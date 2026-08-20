@@ -323,12 +323,32 @@ def get_operator_funcs(
         try:
             fp = safe_path(path)
             async with asyncio.timeout(timeout):
-                async with aiofiles.open(fp, 'r', encoding='utf-8') as f:
-                    text = await f.read()
-                    lines = text.splitlines()
-                    if minilimit:
-                        lines = lines[minilimit:maxlimit]
-                    return "\n".join(lines)
+                if os.name == "nt":
+                    # Lazy import avoids coupling Agent module initialization to
+                    # backend package initialization; the Tool contract stays unchanged.
+                    from drsai.backend.runtime.security_boundary.filesystem import WindowsWorkspaceFilesystem
+                    roots = [root for root in ALLOWED_DIRS if fp.is_relative_to(root)]
+                    if not roots:
+                        raise ValueError(f"Path escapes workspace: {path}")
+                    root = max(roots, key=lambda value: len(value.parts))
+                    relative = fp.relative_to(root).as_posix()
+                    if relative.split("/", 1)[0].casefold() in {
+                        ".git", ".agents", ".codex", ".opendrsai-trash",
+                    }:
+                        raise ValueError("Agent control paths cannot be read")
+                    raw = await asyncio.to_thread(
+                        WindowsWorkspaceFilesystem(root).read_bytes,
+                        relative,
+                        max_bytes=16 * 1024 * 1024,
+                    )
+                    text = raw.decode("utf-8")
+                else:
+                    async with aiofiles.open(fp, 'r', encoding='utf-8') as f:
+                        text = await f.read()
+                lines = text.splitlines()
+                if minilimit:
+                    lines = lines[minilimit:maxlimit]
+                return "\n".join(lines)
         except asyncio.TimeoutError:
             return f"Error: Read operation timed out after {timeout}s"
         except Exception as e:

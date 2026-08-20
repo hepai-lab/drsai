@@ -18,7 +18,9 @@ from drsai.backend.runtime.input_resources import (
     autogen_input_task,
     codex_input_items,
     inspect_native_image_resources,
+    normalize_input_parts,
     normalize_input_resources,
+    serializable_input_resources,
 )
 from drsai.modules.baseagent.drsaiagent import DrSaiAgent
 
@@ -55,6 +57,39 @@ def test_all_five_input_resource_kinds_are_explicit_and_codex_encodable(tmp_path
     assert "https://example.invalid" in items[-1]["text"]
 
 
+def test_ordered_input_parts_are_validated_and_shared_by_both_backends(tmp_path: Path) -> None:
+    (tmp_path / "first.txt").write_text("first", encoding="utf-8")
+    resources = [
+        resource("file-one", "file", reference="first.txt"),
+        resource("selection-one", "selection", content="selected context"),
+    ]
+    parts = [
+        {"type": "text", "text": "before "},
+        {"type": "resource", "resource_id": "selection-one"},
+        {"type": "text", "text": " after "},
+        {"type": "resource", "resource_id": "file-one"},
+    ]
+    normalized = normalize_input_parts(parts, normalize_input_resources(resources), fallback_text="fallback")
+    assert [dict(part) for part in normalized] == parts
+    codex = codex_input_items("fallback", resources, workspace_path=tmp_path, input_parts=parts)
+    assert [item["type"] for item in codex] == ["text", "text", "text", "mention"]
+    assert codex[0]["text"] == "before "
+    assert "selected context" in codex[1]["text"]
+    assert codex[2]["text"] == " after "
+    autogen = autogen_input_task("fallback", resources, workspace_path=tmp_path, input_parts=parts)
+    assert isinstance(autogen, MultiModalMessage)
+    assert autogen.content[0] == "before "
+    assert "selected context" in autogen.content[1]
+    assert autogen.content[2] == " after "
+    assert "workspace_path=first.txt" in autogen.content[3]
+    with pytest.raises(ValueError, match="unknown resource"):
+        normalize_input_parts(
+            [{"type": "resource", "resource_id": "other"}],
+            normalize_input_resources(resources),
+            fallback_text="fallback",
+        )
+
+
 @pytest.mark.parametrize("value", [
     [resource("x", "future", content="x")],
     [resource("x", "file", reference="../outside")],
@@ -65,6 +100,41 @@ def test_all_five_input_resource_kinds_are_explicit_and_codex_encodable(tmp_path
 def test_invalid_or_unsupported_resources_are_rejected_instead_of_dropped(value) -> None:
     with pytest.raises(ValueError):
         normalize_input_resources(value)
+
+
+def test_file_resource_preserves_a_normalized_owop_reference() -> None:
+    digest = "a" * 64
+    normalized = normalize_input_resources([resource(
+        "file-one", "file", name="方案.md", reference="docs/方案.md",
+        mime="text/markdown", sha256=digest,
+        resource_ref={
+            "protocol": "owop/1", "workspace_id": "workspace-one",
+            "resource_type": "file", "resource_id": "opaque-file-one",
+            "label": "方案.md", "digest": digest,
+            "relation": "related", "presentation": "activity",
+        },
+    )])
+    assert dict(normalized[0]["resource_ref"]) == {
+        "protocol": "owop/1", "workspace_id": "workspace-one",
+        "resource_type": "file", "resource_id": "opaque-file-one",
+        "label": "方案.md", "digest": f"sha256:{digest}",
+        "relation": "input_attachment", "presentation": "inline",
+    }
+    assert serializable_input_resources(normalized)[0]["resource_ref"]["resource_id"] == "opaque-file-one"
+
+
+@pytest.mark.parametrize("resource_ref", [
+    {"protocol": "future/1", "workspace_id": "workspace-one", "resource_type": "file", "resource_id": "file-one"},
+    {"protocol": "owop/1", "workspace_id": "../other", "resource_type": "file", "resource_id": "file-one"},
+    {"protocol": "owop/1", "workspace_id": "workspace-one", "resource_type": "artifact", "resource_id": "file-one"},
+    {"protocol": "owop/1", "workspace_id": "workspace-one", "resource_type": "file", "resource_id": "file-one", "digest": "bad"},
+])
+def test_invalid_file_resource_reference_is_rejected(resource_ref) -> None:
+    with pytest.raises(ValueError, match="resource_ref"):
+        normalize_input_resources([resource(
+            "file-one", "file", name="note.md", reference="note.md",
+            resource_ref=resource_ref,
+        )])
 
 
 def test_resource_content_and_count_are_bounded() -> None:

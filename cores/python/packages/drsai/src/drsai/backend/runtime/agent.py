@@ -90,6 +90,7 @@ class RuntimeRunContext:
     agent_backend_runtime_id: str | None = None
     workspace_runtime_id: str | None = None
     input_resources: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    input_parts: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     model_override_requested: bool = False
 
     def __post_init__(self) -> None:
@@ -1101,6 +1102,7 @@ class RuntimeAgentService:
         model_catalog_revision: str | None = None,
         checkpoint_state: Mapping[str, Any] | None = None,
         input_resources_override: tuple[Mapping[str, Any], ...] | None = None,
+        input_parts_override: tuple[Mapping[str, Any], ...] | None = None,
     ) -> dict[str, Any]:
         if self._closed:
             raise RuntimeExecutionError("agent_backend_service_closed", "Agent Backend service is closed.")
@@ -1129,6 +1131,8 @@ class RuntimeAgentService:
         )
         if input_resources_override is not None:
             context = replace(context, input_resources=tuple(input_resources_override))
+        if input_parts_override is not None:
+            context = replace(context, input_parts=tuple(input_parts_override))
         backend = self.router.require(definition.backend)
         backend_health = await backend.health()
         manifest_writer = getattr(self.state, "update_run_manifest", None)
@@ -1695,6 +1699,9 @@ class RuntimeAgentService:
             input_resources=tuple(
                 value for value in run.get("input_resources", []) if isinstance(value, Mapping)
             ) if parent is None else parent.input_resources,
+            input_parts=tuple(
+                value for value in run.get("input_parts", []) if isinstance(value, Mapping)
+            ) if parent is None else parent.input_parts,
             model_override_requested=model_override_requested if parent is None else parent.model_override_requested,
         )
 

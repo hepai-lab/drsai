@@ -832,6 +832,15 @@ async def run_agent_through_kernel(
     the production default; it is used to finish and prove each Host adapter.
     """
 
+    security_binding = getattr(agent, "_runtime_security_execution_binding", None)
+    if security_binding is not None:
+        from .desktop_security_binding import validate_desktop_security_execution_binding
+        validate_desktop_security_execution_binding(
+            security_binding,
+            expected_session_id=str(getattr(agent, "_thread_id", "desktop-session")),
+            expected_workspace_root=_agent_execution_root(agent),
+        )
+
     normalized_task = normalize_desktop_kernel_task(task)
     prefix_messages: list[BaseAgentEvent | BaseChatMessage] = list(normalized_task.messages)
     for user_message in normalized_task.messages:
@@ -1009,12 +1018,18 @@ async def run_agent_through_kernel(
             getattr(agent, "_scheduled_task_tools", ())
         ) + list(getattr(agent, "_regression_tools", ()))
     all_tools = [*workbench_tools, *handoff_tools, *manager_tools]
+    authorized_workspace_calls: dict[str, dict[str, str]] = {}
     metadata: dict[str, Mapping[str, Any]] = {}
     normal_names = set()
     for tool in workbench_tools:
         name = str(getattr(tool, "schema", tool)["name"])
         normal_names.add(name)
         policy = dict(policy_resolver(name, f"workbench:{name}"))
+        if security_binding is not None and name in {"run_write", "run_edit"}:
+            # All bound workspace mutations enter the Runtime authorization
+            # callback. Auto/full-access remain fail-closed there until their
+            # reviewer/attestation executors are wired.
+            policy.update({"risk": "local_write", "approval_mode": "required"})
         if name in controlled_virtual_tools:
             policy.update({
                 "source": "desktop-host", "classification": "local-equivalent",
@@ -1262,6 +1277,145 @@ async def run_agent_through_kernel(
             )
 
         special["run_write"] = desktop_workspace_write
+    elif security_binding is not None and "run_write" in normal_names:
+        async def desktop_authorized_workspace_write(payload: Mapping[str, Any]) -> DesktopToolResult:
+            from .desktop_security_binding import (
+                validate_desktop_authorization_grant,
+                validate_desktop_security_execution_binding,
+            )
+            from .security_boundary import AuthorizationGrantStore
+            from .security_boundary.filesystem_execution import AuthorizedFilesystemExecutionService
+            from .security_boundary.storage import SecurityBoundaryStore
+
+            call_id = str(payload["call_id"])
+            arguments = payload.get("arguments")
+            if not isinstance(arguments, Mapping):
+                raise ValueError("desktop_workspace_write_arguments_invalid")
+            authorization = authorized_workspace_calls.pop(call_id, None)
+            if authorization is None:
+                return DesktopToolResult(
+                    call_id, False, {"error": "desktop_workspace_grant_missing"},
+                    "desktop_workspace_grant_missing",
+                )
+            validate_desktop_security_execution_binding(
+                security_binding,
+                expected_session_id=str(getattr(agent, "_thread_id", "desktop-session")),
+                expected_workspace_root=_agent_execution_root(agent),
+            )
+            path, content = arguments.get("path"), arguments.get("content")
+            if not isinstance(path, str) or not isinstance(content, str):
+                return DesktopToolResult(
+                    call_id, False, {"error": "desktop_workspace_write_arguments_invalid"},
+                    "desktop_workspace_write_arguments_invalid",
+                )
+            proposal = SecurityBoundaryStore(security_binding.database).get_proposal(
+                authorization["proposal_id"],
+            )
+            validate_desktop_authorization_grant(
+                security_binding, grant_id=authorization["grant_id"],
+                proposal_id=authorization["proposal_id"],
+            )
+            service = AuthorizedFilesystemExecutionService.for_windows(
+                Path(security_binding.workspace_root),
+                AuthorizationGrantStore(security_binding.database),
+            )
+            try:
+                receipt = await asyncio.to_thread(
+                    service.write,
+                    grant_id=authorization["grant_id"], proposal=proposal,
+                    profile=security_binding.profile, relative_path=path,
+                    content=content.encode("utf-8"),
+                    execution_id=f"desktop-write-{hashlib.sha256((security_binding.runtime_run_id + ':' + call_id).encode()).hexdigest()[:32]}",
+                )
+            except Exception as exc:
+                return DesktopToolResult(
+                    call_id, False, {"error": str(getattr(exc, "code", "desktop_workspace_write_failed"))},
+                    str(getattr(exc, "code", "desktop_workspace_write_failed")),
+                )
+            return DesktopToolResult(
+                call_id, True,
+                {
+                    "content": f"Wrote {len(content)} bytes to {path}",
+                    "receipt_digest": receipt.receipt_digest,
+                    "content_digest": receipt.content_digest,
+                },
+                inspection={
+                    "version": 1, "kind": "authorized_workspace_write",
+                    "receipt_digest": receipt.receipt_digest,
+                },
+            )
+
+        special["run_write"] = desktop_authorized_workspace_write
+    if security_binding is not None and "run_edit" in normal_names:
+        async def desktop_authorized_workspace_edit(payload: Mapping[str, Any]) -> DesktopToolResult:
+            from .desktop_security_binding import (
+                validate_desktop_authorization_grant,
+                validate_desktop_security_execution_binding,
+            )
+            from .security_boundary import AuthorizationGrantStore
+            from .security_boundary.filesystem_execution import AuthorizedFilesystemExecutionService
+            from .security_boundary.storage import SecurityBoundaryStore
+
+            call_id = str(payload["call_id"])
+            arguments = payload.get("arguments")
+            if not isinstance(arguments, Mapping):
+                raise ValueError("desktop_workspace_edit_arguments_invalid")
+            authorization = authorized_workspace_calls.pop(call_id, None)
+            if authorization is None:
+                return DesktopToolResult(
+                    call_id, False, {"error": "desktop_workspace_grant_missing"},
+                    "desktop_workspace_grant_missing",
+                )
+            validate_desktop_security_execution_binding(
+                security_binding,
+                expected_session_id=str(getattr(agent, "_thread_id", "desktop-session")),
+                expected_workspace_root=_agent_execution_root(agent),
+            )
+            path = arguments.get("path")
+            old_text, new_text = arguments.get("old_text"), arguments.get("new_text")
+            if not all(isinstance(value, str) for value in (path, old_text, new_text)):
+                return DesktopToolResult(
+                    call_id, False, {"error": "desktop_workspace_edit_arguments_invalid"},
+                    "desktop_workspace_edit_arguments_invalid",
+                )
+            proposal = SecurityBoundaryStore(security_binding.database).get_proposal(
+                authorization["proposal_id"],
+            )
+            validate_desktop_authorization_grant(
+                security_binding, grant_id=authorization["grant_id"],
+                proposal_id=authorization["proposal_id"],
+            )
+            service = AuthorizedFilesystemExecutionService.for_windows(
+                Path(security_binding.workspace_root),
+                AuthorizationGrantStore(security_binding.database),
+            )
+            try:
+                receipt = await asyncio.to_thread(
+                    service.edit,
+                    grant_id=authorization["grant_id"], proposal=proposal,
+                    profile=security_binding.profile, relative_path=path,
+                    old_text=old_text, new_text=new_text,
+                    execution_id=f"desktop-edit-{hashlib.sha256((security_binding.runtime_run_id + ':' + call_id).encode()).hexdigest()[:32]}",
+                )
+            except Exception as exc:
+                return DesktopToolResult(
+                    call_id, False, {"error": str(getattr(exc, "code", "desktop_workspace_edit_failed"))},
+                    str(getattr(exc, "code", "desktop_workspace_edit_failed")),
+                )
+            return DesktopToolResult(
+                call_id, True,
+                {
+                    "content": f"Edited {path}",
+                    "receipt_digest": receipt.receipt_digest,
+                    "content_digest": receipt.content_digest,
+                },
+                inspection={
+                    "version": 1, "kind": "authorized_workspace_edit",
+                    "receipt_digest": receipt.receipt_digest,
+                },
+            )
+
+        special["run_edit"] = desktop_authorized_workspace_edit
     if controlled_presentation_visual_denial:
         async def desktop_visual_edit_denial(payload: Mapping[str, Any]) -> DesktopToolResult:
             return DesktopToolResult(
@@ -1389,7 +1543,17 @@ async def run_agent_through_kernel(
         if approval_handler is None:
             decision = "rejected"
         else:
-            decision = "approved" if await approval_handler(dict(payload), dict(payload.get("arguments") or {})) else "rejected"
+            approval_result = await approval_handler(dict(payload), dict(payload.get("arguments") or {}))
+            if isinstance(approval_result, Mapping):
+                decision = "approved" if approval_result.get("approved") is True else "rejected"
+                if decision == "approved":
+                    grant_id, proposal_id = approval_result.get("grant_id"), approval_result.get("proposal_id")
+                    if isinstance(grant_id, str) and isinstance(proposal_id, str):
+                        authorized_workspace_calls[str(payload["call_id"])] = {
+                            "grant_id": grant_id, "proposal_id": proposal_id,
+                        }
+            else:
+                decision = "approved" if approval_result else "rejected"
         return DesktopApprovalResult(str(payload["approval_id"]), str(payload["call_id"]), decision)
 
     checkpoint = AgentKernelCheckpointPort(agent)

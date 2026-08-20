@@ -21,3 +21,4 @@ from . import wechat  # noqa: F401
 from . import daemon  # noqa: F401 — daemon RPC handlers
 from . import gfs  # noqa: F401 — GFS (高能所文件系统) config RPC handlers
 from . import artifact  # noqa: F401 — Workspace-scoped Artifact read/download
+from . import resource  # noqa: F401 — OAEP/OWOP Workspace resource registration/resolution

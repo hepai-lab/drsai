@@ -29,6 +29,8 @@ from pathlib import Path
 from concurrent.futures import Future
 from typing import Any, Callable, Mapping, Optional
 
+from ..resources import oaep_resource_ref, register_tui_resource, tui_workspace_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -519,9 +521,22 @@ class AgentSession:
                 pass
             for artifact in _new_artifact_descriptors(self._workdir, artifact_baseline, self.session_id):
                 try:
+                    resource = register_tui_resource(self.user_id, Path(self._workdir), artifact["path"])
+                    artifact["resource_ref"] = oaep_resource_ref(
+                        resource,
+                        workspace_id=tui_workspace_id(self.user_id, Path(self._workdir)),
+                        relation="output_artifact",
+                        presentation="card",
+                    )
                     on_event("artifact.created", artifact)
                 except Exception:
-                    logger.exception("on_event Artifact delivery raised")
+                    # Keep the legacy Artifact visible if registration fails;
+                    # the missing resource_ref is an explicit degraded mode.
+                    logger.exception("Artifact resource registration or delivery raised")
+                    try:
+                        on_event("artifact.created", artifact)
+                    except Exception:
+                        logger.exception("on_event Artifact delivery fallback raised")
             ev_type, payload = finalize(state, status=status)
             try:
                 on_event(ev_type, payload)

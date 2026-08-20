@@ -310,7 +310,9 @@ def test_gateway_backend_skips_stale_workspace_artifacts_from_earlier_runs(tmp_p
     )
 
 
-def test_gateway_backend_warns_when_likely_deliverable_is_left_outside_artifacts(tmp_path: Path) -> None:
+def test_gateway_backend_auto_publishes_one_new_deliverable_in_place(tmp_path: Path, monkeypatch) -> None:
+    store = gateway.RuntimeArtifactStore(tmp_path / "artifact-index.sqlite3", lambda _workspace_id: tmp_path)
+    monkeypatch.setattr(gateway, "_runtime_artifact_store", lambda: store)
     async def runner(**_kwargs):
         (tmp_path / "undelivered.docx").write_bytes(b"not-published")
         yield TextMessage(source="assistant", content="created")
@@ -320,17 +322,29 @@ def test_gateway_backend_warns_when_likely_deliverable_is_left_outside_artifacts
         _context(tmp_path), _definition("zhizengzeng"), "create document", services,
     ))
 
+    artifacts = [payload for event_type, payload in services.events if event_type == "artifact.created"]
+    assert len(artifacts) == 1
+    assert artifacts[0]["path"] == "undelivered.docx"
+    assert artifacts[0]["storage_kind"] == "workspace"
+    assert [payload for event_type, payload in services.events if event_type == "notice"] == []
+    assert (tmp_path / "undelivered.docx").read_bytes() == b"not-published"
+    assert not (tmp_path / "artifacts" / "undelivered.docx").exists()
+
+
+def test_gateway_backend_does_not_guess_between_multiple_undelivered_files(tmp_path: Path) -> None:
+    async def runner(**_kwargs):
+        (tmp_path / "first.docx").write_bytes(b"first")
+        (tmp_path / "second.pdf").write_bytes(b"second")
+        yield TextMessage(source="assistant", content="created")
+
+    services = RecordingServices()
+    asyncio.run(GatewayOpenDrSaiAgentBackend(runner).execute(
+        _context(tmp_path), _definition("zhizengzeng"), "create documents", services,
+    ))
+
+    assert [payload for event_type, payload in services.events if event_type == "artifact.created"] == []
     warnings = [payload for event_type, payload in services.events if event_type == "notice"]
-    assert warnings == [{
-        "id": "artifact_not_delivered",
-        "level": "warning",
-        "code": "artifact_not_delivered",
-        "message": (
-            "A likely user deliverable was created outside artifacts/ and was not delivered. "
-            "Publish it with deliver_artifact before presenting it as a result."
-        ),
-        "paths": ["undelivered.docx"],
-    }]
+    assert warnings[0]["paths"] == ["first.docx", "second.pdf"]
 
 
 def test_deliver_artifact_tool_uses_bound_runtime_context_and_emits_event(

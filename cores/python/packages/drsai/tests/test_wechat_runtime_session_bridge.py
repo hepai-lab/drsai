@@ -165,7 +165,6 @@ async def test_wechat_exports_only_completed_final_plain_text(tmp_path: Path) ->
                         '你好！<span class="emoji emoji1f44b"></span> 有什么我可以帮你的吗？'
                         '<br/><br/>The user said "hlll". Let me respond in a friendly manner.'
                     ),
-                    "phase": "final",
                     "status": "completed",
                 }),
             ):

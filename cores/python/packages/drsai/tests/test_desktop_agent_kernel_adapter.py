@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import base64
 import hashlib
+import os
 from pathlib import Path
 
 from autogen_agentchat.messages import MultiModalMessage, TextMessage
@@ -392,6 +393,43 @@ class _WriteWorkbench(_Workbench):
     async def call_tool(self, **kwargs):
         self.called.append(kwargs)
         raise AssertionError("controlled write must not reach Workbench")
+
+
+class _ForbiddenWorkspaceEditClient(_Client):
+    def __init__(self):
+        self.calls = 0
+
+    async def create_stream(self, _messages, **_kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            yield CreateResult(
+                finish_reason="function_calls",
+                content=[FunctionCall(
+                    id="call-forbidden-edit", name="run_edit",
+                    arguments='{"path":"scripts/create_deck.py","old_text":"before","new_text":"after"}',
+                )],
+                usage=RequestUsage(prompt_tokens=1, completion_tokens=1), cached=False,
+            )
+            return
+        yield CreateResult(
+            finish_reason="stop", content="Edit completed.",
+            usage=RequestUsage(prompt_tokens=1, completion_tokens=1), cached=False,
+        )
+
+
+class _EditWorkbench(_Workbench):
+    def __init__(self):
+        async def run_edit(path: str, old_text: str, new_text: str) -> str:
+            return path
+        self.tool = FunctionTool(run_edit, name="run_edit", description="Edit file")
+        self.called = []
+
+    async def list_tools(self):
+        return [self.tool.schema]
+
+    async def call_tool(self, **kwargs):
+        self.called.append(kwargs)
+        raise AssertionError("controlled edit must not reach Workbench")
 
 
 class _ImageEditClient(_Client):
@@ -905,6 +943,197 @@ async def test_regression_controlled_write_requires_approval_and_stays_in_isolat
     )
     assert tool_message["name"] == "regression_controlled_write"
     assert tool_message["content"]["handler_execution_count"] == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="authorized production workspace writer requires Windows handles")
+@pytest.mark.parametrize(
+    "mode_id,reviewer_kind", [("manual_safe", "human"), ("auto_reviewed", "auto")],
+)
+@pytest.mark.asyncio
+async def test_bound_production_run_write_consumes_runtime_grant_not_workbench(
+    tmp_path, mode_id: str, reviewer_kind: str,
+) -> None:
+    from drsai.backend.runtime.agent import RuntimeRunContext
+    from drsai.backend.runtime.desktop_security_binding import create_desktop_security_execution_binding
+    from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+    from drsai.backend.runtime.permission_modes import (
+        AdministratorPolicy, DEVELOPMENT_CAPABILITIES, ModeSelection,
+        PlatformBoundary, WorkspaceContext,
+    )
+    from drsai.backend.runtime.security_boundary import ActionProposal
+    from drsai.backend.runtime.security_boundary.filesystem_execution import AuthorizedFilesystemExecutionService
+
+    workspace = tmp_path / "workspace"
+    (workspace / "scripts").mkdir(parents=True)
+    engine = RuntimeEngine(
+        tmp_path / "runtime.sqlite3", RuntimeEngineIdentity("runtime", "instance"),
+        lambda value: value == "workspace", lambda _value: None,
+    )
+    session = engine.create_session("workspace")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "bound-write")
+    engine.transition_run(run["run_id"], "running")
+    engine.apply_permission_mode(
+        run["run_id"], ModeSelection(
+            mode_id, "user", False,
+            requested_capabilities=frozenset({"filesystem.write"}),
+        ),
+        administrator=AdministratorPolicy(
+            "organization", 1, True, capability_ceiling=DEVELOPMENT_CAPABILITIES,
+        ),
+        platform=PlatformBoundary(DEVELOPMENT_CAPABILITIES),
+        workspace=WorkspaceContext(str(workspace), True),
+    )
+    context = RuntimeRunContext(
+        "runtime", "instance", "workspace", workspace,
+        session["session_id"], run["run_id"], "agent", "v1",
+    )
+    binding = create_desktop_security_execution_binding(engine, context)
+    agent = _Agent()
+    agent._thread_id = session["session_id"]
+    agent._work_dir = str(workspace)
+    agent._runtime_workspace_path = workspace
+    agent._runtime_security_execution_binding = binding
+    agent._model_client = _ForbiddenWorkspaceWriteClient()
+    agent._workbench = _WriteWorkbench()
+
+    async def authorize(payload, arguments):
+        content = str(arguments["content"]).encode("utf-8")
+        proposal = ActionProposal.create(
+            proposal_id="proposal-bound-write", run_id=run["run_id"], operation="file.write",
+            payload=AuthorizedFilesystemExecutionService.write_payload(str(arguments["path"]), content),
+            risk="write", required_capabilities=("filesystem.write",),
+        )
+        if reviewer_kind == "auto":
+            route = engine.route_auto_authorization_review(
+                proposal, binding.profile, idempotency_key="bound-write-auto",
+            )
+            assert route.route == "approved"
+            request_id = route.request_id
+        else:
+            request = engine.request_authorization_review(
+                proposal, binding.profile, reviewer_kind="human",
+                reason_code="desktop_workspace_write", idempotency_key="bound-write-request",
+            )
+            engine.decide_authorization_review(
+                request.request_id, "approved", reviewer_kind="human", reviewer_id="test-user",
+                reason_code="desktop_user_approved", idempotency_key="bound-write-decision",
+            )
+            request_id = request.request_id
+        grant = engine.issue_authorization_grant(
+            request_id, binding.profile, review_requirement=reviewer_kind,
+        )
+        return {"approved": True, "grant_id": grant.grant_id, "proposal_id": proposal.proposal_id}
+
+    agent._tool_approval_handler = authorize
+    output = [value async for value in run_agent_through_kernel(
+        agent, task="write the file", cancellation_token=__import__("autogen_core").CancellationToken(),
+        policy_resolver=_policy,
+    )]
+
+    assert output[-1].stop_reason == "run.completed"
+    assert (workspace / "scripts" / "create_deck.py").read_text(encoding="utf-8") == "bypass"
+    assert agent._workbench.called == []
+    effects = binding.database.read_bytes()
+    assert b"proposal-bound-write" in effects
+    assert b"bypass" not in effects
+
+
+@pytest.mark.skipif(os.name != "nt", reason="authorized production workspace editor requires Windows handles")
+@pytest.mark.parametrize(
+    "mode_id,reviewer_kind", [("manual_safe", "human"), ("auto_reviewed", "auto")],
+)
+@pytest.mark.asyncio
+async def test_bound_production_run_edit_consumes_cas_grant_not_workbench(
+    tmp_path, mode_id: str, reviewer_kind: str,
+) -> None:
+    from drsai.backend.runtime.agent import RuntimeRunContext
+    from drsai.backend.runtime.desktop_security_binding import create_desktop_security_execution_binding
+    from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+    from drsai.backend.runtime.permission_modes import (
+        AdministratorPolicy, DEVELOPMENT_CAPABILITIES, ModeSelection,
+        PlatformBoundary, WorkspaceContext,
+    )
+    from drsai.backend.runtime.security_boundary import ActionProposal
+    from drsai.backend.runtime.security_boundary.filesystem_execution import AuthorizedFilesystemExecutionService
+
+    workspace = tmp_path / "workspace"
+    (workspace / "scripts").mkdir(parents=True)
+    target = workspace / "scripts" / "create_deck.py"
+    target.write_text("before", encoding="utf-8")
+    engine = RuntimeEngine(
+        tmp_path / "runtime.sqlite3", RuntimeEngineIdentity("runtime", "instance"),
+        lambda value: value == "workspace", lambda _value: None,
+    )
+    session = engine.create_session("workspace")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "bound-edit")
+    engine.transition_run(run["run_id"], "running")
+    engine.apply_permission_mode(
+        run["run_id"], ModeSelection(
+            mode_id, "user", False,
+            requested_capabilities=frozenset({"filesystem.write"}),
+        ),
+        administrator=AdministratorPolicy(
+            "organization", 1, True, capability_ceiling=DEVELOPMENT_CAPABILITIES,
+        ),
+        platform=PlatformBoundary(DEVELOPMENT_CAPABILITIES),
+        workspace=WorkspaceContext(str(workspace), True),
+    )
+    context = RuntimeRunContext(
+        "runtime", "instance", "workspace", workspace,
+        session["session_id"], run["run_id"], "agent", "v1",
+    )
+    binding = create_desktop_security_execution_binding(engine, context)
+    agent = _Agent()
+    agent._thread_id = session["session_id"]
+    agent._work_dir = str(workspace)
+    agent._runtime_workspace_path = workspace
+    agent._runtime_security_execution_binding = binding
+    agent._model_client = _ForbiddenWorkspaceEditClient()
+    agent._workbench = _EditWorkbench()
+
+    async def authorize(payload, arguments):
+        source = target.read_bytes()
+        proposal = ActionProposal.create(
+            proposal_id="proposal-bound-edit", run_id=run["run_id"], operation="file.edit",
+            payload=AuthorizedFilesystemExecutionService.edit_payload(
+                str(arguments["path"]), source,
+                str(arguments["old_text"]), str(arguments["new_text"]),
+            ),
+            risk="write", required_capabilities=("filesystem.write",),
+        )
+        if reviewer_kind == "auto":
+            route = engine.route_auto_authorization_review(
+                proposal, binding.profile, idempotency_key="bound-edit-auto",
+            )
+            assert route.route == "approved"
+            request_id = route.request_id
+        else:
+            request = engine.request_authorization_review(
+                proposal, binding.profile, reviewer_kind="human",
+                reason_code="desktop_workspace_edit", idempotency_key="bound-edit-request",
+            )
+            engine.decide_authorization_review(
+                request.request_id, "approved", reviewer_kind="human", reviewer_id="test-user",
+                reason_code="desktop_user_approved", idempotency_key="bound-edit-decision",
+            )
+            request_id = request.request_id
+        grant = engine.issue_authorization_grant(
+            request_id, binding.profile, review_requirement=reviewer_kind,
+        )
+        return {"approved": True, "grant_id": grant.grant_id, "proposal_id": proposal.proposal_id}
+
+    agent._tool_approval_handler = authorize
+    output = [value async for value in run_agent_through_kernel(
+        agent, task="edit the file", cancellation_token=__import__("autogen_core").CancellationToken(),
+        policy_resolver=_policy,
+    )]
+
+    assert output[-1].stop_reason == "run.completed"
+    assert target.read_text(encoding="utf-8") == "after"
+    assert agent._workbench.called == []
+    persisted = binding.database.read_bytes()
+    assert b"proposal-bound-edit" in persisted
+    assert b"before" not in persisted and b"after" not in persisted
 
 
 @pytest.mark.asyncio

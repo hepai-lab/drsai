@@ -107,7 +107,7 @@ def test_codex_items_authoritative_sequence_dedupe_and_safe_unknown(tmp_path: Pa
     assert command["type"] == "command_execution"
     assert command["source"]["backend"] == "codex"
     assert command["source"]["adapter"] == "codex-adapter"
-    assert command["source"]["mapping_version"] == "oaep-codex/2.0"
+    assert command["source"]["mapping_version"] == "oaep-codex/2.1"
     assert command["content"]["display_command"] == "git status"
     assert command["content"]["output"] == "clean\n"
     assert command["content"]["exit_code"] == 0

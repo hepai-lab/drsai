@@ -57,6 +57,25 @@ def test_permission_is_checked_before_approval(tmp_path: Path) -> None:
     assert [row["event"] for row in audit.list()] == ["permission.denied"]
 
 
+def test_audit_batch_keeps_one_redacted_immutable_row_per_resource(tmp_path: Path) -> None:
+    audit = security.AuditLog(tmp_path / "audit-batch.sqlite3")
+    records = [
+        ("resource.action", context(), {
+            "resource_hash": f"hash-{index}", "action": "resolve",
+            "token": f"secret-{index}",
+        })
+        for index in range(100)
+    ]
+    written = audit.record_batch(records)
+    rows = audit.list()
+    assert len(written) == len(rows) == 100
+    assert {row["detail"]["resource_hash"] for row in rows} == {f"hash-{index}" for index in range(100)}
+    assert all("secret-" not in str(row) for row in rows)
+    with sqlite3.connect(tmp_path / "audit-batch.sqlite3") as db:
+        with pytest.raises(sqlite3.DatabaseError, match="append-only"):
+            db.execute("UPDATE runtime_audit SET event='changed'")
+
+
 @pytest.mark.parametrize("action", ["shell.execute", "file.write", "git.push", "worktree.write", "workspace.restore", "pty.execute"])
 def test_sensitive_operations_require_scoped_one_time_approval(tmp_path: Path, action: str) -> None:
     runtime, permissions, approvals, audit = system(tmp_path)
@@ -70,6 +89,25 @@ def test_sensitive_operations_require_scoped_one_time_approval(tmp_path: Path, a
         runtime.authorize(principal(), action, context(), resource, requested.value.approval_id)
     assert reused.value.code == "approval_not_approved"
     assert "approval.consumed" in [row["event"] for row in audit.list()]
+
+
+def test_approval_binding_uses_unredacted_resource_identity(tmp_path: Path) -> None:
+    runtime, permissions, approvals, _ = system(tmp_path)
+    permissions.set_role("workspace-1", "owner", "owner")
+    approved_resource = {"command": "deploy alpha", "arguments": {"token": "secret-a"}}
+    changed_command = {"command": "deploy beta", "arguments": {"token": "secret-b"}}
+
+    with pytest.raises(security.ApprovalRequired) as requested:
+        runtime.authorize(principal(), "shell.execute", context(), approved_resource)
+    approvals.decide(requested.value.approval_id, "approved")
+
+    assert approvals._resource_hash(approved_resource) != approvals._resource_hash(changed_command)
+    with pytest.raises(security.SecurityError) as mismatch:
+        runtime.authorize(
+            principal(), "shell.execute", context(), changed_command,
+            requested.value.approval_id,
+        )
+    assert mismatch.value.code == "approval_scope_mismatch"
 
 
 def test_complete_audit_chain_is_append_only_and_redacted(tmp_path: Path) -> None:

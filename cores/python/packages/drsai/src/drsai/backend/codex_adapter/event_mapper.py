@@ -42,6 +42,7 @@ class CodexEventMapper:
         max_wait_ms: int = 40,
         clock: Callable[[], float] = time.monotonic,
         diagnostic_sink: CodexDiagnosticSink | None = None,
+        event_transformer: Callable[[RuntimeRunContext, NormalizedAgentEvent], NormalizedAgentEvent] | None = None,
     ):
         self.batch_bytes = max(256, batch_bytes)
         self.max_buffer_bytes = max(self.batch_bytes, max_buffer_bytes)
@@ -66,6 +67,7 @@ class CodexEventMapper:
         self._coverage: Counter[str] = Counter()
         self.native_decoder = CodexNativeEventDecoder(max_field_chars=self.max_field_chars)
         self.diagnostic_sink = diagnostic_sink or CodexDiagnosticSink()
+        self.event_transformer = event_transformer
 
     def handle(
         self, context: RuntimeRunContext, services: AgentExecutionServices, message: Mapping[str, Any],
@@ -232,6 +234,8 @@ class CodexEventMapper:
         services: AgentExecutionServices,
         event: NormalizedAgentEvent,
     ) -> None:
+        if self.event_transformer is not None:
+            event = self.event_transformer(context, event)
         event = replace(event, payload={
             **dict(event.payload),
             "adapter": "codex-adapter",

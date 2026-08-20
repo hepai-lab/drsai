@@ -281,7 +281,7 @@ class WeChatRuntimeSessionBridge:
             if (
                 item.get("kind") == "message"
                 and item.get("role") == "assistant"
-                and payload.get("phase") == "final"
+                and payload.get("phase") in {None, "final"}
                 and payload.get("status") == "completed"
             ):
                 text = payload.get("text") or payload.get("content")

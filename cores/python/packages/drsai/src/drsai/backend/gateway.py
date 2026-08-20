@@ -127,11 +127,19 @@ from drsai.backend.workspace.git_worktree_service import GitWorktreeError, GitWo
 from drsai.backend.runtime.terminal.state_service import TerminalStateService, TerminalWorkspaceBinding
 from drsai.owop.local_workspace import LocalWorkspaceOperations, WorkspaceWatchJournal
 from drsai.owop.process_pty import LocalProcessPtyOperations
-from drsai.owop.protocol import OWOPProtocol
+from drsai.owop.protocol import OWOPError, OWOPProtocol
 from drsai.owop.runtime_terminal import RuntimeTerminalOWOPOperations
+from drsai.owop.gateway_resource_host import GatewayResourceHost
+from drsai.owop.resource_service import ResourceAccessContext, ResourceService, ResourceServiceOperations
 from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
-from drsai.backend.runtime.input_resources import inspect_native_image_resources
+from drsai.backend.runtime.input_resources import (
+    inspect_native_image_resources,
+    normalize_input_parts,
+    normalize_input_resources,
+    serializable_input_resources,
+)
 from drsai.oaep.generated import OAEP_PROFILE, OAEP_SCHEMA_SHA256, OAEP_VERSION
+from drsai.oaep.resource_associations import migrate_p1_snapshot
 from drsai.backend.runtime.image_operations import RuntimeImageOperationAdapter
 from drsai.backend.runtime.web_search import create_web_fetch_tool, create_web_search_tool, web_fetch, web_search
 from drsai.backend.runtime.journal import SessionCursorExpired
@@ -149,7 +157,6 @@ from drsai.backend.runtime.agent import (
 )
 from drsai.backend.runtime.conversation import StructuredConversationProjector
 from drsai.backend.runtime.desktop_oaep_bridge import DesktopOaepJournalBridge
-from drsai.backend.runtime.desktop_threads import DesktopThreadProjection
 from drsai.backend.tui_gateway.adapter.event_translator import (
     TurnState as ConversationTranslationState,
     finalize as finalize_conversation_translation,
@@ -1503,6 +1510,8 @@ class AgentManager:
 
         regression_control_resources: Sequence[Mapping[str, Any]] = (),
 
+        security_execution_binding: Any = None,
+
     ):
 
         """Run agent.run_stream() for the given session, with concurrency guard."""
@@ -1571,6 +1580,10 @@ class AgentManager:
                 agent._tool_output_artifact_handler = tool_output_artifact_handler
             previous_trusted_evidence_domains = getattr(agent, "_trusted_evidence_domains", ())
             agent._trusted_evidence_domains = tuple(trusted_evidence_domains)
+            had_security_execution_binding = hasattr(agent, "_runtime_security_execution_binding")
+            previous_security_execution_binding = getattr(agent, "_runtime_security_execution_binding", None)
+            if security_execution_binding is not None:
+                agent._runtime_security_execution_binding = security_execution_binding
             had_runtime_workspace_path = hasattr(agent, "_runtime_workspace_path")
             previous_runtime_workspace_path = getattr(agent, "_runtime_workspace_path", None)
             had_runtime_workspace_id = hasattr(agent, "_runtime_workspace_id")
@@ -1618,6 +1631,10 @@ class AgentManager:
             finally:
 
                 agent._trusted_evidence_domains = previous_trusted_evidence_domains
+                if had_security_execution_binding:
+                    agent._runtime_security_execution_binding = previous_security_execution_binding
+                elif hasattr(agent, "_runtime_security_execution_binding"):
+                    delattr(agent, "_runtime_security_execution_binding")
                 if had_runtime_workspace_path:
                     agent._runtime_workspace_path = previous_runtime_workspace_path
                 elif hasattr(agent, "_runtime_workspace_path"):
@@ -1966,6 +1983,12 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Failed to stop scheduler for {uid}: {e}")
 
+    # SQLAlchemy keeps pooled SQLite handles open until the engine is disposed.
+    # Closing them is required for clean Desktop restarts and for deleting a
+    # runtime-owned workspace on Windows after the Gateway exits.
+    if _db_manager is not None:
+        await _db_manager.close()
+
 
 
 
@@ -2009,6 +2032,7 @@ _terminal_provider_instance: LocalProcessPtyOperations | None = None
 _owop_protocol_instance: OWOPProtocol | None = None
 _local_workspace_owop_instances: dict[str, LocalWorkspaceOperations] = {}
 _runtime_artifact_store_instance: RuntimeArtifactStore | None = None
+_resource_service_instances: dict[str, tuple[Path, ResourceService]] = {}
 _REMOTE_CAPABILITY_VERSIONS = {
     "threads": 1,
     "chat": 1,
@@ -2329,62 +2353,15 @@ def _runtime_engine() -> RuntimeEngine:
     return _runtime_engine_instance
 
 
-def _desktop_thread_projection() -> DesktopThreadProjection:
-    state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
-    return DesktopThreadProjection(state_root)
-
-
-def _sync_desktop_sessions(workspace_id: str) -> tuple[DesktopThreadProjection, list[dict[str, Any]]]:
-    projection = _desktop_thread_projection()
-    workspace = _runtime_registry().get_workspace(workspace_id, include_closed=True)
-    if workspace is None or not workspace.open:
-        return projection, []
-    rows = projection.threads_for_workspace(workspace.path)
-    for row in rows:
-        _runtime_engine().import_session(
-            str(row["session_id"]),
-            workspace_id,
-            str(row["title"]),
-            agent_definition=row.get("agent_definition"),
-            backend_id=row.get("backend_id"),
-            created_at=str(row.get("created_at") or ""),
-            updated_at=str(row.get("updated_at") or ""),
-            archived=bool(row.get("archived")),
-        )
-    return projection, rows
-
-
-def _sync_desktop_session_id(session_id: str) -> DesktopThreadProjection:
-    projection = _desktop_thread_projection()
-    if not projection.has_thread(session_id):
-        return projection
-    for workspace in _runtime_registry().list_workspaces(include_closed=False):
-        rows = projection.threads_for_workspace(workspace.path)
-        row = next(
-            (item for item in rows if item["session_id"] == session_id),
-            None,
-        )
-        if row is None:
-            continue
-        _runtime_engine().import_session(
-            session_id,
-            workspace.workspace_id,
-            str(row["title"]),
-            agent_definition=row.get("agent_definition"),
-            backend_id=row.get("backend_id"),
-            created_at=str(row.get("created_at") or ""),
-            updated_at=str(row.get("updated_at") or ""),
-            archived=bool(row.get("archived")),
-        )
-        break
-    return projection
-
-
 def _runtime_image_adapter() -> RuntimeImageOperationAdapter:
     global _runtime_image_adapter_instance
     if _runtime_image_adapter_instance is None:
         _runtime_image_adapter_instance = RuntimeImageOperationAdapter(
-            _runtime_artifact_store(), _runtime_engine().append_event,
+            _runtime_artifact_store(),
+            lambda run_id, event_type, item, context: (
+                _register_runtime_artifact_resource(context, item),
+                _runtime_engine().append_event(run_id, event_type, item),
+            )[1],
         )
     return _runtime_image_adapter_instance
 
@@ -2455,6 +2432,7 @@ async def deliver_artifact(
     if idempotency_key:
         arguments["idempotency_key"] = idempotency_key
     item = await asyncio.to_thread(_runtime_artifact_store().deliver, context, arguments)
+    _register_runtime_artifact_resource(context, item)
     if item.get("idempotent_replay") is not True:
         _runtime_engine().append_event(context.run_id, "artifact.created", item)
     return item
@@ -2489,14 +2467,36 @@ def _runtime_artifact_store() -> RuntimeArtifactStore:
     return _runtime_artifact_store_instance
 
 
+def _run_resource_access_context(context: RuntimeRunContext) -> ResourceAccessContext:
+    return ResourceAccessContext(
+        tenant_id=f"local:{context.runtime_id}", principal_id="local-runtime",
+        session_id=context.session_id, authority_id=context.runtime_id,
+        workspace_id=context.workspace_id,
+        correlation_id=context.correlation_id or f"run:{context.run_id}",
+    )
+
+
+def _register_runtime_artifact_resource(context: RuntimeRunContext, item: Mapping[str, Any]) -> dict[str, Any]:
+    artifact_id = str(item.get("artifact_id") or "")
+    if not artifact_id:
+        raise RuntimeExecutionError("artifact_identity_invalid", "Artifact identity is unavailable.")
+    return _resource_service(context.workspace_id, context.workspace_path).register(
+        _run_resource_access_context(context), host_handle=f"artifact:{artifact_id}",
+        resource_type="artifact", idempotency_key=f"artifact:{context.session_id}:{artifact_id}",
+        immutable=True, resource_id_hint=artifact_id,
+    )
+
+
 def _publish_runtime_artifact(context: RuntimeRunContext, arguments: dict[str, Any]) -> dict[str, Any]:
     item = _runtime_artifact_store().publish(context, arguments)
+    _register_runtime_artifact_resource(context, item)
     _runtime_engine().append_event(context.run_id, "artifact.created", item)
     return item
 
 
 def _deliver_runtime_artifact(context: RuntimeRunContext, arguments: dict[str, Any]) -> dict[str, Any]:
     item = _runtime_artifact_store().deliver(context, arguments)
+    _register_runtime_artifact_resource(context, item)
     if item.get("idempotent_replay") is not True:
         _runtime_engine().append_event(context.run_id, "artifact.created", item)
     return item
@@ -2781,6 +2781,9 @@ class GatewayOpenDrSaiAgentBackend:
             try:
                 input_task = autogen_input_task(
                     prompt, context.input_resources, workspace_path=context.workspace_path,
+                    # Preserve compatibility with runs created before ordered
+                    # OAEP input parts were persisted.
+                    input_parts=context.input_parts or None,
                 )
             except (OSError, ValueError) as exc:
                 raise RuntimeExecutionError(
@@ -2801,13 +2804,27 @@ class GatewayOpenDrSaiAgentBackend:
                 agent_name=definition.asset_id,
                 cancellation_token=cancellation,
             )
+            if self._runner is None and all(callable(getattr(services.state, name, None)) for name in (
+                "get_run", "get_run_security_profile", "effective_permission_descriptor",
+            )):
+                from drsai.backend.runtime.desktop_security_binding import (
+                    DesktopSecurityBindingError,
+                    create_desktop_security_execution_binding,
+                )
+                try:
+                    run_kwargs["security_execution_binding"] = create_desktop_security_execution_binding(
+                        services.state, context,
+                    )
+                except DesktopSecurityBindingError as error:
+                    if error.code not in {"desktop_permission_mode_missing", "desktop_security_profile_missing"}:
+                        raise RuntimeExecutionError(error.code, str(error)) from error
             if definition.reasoning_effort is not None:
                 run_kwargs["reasoning_effort"] = definition.reasoning_effort
             if self._runner is None:
                 from drsai.backend.runtime.desktop_agent_kernel_adapter import trusted_evidence_domains
                 run_kwargs["trusted_evidence_domains"] = trusted_evidence_domains(context.input_resources)
                 run_kwargs["regression_control_resources"] = context.input_resources
-                async def approve_registry_tool(record: dict[str, Any], _arguments: dict[str, Any]) -> bool:
+                async def approve_registry_tool(record: dict[str, Any], _arguments: dict[str, Any]) -> bool | dict[str, Any]:
                     if not _runtime_tool_requires_approval(record):
                         return True
                     operation = str(record.get("name") or "unknown_tool")[:160]
@@ -2825,6 +2842,7 @@ class GatewayOpenDrSaiAgentBackend:
                         ),
                         "scope": "workspace",
                     }
+                    workspace_authorization_proposal = None
                     if operation == "regression_controlled_write":
                         relative_path = str(_arguments.get("relative_path") or "")
                         content = _arguments.get("content")
@@ -2866,7 +2884,177 @@ class GatewayOpenDrSaiAgentBackend:
                             "relative_path": relative_path,
                             "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
                         }
-                    approval_id = await self._await_approval(context, approval_payload, services)
+                    elif operation == "run_write" and run_kwargs.get("security_execution_binding") is not None:
+                        relative_path, content = _arguments.get("path"), _arguments.get("content")
+                        if not isinstance(relative_path, str) or not isinstance(content, str):
+                            raise RuntimeExecutionError(
+                                "desktop_workspace_write_proposal_invalid",
+                                "Workspace write requires an exact path and UTF-8 content.",
+                            )
+                        approval_payload["proposal"] = {
+                            "tool": operation,
+                            "effect": "write_local_mutable",
+                            "relative_path": relative_path,
+                            "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                            "size_bytes": len(content.encode("utf-8")),
+                        }
+                        from drsai.backend.runtime.security_boundary import ActionProposal
+                        from drsai.backend.runtime.security_boundary.filesystem_execution import AuthorizedFilesystemExecutionService
+                        call_identity = str(record.get("call_id") or _arguments.get("_runtime_call_id") or "")
+                        if not call_identity:
+                            raise RuntimeExecutionError(
+                                "desktop_workspace_call_identity_missing",
+                                "Workspace write call identity is required for authorization.",
+                            )
+                        workspace_authorization_proposal = ActionProposal.create(
+                            proposal_id="desktop-proposal-" + hashlib.sha256(
+                                f"{context.run_id}:{call_identity}:run_write".encode("utf-8")
+                            ).hexdigest()[:32],
+                            run_id=context.run_id, operation="file.write",
+                            payload=AuthorizedFilesystemExecutionService.write_payload(
+                                relative_path, content.encode("utf-8"),
+                            ),
+                            risk="write", required_capabilities=("filesystem.write",),
+                        )
+                    elif operation == "run_edit" and run_kwargs.get("security_execution_binding") is not None:
+                        relative_path = _arguments.get("path")
+                        old_text, new_text = _arguments.get("old_text"), _arguments.get("new_text")
+                        if not all(isinstance(value, str) for value in (relative_path, old_text, new_text)):
+                            raise RuntimeExecutionError(
+                                "desktop_workspace_edit_proposal_invalid",
+                                "Workspace edit requires an exact path, match text, and replacement text.",
+                            )
+                        from drsai.backend.runtime.security_boundary import ActionProposal, WindowsWorkspaceFilesystem
+                        from drsai.backend.runtime.security_boundary.filesystem_execution import AuthorizedFilesystemExecutionService
+                        security_binding = run_kwargs["security_execution_binding"]
+                        source_content = await asyncio.to_thread(
+                            WindowsWorkspaceFilesystem(Path(security_binding.workspace_root)).read_bytes,
+                            relative_path,
+                        )
+                        edit_payload = AuthorizedFilesystemExecutionService.edit_payload(
+                            relative_path, source_content, old_text, new_text,
+                        )
+                        call_identity = str(record.get("call_id") or _arguments.get("_runtime_call_id") or "")
+                        if not call_identity:
+                            raise RuntimeExecutionError(
+                                "desktop_workspace_call_identity_missing",
+                                "Workspace edit call identity is required for authorization.",
+                            )
+                        workspace_authorization_proposal = ActionProposal.create(
+                            proposal_id="desktop-proposal-" + hashlib.sha256(
+                                f"{context.run_id}:{call_identity}:run_edit".encode("utf-8")
+                            ).hexdigest()[:32],
+                            run_id=context.run_id, operation="file.edit", payload=edit_payload,
+                            risk="write", required_capabilities=("filesystem.write",),
+                        )
+                        approval_payload["proposal"] = {
+                            "tool": operation, "effect": "edit_local_mutable",
+                            "relative_path": str(edit_payload["relative_path"]),
+                            "source_content_sha256": str(edit_payload["source_content_digest"]),
+                            "result_content_sha256": str(edit_payload["result_content_digest"]),
+                            "size_bytes": int(edit_payload["result_size_bytes"]),
+                        }
+                    authorization_result: dict[str, Any] | None = None
+                    security_binding = run_kwargs.get("security_execution_binding")
+                    approval_id: str | None = None
+                    if operation in {"run_write", "run_edit"} and security_binding is not None:
+                        call_identity = str(record.get("call_id") or _arguments.get("_runtime_call_id") or "")
+                        if not call_identity:
+                            raise RuntimeExecutionError(
+                                "desktop_workspace_call_identity_missing",
+                                "Workspace mutation call identity is required for authorization.",
+                            )
+                        if workspace_authorization_proposal is None:
+                            raise RuntimeExecutionError(
+                                "desktop_workspace_proposal_missing",
+                                "Workspace mutation Proposal was not prepared before review.",
+                            )
+                        proposal = workspace_authorization_proposal
+                        review_requirement: str
+                        request_id: str
+                        if security_binding.reviewer_route == "human":
+                            approval_id = await self._await_approval(context, approval_payload, services)
+                            request = services.state.request_authorization_review(
+                                proposal, security_binding.profile,
+                                reviewer_kind="human", reason_code=f"desktop_workspace_{operation[4:]}",
+                                idempotency_key=f"desktop-{operation[4:]}-review:{call_identity}",
+                            )
+                            services.state.decide_authorization_review(
+                                request.request_id, "approved", reviewer_kind="human",
+                                reviewer_id=f"legacy-approval:{approval_id}",
+                                reason_code="desktop_user_approved",
+                                idempotency_key=f"desktop-{operation[4:]}-decision:{call_identity}",
+                            )
+                            request_id, review_requirement = request.request_id, "human"
+                        elif security_binding.reviewer_route == "auto":
+                            route_auto = getattr(services.state, "route_auto_authorization_review", None)
+                            if not callable(route_auto):
+                                raise RuntimeExecutionError(
+                                    "desktop_auto_reviewer_unavailable",
+                                    "AutoReviewer authority is unavailable for this Runtime.",
+                                )
+                            route = await asyncio.to_thread(
+                                route_auto, proposal, security_binding.profile,
+                                idempotency_key=f"desktop-{operation[4:]}:{call_identity}",
+                            )
+                            if route.route == "denied":
+                                return {"approved": False, "reason_code": route.review.reason_code}
+                            if route.route == "approved":
+                                request_id, review_requirement = route.request_id, "auto"
+                            elif route.route == "escalated" and route.human_request is not None:
+                                try:
+                                    approval_id = await self._await_approval(context, approval_payload, services)
+                                except RuntimeExecutionError as error:
+                                    rejected_approval_id = str(getattr(error, "approval_id", "unavailable"))
+                                    if error.code == "approval_denied":
+                                        services.state.decide_authorization_review(
+                                            route.human_request.request_id, "denied", reviewer_kind="human",
+                                            reviewer_id=f"legacy-approval:{rejected_approval_id}",
+                                            reason_code="desktop_user_denied_auto_escalation",
+                                            idempotency_key=f"desktop-{operation[4:]}-escalation-denied:{call_identity}",
+                                        )
+                                    else:
+                                        services.state.decide_authorization_review(
+                                            route.human_request.request_id, "cancelled", reviewer_kind="system",
+                                            reviewer_id="desktop-approval-bridge",
+                                            reason_code="desktop_auto_escalation_interrupted",
+                                            idempotency_key=f"desktop-{operation[4:]}-escalation-cancelled:{call_identity}",
+                                        )
+                                    raise
+                                services.state.decide_authorization_review(
+                                    route.human_request.request_id, "approved", reviewer_kind="human",
+                                    reviewer_id=f"legacy-approval:{approval_id}",
+                                    reason_code="desktop_user_approved_auto_escalation",
+                                    idempotency_key=f"desktop-{operation[4:]}-escalation:{call_identity}",
+                                )
+                                request_id, review_requirement = route.human_request.request_id, "human"
+                            else:
+                                raise RuntimeExecutionError(
+                                    "desktop_auto_reviewer_route_invalid",
+                                    "AutoReviewer produced no executable authorization route.",
+                                )
+                        else:
+                            raise RuntimeExecutionError(
+                                "desktop_workspace_reviewer_unavailable",
+                                "The selected Permission Mode execution attestation is not yet available for workspace mutations.",
+                            )
+                        grant = services.state.issue_authorization_grant(
+                            request_id, security_binding.profile,
+                            review_requirement=review_requirement, ttl_seconds=300,
+                        )
+                        authorization_result = {
+                            "approved": True, "grant_id": grant.grant_id,
+                            "proposal_id": proposal.proposal_id,
+                        }
+                        if approval_id is None:
+                            return authorization_result
+                    else:
+                        approval_id = await self._await_approval(context, approval_payload, services)
+                    if approval_id is None:
+                        raise RuntimeExecutionError(
+                            "desktop_approval_identity_missing",
+                            "Human-reviewed side effect has no Approval identity.",
+                        )
                     call_id = str(_arguments.get("_runtime_call_id") or "").strip()
                     if call_id:
                         recovered_effect = context.run_id in self._recovering_runs
@@ -2908,7 +3096,7 @@ class GatewayOpenDrSaiAgentBackend:
                             })
                         else:
                             self._approved_effects.setdefault(context.run_id, []).append((operation, approval_id))
-                    return True
+                    return authorization_result or True
 
                 run_kwargs["tool_approval_handler"] = approve_registry_tool
             context_token = _runtime_image_context.set(context)
@@ -2999,6 +3187,11 @@ class GatewayOpenDrSaiAgentBackend:
             # Only register files written during this Run. A shared Desktop
             # Workspace keeps prior task outputs under artifacts/; republishing
             # them would attach stale PNG/PPTX cards to unrelated later replies.
+            artifact_store = _runtime_artifact_store()
+            existing = {
+                str(item.get("relative_path") or "")
+                for item in artifact_store.list_for_run(context.workspace_id, context.run_id)
+            }
             artifacts_root = context.workspace_path / "artifacts"
             if artifacts_root.is_dir():
                 candidates = sorted(
@@ -3012,11 +3205,6 @@ class GatewayOpenDrSaiAgentBackend:
                         "artifact_output_limit_exceeded",
                         "The Run produced too many output artifacts to register safely.",
                     )
-                artifact_store = _runtime_artifact_store() if candidates else None
-                existing = {
-                    str(item.get("relative_path") or "")
-                    for item in artifact_store.list_for_run(context.workspace_id, context.run_id)
-                } if artifact_store is not None else set()
                 for path in candidates:
                     relative = path.relative_to(context.workspace_path).as_posix()
                     if relative in existing:
@@ -3030,10 +3218,29 @@ class GatewayOpenDrSaiAgentBackend:
                     descriptor = artifact_store.publish(context, {"path": relative})
                     services.emit(context, "artifact.created", descriptor)
                     existing.add(relative)
-            undelivered = [
-                relative for relative, signature in _workspace_undelivered_snapshot(context.workspace_path).items()
+            current_undelivered = _workspace_undelivered_snapshot(context.workspace_path)
+            undelivered = sorted(
+                relative for relative, signature in current_undelivered.items()
                 if undelivered_baseline.get(relative) != signature
+            )
+            # Compatibility recovery for legacy/third-party Skills that create
+            # one explicit document result in the Workspace but omit the
+            # deliver_artifact call. Register it in place: the file remains a
+            # single Workspace object, while OAEP gains a durable Artifact and
+            # OWOP authorization boundary. Multiple candidates remain
+            # ambiguous and are never guessed into deliverables.
+            newly_created = [
+                relative for relative in undelivered
+                if relative not in undelivered_baseline and relative not in existing
             ]
+            if not existing and len(newly_created) == 1:
+                descriptor = artifact_store.publish(context, {
+                    "path": newly_created[0],
+                    "idempotency_key": f"runtime-auto-deliver:{context.run_id}:{newly_created[0]}",
+                })
+                services.emit(context, "artifact.created", descriptor)
+                existing.add(newly_created[0])
+                undelivered = [relative for relative in undelivered if relative != newly_created[0]]
             if undelivered:
                 services.emit(context, "notice", {
                     "id": "artifact_not_delivered",
@@ -3192,9 +3399,14 @@ class GatewayOpenDrSaiAgentBackend:
         if isinstance(proposal, dict):
             request["proposal"] = {
                 key: proposal[key]
-                for key in ("tool", "effect", "relative_path", "content_sha256")
+                for key in (
+                    "tool", "effect", "relative_path", "content_sha256",
+                    "source_content_sha256", "result_content_sha256",
+                )
                 if isinstance(proposal.get(key), str)
             }
+            if isinstance(proposal.get("size_bytes"), int) and not isinstance(proposal.get("size_bytes"), bool):
+                request["proposal"]["size_bytes"] = proposal["size_bytes"]
         approval = None
         if context.run_id in self._recovering_runs:
             list_run_approvals = getattr(services.state, "list_run_approvals", None)
@@ -3217,12 +3429,16 @@ class GatewayOpenDrSaiAgentBackend:
         except TimeoutError as exc:
             if services.state.get_approval(approval_id)["status"] == "pending":
                 services.state.resolve_approval(approval_id, "timeout", {"reason": "deadline_elapsed"})
-            raise RuntimeExecutionError("approval_timeout", "OpenDrSai Approval timed out.") from exc
+            timeout_error = RuntimeExecutionError("approval_timeout", "OpenDrSai Approval timed out.")
+            timeout_error.approval_id = approval_id
+            raise timeout_error from exc
         finally:
             self._pending_approvals.pop(approval_id, None)
             self._recovering_runs.discard(context.run_id)
         if decision != "approved":
-            raise RuntimeExecutionError("approval_denied", "OpenDrSai Approval was not granted.")
+            denied_error = RuntimeExecutionError("approval_denied", "OpenDrSai Approval was not granted.")
+            denied_error.approval_id = approval_id
+            raise denied_error
         return approval_id
 
     async def recover(self, run_id: str) -> None:
@@ -4141,7 +4357,6 @@ def _prepare_desktop_oaep_bridge(
             },
         )
     workspace_id = _chat_runtime_workspace_id(request, raw_request)
-    _sync_desktop_session_id(request.thread_id)
     engine = _runtime_engine()
     try:
         session = engine.get_session(request.thread_id)
@@ -5011,11 +5226,6 @@ async def runtime_session_create(request: RuntimeSessionCreateRequest):
 @app.get("/v1/sessions")
 async def runtime_session_list(workspace_id: str, offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=200), archived: bool | None = False):
     try:
-        # Desktop Threads are one producer of authoritative Runtime Sessions,
-        # not a replacement catalog. Import their latest metadata first, then
-        # list the unified engine store so Sessions created by Android/SDK
-        # remain visible to every client.
-        _sync_desktop_sessions(workspace_id)
         return _runtime_engine().list_sessions(
             workspace_id, offset=offset, limit=limit, archived=archived
         )
@@ -5066,14 +5276,12 @@ async def runtime_workspace_session_catalog_event_stream(
 @app.get("/v1/sessions/{session_id}")
 async def runtime_session_get(session_id: str):
     try:
-        _sync_desktop_session_id(session_id)
         return _runtime_engine().get_session(session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 _runtime_legacy_conversation = RuntimeLegacyConversationHandlers(
-    sync_session=_sync_desktop_session_id,
     engine=_runtime_engine,
 )
 app.include_router(_runtime_legacy_conversation.router())
@@ -5086,6 +5294,21 @@ runtime_session_event_list = _runtime_legacy_conversation.event_list
 runtime_session_event_stream = _runtime_legacy_conversation.event_stream
 
 
+def _migrate_oaep_event(event: Mapping[str, Any]) -> dict[str, Any]:
+    projected = dict(event)
+    data = dict(projected.get("data") or {})
+    item = data.get("item")
+    if isinstance(item, Mapping):
+        session_id = str(projected.get("session_id") or item.get("session_id") or "")
+        migrated = migrate_p1_snapshot(
+            {"session": {"id": session_id}, "items": [item]},
+            authority_id=_runtime_registry().identity.runtime_id,
+        )
+        data["item"] = migrated["items"][0]
+        projected["data"] = data
+    return projected
+
+
 @app.get("/v1/sessions/{session_id}/oaep-snapshot")
 async def runtime_session_oaep_snapshot(
     session_id: str,
@@ -5094,8 +5317,8 @@ async def runtime_session_oaep_snapshot(
 ):
     """Return the OAEP v1 Session/Run/Item projection for one Runtime Session."""
     try:
-        _sync_desktop_session_id(session_id)
-        return _runtime_engine().oaep_snapshot(session_id, cursor=cursor, limit=limit)
+        snapshot = _runtime_engine().oaep_snapshot(session_id, cursor=cursor, limit=limit)
+        return migrate_p1_snapshot(snapshot, authority_id=_runtime_registry().identity.runtime_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -5130,7 +5353,6 @@ async def runtime_session_oaep_event_list(
 ):
     """Replay durable OAEP v1 Events after an exclusive Session sequence cursor."""
     try:
-        _sync_desktop_session_id(session_id)
         events = _runtime_engine().list_oaep_events(
             session_id,
             after_sequence=after_sequence,
@@ -5139,7 +5361,7 @@ async def runtime_session_oaep_event_list(
         return {
             "version": "1.0",
             "object": "list",
-            "data": events,
+            "data": [_migrate_oaep_event(event) for event in events],
             "next_sequence": int(events[-1]["sequence"]) if events else after_sequence,
             "has_more": len(events) == limit,
         }
@@ -5157,7 +5379,6 @@ async def runtime_session_oaep_event_stream(
 ):
     """Resume an OAEP v1 Session Event stream without a snapshot/subscribe race."""
     try:
-        _sync_desktop_session_id(session_id)
         _runtime_engine().list_oaep_events(
             session_id,
             after_sequence=after_sequence,
@@ -5187,7 +5408,7 @@ async def runtime_session_oaep_event_stream(
             for event in events:
                 cursor = int(event["sequence"])
                 payload = json.dumps(
-                    event, ensure_ascii=False, separators=(",", ":")
+                    _migrate_oaep_event(event), ensure_ascii=False, separators=(",", ":")
                 )
                 yield f"id: {cursor}\nevent: oaep.event\ndata: {payload}\n\n"
 
@@ -5243,7 +5464,6 @@ async def runtime_session_update(session_id: str, request: RuntimeSessionUpdateR
 @app.post("/v1/sessions/{session_id}/runs")
 async def runtime_run_create(session_id: str, request: RuntimeRunCreateRequest, http_request: Request):
     try:
-        _sync_desktop_session_id(session_id)
         state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
         # Run creation can be the first Agent API call made by a freshly
         # installed remote Runtime. Seed the built-ins before resolving the
@@ -6570,10 +6790,15 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
         if workspace_record is None:
             raise RuntimeExecutionError("workspace_unavailable", "The Run Workspace is no longer available.")
         try:
+            input_resources = _register_input_workspace_resources(
+                str(run_record["workspace_id"]), Path(workspace_record.path), input_resources,
+                session_id=str(run_record["session_id"]),
+                correlation_id=str(run_record.get("correlation_id") or run_record["run_id"]),
+            )
             multimodal_input = inspect_native_image_resources(
                 input_resources, workspace_path=Path(workspace_record.path),
             )
-        except ValueError as exc:
+        except (ValueError, OWOPError) as exc:
             raise RuntimeExecutionError(
                 "input_resources_invalid", "One or more input resources are invalid."
             ) from exc
@@ -6607,6 +6832,16 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
             display_prompt = _strip_local_attachment_context(request.prompt)
         else:
             display_prompt = display_prompt.strip()
+        try:
+            registered_input_parts = normalize_input_parts(
+                metadata.get("input_parts"), input_resources, fallback_text=display_prompt,
+            ) if not resuming_capability_configuration else tuple(
+                item for item in (run_record.get("input_parts") or []) if isinstance(item, Mapping)
+            )
+        except ValueError as exc:
+            raise RuntimeExecutionError(
+                "input_parts_invalid", "Input Parts must reference resources from the same Run input."
+            ) from exc
         if not resuming_capability_configuration:
             try:
                 input_manifest_evidence: dict[str, Any] = {}
@@ -6635,6 +6870,7 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
                     display_prompt,
                     attachment_refs=attachment_refs,
                     input_resources=input_resources,
+                    input_parts=[dict(part) for part in registered_input_parts],
                     correlation_id=correlation_id,
                     source_client=(
                         str(metadata.get("source_client"))
@@ -6918,6 +7154,23 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
             # Preserve Trusted image-understanding text when a confirmed goal wraps the prompt.
             goal_base_prompt = execution_prompt if image_understanding_text else request.prompt
             execution_prompt = render_goal_execution_prompt(confirmed_goal["goal"], goal_base_prompt)
+        original_execution_prompt = display_prompt if resuming_capability_configuration else request.prompt
+        execution_resources = (
+            execution_input_resources if execution_input_resources is not None else tuple(input_resources)
+        )
+        if resuming_capability_configuration:
+            execution_input_parts = None
+        elif execution_input_resources is None and execution_prompt == original_execution_prompt:
+            execution_input_parts = tuple(dict(part) for part in registered_input_parts)
+        else:
+            # Gateway-supplied evidence and vision summaries are execution-only.
+            # Rebuild Backend Parts so removed image resources cannot be referenced
+            # and trusted prompt additions cannot be bypassed by explicit Parts.
+            execution_input_parts = tuple(
+                dict(part) for part in normalize_input_parts(
+                    None, execution_resources, fallback_text=execution_prompt,
+                )
+            )
         with platform_auth_scope(auth_context) if auth_context else nullcontext():
             execution_result = await _runtime_agent_service(auth_context).execute(
                 run_id,
@@ -6931,6 +7184,7 @@ async def runtime_run_execute(run_id: str, request: RuntimeRunExecuteRequest, ra
                 model_config_revision=model_snapshot.revision,
                 model_catalog_revision=effective_catalog_revision,
                 input_resources_override=execution_input_resources,
+                input_parts_override=execution_input_parts,
             )
         if confirmed_goal is not None:
             execution_result["goal"] = {
@@ -7250,25 +7504,7 @@ async def remote_workspace_context(workspace_id: str):
     return {"workspacePath": str(root), "trusted": True, "git": {"hasChanges": bool(changed), "changedFiles": changed}, "instructions": instructions, "stats": {"instructionCount": len(instructions), "changedFileCount": len(changed)}}
 
 
-@app.post("/v1/owop")
-async def runtime_owop_execute(payload: dict[str, Any], raw_request: Request):
-    """Execute the same typed Workspace operation over local HTTP or an SSH tunnel."""
-    workspace_id = str(payload.get("workspace_id") or "")
-    operation = str(payload.get("operation") or "")
-    root = _workspace_root(workspace_id)
-    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
-    read_only_operations = {
-        "workspace.describe", "files.list", "files.stat", "files.read", "search.query",
-        "git.status", "git.diff", "git.file_at_ref", "git.worktree.list", "git.worktree.describe",
-        "pty.list", "pty.describe", "checkpoint.preview", "artifact.metadata", "artifact.chunk",
-    }
-    read_only = operation in read_only_operations or (operation == "pty.attach" and params.get("mode") == "reader")
-    permission = "workspace.read" if read_only else "pty.execute" if operation.startswith("pty.") else "workspace.write"
-    _authorize_request(raw_request, workspace_id, permission, {
-        "operation": operation,
-        "terminal_id": params.get("pty_id"),
-        "lease_id": params.get("lease_id"),
-    })
+def _local_workspace_operations(workspace_id: str, root: Path) -> LocalWorkspaceOperations:
     local = _local_workspace_owop_instances.get(workspace_id)
     if local is None or local.root != root:
         if local is not None:
@@ -7278,9 +7514,172 @@ async def runtime_owop_execute(payload: dict[str, Any], raw_request: Request):
             workspace_id, root, _workspace_event_journal(), worktree_handlers=worktrees.handlers()
         )
         _local_workspace_owop_instances[workspace_id] = local
+    return local
+
+
+def _resource_audit_salt(state_root: Path) -> bytes:
+    configured = os.environ.get("OPENDRSAI_RESOURCE_AUDIT_SALT", "").encode("utf-8")
+    if configured:
+        return hashlib.sha256(configured).digest()
+    path = state_root / "runtime" / "resource-audit.key"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(descriptor, os.urandom(32))
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except FileExistsError:
+        pass
+    value = path.read_bytes()
+    if len(value) < 32:
+        raise RuntimeError("resource_audit_salt_invalid")
+    return value
+
+
+def _resource_service(workspace_id: str, root: Path) -> ResourceService:
+    state_root = Path(os.environ.get("DRSAI_HOME", str(Path.home() / ".drsai"))).expanduser()
+    cached = _resource_service_instances.get(workspace_id)
+    if cached is not None and cached[0] == root:
+        return cached[1]
+
+    def authorize(context: ResourceAccessContext, _action: str, _key: Mapping[str, Any] | None) -> bool:
+        try:
+            session = _runtime_engine().get_session(context.session_id)
+        except KeyError:
+            return False
+        return (
+            context.workspace_id == workspace_id
+            and str(session.get("workspace_id") or "") == workspace_id
+            and context.authority_id == _runtime_registry().identity.runtime_id
+        )
+
+    def audit_record(event: Mapping[str, Any]) -> tuple[str, OperationContext, Mapping[str, Any]]:
+        context = OperationContext(
+            principal_id=str(event["principal_id"]), runtime_id=str(event["authority_id"]),
+            workspace_id=str(event["workspace_id"]), session_id=str(event["session_id"]),
+            run_id="", tool_id="", correlation_id=str(event["correlation_id"]),
+            operation_id=f"resources.{event['action']}",
+        )
+        return (
+            "resource.action", context, {key: event.get(key) for key in (
+                "tenant_id", "authority_id", "resource_hash", "action", "version_id", "result_code",
+            )},
+        )
+
+    def audit(event: Mapping[str, Any]) -> None:
+        _runtime_security().audit.record(*audit_record(event))
+
+    def audit_batch(events: list[Mapping[str, Any]]) -> None:
+        _runtime_security().audit.record_batch([audit_record(event) for event in events])
+
+    service = ResourceService(
+        state_root / "runtime" / "resources-v2.sqlite3",
+        GatewayResourceHost(workspace_id, _local_workspace_operations(workspace_id, root), _runtime_artifact_store()),
+        authorize=authorize, audit_salt=_resource_audit_salt(state_root),
+        audit_sink=audit, audit_batch_sink=audit_batch,
+    )
+    _resource_service_instances[workspace_id] = (root, service)
+    return service
+
+
+def _resource_access_context(
+    raw_request: Request,
+    payload: Mapping[str, Any],
+    workspace_id: str,
+    principal: RuntimePrincipal | None,
+) -> ResourceAccessContext:
+    identity = _runtime_registry().identity
+    session_id = raw_request.headers.get("x-opendrsai-session-id", "") or "missing-session"
+    return ResourceAccessContext(
+        tenant_id=principal.organization_id if principal else f"local:{identity.runtime_id}",
+        principal_id=principal.principal_id if principal else "local-runtime",
+        session_id=session_id, authority_id=identity.runtime_id, workspace_id=workspace_id,
+        correlation_id=str(payload.get("correlation_id") or getattr(raw_request.state, "correlation_id", "") or "missing-correlation"),
+    )
+
+
+def _register_input_workspace_resources(
+    workspace_id: str,
+    root: Path,
+    input_resources: list[Mapping[str, Any]],
+    *,
+    session_id: str,
+    correlation_id: str,
+) -> list[dict[str, Any]]:
+    """Bind native input attachments to durable OWOP file identities."""
+    local = _local_workspace_operations(workspace_id, root)
+    registered: list[dict[str, Any]] = []
+    for resource in normalize_input_resources(input_resources):
+        value = dict(resource)
+        if isinstance(resource.get("resource_ref"), Mapping):
+            existing = dict(resource["resource_ref"])
+            if existing.get("workspace_id") != workspace_id:
+                raise ValueError("Input resource belongs to another Workspace")
+            value["resource_ref"] = existing
+            registered.append(value)
+            continue
+        if resource.get("kind") in {"file", "folder"}:
+            expected = str(resource.get("sha256") or "")
+            result = local.register_file({
+                "path": str(resource["reference"]),
+                **({"expected_digest": f"sha256:{expected}"} if expected else {}),
+            })
+            descriptor = result["resource"]
+            identity = _runtime_registry().identity
+            _resource_service(workspace_id, root).register(
+                ResourceAccessContext(
+                    tenant_id=f"local:{identity.runtime_id}", principal_id="local-runtime",
+                    session_id=session_id, authority_id=identity.runtime_id,
+                    workspace_id=workspace_id, correlation_id=correlation_id,
+                ),
+                host_handle=f"file:{descriptor['file_id']}", resource_type="file",
+                idempotency_key=f"input:{session_id}:{descriptor['file_id']}:{descriptor.get('digest') or 'none'}",
+                resource_id_hint=str(descriptor["file_id"]),
+            )
+            value["resource_ref"] = {
+                "protocol": "owop/1",
+                "workspace_id": workspace_id,
+                "resource_type": "file",
+                "resource_id": descriptor["file_id"],
+                "label": str(resource["name"]),
+                **({"digest": descriptor["digest"]} if descriptor.get("digest") else {}),
+                "relation": "input_attachment",
+                "presentation": "inline",
+            }
+        registered.append(value)
+    return serializable_input_resources(registered)
+
+
+@app.post("/v1/owop")
+async def runtime_owop_execute(payload: dict[str, Any], raw_request: Request):
+    """Execute the same typed Workspace operation over local HTTP or an SSH tunnel."""
+    workspace_id = str(payload.get("workspace_id") or "")
+    operation = str(payload.get("operation") or "")
+    root = _workspace_root(workspace_id)
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    read_only_operations = {
+        "workspace.describe", "files.list", "files.register", "files.resolve", "files.stat", "files.read", "search.query",
+        "git.status", "git.diff", "git.file_at_ref", "git.worktree.list", "git.worktree.describe",
+        "pty.list", "pty.describe", "checkpoint.preview", "artifact.metadata", "artifact.chunk",
+        "resources.resolve_batch", "resources.read", "resources.preview", "resources.download.prepare",
+        "resources.download.chunk", "resources.download.cancel", "resources.subscribe",
+    }
+    read_only = operation in read_only_operations or (operation == "pty.attach" and params.get("mode") == "reader")
+    permission = "workspace.read" if read_only else "pty.execute" if operation.startswith("pty.") else "workspace.write"
+    principal = _authorize_request(raw_request, workspace_id, permission, {
+        "operation": operation,
+        "terminal_id": params.get("pty_id"),
+        "lease_id": params.get("lease_id"),
+    })
+    local = _local_workspace_operations(workspace_id, root)
     handlers = local.handlers()
     handlers.update(RuntimeTerminalOWOPOperations(_terminal_state_service(), workspace_id).handlers())
     handlers.update(_runtime_artifact_store().handlers(workspace_id))
+    if operation.startswith("resources."):
+        context = _resource_access_context(raw_request, payload, workspace_id, principal)
+        handlers.update(ResourceServiceOperations(_resource_service(workspace_id, root), lambda: context).handlers())
     if operation not in handlers:
         raise HTTPException(status_code=400, detail={"code": "owop_operation_unavailable"})
     response = await _owop_protocol().dispatch(payload, handlers)

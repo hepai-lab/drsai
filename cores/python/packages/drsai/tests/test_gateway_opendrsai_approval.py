@@ -245,6 +245,411 @@ def test_regression_controlled_write_approval_records_only_safe_proposal(monkeyp
     asyncio.run(scenario())
 
 
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Desktop edit proposal uses Windows filesystem boundary")
+def test_bound_run_edit_approval_uses_source_and_result_digests_only(monkeypatch, tmp_path) -> None:
+    async def scenario() -> None:
+        from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+        from drsai.backend.runtime.permission_modes import (
+            AdministratorPolicy, DEVELOPMENT_CAPABILITIES, ModeSelection,
+            PlatformBoundary, WorkspaceContext,
+        )
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        target = workspace / "notes.txt"
+        target.write_text("prefix secret-before suffix", encoding="utf-8")
+        engine = RuntimeEngine(
+            tmp_path / "runtime.sqlite3", RuntimeEngineIdentity("runtime", "instance"),
+            lambda value: value == "workspace", lambda _value: None,
+        )
+        session = engine.create_session("workspace")
+        run, _ = engine.create_run(session["session_id"], "opendrsai@1", "edit")
+        engine.transition_run(run["run_id"], "running")
+        engine.apply_permission_mode(
+            run["run_id"], ModeSelection(
+                "manual_safe", "user", False,
+                requested_capabilities=frozenset({"filesystem.write"}),
+            ),
+            administrator=AdministratorPolicy(
+                "organization", 1, True, capability_ceiling=DEVELOPMENT_CAPABILITIES,
+            ),
+            platform=PlatformBoundary(DEVELOPMENT_CAPABILITIES),
+            workspace=WorkspaceContext(str(workspace), True),
+        )
+
+        class ObservableEngine:
+            def __init__(self, authority):
+                self.authority = authority
+                self.created = asyncio.Event()
+
+            def __getattr__(self, name):
+                return getattr(self.authority, name)
+
+            def request_approval(self, *args, **kwargs):
+                approval = self.authority.request_approval(*args, **kwargs)
+                self.created.set()
+                return approval
+
+        state = ObservableEngine(engine)
+        context = RuntimeRunContext(
+            "runtime", "instance", "workspace", workspace,
+            session["session_id"], run["run_id"], "opendrsai", "1",
+            correlation_id="correlation-edit",
+        )
+        observed = {}
+
+        async def run_stream(**kwargs):
+            assert kwargs["security_execution_binding"].runtime_run_id == run["run_id"]
+            observed["authorization"] = await kwargs["tool_approval_handler"]({
+                "call_id": "call-edit", "name": "run_edit",
+                "executor_id": "workbench:run_edit", "risk": "local_write",
+                "schema_sha256": "c" * 64,
+            }, {
+                "path": "notes.txt", "old_text": "secret-before", "new_text": "secret-after",
+            })
+            yield "start"
+            yield "complete"
+            yield "answer"
+
+        monkeypatch.setattr(gateway, "get_platform_auth", lambda: SimpleNamespace(subject="user"))
+        monkeypatch.setattr(gateway.manager, "run_stream", run_stream)
+        monkeypatch.setattr(
+            gateway, "translate_conversation_event",
+            lambda event, _state: [
+                ("tool.start" if event == "start" else "tool.complete", {
+                    "tool_id": "call-edit", "name": "run_edit",
+                })
+            ] if event in {"start", "complete"} else [("message.delta", {"text": "done"})],
+        )
+        services = SimpleNamespace(state=state, emit=lambda *_args: None)
+        backend = gateway.GatewayOpenDrSaiAgentBackend()
+        task = asyncio.create_task(backend.execute(context, _definition(), "task", services))
+        await asyncio.wait_for(state.created.wait(), timeout=2)
+        legacy = engine.list_run_approvals(run["run_id"])[0]
+        safe = legacy["request"]["proposal"]
+        assert safe["tool"] == "run_edit"
+        assert safe["relative_path"] == "notes.txt"
+        assert safe["source_content_sha256"].startswith("sha256:")
+        assert safe["result_content_sha256"].startswith("sha256:")
+        assert "secret-before" not in str(legacy) and "secret-after" not in str(legacy)
+        engine.resolve_approval(legacy["approval_id"], "approved", {"idempotency_key": "edit"})
+        await backend.respond_approval(run["run_id"], legacy["approval_id"], "approved")
+        assert (await asyncio.wait_for(task, timeout=2))["content"] == "done"
+        assert observed["authorization"]["approved"] is True
+        proposal = engine.security_boundary.get_proposal(observed["authorization"]["proposal_id"])
+        assert proposal.operation == "file.edit"
+        assert b"secret-before" not in engine.database.read_bytes()
+        assert b"secret-after" not in engine.database.read_bytes()
+
+    asyncio.run(scenario())
+
+
+def test_auto_reviewed_bound_write_issues_auto_grant_without_human_approval(monkeypatch, tmp_path) -> None:
+    async def scenario() -> None:
+        from drsai.backend.runtime.desktop_security_binding import validate_desktop_authorization_grant
+        from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+        from drsai.backend.runtime.permission_modes import (
+            AdministratorPolicy, DEVELOPMENT_CAPABILITIES, ModeSelection,
+            PlatformBoundary, WorkspaceContext,
+        )
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        engine = RuntimeEngine(
+            tmp_path / "runtime.sqlite3", RuntimeEngineIdentity("runtime", "instance"),
+            lambda value: value == "workspace", lambda _value: None,
+        )
+        session = engine.create_session("workspace")
+        run, _ = engine.create_run(session["session_id"], "opendrsai@1", "auto-write")
+        engine.transition_run(run["run_id"], "running")
+        engine.apply_permission_mode(
+            run["run_id"], ModeSelection(
+                "auto_reviewed", "user", False,
+                requested_capabilities=frozenset({"filesystem.write"}),
+            ),
+            administrator=AdministratorPolicy(
+                "organization", 1, True, capability_ceiling=DEVELOPMENT_CAPABILITIES,
+            ),
+            platform=PlatformBoundary(DEVELOPMENT_CAPABILITIES),
+            workspace=WorkspaceContext(str(workspace), True),
+        )
+        context = RuntimeRunContext(
+            "runtime", "instance", "workspace", workspace,
+            session["session_id"], run["run_id"], "opendrsai", "1",
+            correlation_id="correlation-auto-write",
+        )
+        observed = {}
+
+        async def run_stream(**kwargs):
+            binding = kwargs["security_execution_binding"]
+            assert binding.reviewer_route == "auto"
+            observed["binding"] = binding
+            observed["authorization"] = await kwargs["tool_approval_handler"]({
+                "call_id": "call-auto-write", "name": "run_write",
+                "executor_id": "workbench:run_write", "risk": "local_write",
+                "schema_sha256": "d" * 64,
+            }, {"path": "notes.txt", "content": "auto-approved-secret"})
+            observed["denied"] = await kwargs["tool_approval_handler"]({
+                "call_id": "call-auto-denied", "name": "run_write",
+                "executor_id": "workbench:run_write", "risk": "local_write",
+                "schema_sha256": "d" * 64,
+            }, {"path": ".git/config", "content": "must-not-write"})
+            yield "answer"
+
+        monkeypatch.setattr(gateway, "get_platform_auth", lambda: SimpleNamespace(subject="user"))
+        monkeypatch.setattr(gateway.manager, "run_stream", run_stream)
+        monkeypatch.setattr(
+            gateway, "translate_conversation_event",
+            lambda _event, _state: [("message.delta", {"text": "done"})],
+        )
+        services = SimpleNamespace(state=engine, emit=lambda *_args: None)
+        result = await gateway.GatewayOpenDrSaiAgentBackend().execute(
+            context, _definition(), "task", services,
+        )
+
+        assert result["content"] == "done"
+        authorization = observed["authorization"]
+        assert authorization["approved"] is True
+        assert observed["denied"] == {
+            "approved": False, "reason_code": "auto_deny.control_path",
+        }
+        validate_desktop_authorization_grant(
+            observed["binding"], grant_id=authorization["grant_id"],
+            proposal_id=authorization["proposal_id"],
+        )
+        assert engine.list_run_approvals(run["run_id"]) == []
+        requests = engine.authorization_approvals.list_requests(run["run_id"])
+        assert len(requests) == 2 and all(request.reviewer_kind == "auto" for request in requests)
+        decisions = [engine.authorization_approvals.get_decision(request.request_id) for request in requests]
+        assert {decision.decision for decision in decisions if decision is not None} == {"approved", "denied"}
+        assert all(decision is not None and decision.reviewer_kind == "auto" for decision in decisions)
+        assert b"auto-approved-secret" not in engine.database.read_bytes()
+        assert b"must-not-write" not in engine.database.read_bytes()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("human_decision", ["approved", "denied", "timeout"])
+def test_auto_reviewed_escalation_hands_same_proposal_to_human_once(
+    monkeypatch, tmp_path, human_decision: str,
+) -> None:
+    async def scenario() -> None:
+        from drsai.backend.runtime.desktop_security_binding import validate_desktop_authorization_grant
+        from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+        from drsai.backend.runtime.permission_modes import (
+            AdministratorPolicy, AutoReviewCoordinator, AutoReviewerConfig, AutoReviewerService,
+            DEVELOPMENT_CAPABILITIES, ModeSelection, PlatformBoundary, WorkspaceContext,
+        )
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        engine = RuntimeEngine(
+            tmp_path / "runtime.sqlite3", RuntimeEngineIdentity("runtime", "instance"),
+            lambda value: value == "workspace", lambda _value: None,
+        )
+        session = engine.create_session("workspace")
+        run, _ = engine.create_run(session["session_id"], "opendrsai@1", "auto-escalation")
+        engine.transition_run(run["run_id"], "running")
+        engine.apply_permission_mode(
+            run["run_id"], ModeSelection(
+                "auto_reviewed", "user", False,
+                requested_capabilities=frozenset({"filesystem.write"}),
+            ),
+            administrator=AdministratorPolicy(
+                "organization", 1, True, capability_ceiling=DEVELOPMENT_CAPABILITIES,
+            ), platform=PlatformBoundary(DEVELOPMENT_CAPABILITIES),
+            workspace=WorkspaceContext(str(workspace), True),
+        )
+        context = RuntimeRunContext(
+            "runtime", "instance", "workspace", workspace,
+            session["session_id"], run["run_id"], "opendrsai", "1",
+            correlation_id="correlation-auto-escalation",
+        )
+
+        def force_safe_escalation(proposal, profile, *, idempotency_key, human_deadline_seconds=300):
+            effective = engine.effective_permission_profile(proposal.run_id)
+            request = engine.request_authorization_review(
+                proposal, profile, reviewer_kind="auto",
+                reason_code="permission_mode_auto_review",
+                idempotency_key=f"auto-request:{idempotency_key}",
+            )
+            reviewer = AutoReviewerService(
+                engine.database, AutoReviewerConfig(enabled=False), model=None,
+            )
+            return AutoReviewCoordinator(engine.database, reviewer).process(
+                request.request_id, effective,
+                idempotency_key=f"auto-route:{idempotency_key}",
+                human_deadline_seconds=human_deadline_seconds,
+            )
+
+        engine.route_auto_authorization_review = force_safe_escalation
+
+        class ObservableEngine:
+            def __init__(self, authority):
+                self.authority = authority
+                self.created = asyncio.Event()
+
+            def __getattr__(self, name):
+                return getattr(self.authority, name)
+
+            def request_approval(self, *args, **kwargs):
+                approval = self.authority.request_approval(*args, **kwargs)
+                self.created.set()
+                return approval
+
+        state = ObservableEngine(engine)
+        observed = {}
+
+        async def run_stream(**kwargs):
+            observed["binding"] = kwargs["security_execution_binding"]
+            observed["authorization"] = await kwargs["tool_approval_handler"]({
+                "call_id": "call-auto-escalation", "name": "run_write",
+                "executor_id": "workbench:run_write", "risk": "local_write",
+                "schema_sha256": "e" * 64,
+            }, {"path": "release.txt", "content": "escalation-secret"})
+            yield "start"
+            yield "complete"
+            yield "answer"
+
+        monkeypatch.setattr(gateway, "get_platform_auth", lambda: SimpleNamespace(subject="user"))
+        monkeypatch.setattr(gateway.manager, "run_stream", run_stream)
+        monkeypatch.setattr(
+            gateway, "translate_conversation_event",
+            lambda event, _state: [
+                ("tool.start" if event == "start" else "tool.complete", {
+                    "tool_id": "call-auto-escalation", "name": "run_write",
+                })
+            ] if event in {"start", "complete"} else [("message.delta", {"text": "done"})],
+        )
+        services = SimpleNamespace(state=state, emit=lambda *_args: None)
+        backend = gateway.GatewayOpenDrSaiAgentBackend()
+        if human_decision == "timeout":
+            original_await_approval = backend._await_approval
+
+            async def short_approval(context_value, payload, services_value):
+                return await original_await_approval(
+                    context_value, {**payload, "timeout_seconds": 1}, services_value,
+                )
+
+            backend._await_approval = short_approval
+        task = asyncio.create_task(backend.execute(context, _definition(), "task", services))
+        await asyncio.wait_for(state.created.wait(), timeout=2)
+        legacy = engine.list_run_approvals(run["run_id"])
+        assert len(legacy) == 1 and legacy[0]["status"] == "pending"
+        assert "escalation-secret" not in str(legacy[0])
+        if human_decision == "timeout":
+            with pytest.raises(RuntimeExecutionError) as timed_out:
+                await asyncio.wait_for(task, timeout=2)
+            assert timed_out.value.code == "approval_timeout"
+            requests = engine.authorization_approvals.list_requests(run["run_id"])
+            assert [request.reviewer_kind for request in requests] == ["auto", "human"]
+            assert [request.status for request in requests] == ["cancelled", "cancelled"]
+            assert engine.authorization_grants.get_for_request(requests[1].request_id) is None
+            return
+        engine.resolve_approval(
+            legacy[0]["approval_id"], human_decision, {"idempotency_key": "escalated-human"},
+        )
+        await backend.respond_approval(run["run_id"], legacy[0]["approval_id"], human_decision)
+
+        if human_decision == "denied":
+            with pytest.raises(RuntimeExecutionError) as rejected:
+                await asyncio.wait_for(task, timeout=2)
+            assert rejected.value.code == "approval_denied"
+            requests = engine.authorization_approvals.list_requests(run["run_id"])
+            assert [request.reviewer_kind for request in requests] == ["auto", "human"]
+            assert [request.status for request in requests] == ["cancelled", "denied"]
+            assert engine.authorization_grants.get_for_request(requests[1].request_id) is None
+            return
+
+        assert (await asyncio.wait_for(task, timeout=2))["content"] == "done"
+
+        authorization = observed["authorization"]
+        validate_desktop_authorization_grant(
+            observed["binding"], grant_id=authorization["grant_id"],
+            proposal_id=authorization["proposal_id"],
+        )
+        requests = engine.authorization_approvals.list_requests(run["run_id"])
+        assert [request.reviewer_kind for request in requests] == ["auto", "human"]
+        assert [request.status for request in requests] == ["cancelled", human_decision]
+        assert requests[0].proposal_id == requests[1].proposal_id == authorization["proposal_id"]
+        assert b"escalation-secret" not in engine.database.read_bytes()
+
+    asyncio.run(scenario())
+
+
+def test_isolated_full_bound_write_stays_closed_without_isolated_effect_executor(monkeypatch, tmp_path) -> None:
+    async def scenario() -> None:
+        import time
+
+        from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
+        from drsai.backend.runtime.permission_modes import (
+            AdministratorPolicy, DEVELOPMENT_CAPABILITIES, ModeSelection,
+            PlatformBoundary, WorkspaceContext,
+        )
+        from drsai.backend.runtime.security_boundary import IsolationAttestation
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        now = time.time()
+        attestation = IsolationAttestation(
+            "windows-appcontainer-session", "1", "windows", now - 1, now + 60,
+            frozenset({
+                "non_admin_identity", "process_tree_controlled",
+                "filesystem_enforced", "environment_sanitized",
+            }), "sha256:isolated-gateway-evidence",
+        )
+        engine = RuntimeEngine(
+            tmp_path / "runtime.sqlite3", RuntimeEngineIdentity("runtime", "instance"),
+            lambda value: value == "workspace", lambda _value: None,
+        )
+        session = engine.create_session("workspace")
+        run, _ = engine.create_run(session["session_id"], "opendrsai@1", "isolated-write")
+        engine.transition_run(run["run_id"], "running")
+        engine.apply_permission_mode(
+            run["run_id"], ModeSelection("isolated_full_access", "user", True),
+            administrator=AdministratorPolicy(
+                "organization", 1, True, capability_ceiling=DEVELOPMENT_CAPABILITIES,
+            ),
+            platform=PlatformBoundary(DEVELOPMENT_CAPABILITIES, isolation_attestation=attestation),
+            workspace=WorkspaceContext(str(workspace), True),
+        )
+        context = RuntimeRunContext(
+            "runtime", "instance", "workspace", workspace,
+            session["session_id"], run["run_id"], "opendrsai", "1",
+            correlation_id="correlation-isolated-write",
+        )
+        observed = {}
+
+        async def run_stream(**kwargs):
+            assert kwargs["security_execution_binding"].reviewer_route == "none"
+            try:
+                await kwargs["tool_approval_handler"]({
+                    "call_id": "call-isolated-write", "name": "run_write",
+                    "executor_id": "workbench:run_write", "risk": "local_write",
+                    "schema_sha256": "f" * 64,
+                }, {"path": "notes.txt", "content": "must-not-write"})
+            except RuntimeExecutionError as error:
+                observed["error"] = error.code
+            yield "answer"
+
+        monkeypatch.setattr(gateway, "get_platform_auth", lambda: SimpleNamespace(subject="user"))
+        monkeypatch.setattr(gateway.manager, "run_stream", run_stream)
+        monkeypatch.setattr(
+            gateway, "translate_conversation_event",
+            lambda _event, _state: [("message.delta", {"text": "done"})],
+        )
+        result = await gateway.GatewayOpenDrSaiAgentBackend().execute(
+            context, _definition(), "task", SimpleNamespace(state=engine, emit=lambda *_args: None),
+        )
+        assert result["content"] == "done"
+        assert observed["error"] == "desktop_workspace_reviewer_unavailable"
+        assert engine.list_run_approvals(run["run_id"]) == []
+        assert engine.authorization_approvals.list_requests(run["run_id"]) == []
+        assert not (workspace / "notes.txt").exists()
+
+    asyncio.run(scenario())
+
+
 def test_real_agent_start_before_approval_binds_side_effect_by_runtime_call_id(monkeypatch, tmp_path) -> None:
     async def scenario() -> None:
         async def run_stream(**kwargs):

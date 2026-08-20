@@ -1330,6 +1330,61 @@ def cmd_artifact(ctx: SlashContext) -> dict:
     return {"output": "\n".join(lines)}
 
 
+def cmd_resource(ctx: SlashContext) -> dict:
+    """Resolve an OAEP file resource in the active session Workspace."""
+    if not ctx.session:
+        return {"output": "Error: no active session"}
+    parts = ctx.args.split()
+    if not parts:
+        return {"output": "Usage: /resource <file-id> [read]"}
+
+    from drsai.backend.tui_gateway.handlers.resource import _workdir
+    from drsai.backend.tui_gateway.resources import read_tui_resource, resolve_tui_resource
+
+    root = _workdir(ctx.session.session_id)
+    expected_digest = parts[2] if len(parts) > 2 and parts[1].lower() == "read" else None
+    descriptor = resolve_tui_resource(
+        ctx.user_id,
+        root,
+        parts[0],
+        expected_digest=expected_digest,
+    )
+    state = str(descriptor["state"])
+    lines = [
+        f"Resource: {descriptor['name']}",
+        f"ID: {descriptor['file_id']}",
+        f"Workspace path: {descriptor['path']}",
+        f"State: {state}",
+        f"MIME: {descriptor.get('mime_type') or 'application/octet-stream'}",
+        f"Size: {descriptor['size']} bytes",
+    ]
+    if state == "moved":
+        lines.append("The resource moved; the path above is its current Workspace location.")
+    elif state == "changed":
+        lines.append("The resource content changed since it was associated with the conversation.")
+    elif state == "deleted":
+        lines.append("The resource is no longer available in this Workspace.")
+        return {"output": "\n".join(lines)}
+
+    if len(parts) > 1 and parts[1].lower() == "read":
+        if not descriptor["capabilities"].get("preview"):
+            lines.append("This resource is not rendered inline; use files.read from a trusted host to download it.")
+        else:
+            chunk = read_tui_resource(
+                ctx.user_id,
+                root,
+                descriptor["path"],
+                offset=0,
+                length=64 * 1024,
+            )
+            import base64
+            content = base64.b64decode(chunk["content_base64"], validate=True).decode("utf-8", errors="replace")
+            lines.extend(["", content, "" if chunk["eof"] else "[truncated at 64 KiB]"])
+    else:
+        lines.append(f"Read text: /resource {descriptor['file_id']} read")
+    return {"output": "\n".join(lines)}
+
+
 def cmd_status(ctx: SlashContext) -> str:
     """Show agent and session status (compact)."""
     if not ctx.session:
@@ -1808,6 +1863,8 @@ SLASH_HANDLERS: dict[str, Any] = {
     "resume": cmd_resume,
     "copy": cmd_copy,
     "artifact": cmd_artifact,
+    "resource": cmd_resource,
+    "file": cmd_resource,
     "status": cmd_status,
     "setup": cmd_setup,
     "env": cmd_setup,

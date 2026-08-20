@@ -24,6 +24,7 @@ from drsai.backend.codex_adapter import CodexAdapter
 from drsai.backend.codex_adapter.backend_client import CodexAgentBackendClient, _codex_turn_timing
 from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
 from drsai.backend.runtime.registry import RuntimeRegistry
+from drsai.backend.runtime.normalized_events import BackendBinding, NormalizedAgentEvent, NormalizedEventKind, NormalizedItemType
 from drsai.owop.local_workspace import LocalWorkspaceOperations, WorkspaceWatchJournal
 from drsai.owop.process_pty import LocalProcessPtyOperations
 
@@ -85,6 +86,8 @@ class FakeRPC:
         self.interrupt_no_active = False
         self.archive_active_writer_failures = 0
         self.archive_active_writer_generation: int | None = None
+        self.turn_start_active_writer_failures = 0
+        self.thread_resume_active_writer_failures = 0
         self.thread_lists: dict[bool, list[dict[str, Any]]] = {False: [], True: []}
         self.connection_failure_handlers: list[Any] = []
         self.account_logged_in = True
@@ -140,6 +143,9 @@ class FakeRPC:
             identity = f"thread-{self.thread_count}"
             return {"thread": {"id": identity}}
         if method == "thread/resume":
+            if self.thread_resume_active_writer_failures:
+                self.thread_resume_active_writer_failures -= 1
+                raise RuntimeExecutionError("codex_jsonrpc_error", "thread already has an active writer")
             return {"thread": {"id": values["threadId"]}}
         if method == "thread/unsubscribe":
             return {}
@@ -151,6 +157,9 @@ class FakeRPC:
                 raise RuntimeExecutionError("codex_jsonrpc_error", "thread already has an active writer")
             return {}
         if method == "turn/start":
+            if self.turn_start_active_writer_failures:
+                self.turn_start_active_writer_failures -= 1
+                raise RuntimeExecutionError("codex_jsonrpc_error", "thread already has an active writer")
             self.turn_count += 1
             identity = f"turn-{self.turn_count}"
 
@@ -260,6 +269,42 @@ def _context(root: Path, *, workspace="workspace-1", session="session-1", run="r
 def _services():
     state = EventState()
     return AgentExecutionServices(state, None, None), state
+
+
+def test_live_file_change_is_associated_before_oaep_persistence(tmp_path: Path):
+    context = _context(tmp_path, workspace="workspace-live", session="session-live", run="run-live")
+    changed = context.workspace_path / "result.txt"
+    changed.write_text("result", encoding="utf-8")
+    outside = tmp_path / "outside-live.txt"
+    outside.write_text("outside", encoding="utf-8")
+    client = CodexAgentBackendClient(
+        FakeRPC(), AgentBackendBindingStore(tmp_path / "runtime" / "live-bindings.sqlite3"),
+    )
+    event = NormalizedAgentEvent(
+        kind=NormalizedEventKind.ITEM_COMPLETED,
+        backend="codex",
+        binding=BackendBinding("thread-live", "turn-live", "change-live"),
+        dedupe_key="change-live",
+        item_type=NormalizedItemType.FILE_CHANGE,
+        payload={
+            "summary": "Updated files",
+            "changes": [
+                {"path": str(changed), "operation": "modify"},
+                {"path": str(outside), "operation": "modify"},
+            ],
+        },
+    )
+
+    normalized = client._normalize_live_resource_event(context, event)
+
+    changes = normalized.payload["changes"]
+    assert changes[0]["path"] == "result.txt"
+    assert changes[0]["resource_ref"]["relation"] == "file_change_target"
+    assert changes[0]["resource_ref"]["workspace_id"] == "workspace-live"
+    assert "path" not in changes[1]
+    assert "could not be associated" in normalized.payload["summary"]
+    assert str(context.workspace_path) not in repr(normalized.payload)
+    assert str(outside) not in repr(normalized.payload)
 
 
 @pytest.mark.anyio
@@ -476,6 +521,62 @@ async def test_imported_thread_read_normalizes_historical_items(tmp_path: Path):
 
 
 @pytest.mark.anyio
+async def test_imported_thread_history_associates_workspace_resources_without_absolute_paths(tmp_path: Path):
+    workspace = tmp_path / "Codex 中文 Workspace"
+    workspace.mkdir()
+    document = workspace / "方案.md"
+    image = workspace / "截图.png"
+    changed_file = workspace / "结果.txt"
+    document.write_text("P1", encoding="utf-8")
+    image.write_bytes(b"png")
+    changed_file.write_text("result", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("private", encoding="utf-8")
+    registry = RuntimeRegistry(tmp_path / "runtime.sqlite3")
+    workspace_record = registry.open_workspace(str(workspace))
+    rpc = FakeRPC()
+    rpc.read_turns = [{
+        "id": "turn-resources", "status": "completed", "items": [
+            {"id": "user-resources", "type": "userMessage", "content": [
+                {"type": "mention", "name": "方案.md", "path": str(document)},
+                {"type": "localImage", "path": str(image)},
+                {"type": "mention", "name": "outside.txt", "path": str(outside)},
+                {"type": "text", "text": "根据这些文件执行"},
+            ]},
+            {"id": "change-resources", "type": "fileChange", "changes": [
+                {"path": str(changed_file), "operation": "modify"},
+                {"path": str(outside), "operation": "modify"},
+            ]},
+        ],
+    }]
+    bindings = AgentBackendBindingStore(tmp_path / "runtime" / "agent-backend-bindings.sqlite3")
+    client = CodexAgentBackendClient(rpc, bindings, runtime_state=registry)
+    await client.bind_imported_session(
+        "session-resources", workspace_record.workspace_id, "runtime-resources", "thread-resources",
+    )
+
+    history = await client.read_imported_session_history("session-resources")
+    items = history[0]["items"]
+    message = next(item for item in items if item["item_id"] == "user-resources")
+    file_change = next(item for item in items if item["item_id"] == "change-resources")
+    notices = [item for item in items if item["kind"] == "notice"]
+    attached_parts = [part for part in message["payload"]["parts"] if part.get("resource_ref")]
+
+    assert len(attached_parts) == 2
+    assert {part["resource_ref"]["relation"] for part in attached_parts} == {"input_attachment"}
+    assert all(part["resource_ref"]["workspace_id"] == workspace_record.workspace_id for part in attached_parts)
+    assert file_change["payload"]["changes"][0]["path"] == "结果.txt"
+    assert file_change["payload"]["changes"][0]["resource_ref"]["relation"] == "file_change_target"
+    assert len(file_change["payload"]["changes"]) == 2
+    assert "path" not in file_change["payload"]["changes"][1]
+    assert {item["payload"]["code"] for item in notices} == {
+        "backend_history_attachment_unavailable", "backend_history_file_change_unavailable",
+    }
+    assert str(workspace) not in repr(history)
+    assert str(outside) not in repr(history)
+
+
+@pytest.mark.anyio
 async def test_history_window_is_recent_first_continuable_and_detects_stale_cursor(tmp_path: Path):
     rpc = FakeRPC()
     rpc.read_turns = [
@@ -582,6 +683,111 @@ async def test_archive_waits_for_codex_writer_release_without_fixed_sleep(tmp_pa
     await client.archive_session("session-archive", archived=True)
 
     assert [method for method, _ in rpc.calls].count("thread/archive") == 3
+
+
+@pytest.mark.anyio
+async def test_turn_start_waits_for_previous_codex_writer_release(tmp_path: Path):
+    rpc = FakeRPC()
+    rpc.turn_start_active_writer_failures = 2
+    client = CodexAgentBackendClient(
+        rpc,
+        AgentBackendBindingStore(tmp_path / "turn-writer-release.sqlite3"),
+        lifecycle_writer_release_timeout=1.0,
+    )
+    services, _ = _services()
+
+    result = await client.execute_turn(
+        _context(tmp_path, session="writer-session", run="writer-run"),
+        _definition(),
+        "second message",
+        services,
+    )
+
+    assert result["status"] == "completed"
+    assert [method for method, _ in rpc.calls].count("turn/start") == 3
+
+
+@pytest.mark.anyio
+async def test_turn_start_writer_timeout_is_actionable_and_retryable(tmp_path: Path):
+    rpc = FakeRPC()
+    rpc.turn_start_active_writer_failures = 100
+    client = CodexAgentBackendClient(
+        rpc,
+        AgentBackendBindingStore(tmp_path / "turn-writer-timeout.sqlite3"),
+        lifecycle_writer_release_timeout=0.05,
+    )
+    services, _ = _services()
+
+    with pytest.raises(RuntimeExecutionError) as caught:
+        await client.execute_turn(
+            _context(tmp_path, session="busy-writer-session", run="busy-writer-run"),
+            _definition(),
+            "second message",
+            services,
+        )
+
+    assert caught.value.code == "codex_session_busy"
+    assert caught.value.retryable is True
+    assert caught.value.detail["operation"] == "turn/start"
+
+
+@pytest.mark.anyio
+async def test_imported_thread_resume_waits_for_existing_codex_writer_release(tmp_path: Path):
+    rpc = FakeRPC()
+    bindings = AgentBackendBindingStore(tmp_path / "resume-writer-release.sqlite3")
+    context = _context(tmp_path, session="imported-session", run="imported-run")
+    bindings.bind_session(
+        session_id=context.session_id,
+        workspace_id=context.workspace_id,
+        backend_id="codex",
+        agent_backend_runtime_id=context.agent_backend_runtime_id,
+        workspace_runtime_id=context.workspace_runtime_id,
+        backend_session_id="existing-codex-thread",
+        backend_version="test",
+        backend_model_id="gpt-5.4",
+        workspace_fingerprint=CodexAgentBackendClient._workspace_fingerprint(context.workspace_path),
+    )
+    rpc.thread_resume_active_writer_failures = 2
+    client = CodexAgentBackendClient(rpc, bindings, lifecycle_writer_release_timeout=1.0)
+    services, _ = _services()
+
+    result = await client.execute_turn(context, _definition(), "continue through OpenDrSai", services)
+
+    assert result["status"] == "completed"
+    assert [method for method, _ in rpc.calls].count("thread/resume") == 3
+    turn_start = next(params for method, params in rpc.calls if method == "turn/start")
+    assert turn_start["threadId"] == "existing-codex-thread"
+
+
+@pytest.mark.anyio
+async def test_imported_thread_resume_uses_cross_process_writer_wait_budget(tmp_path: Path):
+    rpc = FakeRPC()
+    bindings = AgentBackendBindingStore(tmp_path / "resume-writer-budget.sqlite3")
+    context = _context(tmp_path, session="budget-session", run="budget-run")
+    bindings.bind_session(
+        session_id=context.session_id,
+        workspace_id=context.workspace_id,
+        backend_id="codex",
+        agent_backend_runtime_id=context.agent_backend_runtime_id,
+        workspace_runtime_id=context.workspace_runtime_id,
+        backend_session_id="desktop-owned-thread",
+        backend_version="test",
+        backend_model_id="gpt-5.4",
+        workspace_fingerprint=CodexAgentBackendClient._workspace_fingerprint(context.workspace_path),
+    )
+    rpc.thread_resume_active_writer_failures = 4
+    client = CodexAgentBackendClient(
+        rpc,
+        bindings,
+        lifecycle_writer_release_timeout=0.05,
+        session_resume_writer_release_timeout=1.0,
+    )
+    services, _ = _services()
+
+    result = await client.execute_turn(context, _definition(), "wait for ownership", services)
+
+    assert result["status"] == "completed"
+    assert [method for method, _ in rpc.calls].count("thread/resume") == 5
 
 
 @pytest.mark.anyio

@@ -183,6 +183,21 @@ def test_decoder_normalizes_real_user_content_parts_without_stringifying_arrays(
     assert nested_legacy is not None
     assert nested_legacy.payload["text"] == "user: hello"
 
+    historical_resources = history_decoder.decode({"method": "item/completed", "params": {
+        "threadId": "t", "turnId": "r", "item": {
+            "id": "user-history-resources", "type": "userMessage", "content": [
+                {"type": "mention", "name": "方案.md", "path": r"C:\workspace\方案.md"},
+                {"type": "localImage", "path": r"C:\workspace\截图.png"},
+            ],
+        },
+    }})
+    assert historical_resources is not None
+    assert historical_resources.payload["parts"] == [
+        {"type": "file", "name": "方案.md", "_native_path": "C:/workspace/方案.md"},
+        {"type": "image", "name": "截图.png", "_native_path": "C:/workspace/截图.png"},
+    ]
+    assert "content" not in historical_resources.payload
+
 
 def test_decoder_preserves_reasoning_segments_command_output_and_terminal_status() -> None:
     decoder = CodexNativeEventDecoder()

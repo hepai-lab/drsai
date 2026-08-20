@@ -153,13 +153,30 @@ def sanitize_persisted_item(value: Any) -> dict[str, Any]:
         return {}
     item = copy.deepcopy(value)
     content = item.get("content")
-    if not isinstance(content, dict) or "operation_ref" not in content:
+    if not isinstance(content, dict):
         return item
-    operation_ref = _safe_operation_ref(content.get("operation_ref"))
-    if operation_ref is None:
-        content.pop("operation_ref", None)
-    else:
-        content["operation_ref"] = operation_ref
+    if "operation_ref" in content:
+        operation_ref = _safe_operation_ref(content.get("operation_ref"))
+        if operation_ref is None:
+            content.pop("operation_ref", None)
+        else:
+            content["operation_ref"] = operation_ref
+    if "resource_refs" in content:
+        resource_refs = _safe_resource_refs(content.get("resource_refs"))
+        if resource_refs:
+            content["resource_refs"] = resource_refs
+        else:
+            content.pop("resource_refs", None)
+    parts = content.get("parts")
+    if isinstance(parts, list):
+        for part in parts:
+            if not isinstance(part, dict) or "resource_ref" not in part:
+                continue
+            resource_refs = _safe_resource_refs([part.get("resource_ref")])
+            if resource_refs:
+                part["resource_ref"] = resource_refs[0]
+            else:
+                part.pop("resource_ref", None)
     return item
 
 
@@ -182,6 +199,25 @@ def _safe_resource_refs(value: Any) -> list[dict[str, Any]]:
         for key in ("operation_id", "label", "digest"):
             if raw.get(key):
                 ref[key] = _safe_text(raw[key], limit=512)
+        if raw.get("relation") in {
+            "input_reference", "input_attachment", "output_artifact", "citation_source",
+            "file_change_target", "derived_from", "related",
+        }:
+            ref["relation"] = str(raw["relation"])
+        if raw.get("presentation") in {"inline", "card", "activity"}:
+            ref["presentation"] = str(raw["presentation"])
+        locator = raw.get("locator")
+        if isinstance(locator, dict) and locator.get("kind") in {
+            "text_range", "page", "slide", "sheet_cell", "time_range",
+        }:
+            safe_locator: dict[str, Any] = {"kind": str(locator["kind"])}
+            for key in ("line", "column", "end_line", "end_column", "page", "slide", "start_ms", "end_ms"):
+                if isinstance(locator.get(key), int) and not isinstance(locator.get(key), bool) and locator[key] >= (0 if key.endswith("_ms") else 1):
+                    safe_locator[key] = locator[key]
+            for key in ("sheet", "cell"):
+                if isinstance(locator.get(key), str) and locator[key]:
+                    safe_locator[key] = _safe_text(locator[key], limit=255)
+            ref["locator"] = safe_locator
         result.append(ref)
     return result
 

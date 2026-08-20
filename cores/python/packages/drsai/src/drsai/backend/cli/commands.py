@@ -286,6 +286,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<path>",
         handler="sync",
     ),
+    CommandDef(
+        "resource",
+        "Resolve or read an OAEP/OWOP Workspace resource",
+        "Workspace",
+        aliases=("file",),
+        args_hint="<file-id> [read]",
+        handler="async",
+    ),
 
     # ── Subagent ────────────────────────────────────────────────────────
     CommandDef(

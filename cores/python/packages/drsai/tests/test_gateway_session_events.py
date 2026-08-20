@@ -527,10 +527,9 @@ def test_gateway_advertises_complete_session_event_profile() -> None:
         "oaep.session.events",
         "oaep.session.events.stream",
     }.issubset(gateway._REMOTE_CAPABILITY_VERSIONS)
-    assert gateway._RUNTIME_PROTOCOLS["oaep"] == {
-        "version": "1.0",
-        "profiles": ["oaep.session-stream/1"],
-    }
+    assert gateway._RUNTIME_PROTOCOLS["oaep"]["version"] == "1.0"
+    assert gateway._RUNTIME_PROTOCOLS["oaep"]["profiles"] == ["oaep.session-stream/1"]
+    assert len(gateway._RUNTIME_PROTOCOLS["oaep"]["schema_sha256"]) == 64
     assert gateway._RUNTIME_PROTOCOLS["owop"]["version"] == "1.0"
     assert {"files", "git", "pty", "artifact"}.issubset(
         gateway._RUNTIME_PROTOCOLS["owop"]["capabilities"]

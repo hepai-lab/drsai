@@ -1,8 +1,11 @@
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import sqlite3
 import sys
+import time
 
 import pytest
 
@@ -379,6 +382,48 @@ def test_conversation_projection_uses_authoritative_input_and_stable_cursor(engi
         "name": "Selected text", "permission": "read", "status": "encoded", "content": "hello",
         "captured_at": "2026-08-05T00:00:00Z",
     }]
+
+
+def test_native_user_file_reference_is_persisted_as_an_oaep_message_part(engine: RuntimeEngine) -> None:
+    session = engine.create_session("workspace-one", backend_id="opendrsai")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "file-resource-key")
+    digest = "a" * 64
+    engine.set_run_input(run["run_id"], "请读这个文件", input_resources=[{
+        "protocol": "oaep.input/1", "resource_id": "attachment-one", "kind": "file",
+        "name": "方案.md", "permission": "read", "status": "encoded",
+        "reference": "docs/方案.md", "mime": "text/markdown", "sha256": digest,
+        "resource_ref": {
+            "protocol": "owop/1", "workspace_id": "workspace-one",
+            "resource_type": "file", "resource_id": "opaque-file-one",
+            "label": "方案.md", "digest": f"sha256:{digest}",
+            "relation": "input_attachment", "presentation": "inline",
+        },
+    }], input_parts=[
+        {"type": "text", "text": "before "},
+        {"type": "resource", "resource_id": "attachment-one"},
+        {"type": "text", "text": " after"},
+    ])
+
+    snapshot = engine.oaep_snapshot(session["session_id"])
+    user_item = next(
+        item for item in snapshot["items"]
+        if item.get("type") == "message" and item.get("content", {}).get("role") == "user"
+    )
+    resource_part = next(part for part in user_item["content"]["parts"] if part["type"] == "resource_ref")
+    assert [part["type"] for part in user_item["content"]["parts"]] == ["text", "resource_ref", "text"]
+    assert engine.get_run(run["run_id"])["input_parts"] == [
+        {"type": "text", "text": "before "},
+        {"type": "resource", "resource_id": "attachment-one"},
+        {"type": "text", "text": " after"},
+    ]
+    assert resource_part["name"] == "方案.md"
+    assert resource_part["resource_ref"] == {
+        "protocol": "owop/1", "workspace_id": "workspace-one",
+        "resource_type": "file", "resource_id": "opaque-file-one",
+        "label": "方案.md", "digest": f"sha256:{digest}",
+        "relation": "input_attachment", "presentation": "inline",
+    }
+    assert "C:\\" not in str(user_item)
 
 
 def test_run_input_is_bound_once_and_idempotent_retries_do_not_revise_it(
@@ -774,6 +819,934 @@ def test_approved_side_effect_claim_and_cancel_race_executes_at_most_once(engine
         effect = engine.complete_side_effect(approval["approval_id"], {"ok": True})
     assert effect["status"] in {"completed", "rejected"}
     assert engine.get_run(run["run_id"])["status"] == "cancelled"
+
+
+def test_side_effect_digest_uses_raw_request_and_revalidates_actual_request(engine: RuntimeEngine) -> None:
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "raw-request-binding")
+    engine.transition_run(run["run_id"], "running")
+    requested = {
+        "operation": "tool:write",
+        "command": "deploy alpha",
+        "arguments": {"token": "secret-a"},
+    }
+    changed = {
+        "operation": "tool:write",
+        "command": "deploy beta",
+        "arguments": {"token": "secret-b"},
+    }
+    approval = engine.request_approval(run["run_id"], requested)
+    proposal = engine.get_action_proposal(approval["approval_id"])
+    assert proposal.run_id == run["run_id"]
+    assert proposal.operation == "tool:write"
+    assert proposal.matches_payload(requested)
+    assert "secret-a" not in str(proposal.display_payload)
+    first_digest = engine.get_side_effect(approval["approval_id"])["request_digest"]
+    assert "secret-a" not in str(approval)
+    engine.resolve_approval(approval["approval_id"], "approved")
+
+    with pytest.raises(ValueError, match="differs from the approved proposal"):
+        engine.claim_side_effect(
+            approval["approval_id"], run["run_id"], "tool:write", actual_request=changed,
+        )
+    claimed = engine.claim_side_effect(
+        approval["approval_id"], run["run_id"], "tool:write", actual_request=requested,
+    )
+    assert claimed["status"] == "executing"
+
+    second_run, _ = engine.create_run(session["session_id"], "agent@v1", "raw-request-binding-2")
+    engine.transition_run(second_run["run_id"], "running")
+    second = engine.request_approval(second_run["run_id"], changed)
+    assert engine.get_side_effect(second["approval_id"])["request_digest"] != first_digest
+
+
+def test_run_security_profile_is_durable_and_monotonic(engine: RuntimeEngine) -> None:
+    from drsai.backend.runtime.security_boundary import ResolvedCapabilityProfile
+
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "security-profile")
+    first = ResolvedCapabilityProfile(
+        profile_id="manual-safe",
+        version=1,
+        workspace_root="C:/workspace",
+        capabilities=frozenset({"file.read"}),
+    )
+    bound = engine.bind_run_security_profile(run["run_id"], first, reason="run.created")
+    assert bound == first
+    assert engine.get_run_security_profile(run["run_id"]) == first
+
+
+def test_runtime_security_metrics_snapshot_is_internal_and_low_cardinality(engine: RuntimeEngine) -> None:
+    engine.security_metrics.journal.append(
+        "hard_deny.blocked", "proposal-private-id",
+        {"category": "host_persistence", "run_id": "run-private-id", "operation": "private-command"},
+        now=100,
+    )
+    snapshot = engine.security_metrics_snapshot()
+    assert {
+        "name": "security_hard_deny_total",
+        "labels": {"category": "host_persistence"},
+        "value": 1,
+    } in snapshot
+    serialized = str(snapshot)
+    assert "private-id" not in serialized
+    assert "private-command" not in serialized
+
+
+def test_runtime_permission_mode_path_is_internal_and_does_not_change_run_state(engine: RuntimeEngine) -> None:
+    from drsai.backend.runtime.permission_modes import (
+        AdministratorPolicy,
+        DEVELOPMENT_CAPABILITIES,
+        ModeSelection,
+        PlatformBoundary,
+        WorkspaceContext,
+    )
+
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "permission-mode-internal")
+    engine.transition_run(run["run_id"], "running")
+    result = engine.apply_permission_mode(
+        run["run_id"], ModeSelection("manual_safe", "user", False),
+        administrator=AdministratorPolicy(
+            "organization-default", 1, True,
+            capability_ceiling=DEVELOPMENT_CAPABILITIES,
+        ),
+        platform=PlatformBoundary(DEVELOPMENT_CAPABILITIES),
+        workspace=WorkspaceContext("C:/workspace", True),
+    )
+    assert result.effective.mode.mode_id == "manual_safe"
+    assert engine.effective_permission_descriptor(run["run_id"]) == result.effective.as_descriptor()
+    assert engine.get_run(run["run_id"])["status"] == "running"
+    assert {item["mode_id"] for item in engine.permission_mode_descriptors()} == {
+        "manual_safe", "auto_reviewed", "isolated_full_access",
+    }
+
+
+def test_desktop_security_binding_is_runtime_owned_and_revalidated(engine: RuntimeEngine) -> None:
+    from dataclasses import replace
+
+    from drsai.backend.runtime.agent import RuntimeRunContext
+    from drsai.backend.runtime.desktop_security_binding import (
+        DesktopSecurityBindingError,
+        create_desktop_security_execution_binding,
+        validate_desktop_authorization_grant,
+        validate_desktop_security_execution_binding,
+    )
+    from drsai.backend.runtime.permission_modes import (
+        AdministratorPolicy, DEVELOPMENT_CAPABILITIES, ModeSelection,
+        PlatformBoundary, WorkspaceContext,
+    )
+
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "desktop-binding")
+    engine.transition_run(run["run_id"], "running")
+    engine.apply_permission_mode(
+        run["run_id"], ModeSelection("manual_safe", "user", False),
+        administrator=AdministratorPolicy(
+            "organization-default", 1, True,
+            capability_ceiling=DEVELOPMENT_CAPABILITIES,
+        ),
+        platform=PlatformBoundary(DEVELOPMENT_CAPABILITIES),
+        workspace=WorkspaceContext("C:/workspace", True),
+    )
+    context = RuntimeRunContext(
+        "runtime-test", "instance-one", "workspace-one", Path("C:/workspace"),
+        session["session_id"], run["run_id"], "agent", "v1",
+    )
+    binding = create_desktop_security_execution_binding(engine, context, now=100)
+
+    assert binding.runtime_run_id == run["run_id"]
+    assert binding.profile.digest == engine.get_run_security_profile(run["run_id"]).digest
+    assert binding.mode_id == "manual_safe" and binding.reviewer_route == "human"
+    validate_desktop_security_execution_binding(
+        binding, expected_session_id=session["session_id"],
+        expected_workspace_root="C:/workspace",
+    )
+    with pytest.raises(DesktopSecurityBindingError) as tampered:
+        validate_desktop_security_execution_binding(
+            replace(binding, workspace_id="workspace-two"),
+            expected_session_id=session["session_id"], expected_workspace_root="C:/workspace",
+        )
+    assert tampered.value.code == "desktop_security_binding_tampered"
+    with pytest.raises(DesktopSecurityBindingError) as wrong_session:
+        validate_desktop_security_execution_binding(
+            binding, expected_session_id="another-session", expected_workspace_root="C:/workspace",
+        )
+    assert wrong_session.value.code == "desktop_security_session_mismatch"
+    from drsai.backend.runtime.security_boundary import ActionProposal, AuthorizationGrantStore
+    unreviewed = AuthorizationGrantStore(engine.database).issue(
+        ActionProposal.create(
+            proposal_id="proposal-unreviewed", run_id=run["run_id"], operation="file.read",
+            payload={"relative_path": "notes.txt", "max_bytes": 10}, risk="read",
+            required_capabilities=("filesystem.read",),
+        ),
+        binding.profile,
+    )
+    with pytest.raises(DesktopSecurityBindingError) as untrusted_grant:
+        validate_desktop_authorization_grant(
+            binding, grant_id=unreviewed.grant_id, proposal_id="proposal-unreviewed",
+        )
+    assert untrusted_grant.value.code == "desktop_workspace_grant_scope_mismatch"
+    engine.apply_permission_mode(
+        run["run_id"], ModeSelection("auto_reviewed", "user", True),
+        administrator=AdministratorPolicy(
+            "organization-default", 1, True,
+            capability_ceiling=DEVELOPMENT_CAPABILITIES,
+        ),
+        platform=PlatformBoundary(DEVELOPMENT_CAPABILITIES),
+        workspace=WorkspaceContext("C:/workspace", True),
+    )
+    with pytest.raises(DesktopSecurityBindingError) as stale:
+        validate_desktop_security_execution_binding(
+            binding, expected_session_id=session["session_id"],
+            expected_workspace_root="C:/workspace",
+        )
+    assert stale.value.code == "desktop_security_binding_stale"
+
+
+def test_auto_reviewed_desktop_grants_accept_direct_auto_and_proven_human_escalation(
+    engine: RuntimeEngine,
+) -> None:
+    from drsai.backend.runtime.agent import RuntimeRunContext
+    from drsai.backend.runtime.desktop_security_binding import (
+        create_desktop_security_execution_binding,
+        validate_desktop_authorization_grant,
+    )
+    from drsai.backend.runtime.permission_modes import (
+        AdministratorPolicy, DEVELOPMENT_CAPABILITIES, ModeSelection,
+        PlatformBoundary, WorkspaceContext,
+    )
+    from drsai.backend.runtime.security_boundary import ActionProposal
+
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "auto-binding")
+    engine.transition_run(run["run_id"], "running")
+    engine.apply_permission_mode(
+        run["run_id"], ModeSelection(
+            "auto_reviewed", "user", False,
+            requested_capabilities=frozenset({"filesystem.write"}),
+        ),
+        administrator=AdministratorPolicy(
+            "organization-default", 1, True, capability_ceiling=DEVELOPMENT_CAPABILITIES,
+        ),
+        platform=PlatformBoundary(DEVELOPMENT_CAPABILITIES),
+        workspace=WorkspaceContext("C:/workspace", True),
+    )
+    binding = create_desktop_security_execution_binding(
+        engine,
+        RuntimeRunContext(
+            "runtime", "instance", "workspace-one", Path("C:/workspace"),
+            session["session_id"], run["run_id"], "agent", "v1",
+        ),
+    )
+
+    direct = ActionProposal.create(
+        proposal_id="proposal-auto-direct", run_id=run["run_id"], operation="file.write",
+        payload={
+            "relative_path": "notes.txt", "content_digest": "sha256:direct", "size_bytes": 6,
+        },
+        risk="write", required_capabilities=("filesystem.write",),
+    )
+    direct_route = engine.route_auto_authorization_review(
+        direct, binding.profile, idempotency_key="auto-direct",
+    )
+    assert direct_route.route == "approved"
+    direct_grant = engine.issue_authorization_grant(
+        direct_route.request_id, binding.profile, review_requirement="auto",
+    )
+    validate_desktop_authorization_grant(
+        binding, grant_id=direct_grant.grant_id, proposal_id=direct.proposal_id,
+    )
+
+    escalated = ActionProposal.create(
+        proposal_id="proposal-auto-escalated", run_id=run["run_id"], operation="file.write",
+        payload={
+            "relative_path": "release.txt", "content_digest": "sha256:release", "size_bytes": 7,
+        },
+        risk="write", required_capabilities=("filesystem.write",),
+        effect_categories=("production_target",),
+    )
+    escalated_route = engine.route_auto_authorization_review(
+        escalated, binding.profile, idempotency_key="auto-escalated",
+    )
+    assert escalated_route.route == "escalated" and escalated_route.human_request is not None
+    engine.decide_authorization_review(
+        escalated_route.human_request.request_id, "approved", reviewer_kind="human",
+        reviewer_id="test-user", reason_code="approved_escalation",
+        idempotency_key="auto-escalated-human",
+    )
+    escalated_grant = engine.issue_authorization_grant(
+        escalated_route.human_request.request_id, binding.profile, review_requirement="human",
+    )
+    validate_desktop_authorization_grant(
+        binding, grant_id=escalated_grant.grant_id, proposal_id=escalated.proposal_id,
+    )
+
+
+def test_auto_decision_cannot_cross_mode_transition_or_kill_switch_into_effect(
+    engine: RuntimeEngine,
+) -> None:
+    from drsai.backend.runtime.authorization import GrantServiceError
+    from drsai.backend.runtime.permission_modes import (
+        AdministratorPolicy, DEVELOPMENT_CAPABILITIES, ModeSelection,
+        PlatformBoundary, WorkspaceContext,
+    )
+    from drsai.backend.runtime.security_boundary import ActionProposal, AuthorizationGrantStore
+    from drsai.backend.runtime.security_boundary.filesystem_execution import AuthorizedFilesystemExecutionService
+
+    administrator = AdministratorPolicy(
+        "organization-default", 1, True, capability_ceiling=DEVELOPMENT_CAPABILITIES,
+    )
+    platform = PlatformBoundary(DEVELOPMENT_CAPABILITIES)
+    workspace = WorkspaceContext("C:/workspace", True)
+
+    class NoWriteFilesystem:
+        root = Path("C:/workspace")
+
+        def __init__(self):
+            self.writes: list[tuple[str, bytes]] = []
+
+        def atomic_write(self, relative: str, content: bytes) -> None:
+            self.writes.append((relative, content))
+
+    def create_auto_run(label: str):
+        session = engine.create_session("workspace-one")
+        run, _ = engine.create_run(session["session_id"], "agent@v1", label)
+        engine.transition_run(run["run_id"], "running")
+        transition = engine.apply_permission_mode(
+            run["run_id"], ModeSelection(
+                "auto_reviewed", "user", False,
+                requested_capabilities=frozenset({"filesystem.write"}),
+            ), administrator=administrator, platform=platform, workspace=workspace,
+        )
+        action = ActionProposal.create(
+            proposal_id=f"proposal-{label}", run_id=run["run_id"], operation="file.write",
+            payload={
+                "relative_path": f"{label}.txt",
+                "content_digest": "sha256:" + hashlib.sha256(b"content").hexdigest(),
+                "size_bytes": 7,
+            }, risk="write", required_capabilities=("filesystem.write",),
+        )
+        route = engine.route_auto_authorization_review(
+            action, transition.effective.capability_profile, idempotency_key=label,
+        )
+        assert route.route == "approved"
+        return run, transition.effective.capability_profile, action, route
+
+    run_before_grant, old_profile, action_before_grant, route_before_grant = create_auto_run("before-grant")
+    engine.apply_permission_mode(
+        run_before_grant["run_id"], ModeSelection("manual_safe", "user", False),
+        administrator=administrator, platform=platform, workspace=workspace,
+    )
+    with pytest.raises((GrantServiceError, ValueError)):
+        engine.issue_authorization_grant(
+            route_before_grant.request_id, old_profile, review_requirement="auto",
+        )
+    assert engine.authorization_grants.get_for_request(route_before_grant.request_id) is None
+
+    run_after_grant, transition_profile, action_after_grant, route_after_grant = create_auto_run("after-grant")
+    transition_grant = engine.issue_authorization_grant(
+        route_after_grant.request_id, transition_profile, review_requirement="auto",
+    )
+    engine.apply_permission_mode(
+        run_after_grant["run_id"], ModeSelection("manual_safe", "user", False),
+        administrator=administrator, platform=platform, workspace=workspace,
+    )
+    transition_filesystem = NoWriteFilesystem()
+    with pytest.raises(Exception) as revoked:
+        AuthorizedFilesystemExecutionService(
+            transition_filesystem, AuthorizationGrantStore(engine.database),
+        ).write(
+            grant_id=transition_grant.grant_id, proposal=action_after_grant,
+            profile=transition_profile, relative_path="after-grant.txt", content=b"content",
+            execution_id="auto-effect-after-mode-transition",
+        )
+    assert getattr(revoked.value, "code", "") == "grant_revoked"
+    assert transition_filesystem.writes == []
+
+    run_before_effect, effect_profile, action_before_effect, route_before_effect = create_auto_run("before-effect")
+    grant = engine.issue_authorization_grant(
+        route_before_effect.request_id, effect_profile, review_requirement="auto",
+    )
+    switched = engine.set_permission_kill_switch(
+        "auto_reviewer", active=True, reason_code="test_incident",
+    )
+    assert switched.revoked_grants >= 1
+
+    filesystem = NoWriteFilesystem()
+    service = AuthorizedFilesystemExecutionService(
+        filesystem, AuthorizationGrantStore(engine.database),
+    )
+    with pytest.raises(Exception) as blocked:
+        service.write(
+            grant_id=grant.grant_id, proposal=action_before_effect,
+            profile=effect_profile, relative_path="before-effect.txt", content=b"content",
+            execution_id="auto-effect-after-kill-switch",
+        )
+    assert getattr(blocked.value, "code", "") in {
+        "permission_kill_switch_active", "grant_revoked",
+    }
+    assert filesystem.writes == []
+
+
+def test_isolated_full_desktop_binding_requires_live_scoped_attestation(engine: RuntimeEngine) -> None:
+    from drsai.backend.runtime.agent import RuntimeRunContext
+    from drsai.backend.runtime.desktop_security_binding import (
+        DesktopSecurityBindingError,
+        create_desktop_security_execution_binding,
+        validate_desktop_security_execution_binding,
+    )
+    from drsai.backend.runtime.permission_modes import (
+        AdministratorPolicy, DEVELOPMENT_CAPABILITIES, ModeSelection,
+        PlatformBoundary, WorkspaceContext,
+    )
+    from drsai.backend.runtime.security_boundary import IsolationAttestation
+
+    now = time.time()
+    isolation = IsolationAttestation(
+        "windows-appcontainer-session", "1", "windows", now - 1, now + 60,
+        frozenset({
+            "non_admin_identity", "process_tree_controlled",
+            "filesystem_enforced", "environment_sanitized",
+        }),
+        "sha256:runtime-isolation-evidence",
+    )
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "isolated-binding")
+    engine.transition_run(run["run_id"], "running")
+    transition = engine.apply_permission_mode(
+        run["run_id"], ModeSelection("isolated_full_access", "user", True),
+        administrator=AdministratorPolicy(
+            "organization-default", 1, True, capability_ceiling=DEVELOPMENT_CAPABILITIES,
+        ),
+        platform=PlatformBoundary(DEVELOPMENT_CAPABILITIES, isolation_attestation=isolation),
+        workspace=WorkspaceContext("C:/workspace", True),
+    )
+    binding = create_desktop_security_execution_binding(
+        engine,
+        RuntimeRunContext(
+            "runtime", "instance", "workspace-one", Path("C:/workspace"),
+            session["session_id"], run["run_id"], "agent", "v1",
+        ),
+    )
+    assert binding.reviewer_route == "none"
+    assert binding.isolation_attestation_digest == isolation.evidence_digest
+    validate_desktop_security_execution_binding(
+        binding, expected_session_id=session["session_id"],
+        expected_workspace_root="C:/workspace",
+    )
+
+    lease = engine.assert_isolated_full_access_authority(
+        run["run_id"], workspace_root="C:/workspace",
+        profile_digest=transition.effective.capability_profile.digest,
+        attestation_digest=isolation.evidence_digest,
+    )
+    assert lease.run_id == run["run_id"]
+    assert engine.revoke_isolated_full_access_authority(
+        run["run_id"], reason_code="worker_exited",
+    ) == 1
+    with pytest.raises(DesktopSecurityBindingError) as revoked:
+        validate_desktop_security_execution_binding(
+            binding, expected_session_id=session["session_id"],
+            expected_workspace_root="C:/workspace",
+        )
+    assert revoked.value.code == "isolation_lease_revoked"
+    assert transition.effective.isolation_attestation_digest == isolation.evidence_digest
+
+
+def test_runtime_owns_windows_isolated_session_authority_revoker(
+    engine: RuntimeEngine, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        engine,
+        "revoke_isolated_full_access_authority",
+        lambda run_id, *, reason_code: calls.append((run_id, reason_code)) or 1,
+    )
+    service = engine.create_windows_isolated_execution_session_service()
+    assert service.authority_revoker is not None
+    assert service.authority_revoker("run-one", "worker_terminal") == 1
+    assert calls == [("run-one", "worker_terminal")]
+    with pytest.raises(ValueError, match="owns the isolation authority revoker"):
+        engine.create_windows_isolated_execution_session_service(
+            authority_revoker=lambda _run_id, _reason: 0,
+        )
+
+
+def test_runtime_isolated_effect_executor_requires_explicit_packaged_worker(
+    engine: RuntimeEngine, tmp_path: Path,
+) -> None:
+    from drsai.backend.runtime.security_boundary import (
+        AuthenticodeEvidence, IsolatedWorkerArtifactError, canonical_digest,
+    )
+
+    with pytest.raises(IsolatedWorkerArtifactError) as missing:
+        engine.create_isolated_effect_execution_service(
+            artifact_manifest=tmp_path / "missing.json",
+            expected_manifest_digest="sha256:" + "0" * 64,
+            trusted_publisher_subjects=("CN=OpenDrSai Security Publisher",),
+        )
+    assert missing.value.code == "isolated_worker_manifest_missing"
+    worker = tmp_path / "isolated-effect-worker.exe"
+    worker.write_bytes(b"packaged-worker")
+    worker_digest = "sha256:" + hashlib.sha256(worker.read_bytes()).hexdigest()
+    manifest = {
+        "schema_version": "isolated-effect-worker-manifest/1",
+        "protocol_version": "isolated-effect/1",
+        "receipt_version": "isolated-effect-receipt/1",
+        "platform": "windows-x64",
+        "worker_version": "1.0.0",
+        "executable": worker.name,
+        "sha256": worker_digest,
+    }
+    manifest_path = tmp_path / "isolated-effect-worker.manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    service = engine.create_isolated_effect_execution_service(
+        artifact_manifest=manifest_path,
+        expected_manifest_digest=canonical_digest(manifest),
+        trusted_publisher_subjects=("CN=OpenDrSai Security Publisher",),
+        signature_verifier=lambda _path: AuthenticodeEvidence(
+            "Valid", "CN=OpenDrSai Security Publisher", "A" * 40,
+        ),
+    )
+    assert service.worker_argv_prefix == (str(worker),)
+    assert service.expected_worker_sha256 == worker_digest
+    assert service.sessions.authority_revoker is not None
+
+
+def test_isolated_mode_binding_and_lease_commit_atomically_and_recover_after_crash(
+    engine: RuntimeEngine,
+) -> None:
+    from drsai.backend.runtime.permission_modes import (
+        AdministratorPolicy, DEVELOPMENT_CAPABILITIES, ModeSelection,
+        ModeTransitionInterrupted, PlatformBoundary, WorkspaceContext,
+    )
+    from drsai.backend.runtime.security_boundary import IsolationAttestation
+
+    now = time.time()
+    attestation = IsolationAttestation(
+        "windows-appcontainer-session", "1", "windows", now - 1, now + 300,
+        frozenset({
+            "non_admin_identity", "process_tree_controlled",
+            "filesystem_enforced", "environment_sanitized",
+        }),
+        "sha256:atomic-mode-lease",
+    )
+    administrator = AdministratorPolicy(
+        "organization-default", 1, True, capability_ceiling=DEVELOPMENT_CAPABILITIES,
+    )
+    platform = PlatformBoundary(DEVELOPMENT_CAPABILITIES, isolation_attestation=attestation)
+    workspace = WorkspaceContext("C:/workspace", True)
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "atomic-isolation")
+    engine.transition_run(run["run_id"], "running")
+
+    with pytest.raises(ModeTransitionInterrupted, match="authority_staged"):
+        engine.apply_permission_mode(
+            run["run_id"], ModeSelection("isolated_full_access", "user", True),
+            administrator=administrator, platform=platform, workspace=workspace,
+            fault_after="authority_staged",
+        )
+    assert engine.effective_permission_descriptor(run["run_id"]) is None
+    with engine._connect() as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM runtime_isolation_attestation_leases WHERE run_id=?",
+            (run["run_id"],),
+        ).fetchone()[0] == 0
+        transition = db.execute(
+            "SELECT status FROM runtime_permission_mode_transitions WHERE run_id=?",
+            (run["run_id"],),
+        ).fetchone()
+    assert transition[0] == "profile_bound"
+
+    recovered = engine.apply_permission_mode(
+        run["run_id"], ModeSelection("isolated_full_access", "user", True),
+        administrator=administrator, platform=platform, workspace=workspace,
+    )
+    descriptor = engine.effective_permission_descriptor(run["run_id"])
+    assert descriptor is not None and descriptor["mode_id"] == "isolated_full_access"
+    lease = engine.assert_isolated_full_access_authority(
+        run["run_id"], workspace_root="C:/workspace",
+        profile_digest=recovered.effective.capability_profile.digest,
+        attestation_digest=attestation.evidence_digest,
+    )
+    assert lease.status == "active"
+    rebound = engine.apply_permission_mode(
+        run["run_id"], ModeSelection("isolated_full_access", "user", True),
+        administrator=administrator, platform=platform, workspace=workspace,
+    )
+    with pytest.raises(Exception) as old_scope:
+        engine.assert_isolated_full_access_authority(
+            run["run_id"], workspace_root="C:/workspace",
+            profile_digest=recovered.effective.capability_profile.digest,
+            attestation_digest=attestation.evidence_digest,
+        )
+    assert getattr(old_scope.value, "code", "") == "isolation_lease_revoked"
+    assert engine.assert_isolated_full_access_authority(
+        run["run_id"], workspace_root="C:/workspace",
+        profile_digest=rebound.effective.capability_profile.digest,
+        attestation_digest=attestation.evidence_digest,
+    ).status == "active"
+
+
+def test_failed_atomic_downgrade_cannot_leave_old_full_binding_usable(
+    engine: RuntimeEngine,
+) -> None:
+    from drsai.backend.runtime.permission_modes import (
+        AdministratorPolicy, DEVELOPMENT_CAPABILITIES, ModeSelection,
+        ModeTransitionInterrupted, PlatformBoundary, WorkspaceContext,
+    )
+    from drsai.backend.runtime.security_boundary import IsolationAttestation, SandboxError
+    from drsai.backend.runtime.agent import RuntimeRunContext
+    from drsai.backend.runtime.desktop_security_binding import (
+        DesktopSecurityBindingError,
+        create_desktop_security_execution_binding,
+        validate_desktop_security_execution_binding,
+    )
+
+    now = time.time()
+    attestation = IsolationAttestation(
+        "windows-appcontainer-session", "1", "windows", now - 1, now + 300,
+        frozenset({
+            "non_admin_identity", "process_tree_controlled",
+            "filesystem_enforced", "environment_sanitized",
+        }),
+        "sha256:atomic-downgrade",
+    )
+    administrator = AdministratorPolicy(
+        "organization-default", 1, True, capability_ceiling=DEVELOPMENT_CAPABILITIES,
+    )
+    workspace = WorkspaceContext("C:/workspace", True)
+    full_platform = PlatformBoundary(DEVELOPMENT_CAPABILITIES, isolation_attestation=attestation)
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "atomic-downgrade")
+    engine.transition_run(run["run_id"], "running")
+    full = engine.apply_permission_mode(
+        run["run_id"], ModeSelection("isolated_full_access", "user", True),
+        administrator=administrator, platform=full_platform, workspace=workspace,
+    )
+    binding = create_desktop_security_execution_binding(
+        engine,
+        RuntimeRunContext(
+            "runtime", "instance", "workspace-one", Path("C:/workspace"),
+            session["session_id"], run["run_id"], "agent", "v1",
+        ),
+    )
+    with pytest.raises(ModeTransitionInterrupted, match="authority_staged"):
+        engine.apply_permission_mode(
+            run["run_id"], ModeSelection("manual_safe", "user", False),
+            administrator=administrator,
+            platform=PlatformBoundary(DEVELOPMENT_CAPABILITIES), workspace=workspace,
+            fault_after="authority_staged",
+        )
+    with pytest.raises(ValueError, match="descriptor and active Profile disagree"):
+        engine.effective_permission_profile(run["run_id"])
+    with pytest.raises(DesktopSecurityBindingError) as stale:
+        validate_desktop_security_execution_binding(
+            binding, expected_session_id=session["session_id"],
+            expected_workspace_root="C:/workspace",
+        )
+    assert stale.value.code == "desktop_security_binding_stale"
+    assert engine.assert_isolated_full_access_authority(
+        run["run_id"], workspace_root="C:/workspace",
+        profile_digest=full.effective.capability_profile.digest,
+        attestation_digest=attestation.evidence_digest,
+    ).status == "active"
+
+    engine.apply_permission_mode(
+        run["run_id"], ModeSelection("manual_safe", "user", False),
+        administrator=administrator,
+        platform=PlatformBoundary(DEVELOPMENT_CAPABILITIES), workspace=workspace,
+    )
+    with pytest.raises(SandboxError) as revoked:
+        engine.assert_isolated_full_access_authority(
+            run["run_id"], workspace_root="C:/workspace",
+            profile_digest=full.effective.capability_profile.digest,
+            attestation_digest=attestation.evidence_digest,
+        )
+    assert revoked.value.code == "isolation_lease_revoked"
+
+
+def test_desktop_security_binding_requires_mode_and_matching_workspace(engine: RuntimeEngine) -> None:
+    from drsai.backend.runtime.agent import RuntimeRunContext
+    from drsai.backend.runtime.desktop_security_binding import (
+        DesktopSecurityBindingError, create_desktop_security_execution_binding,
+    )
+    from drsai.backend.runtime.security_boundary import ResolvedCapabilityProfile
+
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "desktop-binding-denied")
+    engine.transition_run(run["run_id"], "running")
+    engine.bind_run_security_profile(
+        run["run_id"], ResolvedCapabilityProfile(
+            "profile", 1, "C:/workspace", frozenset({"filesystem.read"}),
+        ), reason="test",
+    )
+    context = RuntimeRunContext(
+        "runtime-test", "instance-one", "workspace-one", Path("C:/workspace"),
+        session["session_id"], run["run_id"], "agent", "v1",
+    )
+    with pytest.raises(DesktopSecurityBindingError) as missing_mode:
+        create_desktop_security_execution_binding(engine, context)
+    assert missing_mode.value.code == "desktop_permission_mode_missing"
+
+
+def test_runtime_legacy_permission_config_migration_does_not_apply_mode_or_change_run(
+    engine: RuntimeEngine,
+) -> None:
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "legacy-permission-config")
+    engine.transition_run(run["run_id"], "running")
+    migrated = engine.migrate_legacy_permission_config(
+        "account:workspace-one", {"legacy_runtime": "never", "repository": "full-access"},
+    )
+    assert migrated.mode_id == "manual_safe" and migrated.requires_reselection
+    assert engine.effective_permission_descriptor(run["run_id"]) is None
+    assert engine.get_run(run["run_id"])["status"] == "running"
+    assert engine.acknowledge_permission_config_migration("account:workspace-one").acknowledged
+
+
+def test_operation_level_approval_denial_does_not_cancel_or_resume_run(engine: RuntimeEngine) -> None:
+    from drsai.backend.runtime.security_boundary import ActionProposal, ResolvedCapabilityProfile
+
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "operation-review")
+    engine.transition_run(run["run_id"], "running")
+    profile = ResolvedCapabilityProfile(
+        profile_id="manual-safe", version=1, workspace_root="C:/workspace",
+        capabilities=frozenset({"file.write"}), trusted_workspace=True,
+    )
+    proposal = ActionProposal.create(
+        proposal_id="proposal-operation-review", run_id=run["run_id"], operation="file.write",
+        payload={"path": "safe.txt", "content": "value"}, risk="local_write",
+        required_capabilities=("file.write",),
+    )
+    request = engine.request_authorization_review(
+        proposal, profile, reviewer_kind="human", reason_code="local_write_requires_review",
+        idempotency_key="review-1",
+    )
+    assert engine.get_run(run["run_id"])["status"] == "running"
+    engine.decide_authorization_review(
+        request.request_id, "denied", reviewer_kind="human", reviewer_id="reviewer-1",
+        reason_code="user_denied", idempotency_key="decision-1",
+    )
+    assert engine.get_run(run["run_id"])["status"] == "running"
+    assert engine.authorization_approvals.get_request(request.request_id).status == "denied"
+
+
+def test_operation_level_approval_issues_one_grant_without_changing_run(engine: RuntimeEngine) -> None:
+    from drsai.backend.runtime.security_boundary import ActionProposal, ResolvedCapabilityProfile
+
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "operation-grant")
+    engine.transition_run(run["run_id"], "running")
+    profile = ResolvedCapabilityProfile(
+        profile_id="manual-safe", version=1, workspace_root="C:/workspace",
+        capabilities=frozenset({"file.write"}), trusted_workspace=True,
+    )
+    engine.bind_run_security_profile(run["run_id"], profile, reason="test")
+    proposal = ActionProposal.create(
+        proposal_id="proposal-operation-grant", run_id=run["run_id"], operation="file.write",
+        payload={"path": "safe.txt", "content": "value"}, risk="local_write",
+        required_capabilities=("file.write",),
+    )
+    request = engine.request_authorization_review(
+        proposal, profile, reviewer_kind="human", reason_code="local_write_requires_review",
+        idempotency_key="review-grant-1",
+    )
+    engine.decide_authorization_review(
+        request.request_id, "approved", reviewer_kind="human", reviewer_id="reviewer-1",
+        reason_code="user_approved", idempotency_key="decision-grant-1",
+    )
+
+    first = engine.issue_authorization_grant(request.request_id, profile, review_requirement="human")
+    second = engine.issue_authorization_grant(request.request_id, profile, review_requirement="human")
+
+    assert first == second
+    assert first.proposal_digest == proposal.payload_digest
+    assert engine.get_run(run["run_id"])["status"] == "running"
+
+
+def test_operation_level_grant_uses_active_profile_not_caller_snapshot(engine: RuntimeEngine) -> None:
+    from drsai.backend.runtime.security_boundary import ActionProposal, ResolvedCapabilityProfile
+
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "operation-profile-change")
+    engine.transition_run(run["run_id"], "running")
+    reviewed = ResolvedCapabilityProfile(
+        profile_id="manual-safe", version=1, workspace_root="C:/workspace",
+        capabilities=frozenset({"file.write"}), trusted_workspace=True,
+    )
+    engine.bind_run_security_profile(run["run_id"], reviewed, reason="initial")
+    proposal = ActionProposal.create(
+        proposal_id="proposal-profile-change", run_id=run["run_id"], operation="file.write",
+        payload={"path": "safe.txt"}, risk="local_write", required_capabilities=("file.write",),
+    )
+    request = engine.request_authorization_review(
+        proposal, reviewed, reviewer_kind="human", reason_code="local_write_requires_review",
+        idempotency_key="review-profile-change",
+    )
+    engine.decide_authorization_review(
+        request.request_id, "approved", reviewer_kind="human", reviewer_id="reviewer-1",
+        reason_code="user_approved", idempotency_key="decision-profile-change",
+    )
+    tightened = ResolvedCapabilityProfile(
+        profile_id="manual-safe", version=2, workspace_root="C:/workspace",
+        capabilities=frozenset(), trusted_workspace=True,
+    )
+    engine.bind_run_security_profile(run["run_id"], tightened, reason="policy-tightened")
+
+    with pytest.raises(ValueError, match="Active capability profile"):
+        engine.issue_authorization_grant(request.request_id, reviewed, review_requirement="human")
+    assert engine.authorization_grants.get_for_request(request.request_id) is None
+
+
+def test_legacy_approval_migration_is_restartable_and_preserves_pending_without_decision(
+    engine: RuntimeEngine,
+) -> None:
+    from drsai.backend.runtime.security_boundary import ResolvedCapabilityProfile
+
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "legacy-migrate-pending")
+    engine.transition_run(run["run_id"], "running")
+    profile = ResolvedCapabilityProfile(
+        profile_id="manual-safe", version=1, workspace_root="C:/workspace",
+        capabilities=frozenset({"file.write"}), trusted_workspace=True,
+    )
+    engine.bind_run_security_profile(run["run_id"], profile, reason="migration-test")
+    legacy = engine.request_approval(run["run_id"], {
+        "operation": "file.write", "path": "safe.txt", "required_capabilities": ["file.write"],
+    })
+
+    first = engine.migrate_legacy_approvals(limit=1)
+    second = engine.migrate_legacy_approvals()
+    assert first.migrated == 1
+    assert second.already_migrated == 1
+    rows = engine.approval_compatibility_rows()
+    imported = next(row for row in rows if row["approval_id"] == legacy["approval_id"])
+    assert imported["source"] == "legacy" and imported["migration_status"] == "migrated"
+    request = engine.authorization_approvals.get_request(str(imported["new_request_id"]))
+    assert request.status == "pending"
+    assert engine.authorization_approvals.get_decision(request.request_id) is None
+
+
+def test_legacy_pending_can_sync_once_to_terminal_but_never_becomes_a_reviewer_decision(
+    engine: RuntimeEngine,
+) -> None:
+    from drsai.backend.runtime.authorization import GrantServiceError
+    from drsai.backend.runtime.security_boundary import ResolvedCapabilityProfile
+
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "legacy-sync-terminal")
+    engine.transition_run(run["run_id"], "running")
+    profile = ResolvedCapabilityProfile(
+        profile_id="manual-safe", version=1, workspace_root="C:/workspace",
+        capabilities=frozenset({"file.write"}), trusted_workspace=True,
+    )
+    engine.bind_run_security_profile(run["run_id"], profile, reason="migration-test")
+    legacy = engine.request_approval(run["run_id"], {
+        "operation": "file.write", "path": "safe.txt", "required_capabilities": ["file.write"],
+    })
+    engine.migrate_legacy_approvals()
+    request_id = str(engine.approval_compatibility_rows()[0]["new_request_id"])
+    before = engine.legacy_approval_retirement_status(quiet_since=0)
+    assert not before.ready
+    assert {"pending_rows", "legacy_path_used_since_cutoff"}.issubset(before.blockers)
+
+    engine.resolve_approval(legacy["approval_id"], "approved", {"idempotency_key": "legacy-decision"})
+    synced = engine.migrate_legacy_approvals()
+    assert synced.migrated == 1
+    assert engine.authorization_approvals.get_request(request_id).status == "approved"
+    assert engine.authorization_approvals.get_decision(request_id) is None
+    with pytest.raises(GrantServiceError, match="no approved Decision"):
+        engine.authorization_grants.issue_for_approved_request(
+            request_id, profile, review_requirement="human",
+        )
+    assert engine.get_run(run["run_id"])["status"] == "running"
+    still_used = engine.legacy_approval_retirement_status(quiet_since=0)
+    assert not still_used.ready and still_used.uses_since_cutoff == 2
+    quiet = engine.legacy_approval_retirement_status(quiet_since=time.time() + 1)
+    assert quiet.ready and quiet.blockers == ()
+
+
+def test_legacy_migration_defers_unprovable_pending_then_recovers_when_profile_exists(
+    engine: RuntimeEngine,
+) -> None:
+    from drsai.backend.runtime.security_boundary import ResolvedCapabilityProfile
+
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "legacy-deferred")
+    engine.transition_run(run["run_id"], "running")
+    legacy = engine.request_approval(run["run_id"], {"operation": "file.write"})
+    deferred = engine.migrate_legacy_approvals()
+    assert deferred.deferred_reasons == {"active_profile_missing": 1}
+    row = next(row for row in engine.approval_compatibility_rows() if row["approval_id"] == legacy["approval_id"])
+    assert row["migration_status"] == "deferred" and row["new_request_id"] is None
+
+    profile = ResolvedCapabilityProfile(
+        profile_id="manual-safe", version=1, workspace_root="C:/workspace",
+        capabilities=frozenset({"file.write"}), trusted_workspace=True,
+    )
+    engine.bind_run_security_profile(run["run_id"], profile, reason="migration-recovery")
+    recovered = engine.migrate_legacy_approvals()
+    assert recovered.migrated == 1 and recovered.deferred == 0
+
+
+def test_legacy_migration_detects_identity_mutation_and_compat_view_is_read_only(
+    engine: RuntimeEngine,
+) -> None:
+    from drsai.backend.runtime.authorization import LegacyApprovalMigrationError
+    from drsai.backend.runtime.security_boundary import ResolvedCapabilityProfile
+
+    session = engine.create_session("workspace-one")
+    run, _ = engine.create_run(session["session_id"], "agent@v1", "legacy-tamper")
+    engine.transition_run(run["run_id"], "running")
+    profile = ResolvedCapabilityProfile(
+        profile_id="manual-safe", version=1, workspace_root="C:/workspace",
+        capabilities=frozenset({"file.write"}), trusted_workspace=True,
+    )
+    engine.bind_run_security_profile(run["run_id"], profile, reason="migration-test")
+    legacy = engine.request_approval(run["run_id"], {"operation": "file.write"})
+    engine.migrate_legacy_approvals()
+    with sqlite3.connect(engine.database) as db:
+        with pytest.raises(sqlite3.OperationalError, match="view"):
+            db.execute(
+                "INSERT INTO runtime_approval_compat_v1(approval_id,run_id,status) VALUES('x','y','pending')",
+            )
+        db.execute(
+            "UPDATE runtime_approvals SET request_json=? WHERE approval_id=?",
+            ('{"operation":"different"}', legacy["approval_id"]),
+        )
+    with pytest.raises(LegacyApprovalMigrationError) as changed:
+        engine.migrate_legacy_approvals()
+    assert changed.value.code == "legacy_identity_changed_after_migration"
+
+
+def test_legacy_migration_limit_can_resume_across_runtime_restart(tmp_path: Path) -> None:
+    from drsai.backend.runtime.security_boundary import ResolvedCapabilityProfile
+
+    database = tmp_path / "runtime.sqlite3"
+    first = RuntimeEngine(database, RuntimeEngineIdentity("runtime-test", "instance-one"), lambda _: True)
+    profile = ResolvedCapabilityProfile(
+        profile_id="manual-safe", version=1, workspace_root="C:/workspace",
+        capabilities=frozenset({"file.write"}), trusted_workspace=True,
+    )
+    legacy_ids = []
+    for index in range(2):
+        session = first.create_session("workspace-one")
+        run, _ = first.create_run(session["session_id"], "agent@v1", f"legacy-restart-{index}")
+        first.transition_run(run["run_id"], "running")
+        first.bind_run_security_profile(run["run_id"], profile, reason="migration-test")
+        legacy_ids.append(first.request_approval(run["run_id"], {"operation": "file.write"})["approval_id"])
+    partial = first.migrate_legacy_approvals(limit=1)
+    assert partial.migrated == 1
+
+    restarted = RuntimeEngine(database, RuntimeEngineIdentity("runtime-test", "instance-two"), lambda _: True)
+    completed = restarted.migrate_legacy_approvals()
+    assert completed.migrated == 1 and completed.already_migrated == 1
+    rows = restarted.approval_compatibility_rows()
+    assert {row["approval_id"] for row in rows} == set(legacy_ids)
+    assert all(row["migration_status"] == "migrated" for row in rows)
 
 
 @pytest.mark.parametrize("terminal", ["cancelled", "failed"])

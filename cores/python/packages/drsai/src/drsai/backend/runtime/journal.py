@@ -677,6 +677,8 @@ class RuntimeConversationJournal:
                     "workspace_id": workspace_id,
                     "resource_type": "artifact",
                     "resource_id": str(artifact_id),
+                    "relation": "output_artifact",
+                    "presentation": "card",
                 }]
         operation_ref = content.get("operation_ref")
         if isinstance(operation_ref, dict) and operation_ref.get("workspace_id") != workspace_id:
@@ -684,6 +686,12 @@ class RuntimeConversationJournal:
         for resource_ref in content.get("resource_refs") or []:
             if not isinstance(resource_ref, dict) or resource_ref.get("workspace_id") != workspace_id:
                 raise ValueError("OAEP resource_ref belongs to another Workspace")
+        for part in content.get("parts") or []:
+            resource_ref = part.get("resource_ref") if isinstance(part, dict) else None
+            if resource_ref is not None and (
+                not isinstance(resource_ref, dict) or resource_ref.get("workspace_id") != workspace_id
+            ):
+                raise ValueError("OAEP Message Part resource_ref belongs to another Workspace")
         envelope["content"] = content
         usage = content.get("usage") if isinstance(content.get("usage"), dict) else {}
         input_tokens = usage.get("input_tokens", usage.get("prompt_tokens", 0))
