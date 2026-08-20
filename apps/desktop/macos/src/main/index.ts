@@ -30,7 +30,6 @@ import { cancelBundledRuntimeInstall } from "./runtimeInstaller";
 import { scheduleUpdateHealthConfirmation } from "./updater";
 import { previewWorkspaceFile } from "../../../shared/main/workspaceContext";
 import { cleanupAllVoiceTempFiles } from "../../../shared/main/voice";
-import { cancelStreamingVoiceSessionsForSender } from "../../../shared/main/voiceStreaming";
 import { disposeAllDuplexVoiceSessions, disposeDuplexVoiceSessionsForSender } from "../../../shared/main/voice/duplex/controller";
 import { runPackagedSmokeIfRequested } from "./packagedSmoke";
 import { isAllowedDevelopmentRendererUrl } from "./rendererNavigationPolicy";
@@ -47,7 +46,6 @@ import { killAllTerminalSessions, detachTerminalSessionsForOwner } from "./termi
 import { managedProcessRegistry } from "../../../shared/main/managedProcessRegistry";
 import { MacosMobilePairingControllerRegistry } from "./mobilePairingControllers";
 if (app.isPackaged && !process.env.OPENDRSAI_PDF_SCRIPT?.trim()) process.env.OPENDRSAI_PDF_SCRIPT = join(process.resourcesPath, "python", "presentation_pdf.py");
-
 let mainWindow: BrowserWindow | null = null;
 let appServices: MacosAppServices;
 const openRequests = new DesktopOpenRequestQueue();
@@ -235,7 +233,6 @@ function createWindow(): BrowserWindow {
     }
     },
     onWebContentsDestroyed: (destroyedWindow, destroyedWebContents, ownerId) => {
-      cancelStreamingVoiceSessionsForSender(destroyedWebContents);
       disposeDuplexVoiceSessionsForSender(destroyedWebContents);
       detachTerminalSessionsForOwner(ownerId);
       if (mainWindow === destroyedWindow) openRequests.detach();

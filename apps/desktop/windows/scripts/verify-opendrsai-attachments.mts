@@ -138,8 +138,30 @@ try {
   assert.equal(context.resources.every((item) => item.protocol === "oaep.input/1" && item.status === "encoded"), true);
   checks.contextResourcesEncoded = true;
 
-  await assert.rejects(stageAttachments([{ kind: "browser", path: "browser:2", name: "screenshot", screenshotDataUrl: "data:image/png;base64,AA==" }], workspace, "run-screenshot"), /not supported/);
-  checks.unsupportedScreenshotRejected = true;
+  const screenshotDataUrl = `data:image/png;base64,${(await readFile(png)).toString("base64")}`;
+  await preflightAttachments([{ kind: "selection", path: "clipboard:image:1", name: "clipboard-image.png", screenshotDataUrl }], workspace);
+  await assert.rejects(access(join(workspace, ".opendrsai", "attachments", "run-screenshot")));
+  const stagedScreenshot = await stageAttachments([{
+    kind: "browser", path: "browser:2", name: "screenshot", url: "https://example.invalid",
+    visibleText: "page text", screenshotDataUrl,
+  }], workspace, "run-screenshot");
+  assert.deepEqual(stagedScreenshot.refs, [".opendrsai/attachments/run-screenshot/screenshot.png"]);
+  assert.equal(stagedScreenshot.attachments[0].kind, "file");
+  assert.equal(stagedScreenshot.attachments[0].screenshotDataUrl, undefined);
+  assert.deepEqual(stagedScreenshot.resources.map((item) => [item.kind, item.mime]), [["file", "image/png"], ["browser", undefined]]);
+  assert.equal(stagedScreenshot.resources[0].sha256, createHash("sha256").update(await readFile(png)).digest("hex"));
+  await access(join(workspace, stagedScreenshot.refs[0]));
+  checks.screenshotStagesThroughNativeImageOaep = true;
+
+  await assert.rejects(
+    preflightAttachments([{ kind: "selection", path: "clipboard:image:bad", name: "bad.png", screenshotDataUrl: "data:image/png;base64,AA==" }], workspace),
+    /corrupt|unsupported/i,
+  );
+  await assert.rejects(
+    preflightAttachments([{ kind: "browser", path: "browser:bad", name: "bad.png", screenshotDataUrl: screenshotDataUrl.replace("image/png", "image/jpeg") }], workspace),
+    /does not match/i,
+  );
+  checks.invalidScreenshotRejectedBeforeRun = true;
 
   const clipboardPng = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
   await preflightAttachments([{

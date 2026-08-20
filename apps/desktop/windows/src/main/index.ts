@@ -16,6 +16,7 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  nativeImage,
   protocol,
   powerMonitor,
   screen,
@@ -52,6 +53,9 @@ import { getDesktopHealth, getInstallStatus } from "./status";
 import { bootstrapDesktop } from "./bootstrap";
 import { connectRuntimeClientForWorkspace, isLocalRuntimeUnavailableError, LocalRuntimeClient, withRuntimeClientForWorkspace } from "./runtimeClient";
 import type { RuntimeSession } from "../../../shared/main/runtimeClient";
+import { registerConversationResourceReadIpc } from "../../../shared/main/conversationResourceIpc";
+import { registerConversationResourceDownloadIpc } from "../../../shared/main/conversationResourceDownloadIpc";
+import { registerConversationResourceSubscriptionIpc } from "../../../shared/main/conversationResourceSubscriptionIpc";
 import { bootstrapRuntimeSessionCatalog } from "../../../shared/main/runtimeSessionCatalogBootstrap";
 import { migrateLegacyAgentRunsToRuntime } from "../../../shared/main/legacyAgentRunMigration";
 import type {
@@ -106,7 +110,6 @@ import { desktopFeedback } from "../../../shared/main/feedback";
 import { clearPendingCrashFeedback, getPendingCrashFeedback, initializeLocalCrashReporter, recordCrashIncident } from "../../../shared/main/crashFeedback";
 import { DiagnosticSourceNavigator } from "../../../shared/main/sourceNavigation";
 import { extractDiagnosticContext, runWithDiagnosticContext } from "../../../shared/main/diagnosticContext";
-import { isTrustedDesktopIpcSender } from "../../../shared/main/secureIpc";
 import { InteractiveDebuggerService } from "./interactiveDebugger";
 import { InteractiveDebugPolicyStore } from "../../../shared/main/interactiveDebugPolicy";
 import type { DiagnosticEventInput, DiagnosticIssueUpdateRequest, DiagnosticQuery, DiagnosticSourceOpenRequest, DiagnosticSourceContextRequest, ProductionDiagnosticSettings } from "../../../shared/api/diagnostics";
@@ -384,6 +387,7 @@ import {
   listRemoteHepaiWorkers,
   setRemoteHepaiWorkerEnabled,
   listSshHosts,
+  saveSshHost,
   preflightRemoteGateway,
   installRemoteGateway,
   cancelRemoteGatewayOperation,
@@ -438,14 +442,6 @@ import {
   cleanupExpiredVoiceTempFiles,
 } from "./voice/serial";
 import {
-  attachStreamingVoiceAudioPort,
-  cancelStreamingVoiceSessionsForSender,
-  cancelStreamingVoiceTranscription,
-  getStreamingVoiceCapabilities,
-  startStreamingVoiceTranscription,
-  stopStreamingVoiceTranscription,
-} from "./voice/streaming";
-import {
   attachDuplexVoiceAudioPort,
   cancelDuplexVoiceSession,
   disposeDuplexVoiceSession,
@@ -469,6 +465,7 @@ import {
   startVoiceSynthesis,
 } from "./voice/serial";
 import { saveApiKeyAndSync } from "./settings";
+import { getVoicePreferences, updateVoicePreferences } from "./voicePreferences";
 import {
   cancelOidcLogin,
   getAuthSession,
@@ -566,7 +563,6 @@ import type {
   DesktopWorktreeEventRequest,
   DesktopVoiceTranscriptHandoffRequest,
   DesktopVoiceTranscriptionRequest,
-  DesktopStreamingVoiceStartRequest,
   DesktopDuplexVoiceSessionStartRequest,
   DesktopDuplexVoiceInterruptRequest,
   DesktopDuplexVoiceTakeoverRequest,
@@ -1072,6 +1068,8 @@ const isE2eSmokeProcess =
     process.env.OPENDRSAI_E2E_DUPLEX_PERMISSION_RECOVERY === "1" ||
     process.env.OPENDRSAI_E2E_DUPLEX_PROCESS_RECOVERY === "1" ||
     process.env.OPENDRSAI_E2E_DUPLEX_PACKAGED_RUN === "1" ||
+    process.env.OPENDRSAI_E2E_VOICE_PREFERENCES_MULTI_WINDOW === "1" ||
+    process.env.OPENDRSAI_E2E_DUPLEX_MEDIA === "1" ||
     Boolean(process.env.OPENDRSAI_E2E_DUPLEX_APP_RESTART_PHASE) ||
     process.env.OPENDRSAI_E2E_VOICE === "1" ||
   process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION === "1" ||
@@ -1082,6 +1080,11 @@ if (isE2eSmokeProcess) {
   app.commandLine.appendSwitch("disable-gpu");
   app.commandLine.appendSwitch("disable-gpu-compositing");
   app.commandLine.appendSwitch("disable-gpu-sandbox");
+  app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+  if (process.env.OPENDRSAI_E2E_DUPLEX_MEDIA === "1") {
+    app.commandLine.appendSwitch("use-fake-device-for-media-stream");
+    app.commandLine.appendSwitch("use-fake-ui-for-media-stream");
+  }
 }
 async function phaseAcceptanceExportTarget(
   suggestedName: string, options: SaveDialogOptions,
@@ -3547,11 +3550,15 @@ function isAllowedRendererNavigationUrl(rawUrl: string): boolean {
 }
 
 function isTrustedSender(event: IpcMainInvokeEvent): boolean {
-  return isTrustedDesktopIpcSender(
-    event,
-    mainWindow?.webContents,
-    is.dev ? isAllowedDevRendererUrl : undefined,
-  );
+  try {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    const frameUrl = event.senderFrame?.url;
+    if (!senderWindow || senderWindow.isDestroyed() || event.sender.isDestroyed() || !frameUrl) return false;
+    if (senderWindow.webContents !== event.sender || frameUrl !== event.sender.getURL()) return false;
+    return isAllowedRendererNavigationUrl(frameUrl);
+  } catch {
+    return false;
+  }
 }
 
 function getStringArrayProperty(request: unknown, key: string): string[] | undefined {
@@ -4109,7 +4116,7 @@ async function saveWorkspaceFileAs(request: WorkspaceFileSaveAsRequest): Promise
   const suggestedName = ensureOriginalExtension(requestedName, sourceExtension);
   let destinationPath: string | undefined;
 
-  const automatedSaveDirectory = isE2eSmokeProcess && ["g4-preview-download", "workspace-artifact-p1"].includes(process.env.OPENDRSAI_E2E_AGENT_RUN_SCENARIO || "")
+  const automatedSaveDirectory = isE2eSmokeProcess && ["g4-preview-download", "workspace-artifact-p1", "conversation-resource-p2"].includes(process.env.OPENDRSAI_E2E_AGENT_RUN_SCENARIO || "")
     ? process.env.OPENDRSAI_E2E_G4_SAVE_DIR
     : undefined;
   if (automatedSaveDirectory) {
@@ -4462,16 +4469,19 @@ async function describePickedFiles(paths: string[], canceled: boolean): Promise<
       const info = await statFile(path);
       if (!info.isFile()) return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "所选项目不是文件。", recoveryAction: "请选择一个可读取的本地文件。" };
       const inspected = { ...base, sizeBytes: info.size, ...(await inspectPickedFileWithTimeout(path, category, extension)) };
-      if (inspected.status !== "ready" || category !== "image" || info.size > PICKED_IMAGE_PREVIEW_MAX_BYTES) {
+      if (inspected.status !== "ready" || category !== "image") {
         return inspected;
       }
       const mime = pickedImageMime(extension);
       if (!mime) return inspected;
       try {
-        const buffer = await readFile(path);
+        const previewDataUrl = info.size <= PICKED_IMAGE_PREVIEW_MAX_BYTES
+          ? `data:${mime};base64,${(await readFile(path)).toString("base64")}`
+          : createPickedImageThumbnail(path);
+        if (!previewDataUrl) return inspected;
         return {
           ...inspected,
-          previewDataUrl: `data:${mime};base64,${buffer.toString("base64")}`,
+          previewDataUrl,
         };
       } catch {
         return inspected;
@@ -4481,6 +4491,21 @@ async function describePickedFiles(paths: string[], canceled: boolean): Promise<
     }
   }));
   return { canceled, paths, files };
+}
+
+function createPickedImageThumbnail(path: string): string | undefined {
+  const source = nativeImage.createFromPath(path);
+  if (source.isEmpty()) return undefined;
+  const size = source.getSize();
+  const scale = Math.min(1, 256 / Math.max(size.width, size.height));
+  const thumbnail = scale < 1
+    ? source.resize({
+        width: Math.max(1, Math.round(size.width * scale)),
+        height: Math.max(1, Math.round(size.height * scale)),
+        quality: "good",
+      })
+    : source;
+  return thumbnail.toDataURL();
 }
 
 function registerIpc(): void {
@@ -4998,6 +5023,7 @@ function registerIpc(): void {
   );
   secureHandle("desktop:list-workspaces", () => listWorkspaces(app.getPath("documents")));
   secureHandle("desktop:ssh-hosts", () => listSshHosts());
+  secureHandle("desktop:ssh-host-save", (_event, host) => saveSshHost(host));
   secureHandle("desktop:ssh-diagnose", (_event, hostAlias: string) => diagnoseSshHost(hostAlias));
   secureHandle("desktop:ssh-host-keys", (_event, hostAlias: string) => inspectSshHostKeys(hostAlias));
   secureHandle("desktop:ssh-test", (_event, hostAlias: string) => testSshHost(hostAlias));
@@ -5081,6 +5107,28 @@ function registerIpc(): void {
   });
   secureHandle("desktop:workspace-file-preview", async (_event, request: WorkspaceFilePreviewRequest) =>
     (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? previewRemoteWorkspaceFile(request) : previewWorkspaceFile(request),
+  );
+  registerConversationResourceReadIpc(secureHandle as never, (path) => {
+    if (process.env.OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN !== "1") shell.showItemInFolder(path);
+  });
+  registerConversationResourceSubscriptionIpc(
+    secureHandle as never,
+    (event, value) => (event as { sender: { send(channel: string, payload: unknown): void } }).sender.send("desktop:conversation-resource-state-event", value),
+  );
+  registerConversationResourceDownloadIpc(
+    secureHandle as never,
+    async (suggestedName) => {
+      if (isE2eSmokeProcess && process.env.OPENDRSAI_E2E_AGENT_RUN_SCENARIO === "conversation-resource-p2") {
+        const directory = process.env.OPENDRSAI_E2E_G4_SAVE_DIR;
+        if (!directory) throw new Error("Packaged P2 resource save directory is required.");
+        return join(directory, basename(suggestedName));
+      }
+      const selected = mainWindow
+        ? await dialog.showSaveDialog(mainWindow, { title: "Save Runtime artifact", defaultPath: join(app.getPath("downloads"), suggestedName) })
+        : await dialog.showSaveDialog({ title: "Save Runtime artifact", defaultPath: join(app.getPath("downloads"), suggestedName) });
+      return selected.canceled || !selected.filePath ? null : selected.filePath;
+    },
+    (event, progress) => (event as { sender: { send(channel: string, value: unknown): void } }).sender.send("desktop:conversation-resource-download-progress", progress),
   );
   secureHandle("desktop:workspace-file-save-as", (_event, request: WorkspaceFileSaveAsRequest) =>
     saveWorkspaceFileAs(request),
@@ -6222,10 +6270,14 @@ function registerIpc(): void {
     "desktop:voice-runtime-status",
     () => getVoiceRuntimeStatus(),
   );
-  secureHandle(
-    "desktop:voice-streaming-capabilities",
-    () => getStreamingVoiceCapabilities(),
-  );
+  secureHandle("desktop:voice-preferences-get", () => getVoicePreferences());
+  secureHandle("desktop:voice-preferences-update", async (_event, request: import("../../../shared/api/desktopApi").DesktopVoicePreferencesUpdateRequest) => {
+    const preferences = await updateVoicePreferences(request);
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("desktop:voice-preferences-changed", preferences);
+    }
+    return preferences;
+  });
   secureHandle("desktop:voice-duplex-capabilities", () => getDuplexVoiceCapabilities());
   secureHandle("desktop:voice-duplex-readiness", () => getDuplexVoiceReadiness());
   secureHandle("desktop:voice-duplex-occupancy", (event) => getDuplexVoiceOccupancy(event.sender));
@@ -6240,35 +6292,6 @@ function registerIpc(): void {
   secureHandle("desktop:voice-duplex-finish-turn", (event, sessionId: string) => finishDuplexVoiceTurn(event.sender, typeof sessionId === "string" ? sessionId : ""));
   secureHandle("desktop:voice-duplex-cancel", (event, sessionId: string) => cancelDuplexVoiceSession(event.sender, typeof sessionId === "string" ? sessionId : ""));
   secureHandle("desktop:voice-duplex-dispose", (event, sessionId: string) => disposeDuplexVoiceSession(event.sender, typeof sessionId === "string" ? sessionId : ""));
-  secureHandle(
-    "desktop:voice-streaming-start",
-    (event, request: DesktopStreamingVoiceStartRequest) => startStreamingVoiceTranscription(event.sender, request),
-  );
-  secureHandle(
-    "desktop:voice-streaming-stop",
-    (event, sessionId: string, reason?: "provider" | "local_vad" | "manual") => stopStreamingVoiceTranscription(
-      event.sender,
-      typeof sessionId === "string" ? sessionId : "",
-      reason === "provider" || reason === "local_vad" ? reason : "manual",
-    ),
-  );
-  secureHandle(
-    "desktop:voice-streaming-cancel",
-    (event, sessionId: string) => cancelStreamingVoiceTranscription(event.sender, typeof sessionId === "string" ? sessionId : ""),
-  );
-  ipcMain.on("desktop:voice-streaming-audio-port", (event: IpcMainEvent, request: unknown) => {
-    if (!isTrustedSender(event as unknown as IpcMainInvokeEvent)) {
-      event.ports[0]?.close();
-      return;
-    }
-    const sessionId = getStringProperty(request, "sessionId");
-    const port = event.ports[0];
-    if (!sessionId || !port) {
-      port?.close();
-      return;
-    }
-    attachStreamingVoiceAudioPort(event.sender, sessionId, port);
-  });
   ipcMain.on("desktop:voice-duplex-audio-port", (event: IpcMainEvent, request: unknown) => {
     if (!isTrustedSender(event as unknown as IpcMainInvokeEvent)) { event.ports[0]?.close(); return; }
     const sessionId = getStringProperty(request, "sessionId");
@@ -7134,7 +7157,6 @@ app.on("before-quit", (event) => {
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
     cancelVoiceTranscriptionsForSender(mainWindow.webContents);
     cancelVoiceSynthesisForSender(mainWindow.webContents);
-    cancelStreamingVoiceSessionsForSender(mainWindow.webContents);
   }
   stopScheduledTaskWorker();
   browserTaskService.shutdown();

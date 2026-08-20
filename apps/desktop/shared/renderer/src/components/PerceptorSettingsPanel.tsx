@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, Database, Globe2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
+import { Activity, ChevronDown, Database, Globe2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, X } from "lucide-react";
 import type { PerceptorResource, SavePerceptorRequest, WebSearchProviderMode, WebSearchProviderPolicy } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
 import { requestAppDecision } from "./AppDecisionDialog";
@@ -30,6 +30,8 @@ const FACILITY_CAPABILITIES = [
   "facility.runs.query", "facility.catalog.search", "facility.metadata.read",
 ];
 
+const TAVILY_LOGO_URL = "https://mintlify.s3-us-west-1.amazonaws.com/tavilyai/_generated/favicon/apple-touch-icon.png?v=3";
+
 function emptyDraft(kind: DraftKind): DraftState {
   return {
     kind, id: kind === "tavily" ? "web-tavily-main" : "facility-data-main",
@@ -41,7 +43,7 @@ function emptyDraft(kind: DraftKind): DraftState {
   };
 }
 
-export function PerceptorSettingsPanel({ language }: { language: "zh" | "en" }): React.JSX.Element {
+export function PerceptorSettingsPanel({ language, showHeader = true }: { language: "zh" | "en"; showHeader?: boolean }): React.JSX.Element {
   const zh = language === "zh";
   const [resources, setResources] = useState<PerceptorResource[]>([]);
   const [draft, setDraft] = useState<DraftState | null>(null);
@@ -50,6 +52,7 @@ export function PerceptorSettingsPanel({ language }: { language: "zh" | "en" }):
   const [message, setMessage] = useState<string | null>(null);
   const [health, setHealth] = useState<Record<string, { search?: boolean; extract?: boolean; latency?: string }>>({});
   const [providerPolicy, setProviderPolicy] = useState<WebSearchProviderPolicy | null>(null);
+  const [expandedResourceId, setExpandedResourceId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setBusy(true); setError(null);
@@ -86,6 +89,7 @@ export function PerceptorSettingsPanel({ language }: { language: "zh" | "en" }):
       classificationCeiling: String(config.classification_ceiling || "internal"),
       maxTimeRangeSeconds: String(config.max_time_range_seconds || 86400), maxPoints: String(config.max_points || 10000),
     });
+    setExpandedResourceId(resource.perceptor_id);
     setMessage(null); setError(null);
   }
 
@@ -149,19 +153,41 @@ export function PerceptorSettingsPanel({ language }: { language: "zh" | "en" }):
   }
 
   return <>
-    <header className="settings-content-header"><h2>{zh ? "感知器配置" : "Perceptor configuration"}</h2><p>{zh ? "创建、测试和管理可复用的只读外部数据资源。智能体配置只引用这些资源，不保存连接凭据。" : "Create, test, and manage reusable read-only external data resources. Agent configuration references them without copying credentials."}</p></header>
-    <section className="perceptor-summary" aria-label={zh ? "感知器摘要" : "Perceptor summary"}><span><strong>{resources.length}</strong>{zh ? "资源" : "Resources"}</span><span><strong>{counts.enabled}</strong>{zh ? "已启用" : "Enabled"}</span><span><strong>{counts.web}</strong>{zh ? "公共网络" : "Public web"}</span><span><strong>{counts.facility}</strong>{zh ? "大装置数据" : "Facility data"}</span><button type="button" onClick={() => void refresh()} disabled={busy}><RefreshCw size={14} />{zh ? "刷新" : "Refresh"}</button></section>
-    <section className="settings-section" data-testid="web-search-provider-policy"><div><h2>{zh ? "网页搜索提供方式" : "Web-search provider"}</h2><p>{zh ? "自动模式优先使用当前 HAI 登录会话；未登录时使用已配置的自有 Tavily Key。运行过程中不会静默切换。" : "Auto prefers the current HAI session and uses configured BYOK when signed out. A run never switches silently."}</p></div><label>{zh ? "提供方式" : "Provider mode"}<select value={providerPolicy?.mode || "auto"} disabled={busy} onChange={(event) => void selectProvider(event.target.value as WebSearchProviderMode)}><option value="auto">{zh ? "自动（推荐）" : "Auto (recommended)"}</option><option value="managed">{zh ? "HAI 托管网页搜索" : "HAI managed web search"}</option><option value="byok">{zh ? "使用自己的 Tavily Key" : "Use my Tavily key"}</option><option value="none">{zh ? "禁用网页搜索" : "Disable web search"}</option></select><small>{providerPolicy?.available ? (zh ? `当前：${providerPolicy.provider === "hai_managed_tavily" ? "HAI 托管" : "自有 Tavily"}` : `Current: ${providerPolicy.provider === "hai_managed_tavily" ? "HAI managed" : "BYOK Tavily"}`) : managedStatusLabel(providerPolicy?.error || undefined, zh)}</small></label></section>
-    <section className="settings-section perceptor-create-actions"><div><h2>{zh ? "新增感知器" : "Add perceptor"}</h2><p>{zh ? "感知器只读地观察外部世界；改变外部状态的能力必须配置为执行器。" : "Perceptors observe external state read-only; state-changing capabilities belong to executors."}</p></div><button type="button" onClick={() => setDraft(emptyDraft("tavily"))}><Globe2 size={15} />{zh ? "网页搜索" : "Web search"}</button><button type="button" onClick={() => setDraft(emptyDraft("facility"))}><Database size={15} />{zh ? "大装置数据" : "Facility data"}</button></section>
+    {showHeader ? <header className="settings-content-header"><h2>{zh ? "感知器配置" : "Perceptor configuration"}</h2><p>{zh ? "统一管理智能体读取外部信息所需的只读资源。" : "Manage the read-only resources Agents use to perceive external information."}</p></header> : null}
+    <section className="perceptor-summary" aria-label={zh ? "感知器统计" : "Perceptor summary"}>
+      <div className="perceptor-summary-metrics"><span><strong>{resources.length}</strong>{zh ? "全部" : "Total"}</span><span><strong>{counts.enabled}</strong>{zh ? "已启用" : "Enabled"}</span><span><strong>{counts.web}</strong>{zh ? "网络" : "Web"}</span><span><strong>{counts.facility}</strong>{zh ? "数据" : "Data"}</span></div>
+      <div className="perceptor-summary-controls" data-testid="web-search-provider-policy"><select className="perceptor-provider-select" aria-label={zh ? "网页搜索提供方式" : "Web-search provider"} value={providerPolicy?.mode || "auto"} disabled={busy} onChange={(event) => void selectProvider(event.target.value as WebSearchProviderMode)}><option value="auto">{zh ? "搜索 · 自动" : "Search · Auto"}</option><option value="managed">{zh ? "搜索 · HAI 托管" : "Search · HAI managed"}</option><option value="byok">{zh ? "搜索 · 自有 Tavily" : "Search · BYOK Tavily"}</option><option value="none">{zh ? "搜索 · 禁用" : "Search · Disabled"}</option></select><details className="perceptor-add-menu"><summary><Plus size={14} />{zh ? "新增感知器" : "Add perceptor"}<ChevronDown size={13} /></summary><div><button type="button" onClick={(event) => { setDraft(emptyDraft("tavily")); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Globe2 size={15} /><span><strong>{zh ? "网络感知器" : "Web perceptor"}</strong><small>{zh ? "搜索和读取公共网页" : "Search and read public web pages"}</small></span></button><button type="button" onClick={(event) => { setDraft(emptyDraft("facility")); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Database size={15} /><span><strong>{zh ? "数据感知器" : "Data perceptor"}</strong><small>{zh ? "连接只读外部数据" : "Connect read-only external data"}</small></span></button></div></details><button type="button" className="icon-button" aria-label={zh ? "刷新" : "Refresh"} title={zh ? "刷新" : "Refresh"} onClick={() => void refresh()} disabled={busy}><RefreshCw size={14} /></button></div>
+    </section>
     {error ? <div className="settings-message error" role="alert">{error}</div> : null}{message ? <div className="settings-message" role="status">{message}</div> : null}
-    {draft ? <PerceptorEditor draft={draft} setDraft={setDraft} busy={busy} zh={zh} onSave={() => void save()} onCancel={() => setDraft(null)} /> : null}
+    {draft && !draft.originalId ? <PerceptorEditor draft={draft} setDraft={setDraft} busy={busy} zh={zh} onSave={() => void save()} onCancel={() => setDraft(null)} /> : null}
     <section className="perceptor-resource-list">
-      {resources.map((resource) => { const itemHealth = health[resource.perceptor_id]; const managed = resource.adapter === "hai_managed_tavily"; const managedAvailable = managed && resource.enabled && resource.status === "available"; return <article key={resource.perceptor_id} className="perceptor-resource-card" data-enabled={resource.enabled}>
-        <header><span className="perceptor-kind-icon">{resource.kind === "public_web" ? <Globe2 size={18} /> : <Database size={18} />}</span><span><strong>{resource.name || resource.perceptor_id}</strong><small>{resource.perceptor_id} · {managed ? (zh ? "HAI 托管" : "HAI managed") : resource.adapter}</small></span>{managed ? <span className={managedAvailable ? "ok" : "warning"}><ShieldCheck size={12} />{managedAvailable ? (zh ? "已登录，可直接使用" : "Signed in and available") : managedStatusLabel(resource.status, zh)}</span> : <label><input type="checkbox" checked={resource.enabled} disabled={busy} onChange={() => void toggle(resource)} />{resource.enabled ? (zh ? "已启用" : "Enabled") : (zh ? "已禁用" : "Disabled")}</label>}</header>
-        <div className="perceptor-capabilities">{resource.capabilities.map((capability) => <code key={capability}>{capability}</code>)}</div>
-        <div className="perceptor-state-row"><span className={managedAvailable || resource.config.api_key || resource.config.token ? "ok" : "warning"}><ShieldCheck size={12} />{managed ? (zh ? "平台托管凭据，不保存到本机" : "Platform-managed credential; not stored locally") : resource.config.api_key || resource.config.token ? (zh ? "凭据已配置" : "Credential configured") : (zh ? "需要凭据" : "Credential required")}</span>{itemHealth ? <span className="ok"><Activity size={12} />{zh ? "最近测试成功" : "Recently tested"}{itemHealth.latency ? ` · ${itemHealth.latency}` : ""}</span> : null}<small title={resource.revision}>rev {resource.revision.slice(-8)}</small></div>
-        <footer>{resource.adapter === "tavily" || managed ? <><button type="button" disabled={busy || !resource.enabled} onClick={() => void test(resource, "search")}>{zh ? "测试搜索" : "Test search"}</button><button type="button" disabled={busy || !resource.enabled} onClick={() => void test(resource, "extract")}>{zh ? "测试读取" : "Test extraction"}</button></> : <button type="button" disabled={busy || !resource.enabled} onClick={() => void test(resource, "search")}>{zh ? "查看接入状态" : "Check integration"}</button>}{!managed ? <><button type="button" disabled={busy} onClick={() => edit(resource)}><Pencil size={13} />{zh ? "编辑" : "Edit"}</button><button type="button" className="danger" disabled={busy} onClick={() => void remove(resource)}><Trash2 size={13} />{zh ? "删除" : "Delete"}</button></> : null}</footer>
-      </article>; })}
+      {resources.map((resource) => {
+        const itemHealth = health[resource.perceptor_id];
+        const managed = resource.adapter === "hai_managed_tavily";
+        const managedAvailable = managed && resource.enabled && resource.status === "available";
+        const expanded = expandedResourceId === resource.perceptor_id;
+        const credentialReady = managedAvailable || Boolean(resource.config.api_key || resource.config.token);
+        const operationalReady = resource.enabled && credentialReady;
+        const tavily = managed || resource.adapter === "tavily";
+        const displayName = managed ? (zh ? "网页搜索感知器" : "Web search perceptor") : resource.name || resource.perceptor_id;
+        return <article key={resource.perceptor_id} className="perceptor-resource-card settings-resource-card" data-enabled={resource.enabled} data-expanded={expanded}>
+          <header className="perceptor-resource-row settings-resource-row">
+            <button type="button" className="perceptor-resource-main settings-resource-main" aria-expanded={expanded} onClick={() => setExpandedResourceId(expanded ? null : resource.perceptor_id)}>
+              <span className="perceptor-kind-icon">{tavily ? <img src={TAVILY_LOGO_URL} alt="" /> : resource.kind === "public_web" ? <Globe2 size={17} /> : <Database size={17} />}</span>
+              <span className="perceptor-resource-name"><strong>{displayName}</strong><small>{managed ? (zh ? "Tavily · 由 HAI 平台托管" : "Tavily · Managed by the HAI platform") : `${resource.kind === "public_web" ? (zh ? "网络感知器" : "Web perceptor") : (zh ? "数据感知器" : "Data perceptor")} · ${resource.adapter}`}</small></span>
+              <span className={`perceptor-inline-status ${operationalReady ? "ok" : "warning"}`}>{operationalReady ? (zh ? "可用" : "Available") : !resource.enabled ? (zh ? "已停用" : "Inactive") : managed ? managedStatusLabel(resource.status, zh) : (zh ? "待配置" : "Setup required")}</span>
+              <ChevronDown className="perceptor-expand-icon" size={16} />
+            </button>
+            <button type="button" role="switch" aria-checked={resource.enabled} aria-label={resource.enabled ? (zh ? "已启用" : "Enabled") : (zh ? "未启用" : "Disabled")} className={`perceptor-enable-switch settings-resource-switch${resource.enabled ? " is-enabled" : ""}`} data-managed={managed} disabled={busy || managed} title={managed ? (zh ? "由 HAI 平台策略管理" : "Managed by HAI platform policy") : resource.enabled ? (zh ? "点击停用" : "Click to disable") : (zh ? "点击启用" : "Click to enable")} onClick={() => void toggle(resource)}><span className="perceptor-switch-track" aria-hidden="true"><i /></span><em>{resource.enabled ? (zh ? "已启用" : "Enabled") : (zh ? "未启用" : "Disabled")}</em></button>
+          </header>
+          {expanded ? <div className="perceptor-resource-details settings-resource-details">
+            <div className="perceptor-capabilities">{resource.capabilities.map((capability) => <code key={capability}>{capability}</code>)}</div>
+            <div className="perceptor-state-row"><span className={credentialReady ? "ok" : "warning"}><ShieldCheck size={12} />{managed ? (zh ? "平台托管凭据" : "Platform-managed credential") : credentialReady ? (zh ? "凭据已配置" : "Credential configured") : (zh ? "需要凭据" : "Credential required")}</span>{itemHealth ? <span className="ok"><Activity size={12} />{zh ? "最近测试成功" : "Recently tested"}{itemHealth.latency ? ` · ${itemHealth.latency}` : ""}</span> : null}<small title={resource.revision}>rev {resource.revision.slice(-8)}</small></div>
+            <footer>{resource.adapter === "tavily" || managed ? <><button type="button" disabled={busy || !resource.enabled} onClick={() => void test(resource, "search")}>{zh ? "测试搜索" : "Test search"}</button><button type="button" disabled={busy || !resource.enabled} onClick={() => void test(resource, "extract")}>{zh ? "测试读取" : "Test extraction"}</button></> : <button type="button" disabled={busy || !resource.enabled} onClick={() => void test(resource, "search")}>{zh ? "检查接入" : "Check integration"}</button>}{!managed ? <><button type="button" disabled={busy} onClick={() => edit(resource)}><Pencil size={13} />{zh ? "编辑" : "Edit"}</button><button type="button" className="danger" disabled={busy} onClick={() => void remove(resource)}><Trash2 size={13} />{zh ? "删除" : "Delete"}</button></> : null}</footer>
+            {draft?.originalId === resource.perceptor_id ? <PerceptorEditor draft={draft} setDraft={setDraft} busy={busy} zh={zh} onSave={() => void save()} onCancel={() => setDraft(null)} /> : null}
+          </div> : null}
+        </article>;
+      })}
       {!busy && resources.length === 0 ? <div className="settings-empty-state"><Globe2 size={24} /><strong>{zh ? "尚未配置感知器" : "No perceptors configured"}</strong><span>{zh ? "可以先添加网页搜索感知器。" : "Start with a web-search perceptor."}</span></div> : null}
     </section>
   </>;

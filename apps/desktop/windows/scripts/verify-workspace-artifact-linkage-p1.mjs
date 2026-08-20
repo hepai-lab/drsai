@@ -13,7 +13,7 @@ const tuiEvents = readFileSync(join(root, "../../ui-tui/src/app/createGatewayEve
 
 assert.ok(conversation.includes("previewable?: boolean") && conversation.includes("downloadable?: boolean"), "Conversation Artifact capabilities are missing.");
 assert.ok(renderer.includes("formatArtifactSize") && renderer.includes("在文件中显示"), "Desktop Artifact card lacks size/action presentation.");
-assert.ok(renderer.includes("onDownloadArtifact") && chat.includes("desktopApi.saveWorkspaceFileAs"), "Desktop Artifact card lacks an integrity-checked download/save-as action.");
+assert.ok(renderer.includes("onDownloadArtifact") && chat.includes("desktopApi.saveWorkspaceFileAs") && chat.includes("downloadConversationResource"), "Desktop Artifact card lacks an integrity-checked local/remote download action.");
 assert.ok(app.includes("setFilesPanelFocusPath(path)") && app.includes('setActiveRightTab("files")'), "Artifact click does not route to Files.");
 assert.ok(files.includes("findWorkspaceNodeByArtifactPath") && files.includes("normalizeWorkspaceArtifactPath"), "Files panel cannot correlate Runtime relative Artifact paths.");
 assert.ok(files.includes("focusRefreshPathRef") && files.includes("void refresh()"), "Files panel does not refresh for a newly delivered Artifact.");

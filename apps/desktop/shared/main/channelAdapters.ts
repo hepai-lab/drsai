@@ -458,7 +458,6 @@ const DEFAULT_VOICE_TRANSCRIPT_RELATIVE_PATH = join(".drsai", "voice-context.jso
 const DEFAULT_LOG_MONITOR_CONFIG_RELATIVE_PATH = join(".drsai", "log-monitor.json");
 const SNAPSHOT_SYNC_ADAPTER_IDS = [
   "mobile-chat",
-  "slack-chat",
   "github-connector",
   "docs-connector",
   "calendar-connector",
@@ -1020,7 +1019,7 @@ const CHANNEL_ADAPTERS: DesktopChannelAdapter[] = [
     name: "Slack channel adapter",
     provider: "slack",
     kind: "chat",
-    status: "config_required",
+    status: "planned",
     direction: "bidirectional",
     configured: false,
     requiresApproval: true,
@@ -1032,7 +1031,7 @@ const CHANNEL_ADAPTERS: DesktopChannelAdapter[] = [
       "Route approvals",
     ],
     description: "Connector contract for Slack conversations, workspace-local message snapshots, and approval-aware outbound drafts.",
-    setupHint: "Use a reviewed Slack bot token stored by the platform credential service; local .drsai/slack-context.json remains available for offline handoff.",
+    setupHint: "Planned integration. Slack connection and configuration are not yet available in Desktop.",
   },
   {
     id: "github-connector",
@@ -2017,6 +2016,9 @@ function applyConnectionToAdapter(
   adapter: DesktopChannelAdapter,
   connections: DesktopChannelConnection[],
 ): DesktopChannelAdapter {
+  if (adapter.status === "planned") {
+    return { ...adapter, configured: false, authMode: "not_configured" };
+  }
   const connection = connections.find((item) => item.adapterId === adapter.id);
   if (!connection) {
     return { ...adapter, authMode: "not_configured" };

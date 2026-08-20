@@ -108,6 +108,7 @@ assert.ok(windowsMain.startsWith('import "./developmentLaunchEnvironment";'));
 assert.ok(developmentLaunchEnvironment.includes('process.defaultApp === true'));
 assert.ok(developmentLaunchEnvironment.includes('production ? ".drsai-prod" : ".drsai-dev"'));
 assert.ok(developmentLaunchEnvironment.includes('OPENDRSAI_GATEWAY_PORT: port'));
+assert.ok(developmentLaunchEnvironment.includes('OPENDRSAI_ENABLE_DUPLEX_VOICE: "1"'));
 assert.ok(developmentLaunchEnvironment.includes('production ? "opendrsai" : "opendrsai-dev"'));
 assert.ok(developmentLaunchEnvironment.includes('"--opendrsai-launch-mode="'));
 assert.ok(developmentLaunchEnvironment.includes('"--opendrsai-launch-home="'));

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
-import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronDown, RefreshCw } from "lucide-react";
 import type {
   DesktopWeChatChannelStatus,
   DesktopWeChatLoginStartResult,
@@ -8,7 +8,7 @@ import type {
 import type { AppLanguage } from "../navigation";
 import { desktopApi } from "../desktopApi";
 
-function WeChatLogo(): React.JSX.Element {
+export function WeChatLogo(): React.JSX.Element {
   return <svg className="wechat-logo" viewBox="0 0 24 24" aria-hidden="true">
     <path d="M15.85 8.14c.39 0 .77.03 1.14.08C16.31 5.25 13.19 3 9.44 3c-4.25 0-7.7 2.88-7.7 6.43 0 2.05 1.15 3.86 2.94 5.04L3.67 16.5l2.76-1.19c.59.21 1.21.38 1.87.47-.09-.39-.14-.79-.14-1.21-.01-3.54 3.44-6.43 7.69-6.43M12 5.89a.96.96 0 1 1 0 1.92.96.96 0 0 1 0-1.92M6.87 7.82a.96.96 0 1 1 0-1.92.96.96 0 0 1 0 1.92" />
     <path d="M22.26 14.57c0-2.84-2.87-5.14-6.41-5.14s-6.41 2.3-6.41 5.14 2.87 5.14 6.41 5.14c.58 0 1.14-.08 1.67-.2L20.98 21l-1.2-2.4c1.5-.94 2.48-2.38 2.48-4.03m-8.34-.32a.96.96 0 1 1 .96-.96c.01.53-.43.96-.96.96m3.85 0a.96.96 0 1 1 0-1.92.96.96 0 0 1 0 1.92" />
@@ -70,6 +70,11 @@ export function WeChatChannelCard({ language, initialStatus, onStatusChange }: {
         if (result.status === "confirmed") {
           window.clearInterval(interval);
           setLogin(null); setLoginState(null); setQrDataUrl("");
+          try {
+            await desktopApi.startWeChatChannel();
+          } catch (cause) {
+            setError(cause instanceof Error ? cause.message : (zh ? "微信已连接，但自动开始接收失败。" : "WeChat connected, but receiving could not start automatically."));
+          }
           await refresh();
         } else if (result.status === "expired" || result.status === "cancelled") {
           window.clearInterval(interval); setLoginState("expired");
@@ -106,27 +111,52 @@ export function WeChatChannelCard({ language, initialStatus, onStatusChange }: {
 
   const running = status?.runtimeState === "running";
   const expired = status?.credentialState === "expired" || status?.credentialState === "unavailable";
+  const operationalReady = running && !expired;
+  const statusLabel = operationalReady
+    ? (zh ? "可用" : "Available")
+    : expired
+      ? (zh ? "登录已失效" : "Login expired")
+      : status?.configured
+        ? (zh ? "已暂停" : "Paused")
+        : (zh ? "待配置" : "Setup required");
   return (
-    <article className={`channel-adapter-card wechat-channel-card ${running ? "available" : "config_required"}`} aria-label={zh ? "微信频道" : "WeChat channel"}>
-      <div className="channel-adapter-card-header">
-        <span className="channel-adapter-icon wechat-channel-icon"><WeChatLogo /></span>
-        <div><h4>{zh ? "微信" : "WeChat"}</h4><span>{running ? (zh ? "运行中" : "Running") : expired ? (zh ? "登录已失效" : "Login expired") : status?.configured ? (zh ? "已连接，未启用" : "Connected, stopped") : (zh ? "未连接" : "Not connected")}</span></div>
-        <b>{running ? "RUNNING" : "ILINK"}</b>
+    <article className="perceptor-resource-card settings-resource-card wechat-channel-card" data-enabled={running} data-expanded={expanded} aria-label={zh ? "微信频道" : "WeChat channel"}>
+      <header className="perceptor-resource-row settings-resource-row">
         <button
           type="button"
-          className="wechat-expand-button"
+          className="perceptor-resource-main settings-resource-main collapsible-channel-header"
           aria-expanded={expanded}
           aria-label={expanded ? (zh ? "收起微信频道" : "Collapse WeChat channel") : (zh ? "展开微信频道" : "Expand WeChat channel")}
           onClick={() => setExpanded((value) => !value)}
         >
-          {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          <span className="perceptor-kind-icon wechat-channel-icon"><WeChatLogo /></span>
+          <span className="perceptor-resource-name"><strong>{zh ? "微信" : "WeChat"}</strong><small>{zh ? "双向聊天频道 · 本机 Runtime" : "Bidirectional chat · Local Runtime"}</small></span>
+          <span className={`perceptor-inline-status ${operationalReady ? "ok" : "warning"}`}>{statusLabel}</span>
+          <ChevronDown className="perceptor-expand-icon" size={16} />
         </button>
+        <button
+          type="button"
+          className={`perceptor-enable-switch settings-resource-switch${running ? " is-enabled" : ""}`}
+          role="switch"
+          aria-checked={running}
+          aria-label={running ? (zh ? "暂停接收" : "Pause receiving") : (zh ? "开始接收" : "Start receiving")}
+          title={running ? (zh ? "暂停接收" : "Pause receiving") : (zh ? "开始接收" : "Start receiving")}
+          disabled={busy || !status?.configured || expired}
+          onClick={() => void mutate(running ? "stop" : "start")}
+        >
+          <span className="perceptor-switch-track" aria-hidden="true"><i /></span>
+          <em>{running ? (zh ? "已启用" : "Enabled") : (zh ? "未启用" : "Disabled")}</em>
+        </button>
+      </header>
+      {expanded && <div className="perceptor-resource-details settings-resource-details channel-resource-details">
+      <p>{zh ? "通过受信任的本机 Runtime 接收微信文字和图片，并为每个微信用户维护独立智能体会话。" : "Receive WeChat text and images through the trusted local Runtime with an isolated Agent conversation for each user."}</p>
+      <div className="perceptor-capabilities"><code>chat.receive</code><code>chat.send</code><code>image.receive</code></div>
+      <div className="perceptor-state-row">
+        <span className={status?.configured && !expired ? "ok" : "warning"}>{status?.configured && !expired ? (zh ? "凭据有效" : "Credential valid") : expired ? (zh ? "登录已失效" : "Login expired") : (zh ? "需要扫码连接" : "QR sign-in required")}</span>
+        {status?.accountLabel && <span>{zh ? "账号" : "Account"}: {status.accountLabel}</span>}
+        {status?.configured && <span>{zh ? "活动会话" : "Active conversations"}: {sessionCount}</span>}
+        {status?.expiresAt && <small title={new Date(status.expiresAt).toLocaleString()}>{zh ? "凭据有时效" : "Time-limited credential"}</small>}
       </div>
-      {expanded && <>
-      <p>{zh ? "通过受信任的本机 Runtime 接收微信文字和图片，并为每个微信用户维护独立 Agent 会话。" : "Receive WeChat text and images through the trusted local Runtime with an isolated Agent session for each provider user."}</p>
-      {status?.accountLabel && <small>{zh ? "账号" : "Account"}: {status.accountLabel}</small>}
-      {status?.expiresAt && <small>{zh ? "预计到期" : "Expected expiry"}: {new Date(status.expiresAt).toLocaleString()}</small>}
-      {status?.configured && <small>{zh ? "活动会话" : "Active sessions"}: {sessionCount}</small>}
       {login && <div className="wechat-login-panel" role="status" aria-live="polite">
         {qrDataUrl && <img src={qrDataUrl} alt={zh ? "微信登录二维码" : "WeChat login QR code"} />}
         <b>{loginState === "scanned" ? (zh ? "已扫码，请在手机确认" : "Scanned — confirm on your phone") : loginState === "expired" ? (zh ? "二维码已过期" : "QR code expired") : (zh ? "请使用微信扫码" : "Scan with WeChat")}</b>
@@ -138,12 +168,11 @@ export function WeChatChannelCard({ language, initialStatus, onStatusChange }: {
         </div>
       </div>}
       {error && <div className="channels-error" role="alert">{error}</div>}
-      {!login && <div className="channel-card-actions">
-        {!status?.configured || expired ? <button type="button" disabled={busy} onClick={() => void beginLogin()}>{busy ? (zh ? "连接中" : "Connecting") : expired ? (zh ? "重新连接" : "Reconnect") : (zh ? "连接微信" : "Connect WeChat")}</button> : running ? <button type="button" disabled={busy} onClick={() => void mutate("stop")}>{zh ? "停用频道" : "Stop channel"}</button> : <button type="button" disabled={busy} onClick={() => void mutate("start")}>{zh ? "启用频道" : "Start channel"}</button>}
+      {!login && <footer className="channel-card-actions">
+        {(!status?.configured || expired) && <button type="button" disabled={busy} onClick={() => void beginLogin()}>{busy ? (zh ? "连接中" : "Connecting") : expired ? (zh ? "重新连接" : "Reconnect") : (zh ? "连接微信" : "Connect WeChat")}</button>}
         {status?.configured && <button type="button" disabled={busy} onClick={() => void mutate("logout")}>{zh ? "退出登录" : "Sign out"}</button>}
-        <button type="button" disabled={busy} onClick={() => void refresh()} aria-label={zh ? "刷新微信状态" : "Refresh WeChat status"}><RefreshCw size={14} /></button>
+      </footer>}
       </div>}
-      </>}
     </article>
   );
 }

@@ -3,7 +3,7 @@ import { request as httpRequest } from "http";
 import { createHash } from "crypto";
 import { basename, dirname, join } from "path";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
-import { app, clipboard, powerMonitor, type BrowserWindow } from "electron";
+import { app, BrowserWindow, clipboard, powerMonitor } from "electron";
 import type { DesktopBackgroundTask, DesktopTaskArtifactLink } from "../shared/desktopApi";
 import {
   clickLatestCompletionNotificationForE2e,
@@ -181,6 +181,8 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     process.env.OPENDRSAI_E2E_DUPLEX_PERMISSION_RECOVERY !== "1" &&
     process.env.OPENDRSAI_E2E_DUPLEX_PROCESS_RECOVERY !== "1" &&
     process.env.OPENDRSAI_E2E_DUPLEX_PACKAGED_RUN !== "1" &&
+    process.env.OPENDRSAI_E2E_VOICE_PREFERENCES_MULTI_WINDOW !== "1" &&
+    process.env.OPENDRSAI_E2E_DUPLEX_MEDIA !== "1" &&
     !process.env.OPENDRSAI_E2E_DUPLEX_APP_RESTART_PHASE &&
     process.env.OPENDRSAI_E2E_VOICE !== "1" &&
     process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION !== "1"
@@ -311,6 +313,10 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         ? runDuplexProcessRecoverySmoke
       : process.env.OPENDRSAI_E2E_DUPLEX_PACKAGED_RUN === "1"
         ? runDuplexPackagedRunSmoke
+      : process.env.OPENDRSAI_E2E_VOICE_PREFERENCES_MULTI_WINDOW === "1"
+        ? runVoicePreferencesMultiWindowSmoke
+      : process.env.OPENDRSAI_E2E_DUPLEX_MEDIA === "1"
+        ? runDuplexMediaSmoke
       : process.env.OPENDRSAI_E2E_DUPLEX_APP_RESTART_PHASE === "before"
         ? runDuplexAppRestartBeforeSmoke
       : process.env.OPENDRSAI_E2E_DUPLEX_APP_RESTART_PHASE === "after"
@@ -340,6 +346,196 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         process.exit(1);
       });
   });
+}
+
+async function runDuplexMediaSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  return window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const checks = {
+        bridge: Boolean(api),
+        mediaDevices: Boolean(navigator.mediaDevices?.getUserMedia),
+        audioContext: typeof AudioContext === 'function',
+        audioWorklet: typeof AudioWorkletNode === 'function',
+      };
+      const details = { stage: 'capabilities', devices: [], track: null, context: null, firstFrame: null, cleanup: null, failure: null };
+      if (!api || !navigator.mediaDevices?.getUserMedia || typeof AudioContext !== 'function' || typeof AudioWorkletNode !== 'function') {
+        return { ok: false, checks, details };
+      }
+      try {
+      details.stage = 'authentication';
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      checks.authenticated = login?.ok === true;
+      details.stage = 'occupancy-before';
+      const before = await api.getDuplexVoiceOccupancy();
+      checks.initiallyUnoccupied = before?.occupied === false;
+      let stream = null;
+      let context = null;
+      let source = null;
+      let worklet = null;
+      let silentGain = null;
+      let moduleUrl = null;
+      try {
+        details.stage = 'enumerate';
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        details.devices = devices.map((device) => ({ kind: device.kind, hasId: Boolean(device.deviceId), label: device.label || '' }));
+        checks.inputEnumerated = devices.some((device) => device.kind === 'audioinput');
+        checks.outputEnumerated = devices.some((device) => device.kind === 'audiooutput');
+        details.stage = 'get-user-media';
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 }, video: false });
+        const track = stream.getAudioTracks()[0];
+        const settings = track?.getSettings?.() || {};
+        details.track = track ? { kind: track.kind, readyState: track.readyState, enabled: track.enabled, sampleRate: settings.sampleRate || null, channelCount: settings.channelCount || null } : null;
+        checks.liveInputTrack = Boolean(track && track.kind === 'audio' && track.readyState === 'live');
+        details.stage = 'audio-context';
+        context = new AudioContext();
+        await context.resume();
+        details.context = { state: context.state, sampleRate: context.sampleRate };
+        checks.contextRunning = context.state === 'running';
+        const rendererScriptUrl = document.querySelector('script[type="module"]')?.src;
+        const rendererBundle = rendererScriptUrl ? await fetch(rendererScriptUrl).then((response) => response.text()) : '';
+        const workletAsset = rendererBundle.match(/duplexPcmCapture\\.worklet-[A-Za-z0-9_-]+\\.js/)?.[0];
+        moduleUrl = workletAsset ? new URL(workletAsset, rendererScriptUrl).href : null;
+        if (!moduleUrl) throw new DOMException('Packaged Duplex Worklet asset was not found.', 'NotFoundError');
+        details.stage = 'worklet-module';
+        await context.audioWorklet.addModule(moduleUrl);
+        worklet = new AudioWorkletNode(context, 'opendrsai-duplex-pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+        source = context.createMediaStreamSource(stream);
+        silentGain = context.createGain();
+        silentGain.gain.value = 0;
+        source.connect(worklet).connect(silentGain).connect(context.destination);
+        details.stage = 'input-first-frame';
+        details.firstFrame = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(null), 5000);
+          worklet.port.onmessage = (event) => {
+            clearTimeout(timer);
+            resolve({ type: event.data?.type || null, channelCount: event.data?.channels?.length || 0, frames: event.data?.channels?.[0]?.length || 0 });
+          };
+        });
+        checks.workletFirstFrame = Number(details.firstFrame?.frames) > 0;
+        details.stage = 'output-first-frame';
+        const output = context.createBufferSource();
+        output.buffer = context.createBuffer(1, Math.max(128, Math.round(context.sampleRate * 0.02)), context.sampleRate);
+        output.connect(context.destination);
+        checks.outputFirstFrame = await new Promise((resolve) => { const timer = setTimeout(() => resolve(false), 2000); output.onended = () => { clearTimeout(timer); resolve(true); }; output.start(); });
+      } finally {
+        try { source?.disconnect(); } catch {}
+        try { worklet?.disconnect(); worklet?.port?.close(); } catch {}
+        try { silentGain?.disconnect(); } catch {}
+        stream?.getTracks().forEach((track) => track.stop());
+        if (context && context.state !== 'closed') await context.close();
+      }
+      details.stage = 'occupancy-after';
+      const after = await api.getDuplexVoiceOccupancy();
+      details.cleanup = { tracksEnded: stream?.getTracks().every((track) => track.readyState === 'ended') === true, contextClosed: context?.state === 'closed' };
+      checks.resourcesReleased = details.cleanup.tracksEnded && details.cleanup.contextClosed;
+      checks.providerNeverStarted = before?.occupied === false && after?.occupied === false;
+      details.stage = 'complete';
+      return { ok: Object.values(checks).every(Boolean), checks, details };
+      } catch (error) {
+        details.failure = { name: error?.name || null, message: error?.message || String(error), stack: error?.stack || null };
+        return { ok: false, checks, details, error: details.failure.message };
+      }
+    })()
+  `, true) as Promise<SmokeResult>;
+}
+
+async function runVoicePreferencesMultiWindowSmoke(primary: BrowserWindow): Promise<SmokeResult> {
+  const secondary = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+    },
+  });
+  try {
+    await secondary.loadURL(primary.webContents.getURL());
+    const installObserver = `(() => {
+      window.__voicePreferenceEvents = [];
+      window.__disposeVoicePreferenceObserver = window.openDrSai.onVoicePreferencesChanged((value) => {
+        window.__voicePreferenceEvents.push(value);
+      });
+      return Boolean(window.openDrSai);
+    })()`;
+    const [primaryBridge, secondaryBridge] = await Promise.all([
+      primary.webContents.executeJavaScript(installObserver, true),
+      secondary.webContents.executeJavaScript(installObserver, true),
+    ]);
+    const initial = await primary.webContents.executeJavaScript("window.openDrSai.getVoicePreferences()", true);
+    const enableDuplex = JSON.stringify({
+      ...initial,
+      realtimeOptIn: true,
+      selectedMode: "duplex",
+    });
+    const enabled = await primary.webContents.executeJavaScript(
+      `window.openDrSai.updateVoicePreferences({ expectedRevision: ${initial.revision}, preferences: ${enableDuplex} })`,
+      true,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const primaryCandidate = JSON.stringify({
+      ...enabled,
+      duplex: { ...enabled.duplex, volume: 0.35 },
+    });
+    const secondaryCandidate = JSON.stringify({
+      ...enabled,
+      duplex: { ...enabled.duplex, volume: 0.65 },
+    });
+    const updateScript = (candidate: string) => `window.openDrSai
+      .updateVoicePreferences({ expectedRevision: ${enabled.revision}, preferences: ${candidate} })
+      .then((value) => ({ status: 'fulfilled', value }))
+      .catch((error) => ({ status: 'rejected', code: error?.code || '', message: error?.message || String(error) }))`;
+    const outcomes = await Promise.all([
+      primary.webContents.executeJavaScript(updateScript(primaryCandidate), true),
+      secondary.webContents.executeJavaScript(updateScript(secondaryCandidate), true),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const snapshotScript = `Promise.all([
+      window.openDrSai.getVoicePreferences(),
+      Promise.resolve(window.__voicePreferenceEvents.slice())
+    ]).then(([current, events]) => ({ current, events }))`;
+    const [primarySnapshot, secondarySnapshot] = await Promise.all([
+      primary.webContents.executeJavaScript(snapshotScript, true),
+      secondary.webContents.executeJavaScript(snapshotScript, true),
+    ]);
+    const fulfilled = outcomes.filter((outcome) => outcome.status === "fulfilled");
+    const rejected = outcomes.filter((outcome) => outcome.status === "rejected");
+    const finalRevision = enabled.revision + 1;
+    const checks = {
+      primaryBridge: primaryBridge === true,
+      secondaryBridge: secondaryBridge === true,
+      duplexBroadcastToPrimary: primarySnapshot.events.some((event) => event.revision === enabled.revision && event.selectedMode === "duplex"),
+      duplexBroadcastToSecondary: secondarySnapshot.events.some((event) => event.revision === enabled.revision && event.selectedMode === "duplex"),
+      oneConcurrentWriterWon: fulfilled.length === 1,
+      staleWriterRejected: rejected.length === 1 && (
+        rejected[0]?.code === "VOICE_PREFERENCES_REVISION_CONFLICT"
+        || rejected[0]?.message.includes("Voice preferences changed in another window.")
+      ),
+      primaryConverged: primarySnapshot.current.revision === finalRevision,
+      secondaryConverged: secondarySnapshot.current.revision === finalRevision,
+      finalDocumentsEqual: JSON.stringify(primarySnapshot.current) === JSON.stringify(secondarySnapshot.current),
+      finalBroadcastToPrimary: primarySnapshot.events.some((event) => event.revision === finalRevision),
+      finalBroadcastToSecondary: secondarySnapshot.events.some((event) => event.revision === finalRevision),
+    };
+    return {
+      ok: Object.values(checks).every(Boolean),
+      checks,
+      details: {
+        initialRevision: initial.revision,
+        duplexRevision: enabled.revision,
+        finalRevision,
+        outcomes,
+        primaryEventRevisions: primarySnapshot.events.map((event) => event.revision),
+        secondaryEventRevisions: secondarySnapshot.events.map((event) => event.revision),
+        finalMode: primarySnapshot.current.selectedMode,
+        finalVolume: primarySnapshot.current.duplex.volume,
+      },
+    };
+  } finally {
+    if (!secondary.isDestroyed()) secondary.destroy();
+  }
 }
 
 async function runDuplexReadinessSmoke(window: BrowserWindow): Promise<SmokeResult> {
@@ -7191,7 +7387,6 @@ async function runShareVersionConsistencySmoke(window: BrowserWindow): Promise<S
 
 async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const liveFixturePath = process.env.OPENDRSAI_VOICE_LIVE_FIXTURE;
-  const streamingMode = process.env.OPENDRSAI_E2E_VOICE_STREAMING === "1";
   const fullRoundMode = Boolean(liveFixturePath) && process.env.OPENDRSAI_E2E_VOICE_FULL_ROUND === "1";
   if (liveFixturePath && !existsSync(liveFixturePath)) throw new Error("Configured live voice fixture does not exist.");
   const fixtureBytes = liveFixturePath
@@ -7209,12 +7404,8 @@ async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
       if (${JSON.stringify(Boolean(liveFixturePath))}) await api.startGateway();
       const sttStatus = await api.getVoiceRuntimeStatus();
       const ttsStatus = await api.getVoiceSynthesisRuntimeStatus();
-      const streamingCapabilities = await api.getStreamingVoiceCapabilities();
       checks.sttFixtureReady = sttStatus.runtimeId === ${JSON.stringify(expectedRuntime)} && sttStatus.state === "ready";
       checks.ttsFixtureReady = ttsStatus.runtimeId === ${JSON.stringify(expectedRuntime)} && ttsStatus.state === "ready" && ttsStatus.supportsSynthesisTask === true;
-      checks.streamingCapabilitiesReady = ${JSON.stringify(streamingMode)}
-        ? streamingCapabilities.streamingStt === true && streamingCapabilities.streamingTts === true && streamingCapabilities.audioEncodings.includes("pcm_s16le") && streamingCapabilities.sampleRatesHz.includes(16000)
-        : streamingCapabilities.serialStt === true && streamingCapabilities.serialTts === true;
 
       const waitForTerminal = (subscribe, start, timeoutMessage, timeoutMs = 5000) => new Promise(async (resolve, reject) => {
         let unsubscribe = () => {};
@@ -7229,54 +7420,6 @@ async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
       });
 
       const audio = new Uint8Array(${JSON.stringify(fixtureBytes)});
-      const streamingEvents = [];
-      let streamingTypes = [];
-      let streamingCancelledType = "skipped";
-      if (${JSON.stringify(streamingMode)}) {
-        let streamingResult;
-        const streamingTerminal = new Promise((resolve, reject) => {
-          const timer = setTimeout(() => { unsubscribe(); reject(new Error("Packaged streaming STT timed out.")); }, 10000);
-          const unsubscribe = api.onStreamingVoiceTranscriptionEvent((event) => {
-            if (streamingResult && event.sessionId !== streamingResult.sessionId) return;
-            streamingEvents.push(event);
-            if (!["completed", "failed", "cancelled"].includes(event.type)) return;
-            clearTimeout(timer); unsubscribe(); resolve(event);
-          });
-        });
-        streamingResult = await api.startStreamingVoiceTranscription({ turnId: "packaged-streaming-turn", encoding: "pcm_s16le", sampleRateHz: 16000, channels: 1, frameDurationMs: 20, providerEndpointing: true });
-        await new Promise((resolve) => setTimeout(resolve, 30));
-        for (let sequence = 0; sequence < 4; sequence += 1) {
-          const samples = new Int16Array(320); samples.fill(sequence + 1);
-          checks.streamingChunkAccepted = api.sendStreamingVoiceAudioChunk({ sessionId: streamingResult.sessionId, turnId: streamingResult.turnId, sequence, capturedAtMs: performance.now(), durationMs: 20, encoding: "pcm_s16le", sampleRateHz: 16000, channels: 1, audioData: new Uint8Array(samples.buffer) });
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        checks.streamingStopAccepted = await api.stopStreamingVoiceTranscription(streamingResult.sessionId, "manual");
-        const streamingTerminalEvent = await streamingTerminal;
-        streamingTypes = streamingEvents.map((event) => event.type);
-        checks.streamingCompleted = streamingTerminalEvent.type === "completed" && streamingTypes.includes("partial") && streamingTypes.includes("final") && streamingTypes.indexOf("partial") < streamingTypes.indexOf("final") && streamingTypes.indexOf("final") < streamingTypes.indexOf("completed");
-
-        let streamingCancelResult;
-        const streamingCancelled = new Promise((resolve, reject) => {
-          const timer = setTimeout(() => { unsubscribe(); reject(new Error("Packaged streaming cancellation timed out.")); }, 5000);
-          const unsubscribe = api.onStreamingVoiceTranscriptionEvent((event) => {
-            if (streamingCancelResult && event.sessionId !== streamingCancelResult.sessionId) return;
-            if (event.type !== "cancelled") return;
-            clearTimeout(timer); unsubscribe(); resolve(event);
-          });
-        });
-        streamingCancelResult = await api.startStreamingVoiceTranscription({ turnId: "packaged-streaming-cancel-turn", encoding: "pcm_s16le", sampleRateHz: 16000, channels: 1, frameDurationMs: 20, providerEndpointing: true });
-        checks.streamingCancelAccepted = await api.cancelStreamingVoiceTranscription(streamingCancelResult.sessionId);
-        const streamingCancelledEvent = await streamingCancelled;
-        streamingCancelledType = streamingCancelledEvent.type;
-        checks.streamingCancelled = streamingCancelledEvent.type === "cancelled" && streamingCancelledEvent.sessionId === streamingCancelResult.sessionId;
-      } else {
-        checks.streamingChunkAccepted = true;
-        checks.streamingStopAccepted = true;
-        checks.streamingCompleted = true;
-        checks.streamingCancelAccepted = true;
-        checks.streamingCancelled = true;
-      }
-
       const sttEvent = await waitForTerminal(
         (listener) => api.onVoiceTranscriptionEvent(listener),
         () => api.startVoiceTranscription({ audioData: audio, mimeType: ${JSON.stringify(fixtureMimeType)}, durationSeconds: 1 }),
@@ -7333,13 +7476,6 @@ async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
       checks.noInvalidTransitions = !voiceDiagnostics.some((event) => event.component === "turn" && event.errorCode === "invalid_transition");
       checks.diagnosticsPrivate = !diagnosticText.includes("Packaged voice fixture") && !diagnosticText.includes("Fixture voice transcript") && !diagnosticText.includes('"audioData":') && !diagnosticText.includes('"transcript":');
       details.runtimeIds = { stt: sttStatus.runtimeId, tts: ttsStatus.runtimeId };
-      details.streaming = {
-        capabilities: streamingCapabilities,
-        terminalTypes: streamingTypes,
-        mode: ${JSON.stringify(streamingMode ? "streaming" : "serial")},
-        cancelledType: streamingCancelledType,
-        errors: streamingEvents.filter((event) => event.type === "failed").map((event) => ({ code: event.error?.code, message: event.error?.message })),
-      };
       details.maxBoundaryBytes = boundaryBytes;
       details.terminalTypes = { stt: sttEvent.type, cancelled: cancelledEvent.type, tts: ttsEvent.type };
       details.diagnosticOperations = voiceDiagnostics.map((event) => ({ component: event.component, operation: event.operation, status: event.status, durationMs: event.durationMs, errorCode: event.errorCode }));
@@ -7365,7 +7501,7 @@ async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
     });
     window.webContents.reload();
   });
-  const fullRoundResult = await runVoiceFullRoundSmoke(window, streamingMode);
+  const fullRoundResult = await runVoiceFullRoundSmoke(window);
   return {
     ok: transportResult.ok && fullRoundResult.ok,
     checks: { ...transportResult.checks, fullRoundLoginBootstrap: true, ...fullRoundResult.checks },
@@ -7373,7 +7509,7 @@ async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
   };
 }
 
-async function runVoiceFullRoundSmoke(window: BrowserWindow, streamingMode = false): Promise<SmokeResult> {
+async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResult> {
   return window.webContents.executeJavaScript(`
     (async () => {
       const api = window.openDrSai;
@@ -7437,7 +7573,7 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow, streamingMode = fal
         confirmBeforeSend: false,
         inputDeviceId: '',
         inputLanguage: 'en-US',
-        interactionMode: ${JSON.stringify(streamingMode ? "streaming" : "serial")},
+        interactionMode: "serial",
         playbackRate: 1,
         remoteSttConsent: true,
         remoteTtsConsent: true,
@@ -7475,11 +7611,11 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow, streamingMode = fal
       stage('voice-button:ready');
       if (!voiceButton) { observer?.disconnect(); return await finish(); }
       voiceButton?.click();
-      checks.fullRoundCaptureStarted = Boolean(await waitFor(() => document.querySelector(${JSON.stringify(streamingMode ? 'form.composer[data-voice-turn-phase="streaming"]' : 'form.composer[data-voice-turn-phase="recording"]')}), 15000));
+      checks.fullRoundCaptureStarted = Boolean(await waitFor(() => document.querySelector('form.composer[data-voice-turn-phase="recording"]'), 15000));
       stage('capture:started');
       if (!checks.fullRoundCaptureStarted) { observer?.disconnect(); return await finish(); }
       await new Promise((resolve) => setTimeout(resolve, 1500));
-      const stopButton = await waitFor(() => document.querySelector(${JSON.stringify(streamingMode ? 'button[aria-label="Stop live transcription"]' : 'button[aria-label="Stop voice recording"]')}), 5000);
+      const stopButton = await waitFor(() => document.querySelector('button[aria-label="Stop voice recording"]'), 5000);
       checks.fullRoundStopButtonReady = Boolean(stopButton);
       stage('stop-button:ready');
       if (!stopButton) { observer?.disconnect(); return await finish(); }
@@ -7517,11 +7653,8 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow, streamingMode = fal
       observer?.disconnect();
       rememberPhase();
 
-      const requiredPhases = ${JSON.stringify(streamingMode
-        ? ["starting", "streaming", "stopping"]
-        : ["requesting_permission", "recording", "preparing_audio", "transcribing", "ready_to_send", "submitting", "awaiting_response", "response_ready", "synthesizing", "playing", "completed"])};
+      const requiredPhases = ${JSON.stringify(["requesting_permission", "recording", "preparing_audio", "transcribing", "ready_to_send", "submitting", "awaiting_response", "response_ready", "synthesizing", "playing", "completed"])};
       checks.fullRoundPhases = requiredPhases.every((phase) => phases.includes(phase));
-      checks.fullRoundStreamingMode = ${JSON.stringify(streamingMode)};
       checks.fullRoundPlayback = playback.played > 0 && playback.ended > 0;
       const voiceDiagnostics = await api.getDiagnosticSnapshot({ module: 'voice', limit: 100 });
       const ttsCompleted = (voiceDiagnostics.events || []).filter((event) => event.component === 'tts' && event.status === 'completed').length;
@@ -7529,7 +7662,7 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow, streamingMode = fal
       const diagnosticText = JSON.stringify(voiceDiagnostics.events || []);
       checks.fullRoundDiagnosticsPrivate = !diagnosticText.includes(transcript) && !diagnosticText.includes(assistantText) && !diagnosticText.includes('audioData');
       details.phases = phases;
-      details.interactionMode = ${JSON.stringify(streamingMode ? "streaming" : "serial")};
+      details.interactionMode = "serial";
       details.playback = playback;
       stage('round:complete');
       return await finish();
@@ -9568,6 +9701,7 @@ async function runAgentPlanAdjustmentSmoke(window: BrowserWindow): Promise<Smoke
 async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const agentScenario = process.env.OPENDRSAI_E2E_AGENT_RUN_SCENARIO || "default";
   if (agentScenario === "workspace-artifact-p1") return runWorkspaceArtifactP1Smoke(window);
+  if (agentScenario === "conversation-resource-p2") return runConversationResourceP2Smoke(window);
   if (agentScenario === "g1-results-center") return runResultsCenterSmoke(window);
   if (agentScenario === "g3-output-versions") return runOutputVersionsSmoke(window);
   if (agentScenario === "g4-preview-download") return runResultPreviewDownloadSmoke(window);
@@ -10230,6 +10364,66 @@ async function runWorkspaceArtifactP1Smoke(window: BrowserWindow): Promise<Smoke
       checks.saveIntegrityVerified = saved?.integrityVerified === true && saved?.sourceHash === saved?.destinationHash;
       checks.originalExtensionPreserved = String(saved?.destinationPath || '').toLowerCase().endsWith('.docx');
       checks.chineseSpaceWorkspaceCovered = workspacePath.includes('中文') && workspacePath.includes(' ');
+      return { checks, details };
+    })()
+  `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+  const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
+  if (screenshotPath) { mkdirSync(dirname(screenshotPath), { recursive: true }); writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG()); result.details.screenshotPath = screenshotPath; }
+  return { ok: Object.values(result.checks).every(Boolean), checks: result.checks, details: result.details };
+}
+
+async function runConversationResourceP2Smoke(window: BrowserWindow): Promise<SmokeResult> {
+  window.show();
+  window.focus();
+  await waitForMain(() => window.isVisible() && !window.isMinimized(), 5_000);
+  const workspacePath = process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\workspace";
+  const result = (await window.webContents.executeJavaScript(`
+    (async () => {
+      const checks = {}; const details = { states: {}, clicked: [] }; const api = window.openDrSai;
+      checks.bridge = Boolean(api); if (!api) return { checks, details };
+      checks.login = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true;
+      const workspacePath = ${JSON.stringify(workspacePath)};
+      const sessionId = 'session-packaged-resource-p2';
+      const workspace = await api.createWorkspace({ source: 'existing', path: workspacePath, name: 'P2 packaged resource E2E', trusted: true });
+      checks.workspaceRegistered = workspace?.path === workspacePath;
+      const harness = document.createElement('section');
+      harness.id = 'packaged-conversation-resource-p2';
+      harness.setAttribute('aria-label', 'Packaged conversation resource P2 verification');
+      Object.assign(harness.style, { position: 'fixed', inset: '80px 80px auto 80px', zIndex: '2147483647', padding: '20px', background: '#fff', border: '2px solid #1677ff' });
+      document.body.appendChild(harness);
+      const associations = ['available', 'moved', 'changed', 'deleted', 'offline'];
+      const clickPromises = [];
+      for (const state of associations) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.textContent = state; button.setAttribute('aria-label', 'Open resource: ' + state);
+        button.dataset.associationId = 'assoc-' + state;
+        button.addEventListener('click', () => {
+          const pending = api.resolveConversationResource({ workspacePath, sessionId, associationId: button.dataset.associationId })
+            .then((resolved) => { details.states[state] = resolved; details.clicked.push(state); button.dataset.resourceState = resolved.state; });
+          clickPromises.push(pending);
+        });
+        harness.appendChild(button); button.click();
+      }
+      await Promise.all(clickPromises);
+      checks.semanticResourceButtonsClicked = associations.every((state) => details.clicked.includes(state) && harness.querySelector('[data-association-id="assoc-' + state + '"]').dataset.resourceState === state);
+      checks.stateMatrix = associations.every((state) => details.states[state]?.state === state);
+      checks.deletedFailClosed = details.states.deleted?.capabilities?.preview === false && details.states.deleted?.capabilities?.download === false;
+      checks.offlineDistinct = details.states.offline?.state === 'offline' && details.states.offline?.state !== details.states.deleted?.state;
+      const available = { workspacePath, sessionId, associationId: 'assoc-available' };
+      const preview = await api.previewConversationResource({ ...available, maxBytes: 100000 });
+      details.preview = { kind: preview?.kind, content: preview?.content, metadata: preview?.metadata };
+      checks.previewThroughIpc = preview?.kind === 'markdown' && preview?.content === '# Packaged P2 resource\\n';
+      checks.revealThroughIpc = await api.revealConversationResource(available);
+      checks.copyLogicalPathThroughIpc = (await api.copyConversationResourceLogicalPath(available)) === 'docs/available.md';
+      const observed = await api.previewConversationResource({ workspacePath, sessionId, associationId: 'assoc-changed', version: 'observed', maxBytes: 100000 });
+      checks.observedVersionThroughIpc = observed?.content === '# Cited P2 resource\\n';
+      const progress = [];
+      const unsubscribe = api.onConversationResourceDownloadProgress((event) => progress.push(event));
+      const saved = await api.downloadConversationResource({ ...available, suggestedName: 'available.md', operationId: 'packaged-resource-download' });
+      unsubscribe(); details.saved = saved; details.progress = progress;
+      checks.downloadThroughIpc = saved?.canceled === false && saved?.name === 'available.md' && saved?.size > 0;
+      checks.progressThroughPreload = progress.some((event) => event.phase === 'downloading') && progress.some((event) => event.phase === 'completed' && event.percent === 100);
+      checks.rendererHasNoResourceKey = !JSON.stringify({ available, sessionId }).includes('resource_id') && !JSON.stringify({ available, sessionId }).includes('authority_id');
       return { checks, details };
     })()
   `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };

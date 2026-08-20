@@ -36,6 +36,7 @@ import type {
   StructuredTurnState,
 } from "@shared/structuredConversation";
 import type { RunReproducibilityLevel } from "@shared/runInspection";
+import type { OaepResourceRef } from "@shared/oaep.generated";
 import { ChatMessageContent } from "./ChatMessageContent";
 import { desktopApi } from "../desktopApi";
 
@@ -51,12 +52,16 @@ interface StructuredMessagePartsProps {
   runId?: string;
   language: "en" | "zh";
   workspacePath?: string;
+  resourceStates?: Readonly<Record<string, "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported">>;
   respondedRequestIds: ReadonlySet<string>;
   configuredCapabilityRequestIds: ReadonlySet<string>;
   onOpenLink: (href: string | undefined) => void;
   onOpenArtifact: (part: ArtifactPart) => void;
   onDownloadArtifact?: (part: ArtifactPart) => void;
+  onOpenArtifactMenu?: (part: ArtifactPart, anchor: { x: number; y: number }) => void;
   onOpenCitation: (part: CitationPart) => void;
+  onOpenCitationMenu?: (part: CitationPart, anchor: { x: number; y: number }) => void;
+  onOpenResource?: (resourceRef: OaepResourceRef) => void;
   onRespondInteraction: (part: InteractionPart, response: InteractionResponse) => void;
   onRequestTextInteraction: (part: InteractionPart) => void;
   onOpenDebug?: () => void;
@@ -81,12 +86,15 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   runId,
   language,
   workspacePath,
+  resourceStates,
   respondedRequestIds,
   configuredCapabilityRequestIds,
   onOpenLink,
   onOpenArtifact,
-  onDownloadArtifact,
+  onOpenArtifactMenu,
   onOpenCitation,
+  onOpenCitationMenu,
+  onOpenResource,
   onRespondInteraction,
   onRequestTextInteraction,
   onOpenDebug,
@@ -100,7 +108,9 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const relationTimerRef = useRef<number | null>(null);
   const [focusedPartId, setFocusedPartId] = useState<string | null>(null);
-  const [processOpen, setProcessOpen] = useState(turn.status === "error");
+  const [processOpen, setProcessOpen] = useState(
+    turn.status === "running" || turn.status === "error",
+  );
   const previousTurnStatusRef = useRef(turn.status);
   const citationParts = turn.parts.filter((part): part is CitationPart => part.kind === "citation");
   const progressParts = turn.parts.filter((part) => part.kind === "progress");
@@ -159,7 +169,18 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   }, []);
 
   useEffect(() => {
-    if (turn.status === "error" && previousTurnStatusRef.current !== "error") setProcessOpen(true);
+    const previousStatus = previousTurnStatusRef.current;
+    if (turn.status === "running" && previousStatus !== "running") {
+      setProcessOpen(true);
+    } else if (turn.status === "error" && previousStatus !== "error") {
+      setProcessOpen(true);
+    } else if (previousStatus === "running" && turn.status !== "running") {
+      // Keep the live reasoning and activity stream visible while work is in
+      // progress, then return the completed card to its compact summary. This
+      // runs only on the terminal transition, so a later manual expansion is
+      // never overridden.
+      setProcessOpen(false);
+    }
     previousTurnStatusRef.current = turn.status;
   }, [turn.status]);
 
@@ -206,8 +227,8 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
       <ChatMessageContent content={part.summary} streaming={part.status === "running"} language={language} onOpenLink={onOpenLink} />
       {part.total !== undefined && part.completed !== undefined ? <small>{part.completed}/{part.total}</small> : null}
     </div>;
-    if (part.kind === "artifact") return <ArtifactItem key={part.id} part={part} language={language} workspacePath={workspacePath} focused={focusedPartId === part.id} onOpen={() => onOpenArtifact(part)} onDownload={onDownloadArtifact && part.downloadable ? () => onDownloadArtifact(part) : undefined} />;
-    if (part.kind === "citation") return <CitationItem key={part.id} part={part} index={citationParts.findIndex((candidate) => candidate.id === part.id) + 1} language={language} focused={focusedPartId === part.id} onOpen={() => onOpenCitation(part)} onBack={part.markdownPartId ? () => focusPart(part.markdownPartId as string) : undefined} />;
+    if (part.kind === "artifact") return <ArtifactItem key={part.id} part={part} language={language} workspacePath={workspacePath} resourceState={resourceState(part, resourceStates)} focused={focusedPartId === part.id} onOpen={() => onOpenArtifact(part)} onOpenMenu={onOpenArtifactMenu ? (anchor) => onOpenArtifactMenu(part, anchor) : undefined} />;
+    if (part.kind === "citation") return <CitationItem key={part.id} part={part} index={citationParts.findIndex((candidate) => candidate.id === part.id) + 1} language={language} resourceState={resourceState(part, resourceStates)} focused={focusedPartId === part.id} onOpen={() => onOpenCitation(part)} onOpenMenu={onOpenCitationMenu && (part.resourceRef || part.associationId) ? (anchor) => onOpenCitationMenu(part, anchor) : undefined} onBack={part.markdownPartId ? () => focusPart(part.markdownPartId as string) : undefined} />;
     if (part.kind === "interaction") return <InteractionItem compact key={part.id} part={part} language={language} responded={respondedRequestIds.has(part.requestId)} capabilityConfigured={configuredCapabilityRequestIds.has(part.requestId)} onRespond={onRespondInteraction} onRequestText={onRequestTextInteraction} onOpenResult={onOpenDebug} onOpenLink={onOpenLink} />;
     if (part.kind === "subtask") return <div className={`structured-subtask ${part.status}`} key={part.id}><ListChecks size={14} aria-hidden="true" /><span><strong>{part.title}</strong>{part.summary ? ` · ${part.summary}` : ""}</span></div>;
     return <NoticeItem key={part.id} part={part} language={language} onOpenDebug={onOpenDebug} />;
@@ -230,8 +251,18 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
           <RetrievalStageSummary turn={turn} language={language} />
           {processPresentation.completionSummary ? <div className="structured-process-overview"><CheckCircle2 size={15} aria-hidden="true" /><span>{processPresentation.completionSummary}</span></div> : null}
           <CompactProgressSection groups={processPresentation.progressGroups} language={language} />
-          <ReasoningDisclosure parts={reasoningParts} language={language} renderPart={renderPart} />
-          <AggregatedActivityDetails groups={processPresentation.activityGroups} language={language} />
+          <ReasoningDisclosure
+            parts={reasoningParts}
+            language={language}
+            running={turn.status === "running"}
+            renderPart={renderPart}
+          />
+          <AggregatedActivityDetails
+            groups={processPresentation.activityGroups}
+            language={language}
+            resourceStates={resourceStates}
+            onOpenResource={onOpenResource}
+          />
           <BoundedProcessSection title={language === "zh" ? "子任务" : "Subtasks"} items={subtaskParts} language={language} renderPart={renderPart} />
           <BoundedProcessSection title={language === "zh" ? "运行信息" : "Run information"} items={backgroundNoticeParts} language={language} renderPart={renderPart} />
           <div className="structured-process-footer">
@@ -255,6 +286,29 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     </div>
   );
 });
+
+function resourceState(
+  link: { resourceRef?: OaepResourceRef; associationId?: string; sessionId?: string } | OaepResourceRef | undefined,
+  states: StructuredMessagePartsProps["resourceStates"],
+): "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported" | undefined {
+  if (!link) return undefined;
+  if ("associationId" in link && link.associationId && link.sessionId) return states?.[`${link.sessionId}:${link.associationId}`];
+  const reference = "workspace_id" in link
+    ? link as OaepResourceRef
+    : (link as { resourceRef?: OaepResourceRef }).resourceRef;
+  if (!reference) return undefined;
+  return states?.[`${reference.workspace_id}:${reference.resource_type}:${reference.resource_id}`];
+}
+
+function resourceStateLabel(
+  state: "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported",
+  language: "en" | "zh",
+): string {
+  const labels = language === "zh"
+    ? { available: "可用", moved: "已移动", changed: "已更改", deleted: "已删除", offline: "离线", unsupported: "不支持" }
+    : { available: "Available", moved: "Moved", changed: "Changed", deleted: "Deleted", offline: "Offline", unsupported: "Unsupported" };
+  return labels[state];
+}
 
 function extractPublicSources(turn: StructuredTurnState): Array<{ url: string; label: string }> {
   const urls: string[] = [];
@@ -417,13 +471,22 @@ function CompactProgressSection({
 function ReasoningDisclosure({
   parts,
   language,
+  running,
   renderPart,
 }: {
   parts: Array<Extract<StructuredAssistantPart, { kind: "reasoning" }>>;
   language: "en" | "zh";
+  running: boolean;
   renderPart: (part: StructuredAssistantPart) => React.JSX.Element | null;
 }): React.JSX.Element | null {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(running);
+  const previousRunningRef = useRef(running);
+  useEffect(() => {
+    const wasRunning = previousRunningRef.current;
+    if (running && !wasRunning) setOpen(true);
+    else if (!running && wasRunning) setOpen(false);
+    previousRunningRef.current = running;
+  }, [running]);
   if (!parts.length) return null;
   const latestSummary = [...parts].reverse().map((part) => part.summary?.trim()).find(Boolean);
   return <details className="structured-analysis-disclosure" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
@@ -438,9 +501,13 @@ function ReasoningDisclosure({
 function AggregatedActivityDetails({
   groups,
   language,
+  resourceStates,
+  onOpenResource,
 }: {
   groups: ProcessActivityGroup[];
   language: "en" | "zh";
+  resourceStates?: Readonly<Record<string, "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported">>;
+  onOpenResource?: (resourceRef: OaepResourceRef) => void;
 }): React.JSX.Element | null {
   const [page, setPage] = useState(0);
   const window = boundedProcessWindow(groups.length, page, PROCESS_ACTIVITY_WINDOW_SIZE);
@@ -453,7 +520,22 @@ function AggregatedActivityDetails({
         <ActivityStatusIcon status={group.status} />
         <span>{group.label}</span>
         {group.count > 1 ? <small>×{group.count}</small> : null}
-        {group.fileNames.length ? <small className="structured-activity-files">{group.fileNames.slice(0, 3).join("、")}{group.fileNames.length > 3 ? ` +${group.fileNames.length - 3}` : ""}</small> : null}
+        {group.fileResources.length && onOpenResource ? <span className="structured-activity-files structured-activity-resource-links">
+          {group.fileResources.slice(0, 3).map(({ name, resourceRef }) => {
+            const state = resourceState(resourceRef, resourceStates);
+            return <button
+              type="button"
+              key={`${resourceRef.workspace_id}:${resourceRef.resource_id}`}
+              disabled={state === "deleted"}
+              data-resource-state={state || "unknown"}
+              title={state === "deleted"
+                ? (language === "zh" ? `${name} 已删除` : `${name} was deleted`)
+                : (language === "zh" ? `在文件中打开 ${name}` : `Open ${name} in Files`)}
+              onClick={() => onOpenResource(resourceRef)}
+            >{name}{state && state !== "available" ? ` · ${resourceStateLabel(state, language)}` : ""}</button>;
+          })}
+          {group.fileResources.length > 3 ? <small>{`+${group.fileResources.length - 3}`}</small> : null}
+        </span> : group.fileNames.length ? <small className="structured-activity-files">{group.fileNames.slice(0, 3).join("、")}{group.fileNames.length > 3 ? ` +${group.fileNames.length - 3}` : ""}</small> : null}
         {group.durationMs !== undefined && (group.durationMs >= 1000 || group.status === "error") ? <time>{formatRunDuration(group.durationMs, language)}</time> : null}
       </div>)}
     </div>
@@ -519,20 +601,29 @@ function isImageArtifact(part: ArtifactPart): boolean {
   return /\.(png|jpe?g|gif|webp|bmp|svg)(?:$|[?#])/i.test(name);
 }
 
+function formatArtifactSize(size: number | undefined): string | undefined {
+  if (typeof size !== "number" || !Number.isFinite(size) || size < 0) return undefined;
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function ArtifactItem({
   part,
   language,
   workspacePath,
+  resourceState,
   focused,
   onOpen,
-  onDownload,
+  onOpenMenu,
 }: {
   part: ArtifactPart;
   language: "en" | "zh";
   workspacePath?: string;
+  resourceState?: "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported";
   focused: boolean;
   onOpen: () => void;
-  onDownload?: () => void;
+  onOpenMenu?: (anchor: { x: number; y: number }) => void;
 }): React.JSX.Element {
   const Icon = part.artifactType === "image"
     ? Image
@@ -575,6 +666,12 @@ function ArtifactItem({
       data-structured-part-id={part.id}
       data-artifact-id={part.artifactId}
       data-status={part.status}
+      data-resource-state={resourceState}
+      onContextMenu={onOpenMenu ? (event) => {
+        event.preventDefault();
+        event.currentTarget.querySelector<HTMLButtonElement>("button")?.focus();
+        onOpenMenu({ x: event.clientX, y: event.clientY });
+      } : undefined}
     >
       {showImage && previewSrc ? (
         <button
@@ -591,15 +688,27 @@ function ArtifactItem({
       <button
         type="button"
         className="structured-artifact"
-        onClick={onOpen}
+        onClick={resourceState === "deleted" ? undefined : onOpen}
+        aria-disabled={resourceState === "deleted" ? true : undefined}
+        onKeyDown={onOpenMenu ? (event) => {
+          if (event.key === "F10" && event.shiftKey) {
+            event.preventDefault();
+            const rect = event.currentTarget.getBoundingClientRect();
+            onOpenMenu({ x: rect.left, y: rect.bottom });
+          }
+        } : undefined}
         title={part.path || part.url || part.name}
+        aria-label={`${language === "zh" ? "打开资源" : "Open resource"}: ${part.name}${resourceState ? ` · ${formatResourceState(resourceState, language)}` : ""}`}
       >
         <Icon size={16} aria-hidden="true" />
-        <span><strong>{part.name}</strong>{part.summary ? <small>{part.summary}</small> : null}</span>
-        <em>{formatPartStatus(part.status, language)}</em>
+        <span>
+          <strong><bdi>{part.name}</bdi></strong>
+          {part.summary ? <small>{part.summary}</small> : null}
+          <small>{[formatArtifactSize(part.size), language === "zh" ? "在文件中显示" : "Show in Files"].filter(Boolean).join(" · ")}</small>
+        </span>
+        <em>{formatResourceState(resourceState, language) || formatPartStatus(part.status, language)}</em>
         <ArrowUpRight size={14} aria-hidden="true" />
       </button>
-      {onDownload ? <button type="button" className="structured-artifact-download" onClick={onDownload}>{language === "zh" ? "下载 / 另存为" : "Download / Save as"}</button> : null}
     </div>
   );
 }
@@ -615,15 +724,19 @@ function CitationItem({
   part,
   index,
   language,
+  resourceState,
   focused,
   onOpen,
+  onOpenMenu,
   onBack,
 }: {
   part: CitationPart;
   index: number;
   language: "en" | "zh";
+  resourceState?: "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported";
   focused: boolean;
   onOpen: () => void;
+  onOpenMenu?: (anchor: { x: number; y: number }) => void;
   onBack?: () => void;
 }): React.JSX.Element {
   // Checking a claim means reading the passage it rests on. A public URL opens
@@ -632,22 +745,31 @@ function CitationItem({
   // which answers the same question without the navigation.
   const [showExcerpt, setShowExcerpt] = useState(false);
   const isWeb = Boolean(part.url && /^https?:\/\//i.test(part.url));
-  const openable = isWeb || Boolean(part.knowledgeBaseId && (part.documentPath || part.path));
+  const openable = isWeb || Boolean(part.resourceRef) || Boolean(part.associationId && part.sessionId) || Boolean(part.path) || Boolean(part.knowledgeBaseId && (part.documentPath || part.path));
   const expandable = Boolean(part.excerpt);
   return (
-    <div className={`structured-citation ${focused ? "relation-focus" : ""}`} data-structured-part-id={part.id} data-citation-id={part.citationId}>
+    <div className={`structured-citation ${focused ? "relation-focus" : ""}`} data-structured-part-id={part.id} data-citation-id={part.citationId} data-resource-state={resourceState} onContextMenu={onOpenMenu ? (event) => { event.preventDefault(); event.currentTarget.querySelector<HTMLButtonElement>("button")?.focus(); onOpenMenu({ x: event.clientX, y: event.clientY }); } : undefined}>
       <button
         type="button"
         className="structured-citation-open"
-        onClick={openable ? onOpen : expandable ? () => setShowExcerpt((value) => !value) : undefined}
+        onClick={resourceState === "deleted" ? undefined : openable ? onOpen : expandable ? () => setShowExcerpt((value) => !value) : undefined}
+        aria-disabled={resourceState === "deleted" ? true : undefined}
+        onKeyDown={onOpenMenu ? (event) => {
+          if (event.key === "F10" && event.shiftKey) {
+            event.preventDefault();
+            const rect = event.currentTarget.getBoundingClientRect();
+            onOpenMenu({ x: rect.left, y: rect.bottom });
+          }
+        } : undefined}
         disabled={!openable && !expandable}
         aria-expanded={expandable && !openable ? showExcerpt : undefined}
         title={part.url || part.path || part.title}
       >
         <span className="structured-citation-index">[{index}]</span>
         {isWeb ? <Globe2 size={13} aria-hidden="true" /> : <FileText size={13} aria-hidden="true" />}
-        <span>{part.title}</span>
+        <span><bdi>{part.title}</bdi></span>
         {part.locator ? <small>{part.locator}</small> : null}
+        {resourceState && resourceState !== "available" ? <small>{formatResourceState(resourceState, language)}</small> : null}
         {openable ? <ArrowUpRight size={12} aria-hidden="true" /> : null}
       </button>
       {expandable && openable ? (
@@ -685,6 +807,18 @@ function formatPartStatus(status: ArtifactPart["status"], language: "en" | "zh")
     cancelled: ["已取消", "Cancelled"],
   } as const;
   return labels[status][language === "zh" ? 0 : 1];
+}
+
+function formatResourceState(state: "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported" | undefined, language: "en" | "zh"): string {
+  if (!state || state === "available") return "";
+  const labels = {
+    moved: ["已移动", "Moved"],
+    changed: ["已变化", "Changed"],
+    deleted: ["已删除", "Deleted"],
+    offline: ["离线", "Offline"],
+    unsupported: ["不支持", "Unsupported"],
+  } as const;
+  return labels[state][language === "zh" ? 0 : 1];
 }
 
 function InteractionItem({
@@ -842,7 +976,7 @@ function InteractionItem({
       <div className="capability-configuration-title"><Globe2 size={18} aria-hidden="true" /><strong>{zh ? "需要网络感知器" : "A network perceptor is needed"}</strong></div>
       <p>{capabilityPrompt}</p>
       <p>{zh ? "登录 HAI 后可直接使用平台托管网页搜索，无需配置 Tavily Key。也可选择使用自己的 Key。" : "Sign in to HAI to use platform-managed web search without a Tavily key, or use your own key."}</p>
-      <p>{zh ? "你也可以稍后在“设置 → 感知器配置”中查看托管状态或管理自己的 Tavily 配置。" : "You can also review managed status or manage your own Tavily configuration later in Settings → Perceptors."}</p>
+      <p>{zh ? "你也可以稍后在“设置 → 智能体 → 感知执行器”中查看托管状态或管理自己的 Tavily 配置。" : "You can also review managed status or manage your own Tavily configuration later in Settings → Agent → Perception & execution."}</p>
       <p className="capability-configuration-privacy">{zh ? "隐私说明：完成选择之前不会发送本次问题；使用托管搜索时，Key 不会下发到本机。" : "Privacy: this query is not sent before you choose. Managed provider credentials never reach this device."}</p>
       {showByokConfiguration ? <>
         <label>{zh ? "Tavily API Key" : "Tavily API key"}<input data-testid="capability-api-key" type="password" autoComplete="off" value={apiKey} disabled={responded || savingConfiguration} onChange={(event) => setApiKey(event.target.value)} placeholder="tvly-…" /></label>

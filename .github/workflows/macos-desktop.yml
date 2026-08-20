@@ -68,6 +68,9 @@ jobs:
         with:
           python-version: "3.11.9"
 
+      - name: Require Apple Silicon runner
+        run: test "$(uname -m)" = "arm64"
+
       - name: Install locked dependencies
         run: npm ci
 
@@ -114,6 +117,9 @@ jobs:
 
       - name: Verify unsigned packaged smoke
         run: npm run verify:packaged --workspace opendrsai-macos-desktop
+
+      - name: Verify packaged P2 conversation resources
+        run: npm run verify:packaged-conversation-resource-p2 --workspace opendrsai-macos-desktop
 
       - name: Package and verify unsigned update artifacts
         run: |

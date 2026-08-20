@@ -11,6 +11,7 @@ const gateway = read("cores/python/packages/drsai/src/drsai/backend/gateway.py")
 const main = read("apps/desktop/windows/src/main/index.ts");
 const archive = read("apps/desktop/windows/src/main/threadArchive.ts");
 const app = read("apps/desktop/shared/renderer/src/App.tsx");
+const codexSettings = read("apps/desktop/shared/renderer/src/components/CodexIntegrationSettings.tsx");
 const shell = read("apps/desktop/shared/renderer/src/components/WorkspaceShell.tsx");
 
 const checks = [
@@ -20,7 +21,7 @@ const checks = [
   ["M02-F04 active and archived discovery", client.includes("for archived in (False, True)")],
   ["M02-F05 deterministic deduplicated import", runtime.includes("hashlib.sha256(backend_session_id") && client.includes("discovered[thread_id]")],
   ["M02-F06 bounded result feedback", app.includes("sync.active") && app.includes("sync.archived") && app.includes("sync.skipped")],
-  ["M02-F07 workspace and Settings resync with cancel", shell.includes("workspace-sync-codex-sessions") && app.includes("codex-workspace-sync-settings") && app.includes("cancelWorkspaceSessionSync")],
+  ["M02-F07 workspace and Codex Settings resync with cancel", shell.includes("workspace-sync-codex-sessions") && codexSettings.includes("codex-workspace-sync-settings") && app.includes("cancelWorkspaceSessionSync")],
   ["M03-F03 visible source labels", shell.includes("thread-source-label") && shell.includes('source === "remote"')],
   ["M03-F04 Codex rename scope is explicit", shell.includes("original Codex task name is unchanged")],
   ["M03-F05 archive converges and remains retryable", gateway.includes("Mirror to the owning Agent Backend first") && archive.includes("Nothing changed; retry")],

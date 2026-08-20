@@ -31,6 +31,7 @@ import type {
   DesktopMobileRemoteDiagnostics,
   GatewayStatus,
   WorkspaceProject,
+  OaepInputPart,
   OaepInputResource,
   RuntimeModelRef,
 } from "../api/desktopApi";
@@ -485,7 +486,7 @@ export interface RuntimeClient {
     runId: string,
     prompt: string,
     signal?: AbortSignal,
-    provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[]; inputResources?: OaepInputResource[]; model?: string; modelSelection?: RuntimeModelRef; metadata?: Record<string, unknown> },
+    provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[]; inputResources?: OaepInputResource[]; inputParts?: OaepInputPart[]; model?: string; modelSelection?: RuntimeModelRef; metadata?: Record<string, unknown> },
     auth?: RuntimeExecutionAuth,
   ): Promise<{ run: RuntimeAgentRun; result: unknown }>;
   cancelAgentRun(runId: string): Promise<RuntimeAgentRun>;
@@ -523,7 +524,12 @@ export interface RuntimeClient {
   decideRunApproval(approvalId: string, decision: "approved" | "denied", auth?: RuntimeExecutionAuth): Promise<Record<string, unknown> & { approval_id: string; status: string }>;
   respondAgentApproval(runId: string, approvalId: string, decision: "accept" | "acceptForSession" | "decline" | "cancel"): Promise<void>;
   createRun(request: RuntimeRunRequest, signal?: AbortSignal): Promise<RuntimeRunStream>;
-  executeOWOP<K extends OWOPOperation>(workspaceId: string, operation: K, params: OWOPParamsByOperation[K]): Promise<Record<string, unknown>>;
+  executeOWOP<K extends OWOPOperation>(
+    workspaceId: string,
+    operation: K,
+    params: OWOPParamsByOperation[K],
+    context?: { sessionId?: string; runId?: string },
+  ): Promise<Record<string, unknown>>;
   requestFiles<T>(workspaceId: string, endpoint: string, init?: RequestInit): Promise<T>;
   requestGit<T>(workspaceId: string, endpoint: string, init?: RequestInit): Promise<T>;
   ptyEndpoint(): string;
@@ -967,7 +973,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     runId: string,
     prompt: string,
     signal?: AbortSignal,
-    provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[]; inputResources?: OaepInputResource[]; model?: string; modelSelection?: RuntimeModelRef; metadata?: Record<string, unknown> },
+    provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[]; inputResources?: OaepInputResource[]; inputParts?: OaepInputPart[]; model?: string; modelSelection?: RuntimeModelRef; metadata?: Record<string, unknown> },
     auth?: RuntimeExecutionAuth,
   ): Promise<{ run: RuntimeAgentRun; result: unknown }> {
     return this.requestJson(`/v1/runs/${encodeURIComponent(runId)}/execute`, { method: "POST", signal,
@@ -995,6 +1001,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
           source_message_id: provenance.sourceMessageId,
           attachment_refs: provenance.attachmentRefs ?? [],
           input_resources: provenance.inputResources ?? [],
+          input_parts: provenance.inputParts,
         } : {},
       }) });
   }
@@ -1257,6 +1264,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     workspaceId: string,
     operation: K,
     params: OWOPParamsByOperation[K],
+    context?: { sessionId?: string; runId?: string },
   ): Promise<Record<string, unknown>> {
     this.assertResourceId("Workspace", workspaceId);
     const requestId = randomUUID();
@@ -1266,7 +1274,12 @@ abstract class HttpRuntimeClient implements RuntimeClient {
       | { ok: false; error: { code: string; message: string; correlation_id: string; retryable: boolean; details: Record<string, unknown> } }
     >("/v1/owop", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Correlation-ID": correlationId },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Correlation-ID": correlationId,
+        ...(context?.sessionId ? { "X-OpenDrSai-Session-ID": context.sessionId } : {}),
+        ...(context?.runId ? { "X-OpenDrSai-Run-ID": context.runId } : {}),
+      },
       body: JSON.stringify({
         version: "1.0", request_id: requestId, correlation_id: correlationId,
         workspace_id: workspaceId, operation, params,

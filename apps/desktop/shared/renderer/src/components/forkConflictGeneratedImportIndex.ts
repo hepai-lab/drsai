@@ -222,6 +222,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/data/androidplatformagentstrings",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt",
+        "specifier": "ai.drsai.remote.data.AndroidPlatformAgentStrings",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/data/androidupdatemanager",
     "importers": [
       {
@@ -327,6 +340,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
         "specifier": "ai.drsai.remote.data.AppDestination",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/data/approvalgrantuiitem",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
+        "specifier": "ai.drsai.remote.data.ApprovalGrantUiItem",
         "kind": "jvm-import",
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
@@ -594,6 +620,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RecoveryCenterRepository.kt",
+        "specifier": "ai.drsai.remote.data.ChatDatabase",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt",
         "specifier": "ai.drsai.remote.data.ChatDatabase",
         "kind": "jvm-import",
@@ -779,6 +813,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     "importers": [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt",
+        "specifier": "ai.drsai.remote.data.FullRuntimeDiagnosticUi",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/DiagnosticFeedbackBundle.kt",
         "specifier": "ai.drsai.remote.data.FullRuntimeDiagnosticUi",
         "kind": "jvm-import",
         "commands": [
@@ -1172,6 +1214,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
         ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt",
+        "specifier": "ai.drsai.remote.data.MIGRATION_13_14",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
       }
     ]
   },
@@ -1189,6 +1239,43 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteWorkspaceContainer.kt",
         "specifier": "ai.drsai.remote.data.MIGRATION_14_15",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt",
+        "specifier": "ai.drsai.remote.data.MIGRATION_14_15",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/data/migration_15_16",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt",
+        "specifier": "ai.drsai.remote.data.MIGRATION_15_16",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteWorkspaceContainer.kt",
+        "specifier": "ai.drsai.remote.data.MIGRATION_15_16",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt",
+        "specifier": "ai.drsai.remote.data.MIGRATION_15_16",
         "kind": "jvm-import",
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
@@ -1429,6 +1516,27 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/data/modelconfigurationmessagekind",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt",
+        "specifier": "ai.drsai.remote.data.ModelConfigurationMessageKind",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
+        "specifier": "ai.drsai.remote.data.ModelConfigurationMessageKind",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/data/modeldelta",
     "importers": [
       {
@@ -1552,6 +1660,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/data/modelrecommendationpolicy",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt",
+        "specifier": "ai.drsai.remote.data.ModelRecommendationPolicy",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/data/modeltoolchoiceprotocoladapter",
     "importers": [
       {
@@ -1582,6 +1703,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     "importers": [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/oaep/LocalOaepLegacyProjection.kt",
+        "specifier": "ai.drsai.remote.data.OaepDiagnosticEventUi",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/DiagnosticFeedbackBundle.kt",
         "specifier": "ai.drsai.remote.data.OaepDiagnosticEventUi",
         "kind": "jvm-import",
         "commands": [
@@ -1724,6 +1853,45 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/ChatExecutionRouter.kt",
         "specifier": "ai.drsai.remote.data.PlatformAgentRuntime",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/data/providerverification",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt",
+        "specifier": "ai.drsai.remote.data.ProviderVerification",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/data/providerverificationpolicy",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt",
+        "specifier": "ai.drsai.remote.data.ProviderVerificationPolicy",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/data/providerverificationstore",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt",
+        "specifier": "ai.drsai.remote.data.ProviderVerificationStore",
         "kind": "jvm-import",
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
@@ -2151,7 +2319,207 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/r",
     "importers": [
       {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/data/AndroidUpdateStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/data/ArtifactAccessStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/data/AttachmentStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/data/LocalToolExecutionStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/data/ModelGatewayStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/data/ModelProviderStoreStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/data/OidcStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/data/PlatformAgentStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/data/ProviderDraftStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/data/AssociationStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/data/RemoteCommandState.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/device/RemoteWorkspaceNotifications.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/model/OaepPresentationStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/model/RemoteConversationStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteActionablePresentation.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteConnectionDiagnostic.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteHomeViewModel.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteHostStatusPresentation.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteMarkdown.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSafeFailurePresentation.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSessionScreens.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSessionViewModel.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteWorkspaceScreens.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/WorkspaceReadScreens.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/WorkspaceSessionsViewModel.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/HybridRuntimeStrings.kt",
         "specifier": "ai.drsai.remote.R",
         "kind": "jvm-import",
         "commands": [
@@ -2167,7 +2535,111 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/errors/CapabilityRepairStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/errors/UserFacingFailureStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/oaep/LegacyRuntimeStatusStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/readiness/AgentReadinessStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/readiness/CapabilityGuidanceStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/LongTaskStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/NetworkRunStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RecoveryCenterStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalPreviewStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ApprovalRiskStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/security/ToolOutcomeStrings.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/setup/FirstTaskExamples.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolHumanPresentation.kt",
         "specifier": "ai.drsai.remote.R",
         "kind": "jvm-import",
         "commands": [
@@ -2177,6 +2649,27 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
         "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/ui/UserAvatar.kt",
+        "specifier": "ai.drsai.remote.R",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/remote/data/androidassociationstrings",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteHomeViewModel.kt",
+        "specifier": "ai.drsai.remote.remote.data.AndroidAssociationStrings",
         "kind": "jvm-import",
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
@@ -2287,6 +2780,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/remote/data/labelresource",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSessionScreens.kt",
+        "specifier": "ai.drsai.remote.remote.data.labelResource",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/remote/data/oaepjsoncodec",
     "importers": [
       {
@@ -2314,6 +2820,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/oaep/AndroidOaepRuntimeSink.kt",
+        "specifier": "ai.drsai.remote.remote.data.OaepJsonCodec",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/oaep/AndroidOaepStore.kt",
         "specifier": "ai.drsai.remote.remote.data.OaepJsonCodec",
         "kind": "jvm-import",
@@ -2330,7 +2844,23 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/oaep/LegacyOaepBackfill.kt",
+        "specifier": "ai.drsai.remote.remote.data.OaepJsonCodec",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/oaep/LocalOaepLegacyProjection.kt",
+        "specifier": "ai.drsai.remote.remote.data.OaepJsonCodec",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRuntimeEventMapper.kt",
         "specifier": "ai.drsai.remote.remote.data.OaepJsonCodec",
         "kind": "jvm-import",
         "commands": [
@@ -2340,6 +2870,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RunRecoveryWorker.kt",
         "specifier": "ai.drsai.remote.remote.data.OaepJsonCodec",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/remote/data/owopresult",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSafeFailurePresentation.kt",
+        "specifier": "ai.drsai.remote.remote.data.OwopResult",
         "kind": "jvm-import",
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
@@ -2450,6 +2993,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteHomeViewModel.kt",
         "specifier": "ai.drsai.remote.remote.data.remoteActionableFailure",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/remote/data/remoteactionablekind",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteActionablePresentation.kt",
+        "specifier": "ai.drsai.remote.remote.data.RemoteActionableKind",
         "kind": "jvm-import",
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
@@ -2654,6 +3210,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/data/LocalStore.kt",
         "specifier": "ai.drsai.remote.remote.data.RemoteEventEntity",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/remote/data/remotefailuremessagekind",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSafeFailurePresentation.kt",
+        "specifier": "ai.drsai.remote.remote.data.RemoteFailureMessageKind",
         "kind": "jvm-import",
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
@@ -2869,6 +3438,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
         ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteWorkspaceScreens.kt",
+        "specifier": "ai.drsai.remote.remote.data.RemoteSearchKind",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
       }
     ]
   },
@@ -2898,6 +3475,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     "importers": [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteHomeViewModel.kt",
+        "specifier": "ai.drsai.remote.remote.data.RemoteSearchSource",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteWorkspaceScreens.kt",
         "specifier": "ai.drsai.remote.remote.data.RemoteSearchSource",
         "kind": "jvm-import",
         "commands": [
@@ -3043,19 +3628,11 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/remote/data/saferemotefailuremessage",
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/remote/data/saferemotefailurekind",
     "importers": [
       {
-        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteAuditViewModel.kt",
-        "specifier": "ai.drsai.remote.remote.data.safeRemoteFailureMessage",
-        "kind": "jvm-import",
-        "commands": [
-          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
-        ]
-      },
-      {
-        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/WorkspaceSessionsViewModel.kt",
-        "specifier": "ai.drsai.remote.remote.data.safeRemoteFailureMessage",
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSafeFailurePresentation.kt",
+        "specifier": "ai.drsai.remote.remote.data.safeRemoteFailureKind",
         "kind": "jvm-import",
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
@@ -3098,19 +3675,6 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteHomeViewModel.kt",
         "specifier": "ai.drsai.remote.remote.data.SharedPreferencesWorkspaceRecencyStore",
-        "kind": "jvm-import",
-        "commands": [
-          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/remote/data/userlabel",
-    "importers": [
-      {
-        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSessionScreens.kt",
-        "specifier": "ai.drsai.remote.remote.data.userLabel",
         "kind": "jvm-import",
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
@@ -3893,6 +4457,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/oaep/NormalizedAgentEvent.kt",
         "specifier": "ai.drsai.remote.remote.generated.OaepItemContent",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/remote/generated/oaeplegacymessagepart",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/oaep/LocalOaepLegacyProjection.kt",
+        "specifier": "ai.drsai.remote.remote.generated.OaepLegacyMessagePart",
         "kind": "jvm-import",
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
@@ -5887,6 +6464,32 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/action_open_run_approval",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/MainActivity.kt",
+        "specifier": "ai.drsai.remote.runtime.device.ACTION_OPEN_RUN_APPROVAL",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/action_open_run_result",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/MainActivity.kt",
+        "specifier": "ai.drsai.remote.runtime.device.ACTION_OPEN_RUN_RESULT",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/action_stop_local_run",
     "importers": [
       {
@@ -5913,6 +6516,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt",
         "specifier": "ai.drsai.remote.runtime.device.ClipboardAccessPolicy",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/extra_account_subject",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/MainActivity.kt",
+        "specifier": "ai.drsai.remote.runtime.device.EXTRA_ACCOUNT_SUBJECT",
         "kind": "jvm-import",
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
@@ -6354,6 +6970,103 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/runtime/readiness/agentreadiness",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt",
+        "specifier": "ai.drsai.remote.runtime.readiness.AgentReadiness",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/data/Models.kt",
+        "specifier": "ai.drsai.remote.runtime.readiness.AgentReadiness",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/setup/SetupJourney.kt",
+        "specifier": "ai.drsai.remote.runtime.readiness.AgentReadiness",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/runtime/readiness/agentreadinessinput",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt",
+        "specifier": "ai.drsai.remote.runtime.readiness.AgentReadinessInput",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/data/Models.kt",
+        "specifier": "ai.drsai.remote.runtime.readiness.AgentReadinessInput",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/runtime/readiness/agentreadinesspolicy",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt",
+        "specifier": "ai.drsai.remote.runtime.readiness.AgentReadinessPolicy",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/data/Models.kt",
+        "specifier": "ai.drsai.remote.runtime.readiness.AgentReadinessPolicy",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/runtime/readiness/localrunadmission",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt",
+        "specifier": "ai.drsai.remote.runtime.readiness.localRunAdmission",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/runtime/readiness/readinesskind",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/setup/SetupJourney.kt",
+        "specifier": "ai.drsai.remote.runtime.readiness.ReadinessKind",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/action_open_recoverable_run",
     "importers": [
       {
@@ -6579,6 +7292,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/data/Models.kt",
+        "specifier": "ai.drsai.remote.runtime.security.SensitiveDataRedactor",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/context/ContextAssembler.kt",
         "specifier": "ai.drsai.remote.runtime.security.SensitiveDataRedactor",
         "kind": "jvm-import",
@@ -6629,6 +7350,45 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt",
         "specifier": "ai.drsai.remote.runtime.security.SensitiveDataRedactor",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/runtime/setup/setupjourney",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/data/Models.kt",
+        "specifier": "ai.drsai.remote.runtime.setup.SetupJourney",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/runtime/setup/setupjourneyreducer",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt",
+        "specifier": "ai.drsai.remote.runtime.setup.SetupJourneyReducer",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/runtime/setup/sharedpreferencessetupjourneystore",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt",
+        "specifier": "ai.drsai.remote.runtime.setup.SharedPreferencesSetupJourneyStore",
         "kind": "jvm-import",
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
@@ -6990,6 +7750,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/SafeRetryPolicy.kt",
+        "specifier": "ai.drsai.remote.runtime.tools.ToolRisk",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/security/AndroidUnifiedToolSecurityPolicy.kt",
         "specifier": "ai.drsai.remote.runtime.tools.ToolRisk",
         "kind": "jvm-import",
@@ -7067,6 +7835,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/ChatExecutionRouter.kt",
+        "specifier": "ai.drsai.remote.runtime.v2.RunCheckpoint",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/LongTaskState.kt",
         "specifier": "ai.drsai.remote.runtime.v2.RunCheckpoint",
         "kind": "jvm-import",
         "commands": [
@@ -7155,11 +7931,148 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/ui/localizedbytes",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSessionScreens.kt",
+        "specifier": "ai.drsai.remote.ui.localizedBytes",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/WorkspaceReadScreens.kt",
+        "specifier": "ai.drsai.remote.ui.localizedBytes",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/ui/localizeddatetime",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSessionScreens.kt",
+        "specifier": "ai.drsai.remote.ui.localizedDateTime",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteWorkspaceScreens.kt",
+        "specifier": "ai.drsai.remote.ui.localizedDateTime",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/ui/localizedtext",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteHomeViewModel.kt",
+        "specifier": "ai.drsai.remote.ui.LocalizedText",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSessionScreens.kt",
+        "specifier": "ai.drsai.remote.ui.LocalizedText",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSessionViewModel.kt",
+        "specifier": "ai.drsai.remote.ui.LocalizedText",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteWorkspaceScreens.kt",
+        "specifier": "ai.drsai.remote.ui.LocalizedText",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/WorkspaceReadScreens.kt",
+        "specifier": "ai.drsai.remote.ui.LocalizedText",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/WorkspaceSessionsViewModel.kt",
+        "specifier": "ai.drsai.remote.ui.LocalizedText",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/ui/opendrsaiapp",
     "importers": [
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/MainActivity.kt",
         "specifier": "ai.drsai.remote.ui.OpenDrSaiApp",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/ui/opendrsaistartupframe",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/MainActivity.kt",
+        "specifier": "ai.drsai.remote.ui.OpenDrSaiStartupFrame",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/android/app/src/main/java/ai/drsai/remote/ui/resolve",
+    "importers": [
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteSessionScreens.kt",
+        "specifier": "ai.drsai.remote.ui.resolve",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/RemoteWorkspaceScreens.kt",
+        "specifier": "ai.drsai.remote.ui.resolve",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/remote/ui/WorkspaceReadScreens.kt",
+        "specifier": "ai.drsai.remote.ui.resolve",
         "kind": "jvm-import",
         "commands": [
           "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
@@ -7269,6 +8182,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/RoomPythonSideEffectAudit.kt",
+        "specifier": "ai.drsai.remote.workbench.data.WorkbenchAuditEntity",
+        "kind": "jvm-import",
+        "commands": [
+          "Run the closest Android Gradle compile or unit test when the Android toolchain is available."
+        ]
+      },
+      {
+        "path": "apps/android/app/src/main/java/ai/drsai/remote/runtime/reliability/RecoveryCenterRepository.kt",
         "specifier": "ai.drsai.remote.workbench.data.WorkbenchAuditEntity",
         "kind": "jvm-import",
         "commands": [
@@ -7892,6 +8813,30 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/desktopToolApprovalGate.ts",
+        "specifier": "../../../../api/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/duplexSessionReducer.ts",
+        "specifier": "../../../../api/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/duplexUiModel.ts",
+        "specifier": "../../../../api/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
         "path": "apps/desktop/shared/renderer/src/voice/duplex/index.ts",
         "specifier": "../../../../api/desktopApi",
         "kind": "re-export",
@@ -7901,6 +8846,22 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "apps/desktop/shared/renderer/src/voice/duplex/playbackController.ts",
+        "specifier": "../../../../api/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/sessionContext.ts",
+        "specifier": "../../../../api/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/stableHistoryWriter.ts",
         "specifier": "../../../../api/desktopApi",
         "kind": "import",
         "commands": [
@@ -7927,6 +8888,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
         "specifier": "../../../../api/desktopApi",
         "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
+        "specifier": "../../../../api/desktopApi",
+        "kind": "dynamic-import",
         "commands": [
           "npm run typecheck"
         ]
@@ -8097,6 +9066,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/desktop/shared/renderer/src/components/AgentSquareView.tsx",
+        "specifier": "../assets/drsai.png",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
         "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
         "specifier": "../assets/drsai.png",
         "kind": "import",
@@ -8123,6 +9100,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/desktop/shared/renderer/src/mockDesktopApi.ts",
         "specifier": "./assets/drsai.png",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/assets/openai.svg",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/OpenAiBrandIcon.tsx",
+        "specifier": "../assets/openai.svg",
         "kind": "import",
         "commands": [
           "npm run typecheck"
@@ -8252,6 +9242,27 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "apps/desktop/shared/renderer/src/citationmarkerplugin",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/ChatMessageContent.tsx",
+        "specifier": "../citationMarkerPlugin",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
+        "specifier": "../citationMarkerPlugin",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "apps/desktop/shared/renderer/src/clipboard",
     "importers": [
       {
@@ -8284,6 +9295,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         "kind": "import",
         "commands": [
           "npm run verify:chat-commands"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/CodexIntegrationSettings.tsx",
+        "specifier": "../clipboard",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
         ]
       },
       {
@@ -8529,11 +9548,50 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "apps/desktop/shared/renderer/src/components/codexintegrationsettings",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/App.tsx",
+        "specifier": "./components/CodexIntegrationSettings",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "apps/desktop/shared/renderer/src/components/debugpanel",
     "importers": [
       {
         "path": "apps/desktop/shared/renderer/src/App.tsx",
         "specifier": "./components/DebugPanel",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/components/feedbackadmindialog",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/App.tsx",
+        "specifier": "./components/FeedbackAdminDialog",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/components/feedbackdialog",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/App.tsx",
+        "specifier": "./components/FeedbackDialog",
         "kind": "import",
         "commands": [
           "npm run typecheck"
@@ -8584,6 +9642,32 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/desktop/shared/renderer/src/components/files/FilesContextPanel.tsx",
         "specifier": "./ArtifactsPanel",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/components/files/artifactworkspacelink",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/files/FilesContextPanel.tsx",
+        "specifier": "./artifactWorkspaceLink",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/components/files/citationsourcepanel",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/App.tsx",
+        "specifier": "./components/files/CitationSourcePanel",
         "kind": "import",
         "commands": [
           "npm run typecheck"
@@ -8647,8 +9731,37 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     "changedModule": "apps/desktop/shared/renderer/src/components/files/file_previewer/filepreviewer",
     "importers": [
       {
+        "path": "apps/desktop/shared/renderer/src/components/files/CitationSourcePanel.tsx",
+        "specifier": "./file_previewer/FilePreviewer",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
         "path": "apps/desktop/shared/renderer/src/components/files/FilePreview.tsx",
         "specifier": "./file_previewer/FilePreviewer",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/components/files/file_previewer/highlightedlines",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/files/file_previewer/MarkdownPreviewer.tsx",
+        "specifier": "./HighlightedLines",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/files/file_previewer/TextPreviewer.tsx",
+        "specifier": "./HighlightedLines",
         "kind": "import",
         "commands": [
           "npm run typecheck"
@@ -8844,6 +9957,22 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
   {
     "changedModule": "apps/desktop/shared/renderer/src/components/files/file_previewer/types",
     "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/files/file_previewer/FilePreviewer.tsx",
+        "specifier": "./types",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/files/file_previewer/HighlightedLines.tsx",
+        "specifier": "./types",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
       {
         "path": "apps/desktop/shared/renderer/src/components/files/file_previewer/HtmlPreviewer.tsx",
         "specifier": "./types",
@@ -9151,6 +10280,51 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "apps/desktop/shared/renderer/src/components/openaibrandicon",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/App.tsx",
+        "specifier": "./components/OpenAiBrandIcon",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/AgentSquareView.tsx",
+        "specifier": "./OpenAiBrandIcon",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
+        "specifier": "./OpenAiBrandIcon",
+        "kind": "import",
+        "commands": [
+          "npm run verify:chat-commands"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/CodexIntegrationSettings.tsx",
+        "specifier": "./OpenAiBrandIcon",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/WorkspaceShell.tsx",
+        "specifier": "./OpenAiBrandIcon",
+        "kind": "import",
+        "commands": [
+          "npm run verify:fork-worktree"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "apps/desktop/shared/renderer/src/components/operationalstatebar",
     "importers": [
       {
@@ -9438,45 +10612,6 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "apps/desktop/shared/renderer/src/components/voice/streamingcomposerprojectioneditor",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
-        "specifier": "./voice/StreamingComposerProjectionEditor",
-        "kind": "import",
-        "commands": [
-          "npm run verify:chat-commands"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/components/voice/streamingvoiceoutputbar",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
-        "specifier": "./voice/StreamingVoiceOutputBar",
-        "kind": "import",
-        "commands": [
-          "npm run verify:chat-commands"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/components/voice/transcriptrepairdiff",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
-        "specifier": "./voice/TranscriptRepairDiff",
-        "kind": "import",
-        "commands": [
-          "npm run verify:chat-commands"
-        ]
-      }
-    ]
-  },
-  {
     "changedModule": "apps/desktop/shared/renderer/src/components/voice/voicecapturebar",
     "importers": [
       {
@@ -9498,6 +10633,27 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         "kind": "import",
         "commands": [
           "npm run verify:chat-commands"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/components/wechatchannelcard",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/ChannelsView.tsx",
+        "specifier": "./WeChatChannelCard",
+        "kind": "import",
+        "commands": [
+          "npm run verify:channel-adapters"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/WorkspaceShell.tsx",
+        "specifier": "./WeChatChannelCard",
+        "kind": "import",
+        "commands": [
+          "npm run verify:fork-worktree"
         ]
       }
     ]
@@ -9532,6 +10688,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         "kind": "import",
         "commands": [
           "npm run verify:fork-worktree"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/composerdraftparts",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
+        "specifier": "../composerDraftParts",
+        "kind": "import",
+        "commands": [
+          "npm run verify:chat-commands"
         ]
       }
     ]
@@ -9626,6 +10795,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         "kind": "import",
         "commands": [
           "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/deletedesktopthread",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/WorkspaceShell.tsx",
+        "specifier": "../deleteDesktopThread",
+        "kind": "import",
+        "commands": [
+          "npm run verify:fork-worktree"
         ]
       }
     ]
@@ -9736,6 +10918,38 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         "kind": "import",
         "commands": [
           "npm run verify:chat-commands"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/CodexIntegrationSettings.tsx",
+        "specifier": "../desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/FeedbackAdminDialog.tsx",
+        "specifier": "../desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/FeedbackDialog.tsx",
+        "specifier": "../desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/files/CitationSourcePanel.tsx",
+        "specifier": "../../desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
         ]
       },
       {
@@ -9867,11 +11081,35 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/desktop/shared/renderer/src/components/WeChatChannelCard.tsx",
+        "specifier": "../desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
         "path": "apps/desktop/shared/renderer/src/components/WorkspaceShell.tsx",
         "specifier": "../desktopApi",
         "kind": "import",
         "commands": [
           "npm run verify:fork-worktree"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/deleteDesktopThread.ts",
+        "specifier": "./desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/knowledgeSources.ts",
+        "specifier": "./desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
         ]
       },
       {
@@ -9892,22 +11130,6 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
-        "specifier": "../../desktopApi",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceInput.ts",
-        "specifier": "../../desktopApi",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceOutput.ts",
         "specifier": "../../desktopApi",
         "kind": "import",
         "commands": [
@@ -9980,6 +11202,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "apps/desktop/shared/renderer/src/knowledgesources",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/files/CitationSourcePanel.tsx",
+        "specifier": "../../knowledgeSources",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "apps/desktop/shared/renderer/src/localdataexport",
     "importers": [
       {
@@ -10011,6 +11246,27 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/desktop/shared/renderer/src/App.tsx",
         "specifier": "./modelCatalogRecovery",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
+        "specifier": "../modelCatalogRecovery",
+        "kind": "import",
+        "commands": [
+          "npm run verify:chat-commands"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/modelvoicecapabilities",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/App.tsx",
+        "specifier": "./modelVoiceCapabilities",
         "kind": "import",
         "commands": [
           "npm run typecheck"
@@ -10108,7 +11364,31 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/desktop/shared/renderer/src/components/CodexIntegrationSettings.tsx",
+        "specifier": "../navigation",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
         "path": "apps/desktop/shared/renderer/src/components/DebugPanel.tsx",
+        "specifier": "../navigation",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/FeedbackAdminDialog.tsx",
+        "specifier": "../navigation",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/FeedbackDialog.tsx",
         "specifier": "../navigation",
         "kind": "import",
         "commands": [
@@ -10125,6 +11405,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "apps/desktop/shared/renderer/src/components/files/ArtifactsPanel.tsx",
+        "specifier": "../../navigation",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/files/CitationSourcePanel.tsx",
         "specifier": "../../navigation",
         "kind": "import",
         "commands": [
@@ -10165,6 +11453,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "apps/desktop/shared/renderer/src/components/files/file_previewer/FilePreviewer.tsx",
+        "specifier": "../../../navigation",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/files/file_previewer/HighlightedLines.tsx",
         "specifier": "../../../navigation",
         "kind": "import",
         "commands": [
@@ -10316,6 +11612,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/desktop/shared/renderer/src/components/WeChatChannelCard.tsx",
+        "specifier": "../navigation",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
         "path": "apps/desktop/shared/renderer/src/components/WorkspaceShell.tsx",
         "specifier": "../navigation",
         "kind": "import",
@@ -10430,6 +11734,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "apps/desktop/shared/renderer/src/components/ChatMessageContent.tsx",
         "specifier": "../streamingTextFade",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/structuredprocesspresentation",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
+        "specifier": "../structuredProcessPresentation",
         "kind": "import",
         "commands": [
           "npm run typecheck"
@@ -10684,19 +12001,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
-        "path": "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
-        "specifier": "../userFacingLanguage",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
         "path": "apps/desktop/shared/renderer/src/components/WorkspaceShell.tsx",
         "specifier": "../userFacingLanguage",
         "kind": "import",
         "commands": [
           "npm run verify:fork-worktree"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/structuredProcessPresentation.ts",
+        "specifier": "./userFacingLanguage",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
         ]
       }
     ]
@@ -10718,6 +12035,40 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         "kind": "import",
         "commands": [
           "npm run verify:chat-commands"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/adaptivejitterbuffer",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/playbackController.ts",
+        "specifier": "./adaptiveJitterBuffer",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/bargeincandidate",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/bargeInPolicy.ts",
+        "specifier": "./bargeInCandidate",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
+        "specifier": "./bargeInCandidate",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
         ]
       }
     ]
@@ -10765,8 +12116,58 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/capturecontroller",
     "importers": [
       {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/duplexUiModel.ts",
+        "specifier": "./captureController",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
         "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
         "specifier": "./captureController",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/capturequality",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
+        "specifier": "../voice/duplex/captureQuality",
+        "kind": "import",
+        "commands": [
+          "npm run verify:chat-commands"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/captureController.ts",
+        "specifier": "./captureQuality",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
+        "specifier": "./captureQuality",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/desktoptoolapprovalgate",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
+        "specifier": "./desktopToolApprovalGate",
         "kind": "import",
         "commands": [
           "npm run typecheck"
@@ -10788,6 +12189,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/duplexsessionreducer",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
+        "specifier": "./duplexSessionReducer",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/duplexturnreducer",
     "importers": [
       {
@@ -10801,8 +12215,42 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/duplexuimodel",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
+        "specifier": "../voice/duplex/duplexUiModel",
+        "kind": "import",
+        "commands": [
+          "npm run verify:chat-commands"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/lifecyclepolicy",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
+        "specifier": "./lifecyclePolicy",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/localvad",
     "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/bargeInCandidate.ts",
+        "specifier": "./localVad",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
       {
         "path": "apps/desktop/shared/renderer/src/voice/duplex/captureController.ts",
         "specifier": "./localVad",
@@ -10856,8 +12304,115 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/readinessactions",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/App.tsx",
+        "specifier": "./voice/duplex/readinessActions",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/sessioncontext",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
+        "specifier": "../voice/duplex/sessionContext",
+        "kind": "import",
+        "commands": [
+          "npm run verify:chat-commands"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
+        "specifier": "./sessionContext",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/sloprojection",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
+        "specifier": "./sloProjection",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/stablehistorywriter",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
+        "specifier": "./stableHistoryWriter",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/startuptransaction",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
+        "specifier": "./startupTransaction",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/temporarydiagnostics",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
+        "specifier": "./temporaryDiagnostics",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/textinputscheduler",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
+        "specifier": "./textInputScheduler",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/toolbridge",
     "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/desktopToolApprovalGate.ts",
+        "specifier": "./toolBridge",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
       {
         "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
         "specifier": "./toolBridge",
@@ -10871,6 +12426,22 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
   {
     "changedModule": "apps/desktop/shared/renderer/src/voice/duplex/transcriptprojection",
     "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/sessionContext.ts",
+        "specifier": "./transcriptProjection",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/stableHistoryWriter.ts",
+        "specifier": "./transcriptProjection",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
       {
         "path": "apps/desktop/shared/renderer/src/voice/duplex/useDuplexVoiceInput.ts",
         "specifier": "./transcriptProjection",
@@ -10891,65 +12462,18 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         "commands": [
           "npm run verify:chat-commands"
         ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/adaptivettswatermark",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceOutput.ts",
-        "specifier": "./adaptiveTtsWatermark",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/assistantspeechstream",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/adapters/useDesktopChatAdapter.ts",
-        "specifier": "../voice/streaming/assistantSpeechStream",
-        "kind": "import",
-        "commands": [
-          "npm run verify:chat-commands"
-        ]
       },
       {
-        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
-        "specifier": "../voice/streaming/assistantSpeechStream",
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/duplexSessionReducer.ts",
+        "specifier": "./useDuplexVoiceInput",
         "kind": "import",
-        "commands": [
-          "npm run verify:chat-commands"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./assistantSpeechStream",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/browserstreamingaudioadapter",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./browserStreamingAudioAdapter",
-        "kind": "re-export",
         "commands": [
           "npm run typecheck"
         ]
       },
       {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceOutput.ts",
-        "specifier": "./browserStreamingAudioAdapter",
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/duplexUiModel.ts",
+        "specifier": "./useDuplexVoiceInput",
         "kind": "import",
         "commands": [
           "npm run typecheck"
@@ -10958,399 +12482,12 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/contextualtranscriptrepair",
+    "changedModule": "apps/desktop/shared/renderer/src/voice/localdevicetest",
     "importers": [
       {
-        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
-        "specifier": "../voice/streaming/contextualTranscriptRepair",
+        "path": "apps/desktop/shared/renderer/src/App.tsx",
+        "specifier": "./voice/localDeviceTest",
         "kind": "import",
-        "commands": [
-          "npm run verify:chat-commands"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/components/voice/TranscriptRepairDiff.tsx",
-        "specifier": "../../voice/streaming/contextualTranscriptRepair",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./contextualTranscriptRepair",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/desktopstreamingttsruntime",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./desktopStreamingTtsRuntime",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceOutput.ts",
-        "specifier": "./desktopStreamingTtsRuntime",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/localvad",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./localVad",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceInput.ts",
-        "specifier": "./localVad",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/orderedaudioplaybackqueue",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/browserStreamingAudioAdapter.ts",
-        "specifier": "./orderedAudioPlaybackQueue",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./orderedAudioPlaybackQueue",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceOutput.ts",
-        "specifier": "./orderedAudioPlaybackQueue",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/pcmcapture.worklet",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingCaptureController.ts",
-        "specifier": "./pcmCapture.worklet.js",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/semanticspeechsegmenter",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/assistantSpeechStream.ts",
-        "specifier": "./semanticSpeechSegmenter",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./semanticSpeechSegmenter",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceOutput.ts",
-        "specifier": "./semanticSpeechSegmenter",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/streamingaudio",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./streamingAudio",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingCaptureController.ts",
-        "specifier": "./streamingAudio",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/streamingcapturecontroller",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./streamingCaptureController",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceInput.ts",
-        "specifier": "./streamingCaptureController",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/streamingcomposerprojection",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
-        "specifier": "../voice/streaming/streamingComposerProjection",
-        "kind": "import",
-        "commands": [
-          "npm run verify:chat-commands"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/components/voice/StreamingComposerProjectionEditor.tsx",
-        "specifier": "../../voice/streaming/streamingComposerProjection",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./streamingComposerProjection",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/streamingttsscheduler",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/desktopStreamingTtsRuntime.ts",
-        "specifier": "./streamingTtsScheduler",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./streamingTtsScheduler",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceOutput.ts",
-        "specifier": "./streamingTtsScheduler",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/streamingvoicediagnostics",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
-        "specifier": "../voice/streaming/streamingVoiceDiagnostics",
-        "kind": "import",
-        "commands": [
-          "npm run verify:chat-commands"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./streamingVoiceDiagnostics",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/streamingvoiceturnreducer",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
-        "specifier": "../voice/streaming/streamingVoiceTurnReducer",
-        "kind": "import",
-        "commands": [
-          "npm run verify:chat-commands"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./streamingVoiceTurnReducer",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceInput.ts",
-        "specifier": "./streamingVoiceTurnReducer",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/transcriptreconciler",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./transcriptReconciler",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceInput.ts",
-        "specifier": "./transcriptReconciler",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/transcriptrepairpolicy",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/contextualTranscriptRepair.ts",
-        "specifier": "./transcriptRepairPolicy",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./transcriptRepairPolicy",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/usestreamingvoiceinput",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
-        "specifier": "../voice/streaming/useStreamingVoiceInput",
-        "kind": "import",
-        "commands": [
-          "npm run verify:chat-commands"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/components/voice/StreamingComposerProjectionEditor.tsx",
-        "specifier": "../../voice/streaming/useStreamingVoiceInput",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/components/voice/StreamingVoiceCaptureBar.tsx",
-        "specifier": "../../voice/streaming/useStreamingVoiceInput",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./useStreamingVoiceInput",
-        "kind": "re-export",
-        "commands": [
-          "npm run typecheck"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "apps/desktop/shared/renderer/src/voice/streaming/usestreamingvoiceoutput",
-    "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
-        "specifier": "../voice/streaming/useStreamingVoiceOutput",
-        "kind": "import",
-        "commands": [
-          "npm run verify:chat-commands"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/components/voice/StreamingVoiceOutputBar.tsx",
-        "specifier": "../../voice/streaming/useStreamingVoiceOutput",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-        "specifier": "./useStreamingVoiceOutput",
-        "kind": "re-export",
         "commands": [
           "npm run typecheck"
         ]
@@ -11402,14 +12539,6 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
   {
     "changedModule": "apps/desktop/shared/renderer/src/voice/usevoicelevelmeter",
     "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceInput.ts",
-        "specifier": "../useVoiceLevelMeter",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
       {
         "path": "apps/desktop/shared/renderer/src/voice/useVoiceCapture.ts",
         "specifier": "./useVoiceLevelMeter",
@@ -11465,30 +12594,6 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
   {
     "changedModule": "apps/desktop/shared/renderer/src/voice/voiceaudio",
     "importers": [
-      {
-        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
-        "specifier": "../voice/voiceAudio",
-        "kind": "import",
-        "commands": [
-          "npm run verify:chat-commands"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/components/voice/StreamingComposerProjectionEditor.tsx",
-        "specifier": "../../voice/voiceAudio",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/components/voice/StreamingVoiceCaptureBar.tsx",
-        "specifier": "../../voice/voiceAudio",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
       {
         "path": "apps/desktop/shared/renderer/src/components/voice/VoiceCaptureBar.tsx",
         "specifier": "../../voice/voiceAudio",
@@ -11598,14 +12703,6 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     "changedModule": "apps/desktop/shared/renderer/src/voice/voicemode",
     "importers": [
       {
-        "path": "apps/desktop/shared/renderer/src/App.tsx",
-        "specifier": "./voice/voiceMode",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
         "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
         "specifier": "../voice/voiceMode",
         "kind": "import",
@@ -11711,11 +12808,45 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     "changedModule": "apps/desktop/shared/renderer/src/websearchpresentation",
     "importers": [
       {
-        "path": "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
-        "specifier": "../webSearchPresentation",
+        "path": "apps/desktop/shared/renderer/src/structuredProcessPresentation.ts",
+        "specifier": "./webSearchPresentation",
         "kind": "import",
         "commands": [
           "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/wechatcomposerpolicy",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
+        "specifier": "../wechatComposerPolicy",
+        "kind": "import",
+        "commands": [
+          "npm run verify:chat-commands"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "apps/desktop/shared/renderer/src/workspaceordering",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/App.tsx",
+        "specifier": "./workspaceOrdering",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/WorkspaceShell.tsx",
+        "specifier": "../workspaceOrdering",
+        "kind": "import",
+        "commands": [
+          "npm run verify:fork-worktree"
         ]
       }
     ]
@@ -14890,6 +16021,27 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway_wechat.py",
+        "specifier": "drsai/backend",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "specifier": "drsai/backend",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "cores/python/packages/drsai/src/drsai/backend/app_worker",
     "importers": [
       {
@@ -15590,6 +16742,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/binary_provider.py",
+        "specifier": "drsai/backend/codex_adapter/stable_contract",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
         "path": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/bridge_transport.py",
         "specifier": "drsai/backend/codex_adapter/stable_contract",
         "kind": "python-import",
@@ -15703,6 +16863,40 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/drsai_assistant.py",
         "specifier": "drsai/backend/daemon/pid_manager",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/feedback_service",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/feedback_worker.py",
+        "specifier": "drsai/backend/feedback_service",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "specifier": "drsai/backend/feedback_service",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/feedback_worker",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "specifier": "drsai/backend/feedback_worker",
         "kind": "python-import",
         "commands": [
           "Run the closest Python unit test or import smoke for this package."
@@ -16073,6 +17267,90 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         "commands": [
           "Run the closest Python unit test or import smoke for this package."
         ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/artifact_host.py",
+        "specifier": "drsai/backend/runtime/artifacts",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/owop/gateway_resource_host.py",
+        "specifier": "drsai/backend/runtime/artifacts",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/auto_review_coordinator.py",
+        "specifier": "drsai/backend/runtime/authorization",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/kill_switch.py",
+        "specifier": "drsai/backend/runtime/authorization",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/service.py",
+        "specifier": "drsai/backend/runtime/authorization",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/approval_service",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "specifier": "drsai/backend/runtime/authorization/approval_service",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/grant_service",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "specifier": "drsai/backend/runtime/authorization/grant_service",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/migration",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "specifier": "drsai/backend/runtime/authorization/migration",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
       }
     ]
   },
@@ -16129,19 +17407,6 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
         "specifier": "drsai/backend/runtime/desktop_oaep_bridge",
-        "kind": "python-import",
-        "commands": [
-          "Run the closest Python unit test or import smoke for this package."
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/desktop_threads",
-    "importers": [
-      {
-        "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
-        "specifier": "drsai/backend/runtime/desktop_threads",
         "kind": "python-import",
         "commands": [
           "Run the closest Python unit test or import smoke for this package."
@@ -16329,6 +17594,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
         "specifier": "drsai/backend/runtime/goals",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/grounded",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/context.py",
+        "specifier": "drsai/backend/runtime/grounded",
         "kind": "python-import",
         "commands": [
           "Run the closest Python unit test or import smoke for this package."
@@ -16635,6 +17913,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "specifier": "drsai/backend/runtime/permission_modes",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/registry",
     "importers": [
       {
@@ -16779,6 +18070,318 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/auto_reviewer.py",
+        "specifier": "drsai/backend/runtime/security_boundary",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/evaluation.py",
+        "specifier": "drsai/backend/runtime/security_boundary",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/inheritance.py",
+        "specifier": "drsai/backend/runtime/security_boundary",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/kill_switch.py",
+        "specifier": "drsai/backend/runtime/security_boundary",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/service.py",
+        "specifier": "drsai/backend/runtime/security_boundary",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary/audit",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/approval_service.py",
+        "specifier": "drsai/backend/runtime/security_boundary/audit",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/grant_service.py",
+        "specifier": "drsai/backend/runtime/security_boundary/audit",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/migration.py",
+        "specifier": "drsai/backend/runtime/security_boundary/audit",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/auto_review_coordinator.py",
+        "specifier": "drsai/backend/runtime/security_boundary/audit",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/auto_reviewer.py",
+        "specifier": "drsai/backend/runtime/security_boundary/audit",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/config_migration.py",
+        "specifier": "drsai/backend/runtime/security_boundary/audit",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/inheritance.py",
+        "specifier": "drsai/backend/runtime/security_boundary/audit",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/kill_switch.py",
+        "specifier": "drsai/backend/runtime/security_boundary/audit",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/service.py",
+        "specifier": "drsai/backend/runtime/security_boundary/audit",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary/grants",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/grant_service.py",
+        "specifier": "drsai/backend/runtime/security_boundary/grants",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "specifier": "drsai/backend/runtime/security_boundary/grants",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary/hard_deny",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/policy_decision_service.py",
+        "specifier": "drsai/backend/runtime/security_boundary/hard_deny",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary/metrics",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "specifier": "drsai/backend/runtime/security_boundary/metrics",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary/models",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/approval_service.py",
+        "specifier": "drsai/backend/runtime/security_boundary/models",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/grant_service.py",
+        "specifier": "drsai/backend/runtime/security_boundary/models",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/migration.py",
+        "specifier": "drsai/backend/runtime/security_boundary/models",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/policy_decision_service.py",
+        "specifier": "drsai/backend/runtime/security_boundary/models",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "specifier": "drsai/backend/runtime/security_boundary/models",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/auto_reviewer.py",
+        "specifier": "drsai/backend/runtime/security_boundary/models",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/config_migration.py",
+        "specifier": "drsai/backend/runtime/security_boundary/models",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/inheritance.py",
+        "specifier": "drsai/backend/runtime/security_boundary/models",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/profiles.py",
+        "specifier": "drsai/backend/runtime/security_boundary/models",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/resolver.py",
+        "specifier": "drsai/backend/runtime/security_boundary/models",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/service.py",
+        "specifier": "drsai/backend/runtime/security_boundary/models",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/security.py",
+        "specifier": "drsai/backend/runtime/security_boundary/models",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary/sandbox",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/resolver.py",
+        "specifier": "drsai/backend/runtime/security_boundary/sandbox",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary/storage",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/approval_service.py",
+        "specifier": "drsai/backend/runtime/security_boundary/storage",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/grant_service.py",
+        "specifier": "drsai/backend/runtime/security_boundary/storage",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "specifier": "drsai/backend/runtime/security_boundary/storage",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/sqlite_connection",
     "importers": [
       {
@@ -16791,6 +18394,30 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/runtime/artifacts.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/approval_service.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/grant_service.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/authorization/migration.py",
         "specifier": "drsai/backend/runtime/sqlite_connection",
         "kind": "python-import",
         "commands": [
@@ -16815,6 +18442,54 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/runtime/operation_metrics.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/auto_review_coordinator.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/auto_reviewer.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/config_migration.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/inheritance.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/kill_switch.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/permission_modes/service.py",
         "specifier": "drsai/backend/runtime/sqlite_connection",
         "kind": "python-import",
         "commands": [
@@ -16847,6 +18522,62 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/runtime/run_comparison.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary/audit.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary/credentials.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary/effects.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary/grants.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary/storage.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary/windows_acl_projection.py",
+        "specifier": "drsai/backend/runtime/sqlite_connection",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/security_boundary/windows_isolated_session.py",
         "specifier": "drsai/backend/runtime/sqlite_connection",
         "kind": "python-import",
         "commands": [
@@ -16924,11 +18655,50 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/web_search/hai_tavily",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "specifier": "drsai/backend/runtime/web_search/hai_tavily",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/web_search/provider_policy",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "specifier": "drsai/backend/runtime/web_search/provider_policy",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/web_search/tavily",
     "importers": [
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
         "specifier": "drsai/backend/runtime/web_search/tavily",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/runtime/work_scheduler",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+        "specifier": "drsai/backend/runtime/work_scheduler",
         "kind": "python-import",
         "commands": [
           "Run the closest Python unit test or import smoke for this package."
@@ -17023,11 +18793,37 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/artifact",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/slash.py",
+        "specifier": "drsai/backend/tui_gateway/handlers/artifact",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/daemon",
     "importers": [
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/slash.py",
         "specifier": "drsai/backend/tui_gateway/handlers/daemon",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/resource",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/slash.py",
+        "specifier": "drsai/backend/tui_gateway/handlers/resource",
         "kind": "python-import",
         "commands": [
           "Run the closest Python unit test or import smoke for this package."
@@ -17054,6 +18850,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/daemon/wechat_adapter.py",
         "specifier": "drsai/backend/tui_gateway/handlers/slash",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/tui_gateway/resources",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/slash.py",
+        "specifier": "drsai/backend/tui_gateway/resources",
         "kind": "python-import",
         "commands": [
           "Run the closest Python unit test or import smoke for this package."
@@ -17109,11 +18918,11 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "cores/python/packages/drsai/src/drsai/backend/wechat/wechat_login",
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/wechat/auth_service",
     "importers": [
       {
-        "path": "cores/python/packages/drsai/src/drsai/backend/daemon/pid_manager.py",
-        "specifier": "drsai/backend/wechat/wechat_login",
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway_wechat.py",
+        "specifier": "drsai/backend/wechat/auth_service",
         "kind": "python-import",
         "commands": [
           "Run the closest Python unit test or import smoke for this package."
@@ -17121,6 +18930,71 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/wechat.py",
+        "specifier": "drsai/backend/wechat/auth_service",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/wechat/channel_controller",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway_wechat.py",
+        "specifier": "drsai/backend/wechat/channel_controller",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/wechat/channel_identity",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway_wechat.py",
+        "specifier": "drsai/backend/wechat/channel_identity",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/wechat/runtime_session_bridge",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway_wechat.py",
+        "specifier": "drsai/backend/wechat/runtime_session_bridge",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/wechat/wechat_bot",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway_wechat.py",
+        "specifier": "drsai/backend/wechat/wechat_bot",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/backend/wechat/wechat_login",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/daemon/pid_manager.py",
         "specifier": "drsai/backend/wechat/wechat_login",
         "kind": "python-import",
         "commands": [
@@ -17147,6 +19021,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     "importers": [
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+        "specifier": "drsai/backend/workspace/paths",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/artifact_host.py",
         "specifier": "drsai/backend/workspace/paths",
         "kind": "python-import",
         "commands": [
@@ -17270,6 +19152,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "cores/python/packages/drsai/src/drsai/backend/wechat/auth_service.py",
+        "specifier": "drsai/config",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
         "path": "cores/python/packages/drsai/src/drsai/modules/components/model_client/LLMClient.py",
         "specifier": "drsai/config",
         "kind": "python-import",
@@ -17283,7 +19173,7 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     "changedModule": "cores/python/packages/drsai/src/drsai/config/agent_model_policy",
     "importers": [
       {
-        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/desktop_threads.py",
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway_wechat.py",
         "specifier": "drsai/config/agent_model_policy",
         "kind": "python-import",
         "commands": [
@@ -17350,6 +19240,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
   {
     "changedModule": "cores/python/packages/drsai/src/drsai/config/loader",
     "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway_wechat.py",
+        "specifier": "drsai/config/loader",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
         "specifier": "drsai/config/loader",
@@ -17636,6 +19534,22 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/daemon/wechat_adapter.py",
+        "specifier": "drsai/configs/constant",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/feedback_service.py",
+        "specifier": "drsai/configs/constant",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway_wechat.py",
         "specifier": "drsai/configs/constant",
         "kind": "python-import",
         "commands": [
@@ -19137,7 +21051,23 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/artifact.py",
+        "specifier": "drsai/modules/managers/datamodel/db",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
         "path": "cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/prompt.py",
+        "specifier": "drsai/modules/managers/datamodel/db",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/resource.py",
         "specifier": "drsai/modules/managers/datamodel/db",
         "kind": "python-import",
         "commands": [
@@ -19638,10 +21568,55 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "cores/python/packages/drsai/src/drsai/owop/local_workspace",
+    "changedModule": "cores/python/packages/drsai/src/drsai/owop/gateway_resource_host",
     "importers": [
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "specifier": "drsai/owop/gateway_resource_host",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/owop/local_workspace",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/backend_client.py",
+        "specifier": "drsai/owop/local_workspace",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "specifier": "drsai/owop/local_workspace",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/resource_host.py",
+        "specifier": "drsai/owop/local_workspace",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/tui_gateway/resources.py",
+        "specifier": "drsai/owop/local_workspace",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/owop/gateway_resource_host.py",
         "specifier": "drsai/owop/local_workspace",
         "kind": "python-import",
         "commands": [
@@ -19683,6 +21658,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     "changedModule": "cores/python/packages/drsai/src/drsai/owop/protocol",
     "importers": [
       {
+        "path": "cores/python/packages/drsai/src/drsai/backend/codex_adapter/backend_client.py",
+        "specifier": "drsai/owop/protocol",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
         "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
         "specifier": "drsai/owop/protocol",
         "kind": "python-import",
@@ -19692,6 +21675,22 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+        "specifier": "drsai/owop/protocol",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/resource_host.py",
+        "specifier": "drsai/owop/protocol",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/resource.py",
         "specifier": "drsai/owop/protocol",
         "kind": "python-import",
         "commands": [
@@ -19723,6 +21722,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "cores/python/packages/drsai/src/drsai/owop/gateway_resource_host.py",
+        "specifier": "drsai/owop/protocol",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
         "path": "cores/python/packages/drsai/src/drsai/owop/local_workspace.py",
         "specifier": "drsai/owop/protocol",
         "kind": "python-import",
@@ -19732,6 +21739,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "cores/python/packages/drsai/src/drsai/owop/process_pty.py",
+        "specifier": "drsai/owop/protocol",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/owop/resource_service.py",
         "specifier": "drsai/owop/protocol",
         "kind": "python-import",
         "commands": [
@@ -19749,6 +21764,27 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "cores/python/packages/drsai/src/drsai/owop/workspace_checkpoints.py",
         "specifier": "drsai/owop/protocol",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "cores/python/packages/drsai/src/drsai/owop/resource_service",
+    "importers": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "specifier": "drsai/owop/resource_service",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/owop/gateway_resource_host.py",
+        "specifier": "drsai/owop/resource_service",
         "kind": "python-import",
         "commands": [
           "Run the closest Python unit test or import smoke for this package."
@@ -19786,6 +21822,22 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     "changedModule": "cores/python/packages/drsai/src/drsai/platform_auth",
     "importers": [
       {
+        "path": "cores/python/packages/drsai/src/drsai/backend/daemon/wechat_adapter.py",
+        "specifier": "drsai/platform_auth",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/gateway_wechat.py",
+        "specifier": "drsai/platform_auth",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
         "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
         "specifier": "drsai/platform_auth",
         "kind": "python-import",
@@ -19811,6 +21863,22 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "cores/python/packages/drsai/src/drsai/backend/runtime/image_operations.py",
+        "specifier": "drsai/platform_auth",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/web_search/hai_tavily.py",
+        "specifier": "drsai/platform_auth",
+        "kind": "python-import",
+        "commands": [
+          "Run the closest Python unit test or import smoke for this package."
+        ]
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/wechat/runtime_session_bridge.py",
         "specifier": "drsai/platform_auth",
         "kind": "python-import",
         "commands": [
@@ -20435,6 +22503,58 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/finalize-duplex-hardware-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/finalize-duplex-hardware-review.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/finalize-duplex-live-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/finalize-duplex-live-review.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/finalize-duplex-packaged-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/finalize-duplex-packaged-review.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/finalize-duplex-stable-release-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/finalize-duplex-stable-release-review.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/finalize-remote-stability-1h",
     "importers": [
       {
@@ -20461,6 +22581,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/generate-codex-p10r-ledger",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/generate-codex-p10r-ledger.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/generate-codex-p8-ledger",
     "importers": [
       {
@@ -20479,6 +22612,32 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "package.json",
         "specifier": "scripts/generate-codex-p9-ledger.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/generate-duplex-p2-acceptance-status",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/generate-duplex-p2-acceptance-status.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/generate-duplex-p2-evidence-index",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/generate-duplex-p2-evidence-index.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -20565,11 +22724,63 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/prepare-duplex-hardware-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/prepare-duplex-hardware-review.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/prepare-duplex-live-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/prepare-duplex-live-review.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/prepare-duplex-packaged-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/prepare-duplex-packaged-review.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/prepare-duplex-release-evidence",
     "importers": [
       {
         "path": "package.json",
         "specifier": "scripts/prepare-duplex-release-evidence.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/prepare-duplex-stable-release-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/prepare-duplex-stable-release-review.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -20617,6 +22828,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/report-duplex-p2-acceptance-readiness",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/report-duplex-p2-acceptance-readiness.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/run-branded-electron-vite",
     "importers": [
       {
@@ -20648,6 +22872,32 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "package.json",
         "specifier": "scripts/run-codex-p9-live.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/run-duplex-p2-automation",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/run-duplex-p2-automation.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/run-duplex-serial-regression",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/run-duplex-serial-regression.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -20734,11 +22984,11 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "scripts/test-adaptive-tts-watermark",
+    "changedModule": "scripts/test-duplex-legacy-removal-gate",
     "importers": [
       {
         "path": "package.json",
-        "specifier": "scripts/test-adaptive-tts-watermark.mjs",
+        "specifier": "scripts/test-duplex-legacy-removal-gate.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -20747,11 +22997,11 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "scripts/test-browser-streaming-audio-adapter",
+    "changedModule": "scripts/test-duplex-p2-acceptance-projection",
     "importers": [
       {
         "path": "package.json",
-        "specifier": "scripts/test-browser-streaming-audio-adapter.mjs",
+        "specifier": "scripts/test-duplex-p2-acceptance-projection.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -20760,11 +23010,50 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "scripts/test-desktop-streaming-tts-runtime",
+    "changedModule": "scripts/test-duplex-p2-acceptance-readiness",
     "importers": [
       {
         "path": "package.json",
-        "specifier": "scripts/test-desktop-streaming-tts-runtime.mjs",
+        "specifier": "scripts/test-duplex-p2-acceptance-readiness.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/test-duplex-p2-acceptance-status",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/test-duplex-p2-acceptance-status.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/test-duplex-p2-automation-evidence",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/test-duplex-p2-automation-evidence.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/test-duplex-p2-evidence-index",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/test-duplex-p2-evidence-index.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -20799,11 +23088,76 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/test-duplex-voice-fault-matrix",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/test-duplex-voice-fault-matrix.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/test-duplex-voice-provider",
     "importers": [
       {
         "path": "package.json",
         "specifier": "scripts/test-duplex-voice-provider.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/test-finalize-duplex-hardware-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/test-finalize-duplex-hardware-review.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/test-finalize-duplex-live-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/test-finalize-duplex-live-review.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/test-finalize-duplex-packaged-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/test-finalize-duplex-packaged-review.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/test-finalize-duplex-stable-release-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/test-finalize-duplex-stable-release-review.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -20825,11 +23179,50 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "scripts/test-ordered-streaming-playback",
+    "changedModule": "scripts/test-model-voice-capabilities",
     "importers": [
       {
         "path": "package.json",
-        "specifier": "scripts/test-ordered-streaming-playback.mjs",
+        "specifier": "scripts/test-model-voice-capabilities.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/test-prepare-duplex-hardware-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/test-prepare-duplex-hardware-review.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/test-prepare-duplex-live-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/test-prepare-duplex-live-review.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/test-prepare-duplex-stable-release-review",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/test-prepare-duplex-stable-release-review.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -20843,227 +23236,6 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "package.json",
         "specifier": "scripts/test-real-serial-voice.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-semantic-speech-segmenter",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-semantic-speech-segmenter.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-composer-projection",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-composer-projection.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-failover-runtime",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-failover-runtime.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-local-vad",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-local-vad.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-provider-policy",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-provider-policy.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-runtime-errors",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-runtime-errors.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-socket-pool",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-socket-pool.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-transcript-reconciler",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-transcript-reconciler.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-transcript-repair",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-transcript-repair.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-transport-reliability",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-transport-reliability.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-tts-scheduler",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-tts-scheduler.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-voice-audio",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-voice-audio.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-voice-contracts",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-voice-contracts.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-voice-diagnostics",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-voice-diagnostics.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-voice-main",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-voice-main.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-voice-stress",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-voice-stress.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-streaming-voice-turn-state",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-streaming-voice-turn-state.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -21207,19 +23379,6 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "package.json",
         "specifier": "scripts/test-voice-validation.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/test-websocket-streaming-runtime",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/test-websocket-streaming-runtime.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -21852,11 +24011,37 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/verify-codex-integration-settings-ui",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-codex-integration-settings-ui.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/verify-codex-p10-ledger",
     "importers": [
       {
         "path": "package.json",
         "specifier": "scripts/verify-codex-p10-ledger.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-codex-p10r-ledger",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-codex-p10r-ledger.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -22268,11 +24453,63 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/verify-duplex-legacy-removal-gate",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-duplex-legacy-removal-gate.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/verify-duplex-p1-ledger",
     "importers": [
       {
         "path": "package.json",
         "specifier": "scripts/verify-duplex-p1-ledger.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-duplex-p2-acceptance-status",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-duplex-p2-acceptance-status.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-duplex-p2-automation",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-duplex-p2-automation.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-duplex-p2-evidence-index",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-duplex-p2-evidence-index.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -22299,6 +24536,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "package.json",
         "specifier": "scripts/verify-duplex-release-evidence.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-duplex-stable-release-cycle",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-duplex-stable-release-cycle.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -22723,6 +24973,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/verify-feedback-p1",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-feedback-p1.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/verify-file-previewers",
     "importers": [
       {
@@ -22871,6 +25134,32 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "package.json",
         "specifier": "scripts/verify-gateway-smoke.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-gateway-snapshot-stability",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-gateway-snapshot-stability.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-grounded-citations",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-grounded-citations.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -23079,6 +25368,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "package.json",
         "specifier": "scripts/verify-ide-producers.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-image-attachment-preview",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-image-attachment-preview.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -24374,6 +26676,84 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/verify-packaged-duplex-app-restart",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-packaged-duplex-app-restart.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-packaged-duplex-permission-recovery",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-packaged-duplex-permission-recovery.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-packaged-duplex-process-recovery",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-packaged-duplex-process-recovery.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-packaged-duplex-readiness",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-packaged-duplex-readiness.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-packaged-duplex-recovery",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-packaged-duplex-recovery.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-packaged-duplex-run",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-packaged-duplex-run.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/verify-packaged-f2-approvals",
     "importers": [
       {
@@ -25336,45 +27716,6 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "scripts/verify-streaming-voice-feature-coverage",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/verify-streaming-voice-feature-coverage.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/verify-streaming-voice-gateway",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/verify-streaming-voice-gateway.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
-    "changedModule": "scripts/verify-streaming-voice-p2-acceptance",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/verify-streaming-voice-p2-acceptance.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
     "changedModule": "scripts/verify-structured-conversation",
     "importers": [
       {
@@ -25440,6 +27781,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "scripts/verify-structured-process-presentation",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-structured-process-presentation.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "scripts/verify-structured-quality",
     "importers": [
       {
@@ -25484,6 +27838,58 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "package.json",
         "specifier": "scripts/verify-system-ssh-agent.ps1",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-tavily-p2-guided-configuration",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-tavily-p2-guided-configuration.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-tavily-p3-live-script",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-tavily-p3-live-script.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-tavily-p3-managed-perceptor",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-tavily-p3-managed-perceptor.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-tavily-p3-multiclient-contract",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-tavily-p3-multiclient-contract.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -25661,19 +28067,6 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "scripts/verify-voice-mode-comparison",
-    "importers": [
-      {
-        "path": "package.json",
-        "specifier": "scripts/verify-voice-mode-comparison.mjs",
-        "kind": "config-reference",
-        "commands": [
-          "npm run verify"
-        ]
-      }
-    ]
-  },
-  {
     "changedModule": "scripts/verify-voice-preferences",
     "importers": [
       {
@@ -25744,6 +28137,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "package.json",
         "specifier": "scripts/verify-voice-state.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-voice-streaming-removal",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-voice-streaming-removal.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -25978,6 +28384,19 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       {
         "path": "package.json",
         "specifier": "scripts/verify-workflow-marketplace.mjs",
+        "kind": "config-reference",
+        "commands": [
+          "npm run verify"
+        ]
+      }
+    ]
+  },
+  {
+    "changedModule": "scripts/verify-workspace-artifact-linkage-p1",
+    "importers": [
+      {
+        "path": "package.json",
+        "specifier": "scripts/verify-workspace-artifact-linkage-p1.mjs",
         "kind": "config-reference",
         "commands": [
           "npm run verify"
@@ -26876,6 +29295,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "src/main/voicePreferences.ts",
+        "specifier": "./paths",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
         "path": "src/main/workflowMarketplace.ts",
         "specifier": "./paths",
         "kind": "import",
@@ -27443,11 +29870,11 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
-    "changedModule": "src/main/voice/streaming",
+    "changedModule": "src/main/voicepreferences",
     "importers": [
       {
         "path": "src/main/index.ts",
-        "specifier": "./voice/streaming",
+        "specifier": "./voicePreferences",
         "kind": "import",
         "commands": [
           "npm run typecheck:node"
@@ -27763,6 +30190,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/desktop/shared/renderer/src/components/CodexIntegrationSettings.tsx",
+        "specifier": "@shared/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
         "path": "apps/desktop/shared/renderer/src/components/files/AgentFileActivityPanel.tsx",
         "specifier": "@shared/desktopApi",
         "kind": "import",
@@ -27772,6 +30207,22 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "apps/desktop/shared/renderer/src/components/files/ArtifactsPanel.tsx",
+        "specifier": "@shared/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/files/artifactWorkspaceLink.ts",
+        "specifier": "@shared/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/files/CitationSourcePanel.tsx",
         "specifier": "@shared/desktopApi",
         "kind": "import",
         "commands": [
@@ -27987,11 +30438,27 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/desktop/shared/renderer/src/components/WeChatChannelCard.tsx",
+        "specifier": "@shared/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
         "path": "apps/desktop/shared/renderer/src/components/WorkspaceShell.tsx",
         "specifier": "@shared/desktopApi",
         "kind": "import",
         "commands": [
           "npm run verify:fork-worktree"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/composerDraftParts.ts",
+        "specifier": "@shared/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
         ]
       },
       {
@@ -28035,6 +30502,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/desktop/shared/renderer/src/modelVoiceCapabilities.ts",
+        "specifier": "@shared/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
         "path": "apps/desktop/shared/renderer/src/naturalLanguageSchedule.ts",
         "specifier": "@shared/desktopApi",
         "kind": "import",
@@ -28067,63 +30542,7 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/browserStreamingAudioAdapter.ts",
-        "specifier": "@shared/desktopApi",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/desktopStreamingTtsRuntime.ts",
-        "specifier": "@shared/desktopApi",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/orderedAudioPlaybackQueue.ts",
-        "specifier": "@shared/desktopApi",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingCaptureController.ts",
-        "specifier": "@shared/desktopApi",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingTtsScheduler.ts",
-        "specifier": "@shared/desktopApi",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingVoiceDiagnostics.ts",
-        "specifier": "@shared/desktopApi",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/streaming/transcriptReconciler.ts",
-        "specifier": "@shared/desktopApi",
-        "kind": "import",
-        "commands": [
-          "npm run typecheck"
-        ]
-      },
-      {
-        "path": "apps/desktop/shared/renderer/src/voice/useVoicePreferences.ts",
+        "path": "apps/desktop/shared/renderer/src/voice/duplex/readinessActions.ts",
         "specifier": "@shared/desktopApi",
         "kind": "import",
         "commands": [
@@ -28164,6 +30583,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "apps/desktop/shared/renderer/src/voice/voiceTurnReducer.ts",
+        "specifier": "@shared/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/workspaceOrdering.ts",
         "specifier": "@shared/desktopApi",
         "kind": "import",
         "commands": [
@@ -28350,6 +30777,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "src/main/voicePreferences.ts",
+        "specifier": "../shared/desktopApi",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck:node"
+        ]
+      },
+      {
         "path": "src/main/workflowMarketplace.ts",
         "specifier": "../shared/desktopApi",
         "kind": "import",
@@ -28430,10 +30865,47 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
     ]
   },
   {
+    "changedModule": "src/shared/feedback",
+    "importers": [
+      {
+        "path": "apps/desktop/shared/renderer/src/components/FeedbackAdminDialog.tsx",
+        "specifier": "@shared/feedback",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/FeedbackDialog.tsx",
+        "specifier": "@shared/feedback",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      }
+    ]
+  },
+  {
     "changedModule": "src/shared/oaep.generated",
     "importers": [
       {
         "path": "apps/desktop/shared/renderer/src/components/RunInspectorPanel.tsx",
+        "specifier": "@shared/oaep.generated",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
+        "specifier": "@shared/oaep.generated",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/structuredProcessPresentation.ts",
         "specifier": "@shared/oaep.generated",
         "kind": "import",
         "commands": [
@@ -28607,6 +31079,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/desktop/shared/renderer/src/App.tsx",
+        "specifier": "@shared/structuredConversation",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
         "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
         "specifier": "@shared/structuredConversation",
         "kind": "import",
@@ -28616,6 +31096,14 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
       },
       {
         "path": "apps/desktop/shared/renderer/src/components/DebugPanel.tsx",
+        "specifier": "@shared/structuredConversation",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/components/files/CitationSourcePanel.tsx",
         "specifier": "@shared/structuredConversation",
         "kind": "import",
         "commands": [
@@ -28639,7 +31127,23 @@ export const FORK_CONFLICT_GENERATED_REPOSITORY_IMPORT_INDEX = [
         ]
       },
       {
+        "path": "apps/desktop/shared/renderer/src/knowledgeSources.ts",
+        "specifier": "@shared/structuredConversation",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
         "path": "apps/desktop/shared/renderer/src/mockDesktopApi.ts",
+        "specifier": "@shared/structuredConversation",
+        "kind": "import",
+        "commands": [
+          "npm run typecheck"
+        ]
+      },
+      {
+        "path": "apps/desktop/shared/renderer/src/structuredProcessPresentation.ts",
         "specifier": "@shared/structuredConversation",
         "kind": "import",
         "commands": [
@@ -28990,6 +31494,27 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/citationmarkerplugin",
+    "path": "apps/desktop/shared/renderer/src/citationMarkerPlugin.ts",
+    "symbols": [
+      {
+        "name": "CITATION_HREF_PREFIX",
+        "kind": "VariableDeclaration"
+      },
+      {
+        "name": "createCitationMarkerPlugin",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "InlineCitationLink",
+        "kind": "InterfaceDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/clipboard",
     "path": "apps/desktop/shared/renderer/src/clipboard.ts",
     "symbols": [
@@ -29032,6 +31557,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "module": "apps/desktop/shared/renderer/src/components/agentsquareview",
     "path": "apps/desktop/shared/renderer/src/components/AgentSquareView.tsx",
     "symbols": [
+      {
+        "name": "AgentLogo",
+        "kind": "FunctionDeclaration"
+      },
       {
         "name": "AgentSquareView",
         "kind": "FunctionDeclaration"
@@ -29136,12 +31665,63 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/components/codexintegrationsettings",
+    "path": "apps/desktop/shared/renderer/src/components/CodexIntegrationSettings.tsx",
+    "symbols": [
+      {
+        "name": "CodexIntegrationSettings",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "CodexIntegrationViewModel",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "deriveCodexIntegrationViewModel",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/components/debugpanel",
     "path": "apps/desktop/shared/renderer/src/components/DebugPanel.tsx",
     "symbols": [
       {
         "name": "DebugPanel",
         "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/components/feedbackadmindialog",
+    "path": "apps/desktop/shared/renderer/src/components/FeedbackAdminDialog.tsx",
+    "symbols": [
+      {
+        "name": "FeedbackAdminDialog",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/components/feedbackdialog",
+    "path": "apps/desktop/shared/renderer/src/components/FeedbackDialog.tsx",
+    "symbols": [
+      {
+        "name": "FeedbackDialog",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "FeedbackDialogProps",
+        "kind": "InterfaceDeclaration"
       }
     ],
     "commands": [
@@ -29183,6 +31763,36 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "symbols": [
       {
         "name": "ArtifactsPanel",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/components/files/artifactworkspacelink",
+    "path": "apps/desktop/shared/renderer/src/components/files/artifactWorkspaceLink.ts",
+    "symbols": [
+      {
+        "name": "findWorkspaceNodeByArtifactPath",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "normalizeWorkspaceArtifactPath",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/components/files/citationsourcepanel",
+    "path": "apps/desktop/shared/renderer/src/components/files/CitationSourcePanel.tsx",
+    "symbols": [
+      {
+        "name": "CitationSourcePanel",
         "kind": "FunctionDeclaration"
       }
     ],
@@ -29260,6 +31870,19 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       },
       {
         "name": "FilePreviewer",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/components/files/file_previewer/highlightedlines",
+    "path": "apps/desktop/shared/renderer/src/components/files/file_previewer/HighlightedLines.tsx",
+    "symbols": [
+      {
+        "name": "HighlightedLines",
         "kind": "FunctionDeclaration"
       }
     ],
@@ -29443,6 +32066,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "formatBytes",
         "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "LineHighlight",
+        "kind": "InterfaceDeclaration"
       },
       {
         "name": "PreviewerProps",
@@ -29777,6 +32404,23 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/components/openaibrandicon",
+    "path": "apps/desktop/shared/renderer/src/components/OpenAiBrandIcon.tsx",
+    "symbols": [
+      {
+        "name": "OpenAiBrandIcon",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "openAiLogo",
+        "kind": "ExportSpecifier"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/components/operationalstatebar",
     "path": "apps/desktop/shared/renderer/src/components/OperationalStateBar.tsx",
     "symbols": [
@@ -30040,7 +32684,7 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "path": "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
     "symbols": [
       {
-        "name": "formatActivitySummary",
+        "name": "citationFileName",
         "kind": "FunctionDeclaration"
       },
       {
@@ -30104,58 +32748,6 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     ]
   },
   {
-    "module": "apps/desktop/shared/renderer/src/components/voice/streamingcomposerprojectioneditor",
-    "path": "apps/desktop/shared/renderer/src/components/voice/StreamingComposerProjectionEditor.tsx",
-    "symbols": [
-      {
-        "name": "StreamingComposerProjectionEditor",
-        "kind": "FunctionDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/components/voice/streamingvoicecapturebar",
-    "path": "apps/desktop/shared/renderer/src/components/voice/StreamingVoiceCaptureBar.tsx",
-    "symbols": [
-      {
-        "name": "StreamingVoiceCaptureBar",
-        "kind": "FunctionDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/components/voice/streamingvoiceoutputbar",
-    "path": "apps/desktop/shared/renderer/src/components/voice/StreamingVoiceOutputBar.tsx",
-    "symbols": [
-      {
-        "name": "StreamingVoiceOutputBar",
-        "kind": "FunctionDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/components/voice/transcriptrepairdiff",
-    "path": "apps/desktop/shared/renderer/src/components/voice/TranscriptRepairDiff.tsx",
-    "symbols": [
-      {
-        "name": "TranscriptRepairDiff",
-        "kind": "FunctionDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
     "module": "apps/desktop/shared/renderer/src/components/voice/voicecapturebar",
     "path": "apps/desktop/shared/renderer/src/components/voice/VoiceCaptureBar.tsx",
     "symbols": [
@@ -30174,6 +32766,23 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "symbols": [
       {
         "name": "VoiceReviewBar",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/components/wechatchannelcard",
+    "path": "apps/desktop/shared/renderer/src/components/WeChatChannelCard.tsx",
+    "symbols": [
+      {
+        "name": "WeChatChannelCard",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "WeChatLogo",
         "kind": "FunctionDeclaration"
       }
     ],
@@ -30253,6 +32862,19 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "WorktreeVisualState",
         "kind": "TypeAliasDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/composerdraftparts",
+    "path": "apps/desktop/shared/renderer/src/composerDraftParts.ts",
+    "symbols": [
+      {
+        "name": "buildComposerDraftParts",
+        "kind": "FunctionDeclaration"
       }
     ],
     "commands": [
@@ -30410,6 +33032,19 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/deletedesktopthread",
+    "path": "apps/desktop/shared/renderer/src/deleteDesktopThread.ts",
+    "symbols": [
+      {
+        "name": "deleteDesktopThread",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/desktopapi",
     "path": "apps/desktop/shared/renderer/src/desktopApi.ts",
     "symbols": [
@@ -30441,6 +33076,35 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "TextKeyboardEventLike",
         "kind": "InterfaceDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/knowledgesources",
+    "path": "apps/desktop/shared/renderer/src/knowledgeSources.ts",
+    "symbols": [
+      {
+        "name": "CitationSourceTarget",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "forgetKnowledgeRoots",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "isKnowledgeCitation",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "knowledgeRoots",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "resolveCitationSource",
+        "kind": "FunctionDeclaration"
       }
     ],
     "commands": [
@@ -30488,6 +33152,31 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "ModelCatalogRecoveryState",
         "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "supportsFullAgentPrimaryRuntime",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/modelvoicecapabilities",
+    "path": "apps/desktop/shared/renderer/src/modelVoiceCapabilities.ts",
+    "symbols": [
+      {
+        "name": "knownVoiceModelCapabilities",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "KnownVoiceModelCapabilities",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "mergeKnownVoiceModalities",
+        "kind": "FunctionDeclaration"
       }
     ],
     "commands": [
@@ -30714,6 +33403,43 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "useStreamingTextSegments",
         "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/structuredprocesspresentation",
+    "path": "apps/desktop/shared/renderer/src/structuredProcessPresentation.ts",
+    "symbols": [
+      {
+        "name": "buildStructuredProcessPresentation",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "formatActivitySummary",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "ProcessActivityGroup",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "ProcessCount",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "ProcessLanguage",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "ProcessProgressGroup",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "StructuredProcessPresentation",
+        "kind": "InterfaceDeclaration"
       }
     ],
     "commands": [
@@ -31021,6 +33747,48 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/adaptivejitterbuffer",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/adaptiveJitterBuffer.ts",
+    "symbols": [
+      {
+        "name": "DuplexAdaptiveJitterBuffer",
+        "kind": "ClassDeclaration"
+      },
+      {
+        "name": "DuplexJitterSnapshot",
+        "kind": "InterfaceDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/bargeincandidate",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/bargeInCandidate.ts",
+    "symbols": [
+      {
+        "name": "DuplexBargeInCandidate",
+        "kind": "ClassDeclaration"
+      },
+      {
+        "name": "DuplexBargeInCandidateAction",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DuplexBargeInCandidateSnapshot",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "isFastStopPrefix",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/voice/duplex/bargeincoordinator",
     "path": "apps/desktop/shared/renderer/src/voice/duplex/bargeInCoordinator.ts",
     "symbols": [
@@ -31035,6 +33803,14 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "DuplexBargeInCoordinator",
         "kind": "ClassDeclaration"
+      },
+      {
+        "name": "DuplexInterruptOutcome",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DuplexInterruptTransaction",
+        "kind": "InterfaceDeclaration"
       }
     ],
     "commands": [
@@ -31088,6 +33864,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "path": "apps/desktop/shared/renderer/src/voice/duplex/captureController.ts",
     "symbols": [
       {
+        "name": "classifyDuplexLocalFailure",
+        "kind": "FunctionDeclaration"
+      },
+      {
         "name": "createDuplexAudioConstraints",
         "kind": "FunctionDeclaration"
       },
@@ -31110,6 +33890,93 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "DuplexCaptureState",
         "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DuplexLocalFailure",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DuplexLocalFailureCode",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DuplexLocalFailureStage",
+        "kind": "TypeAliasDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/capturequality",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/captureQuality.ts",
+    "symbols": [
+      {
+        "name": "classifyDuplexCaptureConstraints",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "DuplexCaptureQualityIssue",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DuplexCaptureQualityMonitor",
+        "kind": "ClassDeclaration"
+      },
+      {
+        "name": "DuplexCaptureQualityOptions",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DuplexCaptureQualitySnapshot",
+        "kind": "InterfaceDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/desktoptoolapprovalgate",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/desktopToolApprovalGate.ts",
+    "symbols": [
+      {
+        "name": "DesktopDuplexToolApprovalGate",
+        "kind": "ClassDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/duplexsessionreducer",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/duplexSessionReducer.ts",
+    "symbols": [
+      {
+        "name": "claimWasGranted",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "DuplexSessionEvent",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DuplexSessionPhase",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DuplexSessionState",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "initialDuplexSessionState",
+        "kind": "VariableDeclaration"
+      },
+      {
+        "name": "reduceDuplexSession",
+        "kind": "FunctionDeclaration"
       }
     ],
     "commands": [
@@ -31146,6 +34013,80 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/duplexuimodel",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/duplexUiModel.ts",
+    "symbols": [
+      {
+        "name": "deriveDuplexHudState",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "duplexFailureTraceId",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "duplexHudLabel",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "DuplexHudState",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DuplexRecoveryAction",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DuplexShortcutAction",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "duplexStartupLabel",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "getDuplexErrorRecovery",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "getDuplexShortcutAction",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "realtimeDisclosureFingerprint",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/lifecyclepolicy",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/lifecyclePolicy.ts",
+    "symbols": [
+      {
+        "name": "duplexLifecycleAction",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "DuplexLifecycleAction",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "duplexLifecyclePolicy",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "DuplexLifecycleSignal",
+        "kind": "TypeAliasDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/voice/duplex/localvad",
     "path": "apps/desktop/shared/renderer/src/voice/duplex/localVad.ts",
     "symbols": [
@@ -31171,15 +34112,15 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "path": "apps/desktop/shared/renderer/src/voice/duplex/pcm.ts",
     "symbols": [
       {
-        "name": "DuplexLinearResampler",
-        "kind": "ClassDeclaration"
-      },
-      {
         "name": "DuplexPcmBatch",
         "kind": "InterfaceDeclaration"
       },
       {
         "name": "DuplexPcmBatcher",
+        "kind": "ClassDeclaration"
+      },
+      {
+        "name": "DuplexSincResampler",
         "kind": "ClassDeclaration"
       },
       {
@@ -31204,12 +34145,175 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
         "kind": "ClassDeclaration"
       },
       {
+        "name": "DuplexPlaybackGap",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DuplexPlaybackSchedule",
+        "kind": "InterfaceDeclaration"
+      },
+      {
         "name": "DuplexPlaybackSink",
         "kind": "InterfaceDeclaration"
       },
       {
         "name": "DuplexPlaybackSnapshot",
         "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DuplexPlaybackSourceEnd",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DuplexPlaybackTimelineEntry",
+        "kind": "InterfaceDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/readinessactions",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/readinessActions.ts",
+    "symbols": [
+      {
+        "name": "DuplexVoiceReadinessActionId",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DuplexVoiceReadinessActions",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "getDuplexVoiceReadinessActions",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/sessioncontext",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/sessionContext.ts",
+    "symbols": [
+      {
+        "name": "buildDuplexSessionContext",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "DuplexSessionContext",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "interruptedVoiceStatus",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "trustedContextContent",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/sloprojection",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/sloProjection.ts",
+    "symbols": [
+      {
+        "name": "buildDuplexSloSnapshot",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "DuplexSloSnapshot",
+        "kind": "InterfaceDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/stablehistorywriter",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/stableHistoryWriter.ts",
+    "symbols": [
+      {
+        "name": "DuplexStableHistoryWriter",
+        "kind": "ClassDeclaration"
+      },
+      {
+        "name": "DuplexStableHistoryWriterOptions",
+        "kind": "InterfaceDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/startuptransaction",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/startupTransaction.ts",
+    "symbols": [
+      {
+        "name": "DuplexStartupError",
+        "kind": "ClassDeclaration"
+      },
+      {
+        "name": "DuplexStartupStage",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "DuplexStartupTransactionOptions",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "runDuplexStartupTransaction",
+        "kind": "FunctionDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/temporarydiagnostics",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/temporaryDiagnostics.ts",
+    "symbols": [
+      {
+        "name": "DuplexTemporaryDiagnostics",
+        "kind": "ClassDeclaration"
+      },
+      {
+        "name": "DuplexTemporaryDiagnosticSample",
+        "kind": "InterfaceDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/textinputscheduler",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/textInputScheduler.ts",
+    "symbols": [
+      {
+        "name": "DuplexPendingText",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DuplexTextInputScheduler",
+        "kind": "ClassDeclaration"
+      },
+      {
+        "name": "DuplexTextInputSchedulerOptions",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "DuplexTextSendStrategy",
+        "kind": "TypeAliasDeclaration"
       }
     ],
     "commands": [
@@ -31255,6 +34359,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "serializeToolResult",
         "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "summarizeToolArguments",
+        "kind": "FunctionDeclaration"
       }
     ],
     "commands": [
@@ -31265,6 +34373,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "module": "apps/desktop/shared/renderer/src/voice/duplex/transcriptprojection",
     "path": "apps/desktop/shared/renderer/src/voice/duplex/transcriptProjection.ts",
     "symbols": [
+      {
+        "name": "alignHeardTranscript",
+        "kind": "FunctionDeclaration"
+      },
       {
         "name": "DuplexContextProjection",
         "kind": "InterfaceDeclaration"
@@ -31295,12 +34407,37 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
         "kind": "TypeAliasDeclaration"
       },
       {
+        "name": "DuplexVoiceStartupStage",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
         "name": "useDuplexVoiceInput",
         "kind": "FunctionDeclaration"
       },
       {
         "name": "UseDuplexVoiceInputOptions",
         "kind": "InterfaceDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/localdevicetest",
+    "path": "apps/desktop/shared/renderer/src/voice/localDeviceTest.ts",
+    "symbols": [
+      {
+        "name": "LocalMicrophoneTestCode",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "LocalMicrophoneTestResult",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "testLocalMicrophone",
+        "kind": "FunctionDeclaration"
       }
     ],
     "commands": [
@@ -31327,529 +34464,6 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "*",
         "kind": "ExportAll"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-    "symbols": [
-      {
-        "name": "*",
-        "kind": "ExportAll"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/adaptivettswatermark",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/adaptiveTtsWatermark.ts",
-    "symbols": [
-      {
-        "name": "AdaptiveTtsPrefetchWatermark",
-        "kind": "ClassDeclaration"
-      },
-      {
-        "name": "estimateSpeechAudioMs",
-        "kind": "FunctionDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/assistantspeechstream",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/assistantSpeechStream.ts",
-    "symbols": [
-      {
-        "name": "AssistantSpeechStreamEvent",
-        "kind": "TypeAliasDeclaration"
-      },
-      {
-        "name": "emitAssistantSpeechStreamEvent",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "subscribeAssistantSpeechStream",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "useAssistantSpeechSegments",
-        "kind": "FunctionDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/browserstreamingaudioadapter",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/browserStreamingAudioAdapter.ts",
-    "symbols": [
-      {
-        "name": "BrowserAudioLike",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "BrowserStreamingAudioAdapter",
-        "kind": "ClassDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/contextualtranscriptrepair",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/contextualTranscriptRepair.ts",
-    "symbols": [
-      {
-        "name": "acceptTranscriptRepair",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "buildContextualTranscriptRepair",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "createTranscriptRepairState",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "proposeTranscriptRepair",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "rejectTranscriptRepair",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "TranscriptRepairCandidate",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "TranscriptRepairGlossaryEntry",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "TranscriptRepairSource",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "TranscriptRepairState",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "undoTranscriptRepair",
-        "kind": "FunctionDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/desktopstreamingttsruntime",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/desktopStreamingTtsRuntime.ts",
-    "symbols": [
-      {
-        "name": "DesktopStreamingTtsRuntime",
-        "kind": "ClassDeclaration"
-      },
-      {
-        "name": "DesktopTtsTaskProvider",
-        "kind": "InterfaceDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/localvad",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/localVad.ts",
-    "symbols": [
-      {
-        "name": "LocalVadOptions",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "LocalVadResult",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "LocalVoiceActivityDetector",
-        "kind": "ClassDeclaration"
-      },
-      {
-        "name": "pcm16Rms",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "resolveEndpointReason",
-        "kind": "FunctionDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/orderedaudioplaybackqueue",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/orderedAudioPlaybackQueue.ts",
-    "symbols": [
-      {
-        "name": "OrderedStreamingAudioPlaybackQueue",
-        "kind": "ClassDeclaration"
-      },
-      {
-        "name": "StreamingAudioPlaybackAdapter",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "StreamingAudioPlaybackHandle",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "StreamingPlaybackPhase",
-        "kind": "TypeAliasDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/semanticspeechsegmenter",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/semanticSpeechSegmenter.ts",
-    "symbols": [
-      {
-        "name": "filterSpeakableAssistantText",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "findSpeechBoundary",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "SemanticSpeechSegmenter",
-        "kind": "ClassDeclaration"
-      },
-      {
-        "name": "SemanticSpeechSegmenterOptions",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "SpeechTextSegment",
-        "kind": "InterfaceDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/streamingaudio",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingAudio.ts",
-    "symbols": [
-      {
-        "name": "float32ToPcm16",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "mixAudioChannelsToMono",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "Pcm16Batcher",
-        "kind": "ClassDeclaration"
-      },
-      {
-        "name": "PcmAudioBatch",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "StreamingLinearResampler",
-        "kind": "ClassDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/streamingcapturecontroller",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingCaptureController.ts",
-    "symbols": [
-      {
-        "name": "StreamingCaptureController",
-        "kind": "ClassDeclaration"
-      },
-      {
-        "name": "StreamingCaptureControllerOptions",
-        "kind": "InterfaceDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/streamingcomposerprojection",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingComposerProjection.ts",
-    "symbols": [
-      {
-        "name": "commitStreamingComposerProjection",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "createStreamingComposerProjection",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "discardStreamingComposerProjection",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "getStreamingComposerProjectionView",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "rebaseStreamingComposerUserText",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "setStreamingComposerComposition",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "StreamingComposerCommit",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "StreamingComposerProjectionState",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "StreamingComposerProjectionView",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "StreamingComposerSelection",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "StreamingComposerTranscriptUpdate",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "updateStreamingComposerTranscript",
-        "kind": "FunctionDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/streamingttsscheduler",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingTtsScheduler.ts",
-    "symbols": [
-      {
-        "name": "BoundedStreamingTtsScheduler",
-        "kind": "ClassDeclaration"
-      },
-      {
-        "name": "StreamingTtsRuntime",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "StreamingTtsSchedulerEvent",
-        "kind": "TypeAliasDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/streamingvoicediagnostics",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingVoiceDiagnostics.ts",
-    "symbols": [
-      {
-        "name": "containsForbiddenStreamingDiagnosticData",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "createStreamingVoiceDiagnostic",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "StreamingVoiceCostBudget",
-        "kind": "ClassDeclaration"
-      },
-      {
-        "name": "StreamingVoiceDiagnosticMetrics",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "StreamingVoiceDiagnosticStage",
-        "kind": "TypeAliasDeclaration"
-      },
-      {
-        "name": "streamingVoiceQualityMetrics",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "streamingVoiceRecoveryAdvice",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "StreamingVoiceSloTracker",
-        "kind": "ClassDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/streamingvoiceturnreducer",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingVoiceTurnReducer.ts",
-    "symbols": [
-      {
-        "name": "canSubmitStreamingVoiceTurn",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "initialStreamingVoiceTurnState",
-        "kind": "VariableDeclaration"
-      },
-      {
-        "name": "isValidStreamingVoiceTurnState",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "reduceStreamingVoiceTurn",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "StreamingTaskPhase",
-        "kind": "TypeAliasDeclaration"
-      },
-      {
-        "name": "StreamingVoiceTopPhase",
-        "kind": "TypeAliasDeclaration"
-      },
-      {
-        "name": "StreamingVoiceTurnEvent",
-        "kind": "TypeAliasDeclaration"
-      },
-      {
-        "name": "StreamingVoiceTurnState",
-        "kind": "InterfaceDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/transcriptreconciler",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/transcriptReconciler.ts",
-    "symbols": [
-      {
-        "name": "getStreamingTranscriptDisplayText",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "initialStreamingTranscriptState",
-        "kind": "VariableDeclaration"
-      },
-      {
-        "name": "reconcileStreamingTranscript",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "StreamingTranscriptState",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "TranscriptEventResult",
-        "kind": "TypeAliasDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/transcriptrepairpolicy",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/transcriptRepairPolicy.ts",
-    "symbols": [
-      {
-        "name": "evaluateTranscriptRepairPolicy",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "TranscriptRepairPolicyInput",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "TranscriptRepairPolicyResult",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "TranscriptRepairRisk",
-        "kind": "TypeAliasDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/usestreamingvoiceinput",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceInput.ts",
-    "symbols": [
-      {
-        "name": "StreamingVoiceInputHook",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "StreamingVoiceInputPhase",
-        "kind": "TypeAliasDeclaration"
-      },
-      {
-        "name": "useStreamingVoiceInput",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "UseStreamingVoiceInputOptions",
-        "kind": "InterfaceDeclaration"
-      }
-    ],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/usestreamingvoiceoutput",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceOutput.ts",
-    "symbols": [
-      {
-        "name": "StreamingVoiceOutputState",
-        "kind": "InterfaceDeclaration"
-      },
-      {
-        "name": "useStreamingVoiceOutput",
-        "kind": "FunctionDeclaration"
       }
     ],
     "commands": [
@@ -31928,7 +34542,23 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
         "kind": "VariableDeclaration"
       },
       {
+        "name": "defaultVoicePreferencesDocument",
+        "kind": "VariableDeclaration"
+      },
+      {
+        "name": "LEGACY_STREAMING_VOICE_MIGRATION_KEY",
+        "kind": "VariableDeclaration"
+      },
+      {
         "name": "loadVoicePreferences",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "loadVoicePreferencesDocument",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "normalizeVoicePreferences",
         "kind": "FunctionDeclaration"
       },
       {
@@ -31952,7 +34582,19 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
         "kind": "VariableDeclaration"
       },
       {
+        "name": "VoiceInteractionMode",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "VoiceLanguage",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
         "name": "VoicePreferences",
+        "kind": "InterfaceDeclaration"
+      },
+      {
+        "name": "VoicePreferencesVNext",
         "kind": "InterfaceDeclaration"
       }
     ],
@@ -32107,10 +34749,6 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       },
       {
         "name": "deriveVoiceModeCapabilities",
-        "kind": "FunctionDeclaration"
-      },
-      {
-        "name": "getStreamingVoiceOutputAvailability",
         "kind": "FunctionDeclaration"
       },
       {
@@ -32273,6 +34911,48 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
       {
         "name": "WebSearchActivityPresentation",
         "kind": "InterfaceDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/wechatcomposerpolicy",
+    "path": "apps/desktop/shared/renderer/src/wechatComposerPolicy.ts",
+    "symbols": [
+      {
+        "name": "decideWeChatComposerSubmit",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "WeChatComposerDecision",
+        "kind": "TypeAliasDeclaration"
+      },
+      {
+        "name": "WeChatComposerTrigger",
+        "kind": "TypeAliasDeclaration"
+      }
+    ],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/workspaceordering",
+    "path": "apps/desktop/shared/renderer/src/workspaceOrdering.ts",
+    "symbols": [
+      {
+        "name": "normalizeWorkspaceSortMode",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "sortWorkspacesForSidebar",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "WorkspaceSortMode",
+        "kind": "TypeAliasDeclaration"
       }
     ],
     "commands": [
@@ -33482,7 +36162,15 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
         "kind": "FunctionDeclaration"
       },
       {
+        "name": "saveSshHost",
+        "kind": "FunctionDeclaration"
+      },
+      {
         "name": "searchRemoteThreadMessages",
+        "kind": "FunctionDeclaration"
+      },
+      {
+        "name": "searchThreadMessagesWithRemoteFallback",
         "kind": "FunctionDeclaration"
       },
       {
@@ -33936,6 +36624,10 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     "path": "src/main/threadArchive.ts",
     "symbols": [
       {
+        "name": "isMissingRuntimeBindingError",
+        "kind": "FunctionDeclaration"
+      },
+      {
         "name": "setThreadArchived",
         "kind": "FunctionDeclaration"
       },
@@ -34139,142 +36831,16 @@ export const FORK_CONFLICT_GENERATED_AST_EXPORT_INDEX = [
     ]
   },
   {
-    "module": "src/main/voice/streaming",
-    "path": "src/main/voice/streaming/index.ts",
+    "module": "src/main/voicepreferences",
+    "path": "src/main/voicePreferences.ts",
     "symbols": [
       {
-        "name": "*",
-        "kind": "ExportAll"
-      }
-    ],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming",
-    "path": "src/main/voiceStreaming/index.ts",
-    "symbols": [
+        "name": "getVoicePreferences",
+        "kind": "FunctionDeclaration"
+      },
       {
-        "name": "*",
-        "kind": "ExportAll"
-      }
-    ],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/audioqueue",
-    "path": "src/main/voiceStreaming/audioQueue.ts",
-    "symbols": [
-      {
-        "name": "*",
-        "kind": "ExportAll"
-      }
-    ],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/errors",
-    "path": "src/main/voiceStreaming/errors.ts",
-    "symbols": [
-      {
-        "name": "*",
-        "kind": "ExportAll"
-      }
-    ],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/eventcursor",
-    "path": "src/main/voiceStreaming/eventCursor.ts",
-    "symbols": [
-      {
-        "name": "*",
-        "kind": "ExportAll"
-      }
-    ],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/fixturestreamingruntime",
-    "path": "src/main/voiceStreaming/fixtureStreamingRuntime.ts",
-    "symbols": [
-      {
-        "name": "*",
-        "kind": "ExportAll"
-      }
-    ],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/runtime",
-    "path": "src/main/voiceStreaming/runtime.ts",
-    "symbols": [
-      {
-        "name": "*",
-        "kind": "ExportAll"
-      }
-    ],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/sessionregistry",
-    "path": "src/main/voiceStreaming/sessionRegistry.ts",
-    "symbols": [
-      {
-        "name": "*",
-        "kind": "ExportAll"
-      }
-    ],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/transportreliability",
-    "path": "src/main/voiceStreaming/transportReliability.ts",
-    "symbols": [
-      {
-        "name": "*",
-        "kind": "ExportAll"
-      }
-    ],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/validation",
-    "path": "src/main/voiceStreaming/validation.ts",
-    "symbols": [
-      {
-        "name": "*",
-        "kind": "ExportAll"
-      }
-    ],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/websocketstreamingruntime",
-    "path": "src/main/voiceStreaming/websocketStreamingRuntime.ts",
-    "symbols": [
-      {
-        "name": "*",
-        "kind": "ExportAll"
+        "name": "updateVoicePreferences",
+        "kind": "FunctionDeclaration"
       }
     ],
     "commands": [
@@ -34932,6 +37498,16 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/citationmarkerplugin",
+    "path": "apps/desktop/shared/renderer/src/citationMarkerPlugin.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/clipboard",
     "path": "apps/desktop/shared/renderer/src/clipboard.ts",
     "scriptKind": "TS",
@@ -35023,8 +37599,38 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/components/codexintegrationsettings",
+    "path": "apps/desktop/shared/renderer/src/components/CodexIntegrationSettings.tsx",
+    "scriptKind": "TSX",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/components/debugpanel",
     "path": "apps/desktop/shared/renderer/src/components/DebugPanel.tsx",
+    "scriptKind": "TSX",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/components/feedbackadmindialog",
+    "path": "apps/desktop/shared/renderer/src/components/FeedbackAdminDialog.tsx",
+    "scriptKind": "TSX",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/components/feedbackdialog",
+    "path": "apps/desktop/shared/renderer/src/components/FeedbackDialog.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
     "semanticDiagnostics": [],
@@ -35045,6 +37651,26 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
   {
     "module": "apps/desktop/shared/renderer/src/components/files/artifactspanel",
     "path": "apps/desktop/shared/renderer/src/components/files/ArtifactsPanel.tsx",
+    "scriptKind": "TSX",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/components/files/artifactworkspacelink",
+    "path": "apps/desktop/shared/renderer/src/components/files/artifactWorkspaceLink.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/components/files/citationsourcepanel",
+    "path": "apps/desktop/shared/renderer/src/components/files/CitationSourcePanel.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
     "semanticDiagnostics": [],
@@ -35095,6 +37721,16 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
   {
     "module": "apps/desktop/shared/renderer/src/components/files/file_previewer/filepreviewer",
     "path": "apps/desktop/shared/renderer/src/components/files/file_previewer/FilePreviewer.tsx",
+    "scriptKind": "TSX",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/components/files/file_previewer/highlightedlines",
+    "path": "apps/desktop/shared/renderer/src/components/files/file_previewer/HighlightedLines.tsx",
     "scriptKind": "TSX",
     "syntaxDiagnostics": [],
     "semanticDiagnostics": [],
@@ -35393,6 +38029,16 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/components/openaibrandicon",
+    "path": "apps/desktop/shared/renderer/src/components/OpenAiBrandIcon.tsx",
+    "scriptKind": "TSX",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/components/operationalstatebar",
     "path": "apps/desktop/shared/renderer/src/components/OperationalStateBar.tsx",
     "scriptKind": "TSX",
@@ -35583,46 +38229,6 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     ]
   },
   {
-    "module": "apps/desktop/shared/renderer/src/components/voice/streamingcomposerprojectioneditor",
-    "path": "apps/desktop/shared/renderer/src/components/voice/StreamingComposerProjectionEditor.tsx",
-    "scriptKind": "TSX",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/components/voice/streamingvoicecapturebar",
-    "path": "apps/desktop/shared/renderer/src/components/voice/StreamingVoiceCaptureBar.tsx",
-    "scriptKind": "TSX",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/components/voice/streamingvoiceoutputbar",
-    "path": "apps/desktop/shared/renderer/src/components/voice/StreamingVoiceOutputBar.tsx",
-    "scriptKind": "TSX",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/components/voice/transcriptrepairdiff",
-    "path": "apps/desktop/shared/renderer/src/components/voice/TranscriptRepairDiff.tsx",
-    "scriptKind": "TSX",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
     "module": "apps/desktop/shared/renderer/src/components/voice/voicecapturebar",
     "path": "apps/desktop/shared/renderer/src/components/voice/VoiceCaptureBar.tsx",
     "scriptKind": "TSX",
@@ -35643,6 +38249,16 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/components/wechatchannelcard",
+    "path": "apps/desktop/shared/renderer/src/components/WeChatChannelCard.tsx",
+    "scriptKind": "TSX",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/components/workspaceshell",
     "path": "apps/desktop/shared/renderer/src/components/WorkspaceShell.tsx",
     "scriptKind": "TSX",
@@ -35655,6 +38271,16 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
   {
     "module": "apps/desktop/shared/renderer/src/components/worktreepresentation",
     "path": "apps/desktop/shared/renderer/src/components/worktreePresentation.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/composerdraftparts",
+    "path": "apps/desktop/shared/renderer/src/composerDraftParts.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
     "semanticDiagnostics": [],
@@ -35723,6 +38349,16 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/deletedesktopthread",
+    "path": "apps/desktop/shared/renderer/src/deleteDesktopThread.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/desktopapi",
     "path": "apps/desktop/shared/renderer/src/desktopApi.ts",
     "scriptKind": "TS",
@@ -35735,6 +38371,16 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
   {
     "module": "apps/desktop/shared/renderer/src/imekeyboardpolicy",
     "path": "apps/desktop/shared/renderer/src/imeKeyboardPolicy.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/knowledgesources",
+    "path": "apps/desktop/shared/renderer/src/knowledgeSources.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
     "semanticDiagnostics": [],
@@ -35775,6 +38421,16 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
   {
     "module": "apps/desktop/shared/renderer/src/modelcatalogrecovery",
     "path": "apps/desktop/shared/renderer/src/modelCatalogRecovery.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/modelvoicecapabilities",
+    "path": "apps/desktop/shared/renderer/src/modelVoiceCapabilities.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
     "semanticDiagnostics": [],
@@ -35885,6 +38541,16 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
   {
     "module": "apps/desktop/shared/renderer/src/streamingtextfade",
     "path": "apps/desktop/shared/renderer/src/streamingTextFade.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/structuredprocesspresentation",
+    "path": "apps/desktop/shared/renderer/src/structuredProcessPresentation.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
     "semanticDiagnostics": [],
@@ -36013,6 +38679,26 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/adaptivejitterbuffer",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/adaptiveJitterBuffer.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/bargeincandidate",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/bargeInCandidate.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/voice/duplex/bargeincoordinator",
     "path": "apps/desktop/shared/renderer/src/voice/duplex/bargeInCoordinator.ts",
     "scriptKind": "TS",
@@ -36053,6 +38739,26 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/capturequality",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/captureQuality.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/desktoptoolapprovalgate",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/desktopToolApprovalGate.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/voice/duplex/duplexpcmcapture.worklet",
     "path": "apps/desktop/shared/renderer/src/voice/duplex/duplexPcmCapture.worklet.js",
     "scriptKind": "JS",
@@ -36063,8 +38769,38 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/duplexsessionreducer",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/duplexSessionReducer.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/voice/duplex/duplexturnreducer",
     "path": "apps/desktop/shared/renderer/src/voice/duplex/duplexTurnReducer.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/duplexuimodel",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/duplexUiModel.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/lifecyclepolicy",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/lifecyclePolicy.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
     "semanticDiagnostics": [],
@@ -36103,6 +38839,76 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/readinessactions",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/readinessActions.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/sessioncontext",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/sessionContext.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/sloprojection",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/sloProjection.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/stablehistorywriter",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/stableHistoryWriter.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/startuptransaction",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/startupTransaction.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/temporarydiagnostics",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/temporaryDiagnostics.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/voice/duplex/textinputscheduler",
+    "path": "apps/desktop/shared/renderer/src/voice/duplex/textInputScheduler.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/voice/duplex/toolbridge",
     "path": "apps/desktop/shared/renderer/src/voice/duplex/toolBridge.ts",
     "scriptKind": "TS",
@@ -36133,6 +38939,16 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     ]
   },
   {
+    "module": "apps/desktop/shared/renderer/src/voice/localdevicetest",
+    "path": "apps/desktop/shared/renderer/src/voice/localDeviceTest.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
     "module": "apps/desktop/shared/renderer/src/voice/serial",
     "path": "apps/desktop/shared/renderer/src/voice/serial/index.ts",
     "scriptKind": "TS",
@@ -36145,206 +38961,6 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
   {
     "module": "apps/desktop/shared/renderer/src/voice/shared",
     "path": "apps/desktop/shared/renderer/src/voice/shared/index.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/index.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/adaptivettswatermark",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/adaptiveTtsWatermark.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/assistantspeechstream",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/assistantSpeechStream.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/browserstreamingaudioadapter",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/browserStreamingAudioAdapter.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/contextualtranscriptrepair",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/contextualTranscriptRepair.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/desktopstreamingttsruntime",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/desktopStreamingTtsRuntime.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/localvad",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/localVad.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/orderedaudioplaybackqueue",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/orderedAudioPlaybackQueue.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/pcmcapture.worklet",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/pcmCapture.worklet.js",
-    "scriptKind": "JS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/semanticspeechsegmenter",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/semanticSpeechSegmenter.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/streamingaudio",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingAudio.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/streamingcapturecontroller",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingCaptureController.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/streamingcomposerprojection",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingComposerProjection.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/streamingttsscheduler",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingTtsScheduler.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/streamingvoicediagnostics",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingVoiceDiagnostics.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/streamingvoiceturnreducer",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/streamingVoiceTurnReducer.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/transcriptreconciler",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/transcriptReconciler.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/transcriptrepairpolicy",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/transcriptRepairPolicy.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/usestreamingvoiceinput",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceInput.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck"
-    ]
-  },
-  {
-    "module": "apps/desktop/shared/renderer/src/voice/streaming/usestreamingvoiceoutput",
-    "path": "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceOutput.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
     "semanticDiagnostics": [],
@@ -36495,6 +39111,26 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
   {
     "module": "apps/desktop/shared/renderer/src/websearchpresentation",
     "path": "apps/desktop/shared/renderer/src/webSearchPresentation.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/wechatcomposerpolicy",
+    "path": "apps/desktop/shared/renderer/src/wechatComposerPolicy.ts",
+    "scriptKind": "TS",
+    "syntaxDiagnostics": [],
+    "semanticDiagnostics": [],
+    "commands": [
+      "npm run typecheck"
+    ]
+  },
+  {
+    "module": "apps/desktop/shared/renderer/src/workspaceordering",
+    "path": "apps/desktop/shared/renderer/src/workspaceOrdering.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
     "semanticDiagnostics": [],
@@ -37462,108 +40098,8 @@ export const FORK_CONFLICT_GENERATED_COMPILER_DIAGNOSTIC_INDEX = [
     ]
   },
   {
-    "module": "src/main/voice/streaming",
-    "path": "src/main/voice/streaming/index.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming",
-    "path": "src/main/voiceStreaming/index.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/audioqueue",
-    "path": "src/main/voiceStreaming/audioQueue.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/errors",
-    "path": "src/main/voiceStreaming/errors.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/eventcursor",
-    "path": "src/main/voiceStreaming/eventCursor.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/fixturestreamingruntime",
-    "path": "src/main/voiceStreaming/fixtureStreamingRuntime.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/runtime",
-    "path": "src/main/voiceStreaming/runtime.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/sessionregistry",
-    "path": "src/main/voiceStreaming/sessionRegistry.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/transportreliability",
-    "path": "src/main/voiceStreaming/transportReliability.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/validation",
-    "path": "src/main/voiceStreaming/validation.ts",
-    "scriptKind": "TS",
-    "syntaxDiagnostics": [],
-    "semanticDiagnostics": [],
-    "commands": [
-      "npm run typecheck:node"
-    ]
-  },
-  {
-    "module": "src/main/voicestreaming/websocketstreamingruntime",
-    "path": "src/main/voiceStreaming/websocketStreamingRuntime.ts",
+    "module": "src/main/voicepreferences",
+    "path": "src/main/voicePreferences.ts",
     "scriptKind": "TS",
     "syntaxDiagnostics": [],
     "semanticDiagnostics": [],

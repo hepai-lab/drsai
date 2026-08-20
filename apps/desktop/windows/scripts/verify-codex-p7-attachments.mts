@@ -65,7 +65,7 @@ try {
     stageAttachments([{
       kind: "browser", path: "browser:2", name: "screenshot", screenshotDataUrl: "data:image/png;base64,AA==",
     }], workspace, "run-screenshot"),
-    /screenshot input is not supported/,
+    /corrupt|unsupported image format/,
   );
   const clipboardPng = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
   const stagedClipboard = await stageAttachments([{

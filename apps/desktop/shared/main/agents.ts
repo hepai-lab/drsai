@@ -38,6 +38,10 @@ import {
 } from "./agentCatalog";
 import { recordAgentTelemetry } from "./agentTelemetry";
 import { LocalRuntimeClient } from "./runtimeClient";
+import {
+  getExternalAgentRuntimeDescriptor,
+  listExternalAgentRuntimeAgents,
+} from "./externalAgentRuntimes";
 
 const ACTIVE_PLATFORM = getActivePlatformConfig();
 const PLATFORM_BASE_URL = ACTIVE_PLATFORM.portalUrl;
@@ -114,6 +118,8 @@ export function getPlatformAgentExecutionDescriptor(
   const descriptor = platformExecutionDescriptors.get(agentId);
   return descriptor ? { ...descriptor, capabilities: [...descriptor.capabilities] } : null;
 }
+
+export { getExternalAgentRuntimeDescriptor };
 
 export function getPlatformAgentChatUrl(_platformId: string): string {
   // Agents discovered through HepAI's base_url are DDF runtime/model IDs.
@@ -216,6 +222,7 @@ async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
     capabilities: ["chat", "workspace", "tools"], catalogGroup: "local", url: gateway.baseUrl,
     error: gateway.externalConflict ? "The local Runtime port is already used by another service." : undefined,
   }));
+  agents.push(...await listExternalAgentRuntimeAgents({ preferCache: options.preferCache }).catch(() => []));
   if (!gateway.ready) return agents;
   try {
     await Promise.all(agents.map(async (agent, index) => {

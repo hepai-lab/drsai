@@ -37,15 +37,30 @@ const ownershipFor = (channel) => {
 const preload = channels(read("shared/main/preload.ts"), [
   /ipcRenderer\.invoke\(\s*["'](desktop:[^"']+)["']/g,
 ]);
-const windows = channels(read("windows/src/main/index.ts"), [
+const windowsSource = read("windows/src/main/index.ts");
+const windowsDirect = channels(windowsSource, [
   /secureHandle\(\s*["'](desktop:[^"']+)["']/g,
   /ipcMain\.handle\(\s*["'](desktop:[^"']+)["']/g,
 ]);
 const macosSource = macosIpcSource(desktopRoot);
-const macos = channels(macosSource, [
+const macosDirect = channels(macosSource, [
   /secureHandle\(\s*["'](desktop:[^"']+)["']/g,
   /ipcMain\.handle\(\s*["'](desktop:[^"']+)["']/g,
 ]);
+const sharedRegistrars = [
+  ["registerConversationResourceReadIpc", "shared/main/conversationResourceIpc.ts"],
+  ["registerConversationResourceDownloadIpc", "shared/main/conversationResourceDownloadIpc.ts"],
+  ["registerConversationResourceSubscriptionIpc", "shared/main/conversationResourceSubscriptionIpc.ts"],
+];
+const sharedChannels = sharedRegistrars.flatMap(([registrar, path]) => {
+  assert.ok(windowsSource.includes(`${registrar}(`), `Windows composition omits shared registrar ${registrar}`);
+  assert.ok(macosSource.includes(`${registrar}(`), `macOS composition omits shared registrar ${registrar}`);
+  const registered = channels(read(path), [/\bregister\(\s*["'](desktop:[^"']+)["']/g]);
+  assert.ok(registered.length > 0, `shared registrar ${registrar} exposes no statically auditable channels`);
+  return registered;
+});
+const windows = [...new Set([...windowsDirect, ...sharedChannels])].sort();
+const macos = [...new Set([...macosDirect, ...sharedChannels])].sort();
 const macosRegistrations = [...macosSource.matchAll(/ipcMain\.handle\(\s*["'](desktop:[^"']+)["']/g)].map((match) => match[1]);
 assert.equal(new Set(macosRegistrations).size, macosRegistrations.length, "macOS IPC channel registration must not contain duplicates across registrars");
 

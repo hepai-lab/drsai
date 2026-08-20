@@ -5,6 +5,12 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertPackagedConversationResourceChecks,
+  packagedConversationResourceOwopResult,
+  packagedConversationResourceSnapshot,
+  writePackagedConversationResourceFixtures,
+} from "../../shared/test-kit/packaged-conversation-resource-p2-fixture.mjs";
 
 for (const key of ["NO_PROXY", "no_proxy"]) {
   const entries = String(process.env[key] || "").split(",").map((value) => value.trim()).filter(Boolean);
@@ -18,7 +24,7 @@ const pythonSrc = join(repoRoot, "cores", "python", "packages", "drsai", "src");
 const exePath = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const scenarioIndex = process.argv.indexOf("--scenario");
 const scenario = scenarioIndex >= 0 ? process.argv[scenarioIndex + 1] : "default";
-if (!["default", "background-close", "minimized-notification", "network-recovery", "business-progress", "completion-criteria", "continuous-task", "d1-plan-g2", "d1-plan-g3", "d1-plan-g4", "d2-edit-plan", "d3-depth", "d5-plan-adjustment", "g1-results-center", "g2-deliverable-report", "g3-output-versions", "g4-preview-download", "workspace-artifact-p1", "g5-local-edit", "g6-chart-consistency", "i4-analysis-routes", "i5-route-comparison", "i6-external-conflict"].includes(scenario)) {
+if (!["default", "background-close", "minimized-notification", "network-recovery", "business-progress", "completion-criteria", "continuous-task", "d1-plan-g2", "d1-plan-g3", "d1-plan-g4", "d2-edit-plan", "d3-depth", "d5-plan-adjustment", "g1-results-center", "g2-deliverable-report", "g3-output-versions", "g4-preview-download", "workspace-artifact-p1", "conversation-resource-p2", "g5-local-edit", "g6-chart-consistency", "i4-analysis-routes", "i5-route-comparison", "i6-external-conflict"].includes(scenario)) {
   throw new Error(`Unknown Agent run scenario: ${scenario}`);
 }
 const isAnalysisRouteScenario = scenario === "i4-analysis-routes" || scenario === "i5-route-comparison";
@@ -49,7 +55,9 @@ const evidenceDir = join(
   root,
   "release",
   "product-evidence",
-  scenario === "workspace-artifact-p1"
+  scenario === "conversation-resource-p2"
+    ? "conversation-resource-p2"
+    : scenario === "workspace-artifact-p1"
     ? "p1-workspace-artifact"
     : scenario === "background-close"
     ? "agent-background-close"
@@ -89,7 +97,9 @@ const evidenceDir = join(
                                       ? "i6-external-conflict"
         : "agent-completion-notifications",
 );
-const evidenceStem = scenario === "workspace-artifact-p1"
+const evidenceStem = scenario === "conversation-resource-p2"
+  ? "packaged-conversation-resource-p2"
+  : scenario === "workspace-artifact-p1"
   ? "packaged-workspace-artifact-p1"
   : scenario === "background-close"
     ? "packaged-agent-background-close"
@@ -135,6 +145,7 @@ const evidenceScreenshot = join(evidenceDir, `${evidenceStem}.png`);
 const p1SaveDirectory = join(tempDir, "下载结果", "工作区成果");
 const g4SaveDirectory = join(tempDir, "下载结果", "导师版本");
 const i6SaveDirectory = join(tempDir, "冲突保留副本");
+const p2SaveDirectory = join(tempDir, "conversation-resource-p2-downloads");
 mkdirSync(appHome, { recursive: true });
 mkdirSync(workspacePath, { recursive: true });
 mkdirSync(userData, { recursive: true });
@@ -142,6 +153,7 @@ mkdirSync(evidenceDir, { recursive: true });
 mkdirSync(p1SaveDirectory, { recursive: true });
 mkdirSync(g4SaveDirectory, { recursive: true });
 mkdirSync(i6SaveDirectory, { recursive: true });
+mkdirSync(p2SaveDirectory, { recursive: true });
 writeFileSync(join(workspacePath, "user-work.txt"), "user work before agent\n", "utf8");
 writeFileSync(join(workspacePath, "notes.md"), "# Agent E2E notes\n\nUse the Runtime-backed fixture.\n", "utf8");
 if (scenario === "d2-edit-plan") {
@@ -207,6 +219,7 @@ if (scenario === "g3-output-versions") {
 }
 if (scenario === "g4-preview-download") writeG4PreviewFixtures(workspacePath);
 if (scenario === "workspace-artifact-p1") writeWorkspaceArtifactP1Fixture(workspacePath);
+if (scenario === "conversation-resource-p2") writePackagedConversationResourceFixtures(workspacePath);
 if (scenario === "g5-local-edit") writeG5LocalEditFixtures(workspacePath);
 if (scenario === "g6-chart-consistency") writeG6ChartFixtures(workspacePath);
 if (isAnalysisRouteScenario) writeI4AnalysisRouteFixtures(workspacePath);
@@ -266,6 +279,8 @@ try {
   }
   if (scenario === "workspace-artifact-p1") {
     if (!result.checks?.artifactListedByRelativePath || !result.checks?.docxPreviewReady || !result.checks?.saveIntegrityVerified) throw new Error("P1 workspace artifact diagnostics are incomplete.");
+  } else if (scenario === "conversation-resource-p2") {
+    assertConversationResourceP2Diagnostics(result);
   } else if (scenario === "d2-edit-plan") {
     assertD2EditPlanDiagnostics(result);
   } else if (scenario === "d3-depth") {
@@ -325,6 +340,18 @@ try {
 // Electron and Windows may retain non-functional native handles after the app and
 // Runtime have closed. All assertions and evidence writes are complete here.
 process.exit(0);
+
+function assertConversationResourceP2Diagnostics(result) {
+  assertPackagedConversationResourceChecks(result?.checks);
+  if (!result?.checks?.login || !result?.checks?.rendererHasNoResourceKey) throw new Error(`Packaged conversation resource P2 platform checks failed.\n${JSON.stringify(result, null, 2)}`);
+  const expectedRequests = [
+    "GET /v1/sessions/session-packaged-resource-p2/oaep-snapshot",
+    "POST /v1/owop",
+  ];
+  for (const request of expectedRequests) {
+    if (!gatewayRequests.includes(request)) throw new Error(`Packaged P2 transport did not reach Gateway: ${request}`);
+  }
+}
 
 function assertG3OutputVersionsDiagnostics(result) {
   const requiredChecks = [
@@ -783,6 +810,22 @@ function startGateway(workspacePath) {
         closed_at: null,
         open: true,
       }));
+      return;
+    }
+    if (scenario === "conversation-resource-p2" && req.url === "/v1/runtime") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ runtime_id: "runtime-local-packaged-p2", instance_id: "instance-packaged-p2", version: "1.5.8-e2e", protocol_version: 1, platform: "win32", dev_managed: true }));
+      return;
+    }
+    if (scenario === "conversation-resource-p2" && req.url === "/v1/sessions/session-packaged-resource-p2/oaep-snapshot" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(packagedConversationResourceSnapshot()));
+      return;
+    }
+    if (scenario === "conversation-resource-p2" && req.url === "/v1/owop" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, result: packagedConversationResourceOwopResult(body) }));
       return;
     }
     if (req.url === "/v1/chat/completions" && req.method === "POST") {
@@ -1503,7 +1546,7 @@ function runPackagedApp({ appHome, resultPath, workspacePath }) {
         OPENDRSAI_E2E_SCREENSHOT: evidenceScreenshot,
         OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN: "1",
         OPENDRSAI_E2E_WORKSPACE_PATH: workspacePath,
-        OPENDRSAI_E2E_G4_SAVE_DIR: scenario === "workspace-artifact-p1" ? p1SaveDirectory : scenario === "g4-preview-download" ? g4SaveDirectory : undefined,
+        OPENDRSAI_E2E_G4_SAVE_DIR: scenario === "workspace-artifact-p1" ? p1SaveDirectory : scenario === "g4-preview-download" ? g4SaveDirectory : scenario === "conversation-resource-p2" ? p2SaveDirectory : undefined,
         OPENDRSAI_E2E_I6_SAVE_DIR: scenario === "i6-external-conflict" ? i6SaveDirectory : undefined,
         OPENDRSAI_E2E_TIMEOUT_MS: scenario === "network-recovery" ? "120000" : scenario === "i6-external-conflict" ? "90000" : scenario === "g4-preview-download" ? "180000" : "45000",
         OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS: scenario === "network-recovery" ? "90000" : undefined,

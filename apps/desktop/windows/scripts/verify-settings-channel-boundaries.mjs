@@ -14,7 +14,9 @@ assert.doesNotMatch(channels, /aria-label="Input channel adapters"/, "File and v
 assert.match(channels, /readOnly \? .*只读数据/, "Data connector cards must expose a read-only boundary.");
 assert.match(channels, /!readOnly &&[\s\S]{0,120}adapter\.requiresApproval/, "Data perceptors must not expose outbound draft actions.");
 assert.match(app, /mode="data"/, "Settings must mount data connectors in data-perceptor mode.");
-assert.match(app, /activePane === "perceptors"[\s\S]{0,240}dataPerceptorsPanel/, "Data connectors must be colocated with perceptor configuration.");
-assert.match(app, /Android 端访问此电脑的连接/, "Android device access must remain under Remote Workspace.");
+assert.match(app, /capabilitySettingsTab === "perceptors"[\s\S]{0,1000}dataPerceptorsPanel/, "Data connectors must remain in the Perceptors tab of the merged configuration.");
+assert.match(app, /remote-workspace-settings-shell/, "Remote Workspace must retain its settings shell.");
+assert.match(app, /computer-access-settings-panel/, "Device access must remain under Remote Workspace.");
+assert.match(app, /访问本电脑/, "Device access must use the Access this computer product wording.");
 
 console.log("Settings channel boundaries verified.");

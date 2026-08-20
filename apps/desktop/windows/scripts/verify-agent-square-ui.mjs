@@ -45,7 +45,8 @@ assert(view.includes("agent.capabilities") && view.includes("getCapabilityLabel"
 assert(view.includes("const logo = agent.source === \"local\" ? drsaiLogo : agent.logo") && view.includes("logo && !failed") && view.includes("onError={() => setFailed(true)}"), "C4 local/remote logo selection and fallback are missing");
 assert(view.includes('agent.id === "my-codex"') && view.includes("<OpenAiBrandIcon"), "Codex cards do not use the OpenAI brand icon");
 assert(view.includes('" codex-logo"') && styles.includes(".agent-logo.codex-logo"), "Codex logo still inherits the generic framed agent-logo treatment");
-assert(view.includes("OpenDrSai Codex Adapter") && view.includes("getAgentOwner(agent, zh)"), "Codex card does not provide stable localized product copy and OpenAI attribution");
+assert(view.includes("OpenAI 官方编程智能体") && view.includes("OpenDrSai Agent 协议（OAEP）") && view.includes("getAgentOwner(agent, zh)"), "Codex card does not provide stable localized product copy, protocol context, and OpenAI attribution");
+assert(view.includes("isSaiDoctor(right)") && view.includes('agent.name.trim() === "赛博士"'), "recommended sorting does not prioritize 赛博士");
 assert(!view.includes("function AgentFeaturedCard") && view.includes('data-testid="my-drsai-configure"'), "local OpenDrSai and Codex do not share the standard card layout or preserve configuration access");
 assert(workspace.includes('agent?.id === "my-codex"') && workspace.includes("<OpenAiBrandIcon"), "Codex selectors do not use the OpenAI brand icon");
 assert(app.includes('{ id: "codex", label: "Codex", icon: OpenAiBrandIcon }'), "Codex settings still use a generic icon");
@@ -71,6 +72,7 @@ assert(chat.includes("Only HAI Platform Agents reach this branch"), "platform ch
 assert(agents.includes('capabilities.has("chat")') && agents.includes('capabilities.has("streaming")'), "per-agent chat capability gate is missing");
 assert(threads.includes("boundAgentId") && threads.includes("boundAgentName"), "D2 thread agent binding is missing");
 assert(app.includes("changesBoundAgent") && app.includes("requestAppDecision") && app.includes("Start a new conversation"), "D5 switch protection is missing");
+assert(app.includes("hasRuntimeBinding") && app.includes("(hasConversation || hasRuntimeBinding) && changesBoundAgent"), "D5 persisted Runtime Session agent-switch protection is missing");
 assert(
   app.includes("persistInBackground: true") && app.includes("Keep navigation responsive"),
   "starting an agent chat still blocks navigation on thread persistence",

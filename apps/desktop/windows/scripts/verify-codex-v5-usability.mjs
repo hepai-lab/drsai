@@ -8,6 +8,7 @@ const api = read("../shared/api/desktopApi.ts");
 const app = read("../shared/renderer/src/App.tsx");
 const codexSettings = read("../shared/renderer/src/components/CodexIntegrationSettings.tsx");
 const chatUi = read("../shared/renderer/src/components/ChatWorkspace.tsx");
+const styles = read("../shared/renderer/src/styles.css");
 const structured = read("../shared/renderer/src/components/StructuredMessageParts.tsx");
 const errors = read("../shared/renderer/src/userFacingErrors.ts");
 const chatMain = read("../shared/main/chat.ts");
@@ -46,7 +47,8 @@ const checks = [
   ["M4-F01 full native history scrollbar", chatUi.includes("const visibleMessages = conversationMessages") && !chatUi.includes("historyRunLimit") && !chatUi.includes("loadEarlierMessages")],
   ["M4-F02 virtualized heavy message rendering", chatUi.includes("VirtualizedMessage") && chatUi.includes("estimateVirtualMessageHeight") && chatUi.includes("virtual-message-placeholder")],
   ["M4-F03 compact heavy activity", structured.includes("structured-activity-compact") && structured.includes("View details in Debug")],
-  ["M4-F04 latest navigation", chatUi.includes("conversation-jump-latest") && chatUi.includes("scrollToLatest")],
+  ["M4-F04 latest navigation", chatUi.indexOf("conversation-jump-latest") > chatUi.indexOf('className="composer-shell"')
+    && chatUi.includes("scrollToLatest") && styles.includes("top: -38px") && styles.includes("left: 50%")],
   ["M4-F05 search and date navigation", chatUi.includes("searchMatches") && chatUi.includes("locateConversationDate")],
   ["M4-F06 retryable loading failure", app.includes("conversation-history-error") && app.includes("hydrateThreadSnapshot(activeThreadId)")],
 

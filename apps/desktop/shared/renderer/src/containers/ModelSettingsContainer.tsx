@@ -110,7 +110,7 @@ export function ModelSettingsContainer({ children, initialProvider, requestedPan
   const [providerModelConfigsDraft, setProviderModelConfigsDraft] = useState<Record<string, MyDrSaiProviderModelConfig>>({});
   const [newProviderModelDraft, setNewProviderModelDraft] = useState<string | null>(null);
 
-  useEffect(() => { if (requestedPane) setActivePane(requestedPane); }, [requestedPane]);
+  useEffect(() => { if (requestedPane) setActivePane(requestedPane === "executors" ? "perceptors" : requestedPane); }, [requestedPane]);
 
   return <>{children({
     activePane, setActivePane,

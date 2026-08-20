@@ -53,10 +53,74 @@ try {
   await page.addInitScript(() => {
     window.localStorage.setItem("opendrsai:first-run-complete:v3", "true");
   });
-  await page.goto(`${baseUrl}?structuredVisualFixture=1`, { waitUntil: "networkidle" });
+  await page.goto(`${baseUrl}?structuredVisualFixture=1&conversationResourceFixture=1&conversationResourceNonInline=1`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: /进入开发者工作区|Enter developer workspace/ }).click();
   const composer = page.getByTestId("composer-input");
   await composer.waitFor({ state: "visible" });
+  const fixtureThread = page.getByText("P2 resource fixture", { exact: true }).first();
+  if (await fixtureThread.isVisible().catch(() => false)) {
+    await fixtureThread.click();
+  }
+  const p2ComposerChip = page.getByRole("button", { name: /打开资源: 引用资料\.md|Open resource: 引用资料\.md/ });
+  await p2ComposerChip.waitFor({ state: "visible" });
+  const orderedUserParts = p2ComposerChip.locator("xpath=ancestor::*[contains(@class,'message-ordered-draft-parts')][1]");
+  assert.equal(await orderedUserParts.count(), 1, "The P2 input Chip must remain in the ordered Composer projection.");
+  await p2ComposerChip.click({ button: "right" });
+  const inputResourceMenu = page.getByTestId("conversation-resource-menu");
+  await inputResourceMenu.waitFor({ state: "visible" });
+  assert.equal(await inputResourceMenu.getByRole("menuitem", { name: /^预览$|^Preview$/ }).count(), 0,
+    "A non-inline local Office file must not advertise Runtime preview.");
+  assert.equal(await inputResourceMenu.getByRole("menuitem", { name: /在文件栏显示|Show in Files/ }).count(), 1);
+  assert.equal(await inputResourceMenu.getByRole("menuitem", { name: /下载 \/ 另存为|Download \/ Save as/ }).count(), 1);
+  assert.equal(await inputResourceMenu.getByRole("menuitem", { name: /在系统文件管理器中显示|Reveal in system file manager/ }).count(), 1,
+    "A local P2 input file must expose the authorized reveal action.");
+  await inputResourceMenu.getByRole("menuitem", { name: /在系统文件管理器中显示|Reveal in system file manager/ }).click();
+  await page.getByTestId("conversation-resource-notice").waitFor({ state: "visible" });
+  await p2ComposerChip.click();
+  await page.locator('.files-context-preview').getByText("Mock extracted Office text preview.").waitFor({ state: "visible" });
+  const deletedChip = page.getByRole("button", { name: /打开资源: 已删除资料\.md|Open resource: 已删除资料\.md/ });
+  await deletedChip.click();
+  assert.equal(await deletedChip.getAttribute("data-resource-state"), "deleted", "A deleted resource must report deleted in place.");
+  assert.equal(await deletedChip.getAttribute("aria-disabled"), "true", "Deleted current-version open must be exposed as disabled to assistive technology.");
+  const deletedNotice = page.getByTestId("conversation-resource-notice");
+  assert.match(await deletedNotice.innerText(), /已删除|was deleted/);
+  assert.doesNotMatch(await deletedNotice.innerText(), /离线|offline/i, "Deleted and offline must never share a user-facing state.");
+  assert.equal(await deletedNotice.getByRole("button", { name: /打开引用时版本|Open cited version/ }).count(), 0,
+    "A deleted resource without a retained snapshot must not advertise cited-version access.");
+  await deletedChip.click({ button: "right", force: true });
+  await inputResourceMenu.waitFor({ state: "visible" });
+  assert.equal(await inputResourceMenu.getByRole("menuitem", { name: /在文件栏显示|Show in Files|打开当前版本|Open current version/ }).count(), 0,
+    "A deleted resource must disable current-version open actions.");
+  assert.equal(await inputResourceMenu.getByRole("menuitem", { name: /查看资源详情|Resource details/ }).count(), 1,
+    "A deleted resource must retain its details action.");
+  await page.keyboard.press("Escape");
+  const offlineChip = page.getByRole("button", { name: /打开资源: 离线资料\.md|Open resource: 离线资料\.md/ });
+  await offlineChip.click();
+  assert.equal(await offlineChip.getAttribute("data-resource-state"), "offline", "An unreachable authority must report offline in place.");
+  const offlineText = await page.getByTestId("conversation-resource-notice").innerText();
+  assert.match(offlineText, /离线|offline/i);
+  assert.doesNotMatch(offlineText, /已删除|was deleted/i, "Offline resources must not be described as deleted.");
+  assert.equal(await page.getByTestId("conversation-resource-notice").getByRole("button", { name: /^重试$|^Retry$/ }).count(), 1);
+  assert.equal(await page.getByTestId("conversation-resource-notice").getByRole("button", { name: /检查 \/ 切换 Runtime|Check \/ switch Runtime/ }).count(), 1);
+  await offlineChip.click({ button: "right" });
+  await inputResourceMenu.waitFor({ state: "visible" });
+  assert.equal(await inputResourceMenu.getByRole("menuitem", { name: /^重试$|^Retry$/ }).count(), 1,
+    "Offline resources must expose an explicit retry action.");
+  await page.keyboard.press("Escape");
+  const movedChip = page.getByRole("button", { name: /打开资源: 已移动资料|Open resource: 已移动资料/ });
+  await movedChip.click();
+  assert.equal(await movedChip.getAttribute("data-resource-state"), "moved", "A relocated resource must report moved in place.");
+  assert.match(await page.getByTestId("conversation-resource-notice").innerText(), /已移动|moved/i);
+  assert.equal(await movedChip.locator("bdi").count(), 1, "Untrusted Unicode/bidi resource labels must render in an isolation element.");
+  await page.reload({ waitUntil: "networkidle" });
+  const reloadBypass = page.getByRole("button", { name: /进入开发者工作区|Enter developer workspace/ });
+  if (await reloadBypass.isVisible().catch(() => false)) await reloadBypass.click();
+  await composer.waitFor({ state: "visible" });
+  const reloadedThread = page.getByText("P2 resource fixture", { exact: true }).first();
+  if (await reloadedThread.isVisible().catch(() => false)) await reloadedThread.click();
+  await p2ComposerChip.waitFor({ state: "visible" });
+  await p2ComposerChip.click();
+  await page.locator('.files-context-preview').getByText("Mock extracted Office text preview.").waitFor({ state: "visible" });
   const bannerGeometry = await page.evaluate(() => {
     const panel = document.querySelector(".conversation-panel");
     const composerElement = document.querySelector(".composer");
@@ -95,6 +159,52 @@ try {
   await page.locator('.structured-message-parts[data-turn-status="completed"]').last().waitFor({ state: "visible" });
   await page.locator(".chat-markdown-image").last().waitFor({ state: "visible" });
   const completedTurn = page.locator('.structured-message-parts[data-turn-status="completed"]').last();
+  const p2Artifact = completedTurn.getByRole("button", { name: /打开资源: README\.md|Open resource: README\.md/ });
+  await p2Artifact.waitFor({ state: "visible" });
+  assert.equal(await p2Artifact.getAttribute("data-resource-state"), null);
+  await p2Artifact.click({ button: "right" });
+  const resourceMenu = page.getByTestId("conversation-resource-menu");
+  await resourceMenu.waitFor({ state: "visible" });
+  assert.equal(await p2Artifact.locator("xpath=ancestor::*[contains(@class,'structured-artifact-card')][1]").getAttribute("data-resource-state"), "changed", "A version conflict must report changed on the resource card itself.");
+  for (const label of [/打开当前版本|Open current version/, /预览|Preview/, /打开引用时版本|Open cited version/, /下载 \/ 另存为|Download \/ Save as/, /复制逻辑路径|Copy logical path/, /查看资源详情|Resource details/]) {
+    assert.equal(await resourceMenu.getByRole("menuitem", { name: label }).count(), 1, `Resource menu action ${label} must be capability-driven and visible.`);
+  }
+  await resourceMenu.getByRole("menuitem", { name: /下载 \/ 另存为|Download \/ Save as/ }).click();
+  const resourceDownload = page.getByTestId("conversation-resource-download");
+  await resourceDownload.waitFor({ state: "visible" });
+  await resourceDownload.getByRole("button", { name: /取消下载|Cancel download/ }).click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="conversation-resource-download"]')?.getAttribute("data-phase") === "cancelled");
+  assert.match(await resourceDownload.innerText(), /已取消|Cancelled/i, "A cancelled download must visibly return to a retryable state.");
+  assert.equal(await resourceDownload.locator("progress").count(), 1, "Resource downloads must expose semantic progress.");
+  await page.keyboard.press("Escape");
+  await resourceMenu.waitFor({ state: "hidden" });
+  await p2Artifact.focus();
+  await page.keyboard.press("Shift+F10");
+  await resourceMenu.waitFor({ state: "visible" });
+  await page.waitForFunction(() => document.activeElement?.getAttribute("role") === "menuitem");
+  assert.match(await page.evaluate(() => document.activeElement?.textContent || ""), /打开当前版本|Open current version/,
+    "The capability menu must move focus to its first available action.");
+  await page.keyboard.press("End");
+  assert.match(await page.evaluate(() => document.activeElement?.textContent || ""), /查看资源详情|Resource details/,
+    "End must move to the last resource action.");
+  await page.keyboard.press("Escape");
+  assert.equal(await p2Artifact.evaluate((element) => element === document.activeElement), true,
+    "Closing a keyboard-opened resource menu must restore focus to its trigger.");
+  await page.keyboard.press("Shift+F10");
+  await resourceMenu.waitFor({ state: "visible" });
+  await resourceMenu.getByRole("menuitem", { name: /查看资源详情|Resource details/ }).click();
+  await page.getByTestId("conversation-resource-notice").waitFor({ state: "visible" });
+  await p2Artifact.click({ button: "right" });
+  await resourceMenu.getByRole("menuitem", { name: /打开引用时版本|Open cited version/ }).click();
+  await page.locator('.files-context-preview').getByText("Mock cited-version preview.").waitFor({ state: "visible" });
+  await p2Artifact.click();
+  const resourceNotice = page.getByTestId("conversation-resource-notice");
+  await resourceNotice.waitFor({ state: "visible" });
+  assert.match(await resourceNotice.innerText(), /已变化|changed/i);
+  assert.equal(await resourceNotice.getByRole("button", { name: /打开引用时版本|Open cited version/ }).count(), 1,
+    "A changed resource must offer the retained cited version next to the current-version result.");
+  const resourcePreview = page.locator('.files-context-preview').getByText("Mock Runtime artifact preview.");
+  await resourcePreview.waitFor({ state: "visible" });
   const conversationTitlebar = page.locator(".conversation-titlebar");
   const statusRow = completedTurn.locator(".structured-run-status");
   const process = completedTurn.locator(".structured-process");

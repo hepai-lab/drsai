@@ -2062,7 +2062,8 @@ assert(view.includes("Pick files"), "Channels view does not render selected file
 assert(view.includes("paths: picked.paths"), "Channels view does not pass picked paths to the channel importer");
 assert(view.includes("desktopApi.syncChannelSnapshots"), "Channels view does not sync connector snapshots through desktop API");
 assert(view.includes("Sync snapshots"), "Channels view does not expose connector snapshot sync action");
-assert(view.includes('"mobile-chat", "slack-chat", "github-connector", "docs-connector", "calendar-connector", "database-connector", "logs-monitor"'), "Channels view does not include logs/database/Slack/mobile handoffs in snapshot sync");
+assert(view.includes('"mobile-chat", "github-connector", "docs-connector", "calendar-connector", "database-connector", "logs-monitor"'), "Channels view does not include active logs/database/mobile handoffs in snapshot sync");
+assert(!view.includes('adapterIds: ["mobile-chat", "slack-chat"'), "Planned Slack must not participate in snapshot sync");
 assert(view.includes('aria-label="Connector snapshot sync"'), "Channels view does not label connector snapshot sync result");
 assert(view.includes("desktopApi.listChannelInboundEvents"), "Channels view does not list inbound channel events");
 assert(view.includes("desktopApi.routeChannelInboundEvent"), "Channels view does not route inbound channel events");
@@ -2083,7 +2084,8 @@ assert(view.includes("Outbox: {delivery.outboxPath}"), "Channels view does not s
 assert(view.includes("ChannelAdapterCard"), "Channels view does not render adapter cards");
 assert(view.includes("Import context"), "Channels view does not expose context import action");
 assert(view.includes('adapter.id === "mobile-chat"'), "Channels view does not expose Mobile context import");
-assert(view.includes('adapter.id === "slack-chat"'), "Channels view does not expose Slack context import");
+assert(/id: "slack-chat",[\s\S]*?status: "planned"/.test(adapters), "Slack channel is not marked as planned in the canonical adapter catalog");
+assert(view.includes('interactive && adapter.id === "slack-chat"'), "Slack implementation is not guarded by the non-planned interaction gate");
 assert(view.includes('adapter.id === "docs-connector"'), "Channels view does not expose Docs context import");
 assert(view.includes('adapter.id === "calendar-connector"'), "Channels view does not expose Calendar context import");
 assert(view.includes('adapter.id === "database-connector"'), "Channels view does not expose Database context import");

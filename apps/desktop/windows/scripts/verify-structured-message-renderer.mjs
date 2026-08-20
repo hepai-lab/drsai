@@ -20,8 +20,10 @@ for (const kind of ["markdown", "reasoning", "progress", "artifact", "citation",
 }
 assert.equal(renderer.includes('part.kind === "tool"'), false, "Tool activity must not render as a conversation part.");
 assert.ok(renderer.includes("buildStructuredProcessPresentation") && presentation.includes("aggregateActivities") && presentation.includes("aggregateProgress"), "Process presentation must aggregate repeated actions and progress before rendering.");
-assert.ok(renderer.includes('useState(turn.status === "error")') && !renderer.includes('useState(turn.status === "running"'), "Routine running turns must keep process evidence collapsed by default.");
-assert.ok(renderer.includes('turn.status === "error" && previousTurnStatusRef.current !== "error"'), "New run failures must reveal process evidence automatically.");
+assert.ok(renderer.includes('turn.status === "running" || turn.status === "error"'), "Running turns must reveal process evidence by default.");
+assert.ok(renderer.includes('turn.status === "running" && previousStatus !== "running"'), "A Run entering the running state must reveal process evidence.");
+assert.ok(renderer.includes('previousStatus === "running" && turn.status !== "running"') && renderer.includes('setProcessOpen(false)'), "A terminal Run transition must return process evidence to its compact summary.");
+assert.ok(renderer.includes('const [open, setOpen] = useState(running)') && renderer.includes('if (running && !wasRunning) setOpen(true)') && renderer.includes('else if (!running && wasRunning) setOpen(false)'), "Reasoning details must remain visible during generation and collapse when generation finishes.");
 assert.ok(renderer.includes('processOpen ? <div') && renderer.includes('data-testid="structured-process-content"'), "Collapsed process details must not mount their evidence body.");
 assert.ok(renderer.includes("CompactProgressSection") && renderer.includes("AggregatedActivityDetails"), "Progress and operations must use compact grouped presentation.");
 assert.ok(renderer.includes("ReasoningDisclosure") && renderer.includes('className="structured-analysis-disclosure"') && renderer.includes("parts.map(renderPart)"), "Reasoning must be summarized by default and remain expandable without evidence loss.");
@@ -45,6 +47,7 @@ assert.ok(workspace.includes("onOpenDebug={onOpenDebug ? () => onOpenDebug(messa
 assert.ok(workspace.includes('messages.some((message) => message.streaming)'), "Elapsed duration must refresh for the streaming turn.");
 assert.ok(adapter.includes("desktopApi.cancelChatTurn") && adapter.includes('event.type === "aborted" ? "cancelled" : "completed"'), "Cancellation must settle structured streaming state.");
 assert.ok(workspace.includes("!message.structuredTurn && message.reasoningContent") && workspace.includes("!message.structuredTurn && message.inputRequest"), "Legacy content must remain fallback-only.");
+assert.ok(workspace.includes("LegacyReasoningDisclosure") && workspace.includes("const [open, setOpen] = useState(running)") && workspace.includes("else if (!running && wasRunning) setOpen(false)"), "Legacy reasoning must follow the same live-expand and terminal-collapse behavior.");
 assert.ok(workspace.includes("onOpenWorkspaceArtifact") && workspace.includes("isSafeWebUrl(part.url)"), "Artifact and source navigation must stay safe and contextual.");
 assert.ok(app.includes('setActiveRightTab("files")') && app.includes('setActiveRightTab("browser")'), "Artifacts and citations must route to existing panels.");
 assert.ok(files.includes("focusPath") && files.includes("findWorkspaceNodeByArtifactPath(nodes, focusPath)"), "Files panel must focus selected artifacts.");
@@ -53,4 +56,4 @@ for (const className of ["structured-message-parts", "structured-run-status", "s
   assert.ok(styles.includes(`.${className}`), `Missing ${className} styles.`);
 }
 
-console.log("Structured message renderer verification passed (compact default, grouped process, expandable evidence, visible warnings/actions)." );
+console.log("Structured message renderer verification passed (live process expansion, terminal auto-collapse, grouped evidence, visible warnings/actions)." );

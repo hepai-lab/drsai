@@ -35,6 +35,9 @@ export function resolveDevelopmentLaunchEnvironment(input: DevelopmentLaunchInpu
   return {
     OPENDRSAI_DESKTOP_LAUNCH_MODE: launchMode,
     OPENDRSAI_DESKTOP_DEV: production ? "0" : "1",
+    // Development builds expose the in-progress full-duplex flow by default.
+    // Packaged/production rollout remains controlled independently.
+    ...(production ? {} : { OPENDRSAI_ENABLE_DUPLEX_VOICE: "1" }),
     DRSAI_HOME: home,
     DRSAI_REPO: repository,
     OPENDRSAI_RUNTIME_ROOT: join(home, "drsai-agent"),

@@ -22,10 +22,25 @@ assert(component.includes("codex-use-action") && component.includes("onUseCodex"
 assert(!component.includes("Codex Agent Runtime"));
 assert(!app.includes("function CodexRuntimeSettings"));
 assert(app.includes("<CodexIntegrationSettings"));
+assert(component.includes('data-testid="codex-workspace-sync-settings"'));
+assert(component.includes("onSyncWorkspaceSessions(workspace)"));
+assert(app.includes("workspaces={workspaces}") && app.includes("onSyncWorkspaceSessions={onSyncWorkspaceSessions}"));
+assert(!app.includes('data-testid="codex-workspace-sync-settings"'));
+assert(app.includes('data-testid="codex-general-integration"'));
+assert(app.includes('data-testid="codex-general-integration-status"'));
+assert(app.includes('onClick={() => setActivePane("codex")}'));
+const rightSidebarIndex = app.indexOf('zh ? "右侧栏组件" : "Right sidebar components"');
+const visibilityIndex = app.indexOf('data-testid="settings-pane-visibility-settings"');
+assert(rightSidebarIndex >= 0 && visibilityIndex > rightSidebarIndex, "Settings item visibility should follow the sidebar component controls");
+const integrationGeneralIndex = app.indexOf('{ id: "integrations", label: zh ? "通用设置"');
+const remoteWorkspaceIndex = app.indexOf('{ id: "remote-workspace", label: zh ? "远程工作区"');
+const codexPaneIndex = app.indexOf('{ id: "codex", label: "Codex"');
+assert(integrationGeneralIndex >= 0 && remoteWorkspaceIndex > integrationGeneralIndex && codexPaneIndex > remoteWorkspaceIndex, "Remote Workspace should immediately follow Integration general settings");
 for (const selector of [
   ".codex-integration-hero",
   ".codex-connection-list",
   ".codex-device-login",
+  ".codex-session-sync-list",
   ".codex-advanced",
   "@media (max-width: 760px)",
 ]) assert(styles.includes(selector), `Missing Codex integration style: ${selector}`);

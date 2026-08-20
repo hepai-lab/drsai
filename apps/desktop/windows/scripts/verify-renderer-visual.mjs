@@ -489,14 +489,14 @@ async function runCurrentVisual() {
     console.log("Model Provider E2E: settings requested");
     if (!menuOpened || !settingsOpened) fail("could not open settings for model Provider journey");
     await new Promise((resolve) => setTimeout(resolve, 100));
-    const agentPaneOpened = await win.webContents.executeJavaScript("(() => { const button=[...document.querySelectorAll('button')].find((item)=>item.innerText.trim()==='Agent configuration'); button?.click(); return Boolean(button); })()");
+    const agentPaneOpened = await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=settings-pane-agent-defaults]'); button?.click(); return Boolean(button); })()");
     await new Promise((resolve) => setTimeout(resolve, 80));
     const imageModelSetting = await win.webContents.executeJavaScript("(() => { const setting=document.querySelector('[data-testid=agent-image-model-setting]'); return { visible:Boolean(setting), options:setting ? [...setting.querySelectorAll('option')].map((item)=>item.innerText) : [] }; })()");
     if (!agentPaneOpened || !imageModelSetting.visible || !imageModelSetting.options.some((value) => value.includes('image_generation'))) fail("declared image model was not exposed in Agent configuration");
     const modelUsability = await win.webContents.executeJavaScript("(() => { const select=document.querySelector('[data-testid=agent-text-model-select]'); return { labelled:Boolean(select?.getAttribute('aria-label')), groups:select ? [...select.querySelectorAll('optgroup')].map((item)=>item.label) : [], recovery:Boolean(document.querySelector('[data-testid=agent-model-catalog-recovery]')) }; })()");
     console.log("Model Provider E2E: Agent model usability=" + JSON.stringify(modelUsability));
     if (!modelUsability.labelled || !modelUsability.groups.includes('visual-provider') || modelUsability.recovery) fail("fresh Agent models were not grouped by Provider or exposed with the expected accessible state: " + JSON.stringify(modelUsability));
-    const providerPaneOpened = await win.webContents.executeJavaScript("(() => { const button=[...document.querySelectorAll('button')].find((item)=>['模型提供方','Model providers'].includes(item.innerText.trim())); button?.click(); return Boolean(button); })()");
+    const providerPaneOpened = await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=settings-pane-model-providers]'); button?.click(); return Boolean(button); })()");
     console.log("Model Provider E2E: provider pane found=" + providerPaneOpened);
     if (!providerPaneOpened) fail("could not open the model Provider settings pane");
     await new Promise((resolve) => setTimeout(resolve, 80));
@@ -549,7 +549,7 @@ async function runCurrentVisual() {
     await win.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-settings]')?.click()");
     console.log("Model Provider E2E: confirmation settings requested");
     await new Promise((resolve) => setTimeout(resolve, 70));
-    await win.webContents.executeJavaScript("(() => { const button=[...document.querySelectorAll('button')].find((item)=>['模型提供方','Model providers'].includes(item.innerText.trim())); button?.click(); return Boolean(button); })()");
+    await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=settings-pane-model-providers]'); button?.click(); return Boolean(button); })()");
     console.log("Model Provider E2E: confirmation provider pane requested");
     await new Promise((resolve) => setTimeout(resolve, 50));
     const modelTestReopened = await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=model-provider-test-model]'); button?.click(); return Boolean(button); })()");
@@ -653,7 +653,7 @@ async function runCurrentVisual() {
     await new Promise((resolve) => setTimeout(resolve, 40));
     await staleWin.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-settings]')?.click()");
     await new Promise((resolve) => setTimeout(resolve, 70));
-    await staleWin.webContents.executeJavaScript("(() => { const button=[...document.querySelectorAll('button')].find((item)=>['模型提供方','Model providers'].includes(item.innerText.trim())); button?.click(); return Boolean(button); })()");
+    await staleWin.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=settings-pane-model-providers]'); button?.click(); return Boolean(button); })()");
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     if (!(await setInput("模型", "saved-model")) && !(await setInput("Model", "saved-model"))) fail("could not enter saved model draft");
@@ -763,7 +763,7 @@ async function runCurrentVisual() {
     await new Promise((resolve) => setTimeout(resolve, 40));
     await win.webContents.executeJavaScript("document.querySelector('[data-testid=user-menu-settings]')?.click()");
     await new Promise((resolve) => setTimeout(resolve, 80));
-    await win.webContents.executeJavaScript("(() => { const button=[...document.querySelectorAll('button')].find((item)=>['模型提供方','Model providers'].includes(item.innerText.trim())); button?.click(); return Boolean(button); })()");
+    await win.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=settings-pane-model-providers]'); button?.click(); return Boolean(button); })()");
     await new Promise((resolve) => setTimeout(resolve, 50));
     textAfterAction = await win.webContents.executeJavaScript("document.body.innerText");
     if (!textAfterAction.includes("restart-persisted-model")) fail("saved model did not survive a Renderer window restart");
@@ -822,15 +822,15 @@ async function runCurrentVisual() {
       win.webContents.sendInputEvent({ type: "keyDown", keyCode: "TAB" });
       win.webContents.sendInputEvent({ type: "keyUp", keyCode: "TAB" });
       await new Promise((resolve) => setTimeout(resolve, 5));
-      const focus = await win.webContents.executeJavaScript("document.activeElement?.innerText?.trim?.() || document.activeElement?.getAttribute?.('aria-label') || ''");
-      if (["集成概览", "Overview"].includes(focus)) {
+      const focusedPane = await win.webContents.executeJavaScript("document.activeElement?.getAttribute?.('data-testid') || ''");
+      if (focusedPane === "settings-pane-integrations") {
         win.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
         win.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
         openedIntegrations = true;
         break;
       }
     }
-    if (!openedIntegrations) fail("keyboard traversal could not open Integration overview; active=" + await win.webContents.executeJavaScript("document.activeElement?.outerHTML || ''"));
+    if (!openedIntegrations) fail("keyboard traversal could not open Integration general settings; active=" + await win.webContents.executeJavaScript("document.activeElement?.outerHTML || ''"));
     await new Promise((resolve) => setTimeout(resolve, 100));
     const gateAudit = await win.webContents.executeJavaScript(${"`"}(() => ({
       rightTabs: Array.from(document.querySelectorAll('.right-tabs button')).map((button) => button.getAttribute('aria-label') || button.innerText.trim()),
@@ -970,7 +970,7 @@ async function runCurrentVisual() {
   await new Promise((resolve) => setTimeout(resolve, 50));
   await remoteWorkspaceWin.webContents.executeJavaScript("document.querySelector('[data-testid=workspace-type-remote]')?.click()");
   await new Promise((resolve) => setTimeout(resolve, 100));
-  const remoteHostReady = await remoteWorkspaceWin.webContents.executeJavaScript("(() => { const host=document.querySelector('[data-testid=remote-workspace-host]'); return Boolean(host && host.value === 'zhangtianshuo_4090'); })()");
+  const remoteHostReady = await remoteWorkspaceWin.webContents.executeJavaScript("(() => { const host=document.querySelector('[data-testid=remote-workspace-host]'); return Boolean(host && host.value === 'fixture-host'); })()");
   if (!remoteHostReady) fail("remote workspace form did not select the available host");
   await remoteWorkspaceWin.webContents.executeJavaScript("document.querySelector('[data-testid=remote-workspace-load]')?.click()");
   await new Promise((resolve) => setTimeout(resolve, 120));
@@ -1010,7 +1010,9 @@ async function runCurrentVisual() {
   await new Promise((resolve) => setTimeout(resolve, 50));
   if (!(await clickByAnyText(chineseWin, [text.settingsZh, "Settings"]))) fail("could not open Chinese settings audit");
   await checkChinesePage("m9-chinese-settings");
-  if (!(await clickByAnyText(chineseWin, ["感知器配置", "Perceptors"]))) fail("could not open Perceptor settings audit");
+  await chineseWin.webContents.executeJavaScript("document.querySelector('[data-testid=settings-visibility-approvals]')?.click()");
+  const perceptorSettingsOpened = await chineseWin.webContents.executeJavaScript("(() => { const button=document.querySelector('[data-testid=settings-pane-perceptors]'); button?.click(); return Boolean(button); })()");
+  if (!perceptorSettingsOpened) fail("could not open Perceptors / Executors settings audit");
   await new Promise((resolve) => setTimeout(resolve, 120));
   const perceptorAudit = await chineseWin.webContents.executeJavaScript("(() => { const policy=document.querySelector('[data-testid=web-search-provider-policy]'); const card=document.querySelector('.perceptor-resource-card'); const text=document.body.innerText; return { policy:Boolean(policy), card:Boolean(card), managed:text.includes('HAI 托管网页搜索'), credential:text.includes('平台托管凭据，不保存到本机'), search:text.includes('测试搜索'), extract:text.includes('测试读取') }; })()");
   if (!Object.values(perceptorAudit).every(Boolean)) fail("managed Perceptor settings are incomplete: " + JSON.stringify(perceptorAudit));
@@ -1563,8 +1565,6 @@ contextBridge.exposeInMainWorld("openDrSai", {
     providerDisclosure: "Visual fixture transcription is active.",
     message: "Visual fixture voice runtime is ready.",
   }),
-  onStreamingVoiceTranscriptionEvent: () => () => undefined,
-  getStreamingVoiceCapabilities: async () => null,
   getDuplexVoiceCapabilities: async () => ({ enabled: false, inputAudioEncodings: ["pcm_s16le"], outputAudioEncodings: ["pcm_s16le"], inputSampleRates: [24000], outputSampleRates: [24000], channels: [1], maxChunkBytes: 65536, maxBufferedAudioMs: 2000, supportsServerVad: false, supportsBargeIn: false, supportsTools: false, providerDisclosure: "Visual fixture duplex voice is disabled.", reason: "visual_fixture" }),
   startDuplexVoiceSession: async () => { throw new Error("Duplex voice is disabled in the visual fixture."); },
   sendDuplexVoiceAudioChunk: () => false,
@@ -1578,13 +1578,13 @@ contextBridge.exposeInMainWorld("openDrSai", {
   onDuplexVoiceEvents: () => () => undefined,
   appendDuplexVoiceHistory: async () => { throw new Error("Duplex voice history is unavailable in the visual fixture."); },
   recoverChatRun: async () => [],
-  listSshHosts: async () => [{ alias: "zhangtianshuo_4090", hostname: "remote.example", user: "zhangtianshuo", port: 22, identityFiles: [] }],
+  listSshHosts: async () => [{ alias: "fixture-host", hostname: "remote.example", user: "fixture-user", port: 22, identityFiles: [] }],
   diagnoseSshHost: async (hostAlias) => ({ hostAlias, state: "reachable", elapsedMs: 1 }),
   inspectSshHostKeys: async () => [],
   testSshHost: async () => true,
   approveSshHostKey: async () => true,
   listRemoteDirectories: async (_hostAlias, remotePath) => {
-    const base = (remotePath || "/home/zhangtianshuo").replace(/\/$/, "");
+    const base = (remotePath || "/home/fixture-user").replace(/\/$/, "");
     return ["ai_completion", "Cline", "hai", "hai-ddf-main", "hai-k8s", "mineru2_hepai-main", "openclaw-main"].map((name) => ({
       name,
       path: base + "/" + name,

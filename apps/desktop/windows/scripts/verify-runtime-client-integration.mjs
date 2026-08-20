@@ -77,6 +77,10 @@ async function verifySameContract(client, location) {
   const worktrees = await client.listWorktrees(workspace.workspace_id);
   const worktreeEvents = await client.listWorkspaceEvents(workspace.workspace_id, 0);
   const terminals = await client.executeOWOP(workspace.workspace_id, "pty.list", {});
+  const boundOwop = await client.executeOWOP(
+    workspace.workspace_id, "pty.list", {},
+    { sessionId: `session-context-${location}`, runId: `run-context-${location}` },
+  );
   const adoptedWorktree = await client.adoptWorktree(workspace.workspace_id, {
     idempotencyKey: `adopt-${location}`, canonicalPath: `/fixture/legacy/${location}`,
     branch: `drsai/fork/${location}`, baseRef: "fixture-head",
@@ -106,6 +110,8 @@ async function verifySameContract(client, location) {
   assert(createdWorktree.location === location && worktrees.length === 1, `${location} Worktree create/list contract failed`);
   assert(worktreeEvents.events[0]?.type === "worktree.created" && worktreeEvents.nextSequence === 1, `${location} Worktree Event cursor failed`);
   assert(Array.isArray(terminals.terminals), `${location} OWOP Terminal contract failed`);
+  assert(boundOwop.session_id === `session-context-${location}` && boundOwop.run_id === `run-context-${location}`,
+    `${location} OWOP session/run headers were not propagated`);
   assert(adoptedWorktree.location === location && adoptedWorktree.branch === `drsai/fork/${location}`, `${location} legacy Worktree adoption failed`);
   assert(describedWorktree.worktree_id === createdWorktree.worktree_id && mergedWorktree.status === "merged" && removedWorktree.status === "removed", `${location} Worktree merge/remove contract failed`);
   assert(archivedWorktree.status === "archived", `${location} Worktree archive contract failed`);
@@ -133,7 +139,10 @@ async function startFixture(requireToken) {
       if (body.version !== "1.0" || body.operation !== "pty.list" || body.binding?.kind !== expectedBinding) {
         return json(response, 200, { version: "1.0", request_id: body.request_id, correlation_id: body.correlation_id, ok: false, error: { code: "fixture_owop_invalid", message: "Invalid OWOP request", correlation_id: body.correlation_id, retryable: false, details: {} } });
       }
-      return json(response, 200, { version: "1.0", request_id: body.request_id, correlation_id: body.correlation_id, ok: true, result: { terminals: [] } });
+      return json(response, 200, { version: "1.0", request_id: body.request_id, correlation_id: body.correlation_id, ok: true, result: {
+        terminals: [], session_id: request.headers["x-opendrsai-session-id"] ?? null,
+        run_id: request.headers["x-opendrsai-run-id"] ?? null,
+      } });
     }
     if (url.pathname === "/v1/workspaces" && request.method === "POST") {
       const body = JSON.parse(await bodyText(request)); const id = `workspace-${state.workspaces.size + 1}`;

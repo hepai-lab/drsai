@@ -79,11 +79,11 @@ try {
   assert.deepEqual(states, ["available", "not_installed", "version_incompatible", "not_logged_in", "fault"]);
   const detailedStatus = presentCodexBackendStatus({
     backend_id: "codex", available: true, version: "0.142.5", connection_state: "ready",
-    app_server_state: "running", transport: "local-process", adapter_version: "oaep-codex/2.0",
+    app_server_state: "running", transport: "local-process", adapter_version: "oaep-codex/2.1",
   }, { state: "signed_in", logged_in: true, auth_mode: "chatgpt", email: "user@example.test", plan_type: "plus", credential_source: null, requires_openai_auth: true });
   assert.equal(detailedStatus.appServerState, "running");
   assert.equal(detailedStatus.transport, "local-process");
-  assert.equal(detailedStatus.adapterVersion, "oaep-codex/2.0");
+  assert.equal(detailedStatus.adapterVersion, "oaep-codex/2.1");
   assert(codexSettings.includes("codex-backend-status") && codexSettings.includes("codex-login") && codexSettings.includes("codex-logout"));
   assert(app.includes("conversationHistory=") && app.includes("continuesExistingTask="), "Codex history trust and continuation state must reach the chat UI");
   const errorsBundle = join(temp, "user-facing-errors.mjs");
@@ -108,7 +108,10 @@ try {
   for (const forbidden of ["thread/start", "turn/start", "account/read", "turn/interrupt"]) assert(!runtimeClient.includes(forbidden), `Desktop leaked Codex JSON-RPC ${forbidden}`);
   const chat = await readFile(join(root, "../shared/main/chat.ts"), "utf8");
   const oaepProjector = await readFile(join(root, "../shared/main/oaepPresentationProjector.ts"), "utf8");
-  assert(chat.includes('request.agentId === "my-codex"'));
+  assert(chat.includes('effectiveAgentId === "my-codex"'));
+  assert(chat.includes("persistedThread?.runtimeSessionId && persistedThread.boundAgentId"), "OpenDrSai transport must preserve an existing Runtime Session's immutable Agent binding");
+  assert(chat.includes('runtimeSessionId?.startsWith("session-codex-")'), "Imported Codex Sessions must self-heal stale Desktop agent labels from an earlier failed continuation");
+  assert(chat.includes("runtimeTarget?.backendId") && chat.includes("backendId: effectiveBackendId"), "Codex continuation diagnostics must preserve the authoritative backend identity");
   assert(chat.includes("createAgentRun(") && chat.includes("runtimeSessionId,") && chat.includes("agentDefinition,"));
   assert(chat.includes("existingThread?.runtimeSessionId"), "Codex follow-up turns must reuse the mapped Runtime Session");
   assert(chat.includes("codex_session_recovery_required"), "A missing Codex binding must never silently create a replacement task");

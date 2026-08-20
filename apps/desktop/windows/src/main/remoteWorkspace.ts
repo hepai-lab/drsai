@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from "crypto";
 import { spawn, execFile, type ChildProcess } from "child_process";
-import { readFile, readdir, stat } from "fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { basename, dirname, isAbsolute, join, resolve } from "path";
-import type { ConnectRemoteWorkspaceRequest, DesktopForkWorktreeResult, DesktopThread, DesktopThreadContentSearchRequest, DesktopThreadContentSearchResult, DesktopThreadSnapshot, RemoteDirectoryEntry, RemoteGatewayInstallRequest, RemoteGatewayInstallResult, RemoteGatewayOperationEvent, RemoteGatewayPreflight, RemoteHepaiWorker, RemoteSshConnectivityResult, RemoteSshDiagnosticReport, RemoteSshHost, RemoteSshHostKey, RemoteWorkspaceStatus, WorkspaceCheckpoint, WorkspaceCheckpointAcceptRequest, WorkspaceCheckpointCreateRequest, WorkspaceCheckpointPreviewRequest, WorkspaceCheckpointPreviewResult, WorkspaceCheckpointRestoreRequest, WorkspaceCheckpointRestoreResult, WorkspaceContextOverview, WorkspaceFileChangeEvent, WorkspaceFilePreview, WorkspaceFilePreviewRequest, WorkspaceFileTreeRequest, WorkspaceFileTreeResult, WorkspaceFileWriteRequest, WorkspaceFileWriteResult, WorkspaceFolderSummaryRequest, WorkspaceFolderSummaryResult, WorkspaceGitDiffRequest, WorkspaceGitDiffResult, WorkspaceGitFileAtRefRequest, WorkspaceGitFileAtRefResult, WorkspaceProject } from "../shared/desktopApi";
+import type { ConnectRemoteWorkspaceRequest, DesktopForkWorktreeResult, DesktopThread, DesktopThreadContentSearchRequest, DesktopThreadContentSearchResult, DesktopThreadSnapshot, RemoteDirectoryEntry, RemoteGatewayInstallRequest, RemoteGatewayInstallResult, RemoteGatewayOperationEvent, RemoteGatewayPreflight, RemoteHepaiWorker, RemoteSshConnectivityResult, RemoteSshDiagnosticReport, RemoteSshHost, RemoteSshHostDraft, RemoteSshHostKey, RemoteWorkspaceStatus, WorkspaceCheckpoint, WorkspaceCheckpointAcceptRequest, WorkspaceCheckpointCreateRequest, WorkspaceCheckpointPreviewRequest, WorkspaceCheckpointPreviewResult, WorkspaceCheckpointRestoreRequest, WorkspaceCheckpointRestoreResult, WorkspaceContextOverview, WorkspaceFileChangeEvent, WorkspaceFilePreview, WorkspaceFilePreviewRequest, WorkspaceFileTreeRequest, WorkspaceFileTreeResult, WorkspaceFileWriteRequest, WorkspaceFileWriteResult, WorkspaceFolderSummaryRequest, WorkspaceFolderSummaryResult, WorkspaceGitDiffRequest, WorkspaceGitDiffResult, WorkspaceGitFileAtRefRequest, WorkspaceGitFileAtRefResult, WorkspaceProject } from "../shared/desktopApi";
 import { createRemoteWorkspace, findWorkspaceById, listWorkspaces, setRemoteWorkspaceAutoReconnect } from "./workspaces";
 import { RemoteGatewayClient } from "./remoteGatewayClient.generated";
 import { RemoteRuntimeClient } from "./runtimeClient";
@@ -14,6 +14,7 @@ import { loadRuntimeArtifactTrustStore, verifyRuntimeArtifactTrust } from "../..
 import { HostProfileStore, assertHostCanBeRemoved, makeHostProfile, redactSshDiagnostic } from "./hostConnectionManager";
 import { PortForwardRegistry, type CreatePortForwardRequest, type PortForwardResource } from "./portForwardRegistry";
 import { shouldRestorePersistedRemoteWorkspace } from "../../../shared/main/remoteWorkspaceRestorePolicy";
+import { replaceFileSafely } from "../../../shared/main/atomicFileReplace";
 
 const SSH_TIMEOUT_MS = 12_000;
 const REMOTE_PORT = 18642;
@@ -213,13 +214,61 @@ export async function listSshHosts(): Promise<RemoteSshHost[]> {
         return index > 0 ? [line.slice(0, index), line.slice(index + 1)] : ["", ""];
       }));
       const identityFiles = resolvedLines.filter((line) => line.startsWith("identityfile ")).map((line) => line.slice("identityfile ".length));
-      const discovered = { alias, hostname: values.get("hostname") || alias, user: values.get("user") || undefined, port: Number(values.get("port") || 22), identityFiles, proxyJump: values.get("proxyjump") !== "none" ? values.get("proxyjump") : undefined };
+      const discovered = { alias, hostname: values.get("hostname") || alias, user: values.get("user") || undefined, port: Number(values.get("port") || 22), identityFiles, proxyJump: values.get("proxyjump") !== "none" ? values.get("proxyjump") : undefined, connected: hostConnections.has(alias), managed: sources.some((source) => source.includes(`# OpenDrSai managed host: ${alias}`)) };
       hosts.push(discovered);
       await hostProfileStore.upsert(makeHostProfile({ ...discovered, configSource: rootConfig, authPreference: identityFiles.length ? "identity_file" : "system_config" }));
-    } catch { hosts.push({ alias, hostname: alias, port: 22, identityFiles: [] }); }
+    } catch { hosts.push({ alias, hostname: alias, port: 22, identityFiles: [], connected: hostConnections.has(alias), managed: sources.some((source) => source.includes(`# OpenDrSai managed host: ${alias}`)) }); }
   }
   return hosts.sort((a, b) => a.alias.localeCompare(b.alias));
 }
+
+export async function saveSshHost(draft: unknown): Promise<RemoteSshHost> {
+  if (!draft || typeof draft !== "object") throw new Error("SSH host configuration is invalid.");
+  const input = draft as Partial<RemoteSshHostDraft>;
+  const alias = assertAlias(input.alias);
+  const hostname = assertSshConfigValue(input.hostname, "hostname", 255);
+  const user = input.user?.trim() ? assertSshConfigValue(input.user, "user", 128) : undefined;
+  const port = input.port == null ? 22 : Number(input.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("SSH port must be between 1 and 65535.");
+  const identityFile = input.identityFile?.trim() ? assertSshPath(input.identityFile) : undefined;
+  const proxyJump = input.proxyJump?.trim() ? assertSshConfigValue(input.proxyJump, "proxy jump", 255) : undefined;
+  const configPath = resolve((process.env.OPENDRSAI_SSH_CONFIG?.trim() || join(homedir(), ".ssh", "config")).replace(/^~(?=[/\\])/, homedir()));
+  const current = await readFile(configPath, "utf8").catch(() => "");
+  const startMarker = `# OpenDrSai managed host: ${alias}`;
+  const endMarker = `# End OpenDrSai managed host: ${alias}`;
+  const start = current.indexOf(startMarker);
+  const end = start >= 0 ? current.indexOf(endMarker, start) : -1;
+  if (start < 0 && new RegExp(`^\\s*Host\\s+${escapeRegExp(alias)}(?:\\s|$)`, "im").test(current)) {
+    throw new Error("This SSH host already exists outside OpenDrSai. Edit it in your SSH config or choose another name.");
+  }
+  const block = [startMarker, `Host ${alias}`, `  HostName ${hostname}`, ...(user ? [`  User ${user}`] : []), `  Port ${port}`, ...(identityFile ? [`  IdentityFile ${identityFile}`] : []), ...(proxyJump ? [`  ProxyJump ${proxyJump}`] : []), endMarker].join("\n");
+  const withoutOld = start >= 0 && end >= 0 ? `${current.slice(0, start)}${current.slice(end + endMarker.length)}` : current;
+  const next = `${withoutOld.trimEnd()}${withoutOld.trim() ? "\n\n" : ""}${block}\n`;
+  await mkdir(dirname(configPath), { recursive: true });
+  const temporary = `${configPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(temporary, next, { encoding: "utf8", mode: 0o600 });
+    await replaceFileSafely(temporary, configPath);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+  const saved = (await listSshHosts()).find((host) => host.alias === alias);
+  if (!saved) throw new Error("The SSH host was saved but could not be loaded.");
+  return saved;
+}
+
+function assertSshConfigValue(value: unknown, label: string, maxLength: number): string {
+  if (typeof value !== "string" || !value.trim() || value.trim().length > maxLength || /[\r\n\0]/.test(value)) throw new Error(`SSH ${label} is invalid.`);
+  return value.trim();
+}
+
+function assertSshPath(value: string): string {
+  const path = assertSshConfigValue(value, "identity file", 4096);
+  if (/^["']|["']$/.test(path)) throw new Error("SSH identity file must not include quotes.");
+  return path;
+}
+
+function escapeRegExp(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
 async function readSshConfigSources(rootPath: string): Promise<string[]> {
   const queue = [resolve(rootPath.replace(/^~(?=[/\\])/, homedir()))]; const seen = new Set<string>(); const sources: string[] = [];

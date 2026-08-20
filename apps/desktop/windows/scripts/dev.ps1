@@ -925,6 +925,11 @@ try {
     $env:OPENDRSAI_LAUNCH_GATEWAY_PORT = [string]$GatewayPort
     $env:OPENDRSAI_DEV_GATEWAY_PORT = [string]$GatewayPort
     $env:OPENDRSAI_VOICE_TTS_RUNTIME = "gateway-provider"
+    # Full-duplex Realtime voice is a development feature under active P2
+    # integration. Production keeps its rollout independently controlled.
+    if (-not $IsProductionLaunch) {
+        $env:OPENDRSAI_ENABLE_DUPLEX_VOICE = "1"
+    }
     if ($GatewayHotReload) {
         $env:DRSAI_GATEWAY_DEV_MANAGED = "1"
         $env:DRSAI_GATEWAY_HOT_RELOAD = "1"

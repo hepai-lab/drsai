@@ -75,7 +75,7 @@ P1 的真实账号剩余验收按当前决定暂停；P2 不以完成该项验�
 
 ### OAEP 到微信的外发投影边界
 
-微信是外部、低带宽且不可撤回的渠道，不能等同于 Desktop 的完整 OAEP 检查视图。自动回复采用显式白名单：仅允许同一 Run 中 `type=message`、`role=assistant`、`phase=final`、`status=completed` 的最终文本，以及已登记为正式 Runtime Artifact 的受支持图片。Desktop 发往微信的用户文本仍必须走独立的“发送到微信”确认和幂等投递流程。
+微信是外部、低带宽且不可撤回的渠道，不能等同于 Desktop 的完整 OAEP 检查视图。自动回复采用显式白名单：仅允许同一 Run 中 `type=message`、`role=assistant`、`status=completed` 且 `phase` 为 `final` 或按协议缺省的最终文本，以及已登记为正式 Runtime Artifact 的受支持图片。Desktop 发往微信的用户文本仍必须走独立的“发送到微信”确认和幂等投递流程。
 
 以下 OAEP 内容不得自动外发：`reasoning` 的 summary/commentary/analysis 全部可见性级别、`phase=commentary` 的进度消息、plan、tool call/result、command execution、file change、subtask、interaction/approval、notice、诊断、错误栈及未完成消息；非图片 Artifact 也不自动外发。最终文本在出口转换为纯文本，移除 HTML/script/style 和 `<think>` 块，HTML emoji span 转成 Unicode。若模型错误地把明显的内部过程自述写入 final，出口从该段开始 fail-closed 截断；没有安全正文时不发送该内容并进入受控失败回复。
 

@@ -21,7 +21,7 @@
         "Open a project folder that matches the Windows desktop workspace.",
         "Open a source file, select text, and switch editor focus or move the caret.",
         "Confirm .drsai/ide-context.json contains source: \"jetbrains\", currentFile, and currentSelection.",
-        "Refresh IDE context in the desktop chat composer and attach IDE current file or IDE selection."
+        "Open the desktop chat composer + menu; context refreshes automatically, then attach the current IDE file or selection."
       ]
     },
     {
@@ -42,7 +42,7 @@
         "Open a solution folder that matches the Windows desktop workspace.",
         "Open a source file, select text, and invoke the package capture command.",
         "Confirm .drsai/ide-context.json contains source: \"visual_studio\", currentFile, and currentSelection.",
-        "Refresh IDE context in the desktop chat composer and attach IDE current file or IDE selection."
+        "Open the desktop chat composer + menu; context refreshes automatically, then attach the current IDE file or selection."
       ]
     }
   ]

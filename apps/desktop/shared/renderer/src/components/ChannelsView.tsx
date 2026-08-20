@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
+  ChevronDown,
   Database,
   FileSearch,
   FileText,
@@ -297,7 +298,7 @@ export function ChannelsView({
     try {
       const synced = await desktopApi.syncChannelSnapshots({
         workspacePath,
-        adapterIds: ["mobile-chat", "slack-chat", "github-connector", "docs-connector", "calendar-connector", "database-connector", "logs-monitor"],
+        adapterIds: ["mobile-chat", "github-connector", "docs-connector", "calendar-connector", "database-connector", "logs-monitor"],
         limit: 6,
       });
       setSnapshotSyncResult(synced);
@@ -402,11 +403,11 @@ export function ChannelsView({
 
   return (
     <div className="channels-view">
-      <header className="channels-header">
+      {mode !== "data" && <header className="channels-header">
         <div>
-          <span>{mode === "data" ? (zh ? "外部数据资源" : "External data resources") : (zh ? "消息接入" : "Messaging")}</span>
-          <h2>{mode === "data" ? (zh ? "数据感知器" : "Data perceptors") : (zh ? "消息频道" : "Message channels")}</h2>
-          <p>{mode === "data" ? (zh ? "连接只读外部数据，导入后由智能体按需引用。" : "Connect read-only external data and make reviewed context available to agents.") : (zh ? "管理真正接收或发送消息的第三方频道。" : "Manage third-party channels that actually receive or send messages.")}</p>
+          <span>{zh ? "消息接入" : "Messaging"}</span>
+          <h2>{zh ? "消息频道" : "Message channels"}</h2>
+          <p>{zh ? "管理真正接收或发送消息的第三方频道。" : "Manage third-party channels that actually receive or send messages."}</p>
         </div>
         <div className="channels-header-actions">
           {showDiagnostics && <button
@@ -422,7 +423,7 @@ export function ChannelsView({
             {loading ? (zh ? "刷新中" : "Refreshing") : zh ? "刷新" : "Refresh"}
           </button>
         </div>
-      </header>
+      </header>}
 
       {showDiagnostics && result && (
         <dl className="channels-summary-grid" aria-label="Channel adapter summary">
@@ -664,7 +665,13 @@ export function ChannelsView({
       </section>}
 
       {mode === "data" && <section className="channels-section" aria-label="Data perceptor connectors">
-        <h3>{zh ? "外部数据连接" : "External data connections"}</h3>
+        <div className="channels-section-header">
+          <div><h3>{zh ? "数据连接" : "Data connections"}</h3><p>{zh ? "连接只读外部数据，供智能体按需引用。" : "Connect read-only external data for Agents to reference when needed."}</p></div>
+          <div className="channels-header-actions">
+            {showDiagnostics && <button type="button" onClick={() => void syncSnapshots()} disabled={syncingSnapshots}><FileSearch size={15} />{syncingSnapshots ? "Syncing" : "Sync snapshots"}</button>}
+            <button type="button" className="channels-icon-button" onClick={() => void loadAdapters()} disabled={loading} aria-label={loading ? (zh ? "刷新中" : "Refreshing") : (zh ? "刷新数据连接" : "Refresh data connections")} title={zh ? "刷新" : "Refresh"}><RefreshCw size={15} /></button>
+          </div>
+        </div>
         <div className="channels-grid">
           {groupedAdapters.connector.map((adapter) => (
             <ChannelAdapterCard
@@ -869,59 +876,64 @@ function ChannelAdapterCard({
 }): React.JSX.Element {
   const zh = language === "zh";
   const Icon = providerIcons[adapter.provider];
+  const [expanded, setExpanded] = useState(false);
+  const interactive = adapter.status !== "planned" && adapter.status !== "disabled";
   const canConfigureLocalGitHub =
-    adapter.id === "github-connector" && adapter.authMode !== "local_git_remote";
-  const canStartAuth = ["mobile-chat", "github-connector"].includes(
+    interactive && adapter.id === "github-connector" && adapter.authMode !== "local_git_remote";
+  const canStartAuth = interactive && ["mobile-chat", "github-connector"].includes(
     adapter.id,
   );
   const canImportContext =
+    interactive && (
     adapter.id === "file-input" ||
     adapter.id === "mobile-chat" ||
-    adapter.id === "slack-chat" ||
     adapter.id === "docs-connector" ||
     adapter.id === "calendar-connector" ||
     adapter.id === "database-connector" ||
     adapter.id === "logs-monitor" ||
     adapter.id === "voice-input" ||
-    (adapter.id === "github-connector" && adapter.status === "available" && adapter.configured);
+    (adapter.id === "github-connector" && adapter.status === "available" && adapter.configured));
   const canQueueOutboundDraft =
-    !readOnly &&
+    interactive && !readOnly &&
     adapter.id !== "file-input" &&
     adapter.requiresApproval &&
     adapter.direction !== "inbound";
   const canPickFiles = adapter.id === "file-input";
+  const operationalReady = adapter.status === "available" && adapter.configured;
   return (
-    <article className={`channel-adapter-card ${adapter.status}`}>
-      <div className="channel-adapter-card-header">
-        <span className="channel-adapter-icon">
-          <Icon size={18} />
-        </span>
-        <div>
-          <h4>{adapter.name}</h4>
-          <span>{formatDirection(adapter.direction, language)}</span>
-        </div>
-        <b>{formatStatus(adapter.status, language)}</b>
-      </div>
+    <article className="perceptor-resource-card settings-resource-card channel-resource-card" data-enabled={operationalReady} data-expanded={expanded} data-status={adapter.status}>
+      <header className="perceptor-resource-row settings-resource-row">
+        <button
+          type="button"
+          className="perceptor-resource-main settings-resource-main collapsible-channel-header"
+          aria-expanded={expanded}
+          aria-label={expanded ? (zh ? `收起${adapter.name}` : `Collapse ${adapter.name}`) : (zh ? `展开${adapter.name}` : `Expand ${adapter.name}`)}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <span className="perceptor-kind-icon"><Icon size={18} /></span>
+          <span className="perceptor-resource-name"><strong>{adapter.name}</strong><small>{formatDirection(adapter.direction, language)} · {adapter.provider}</small></span>
+          <span className={`perceptor-inline-status ${operationalReady ? "ok" : "warning"}`}>{formatStatus(adapter.status, language)}</span>
+          <ChevronDown className="perceptor-expand-icon" size={16} />
+        </button>
+      </header>
+      {expanded && <div className="perceptor-resource-details settings-resource-details channel-resource-details">
       <p>{adapter.description}</p>
-      <div className="channel-adapter-meta">
-        <span>{adapter.configured ? (zh ? "已验证配置" : "Verified configuration") : adapter.authPreparedAt ? (zh ? "授权尚未完成" : "Authorization incomplete") : zh ? "未配置" : "Not configured"}</span>
+      <div className="perceptor-capabilities">
+        {adapter.capabilities.map((capability) => <code key={capability}>{capability}</code>)}
+      </div>
+      <div className="perceptor-state-row">
+        <span className={adapter.configured ? "ok" : "warning"}>{adapter.configured ? (zh ? "配置已验证" : "Configuration verified") : adapter.authPreparedAt ? (zh ? "授权尚未完成" : "Authorization incomplete") : zh ? "尚未配置" : "Not configured"}</span>
         <span>{readOnly ? (zh ? "只读数据" : "Read-only data") : adapter.requiresApproval ? (zh ? "需要审批" : "Approval required") : zh ? "无需审批" : "No approval gate"}</span>
         {adapter.authMode && adapter.authMode !== "not_configured" && (
           <span>{adapter.authMode}</span>
         )}
         {adapter.credentialState && <span>{adapter.credentialState}</span>}
-        {adapter.authPreparedAt && <span>auth prepared</span>}
       </div>
       {(adapter.accountLabel || adapter.scopeLabel) && (
         <p className="channel-adapter-scope">
           {[adapter.accountLabel, adapter.scopeLabel].filter(Boolean).join(" / ")}
         </p>
       )}
-      <ul>
-        {adapter.capabilities.map((capability) => (
-          <li key={capability}>{capability}</li>
-        ))}
-      </ul>
       {canConfigureLocalGitHub && (
         <button
           type="button"
@@ -950,10 +962,10 @@ function ChannelAdapterCard({
       {adapter.id === "github-connector" && adapter.authMode === "oauth" && adapter.configured && (
         <><input value={liveRepository} onChange={(event) => onLiveRepositoryChange(event.target.value)} placeholder="owner/repository" aria-label="GitHub live repository" /><button type="button" className="channel-import-button" onClick={() => void onLiveSync(adapter)} disabled={importing || !liveRepository.trim()}>{importing ? "Syncing" : "Sync live issues / PRs"}</button><button type="button" className="channel-import-button" onClick={() => void onRevokeAuth(adapter)} disabled={authStarting}>{authStarting ? "Revoking" : "Revoke authorization"}</button></>
       )}
-      {adapter.id === "slack-chat" && !adapter.configured && (
+      {interactive && adapter.id === "slack-chat" && !adapter.configured && (
         <><input type="password" value={slackToken} onChange={(event) => onSlackTokenChange(event.target.value)} placeholder="xoxb-…" autoComplete="off" aria-label="Slack bot token" /><button type="button" className="channel-import-button" onClick={() => void onConfigureSlackToken()} disabled={authStarting || !slackToken.trim()}>{authStarting ? "Verifying" : "Verify bot token"}</button></>
       )}
-      {adapter.id === "slack-chat" && adapter.authMode === "provider_token" && adapter.configured && (
+      {interactive && adapter.id === "slack-chat" && adapter.authMode === "provider_token" && adapter.configured && (
         <><input value={slackChannel} onChange={(event) => onSlackChannelChange(event.target.value.toUpperCase())} placeholder="C0123456789" aria-label="Slack channel ID" /><button type="button" className="channel-import-button" onClick={() => void onLiveSync(adapter)} disabled={importing || !slackChannel.trim()}>{importing ? "Syncing" : "Sync live history"}</button><button type="button" className="channel-import-button" onClick={() => void onRevokeAuth(adapter)} disabled={authStarting}>{authStarting ? "Revoking" : "Revoke authorization"}</button></>
       )}
       {adapter.id === "docs-connector" && !adapter.configured && (
@@ -1002,6 +1014,7 @@ function ChannelAdapterCard({
         </button></>
       )}
       {adapter.setupHint && <small>{adapter.setupHint}</small>}
+      </div>}
     </article>
   );
 }

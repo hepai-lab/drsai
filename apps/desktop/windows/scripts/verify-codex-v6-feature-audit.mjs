@@ -40,7 +40,7 @@ const moduleEvidence = {
   M05: files.stream.includes("Snapshot") && files.stream.includes("openOaepEventStream") && files.stream.includes("protocolViolations") && files.chat.includes("structuredTerminalRequests") && files.chat.includes("oaep_run_terminal_missing") && !files.chat.slice(files.chat.indexOf("async function runRuntimeBackendChat"), files.chat.indexOf("function emitCodexOaepEvent")).includes("listOaepEvents("),
   M06: files.projector.includes("projectOaepEventForPresentation") && files.projector.includes("part.completed") && files.projector.includes("unknownDeltaKinds") && files.history.includes("projectOaepAssistantItem"),
   M07: files.chat.includes('type: "structured"') && files.renderer.includes("structured-process") && files.renderer.includes("structured-interaction-layer") && files.renderer.includes("structured-result-layer") && files.adapter.includes("structuredFlushFrameRef") && files.adapter.includes("completedStructuredRequests"),
-  M08: files.migration.includes("codex_history_migration_dry_run") && files.migration.includes("content_redacted") && files.version.includes("oaep-codex/2.0") && files.mapper.includes("diagnostics_snapshot"),
+  M08: files.migration.includes("codex_history_migration_dry_run") && files.migration.includes("content_redacted") && files.version.includes("oaep-codex/2.1") && files.mapper.includes("diagnostics_snapshot"),
   M09: [
     "verify-codex-v6-input.mts", "verify-oaep-session-stream.mts",
     "verify-oaep-presentation-projector.mts", "verify-codex-v6-performance.mts",

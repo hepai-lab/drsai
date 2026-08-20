@@ -114,6 +114,28 @@ assert.deepEqual(historicalTurn.activities.map((activity) => [activity.id, activ
   live.activities.map((activity) => [activity.id, activity.kind]));
 assert.equal(JSON.stringify(live).includes("[{'text'"), false);
 
+const imageInput = item<Extract<OaepItem, { type: "message" }>>({
+  id: "user-image", type: "message", status: "completed",
+  content: {
+    role: "user", phase: "final", text: "What is this?", citations: [],
+    parts: [
+      { type: "text", text: "What is this?" },
+      {
+        type: "image", name: "sample.png", mime_type: "image/png",
+        reference: ".opendrsai/attachments/run-v6/sample.png",
+        resource_id: "attachment-1",
+      } as never,
+    ],
+  },
+}, 1);
+const imageHistory = projectOaepThreadSnapshot(thread, [imageInput, { ...answerDone, sequence: 2 }], [run("completed", completedAt)]);
+assert.equal(imageHistory.messages[0]?.role, "user");
+assert.deepEqual(imageHistory.messages[0]?.attachments?.map(({ name, path }) => ({ name, path })), [{
+  name: "sample.png",
+  path: ".opendrsai/attachments/run-v6/sample.png",
+}]);
+assert.equal(imageHistory.messages[1]?.role, "assistant");
+
 const completedItem = (value: Pick<OaepItem, "id" | "type" | "content">, sequence: number): OaepItem => ({
   ...value,
   session_id: sessionId,

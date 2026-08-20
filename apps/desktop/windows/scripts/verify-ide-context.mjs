@@ -67,7 +67,7 @@ assert(
 assert(
   chatWorkspace.includes("IDE current file") &&
     chatWorkspace.includes("IDE selection") &&
-    chatWorkspace.includes("Refresh IDE context") &&
+    chatWorkspace.includes("if (!open) onRefreshIdeContext?.()") &&
     chatWorkspace.includes("canAttachIdeCurrentSelection") &&
     chatWorkspace.includes("FileCode2") &&
     chatWorkspace.includes("TextCursorInput"),

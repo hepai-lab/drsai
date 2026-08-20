@@ -16,7 +16,7 @@ import {
   UserRound,
   Wrench,
 } from "lucide-react";
-import type { CodexBackendLogin, CodexBackendStatus, DesktopHealth } from "@shared/desktopApi";
+import type { CodexBackendLogin, CodexBackendStatus, DesktopHealth, WorkspaceProject } from "@shared/desktopApi";
 import { copyTextSafely } from "../clipboard";
 import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
@@ -151,6 +151,8 @@ export function CodexIntegrationSettings({
   onLogin,
   onLogout,
   onUseCodex,
+  workspaces,
+  onSyncWorkspaceSessions,
 }: {
   busy: boolean;
   health: DesktopHealth | null;
@@ -162,6 +164,8 @@ export function CodexIntegrationSettings({
   onLogin: (type: "chatgpt" | "chatgptDeviceCode") => Promise<CodexBackendLogin>;
   onLogout: () => void | Promise<void>;
   onUseCodex: () => void | Promise<void>;
+  workspaces: WorkspaceProject[];
+  onSyncWorkspaceSessions: (workspace: WorkspaceProject) => void | Promise<void>;
 }): React.JSX.Element {
   const zh = language === "zh";
   const view = useMemo(() => deriveCodexIntegrationViewModel(status, health, zh), [health, status, zh]);
@@ -170,6 +174,10 @@ export function CodexIntegrationSettings({
   const [diagnosticCopied, setDiagnosticCopied] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const actionBusy = busy || pendingAction !== null;
+  const localWorkspaces = useMemo(
+    () => workspaces.filter((workspace) => workspace.location !== "remote"),
+    [workspaces],
+  );
 
   async function runAction(action: CodexPrimaryAction): Promise<void> {
     if (!action || actionBusy) return;
@@ -292,6 +300,36 @@ export function CodexIntegrationSettings({
           <ConnectionRow icon={<PackageCheck size={17} />} label="Codex" value={installState} ok={Boolean(installed && contractReady)} />
           <ConnectionRow icon={<UserRound size={17} />} label={zh ? "ChatGPT 账户" : "ChatGPT account"} value={status?.loggedIn ? status.accountLabel || (zh ? "已登录" : "Signed in") : (zh ? "尚未登录" : "Not signed in")} ok={Boolean(status?.loggedIn)} />
           <ConnectionRow icon={<Cable size={17} />} label={zh ? "工作区连接" : "Workspace connection"} value={`${transport} · ${liveness}`} ok={health?.gateway.liveness?.state === "ready" && status?.available === true} />
+        </div>
+      </section>
+
+      <section
+        className="codex-connection-section codex-session-sync-section"
+        data-testid="codex-workspace-sync-settings"
+        aria-labelledby="codex-session-sync-heading"
+      >
+        <div className="codex-section-heading">
+          <div>
+            <h3 id="codex-session-sync-heading">{zh ? "Codex 会话同步" : "Codex conversation sync"}</h3>
+            <p>{zh ? "将 Codex CLI 的历史会话同步到对应的本机工作区。" : "Sync Codex CLI conversation history into the matching local workspace."}</p>
+          </div>
+        </div>
+        <div className="codex-session-sync-list">
+          {localWorkspaces.map((workspace) => (
+            <div className="codex-session-sync-row" key={workspace.id}>
+              <span>
+                <strong>{workspace.name}</strong>
+                <small title={workspace.path}>{workspace.path}</small>
+              </span>
+              <button type="button" disabled={busy} onClick={() => void onSyncWorkspaceSessions(workspace)}>
+                <RefreshCw size={14} />
+                {zh ? "同步" : "Sync"}
+              </button>
+            </div>
+          ))}
+          {localWorkspaces.length === 0 && (
+            <p className="codex-session-sync-empty">{zh ? "暂无可同步的本机工作区。" : "No local workspace is available for sync."}</p>
+          )}
         </div>
       </section>
 

@@ -101,6 +101,8 @@ export function AgentSquareView({
     });
     return [...visible].sort((left, right) => {
       if (sort === "name") return left.name.localeCompare(right.name, zh ? "zh-CN" : "en");
+      const saiDoctorOrder = Number(isSaiDoctor(right)) - Number(isSaiDoctor(left));
+      if (saiDoctorOrder) return saiDoctorOrder;
       const leftSelected = left.id === selectedAgentId ? 1 : 0;
       const rightSelected = right.id === selectedAgentId ? 1 : 0;
       return rightSelected - leftSelected || Number(Boolean(right.featured)) - Number(Boolean(left.featured)) || left.name.localeCompare(right.name);
@@ -233,8 +235,8 @@ export function AgentSquareView({
                 agent={agent}
                 zh={zh}
                 selected={agent.id === selectedAgentId}
-                onConfigure={agent.id === "my-codex" ? undefined : () => setConfigOpen(true)}
-                onDetails={agent.id === "my-codex" ? () => setDetailAgent(agent) : undefined}
+                onConfigure={agent.id === "my-codex" || agent.mode === "oaep-runtime" ? undefined : () => setConfigOpen(true)}
+                onDetails={agent.id === "my-codex" || agent.mode === "oaep-runtime" ? () => setDetailAgent(agent) : undefined}
                 onStartChat={startChat}
               />)}
             </div>
@@ -772,7 +774,7 @@ function AgentStatusPill({
   );
 }
 
-function AgentLogo({
+export function AgentLogo({
   agent,
   large = false,
 }: {
@@ -780,7 +782,7 @@ function AgentLogo({
   large?: boolean;
 }): React.JSX.Element {
   const [failed, setFailed] = useState(false);
-  const logo = agent.source === "local" ? drsaiLogo : agent.logo;
+  const logo = agent.logo || (agent.source === "local" && agent.id !== "my-codex" && agent.mode !== "oaep-runtime" ? drsaiLogo : undefined);
   return (
     <span className={`agent-logo${agent.id === "my-codex" ? " codex-logo" : ""}${large ? " large" : ""}`}>
       {agent.id === "my-codex" ? (
@@ -930,11 +932,15 @@ function getCapabilityLabel(capability: string, zh: boolean): string {
   return label ? label[zh ? 0 : 1] : capability;
 }
 
+function isSaiDoctor(agent: DesktopAgent): boolean {
+  return agent.name.trim() === "赛博士";
+}
+
 function getAgentDescription(agent: DesktopAgent, zh: boolean): string {
   if (agent.id === "my-codex") {
     return zh
-      ? "通过 OpenDrSai Codex Adapter 接入的本机编程智能体，任务过程符合 OAEP 并可复现。"
-      : "A local coding agent integrated through the OpenDrSai Codex Adapter, with reproducible OAEP task execution.";
+      ? "通过 Codex Adapter 接入的 OpenAI 官方编程智能体，任务过程遵循 OpenDrSai Agent 协议（OAEP），可复现。"
+      : "OpenAI's official coding agent, integrated through Codex Adapter with reproducible task execution under the OpenDrSai Agent Protocol (OAEP).";
   }
   if (agent.source === "local") {
     return zh

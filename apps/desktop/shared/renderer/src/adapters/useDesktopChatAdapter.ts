@@ -44,7 +44,6 @@ import {
 import type { ChatSubmitOptions, UiMessage } from "../components/ChatWorkspace";
 import { desktopApi } from "../desktopApi";
 import { describeUserFacingError, type UserFacingRecoveryAction } from "../userFacingErrors";
-import { emitAssistantSpeechStreamEvent } from "../voice/streaming/assistantSpeechStream";
 import {
   formatRecentTerminalTestResult,
   readRecentTerminalTestResult,
@@ -563,6 +562,11 @@ export function useDesktopChatAdapter({
       ? messagesRef.current.slice(0, replaceIndex)
       : messagesRef.current
     ).filter((message) => message.id !== "welcome");
+    const draftParts = options?.draftParts
+      ? (skillPrefix && !alreadyPrefixed
+          ? [{ type: "text" as const, text: skillPrefix }, ...options.draftParts]
+          : options.draftParts)
+      : undefined;
 
     const materialPaths = [...new Set(attachments
       .filter((attachment) => attachment.kind === "file" && !attachment.blockedReason && attachment.path)
@@ -682,6 +686,7 @@ export function useDesktopChatAdapter({
       role: "user",
       content: text,
       ...(attachments.length ? { attachments } : {}),
+      ...(draftParts?.length ? { draftParts } : {}),
     };
     const assistantId = crypto.randomUUID();
     const requestId = crypto.randomUUID();
@@ -721,6 +726,7 @@ export function useDesktopChatAdapter({
         workspaceName,
         workspacePath,
         attachments,
+        draftParts,
         model: options?.model?.trim() || undefined,
         metadata: {
           selected_agent_id: options?.agentId?.trim() || undefined,
@@ -936,9 +942,6 @@ export function useDesktopChatAdapter({
       delete pendingDeltasByRequest.current[event.requestId];
       const structuredEvent = event.structuredEvent;
       appendStructuredProtocolLog(structuredEvent);
-      if (structuredEvent.type === "part.delta" && structuredEvent.delta.kind === "markdown.append") {
-        emitAssistantSpeechStreamEvent({ type: "chunk", requestId: event.requestId, content: structuredEvent.delta.text, at: Date.now() });
-      }
       if (structuredEvent.type === "activity.updated") {
         appendStructuredActivityLog(structuredEvent.activity);
       }
@@ -973,11 +976,6 @@ export function useDesktopChatAdapter({
         structuredEvent.type === "turn.error"
       ) {
         if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
-        emitAssistantSpeechStreamEvent({
-          type: structuredEvent.type === "turn.completed" ? "done" : structuredEvent.type === "turn.cancelled" ? "aborted" : "error",
-          requestId: event.requestId,
-          at: Date.now(),
-        });
         setActiveRequestId((current) => current === event.requestId ? null : current);
         if (!completedStructuredRequests.current.has(event.requestId)) {
           completedStructuredRequests.current.add(event.requestId);
@@ -1028,7 +1026,6 @@ export function useDesktopChatAdapter({
       (event.type === "chunk" || event.type === "reasoning" || event.type === "status")
     ) return;
     if (event.type === "chunk") {
-      emitAssistantSpeechStreamEvent({ type: "chunk", requestId: event.requestId, content: event.content ?? "", at: Date.now() });
       queueAssistantDelta(event.requestId, "text", event.content ?? "");
       return;
     }
@@ -1086,7 +1083,6 @@ export function useDesktopChatAdapter({
         return;
       }
       if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
-      emitAssistantSpeechStreamEvent({ type: event.type, requestId: event.requestId, at: Date.now() });
       flushPendingDeltas();
       if (structuredRequests.current.has(event.requestId)) {
         const assistantId = streamingAssistantByRequest.current[event.requestId];
@@ -1141,7 +1137,6 @@ export function useDesktopChatAdapter({
         return;
       }
       if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
-      emitAssistantSpeechStreamEvent({ type: "error", requestId: event.requestId, at: Date.now() });
       flushPendingDeltas();
       const rawError = event.errorEnvelope ?? event.failureRecovery ?? { code: "unexpected_error", retryable: true };
       const friendlyError = describeUserFacingError(rawError, languageRef.current);

@@ -82,7 +82,7 @@ assert.equal(index.includes('ipcMain.handle("desktop:remote-gateway-install-appr
 assert.equal(index.includes('ipcMain.handle("desktop:diagnostics-record"'), false, "diagnostics IPC channels must not leak back into the composition root");
 assert.equal(index.includes('ipcMain.handle("desktop:git-commit-approval"'), false, "trust IPC channels must not leak back into the composition root");
 assert.equal(index.includes('ipcMain.handle("desktop:terminal-create"'), false, "terminal IPC channels must not leak back into the composition root");
-assert.equal(index.includes('rawIpcMain.on("desktop:voice-streaming-audio-port"'), false, "voice raw IPC channel must not leak back into the composition root");
+assert.equal(index.includes('rawIpcMain.on("desktop:voice-duplex-audio-port"'), false, "voice raw IPC channel must not leak back into the composition root");
 assert.equal(index.includes('ipcMain.handle("desktop:get-auth-session"'), false, "runtime services IPC channels must not leak back into the composition root");
 assert.equal(index.includes('ipcMain.handle("desktop:mobile-pairing-create"'), false, "catalog IPC channels must not leak back into the composition root");
 for (const channel of ["list-perceptors", "save-perceptor", "update-perceptor", "test-perceptor", "delete-perceptor"]) {
@@ -123,7 +123,7 @@ for (const contract of ["interface MacosTrustIpcDependencies", "requestMcpEnumer
   assert.ok(trustIpc.includes(contract), `trust boundary omits ${contract}`);
 }
 for (const contract of ["services.workspace.allowedRoots()", "createTerminalSession(event", "listTerminalSessions(event", "writeTerminalSession(event"]) assert.ok(terminalIpc.includes(contract), `terminal boundary omits ${contract}`);
-for (const contract of ['rawIpcMain: Pick<IpcMain, "on">', "isTrustedDesktopIpcSender", "dependencies.getTrustedWebContents()", "dependencies.allowDevelopmentRendererUrl", "port?.close()", "attachStreamingVoiceAudioPort(event.sender"]) assert.ok(voiceIpc.includes(contract), `voice boundary omits ${contract}`);
+for (const contract of ['rawIpcMain: Pick<IpcMain, "on">', "isTrustedDesktopIpcSender", "dependencies.getTrustedWebContents()", "dependencies.allowDevelopmentRendererUrl", "port?.close()", "attachDuplexVoiceAudioPort(event.sender"]) assert.ok(voiceIpc.includes(contract), `voice boundary omits ${contract}`);
 for (const contract of ["interface MacosRuntimeServicesIpcDependencies", "browserTaskService: BrowserTaskService", "hasActiveChats() || hasActiveAgentRuns()", "electronSession.defaultSession.clearStorageData()", "services.workspace.assertPath", "assertAllowedExternalUrl", "app.isPackaged"]) assert.ok(runtimeServicesIpc.includes(contract), `runtime services boundary omits ${contract}`);
 for (const contract of ["interface MacosCatalogIpcDependencies", "mobilePairingControllerFor(sender: WebContents)", "dependencies.mobilePairingControllerFor(event.sender)", '(options as { refresh?: unknown }).refresh === true', "services.workspace.assertPath", 'workspace?.location === "remote"']) assert.ok(catalogIpc.includes(contract), `catalog boundary omits ${contract}`);
 for (const contract of ["const runs = new Map", "ownerId: event.sender.id", "run.ownerId !== event.sender.id", "run.activeOperationController?.abort()", "run.resumeWaiters", "recordManagerPresentationProgress", "services.workspace.assertPath"]) assert.ok(presentationIpc.includes(contract), `presentation boundary omits ${contract}`);
@@ -166,9 +166,24 @@ for (const contract of ["installMacosAppIntegrations", 'powerMonitor.on("suspend
 assert.ok(index.includes("disposeAppIntegrations = installMacosAppIntegrations({"), "app-ready integrations must be installed explicitly");
 assert.ok(index.includes("disposeAppIntegrations();"), "app-ready integration monitor must be disposed on quit");
 
-const channels = (source) => new Set([...source.matchAll(/ipcMain\.handle\(\s*["'](desktop:[^"']+)["']/g)].map((match) => match[1]));
+const channels = (source, pattern = /ipcMain\.handle\(\s*["'](desktop:[^"']+)["']/g) => new Set([...source.matchAll(pattern)].map((match) => match[1]));
 const preloadChannels = new Set([...read("shared/main/preload.ts").matchAll(/ipcRenderer\.invoke\(\s*["'](desktop:[^"']+)["']/g)].map((match) => match[1]));
-const ipcCount = channels(macosIpcSource(desktopRoot)).size;
-assert.equal(ipcCount, preloadChannels.size, `composition must expose all ${preloadChannels.size} shared preload IPC channels`);
+const macosSource = macosIpcSource(desktopRoot);
+const macosChannels = channels(macosSource);
+for (const [registrar, path] of [
+  ["registerConversationResourceReadIpc", "shared/main/conversationResourceIpc.ts"],
+  ["registerConversationResourceDownloadIpc", "shared/main/conversationResourceDownloadIpc.ts"],
+  ["registerConversationResourceSubscriptionIpc", "shared/main/conversationResourceSubscriptionIpc.ts"],
+]) {
+  assert.ok(macosSource.includes(`${registrar}(`), `macOS composition omits shared registrar ${registrar}`);
+  const registered = channels(read(path), /\bregister\(\s*["'](desktop:[^"']+)["']/g);
+  assert.ok(registered.size > 0, `shared registrar ${registrar} exposes no statically auditable channels`);
+  for (const channel of registered) macosChannels.add(channel);
+}
+const ipcCount = macosChannels.size;
+const missingChannels = [...preloadChannels].filter((channel) => !macosChannels.has(channel)).sort();
+const unknownChannels = [...macosChannels].filter((channel) => !preloadChannels.has(channel)).sort();
+assert.deepEqual(unknownChannels, [], `composition exposes channels absent from the preload contract: ${unknownChannels.join(", ")}`);
+assert.deepEqual(missingChannels, [], `composition omits shared preload IPC channels: ${missingChannels.join(", ")}`);
 
 console.log(`macOS main composition verified (index=${lineCount(index)} lines, window=${lineCount(windowModule)} lines, platformIpc=${lineCount(platformIpc)} lines, sharingIpc=${lineCount(sharingIpc)} lines, customizationIpc=${lineCount(customizationIpc)} lines, automationIpc=${lineCount(automationIpc)} lines, connectionsIpc=${lineCount(connectionsIpc)} lines, workspaceIpc=${lineCount(workspaceIpc)} lines, workspaceHistoryIpc=${lineCount(workspaceHistoryIpc)} lines, remoteAccessIpc=${lineCount(remoteAccessIpc)} lines, diagnosticsIpc=${lineCount(diagnosticsIpc)} lines, trustIpc=${lineCount(trustIpc)} lines, terminalIpc=${lineCount(terminalIpc)} lines, voiceIpc=${lineCount(voiceIpc)} lines, runtimeServicesIpc=${lineCount(runtimeServicesIpc)} lines, catalogIpc=${lineCount(catalogIpc)} lines, presentationIpc=${lineCount(presentationIpc)} lines, executionIpc=${lineCount(executionIpc)} lines, services=${lineCount(serviceContainer)} lines, IPC=${ipcCount}).`);

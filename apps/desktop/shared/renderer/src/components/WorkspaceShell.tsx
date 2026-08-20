@@ -6,7 +6,7 @@ import {
   CalendarClock,
   ChevronDown,
   // Temporarily unused while GFS cloud entry is hidden — keep for later reuse.
-  // Cloud,
+  Cloud,
   Copy,
   FileText,
   FolderCode,
@@ -70,9 +70,12 @@ import { extractShareConclusion, extractShareMessageText } from "@shared/threadS
 import { ChatMessageContent } from "./ChatMessageContent";
 import { MENU_IDS, type AppLanguage, type NavId, type NavSection, type RightTab } from "../navigation";
 import { userFacingFailureMessage } from "../userFacingLanguage";
+import type { WorkspaceSortMode } from "../workspaceOrdering";
 import { showAppNotice, requestAppDecision } from "./AppDecisionDialog";
 import { deleteDesktopThread } from "../deleteDesktopThread";
 import { ThreadActivityBubble } from "./ThreadActivityBubble";
+import { OpenAiBrandIcon } from "./OpenAiBrandIcon";
+import { WeChatLogo } from "./WeChatChannelCard";
 import type { ThreadActivityState } from "../threadActivity";
 import {
   getConflictMarkerCount,
@@ -155,13 +158,14 @@ interface WorkspaceShellProps {
   rightTabIcons: Record<RightTab, LucideIcon>;
   rightTabs: Array<{ id: RightTab; label: string }>;
   sidebarCollapsed: boolean;
+  showThreadSourceIcons: boolean;
   sidebarComponents: {
     square: boolean;
     agents: boolean;
     skills: boolean;
   };
   user: AuthUser | null;
-  workspaceSortMode: "recent" | "name" | "created";
+  workspaceSortMode: WorkspaceSortMode;
   workspaceThreads: WorkspaceThread[];
   workspaceThreadsHasMore: boolean;
   workspaceThreadsLoading: boolean;
@@ -216,15 +220,16 @@ interface WorkspaceShellProps {
   onToggleSidebar: () => void;
   onUpdateWorkspace: (id: string, updates: Partial<Pick<WorkspaceProject, "name" | "description" | "trusted" | "pinned">>) => void | Promise<void>;
   onWorkspaceChange: (workspaceId: string) => void;
-  onWorkspaceSortModeChange: (mode: "recent" | "name" | "created") => void;
+  onWorkspaceSortModeChange: (mode: WorkspaceSortMode) => void;
 }
 
-type ShortcutId = "newChat" | "newWorkspace" | "find" | "commandPalette" | "back" | "forward" | "toggleSidebar" | "toggleRightPanel" | "modelPicker" | "debug" | "settings" | "shortcuts";
+type ShortcutId = "newChat" | "newWorkspace" | "voiceRecording" | "find" | "commandPalette" | "back" | "forward" | "toggleSidebar" | "toggleRightPanel" | "modelPicker" | "debug" | "settings" | "reload" | "shortcuts";
 type WorkbenchMenuId = "file" | "edit" | "layout" | "help";
 
 const SHORTCUT_STORAGE_KEY = "opendrsai.keyboardShortcuts";
 const SHORTCUTS: Array<{ id: ShortcutId; category: "task" | "navigation" | "panels" | "project" | "app"; zh: string; en: string; fallback: string }> = [
   { id: "newChat", category: "task", zh: "新聊天", en: "New chat", fallback: "Ctrl+Alt+N" },
+  { id: "voiceRecording", category: "task", zh: "按住录音", en: "Hold to record voice", fallback: "Ctrl+Shift+D" },
   { id: "newWorkspace", category: "project", zh: "打开文件夹", en: "Open folder", fallback: "Ctrl+O" },
   { id: "find", category: "navigation", zh: "查找", en: "Find", fallback: "Ctrl+F" },
   { id: "commandPalette", category: "navigation", zh: "打开命令菜单", en: "Open command menu", fallback: "Ctrl+K" },
@@ -235,6 +240,7 @@ const SHORTCUTS: Array<{ id: ShortcutId; category: "task" | "navigation" | "pane
   { id: "modelPicker", category: "panels", zh: "打开模型选择器", en: "Open model picker", fallback: "Ctrl+Shift+M" },
   { id: "debug", category: "panels", zh: "打开调试面板", en: "Open debug panel", fallback: "F12" },
   { id: "settings", category: "app", zh: "设置", en: "Settings", fallback: "Ctrl+," },
+  { id: "reload", category: "app", zh: "重新加载应用界面", en: "Reload application interface", fallback: "Ctrl+R" },
   { id: "shortcuts", category: "app", zh: "显示键盘快捷键", en: "Show keyboard shortcuts", fallback: "Ctrl+Shift+/" },
 ];
 
@@ -258,6 +264,7 @@ export function WorkspaceShell({
   rightTabIcons,
   rightTabs,
   sidebarCollapsed,
+  showThreadSourceIcons,
   sidebarComponents,
   user,
   workspaceSortMode,
@@ -306,6 +313,7 @@ export function WorkspaceShell({
   const [shortcutDialogOpen, setShortcutDialogOpen] = useState(false);
   const [shortcutDrafts, setShortcutDrafts] = useState<Record<ShortcutId, string>>(() => loadShortcutSettings());
   const [capturingShortcut, setCapturingShortcut] = useState<ShortcutId | null>(null);
+  const voiceShortcutHeldRef = useRef(false);
   const [openWorkbenchMenu, setOpenWorkbenchMenu] = useState<WorkbenchMenuId | null>(null);
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -645,6 +653,10 @@ export function WorkspaceShell({
   }, [activeRightTab, rightPanelCollapsed, rightTabs]);
 
   useEffect(() => {
+    function dispatchVoiceShortcut(phase: "press" | "release"): void {
+      window.dispatchEvent(new CustomEvent("drsai:voice-recording-shortcut", { detail: { phase } }));
+    }
+
     function handleKeyDown(event: KeyboardEvent): void {
       if (capturingShortcut) return;
       if (
@@ -661,6 +673,11 @@ export function WorkspaceShell({
         event.preventDefault();
         if (command === "newChat") onNewChat();
         else if (command === "newWorkspace") void onAddWorkspace();
+        else if (command === "voiceRecording") {
+          if (event.repeat || voiceShortcutHeldRef.current) return;
+          voiceShortcutHeldRef.current = true;
+          dispatchVoiceShortcut("press");
+        }
         else if (command === "find" || command === "commandPalette") setCommandPaletteOpen(true);
         else if (command === "back") onGoBack();
         else if (command === "forward") onGoForward();
@@ -672,6 +689,7 @@ export function WorkspaceShell({
           else { if (rightPanelCollapsed) onToggleRightPanel(); onRightTabChange("debug"); }
         }
         else if (command === "settings") onNavChange(MENU_IDS.profile);
+        else if (command === "reload") window.location.reload();
         else if (command === "shortcuts") setShortcutDialogOpen(true);
         return;
       }
@@ -685,8 +703,19 @@ export function WorkspaceShell({
       }
     }
 
+    function handleKeyUp(event: KeyboardEvent): void {
+      if (!voiceShortcutHeldRef.current || !shortcutIncludesReleasedKey(shortcutDrafts.voiceRecording, event.key)) return;
+      event.preventDefault();
+      voiceShortcutHeldRef.current = false;
+      dispatchVoiceShortcut("release");
+    }
+
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
   }, [activeRightTab, capturingShortcut, onAddWorkspace, onGoBack, onGoForward, onNavChange, onNewChat, onRightTabChange, onToggleRightPanel, onToggleSidebar, rightPanelCollapsed, shortcutDrafts]);
 
   useEffect(() => {
@@ -1373,12 +1402,12 @@ export function WorkspaceShell({
     return `opendrsai://thread/${encodeURIComponent(thread.id)}`;
   }
 
-  function renderWorkspaceThread(thread: WorkspaceThread): React.JSX.Element {
+  function renderWorkspaceThread(thread: WorkspaceThread, showSourceIcon: boolean): React.JSX.Element {
     return (
       <button
         key={thread.id}
         type="button"
-        className={`thread-item workspace-thread-item ${thread.active ? "active" : ""}${thread.activity.kind === "error" ? " failed" : ""}`}
+        className={`thread-item workspace-thread-item ${showSourceIcon ? "has-source-icon " : ""}${thread.active ? "active" : ""}${thread.activity.kind === "error" ? " failed" : ""}`}
         onClick={() => onThreadSelect(thread.id)}
         onContextMenu={(event) => openThreadMenu(event, thread)}
       >
@@ -1397,9 +1426,6 @@ export function WorkspaceShell({
             </b>
           )}
           {thread.title}
-          <small className={`thread-source-label source-${thread.source ?? "opendrsai"}`}>
-            {thread.source === "codex" ? "Codex" : thread.source === "remote" ? (zh ? "远程" : "Remote") : thread.source === "wechat" ? (zh ? "微信" : "WeChat") : "OpenDrSai"}
-          </small>
         </span>
         <span className="thread-item-status">
           {thread.activity.kind === "idle" ? (
@@ -1417,7 +1443,29 @@ export function WorkspaceShell({
             <ThreadActivityBubble state={thread.activity} language={language} />
           )}
         </span>
+        {showSourceIcon && <ThreadSourceIcon source={thread.source} zh={zh} />}
       </button>
+    );
+  }
+
+  function ThreadSourceIcon({ source = "opendrsai", zh: useZh }: { source?: WorkspaceThread["source"]; zh: boolean }): React.JSX.Element {
+    const agentName = source === "codex"
+      ? "Codex"
+      : source === "remote"
+        ? (useZh ? "远程" : "remote")
+        : source === "wechat"
+          ? (useZh ? "微信" : "WeChat")
+          : "OpenDrSai";
+    const label = useZh
+      ? `该会话由 ${agentName} 智能体运行。可在“设置 → 集成 → 通用设置”中隐藏。`
+      : `This conversation is run by the ${agentName} agent. You can hide this icon in Settings → Integrations → General settings.`;
+    return (
+      <small className={`thread-source-icon source-${source}`} title={label} aria-label={label}>
+        {source === "codex" ? <OpenAiBrandIcon size={12} />
+          : source === "wechat" ? <WeChatLogo />
+            : source === "remote" ? <Cloud size={12} aria-hidden="true" />
+              : <img src={drsaiLogo} alt="" />}
+      </small>
     );
   }
 
@@ -2511,7 +2559,7 @@ export function WorkspaceShell({
               <span className="workspace-section-title sidebar-group-title">{zh ? "工作区" : "Workspace"}</span>
               <div className="workspace-section-actions">
                 <button
-                  className={`workspace-sort-button ${workspaceSortMode !== "recent" ? "active" : ""}`}
+                  className="workspace-sort-button active"
                   type="button"
                   aria-label={getWorkspaceSortButtonLabel(workspaceSortMode, zh)}
                   title={getWorkspaceSortButtonLabel(workspaceSortMode, zh)}
@@ -2556,6 +2604,9 @@ export function WorkspaceShell({
                   const expanded = expandedWorkspaceIds.has(workspace.id);
                   const showAll = showAllWorkspaceThreads.has(workspace.id);
                   const visibleWorkspaceThreads = showAll ? threadsForWorkspace : threadsForWorkspace.slice(0, 5);
+                  const hasMixedThreadSources = new Set(
+                    threadsForWorkspace.map((thread) => thread.source ?? "opendrsai"),
+                  ).size > 1;
                   return (
                     <div className="workspace-tree-node" key={workspace.id}>
                       <div className={`workspace-row ${workspace.id === activeWorkspaceId ? "active" : ""}`}>
@@ -2606,7 +2657,7 @@ export function WorkspaceShell({
                       </div>
                       {expanded && (
                         <div className="workspace-thread-list">
-                          {visibleWorkspaceThreads.map(renderWorkspaceThread)}
+                          {visibleWorkspaceThreads.map((thread) => renderWorkspaceThread(thread, showThreadSourceIcons && hasMixedThreadSources))}
                           {threadsForWorkspace.length === 0 && <p>{zh ? "暂无任务" : "No tasks yet"}</p>}
                           {threadsForWorkspace.length > 5 && (
                             <button
@@ -3605,7 +3656,7 @@ export function WorkspaceShell({
                 return <section key={category}><h3>{labels[category]}</h3>{entries.map((item) => <div className="shortcut-settings-row" key={item.id}><span>{zh ? item.zh : item.en}</span><button type="button" className={capturingShortcut === item.id ? "capturing" : ""} onClick={() => setCapturingShortcut(item.id)} onKeyDown={(event) => { if (capturingShortcut !== item.id) return; event.preventDefault(); event.stopPropagation(); const next = keyboardShortcutFromEvent(event.nativeEvent); if (!next || next === "Escape") return; setShortcutDrafts((current) => ({ ...current, [item.id]: next })); setCapturingShortcut(null); }}>{capturingShortcut === item.id ? (zh ? "请按快捷键" : "Press shortcut") : shortcutDrafts[item.id]}</button></div>)}</section>;
               })}
             </div>
-            <footer><button type="button" onClick={() => { const defaults = defaultShortcutSettings(); setShortcutDrafts(defaults); window.localStorage.removeItem(SHORTCUT_STORAGE_KEY); }}>{zh ? "恢复默认" : "Restore defaults"}</button><button type="button" onClick={() => { window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcutDrafts)); setShortcutDialogOpen(false); }}>{zh ? "完成" : "Done"}</button></footer>
+            <footer><button type="button" onClick={() => { const defaults = defaultShortcutSettings(); setShortcutDrafts(defaults); window.localStorage.removeItem(SHORTCUT_STORAGE_KEY); }}>{zh ? "恢复默认" : "Restore defaults"}</button><button type="button" onClick={() => { window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcutDrafts)); window.dispatchEvent(new Event("drsai:keyboard-shortcuts-updated")); setShortcutDialogOpen(false); }}>{zh ? "完成" : "Done"}</button></footer>
           </section>
         </div>
       )}
@@ -3774,11 +3825,9 @@ function SidebarButton({
 }
 
 function getNextWorkspaceSortMode(
-  mode: "recent" | "name" | "created",
-): "recent" | "name" | "created" {
-  if (mode === "recent") return "name";
-  if (mode === "name") return "created";
-  return "recent";
+  mode: WorkspaceSortMode,
+): WorkspaceSortMode {
+  return mode === "name" ? "created" : "name";
 }
 
 type EditableSelectionSnapshot = {
@@ -3838,16 +3887,13 @@ function restoreEditableSelection(snapshot: EditableSelectionSnapshot | null): b
 }
 
 function getWorkspaceSortButtonLabel(
-  mode: "recent" | "name" | "created",
+  mode: WorkspaceSortMode,
   zh: boolean,
 ): string {
-  if (mode === "recent") {
-    return zh ? "工作区按最近打开排序，点击切换为按名称排序" : "Workspaces sorted by recent use. Click to sort by name.";
-  }
   if (mode === "name") {
     return zh ? "工作区按名称排序，点击切换为按创建时间排序" : "Workspaces sorted by name. Click to sort by created time.";
   }
-  return zh ? "工作区按创建时间排序，点击切换为按最近打开排序" : "Workspaces sorted by created time. Click to sort by recent use.";
+  return zh ? "工作区按创建时间排序，点击切换为按名称排序" : "Workspaces sorted by created time. Click to sort by name.";
 }
 
 function getEnabledNavItems(navSections: NavSection[], sectionId: NavSection["id"]): NavSection["items"] {
@@ -3895,6 +3941,16 @@ function keyboardShortcutFromEvent(event: KeyboardEvent): string {
           : event.key.length === 1 ? event.key.toUpperCase() : event.key;
   const parts = [event.ctrlKey || event.metaKey ? "Ctrl" : "", event.altKey ? "Alt" : "", event.shiftKey ? "Shift" : "", key].filter(Boolean);
   return parts.join("+");
+}
+
+function shortcutIncludesReleasedKey(shortcut: string, releasedKey: string): boolean {
+  const normalizedKey = releasedKey === "Control" || releasedKey === "Meta"
+    ? "ctrl"
+    : releasedKey === " " ? "space" : releasedKey.toLowerCase();
+  return shortcut
+    .split("+")
+    .map((part) => part.trim().toLowerCase())
+    .includes(normalizedKey);
 }
 
 function UserAvatar({ user, fallback }: { user: AuthUser | null; fallback: string }) {

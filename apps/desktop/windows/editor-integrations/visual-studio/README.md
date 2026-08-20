@@ -68,5 +68,5 @@ For a packaged install smoke:
 4. Save the file or invoke the package capture command.
 5. Confirm `.drsai/ide-context.json` contains `source: "visual_studio"`, the
    active file, and the selected text.
-6. In the Windows desktop app, use Refresh IDE context and attach IDE current
-   file or IDE selection from the chat composer.
+6. In the Windows desktop app, open the chat composer `+` menu. IDE context is
+   refreshed automatically; attach the current IDE file or selection.

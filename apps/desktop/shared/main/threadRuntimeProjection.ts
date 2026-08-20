@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { basename } from "node:path";
 import type {
   ChatAttachment,
+  ChatDraftPart,
   DesktopThread,
   DesktopThreadMessageSnapshot,
   DesktopThreadSnapshot,
@@ -20,6 +21,40 @@ import type {
 } from "../api/structuredConversation";
 import type { RuntimeConversationItem } from "./runtimeClient";
 import type { OaepItem, OaepRun } from "./runtimeClient";
+import type { OaepResourceRef } from "../api/oaep.generated";
+import {
+  parseConversationResourceAssociation,
+  type ConversationResourceAssociation,
+} from "../../../../cores/protocol/oaep/conversationResourceProjection";
+
+function resourceRef(value: unknown): OaepResourceRef | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Partial<OaepResourceRef>;
+  if (candidate.protocol !== "owop/1" || !candidate.workspace_id || !candidate.resource_id) return undefined;
+  if (!["workspace", "worktree", "file", "git", "process", "pty", "checkpoint", "artifact"].includes(String(candidate.resource_type))) return undefined;
+  return candidate as OaepResourceRef;
+}
+
+function p2Association(item: OaepItem, associationId: unknown): ConversationResourceAssociation | undefined {
+  if (typeof associationId !== "string" || !associationId) return undefined;
+  const raw = item.associations?.find((entry) => entry.association_id === associationId);
+  return parseConversationResourceAssociation(raw) ?? undefined;
+}
+
+function associationResourceRef(association: ConversationResourceAssociation): OaepResourceRef {
+  return {
+    protocol: "owop/1",
+    workspace_id: association.resource.workspace_id,
+    resource_type: association.resource.resource_type,
+    resource_id: association.resource.resource_id,
+    label: association.label_snapshot,
+    relation: association.relation,
+    presentation: association.presentation,
+    ...(association.operation_id ? { operation_id: association.operation_id } : {}),
+    ...(association.version_snapshot?.digest ? { digest: association.version_snapshot.digest } : {}),
+    ...(association.locator ? { locator: association.locator as unknown as OaepResourceRef["locator"] } : {}),
+  };
+}
 
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value === "boolean" || typeof value === "number") {
@@ -379,12 +414,21 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
     const candidate = String(item.content.artifact_type);
     const artifactType = ["file", "image", "table", "report", "patch", "web"].includes(candidate)
       ? candidate as "file" | "image" | "table" | "report" | "patch" | "web" : "file";
+    const association = p2Association(item, (item.content as typeof item.content & { association_id?: unknown }).association_id);
+    const reference = association
+      ? associationResourceRef(association)
+      : item.content.resource_refs?.map(resourceRef).find((value) => value?.resource_id === item.content.artifact_id);
     return { parts: [{
       id: item.id, kind: "artifact", status, artifactId: String(item.content.artifact_id || item.id),
       artifactType, name: String(item.content.name || item.id),
       ...(item.content.summary ? { summary: String(item.content.summary) } : {}),
       ...(item.content.path ? { path: String(item.content.path) } : {}),
       ...(item.content.mime_type ? { mime: String(item.content.mime_type) } : {}),
+      ...(typeof item.content.size === "number" ? { size: item.content.size } : {}),
+      ...(typeof item.content.previewable === "boolean" ? { previewable: item.content.previewable } : {}),
+      ...(typeof item.content.downloadable === "boolean" ? { downloadable: item.content.downloadable } : {}),
+      ...(reference ? { resourceRef: reference } : {}),
+      ...(association ? { associationId: association.association_id, sessionId: item.session_id } : {}),
     }], activities: [] };
   }
   if (item.type === "interaction") {
@@ -409,10 +453,14 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
       const candidate = String(change.operation || "modify");
       const action = ["create", "modify", "delete", "rename", "patch"].includes(candidate)
         ? candidate as "create" | "modify" | "delete" | "rename" | "patch" : "modify";
+      const association = p2Association(item, (change as typeof change & { association_id?: unknown }).association_id);
+      const reference = association ? associationResourceRef(association) : resourceRef(change.resource_ref);
       return {
         id: `${item.id}:${index + 1}`, oaepItemId: item.id, turnId: runId, timestamp: item.updated_at, source: item.source.backend,
         status, title: String(change.path || item.content.summary || "File change"), kind: "file_change" as const,
         path: String(change.path || ""), action,
+        ...(reference ? { resourceRef: reference } : {}),
+        ...(association ? { associationId: association.association_id, sessionId: item.session_id } : {}),
       };
     }) };
   }
@@ -439,14 +487,44 @@ function userAttachments(item: OaepItem): ChatAttachment[] {
   if (item.type !== "message") return [];
   return (item.content.parts || []).flatMap<ChatAttachment>((part, index) => {
     if (part.type === "text") return [];
+    if (part.type === "resource") {
+      const association = p2Association(item, part.association_id);
+      if (!association) return [{
+        kind: "file" as const, path: "", name: `Resource ${index + 1}`,
+        blockedReason: "The referenced OAEP resource association is unavailable.",
+      }];
+      const reference = associationResourceRef(association);
+      return [{
+        kind: "file" as const, path: "", name: association.label_snapshot,
+        note: `${reference.resource_type}:${reference.resource_id}`, resourceRef: reference,
+        associationId: association.association_id, sessionId: item.session_id,
+      }];
+    }
+    const persistedPart = part as typeof part & { reference?: string; resource_id?: string };
     const reference = part.resource_ref;
     const name = String(part.name || reference?.label || `${part.type} ${index + 1}`);
     if (part.url) return [{ kind: "browser" as const, path: "", name, url: part.url }];
+    const workspaceReference = typeof persistedPart.reference === "string"
+      ? persistedPart.reference.trim()
+      : "";
     return [{
-      kind: "file" as const, path: "", name,
-      ...(reference ? { note: `${reference.resource_type}:${reference.resource_id}` }
-        : { blockedReason: "Media content is available only from its source Codex runtime." }),
+      kind: "file" as const, path: workspaceReference, name,
+      ...(reference ? { note: `${reference.resource_type}:${reference.resource_id}`, resourceRef: reference }
+        : workspaceReference
+          ? { note: `oaep.input:${persistedPart.resource_id || name}` }
+          : { blockedReason: "Media content is available only from its source Codex runtime." }),
     }];
+  });
+}
+
+function userDraftParts(item: OaepItem): ChatDraftPart[] {
+  if (item.type !== "message") return [];
+  let attachmentIndex = 0;
+  return (item.content.parts || []).flatMap<ChatDraftPart>((part) => {
+    if (part.type === "text") return part.text ? [{ type: "text", text: part.text }] : [];
+    const current = attachmentIndex;
+    attachmentIndex += 1;
+    return [{ type: "attachment", attachmentIndex: current }];
   });
 }
 
@@ -552,6 +630,7 @@ export function projectOaepThreadSnapshot(
         flushAssistant(false);
         messages.push({ id: item.id, role: "user", content: stripAttachmentContextFromUserContent(oaepText(item.content)),
           attachments: userAttachments(item),
+          draftParts: userDraftParts(item),
           startedAt: timestamp(item.created_at), lastEventAt: timestamp(item.updated_at) });
       } else {
         assistantItems.push(item);

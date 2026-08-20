@@ -49,7 +49,7 @@ import type {
   DesktopTrustStatus,
   DesktopVoiceTranscriptHandoffResult,
   DesktopVoiceTranscriptionEvent,
-  DesktopStreamingVoiceTranscriptionEvent,
+  DesktopVoicePreferences,
   DesktopDuplexVoiceEvent,
   DesktopVoiceSynthesisEvent,
   DesktopWorkflowRun,
@@ -84,6 +84,7 @@ import type {
   WorkspaceGitDiffResult,
   WorkspaceProject,
   GatewaySkill,
+  ConversationResourceDownloadProgressEvent,
 } from "@shared/desktopApi";
 import {
   DEFAULT_WORKSPACE_DISPLAY_NAME,
@@ -235,7 +236,7 @@ const mockChannelAdapters: DesktopChannelAdapterListResult = {
       name: "Slack channel adapter",
       provider: "slack",
       kind: "chat",
-      status: "config_required",
+      status: "planned",
       direction: "bidirectional",
       configured: false,
       requiresApproval: true,
@@ -852,9 +853,60 @@ export function installMockDesktopApi(): void {
   const resultProvenanceFixture = new URLSearchParams(window.location.search).get("resultProvenance") === "1";
   const runInspectionSafetyFixture = new URLSearchParams(window.location.search).get("runInspectionSafety") === "1";
   const operationalStateFixture = new URLSearchParams(window.location.search).get("operationalStateFixture") === "1";
+  const conversationResourceFixture = new URLSearchParams(window.location.search).get("conversationResourceFixture") === "1";
+  const conversationResourceNonInlineFixture = new URLSearchParams(window.location.search).get("conversationResourceNonInline") === "1";
+  const conversationResourceDownloadListeners = new Set<(event: ConversationResourceDownloadProgressEvent) => void>();
+  const cancelledConversationResourceDownloads = new Set<string>();
   let resultFirstCompletionPoll = 0;
   const comparisonEvaluations: RunComparisonEvaluation[] = [];
   let recoveredExperimentDeleted = false;
+  if (conversationResourceFixture) {
+    const now = new Date().toISOString();
+    const workspacePath = "C:\\Users\\Demo\\Projects\\workspace";
+    const threadId = "mock-conversation-resource-thread";
+    const sessionId = "oaep-session-composer-resource";
+    workspaces = [{
+      id: "mock-workspace", name: "workspace", path: workspacePath, location: "local", type: "local",
+      createdAt: now, updatedAt: now, lastOpenedAt: now, trusted: true, hasAgentInstructions: false,
+      metadata: { managedDefault: true, defaultWorkspaceVersion: DEFAULT_WORKSPACE_VERSION },
+    }];
+    threads = [{
+      id: threadId, kind: "chat", title: "P2 resource fixture", workspacePath,
+      createdAt: now, updatedAt: now, runtimeSessionId: sessionId,
+      boundAgentId: "opendrsai", boundAgentName: "OpenDrSai", messageCount: 1,
+    }];
+    threadSnapshots = { [threadId]: {
+      threadId, title: "P2 resource fixture", updatedAt: Date.now(), messageCount: 1,
+      history: { state: "ready", source: "opendrsai", syncedAt: now, loadedRuns: 1, totalRuns: 1, loadedItems: 1, totalItems: 1 },
+      messages: [{
+        id: "p2-composer-resource-message", role: "user", content: "Review  then summarize it.",
+        attachments: [{
+          kind: "file", path: "", name: "引用资料.md", sessionId,
+          associationId: "association-composer-resource",
+        }, {
+          kind: "file", path: "", name: "已删除资料.md", sessionId,
+          associationId: "association-deleted-resource",
+        }, {
+          kind: "file", path: "", name: "离线资料.md", sessionId,
+          associationId: "association-offline-resource",
+        }, {
+          kind: "file", path: "", name: "已移动资料\u202Ecod.exe.md", sessionId,
+          associationId: "association-moved-resource",
+        }],
+        draftParts: [
+          { type: "text", text: "Review " },
+          { type: "attachment", attachmentIndex: 0 },
+          { type: "text", text: ", compare " },
+          { type: "attachment", attachmentIndex: 1 },
+          { type: "text", text: ", then check " },
+          { type: "attachment", attachmentIndex: 2 },
+          { type: "text", text: ", and open " },
+          { type: "attachment", attachmentIndex: 3 },
+          { type: "text", text: "." },
+        ],
+      }],
+    } };
+  }
   if (resultProvenanceFixture) {
     const now = new Date().toISOString();
     threads = [{
@@ -976,10 +1028,15 @@ export function installMockDesktopApi(): void {
   const chatListeners = new Set<Listener<ChatEvent>>();
   const completionNotificationClickListeners = new Set<Listener<CompletionNotificationClickEvent>>();
   const voiceTranscriptionListeners = new Set<Listener<DesktopVoiceTranscriptionEvent>>();
-  const streamingVoiceTranscriptionListeners = new Set<Listener<DesktopStreamingVoiceTranscriptionEvent>>();
   const duplexVoiceListeners = new Set<Listener<DesktopDuplexVoiceEvent[]>>();
+  const voicePreferencesListeners = new Set<Listener<DesktopVoicePreferences>>();
+  let mockVoicePreferences: DesktopVoicePreferences = {
+    schemaVersion: 11, revision: 0, realtimeOptIn: false, selectedMode: "serial",
+    serial: { inputDeviceId: "", language: "auto", confirmBeforeSend: true },
+    duplex: { inputDeviceId: "", outputDeviceId: "", language: "auto", voice: "", volume: 1, autoRecovery: true, transcriptPolicy: "stable", disclosureFingerprint: "" },
+    playback: { autoReadResponses: false, playbackRate: 1, remoteSttConsent: false, remoteTtsConsent: false, synthesisMode: "system", voiceName: "" },
+  };
   const voiceSynthesisListeners = new Set<Listener<DesktopVoiceSynthesisEvent>>();
-  const streamingVoiceSessions = new Map<string, { turnId: string; eventSequence: number; partialSent: boolean }>();
   const voiceFixtureTimers = new Map<string, number>();
   const voiceSynthesisFixtureTimers = new Map<string, number>();
   const agentRunListeners = new Set<Listener<AgentRunEvent>>();
@@ -1958,6 +2015,7 @@ export function installMockDesktopApi(): void {
       revoked_at: new Date().toISOString(),
     }),
     listSshHosts: async () => [],
+    saveSshHost: async (host) => ({ alias: host.alias, hostname: host.hostname, ...(host.user ? { user: host.user } : {}), port: host.port || 22, identityFiles: host.identityFile ? [host.identityFile] : [], ...(host.proxyJump ? { proxyJump: host.proxyJump } : {}), connected: false, managed: true }),
     diagnoseSshHost: async (hostAlias) => ({ hostAlias, state: "reachable", elapsedMs: 1 }),
     inspectSshHostKeys: async (hostAlias) => [{ hostAlias, hostname: "127.0.0.1", port: 22, algorithm: "ssh-ed25519", fingerprint: "SHA256:mock" }],
     testSshHost: async () => true,
@@ -2777,6 +2835,7 @@ export function installMockDesktopApi(): void {
           id: `${turnId}:artifact:report`, kind: "artifact", status: "completed",
           artifactId: "mock-report", artifactType: "report", name: "README.md",
           summary: "Generated workspace report", path: `${workspacePath}\\README.md`, citationIds: ["mock-docs"],
+          sessionId: "oaep-session-visual", associationId: "association-mock-report",
         },
       });
       sendStructured({
@@ -3058,22 +3117,13 @@ export function installMockDesktopApi(): void {
       providerDisclosure: "Fixture transcription is active in the development renderer.",
       message: "Fixture voice runtime is ready.",
     }),
-    getStreamingVoiceCapabilities: async () => ({
-      serialStt: true,
-      serialTts: true,
-      streamingStt: true,
-      streamingTts: true,
-      audioEncodings: ["pcm_s16le"],
-      sampleRatesHz: [16_000, 24_000, 48_000],
-      supportsPartialTranscripts: true,
-      supportsProviderEndpointing: true,
-      supportsSessionResume: false,
-      supportsAdaptiveEndpointing: true,
-      supportsContextualRepair: true,
-      supportsProviderFailover: false,
-      protocolVersion: 2,
-      maxBufferedAudioMs: 2_000,
-    }),
+    getVoicePreferences: async () => structuredClone(mockVoicePreferences),
+    updateVoicePreferences: async (request) => {
+      if (request.expectedRevision !== mockVoicePreferences.revision) throw new Error("Voice preferences changed in another window.");
+      mockVoicePreferences = { ...structuredClone(request.preferences), revision: request.expectedRevision + 1 };
+      emit(voicePreferencesListeners, mockVoicePreferences);
+      return structuredClone(mockVoicePreferences);
+    },
     getDuplexVoiceCapabilities: async () => ({
       protocolVersion: 2, inputAudioEncodings: ["pcm_s16le"], outputAudioEncodings: ["pcm_s16le"],
       inputSampleRatesHz: [24_000], outputSampleRatesHz: [24_000], supportsInputTranscription: true,
@@ -3100,98 +3150,6 @@ export function installMockDesktopApi(): void {
     finishDuplexVoiceTurn: async () => true,
     cancelDuplexVoiceSession: async (sessionId) => { emit(duplexVoiceListeners, [{ protocolVersion: 2, sessionId, sequence: 0, type: "cancelled", terminal: "cancelled" }]); return true; },
     disposeDuplexVoiceSession: async () => true,
-    startStreamingVoiceTranscription: async (request) => {
-      const sessionId = `fixture-streaming-${Date.now()}`;
-      streamingVoiceSessions.set(sessionId, { turnId: request.turnId, eventSequence: 1, partialSent: false });
-      emit(streamingVoiceTranscriptionListeners, {
-        sessionId,
-        turnId: request.turnId,
-        sequence: 0,
-        type: "accepted",
-        runtimeId: "mock-local",
-      });
-      return {
-        sessionId,
-        turnId: request.turnId,
-        acceptedAt: new Date().toISOString(),
-        capabilities: await api.getStreamingVoiceCapabilities(),
-      };
-    },
-    sendStreamingVoiceAudioChunk: (chunk) => {
-      const session = streamingVoiceSessions.get(chunk.sessionId);
-      if (!session || session.turnId !== chunk.turnId) return false;
-      if ((window as Window & { __voiceFixtureStreamingError?: boolean }).__voiceFixtureStreamingError) {
-        emit(streamingVoiceTranscriptionListeners, {
-          sessionId: chunk.sessionId,
-          turnId: chunk.turnId,
-          sequence: session.eventSequence++,
-          type: "failed",
-          error: { code: "network_error", message: "Streaming transcription connection failed. Retry streaming or use serial next turn.", retryable: true },
-        });
-        streamingVoiceSessions.delete(chunk.sessionId);
-        return false;
-      }
-      emit(streamingVoiceTranscriptionListeners, {
-        sessionId: chunk.sessionId,
-        turnId: chunk.turnId,
-        sequence: session.eventSequence++,
-        type: "audio_ack",
-        ack: {
-          sessionId: chunk.sessionId,
-          turnId: chunk.turnId,
-          acknowledgedSequence: chunk.sequence,
-          bufferedAudioMs: 0,
-          receivedAt: new Date().toISOString(),
-        },
-      });
-      if ((window as Window & { __voiceFixtureSlowNetwork?: boolean }).__voiceFixtureSlowNetwork && !session.partialSent) {
-        emit(streamingVoiceTranscriptionListeners, {
-          sessionId: chunk.sessionId,
-          turnId: chunk.turnId,
-          sequence: session.eventSequence++,
-          type: "flow_control",
-          paused: true,
-          bufferedAudioMs: 1_500,
-          reason: "high_watermark",
-        });
-      }
-      if (!session.partialSent) {
-        session.partialSent = true;
-        const emitPartial = () => emit(streamingVoiceTranscriptionListeners, {
-            sessionId: chunk.sessionId,
-            turnId: chunk.turnId,
-            sequence: session.eventSequence++,
-            type: "partial",
-            segment: { text: "Fixture live…", revision: 1, confidence: 0.92 },
-          });
-        if ((window as Window & { __voiceFixtureHoldPartial?: boolean }).__voiceFixtureHoldPartial) window.setTimeout(emitPartial, 200);
-        else emitPartial();
-      }
-      return true;
-    },
-    stopStreamingVoiceTranscription: async (sessionId, reason = "manual") => {
-      const session = streamingVoiceSessions.get(sessionId);
-      if (!session) return false;
-      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "endpoint", reason });
-      const repairFixture = (window as Window & { __voiceFixtureTranscriptRepair?: boolean }).__voiceFixtureTranscriptRepair;
-      emit(streamingVoiceTranscriptionListeners, {
-        sessionId,
-        turnId: session.turnId,
-        sequence: session.eventSequence++,
-        type: "final",
-        segment: { text: repairFixture ? "检查留是语音模块" : "Fixture streaming transcript.", revision: 1, confidence: 1 },
-      });
-      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "completed" });
-      streamingVoiceSessions.delete(sessionId);
-      return true;
-    },
-    cancelStreamingVoiceTranscription: async (sessionId) => {
-      const session = streamingVoiceSessions.get(sessionId);
-      if (!session) return false;
-      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "cancelled" });
-      streamingVoiceSessions.delete(sessionId);
-      return true;
-    },
     startVoiceSynthesis: async () => {
       const requestId = `fixture-tts-${Date.now()}`;
       const timer = window.setTimeout(() => {
@@ -3395,6 +3353,64 @@ export function installMockDesktopApi(): void {
     }),
     previewWorkspaceFile: async (request) =>
       createMockWorkspacePreview(request.workspacePath, request.path, request.mode),
+    resolveConversationResource: async (request) => { const resourceRef = request.resourceRef; const p2 = request.sessionId && request.associationId; const p2File = Boolean(request.associationId?.includes("composer") || request.associationId?.includes("resource")); const fixtureState = request.associationId?.includes("deleted") ? "deleted" : request.associationId?.includes("offline") ? "offline" : request.associationId?.includes("moved") ? "moved" : p2 && !p2File ? "changed" : "available"; if (!resourceRef && !p2) throw new Error("conversation_resource_request_invalid"); return ({
+      workspaceId: resourceRef?.workspace_id || "mock-workspace",
+      resourceId: resourceRef?.resource_id || request.associationId!,
+      resourceType: resourceRef?.resource_type === "file" || p2File ? "file" : "artifact",
+      state: fixtureState,
+      path: resourceRef ? `mock/${resourceRef.label || resourceRef.resource_id}` : undefined,
+      logicalPath: p2 ? (p2File ? (conversationResourceNonInlineFixture ? "docs/brief.docx" : "docs/引用资料.md") : "artifacts/README.md") : undefined,
+      name: resourceRef?.label || (request.associationId?.includes("deleted") ? "已删除资料.md" : request.associationId?.includes("offline") ? "离线资料.md" : request.associationId?.includes("moved") ? "已移动资料\u202Ecod.exe.md" : p2File ? (conversationResourceNonInlineFixture ? "brief.docx" : "引用资料.md") : "Mock Runtime artifact"),
+      observedVersionAvailable: Boolean(p2 && !p2File && fixtureState === "changed"),
+      capabilities: { read: !["deleted", "offline"].includes(fixtureState), preview: !["deleted", "offline"].includes(fixtureState) && !(conversationResourceNonInlineFixture && p2File), download: !["deleted", "offline"].includes(fixtureState), reveal: !["deleted", "offline"].includes(fixtureState) && Boolean(resourceRef || p2File), openExternal: false, copyLogicalPath: Boolean(p2) },
+    }); },
+    previewConversationResource: async (request) => { const resourceRef = request.resourceRef; const p2 = request.sessionId && request.associationId; if (!resourceRef && !p2) throw new Error("conversation_resource_request_invalid"); return ({
+      workspacePath: request.workspacePath,
+      path: resourceRef ? `artifact://${resourceRef.workspace_id}/${resourceRef.resource_id}` : `resource://${request.sessionId}/${request.associationId}`,
+      relativePath: resourceRef?.label || request.associationId!,
+      name: resourceRef?.label || "Mock Runtime artifact",
+      kind: "text",
+      mime: "text/plain",
+      size: 29,
+      modifiedAt: "2026-08-16T00:00:00Z",
+      truncated: false,
+      content: request.version === "observed" ? "Mock cited-version preview." : "Mock Runtime artifact preview.",
+      metadata: { runtimeOwned: true },
+    }); },
+    revealConversationResource: async (request) => Boolean(request.resourceRef || (request.sessionId && request.associationId)),
+    copyConversationResourceLogicalPath: async () => "docs/Plan.md",
+    downloadConversationResource: async (request) => {
+      const resourceRef = request.resourceRef; const p2 = request.sessionId && request.associationId;
+      if (!resourceRef && !p2) throw new Error("conversation_resource_request_invalid");
+      const operationId = request.operationId || "mock-download-operation";
+      const name = request.suggestedName || resourceRef?.label || "artifact.bin";
+      const emit = (phase: ConversationResourceDownloadProgressEvent["phase"], transferredBytes: number) => {
+        const event = { operationId, phase, name, transferredBytes, totalBytes: 100, percent: transferredBytes } as const;
+        conversationResourceDownloadListeners.forEach((listener) => listener(event));
+      };
+      emit("preparing", 0);
+      for (const transferred of [25, 50, 75, 100]) {
+        await new Promise((resolveDelay) => window.setTimeout(resolveDelay, 150));
+        if (cancelledConversationResourceDownloads.delete(operationId)) {
+          emit("cancelled", transferred - 25);
+          return { canceled: true, name };
+        }
+        emit("downloading", transferred);
+      }
+      emit("completed", 100);
+      return { canceled: false, destinationPath: `C:\\Users\\Demo\\Downloads\\${name}`, name, size: 100, digest: "sha256:mock-runtime-artifact" };
+    },
+    cancelConversationResourceDownload: async (operationId) => {
+      cancelledConversationResourceDownloads.add(operationId);
+      return true;
+    },
+    onConversationResourceDownloadProgress: (callback) => {
+      conversationResourceDownloadListeners.add(callback);
+      return () => conversationResourceDownloadListeners.delete(callback);
+    },
+    startConversationResourceSubscription: async () => "mock-resource-subscription",
+    stopConversationResourceSubscription: async () => true,
+    onConversationResourceStateEvent: () => () => undefined,
     saveWorkspaceFileAs: async (request) => ({
       canceled: false,
       sourcePath: request.path,
@@ -5709,7 +5725,7 @@ export function installMockDesktopApi(): void {
       const workspacePath = request.workspacePath || "C:\\Users\\Demo\\Projects\\workspace";
       const adapterIds = (request.adapterIds?.length
         ? request.adapterIds
-        : ["mobile-chat", "slack-chat", "github-connector", "docs-connector", "calendar-connector", "database-connector", "logs-monitor"]
+        : ["mobile-chat", "github-connector", "docs-connector", "calendar-connector", "database-connector", "logs-monitor"]
       ).filter((adapterId, index, all) => all.indexOf(adapterId) === index);
       const results: DesktopChannelContextImportResult[] = [];
       const skippedAdapterIds: string[] = [];
@@ -6493,7 +6509,7 @@ export function installMockDesktopApi(): void {
       subscribe(oidcLoginDebugListeners, callback),
     onChatEvent: (callback) => subscribe(chatListeners, callback),
     onVoiceTranscriptionEvent: (callback) => subscribe(voiceTranscriptionListeners, callback),
-    onStreamingVoiceTranscriptionEvent: (callback) => subscribe(streamingVoiceTranscriptionListeners, callback),
+    onVoicePreferencesChanged: (callback) => subscribe(voicePreferencesListeners, callback),
     onDuplexVoiceEvents: (callback) => subscribe(duplexVoiceListeners, callback),
     onDuplexVoiceToolApprovalDecision: () => () => undefined,
     onVoiceSynthesisEvent: (callback) => subscribe(voiceSynthesisListeners, callback),

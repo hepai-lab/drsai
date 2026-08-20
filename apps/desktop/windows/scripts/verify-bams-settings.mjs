@@ -9,10 +9,12 @@ const api = readFileSync(resolve(root, "shared/api/desktopApi.ts"), "utf8");
 const main = readFileSync(resolve(root, "shared/main/myDrSaiConfig.ts"), "utf8");
 const preload = readFileSync(resolve(root, "shared/main/preload.ts"), "utf8");
 
-for (const pane of ["perceptors", "executors", "memories"]) {
+for (const pane of ["perceptors", "memories"]) {
   assert.ok(app.includes(`id: "${pane}"`), `Settings navigation is missing ${pane}.`);
   assert.ok(app.includes(`activePane === "${pane}"`), `Settings content is missing ${pane}.`);
 }
+assert.ok(!app.includes('id: "executors"'), "Executor settings must be merged into the perception-and-execution entry.");
+assert.ok(app.includes("执行器注册表") && app.includes("规划中") && app.includes("executor-registry-preview"), "The merged perception-and-execution page must retain a compact, structured executor status preview.");
 for (const marker of ["listPerceptors", "savePerceptor", "updatePerceptor", "testPerceptor", "deletePerceptor"]) {
   assert.ok(panel.includes(`desktopApi.${marker}`), `Perceptor UI is missing ${marker}.`);
 }
@@ -25,4 +27,4 @@ assert.ok(api.includes("updatePerceptor(perceptorId: string"), "Desktop API lack
 assert.ok(main.includes('gatewayRequest(gateway.baseUrl, "PUT", `/v1/config/perceptors/'), "Main bridge lacks perceptor PUT.");
 assert.ok(preload.includes('desktop:update-perceptor'), "Preload lacks perceptor update IPC.");
 
-console.log("BAMS settings verification passed (perceptors CRUD, Tavily, facility data, executor and memory entry points).")
+console.log("BAMS settings verification passed (perceptor CRUD, Tavily, facility data, merged executor status, and memory entry point).")

@@ -164,11 +164,6 @@ import type {
   DesktopVoiceTranscriptionStartResult,
   DesktopVoiceRuntimeStatus,
   DesktopVoiceTranscriptionEvent,
-  DesktopStreamingVoiceAudioChunk,
-  DesktopStreamingVoiceCapabilities,
-  DesktopStreamingVoiceStartRequest,
-  DesktopStreamingVoiceStartResult,
-  DesktopStreamingVoiceTranscriptionEvent,
   DesktopVoiceSynthesisEvent,
   DesktopVoiceSynthesisRequest,
   DesktopVoiceSynthesisRuntimeStatus,
@@ -290,6 +285,11 @@ import type {
   WorkspaceCheckpointRestoreResult,
   WorkspaceFilePreview,
   WorkspaceFilePreviewRequest,
+  ConversationResourceResolveRequest,
+  ConversationResourceResolveResult,
+  ConversationResourcePreviewRequest,
+  ConversationResourceDownloadRequest,
+  ConversationResourceDownloadResult,
   WorkspaceFileSaveAsRequest,
   WorkspaceFileSaveAsResult,
   WorkspaceFileWriteRequest,
@@ -318,7 +318,6 @@ import type {
   GfsDownloadRequest,
 } from "../api/desktopApi";
 
-const streamingVoicePorts = new Map<string, MessagePort>();
 const duplexVoicePorts = new Map<string, MessagePort>();
 
 const api: DesktopApi = {
@@ -494,6 +493,7 @@ const api: DesktopApi = {
   revokeMobileRuntimeEnrollment: () =>
     ipcRenderer.invoke("desktop:mobile-enrollment-revoke"),
   listSshHosts: () => ipcRenderer.invoke("desktop:ssh-hosts"),
+  saveSshHost: (host) => ipcRenderer.invoke("desktop:ssh-host-save", host),
   diagnoseSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-diagnose", hostAlias),
   inspectSshHostKeys: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-keys", hostAlias),
   testSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-test", hostAlias),
@@ -835,8 +835,13 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:voice-transcription-cancel", requestId),
   getVoiceRuntimeStatus: (): Promise<DesktopVoiceRuntimeStatus> =>
     ipcRenderer.invoke("desktop:voice-runtime-status"),
-  getStreamingVoiceCapabilities: (): Promise<DesktopStreamingVoiceCapabilities> =>
-    ipcRenderer.invoke("desktop:voice-streaming-capabilities"),
+  getVoicePreferences: () => ipcRenderer.invoke("desktop:voice-preferences-get"),
+  updateVoicePreferences: (request) => ipcRenderer.invoke("desktop:voice-preferences-update", request),
+  onVoicePreferencesChanged: (callback) => {
+    const listener = (_event: IpcRendererEvent, preferences: import("../api/desktopApi").DesktopVoicePreferences): void => callback(preferences);
+    ipcRenderer.on("desktop:voice-preferences-changed", listener);
+    return () => ipcRenderer.removeListener("desktop:voice-preferences-changed", listener);
+  },
   getDuplexVoiceCapabilities: () => ipcRenderer.invoke("desktop:voice-duplex-capabilities"),
   getDuplexVoiceReadiness: () => ipcRenderer.invoke("desktop:voice-duplex-readiness"),
   getDuplexVoiceOccupancy: () => ipcRenderer.invoke("desktop:voice-duplex-occupancy"),
@@ -882,42 +887,6 @@ const api: DesktopApi = {
     const result = await ipcRenderer.invoke("desktop:voice-duplex-dispose", sessionId);
     duplexVoicePorts.get(sessionId)?.close(); duplexVoicePorts.delete(sessionId);
     return result;
-  },
-  startStreamingVoiceTranscription: async (
-    request: DesktopStreamingVoiceStartRequest,
-  ): Promise<DesktopStreamingVoiceStartResult> => {
-    const result = await ipcRenderer.invoke("desktop:voice-streaming-start", request) as DesktopStreamingVoiceStartResult;
-    const channel = new MessageChannel();
-    streamingVoicePorts.set(result.sessionId, channel.port2);
-    ipcRenderer.postMessage("desktop:voice-streaming-audio-port", { sessionId: result.sessionId }, [channel.port1]);
-    return result;
-  },
-  sendStreamingVoiceAudioChunk: (chunk: DesktopStreamingVoiceAudioChunk): boolean => {
-    const port = streamingVoicePorts.get(chunk.sessionId);
-    if (!port) return false;
-    // contextBridge arguments are proxied values. Rebuild a plain payload
-    // before handing it to MessagePort; directly transferring a proxied typed
-    // array can arrive as null in the Main process in packaged Electron.
-    const audioData = new Uint8Array(chunk.audioData);
-    const payload: DesktopStreamingVoiceAudioChunk = { ...chunk, audioData };
-    // Electron 39 packaged builds can deliver a null MessageEvent when an
-    // ArrayBuffer is included in this cross-context port's transfer list.
-    // Structured clone is bounded by the 100 ms batching and Main queue caps.
-    port.postMessage(payload);
-    return true;
-  },
-  stopStreamingVoiceTranscription: async (sessionId: string, reason = "manual"): Promise<boolean> => {
-    const stopped = await ipcRenderer.invoke("desktop:voice-streaming-stop", sessionId, reason) as boolean;
-    if (!stopped) return false;
-    return true;
-  },
-  cancelStreamingVoiceTranscription: async (sessionId: string): Promise<boolean> => {
-    const cancelled = await ipcRenderer.invoke("desktop:voice-streaming-cancel", sessionId) as boolean;
-    if (cancelled) {
-      streamingVoicePorts.get(sessionId)?.close();
-      streamingVoicePorts.delete(sessionId);
-    }
-    return cancelled;
   },
   startVoiceSynthesis: (
     request: DesktopVoiceSynthesisRequest,
@@ -971,6 +940,42 @@ const api: DesktopApi = {
     request: WorkspaceFilePreviewRequest,
   ): Promise<WorkspaceFilePreview> =>
     ipcRenderer.invoke("desktop:workspace-file-preview", request),
+  resolveConversationResource: (
+    request: ConversationResourceResolveRequest,
+  ): Promise<ConversationResourceResolveResult> =>
+    ipcRenderer.invoke("desktop:conversation-resource-resolve", request),
+  previewConversationResource: (
+    request: ConversationResourcePreviewRequest,
+  ): Promise<WorkspaceFilePreview> =>
+    ipcRenderer.invoke("desktop:conversation-resource-preview", request),
+  revealConversationResource: (
+    request: ConversationResourceResolveRequest,
+  ): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:conversation-resource-reveal", request),
+  copyConversationResourceLogicalPath: (
+    request: ConversationResourceResolveRequest,
+  ): Promise<string> =>
+    ipcRenderer.invoke("desktop:conversation-resource-copy-logical-path", request),
+  downloadConversationResource: (
+    request: ConversationResourceDownloadRequest,
+  ): Promise<ConversationResourceDownloadResult> =>
+    ipcRenderer.invoke("desktop:conversation-resource-download", request),
+  cancelConversationResourceDownload: (operationId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:conversation-resource-download-cancel", operationId),
+  onConversationResourceDownloadProgress: (callback) => {
+    const listener = (_event: IpcRendererEvent, progress: import("../api/desktopApi").ConversationResourceDownloadProgressEvent): void => callback(progress);
+    ipcRenderer.on("desktop:conversation-resource-download-progress", listener);
+    return () => ipcRenderer.removeListener("desktop:conversation-resource-download-progress", listener);
+  },
+  startConversationResourceSubscription: (request) =>
+    ipcRenderer.invoke("desktop:conversation-resource-subscription-start", request),
+  stopConversationResourceSubscription: (subscriptionId) =>
+    ipcRenderer.invoke("desktop:conversation-resource-subscription-stop", subscriptionId),
+  onConversationResourceStateEvent: (callback) => {
+    const listener = (_event: IpcRendererEvent, value: import("../api/desktopApi").ConversationResourceStateEvent): void => callback(value);
+    ipcRenderer.on("desktop:conversation-resource-state-event", listener);
+    return () => ipcRenderer.removeListener("desktop:conversation-resource-state-event", listener);
+  },
   saveWorkspaceFileAs: (
     request: WorkspaceFileSaveAsRequest,
   ): Promise<WorkspaceFileSaveAsResult> =>
@@ -1432,19 +1437,6 @@ const api: DesktopApi = {
     const listener = (_event: IpcRendererEvent, event: DesktopVoiceTranscriptionEvent): void => callback(event);
     ipcRenderer.on("desktop:voice-transcription-event", listener);
     return () => ipcRenderer.removeListener("desktop:voice-transcription-event", listener);
-  },
-  onStreamingVoiceTranscriptionEvent: (
-    callback: (event: DesktopStreamingVoiceTranscriptionEvent) => void,
-  ): (() => void) => {
-    const listener = (_event: IpcRendererEvent, event: DesktopStreamingVoiceTranscriptionEvent): void => {
-      callback(event);
-      if (event.type === "completed" || event.type === "cancelled" || event.type === "failed") {
-        streamingVoicePorts.get(event.sessionId)?.close();
-        streamingVoicePorts.delete(event.sessionId);
-      }
-    };
-    ipcRenderer.on("desktop:voice-streaming-transcription-event", listener);
-    return () => ipcRenderer.removeListener("desktop:voice-streaming-transcription-event", listener);
   },
   onDuplexVoiceEvents: (callback) => {
     const listener = (_event: IpcRendererEvent, events: import("../api/desktopApi").DesktopDuplexVoiceEvent[]): void => {

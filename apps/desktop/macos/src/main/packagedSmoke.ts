@@ -10,7 +10,7 @@ import { setPackagedNetworkOnlineForE2e } from "./bootstrap/installAppIntegratio
 import { wasLatestPermissionNotificationShownForE2e } from "./systemPermissions";
 import { requireAuthContext } from "../../../shared/main/auth";
 
-type PackagedScenario = "smoke" | "core" | "product-state" | "auth-cycle" | "approval-replay" | "restart" | "fault" | "crash-ready" | "recovery" | "stability" | "performance-ready" | "managed-process-crash" | "system-events" | "sleep-wake" | "tcc" | "online-update-lab" | "ssh-loopback" | "hepai-provider";
+type PackagedScenario = "smoke" | "core" | "product-state" | "auth-cycle" | "approval-replay" | "restart" | "fault" | "crash-ready" | "recovery" | "stability" | "performance-ready" | "managed-process-crash" | "system-events" | "sleep-wake" | "tcc" | "online-update-lab" | "ssh-loopback" | "hepai-provider" | "conversation-resource-p2";
 
 interface PackagedScenarioConfig {
   workspacePath?: string;
@@ -97,7 +97,7 @@ export function runPackagedSmokeIfRequested(window: BrowserWindow, nativeHelper:
 
 function normalizeScenario(value: string | undefined): PackagedScenario {
   const scenario = value?.trim() || "smoke";
-  if (["smoke", "core", "product-state", "auth-cycle", "approval-replay", "restart", "fault", "crash-ready", "recovery", "stability", "performance-ready", "managed-process-crash", "system-events", "sleep-wake", "tcc", "online-update-lab", "ssh-loopback", "hepai-provider"].includes(scenario)) return scenario as PackagedScenario;
+  if (["smoke", "core", "product-state", "auth-cycle", "approval-replay", "restart", "fault", "crash-ready", "recovery", "stability", "performance-ready", "managed-process-crash", "system-events", "sleep-wake", "tcc", "online-update-lab", "ssh-loopback", "hepai-provider", "conversation-resource-p2"].includes(scenario)) return scenario as PackagedScenario;
   throw new Error(`Unsupported packaged acceptance scenario: ${scenario}`);
 }
 
@@ -258,6 +258,51 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
   const api = window.openDrSai;
   const descriptor = await api.getPlatformDescriptor();
   if (descriptor.id !== "macos") throw new Error("packaged scenario did not load the macOS platform adapter");
+
+  if (scenario === "conversation-resource-p2") {
+    if (!config.workspacePath) throw new Error("conversation-resource-p2 requires workspacePath");
+    const login = await api.login({ developerBypass: true, rememberMe: false });
+    if (!login.ok) throw new Error("conversation-resource-p2 login failed");
+    const workspace = await api.createWorkspace({ source: "existing", path: config.workspacePath, name: "P2 packaged resource E2E", trusted: true });
+    const sessionId = "session-packaged-resource-p2";
+    const states = ["available", "moved", "changed", "deleted", "offline"];
+    const resolved: Record<string, Awaited<ReturnType<typeof api.resolveConversationResource>>> = {};
+    const harness = document.createElement("section");
+    harness.setAttribute("aria-label", "Packaged conversation resource P2 verification");
+    document.body.appendChild(harness);
+    const pending: Promise<void>[] = [];
+    for (const state of states) {
+      const button = document.createElement("button");
+      button.type = "button"; button.textContent = state; button.setAttribute("aria-label", `Open resource: ${state}`);
+      button.dataset.associationId = `assoc-${state}`;
+      button.addEventListener("click", () => pending.push(api.resolveConversationResource({ workspacePath: config.workspacePath!, sessionId, associationId: button.dataset.associationId }).then((value) => { resolved[state] = value; button.dataset.resourceState = value.state; })));
+      harness.appendChild(button); button.click();
+    }
+    await Promise.all(pending);
+    const available = { workspacePath: config.workspacePath, sessionId, associationId: "assoc-available" };
+    const preview = await api.previewConversationResource({ ...available, maxBytes: 100_000 });
+    const reveal = await api.revealConversationResource(available);
+    const logicalPath = await api.copyConversationResourceLogicalPath(available);
+    const observed = await api.previewConversationResource({ workspacePath: config.workspacePath, sessionId, associationId: "assoc-changed", version: "observed", maxBytes: 100_000 });
+    const progress: Array<{ phase: string; percent?: number }> = [];
+    const unsubscribe = api.onConversationResourceDownloadProgress((event) => progress.push(event));
+    const saved = await api.downloadConversationResource({ ...available, suggestedName: "available.md", operationId: "packaged-resource-download" });
+    unsubscribe();
+    const checks = {
+      bridge: true, workspaceRegistered: workspace.path === config.workspacePath,
+      semanticResourceButtonsClicked: states.every((state) => harness.querySelector<HTMLElement>(`[data-association-id="assoc-${state}"]`)?.dataset.resourceState === state),
+      stateMatrix: states.every((state) => resolved[state]?.state === state),
+      deletedFailClosed: resolved.deleted?.capabilities.preview === false && resolved.deleted?.capabilities.download === false,
+      offlineDistinct: resolved.offline?.state === "offline" && resolved.offline?.state !== resolved.deleted?.state,
+      previewThroughIpc: preview.kind === "markdown" && preview.content === "# Packaged P2 resource\n",
+      revealThroughIpc: reveal === true, copyLogicalPathThroughIpc: logicalPath === "docs/available.md",
+      observedVersionThroughIpc: observed.content === "# Cited P2 resource\n",
+      downloadThroughIpc: saved.canceled === false && saved.name === "available.md" && Number(saved.size) > 0,
+      progressThroughPreload: progress.some((event) => event.phase === "downloading") && progress.some((event) => event.phase === "completed" && event.percent === 100),
+    };
+    if (!Object.values(checks).every(Boolean)) throw new Error(`conversation-resource-p2 checks failed: ${JSON.stringify(checks)}`);
+    return { descriptor, checks, states: resolved, preview: { kind: preview.kind, content: preview.content, metadata: preview.metadata }, saved, progress };
+  }
 
   if (scenario === "performance-ready") return { descriptor, interactive: true };
 

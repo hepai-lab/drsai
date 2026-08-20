@@ -63,6 +63,7 @@ interface FilesContextPanelProps {
   basket: ChatAttachment[];
   fileTraceEvents: AgentFileTraceEvent[];
   focusPath?: string;
+  resourcePreview?: WorkspaceFilePreview;
   language: AppLanguage;
   scopeId: string;
   workspaceId: string;
@@ -80,6 +81,7 @@ export function FilesContextPanel({
   basket,
   fileTraceEvents,
   focusPath,
+  resourcePreview,
   language,
   scopeId,
   workspaceId,
@@ -160,6 +162,7 @@ export function FilesContextPanel({
   const managerPresentationActive = managerPresentationProgress !== null
     && !["completed", "failed", "cancelled", "interrupted"].includes(managerPresentationProgress.phase);
   const audienceComparison = compareAudienceResults(audienceResults.non_expert_managers, audienceResults.technical_experts);
+  const selectedRuntimeResource = selectedNode?.path.startsWith("artifact://") === true;
 
   const loadWorkspaceCheckpoints = useCallback(async () => {
     if (!workspacePath) return;
@@ -247,6 +250,26 @@ export function FilesContextPanel({
     setCheckpointPreview(null);
     setCheckpointMessage("");
   }, [workspaceId, workspacePath]);
+
+  // This must run after the Workspace-reset effect. A resource click commonly
+  // mounts the Files panel and changes its active Workspace in the same render;
+  // running this first allowed the reset to erase the just-opened P2 preview.
+  useEffect(() => {
+    if (!resourcePreview) return;
+    setSelectedNode({
+      name: resourcePreview.name,
+      path: resourcePreview.path,
+      relativePath: resourcePreview.relativePath,
+      type: "file",
+      size: resourcePreview.size,
+      modifiedAt: resourcePreview.modifiedAt,
+      previewKind: resourcePreview.kind,
+    });
+    setPreview(resourcePreview);
+    setPreviewState("idle");
+    setUnavailableFocusPath(null);
+    setError(null);
+  }, [resourcePreview, workspaceId, workspacePath]);
 
   useEffect(() => desktopApi.onManagerPresentationProgress((progress) => {
     if (progress.requestId !== managerPresentationRequestRef.current) return;
@@ -884,7 +907,7 @@ export function FilesContextPanel({
           <button
             type="button"
             onClick={() => void openSelectedWithSystem()}
-            disabled={!selectedNode}
+            disabled={!selectedNode || selectedRuntimeResource}
             title={systemOpenLabel}
             aria-label={systemOpenLabel}
           >
@@ -897,7 +920,7 @@ export function FilesContextPanel({
           <button
             type="button"
             onClick={() => void previewWithMode("head")}
-            disabled={!selectedNode || selectedNode.type !== "file"}
+            disabled={!selectedNode || selectedNode.type !== "file" || selectedRuntimeResource}
             title="Preview file head"
             aria-label="Preview file head"
           >
@@ -906,7 +929,7 @@ export function FilesContextPanel({
           <button
             type="button"
             onClick={() => void previewWithMode("tail")}
-            disabled={!selectedNode || selectedNode.type !== "file"}
+            disabled={!selectedNode || selectedNode.type !== "file" || selectedRuntimeResource}
             title="Preview file tail"
             aria-label="Preview file tail"
           >
@@ -915,7 +938,7 @@ export function FilesContextPanel({
           <button
             type="button"
             onClick={() => void previewWithMode("outline")}
-            disabled={!selectedNode || selectedNode.type !== "file"}
+            disabled={!selectedNode || selectedNode.type !== "file" || selectedRuntimeResource}
             title="Preview outline"
             aria-label="Preview outline"
           >

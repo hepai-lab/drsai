@@ -10,7 +10,7 @@ import type {
 import type { ExecutionActionKind } from "./executionPolicy";
 import type { DesktopPlatformDescriptor } from "./platform";
 import type { InteractionOption, StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
-import type { OaepEvent } from "./oaep.generated";
+import type { OaepEvent, OaepResourceRef } from "./oaep.generated";
 export type { InteractionOption } from "./structuredConversation";
 import type {
   RunInspection,
@@ -453,9 +453,22 @@ export type DesktopVoiceRuntimeId =
   | "local-whisper"
   | "realtime-provider";
 
-export type DesktopVoiceInteractionMode = "serial" | "streaming" | "duplex";
+export type DesktopVoiceInteractionMode = "serial" | "duplex";
+export type DesktopVoicePreferenceLanguage = "auto" | "zh-CN" | "en-US";
+export interface DesktopVoicePreferences {
+  schemaVersion: 11;
+  revision: number;
+  realtimeOptIn: boolean;
+  selectedMode: DesktopVoiceInteractionMode;
+  serial: { inputDeviceId: string; language: DesktopVoicePreferenceLanguage; confirmBeforeSend: boolean };
+  duplex: { inputDeviceId: string; outputDeviceId: string; language: DesktopVoicePreferenceLanguage; voice: string; volume: number; autoRecovery: boolean; transcriptPolicy: "stable" | "none"; disclosureFingerprint: string };
+  playback: { autoReadResponses: boolean; playbackRate: number; remoteSttConsent: boolean; remoteTtsConsent: boolean; synthesisMode: "system" | "provider"; voiceName: string };
+}
+export interface DesktopVoicePreferencesUpdateRequest {
+  expectedRevision: number;
+  preferences: Omit<DesktopVoicePreferences, "revision">;
+}
 
-export type DesktopStreamingAudioEncoding = "pcm_s16le";
 
 export const DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION = 2 as const;
 
@@ -702,134 +715,6 @@ export type DesktopDuplexVoiceEvent = {
   | { type: "failed"; terminal: "failed"; error: DesktopDuplexVoiceError }
 );
 
-export interface DesktopStreamingVoiceCapabilities {
-  serialStt: boolean;
-  serialTts: boolean;
-  streamingStt: boolean;
-  streamingTts: boolean;
-  audioEncodings: DesktopStreamingAudioEncoding[];
-  sampleRatesHz: number[];
-  supportsPartialTranscripts: boolean;
-  supportsProviderEndpointing: boolean;
-  supportsSessionResume: boolean;
-  supportsAdaptiveEndpointing?: boolean;
-  supportsContextualRepair?: boolean;
-  supportsProviderFailover?: boolean;
-  protocolVersion?: 1 | 2;
-  maxBufferedAudioMs: number;
-}
-
-export type DesktopTranscriptRepairSourceType = "later_speech" | "conversation_summary" | "user_dictionary" | "workspace_term";
-
-export interface DesktopTranscriptRepairSource {
-  type: DesktopTranscriptRepairSourceType;
-  label?: string;
-}
-
-export interface DesktopTranscriptRepairCandidate {
-  id: string;
-  revision: number;
-  originalText: string;
-  suggestedText: string;
-  confidence: number;
-  sources: DesktopTranscriptRepairSource[];
-  risk: "none" | "meaning_change" | "sensitive_value" | "command_or_code";
-  autoAccept: boolean;
-  reasons: string[];
-}
-
-export interface DesktopStreamingVoiceStartRequest {
-  protocolVersion?: 1 | 2;
-  turnId: string;
-  languageHint?: string;
-  encoding: DesktopStreamingAudioEncoding;
-  sampleRateHz: number;
-  channels: 1;
-  frameDurationMs: number;
-  providerEndpointing: boolean;
-}
-
-export interface DesktopStreamingVoiceStartResult {
-  sessionId: string;
-  turnId: string;
-  acceptedAt: string;
-  capabilities: DesktopStreamingVoiceCapabilities;
-}
-
-export interface DesktopStreamingVoiceAudioChunk {
-  protocolVersion?: 1 | 2;
-  sessionId: string;
-  turnId: string;
-  sequence: number;
-  capturedAtMs: number;
-  durationMs: number;
-  encoding: DesktopStreamingAudioEncoding;
-  sampleRateHz: number;
-  channels: 1;
-  audioData: Uint8Array;
-}
-
-export interface DesktopStreamingVoiceAudioAck {
-  sessionId: string;
-  turnId: string;
-  acknowledgedSequence: number;
-  bufferedAudioMs: number;
-  receivedAt: string;
-}
-
-export interface DesktopStreamingVoiceTranscriptSegment {
-  text: string;
-  revision: number;
-  confidence?: number;
-  startMs?: number;
-  endMs?: number;
-}
-
-export type DesktopStreamingVoiceTranscriptionEvent = { protocolVersion?: 1 | 2 } & (
-  | { sessionId: string; turnId: string; sequence: number; type: "accepted"; runtimeId: DesktopVoiceRuntimeId }
-  | { sessionId: string; turnId: string; sequence: number; type: "audio_ack"; ack: DesktopStreamingVoiceAudioAck }
-  | { sessionId: string; turnId: string; sequence: number; type: "flow_control"; paused: boolean; bufferedAudioMs: number; reason: "high_watermark" | "low_watermark" }
-  | { sessionId: string; turnId: string; sequence: number; type: "connection_state"; state: "connected" | "reconnecting" | "reconnected"; attempt?: number }
-  | { sessionId: string; turnId: string; sequence: number; type: "partial"; segment: DesktopStreamingVoiceTranscriptSegment }
-  | { sessionId: string; turnId: string; sequence: number; type: "final"; segment: DesktopStreamingVoiceTranscriptSegment }
-  | { sessionId: string; turnId: string; sequence: number; type: "endpoint"; reason: "provider" | "local_vad" | "manual" }
-  | { sessionId: string; turnId: string; sequence: number; type: "completed" }
-  | { sessionId: string; turnId: string; sequence: number; type: "failed"; error: DesktopVoiceError }
-  | { sessionId: string; turnId: string; sequence: number; type: "cancelled" }
-);
-
-export interface DesktopStreamingVoiceTtsSegmentRequest {
-  sessionId: string;
-  turnId: string;
-  messageId: string;
-  segmentId: string;
-  segmentIndex: number;
-  text: string;
-  voice?: string;
-  speed?: number;
-  format: "wav" | "mp3" | "opus";
-}
-
-export interface DesktopStreamingVoiceTtsAudioSegment {
-  sessionId: string;
-  turnId: string;
-  messageId: string;
-  segmentId: string;
-  segmentIndex: number;
-  mimeType: string;
-  durationMs?: number;
-  audioData: Uint8Array;
-  final: boolean;
-}
-
-export type DesktopStreamingVoiceTtsEvent =
-  | { sessionId: string; turnId: string; sequence: number; type: "accepted"; segmentId: string; segmentIndex: number }
-  | { sessionId: string; turnId: string; sequence: number; type: "audio"; segment: DesktopStreamingVoiceTtsAudioSegment }
-  | { sessionId: string; turnId: string; sequence: number; type: "segment_completed"; segmentId: string; segmentIndex: number }
-  | { sessionId: string; turnId: string; sequence: number; type: "completed" }
-  | { sessionId: string; turnId: string; sequence: number; type: "failed"; error: DesktopVoiceError; segmentId?: string }
-  | { sessionId: string; turnId: string; sequence: number; type: "cancelled" };
-
 export interface DesktopVoiceTranscriptionRequest {
   workspacePath?: string;
   audioData?: Uint8Array;
@@ -1028,6 +913,10 @@ export interface ChatAttachment {
   note?: string;
   fileHash?: string;
   blockedReason?: string;
+  resourceRef?: OaepResourceRef;
+  /** P2 renderer identity; authoritative ResourceKey is reloaded in main. */
+  associationId?: string;
+  sessionId?: string;
 }
 
 export interface OaepInputResource {
@@ -1045,6 +934,97 @@ export interface OaepInputResource {
   size_bytes?: number;
   sha256?: string;
   captured_at?: string;
+  resource_ref?: OaepResourceRef;
+}
+
+export type OaepInputPart =
+  | { type: "text"; text: string }
+  | { type: "resource"; resource_id: string };
+
+/** Ordered public Composer content. Attachment indexes address ChatRequest.attachments. */
+export type ChatDraftPart =
+  | { type: "text"; text: string }
+  | { type: "attachment"; attachmentIndex: number };
+
+export interface ConversationResourceResolveRequest {
+  workspacePath: string;
+  /** P2 requests use this pair and never submit a path or ResourceKey. */
+  sessionId?: string;
+  associationId?: string;
+  /** P1 wide-read fallback only. */
+  resourceRef?: OaepResourceRef;
+}
+
+export interface ConversationResourceResolveResult {
+  workspaceId: string;
+  resourceId: string;
+  resourceType: "file" | "artifact";
+  state: "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported";
+  path?: string;
+  /** Workspace-relative path; never a remote Host physical path. */
+  logicalPath?: string;
+  name: string;
+  mime?: string;
+  size?: number;
+  digest?: string;
+  modifiedAt?: string;
+  observedVersionAvailable?: boolean;
+  capabilities: {
+    read: boolean;
+    preview: boolean;
+    download: boolean;
+    reveal: boolean;
+    openExternal: boolean;
+    copyLogicalPath?: boolean;
+  };
+}
+
+export interface ConversationResourcePreviewRequest extends ConversationResourceResolveRequest {
+  maxBytes?: number;
+  /** Host resolves the observed token from the Association. */
+  version?: "current" | "observed";
+}
+
+export interface ConversationResourceDownloadRequest extends ConversationResourceResolveRequest {
+  suggestedName?: string;
+  /** Renderer-generated correlation id used only for progress and cancellation. */
+  operationId?: string;
+}
+
+export interface ConversationResourceDownloadProgressEvent {
+  operationId: string;
+  phase: "preparing" | "downloading" | "completed" | "cancelled" | "failed";
+  name: string;
+  transferredBytes: number;
+  totalBytes?: number;
+  percent?: number;
+  errorCode?: string;
+}
+
+export interface ConversationResourceDownloadResult {
+  canceled: boolean;
+  destinationPath?: string;
+  name: string;
+  size?: number;
+  digest?: string;
+}
+
+export interface ConversationResourceSubscriptionRequest {
+  workspacePath: string;
+  sessionId: string;
+  afterSequence?: number;
+}
+
+export interface ConversationResourceStateEvent {
+  subscriptionId: string;
+  workspacePath: string;
+  sessionId: string;
+  sequence: number;
+  eventType: string;
+  resourceId?: string;
+  state?: ConversationResourceResolveResult["state"];
+  versionId?: string;
+  scopeInvalidated?: boolean;
 }
 
 export interface ChatRequest {
@@ -1058,6 +1038,7 @@ export interface ChatRequest {
   sessionId?: string;
   runId?: string;
   attachments?: ChatAttachment[];
+  draftParts?: ChatDraftPart[];
   metadata?: Record<string, unknown>;
   messages: ChatMessage[];
 }
@@ -4029,6 +4010,8 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   structuredTurn?: StructuredTurnState;
   /** User-visible attachment chips; not part of the model prompt text. */
   attachments?: ChatAttachment[];
+  /** Original text/attachment ordering from the Composer. */
+  draftParts?: ChatDraftPart[];
   inputRequest?: {
     requestId: string;
     prompt: string;
@@ -4675,6 +4658,18 @@ export interface RemoteSshHost {
   user?: string;
   port: number;
   identityFiles: string[];
+  proxyJump?: string;
+  connected?: boolean;
+  managed?: boolean;
+  enabled?: boolean;
+}
+
+export interface RemoteSshHostDraft {
+  alias: string;
+  hostname: string;
+  user?: string;
+  port?: number;
+  identityFile?: string;
   proxyJump?: string;
 }
 
@@ -5665,6 +5660,7 @@ export interface DesktopApi {
   ): Promise<DesktopMobileAssociation>;
   revokeMobileRuntimeEnrollment(): Promise<DesktopRuntimeEnrollmentRevocation>;
   listSshHosts(): Promise<RemoteSshHost[]>;
+  saveSshHost(host: RemoteSshHostDraft): Promise<RemoteSshHost>;
   diagnoseSshHost(hostAlias: string): Promise<RemoteSshConnectivityResult>;
   inspectSshHostKeys(hostAlias: string): Promise<RemoteSshHostKey[]>;
   testSshHost(hostAlias: string): Promise<boolean>;
@@ -5737,6 +5733,16 @@ export interface DesktopApi {
   ): Promise<MaterialConsistencyAnalysisResult>;
   queryMaterials(request: MaterialQueryRequest): Promise<MaterialQueryResult>;
   previewWorkspaceFile(request: WorkspaceFilePreviewRequest): Promise<WorkspaceFilePreview>;
+  resolveConversationResource(request: ConversationResourceResolveRequest): Promise<ConversationResourceResolveResult>;
+  previewConversationResource(request: ConversationResourcePreviewRequest): Promise<WorkspaceFilePreview>;
+  revealConversationResource(request: ConversationResourceResolveRequest): Promise<boolean>;
+  copyConversationResourceLogicalPath(request: ConversationResourceResolveRequest): Promise<string>;
+  downloadConversationResource(request: ConversationResourceDownloadRequest): Promise<ConversationResourceDownloadResult>;
+  cancelConversationResourceDownload(operationId: string): Promise<boolean>;
+  onConversationResourceDownloadProgress(callback: (event: ConversationResourceDownloadProgressEvent) => void): () => void;
+  startConversationResourceSubscription(request: ConversationResourceSubscriptionRequest): Promise<string>;
+  stopConversationResourceSubscription(subscriptionId: string): Promise<boolean>;
+  onConversationResourceStateEvent(callback: (event: ConversationResourceStateEvent) => void): () => void;
   saveWorkspaceFileAs(request: WorkspaceFileSaveAsRequest): Promise<WorkspaceFileSaveAsResult>;
   writeWorkspaceFile(request: WorkspaceFileWriteRequest): Promise<WorkspaceFileWriteResult>;
   applyAnomalyDecision(
@@ -5879,7 +5885,9 @@ export interface DesktopApi {
   ): Promise<DesktopVoiceTranscriptionStartResult>;
   cancelVoiceTranscription(requestId: string): Promise<boolean>;
   getVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus>;
-  getStreamingVoiceCapabilities(): Promise<DesktopStreamingVoiceCapabilities>;
+  getVoicePreferences(): Promise<DesktopVoicePreferences>;
+  updateVoicePreferences(request: DesktopVoicePreferencesUpdateRequest): Promise<DesktopVoicePreferences>;
+  onVoicePreferencesChanged(listener: (preferences: DesktopVoicePreferences) => void): () => void;
   getDuplexVoiceCapabilities(): Promise<DesktopDuplexVoiceCapabilities>;
   getDuplexVoiceReadiness(): Promise<DesktopDuplexVoiceReadiness>;
   getDuplexVoiceOccupancy(): Promise<DesktopDuplexVoiceOccupancy>;
@@ -5899,15 +5907,6 @@ export interface DesktopApi {
   disposeDuplexVoiceSession(sessionId: string): Promise<boolean>;
   onDuplexVoiceEvents(callback: (events: DesktopDuplexVoiceEvent[]) => void): () => void;
   appendDuplexVoiceHistory(request: DesktopDuplexVoiceHistoryAppendRequest): Promise<DesktopThreadSnapshot>;
-  startStreamingVoiceTranscription(
-    request: DesktopStreamingVoiceStartRequest,
-  ): Promise<DesktopStreamingVoiceStartResult>;
-  sendStreamingVoiceAudioChunk(chunk: DesktopStreamingVoiceAudioChunk): boolean;
-  stopStreamingVoiceTranscription(sessionId: string, reason?: "provider" | "local_vad" | "manual"): Promise<boolean>;
-  cancelStreamingVoiceTranscription(sessionId: string): Promise<boolean>;
-  onStreamingVoiceTranscriptionEvent(
-    callback: (event: DesktopStreamingVoiceTranscriptionEvent) => void,
-  ): () => void;
   onVoiceTranscriptionEvent(
     callback: (event: DesktopVoiceTranscriptionEvent) => void,
   ): () => void;
