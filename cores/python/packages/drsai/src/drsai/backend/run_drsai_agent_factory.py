@@ -362,21 +362,12 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         vision=False,           # MiniMax M2.7 does not support image input
         base_url=_DEFAULT_ANTHROPIC_BASE_URL,
     ),
-    "hepai/minimax-m2.7-highspeed": ModelEntry(
-        model="hepai/minimax-m2.7-highspeed",
-        token_limit=196608,
-        max_tokens=64000,
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
-        vision=False,
-        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
-    ),
     # ── Anthropic Claude ──────────────────────────────────────────────
     # token_limit = total context window (input + output share the same window)
     # max_tokens  = maximum output tokens per request (Anthropic API requires this)
     # Sources: litellm model_prices_and_context_window.json, Anthropic docs
-    "claude-sonnet-4-6": ModelEntry(
-        model="anthropic/claude-sonnet-4-6",
+    "claude-sonnet-5": ModelEntry(
+        model="anthropic/claude-sonnet-5",
         token_limit=1000000,     # context window: 1M (input+output shared)
         max_tokens=64000,       # max output per request
         client_type="anthropic",
