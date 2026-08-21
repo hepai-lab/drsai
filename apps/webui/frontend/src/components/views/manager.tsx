@@ -1717,9 +1717,9 @@ export const SessionManager: React.FC = () => {
                     agent={chatAgent}
                     suppressSampleTasks={sampleTasksDismissed}
                     onDismissSampleTasks={() => setSampleTasksDismissed(true)}
-                    onSubmit={async (agent, query, files, plan, llm) => {
+                    onSubmit={async (agent, query, files, plan, llm, attachedSkills) => {
                       setSampleTasksDismissed(true);
-                      await createNewChatSession(agent, query, files, plan, llm);
+                      await createNewChatSession(agent, query, files, plan, llm, attachedSkills);
                     }}
                   />
                 </Suspense>

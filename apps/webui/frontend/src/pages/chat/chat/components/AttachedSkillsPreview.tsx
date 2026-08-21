@@ -46,9 +46,9 @@ const AttachedSkillsPreview: React.FC<AttachedSkillsPreviewProps> = ({
               className={`truncate text-[11px] ${
                 darkMode === "dark" ? "text-gray-400" : "text-magenta-600"
               }`}
-              title={s.url}
+              title={s.source}
             >
-              {s.url}
+              {s.source}
             </span>
           </div>
           <button

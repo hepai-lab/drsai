@@ -1,20 +1,27 @@
 import * as React from "react";
 import { message } from "antd";
-import { getServerUrl } from "../../../../components/utils";
 import { fetchHigrafGroupSkills, skillsAPI } from "@/components/views/api";
+import type { SkillsPublicItem } from "@/components/views/api/skills";
 import type { HepaiSkillPickRow } from "../types";
 
 const PUBLIC_SKILLS_TOKEN =
   "sk-oXCqlvdsZXQMnMpSjZGrVqpoIQETdhOrZYVngTBkVkTulha";
 
-function mapPublicSkillsToRows(
-  rows: Array<{ slug: string; name: string }>
-): HepaiSkillPickRow[] {
-  const baseUrl = getServerUrl();
+function mapPublicSkillsToRows(rows: SkillsPublicItem[]): HepaiSkillPickRow[] {
   return rows.map((r) => ({
     id: r.slug,
     filename: r.name,
-    url: `${baseUrl}/skills/${encodeURIComponent(r.slug)}/download?type=public`,
+    source: r.source || "public",
+  }));
+}
+
+function mapHigrafSkillsToRows(
+  rows: Array<{ slug: string; name: string }>
+): HepaiSkillPickRow[] {
+  return rows.map((r) => ({
+    id: r.slug,
+    filename: r.name,
+    source: "higraf",
   }));
 }
 
@@ -84,18 +91,21 @@ export function useSkillAttach({ isInputDisabled }: UseSkillAttachOptions) {
   };
 
   const handleSkillModalTagFilter = (tag: string) => {
-    if (skillModalTagFilter === tag) {
+    // 点击"全部"或当前已选中标签再次点击 → 清除筛选，显示公共技能
+    if (!tag || skillModalTagFilter === tag) {
       setSkillModalTagFilter(null);
+      setSkillModalLoading(true);
       void loadPublicSkills().finally(() => {
         setSkillModalLoading(false);
       });
       return;
     }
+    // 点击新标签 → 加载对应组的技能
     setSkillModalTagFilter(tag);
     setSkillModalLoading(true);
     void fetchHigrafGroupSkills(tag)
       .then((items) => {
-        setSkillModalRows(mapPublicSkillsToRows(items));
+        setSkillModalRows(mapHigrafSkillsToRows(items));
       })
       .catch((e) => {
         message.error(e instanceof Error ? e.message : String(e));

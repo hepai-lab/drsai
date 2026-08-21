@@ -25,6 +25,7 @@ import { messageUtils } from "./rendermessage";
 import RunView from "./runview";
 import WelcomeScreen from "./WelcomeScreen";
 import type { ServerUploadedFileInfo } from "./chat/hooks/useFileUpload";
+import type { HepaiSkillPickRow } from "./chat/chat/types";
 import { parseFlexibleTimestampToUnixSeconds } from "../../utils/apiDatetime";
 
 // Extend RunStatus for sidebar status reporting
@@ -53,6 +54,7 @@ interface ChatViewProps {
     files: any[];
     plan?: any;
     llm?: { label: string; value: string };
+    attachedSkills?: HepaiSkillPickRow[];
   } | null;
   onPendingMessageSent?: () => void;
   /** From 库: attach already-uploaded files to the input */
@@ -587,8 +589,8 @@ export default function ChatView({
     }
     pendingMessageSentRef.current = true;
 
-    const { query, files, plan, llm } = pendingFirstMessage;
-    runTaskWithActiveFlag(query, files as any[], plan, true, llm);
+    const { query, files, plan, llm, attachedSkills } = pendingFirstMessage;
+    runTaskWithActiveFlag(query, files as any[], plan, true, llm, attachedSkills);
 
     if (onPendingMessageSent) {
       onPendingMessageSent();
@@ -759,16 +761,21 @@ export default function ChatView({
                 }>,
                 accepted = false,
                 plan?: IPlan,
-                llm?: { label: string; value: string }
+                llm?: { label: string; value: string },
+                attachedSkills?: HepaiSkillPickRow[]
               ) => {
                 if (!currentRun) {
                   console.warn("No active run — skipping submit");
                   return;
                 }
+                console.debug("[skill debug][chat.tsx] onSubmit received", {
+                  attachedSkills: attachedSkills?.map((s) => ({ id: s.id, source: s.source })) ?? [],
+                  query,
+                });
                 if (currentRun?.status === "awaiting_input" && activeSocketRef?.current?.readyState === WebSocket.OPEN) {
-                  handleInputResponse(query, accepted, plan, files, llm);
+                  handleInputResponse(query, accepted, plan, files, llm, undefined, attachedSkills);
                 } else {
-                  runTaskWithActiveFlag(query, files, plan, true, llm);
+                  runTaskWithActiveFlag(query, files, plan, true, llm, attachedSkills);
                 }
               }}
               onCancel={handleCancel}

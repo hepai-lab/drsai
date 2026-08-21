@@ -8,13 +8,16 @@ Deer Flow — Higraf 内部 token-exchange 认证代理。
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 import re
 import time
+import zipfile
+from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -702,3 +705,403 @@ async def _proxy_download(path: str, fastapi_request: Request) -> StreamingRespo
 async def skill_hub_download(skill_id: str, fastapi_request: Request):
     """GET /api/v1/skill-hub/by-id/{skill_id}/download — 流式下载技能 zip 包。"""
     return await _proxy_download(f"/api/v1/skill-hub/by-id/{skill_id}/download", fastapi_request)
+
+
+# ── 技能安装到智能体 ──────────────────────────────────────────────────────────
+
+
+class SkillInstallItem(BaseModel):
+    id: str = Field(..., description="Skill slug 或 Higraf skill ID")
+    source: str = Field(default="public", description="来源: public | higraf | user | catalog")
+
+
+class SkillInstallRequest(BaseModel):
+    skills: list[SkillInstallItem] = Field(..., min_length=1, description="要安装的技能列表")
+
+
+def _parse_skill_frontmatter_fields(content: str) -> dict:
+    """从 SKILL.md frontmatter 解析 name / description。"""
+    fields: dict[str, str] = {}
+    match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
+    if not match:
+        return fields
+    for line in match.group(1).strip().split("\n"):
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        if key in {"name", "description"}:
+            fields[key] = value.strip().strip("\"'")
+    return fields
+
+
+def _parse_skill_name_from_md(content: str) -> str | None:
+    """从 SKILL.md frontmatter 解析 name 字段（Skill 工具使用的标识）。"""
+    return _parse_skill_frontmatter_fields(content).get("name") or None
+
+
+def wrap_skill_loaded(name: str, content: str) -> str:
+    """Wrap SKILL.md as the Skill tool result, matching SkillLoader.run_skill."""
+    match = re.match(r"^---\s*\n.*?\n---\s*\n(.*)$", content, re.DOTALL)
+    body = match.group(1).strip() if match else content.strip()
+    return (
+        f'<skill-loaded name="{name}">\n'
+        f"    # Skill: {name}\n\n"
+        f"    {body}\n"
+        f"    </skill-loaded>\n\n"
+        "    Follow the instructions in the skill above to complete the user's task."
+    )
+
+
+def find_cached_skill_md(user_id: str, *, slug: str | None = None, name: str | None = None) -> tuple[str | None, str | None, str | None]:
+    """Find a cached SKILL.md. Returns (path_slug, name, content)."""
+    skills_dir = _get_agent_skills_dir(user_id)
+    if not skills_dir.exists():
+        return None, None, None
+
+    candidates: list[Path] = []
+    if slug:
+        candidates.append(skills_dir / slug / "SKILL.md")
+    try:
+        for child in skills_dir.iterdir():
+            md = child / "SKILL.md"
+            if md.is_file():
+                candidates.append(md)
+    except OSError:
+        pass
+
+    seen: set[str] = set()
+    for md in candidates:
+        key = str(md)
+        if key in seen or not md.is_file():
+            continue
+        seen.add(key)
+        try:
+            text = md.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        parsed = _parse_skill_frontmatter_fields(text)
+        parsed_name = parsed.get("name") or md.parent.name
+        if slug and md.parent.name == slug:
+            return md.parent.name, parsed_name, text
+        if name and (parsed_name == name or md.parent.name == name):
+            return md.parent.name, parsed_name, text
+    return None, None, None
+
+
+def _extract_skill_md_from_zip_bytes(zip_bytes: bytes) -> str | None:
+    """从 ZIP 字节中提取 SKILL.md 内容。"""
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            for name in zf.namelist():
+                basename = name.rstrip("/").split("/")[-1]
+                if basename.lower() == "skill.md":
+                    return zf.read(name).decode("utf-8", errors="replace")
+            # 也尝试在子目录中查找
+            for name in zf.namelist():
+                if name.lower().endswith("/skill.md"):
+                    return zf.read(name).decode("utf-8", errors="replace")
+    except Exception as exc:
+        logger.warning(f"[DeerFlow] failed to extract SKILL.md from zip: {exc}")
+    return None
+
+
+def _get_agent_skills_dir(user_id: str) -> Path:
+    """获取智能体的 skills 目录，与 UserProfileManager 保持一致。
+
+    路径: WORKSPACE_RUNS_DIR / user_id / configs / skills
+    """
+    from drsai.configs.constant import WORKSPACE_RUNS_DIR
+    return Path(WORKSPACE_RUNS_DIR) / user_id / "configs" / "skills"
+
+
+def list_cached_user_skills(user_id: str) -> list[dict]:
+    """List all SKILL.md entries in the user's persistent skills cache."""
+    skills_dir = _get_agent_skills_dir(user_id)
+    rows: list[dict] = []
+    if not skills_dir.exists():
+        return rows
+    try:
+        children = sorted(skills_dir.iterdir(), key=lambda p: p.name)
+    except OSError:
+        return rows
+    for child in children:
+        md = child / "SKILL.md"
+        if not child.is_dir() or not md.is_file():
+            continue
+        try:
+            text = md.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        fields = _parse_skill_frontmatter_fields(text)
+        rows.append({
+            "slug": child.name,
+            "name": fields.get("name") or child.name,
+            "source": "",
+            "description": fields.get("description") or "",
+        })
+    return rows
+
+
+def _write_skill_to_dir(skills_dir: Path, slug: str, content: str) -> bool:
+    """将 SKILL.md 内容写入智能体的 skills 目录。"""
+    try:
+        skill_dir = skills_dir / slug
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
+        logger.info(f"[DeerFlow] skill installed: {slug} -> {skill_dir}")
+        return True
+    except Exception as exc:
+        logger.error(f"[DeerFlow] failed to write skill {slug}: {exc}")
+        return False
+
+
+@router.post(
+    "/skills/install",
+    response_model=dict,
+    summary="安装技能到智能体",
+    description="根据 skill ID 和来源，下载并安装技能到当前用户的智能体 skills 目录。",
+)
+async def install_skills_for_agent(
+    req: SkillInstallRequest,
+    fastapi_request: Request,
+    user_id: str = Depends(lambda: None),  # 可选，优先从 SSO session 获取
+):
+    """POST /api/deer-flow/skills/install — 安装技能到智能体。
+
+    请求体：
+    {
+        "skills": [
+            {"id": "skill-f44f20e44638", "source": "higraf"},
+            {"id": "my-skill", "source": "public"}
+        ]
+    }
+
+    后端流程：
+    1. 根据 source 下载技能内容（ZIP 或 SKILL.md）
+    2. 提取 SKILL.md 内容
+    3. 写入 WORKSPACE_RUNS_DIR/{user_id}/configs/skills/{slug}/SKILL.md
+    """
+    # 优先从 SSO JWT 获取 user_id
+    if not user_id:
+        try:
+            from .....drsai_adapter.sso.jwt import get_current_user_id
+            auth = fastapi_request.headers.get("Authorization", "")
+            if auth.startswith("Bearer "):
+                user_id = get_current_user_id(auth[7:].strip())
+        except Exception:
+            pass
+    if not user_id:
+        # 从 cookie 或 header 中 fallback
+        user_id = fastapi_request.cookies.get("user_id") or fastapi_request.headers.get("X-User-Id") or ""
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无法识别用户身份")
+
+    skills_dir = _get_agent_skills_dir(user_id)
+    installed: list[dict] = []
+    failed: list[dict] = []
+
+    for item in req.skills:
+        slug = item.id
+        source = item.source
+        content: str | None = None
+
+        try:
+            if source == "higraf":
+                # 从 Higraf 下载 ZIP 并提取 SKILL.md
+                zip_bytes, restricted = await download_higraf_skill_bytes(slug)
+                if restricted:
+                    failed.append({"id": slug, "reason": "restricted"})
+                    continue
+                if zip_bytes:
+                    content = _extract_skill_md_from_zip_bytes(zip_bytes)
+                if not content:
+                    # 尝试获取详情
+                    detail = await fetch_higraf_skill_detail(slug)
+                    if detail:
+                        if isinstance(detail, dict):
+                            content = detail.get("description") or ""
+                            body = detail.get("body") or detail.get("readme") or ""
+                            if body:
+                                content = body
+                    if not content:
+                        failed.append({"id": slug, "reason": "no content"})
+                        continue
+
+            elif source == "catalog":
+                # 本地 catalog 技能
+                from .skills import get_catalog_root
+                root = get_catalog_root()
+                if root:
+                    skill_md = root / slug / "SKILL.md"
+                    if skill_md.exists():
+                        content = skill_md.read_text(encoding="utf-8")
+                if not content:
+                    failed.append({"id": slug, "reason": "catalog skill not found"})
+                    continue
+
+            elif source == "public":
+                # 公共技能：从 GFS 下载 ZIP 并提取 SKILL.md
+                try:
+                    from .skills_gfs._download import _gfs_download_public_skill_bytes
+                    zip_bytes = await _gfs_download_public_skill_bytes(slug)
+                    if zip_bytes:
+                        content = _extract_skill_md_from_zip_bytes(zip_bytes)
+                except Exception as exc:
+                    logger.warning(f"[DeerFlow] GFS download failed for {slug}: {exc}")
+                if not content:
+                    failed.append({"id": slug, "reason": "public skill download failed"})
+                    continue
+
+            elif source == "user":
+                # 用户私有技能：从 GFS 下载 ZIP 并提取 SKILL.md
+                try:
+                    from .skills_gfs._download import _gfs_download_user_skill_bytes
+                    zip_bytes = await _gfs_download_user_skill_bytes(slug, user_id)
+                    if zip_bytes:
+                        content = _extract_skill_md_from_zip_bytes(zip_bytes)
+                except Exception as exc:
+                    logger.warning(f"[DeerFlow] GFS user download failed for {slug}: {exc}")
+                if not content:
+                    failed.append({"id": slug, "reason": "user skill download failed"})
+                    continue
+
+            else:
+                failed.append({"id": slug, "reason": f"unknown source: {source}"})
+                continue
+
+            # 写入文件
+            if content and _write_skill_to_dir(skills_dir, slug, content):
+                fields = _parse_skill_frontmatter_fields(content)
+                installed.append({
+                    "slug": slug,
+                    "name": fields.get("name") or slug,
+                    "source": source,
+                    "description": fields.get("description") or "",
+                })
+            else:
+                failed.append({"id": slug, "reason": "write failed"})
+
+        except Exception as exc:
+            logger.exception(f"[DeerFlow] install skill {slug} error: {exc}")
+            failed.append({"id": slug, "reason": str(exc)})
+
+    return {
+        "status": True,
+        "data": {
+            "installed": installed,
+            "failed": failed,
+            "skills_dir": str(skills_dir),
+        },
+    }
+
+
+async def _install_skills_for_user(user_id: str, skills: list[dict]) -> dict:
+    """Internal helper: install skills for a user (called from connection.py).
+
+    Args:
+        user_id: The user identifier.
+        skills: List of {"id": slug, "source": "public|higraf|user|catalog"} dicts.
+
+    Returns:
+        {"installed": [...], "failed": [...]}
+    """
+    skills_dir = _get_agent_skills_dir(user_id)
+    installed: list[dict] = []
+    failed: list[dict] = []
+    logger.info(
+        "[skill debug][deer_flow] install request user={} skills={} target_dir={}",
+        user_id,
+        skills,
+        skills_dir,
+    )
+
+    for item in skills:
+        slug = item.get("id", "")
+        source = item.get("source", "")
+        if not slug:
+            failed.append({"id": slug, "reason": "missing id"})
+            continue
+        content: str | None = None
+
+        try:
+            if source == "higraf":
+                zip_bytes, restricted = await download_higraf_skill_bytes(slug)
+                if restricted:
+                    failed.append({"id": slug, "reason": "restricted"})
+                    continue
+                if zip_bytes:
+                    content = _extract_skill_md_from_zip_bytes(zip_bytes)
+                if not content:
+                    detail = await fetch_higraf_skill_detail(slug)
+                    if detail:
+                        if isinstance(detail, dict):
+                            content = detail.get("description") or ""
+                            body = detail.get("body") or detail.get("readme") or ""
+                            if body:
+                                content = body
+                    if not content:
+                        failed.append({"id": slug, "reason": "no content"})
+                        continue
+
+            elif source == "catalog":
+                from .skills import get_catalog_root
+                root = get_catalog_root()
+                if root:
+                    skill_md = root / slug / "SKILL.md"
+                    if skill_md.exists():
+                        content = skill_md.read_text(encoding="utf-8")
+                if not content:
+                    failed.append({"id": slug, "reason": "catalog skill not found"})
+                    continue
+
+            elif source == "public":
+                try:
+                    from .skills_gfs._download import _gfs_download_public_skill_bytes
+                    zip_bytes = await _gfs_download_public_skill_bytes(slug)
+                    if zip_bytes:
+                        content = _extract_skill_md_from_zip_bytes(zip_bytes)
+                except Exception as exc:
+                    logger.warning(f"[DeerFlow] GFS download failed for {slug}: {exc}")
+                if not content:
+                    failed.append({"id": slug, "reason": "public skill download failed"})
+                    continue
+
+            elif source == "user":
+                try:
+                    from .skills_gfs._download import _gfs_download_user_skill_bytes
+                    zip_bytes = await _gfs_download_user_skill_bytes(slug, user_id)
+                    if zip_bytes:
+                        content = _extract_skill_md_from_zip_bytes(zip_bytes)
+                except Exception as exc:
+                    logger.warning(f"[DeerFlow] GFS user download failed for {slug}: {exc}")
+                if not content:
+                    failed.append({"id": slug, "reason": "user skill download failed"})
+                    continue
+
+            else:
+                failed.append({"id": slug, "reason": f"unknown source: {source}"})
+                continue
+
+            if content and _write_skill_to_dir(skills_dir, slug, content):
+                fields = _parse_skill_frontmatter_fields(content)
+                installed.append({
+                    "slug": slug,
+                    "name": fields.get("name") or slug,
+                    "source": source,
+                    "description": fields.get("description") or "",
+                })
+            else:
+                failed.append({"id": slug, "reason": "write failed"})
+
+        except Exception as exc:
+            logger.exception(f"[DeerFlow] install skill {slug} error: {exc}")
+            failed.append({"id": slug, "reason": str(exc)})
+
+    logger.info(
+        "[skill debug][deer_flow] install result user={} installed={} failed={}",
+        user_id,
+        installed,
+        failed,
+    )
+    return {"installed": installed, "failed": failed, "skills_dir": str(skills_dir)}

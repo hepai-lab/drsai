@@ -211,3 +211,58 @@ async def get_skill_md(slug: str, request: Request, user_id: str = Query(...)) -
                 pass
 
     raise HTTPException(status_code=404, detail="Skill not found")
+
+# ── 内部函数：供 deer_flow.py 的 skills/install 使用 ───────────────────────────
+
+
+async def _gfs_download_public_skill_bytes(slug: str) -> bytes | None:
+    """下载公共技能 ZIP 的原始字节，供 deer_flow 安装到智能体使用。"""
+    from ....datamodel.db import SkillMeta
+    from ._auth import _get_db
+
+    cfg = _require_gfs()
+    remote = _gfs_zip_path("public", slug)
+    tmp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    tmp_zip.close()
+    try:
+        ok = gfs_get(remote, tmp_zip.name, cfg, timeout=60)
+        if not ok:
+            db_mgr = await _get_db()
+            resp = db_mgr.get(SkillMeta, filters={"slug": slug})
+            if resp.status and resp.data:
+                owner = resp.data[0].owner
+                if owner:
+                    for src in ("created", "imported"):
+                        remote = _gfs_zip_path("user", slug, owner, src)
+                        if gfs_get(remote, tmp_zip.name, cfg, timeout=30):
+                            ok = True
+                            break
+        if not ok:
+            return None
+        with open(tmp_zip.name, "rb") as f:
+            return f.read()
+    finally:
+        try:
+            os.unlink(tmp_zip.name)
+        except OSError:
+            pass
+
+
+async def _gfs_download_user_skill_bytes(slug: str, user_id: str) -> bytes | None:
+    """下载用户私有技能 ZIP 的原始字节，供 deer_flow 安装到智能体使用。"""
+    cfg = _require_gfs()
+    for src in ("created", "imported"):
+        remote = _gfs_zip_path("user", slug, user_id, src)
+        tmp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        tmp_zip.close()
+        try:
+            ok = gfs_get(remote, tmp_zip.name, cfg, timeout=30)
+            if ok:
+                with open(tmp_zip.name, "rb") as f:
+                    return f.read()
+        finally:
+            try:
+                os.unlink(tmp_zip.name)
+            except OSError:
+                pass
+    return None
