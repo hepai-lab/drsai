@@ -1,0 +1,382 @@
+{
+  "apk": {
+    "bytes": 59752094,
+    "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\debug\\OpenDrSai-Android-v1.5.6.apk",
+    "sha256": "6787c01c6f8122bc37608594b10f558cc2cd0c00cefc73aa9cbb88b2fadd5ce6"
+  },
+  "completion_percent": 100.0,
+  "decision": "GO",
+  "feature_count": 60,
+  "generated_at": "2026-08-04T17:38:08.221803+00:00",
+  "ledger": [
+    {
+      "evidence": "build-identity.json",
+      "id": "M01-F01",
+      "module": "M01",
+      "passed": true
+    },
+    {
+      "evidence": "build-identity.json",
+      "id": "M01-F02",
+      "module": "M01",
+      "passed": true
+    },
+    {
+      "evidence": "build-identity.json",
+      "id": "M01-F03",
+      "module": "M01",
+      "passed": true
+    },
+    {
+      "evidence": "build-identity.json",
+      "id": "M01-F04",
+      "module": "M01",
+      "passed": true
+    },
+    {
+      "evidence": "build-identity.json",
+      "id": "M01-F05",
+      "module": "M01",
+      "passed": true
+    },
+    {
+      "evidence": "build-identity.json",
+      "id": "M01-F06",
+      "module": "M01",
+      "passed": true
+    },
+    {
+      "evidence": "architecture-gate.json",
+      "id": "M02-F01",
+      "module": "M02",
+      "passed": true
+    },
+    {
+      "evidence": "architecture-gate.json",
+      "id": "M02-F02",
+      "module": "M02",
+      "passed": true
+    },
+    {
+      "evidence": "architecture-gate.json",
+      "id": "M02-F03",
+      "module": "M02",
+      "passed": true
+    },
+    {
+      "evidence": "architecture-gate.json",
+      "id": "M02-F04",
+      "module": "M02",
+      "passed": true
+    },
+    {
+      "evidence": "architecture-gate.json",
+      "id": "M02-F05",
+      "module": "M02",
+      "passed": true
+    },
+    {
+      "evidence": "architecture-gate.json",
+      "id": "M02-F06",
+      "module": "M02",
+      "passed": true
+    },
+    {
+      "evidence": "architecture-gate.json",
+      "id": "M03-F01",
+      "module": "M03",
+      "passed": true
+    },
+    {
+      "evidence": "architecture-gate.json",
+      "id": "M03-F02",
+      "module": "M03",
+      "passed": true
+    },
+    {
+      "evidence": "architecture-gate.json",
+      "id": "M03-F03",
+      "module": "M03",
+      "passed": true
+    },
+    {
+      "evidence": "architecture-gate.json",
+      "id": "M03-F04",
+      "module": "M03",
+      "passed": true
+    },
+    {
+      "evidence": "architecture-gate.json",
+      "id": "M03-F05",
+      "module": "M03",
+      "passed": true
+    },
+    {
+      "evidence": "architecture-gate.json",
+      "id": "M03-F06",
+      "module": "M03",
+      "passed": true
+    },
+    {
+      "evidence": "oaep-parity.json",
+      "id": "M04-F01",
+      "module": "M04",
+      "passed": true
+    },
+    {
+      "evidence": "oaep-parity.json",
+      "id": "M04-F02",
+      "module": "M04",
+      "passed": true
+    },
+    {
+      "evidence": "oaep-parity.json",
+      "id": "M04-F03",
+      "module": "M04",
+      "passed": true
+    },
+    {
+      "evidence": "oaep-parity.json",
+      "id": "M04-F04",
+      "module": "M04",
+      "passed": true
+    },
+    {
+      "evidence": "oaep-parity.json",
+      "id": "M04-F05",
+      "module": "M04",
+      "passed": true
+    },
+    {
+      "evidence": "oaep-parity.json",
+      "id": "M04-F06",
+      "module": "M04",
+      "passed": true
+    },
+    {
+      "evidence": "tool-e2e-emulator-api35.json",
+      "id": "M05-F01",
+      "module": "M05",
+      "passed": true
+    },
+    {
+      "evidence": "tool-e2e-emulator-api35.json",
+      "id": "M05-F02",
+      "module": "M05",
+      "passed": true
+    },
+    {
+      "evidence": "tool-e2e-emulator-api35.json",
+      "id": "M05-F03",
+      "module": "M05",
+      "passed": true
+    },
+    {
+      "evidence": "tool-e2e-emulator-api35.json",
+      "id": "M05-F04",
+      "module": "M05",
+      "passed": true
+    },
+    {
+      "evidence": "tool-e2e-emulator-api35.json",
+      "id": "M05-F05",
+      "module": "M05",
+      "passed": true
+    },
+    {
+      "evidence": "tool-e2e-physical-api36.json",
+      "id": "M05-F06",
+      "module": "M05",
+      "passed": true
+    },
+    {
+      "evidence": "ui-diagnostics.json",
+      "id": "M06-F01",
+      "module": "M06",
+      "passed": true
+    },
+    {
+      "evidence": "ui-diagnostics.json",
+      "id": "M06-F02",
+      "module": "M06",
+      "passed": true
+    },
+    {
+      "evidence": "ui-diagnostics.json",
+      "id": "M06-F03",
+      "module": "M06",
+      "passed": true
+    },
+    {
+      "evidence": "ui-diagnostics.json",
+      "id": "M06-F04",
+      "module": "M06",
+      "passed": true
+    },
+    {
+      "evidence": "ui-diagnostics.json",
+      "id": "M06-F05",
+      "module": "M06",
+      "passed": true
+    },
+    {
+      "evidence": "ui-diagnostics.json",
+      "id": "M06-F06",
+      "module": "M06",
+      "passed": true
+    },
+    {
+      "evidence": "oaep-parity.json",
+      "id": "M07-F01",
+      "module": "M07",
+      "passed": true
+    },
+    {
+      "evidence": "oaep-parity.json",
+      "id": "M07-F02",
+      "module": "M07",
+      "passed": true
+    },
+    {
+      "evidence": "oaep-parity.json",
+      "id": "M07-F03",
+      "module": "M07",
+      "passed": true
+    },
+    {
+      "evidence": "oaep-parity.json",
+      "id": "M07-F04",
+      "module": "M07",
+      "passed": true
+    },
+    {
+      "evidence": "oaep-parity.json",
+      "id": "M07-F05",
+      "module": "M07",
+      "passed": true
+    },
+    {
+      "evidence": "oaep-parity.json",
+      "id": "M07-F06",
+      "module": "M07",
+      "passed": true
+    },
+    {
+      "evidence": "runtime-recovery-emulator-api35.json",
+      "id": "M08-F01",
+      "module": "M08",
+      "passed": true
+    },
+    {
+      "evidence": "lifecycle-recovery-emulator-api35.json",
+      "id": "M08-F02",
+      "module": "M08",
+      "passed": true
+    },
+    {
+      "evidence": "stress-performance-emulator-api35.json",
+      "id": "M08-F03",
+      "module": "M08",
+      "passed": true
+    },
+    {
+      "evidence": "stress-performance-physical-api36.json",
+      "id": "M08-F04",
+      "module": "M08",
+      "passed": true
+    },
+    {
+      "evidence": "stress-performance-physical-api36.json",
+      "id": "M08-F05",
+      "module": "M08",
+      "passed": true
+    },
+    {
+      "evidence": "stress-performance-emulator-api35.json",
+      "id": "M08-F06",
+      "module": "M08",
+      "passed": true
+    },
+    {
+      "evidence": "security-emulator-api35.json",
+      "id": "M09-F01",
+      "module": "M09",
+      "passed": true
+    },
+    {
+      "evidence": "security-emulator-api35.json",
+      "id": "M09-F02",
+      "module": "M09",
+      "passed": true
+    },
+    {
+      "evidence": "security-emulator-api35.json",
+      "id": "M09-F03",
+      "module": "M09",
+      "passed": true
+    },
+    {
+      "evidence": "security-emulator-api35.json",
+      "id": "M09-F04",
+      "module": "M09",
+      "passed": true
+    },
+    {
+      "evidence": "security-emulator-api35.json",
+      "id": "M09-F05",
+      "module": "M09",
+      "passed": true
+    },
+    {
+      "evidence": "security-emulator-api35.json",
+      "id": "M09-F06",
+      "module": "M09",
+      "passed": true
+    },
+    {
+      "evidence": "build-identity.json",
+      "id": "M10-F01",
+      "module": "M10",
+      "passed": true
+    },
+    {
+      "evidence": "physical-default-binding-api36.json",
+      "id": "M10-F02",
+      "module": "M10",
+      "passed": true
+    },
+    {
+      "evidence": "tool-e2e-physical-api36.json",
+      "id": "M10-F03",
+      "module": "M10",
+      "passed": true
+    },
+    {
+      "evidence": "physical-fault-recovery-api36.json",
+      "id": "M10-F04",
+      "module": "M10",
+      "passed": true
+    },
+    {
+      "evidence": "oaep-cross-end-emulator-api35.json",
+      "id": "M10-F05",
+      "module": "M10",
+      "passed": true
+    },
+    {
+      "evidence": "final-debug-go-no-go.json",
+      "id": "M10-F06",
+      "module": "M10",
+      "passed": true
+    }
+  ],
+  "missing": [],
+  "passed": true,
+  "passed_count": 60,
+  "release": {
+    "package": "ai.drsai.remote.debug",
+    "version": "1.5.6",
+    "version_code": 10506
+  },
+  "schema_version": 1
+}

@@ -56,7 +56,7 @@ assert.equal(evidence.sourceAggregateSha256, snapshot.aggregateSha256);
 assert.equal(evidence.platform, "darwin-arm64");
 assert.equal(evidence.passed, true);
 assertEvidenceFeatureCoverage(evidence);
-assert.deepEqual(evidence.tests.map((test) => test.testId).sort(), ["packaged-smoke", "runtime-reproducibility"]);
+assert.deepEqual(evidence.tests.map((test) => test.testId).sort(), ["catalog-l4-feature-suites", "packaged-smoke", "runtime-reproducibility"]);
 assert.ok(evidence.tests.every((test) => test.passed === true));
 assert.ok(Array.isArray(evidence.artifacts) && evidence.artifacts.length >= 2);
 for (const artifact of evidence.artifacts) {
@@ -70,8 +70,8 @@ console.log(`macOS L4 evidence passed: commit=${evidence.commit}, source=${evide
 
 let previous = evidence;
 for (const [level, requiredTests] of [
-  ["L5", ["packaged-core-journeys", "packaged-product-journeys", "restart-stability", "fault-injection"]],
-  ["L6", ["codesign-strict", "gatekeeper", "notarization-staple", "clean-install", "signed-update-rollback", "tcc-real-device"]],
+  ["L5", ["packaged-core-journeys", "packaged-auth-cycles", "packaged-product-journeys", "managed-process-crash-recovery", "packaged-system-events", "restart-resource-growth", "packaged-resource-sampling", "packaged-performance-budget", "restart-stability", "fault-injection", "catalog-l5-feature-suites"]],
+  ["L6", ["codesign-strict", "gatekeeper", "notarization-staple", "clean-install", "signed-update-rollback", "model-provider-real-opt-in", "keychain-lock-cycle", "sleep-wake-real-device", "stability-matrix", "tcc-real-device", "catalog-l6-feature-suites"]],
 ]) {
   const path = resolve(acceptanceRoot, `macos-${level.toLowerCase()}-evidence.json`);
   if (!existsSync(path)) {
@@ -117,7 +117,7 @@ for (const [level, requiredTests] of [
     const tcc = readArtifactReceipt(next, "tcc-real-device");
     assert.ok(["granted", "denied", "restricted"].includes(tcc.microphoneState));
     assert.ok(["granted", "denied"].includes(tcc.automationState));
-    assert.equal(tcc.notificationVisiblyConfirmed, true);
+    assert.equal(tcc.notificationShowEventObserved, true);
   }
   previous = next;
   console.log(`macOS ${level} evidence passed: tests=${next.tests.length}, artifacts=${next.artifacts.length}.`);

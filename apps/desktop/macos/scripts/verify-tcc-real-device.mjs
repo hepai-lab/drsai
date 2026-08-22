@@ -29,9 +29,8 @@ try {
   assert.ok(["granted", "denied", "restricted"].includes(result.microphone.state), `microphone TCC remained unresolved: ${result.microphone.state}`);
   assert.ok(["granted", "denied"].includes(result.automation.state), `Automation TCC remained unresolved: ${result.automation.state}`);
   assert.equal(result.notifications.canRequest, true);
+  assert.equal(result.notificationShown, true, "macOS did not emit the native notification show event");
   assert.equal(result.filesSettingsOpened, true);
-  const operator = run("/usr/bin/osascript", ["-e", 'display dialog "Did the OpenDrSai notification appear, and did macOS open the Files/Full Disk Access settings pane?" buttons {"Reject", "Confirmed"} default button "Confirmed" cancel button "Reject" giving up after 600']);
-  assert.match(operator, /button returned:Confirmed/);
   const machine = machineEvidence();
   const acceptance = join(root, "build", "acceptance");
   mkdirSync(acceptance, { recursive: true });
@@ -44,7 +43,7 @@ try {
     appExecutableSha256: sha256(executable),
     microphoneState: result.microphone.state,
     automationState: result.automation.state,
-    notificationVisiblyConfirmed: true,
+    notificationShowEventObserved: true,
     filesSettingsOpened: true,
     osVersion: machine.osVersion,
     osBuild: machine.osBuild,
@@ -64,7 +63,7 @@ function machineEvidence() {
   assert.ok(match, "physical Mac hardware identity is unavailable");
   return { osVersion, osBuild, hardwareModel, hardwareIdentitySha256: createHash("sha256").update(match[1]).digest("hex") };
 }
-function run(command, args) { const result = spawnSync(command, args, { encoding: "utf8", timeout: 60_000 }); if (result.error || result.status !== 0) throw new Error(`${command} failed: ${result.stderr || result.error?.message}`); return `${result.stdout || ""}\n${result.stderr || ""}`; }
+function run(command, args, timeout = 60_000) { const result = spawnSync(command, args, { encoding: "utf8", timeout }); if (result.error || result.status !== 0) throw new Error(`${command} failed: ${result.stderr || result.error?.message}`); return `${result.stdout || ""}\n${result.stderr || ""}`; }
 function sha256(path) { return createHash("sha256").update(readFileSync(path)).digest("hex"); }
 function waitForExit(child, timeout) { if (child.exitCode !== null) return Promise.resolve(child.exitCode); return new Promise((resolveExit, reject) => { const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("TCC App did not exit")); }, timeout); child.once("exit", (code) => { clearTimeout(timer); resolveExit(code); }); }); }
 async function waitForJson(path, child, timeout, stderr) { const deadline = Date.now() + timeout; while (Date.now() < deadline) { try { return JSON.parse(readFileSync(path, "utf8")); } catch { /* wait for operator */ } if (child.exitCode !== null) throw new Error(`TCC App exited before result (${child.exitCode})\n${stderr()}`); await new Promise((resolveDelay) => setTimeout(resolveDelay, 200)); } child.kill("SIGKILL"); throw new Error(`TCC interaction timed out\n${stderr()}`); }

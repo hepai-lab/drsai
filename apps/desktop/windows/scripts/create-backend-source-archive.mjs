@@ -36,6 +36,8 @@ writeFileSync(
       "cores/python/packages/drsai/src/drsai",
       "cores/protocol/owop",
       "cores/protocol/relay",
+      "skills/skills",
+      "eval/regression",
     ],
   }, null, 2)}\n`,
   "utf8",
@@ -55,6 +57,8 @@ function collectBackendSourceEntries() {
     "cores/python/packages/drsai/src",
     "cores/protocol/owop",
     "cores/protocol/relay",
+    "skills/skills",
+    "eval/regression",
   ];
   const files = [];
   for (const root of roots) {

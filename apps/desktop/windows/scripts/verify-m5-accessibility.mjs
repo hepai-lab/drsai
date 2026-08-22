@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -32,7 +33,12 @@ writeFileSync(chartPath, `<svg xmlns="http://www.w3.org/2000/svg" width="800" he
 rmSync(resultPath, { force: true });
 
 try {
-  await run();
+  const gateway = await startGateway();
+  try {
+    await run(gateway.address().port);
+  } finally {
+    await new Promise((resolveClose) => gateway.close(resolveClose));
+  }
   const result = JSON.parse(readFileSync(resultPath, "utf8"));
   assert(result.ok === true, `M5 packaged acceptance failed:\n${JSON.stringify(result, null, 2)}`);
   const checks = Object.entries(result.checks || {});
@@ -43,17 +49,73 @@ try {
   rmSync(testRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
 }
 
-function run() {
+function run(port) {
   return new Promise((resolveRun, reject) => {
     let settled = false;
     const child = spawn(executable, [`--user-data-dir=${userData}`], {
       cwd: root,
-      env: { ...process.env, DRSAI_HOME: appHome, DRSAI_GATEWAY_DEV_MANAGED: "1", OPENDRSAI_DEV_AUTH_BYPASS: "1", OPENDRSAI_E2E_M5_ACCESSIBILITY: "1", OPENDRSAI_E2E_RESULT: resultPath, OPENDRSAI_E2E_M5_CERN_PDF: fixturePath, OPENDRSAI_E2E_M5_CERN_CHART: chartPath, OPENDRSAI_E2E_M5_AXE_PATH: axePath, OPENDRSAI_E2E_M5_EVIDENCE_DIR: evidenceDir, OPENDRSAI_E2E_DISABLE_GPU: "1", OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN: "1", OPENDRSAI_E2E_TIMEOUT_MS: "120000" },
+      env: { ...process.env, DRSAI_HOME: appHome, DRSAI_GATEWAY_DEV_MANAGED: "1", OPENDRSAI_GATEWAY_PORT: String(port), OPENDRSAI_DEV_AUTH_BYPASS: "1", OPENDRSAI_E2E_M5_ACCESSIBILITY: "1", OPENDRSAI_E2E_RESULT: resultPath, OPENDRSAI_E2E_M5_CERN_PDF: fixturePath, OPENDRSAI_E2E_M5_CERN_CHART: chartPath, OPENDRSAI_E2E_M5_AXE_PATH: axePath, OPENDRSAI_E2E_M5_EVIDENCE_DIR: evidenceDir, OPENDRSAI_E2E_DISABLE_GPU: "1", OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN: "1", OPENDRSAI_E2E_TIMEOUT_MS: "120000" },
       stdio: "ignore", windowsHide: true,
     });
     const timer = setTimeout(() => { if (!settled) { settled = true; killTree(child.pid); reject(new Error("M5 packaged acceptance timed out.")); } }, 135_000);
     child.on("error", (error) => { if (!settled) { settled = true; clearTimeout(timer); reject(error); } });
     child.on("close", (code) => { if (settled) return; settled = true; clearTimeout(timer); code === 0 ? resolveRun() : reject(new Error(`M5 packaged app exited ${code}.${existsSync(resultPath) ? `\n${readFileSync(resultPath, "utf8")}` : " No result JSON was written."}`)); });
+  });
+}
+
+function startGateway() {
+  const server = createServer(async (req, res) => {
+    if (req.url === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+    if (req.url === "/v1/models") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ object: "list", data: [{ id: "drsai", object: "model" }] }));
+      return;
+    }
+    if (req.url === "/v1/runtime") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ runtime_id: "runtime-m5-accessibility", instance_id: "instance-m5-accessibility", version: "1.5.5", protocol_version: 1, platform: "windows", dev_managed: true }));
+      return;
+    }
+    if (req.url === "/v1/capabilities") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ protocol_version: 1, capabilities: ["chat", "tools", "goals", "approvals"], capability_versions: { chat: 1, tools: 1, goals: 1, approvals: 1 } }));
+      return;
+    }
+    if (req.url === "/v1/workspaces" && req.method === "POST") {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        const path = JSON.parse(body || "{}").path;
+        const now = new Date().toISOString();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ workspace_id: `m5-${Buffer.from(String(path)).toString("base64url").slice(0, 48)}`, path, created_at: now, last_opened_at: now, closed_at: null, open: true }));
+      });
+      return;
+    }
+    if (req.url === "/v1/config/cli" || req.url === "/v1/models/config") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end("{}");
+      return;
+    }
+    if (req.url === "/v1/chat/completions" && req.method === "POST") {
+      for await (const _chunk of req) { /* consume request */ }
+      res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "CERN WLCG accessible report request received." }, index: 0 }] })}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "M5 fake gateway" }));
+  });
+  return new Promise((resolveListen, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolveListen(server));
   });
 }
 

@@ -1,0 +1,59 @@
+{
+  "schema_version": "opendrsai.windows.phase3.model-convergence-evidence/1",
+  "captured_at": "2026-08-05T15:56:10.2497763+08:00",
+  "feature_id": "P3-MC01",
+  "status": "accepted",
+  "scope": "OpenDrSai local Full Agent Runtime model catalog; Codex Adapter excluded",
+  "checks": {
+    "provider_aware_model_ref": true,
+    "cross_language_contract": true,
+    "openapi_contract": true,
+    "descriptor_capability_validation": true,
+    "same_model_id_across_providers_preserved": true,
+    "deterministic_catalog_revision": true,
+    "capability_provenance_precedence": true,
+    "unknown_capabilities_fail_closed": true,
+    "cache_states_distinct": true,
+    "unwired_image_model_ui_removed": true,
+    "legacy_image_model_read_only": true,
+    "production_build": true
+  },
+  "tests": [
+    {
+      "command": ".venv/Scripts/python.exe -m pytest test_runtime_model_catalog.py test_model_provider_*.py test_gateway_model_catalog.py test_agent_runtime.py test_platform_auth.py -q",
+      "result": "174 passed, 12 subtests passed"
+    },
+    {
+      "command": ".venv/Scripts/python.exe scripts/verify_model_provider_compatibility.py --local --require-all",
+      "result": "15 probes passed"
+    },
+    {
+      "command": "npm run verify:opendrsai-model-convergence-p3",
+      "result": "passed"
+    },
+    {
+      "command": "npm run build",
+      "result": "passed"
+    }
+  ],
+  "artifacts": {
+    "model_catalog": {
+      "path": "cores/python/packages/drsai/src/drsai/config/model_catalog.py",
+      "sha256": "f78db856935cec7dd9d9e0c85123667f4029f8f256ae67ffbf06252cb79e4037"
+    },
+    "desktop_main_bundle": {
+      "path": "apps/desktop/windows/out/main/index.js",
+      "sha256": "de3ef6a91466321c391c02406ea66494c92abfe5a6ca56c2a33365b866362ce2"
+    },
+    "desktop_renderer_bundle": {
+      "path": "apps/desktop/windows/out/renderer/assets/index-fav5QtbC.js",
+      "sha256": "12957b1349a1f0093ce605046034c25683dcd078c3d387ce0d1c36e3ba709c72"
+    }
+  },
+  "progress": {
+    "model_convergence": "1/8 (12.5%)",
+    "phase3_product_ledger": "29/50 (58%)",
+    "note": "The model-convergence sub-ledger is additive detail and does not inflate the existing 50-feature P3 product ledger."
+  },
+  "next": "P3-MC02 Provider catalog authority, membership and upstream routing"
+}

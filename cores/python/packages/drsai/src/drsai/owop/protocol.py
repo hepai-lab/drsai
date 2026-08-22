@@ -26,7 +26,7 @@ def _default_schema_path() -> Path:
     raise RuntimeError("OWOP schema is not installed")
 
 
-@dataclass(frozen=True)
+@dataclass
 class OWOPError(RuntimeError):
     code: str
     message: str

@@ -11,6 +11,7 @@ import type {
 import type { DesktopNotificationHandle, DesktopNotificationService } from "../api";
 import { replaceFileSafely } from "./atomicFileReplace";
 import { DRSAI_HOME } from "./paths";
+import { redactSensitiveData } from "../api/sensitiveData";
 
 type WindowVisibility = "foreground" | "minimized" | "hidden";
 interface Handlers {
@@ -119,11 +120,7 @@ export function clickLatestCompletionNotificationForE2e(): boolean {
 }
 
 export function redactNotificationText(value: string): string {
-  return value.replace(/[\r\n\t]+/g, " ")
-    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "[已隐藏凭据]")
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/gi, "[已隐藏凭据]")
-    .replace(/\b(api[_-]?key|token|password|secret)\s*[:=]\s*[^\s,;]+/gi, "$1=[已隐藏]")
-    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[已隐藏邮箱]")
+  return redactSensitiveData(value.replace(/[\r\n\t]+/g, " "))
     .replace(/\s+/g, " ").trim().slice(0, 120);
 }
 

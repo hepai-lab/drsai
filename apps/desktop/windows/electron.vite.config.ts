@@ -24,6 +24,12 @@ export default defineConfig({
   },
   renderer: {
     root: resolve("../shared/renderer"),
+    server: {
+      host: "127.0.0.1",
+      hmr: {
+        host: "127.0.0.1",
+      },
+    },
     build: {
       sourcemap: true,
       rollupOptions: {

@@ -1,0 +1,40 @@
+{
+  "apk": "OpenDrSai-Android-v1.5.6.apk",
+  "apk_sha256": "220bb1c437f6001acf3252104217541bbc280bdd579c065178af9ef50c13e62f",
+  "device_checks": {
+    "checkpoint_receipt_token_findings": 0,
+    "cross_account_reads": 0,
+    "oaep_absolute_path_findings": 0,
+    "oaep_token_findings": 0
+  },
+  "dynamic_findings": {
+    "apk": 0,
+    "app_data": 0,
+    "logcat": 0
+  },
+  "features": {
+    "M09-F01": true,
+    "M09-F02": true,
+    "M09-F03": true,
+    "M09-F04": true,
+    "M09-F05": true,
+    "M09-F06": true
+  },
+  "gates": {
+    "apk_generic_secret_scan": true,
+    "checkpoint_receipt_no_token": true,
+    "cross_account_isolation": true,
+    "dynamic_canary_absent_from_apk_logcat_app_data": true,
+    "external_runtime_service_rejected": true,
+    "oaep_no_token_or_absolute_path": true,
+    "supply_chain_sbom_hashes_licenses_osv": true
+  },
+  "generated_at": "2026-08-04T12:30:18.927409+00:00",
+  "generic_apk_findings": [],
+  "package": "ai.drsai.remote.debug",
+  "passed": true,
+  "schema_version": 1,
+  "serial": "emulator-5560",
+  "status": "passed",
+  "version": "1.5.6"
+}

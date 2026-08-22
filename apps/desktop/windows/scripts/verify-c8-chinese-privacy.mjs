@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { createServer } from "node:net";
+import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -10,10 +11,12 @@ const repo = resolve(root, "../../..");
 const executable = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const sourcePdf = resolve(process.env.OPENDRSAI_CERN_PDF || "C:/tmp/WLCG-20260715-WLCG-talk-IHEP-visit.pdf");
 const python = process.env.OPENDRSAI_PDF_PYTHON || "C:/Users/win11/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe";
+const runtimePython = resolve(repo, ".venv", "Scripts", "python.exe");
+const runtimeSource = resolve(repo, "cores", "python", "packages", "drsai", "src");
 const extractor = join(repo, "cores", "python", "packages", "drsai", "src", "drsai", "content", "pdf", "presentation.py");
 const runId = process.env.OPENDRSAI_C8_RUN_ID?.trim() || "latest";
 if (!/^[a-z0-9-]+$/i.test(runId)) throw new Error("OPENDRSAI_C8_RUN_ID must be alphanumeric with optional hyphens.");
-for (const path of [executable, sourcePdf, python, extractor]) if (!existsSync(path)) throw new Error(`C8 dependency is missing: ${path}`);
+for (const path of [executable, sourcePdf, python, runtimePython, extractor]) if (!existsSync(path)) throw new Error(`C8 dependency is missing: ${path}`);
 const source = readFileSync(sourcePdf);
 const sourceHash = sha256(source);
 assert(source.length === 7_664_262 && sourceHash === "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E", "CERN PDF fixture changed.");
@@ -25,13 +28,24 @@ const evidenceDir = join(root, "release", "product-evidence", "c8-chinese-privac
 const resultPath = join(evidenceDir, "packaged-c8-chinese-privacy-result.json");
 const appHome = join(testRoot, "应用 数据");
 const userData = join(testRoot, "用户 数据");
-for (const path of [workspace, evidenceDir, appHome, userData]) mkdirSync(path, { recursive: true });
+const gatewayHome = join(testRoot, "full-runtime");
+const gatewayPort = await findAvailablePort();
+const gatewayToken = `c8-runtime-${process.pid}-${Date.now()}`;
+for (const path of [workspace, evidenceDir, appHome, userData, gatewayHome]) mkdirSync(path, { recursive: true });
 const fixturePaths = [join(workspace, "联系人与密钥 样例.md"), join(workspace, "扫描 图片.png"), join(workspace, "WLCG 中文演示.pdf")];
 writeFileSync(fixturePaths[0], `# D7 隐私材料\n\n手机号: ${sensitiveValues[0]}\n邮箱: ${sensitiveValues[1]}\nAPI Key: ${sensitiveValues[2]}\nuser_secret=${sensitiveValues[3]}\n`, "utf8");
 writeFileSync(fixturePaths[1], Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zy8sAAAAASUVORK5CYII=", "base64"));
 copyFileSync(sourcePdf, fixturePaths[2]);
 
+const gateway = spawn(runtimePython, ["-m", "drsai.backend.gateway"], {
+  cwd: repo, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+  env: { ...process.env, DRSAI_HOME: gatewayHome, DRSAI_API_HOST: "127.0.0.1", DRSAI_API_PORT: String(gatewayPort), OPENDRSAI_GATEWAY_INSTANCE_TOKEN: gatewayToken, OPENDRSAI_DEV_AUTH_BYPASS: "1", PYTHONPATH: [runtimeSource, process.env.PYTHONPATH].filter(Boolean).join(delimiter) },
+});
+let gatewayLog = "";
+gateway.stdout.on("data", (chunk) => { gatewayLog = `${gatewayLog}${chunk}`.slice(-16000); });
+gateway.stderr.on("data", (chunk) => { gatewayLog = `${gatewayLog}${chunk}`.slice(-16000); });
 try {
+  await waitForGateway();
   const processOutput = await runPackagedApp();
   const result = JSON.parse(readFileSync(resultPath, "utf8"));
   assert(result.ok === true, `C8 packaged acceptance failed:\n${JSON.stringify(result, null, 2)}`);
@@ -48,7 +62,17 @@ try {
   writeFileSync(join(evidenceDir, "evidence-integrity.json"), `${JSON.stringify(summary, null, 2)}\n`);
   console.log(`C8 Chinese-path privacy passed ${summary.totalChecks}/${summary.totalChecks} checks; four sensitive values absent from UI, logs, notifications, shares, and app-owned data.`);
 } finally {
-  rmSync(testRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 300 });
+  killTree(gateway.pid);
+  gateway.unref();
+  gateway.removeAllListeners();
+  gateway.stdout.removeAllListeners();
+  gateway.stderr.removeAllListeners();
+  gateway.stdout.destroy();
+  gateway.stderr.destroy();
+  await new Promise((resolveWait) => setTimeout(resolveWait, 750));
+  try { rmSync(testRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 300 }); } catch (error) {
+    console.warn(`C8 temporary cleanup deferred: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function runPackagedApp() {
@@ -58,7 +82,7 @@ function runPackagedApp() {
     let stderr = "";
     const child = spawn(executable, [`--user-data-dir=${userData}`], {
       cwd: root,
-      env: { ...process.env, DRSAI_HOME: appHome, DRSAI_REPO: workspace, DRSAI_GATEWAY_DEV_MANAGED: "1", OPENDRSAI_DEV_AUTH_BYPASS: "1", OPENDRSAI_PDF_PYTHON: python, OPENDRSAI_PDF_SCRIPT: extractor, OPENDRSAI_E2E_C8_CHINESE_PRIVACY: "1", OPENDRSAI_E2E_C8_IMPORT_PATHS: fixturePaths.join("|"), OPENDRSAI_E2E_C8_SENSITIVE_VALUES: JSON.stringify(sensitiveValues), OPENDRSAI_E2E_C8_EVIDENCE_DIR: evidenceDir, OPENDRSAI_E2E_RESULT: resultPath, OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN: "1", OPENDRSAI_E2E_DISABLE_GPU: "1", OPENDRSAI_E2E_TIMEOUT_MS: "120000" },
+      env: { ...process.env, DRSAI_HOME: appHome, DRSAI_REPO: workspace, DRSAI_GATEWAY_DEV_MANAGED: "1", OPENDRSAI_GATEWAY_STARTUP: "external", OPENDRSAI_GATEWAY_PORT: String(gatewayPort), OPENDRSAI_GATEWAY_INSTANCE_TOKEN: gatewayToken, OPENDRSAI_DEV_AUTH_BYPASS: "1", OPENDRSAI_PDF_PYTHON: python, OPENDRSAI_PDF_SCRIPT: extractor, OPENDRSAI_E2E_C8_CHINESE_PRIVACY: "1", OPENDRSAI_E2E_C8_IMPORT_PATHS: fixturePaths.join("|"), OPENDRSAI_E2E_C8_SENSITIVE_VALUES: JSON.stringify(sensitiveValues), OPENDRSAI_E2E_C8_EVIDENCE_DIR: evidenceDir, OPENDRSAI_E2E_RESULT: resultPath, OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN: "1", OPENDRSAI_E2E_DISABLE_GPU: "1", OPENDRSAI_E2E_TIMEOUT_MS: "120000" },
       stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
     });
     child.stdout.on("data", (chunk) => { stdout += String(chunk); });
@@ -85,5 +109,7 @@ function scanDirectoryForSecrets(directory, secrets) {
 }
 
 function sha256(value) { return createHash("sha256").update(value).digest("hex").toUpperCase(); }
+function findAvailablePort() { return new Promise((resolvePort, reject) => { const server = createServer(); server.unref(); server.once("error", reject); server.listen(0, "127.0.0.1", () => { const address = server.address(); if (!address || typeof address === "string") return server.close(() => reject(new Error("Could not reserve a C8 Runtime port."))); const port = address.port; server.close((error) => error ? reject(error) : resolvePort(port)); }); }); }
+async function waitForGateway() { const deadline = Date.now() + 30_000; while (Date.now() < deadline) { try { const response = await fetch(`http://127.0.0.1:${gatewayPort}/health`, { headers: { "X-OpenDrSai-Gateway-Token": gatewayToken } }); if (response.ok) return; } catch {} await new Promise((resolveWait) => setTimeout(resolveWait, 200)); } throw new Error(`C8 Full Runtime did not start.\n${gatewayLog}`); }
 function killTree(pid) { if (pid) spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }); }
 function assert(condition, message) { if (!condition) throw new Error(message); }

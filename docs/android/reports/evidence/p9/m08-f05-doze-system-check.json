@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "feature_id": "M08-F05",
+  "generated_at": "2026-08-05T17:10:00+08:00",
+  "serial": "emulator-5554",
+  "api_level": 35,
+  "package": "ai.drsai.remote.debug",
+  "test_class": "ai.drsai.remote.runtime.device.LongRunDozeInstrumentedTest",
+  "test_method": "foreground_long_run_keeps_user_controls_visible_during_forced_doze",
+  "instrumentation_test_passed": true,
+  "notification_visible_before_doze": true,
+  "device_entered_idle": true,
+  "notification_visible_during_doze": true,
+  "cleanup": {
+    "deviceidle_unforced": true,
+    "battery_state_reset": true,
+    "foreground_service_stopped": true
+  }
+}

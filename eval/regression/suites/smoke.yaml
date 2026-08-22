@@ -1,0 +1,19 @@
+schema_version: opendrsai.agent-regression-suite/1
+id: smoke
+title: OpenDrSai Agent 快速回归
+description: 当前已确认、适合快速执行的黄金用例。
+cases:
+  - qa.greeting.hello
+  - qa.constraints.json
+  - tool.web.hepix
+  - tool.failure.recovery
+  - knowledge.grounded
+  - knowledge.absent
+  - skill.presentation
+  - image.input.ui_error
+  - image.output.simple
+  - workspace.readonly.diagnose
+  - safety.write_approval
+  - run.inspect_compare
+defaults:
+  concurrency: 1

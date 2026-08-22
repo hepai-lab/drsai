@@ -27,16 +27,24 @@ data class RuntimeDescriptor(
 /** Forward-compatible codec: unknown optional capabilities and fields are ignored. */
 object RuntimeCapabilityCodec {
     fun decode(json: String): RuntimeCapabilitySet {
-        val root = JSONObject(json)
-        val values = root.optJSONArray("capabilities") ?: JSONArray()
+        val trimmed = json.trim()
+        val root = if (trimmed.startsWith("{")) JSONObject(trimmed) else null
+        val values = root?.optJSONArray("capabilities") ?: JSONArray(trimmed)
         val known = buildSet {
             repeat(values.length()) { index ->
-                runCatching { RuntimeCapability.valueOf(values.getString(index).uppercase()) }.getOrNull()?.let(::add)
+                val wire = values.getString(index).lowercase()
+                runCatching { RuntimeCapability.valueOf(wire.uppercase().replace('.', '_')) }.getOrNull()?.let(::add)
+                when (wire) {
+                    "run.create" -> add(RuntimeCapability.CHAT)
+                    "approval.list", "approval.decide" -> add(RuntimeCapability.APPROVALS)
+                    "file.raw.read" -> add(RuntimeCapability.PROJECT_FILES)
+                    "mcp.stdio" -> add(RuntimeCapability.MCP_STDIO)
+                }
             }
         }
-        val limits = root.optJSONObject("limits")
+        val limits = root?.optJSONObject("limits")
         return RuntimeCapabilitySet(
-            schemaVersion = root.optInt("schema_version", 1).coerceAtLeast(1),
+            schemaVersion = root?.optInt("schema_version", 1)?.coerceAtLeast(1) ?: 1,
             values = known,
             limits = RuntimeLimits(
                 maxContextTokens = limits?.positiveIntOrNull("max_context_tokens"),
@@ -68,12 +76,16 @@ object TaskRequirementInferer {
         "workspace.read" to RuntimeCapability.SAF_READ,
         "workspace.search" to RuntimeCapability.SAF_READ,
         "workspace.write" to RuntimeCapability.SAF_WRITE,
+        "powershell.execute" to RuntimeCapability.SHELL,
         "shell.execute" to RuntimeCapability.SHELL,
+        "terminal.pty" to RuntimeCapability.PTY,
         "git.status" to RuntimeCapability.GIT,
         "git.diff" to RuntimeCapability.GIT,
+        "git.command" to RuntimeCapability.GIT,
         "worktree.create" to RuntimeCapability.WORKTREE,
         "codex.run" to RuntimeCapability.CODEX,
         "mcp.call" to RuntimeCapability.MCP,
+        "mcp.stdio.call" to RuntimeCapability.MCP_STDIO,
     )
 
     fun infer(toolIds: Collection<String>, background: Boolean = false): TaskRequirements = TaskRequirements(buildSet {
@@ -81,6 +93,79 @@ object TaskRequirementInferer {
         toolIds.mapNotNull(toolCapabilities::get).forEach(::add)
         if (background) add(RuntimeCapability.BACKGROUND_RUNS)
     })
+}
+
+enum class DesktopHandoffState { NOT_REQUIRED, OFFER, UNAVAILABLE }
+
+enum class DesktopHandoffKind { DESKTOP_NATIVE, MCP_STDIO }
+
+data class DesktopHandoffDecision(
+    val state: DesktopHandoffState,
+    val required: Set<RuntimeCapability> = emptySet(),
+    val target: RuntimeDescriptor? = null,
+    val message: String = "",
+    val kind: DesktopHandoffKind = DesktopHandoffKind.DESKTOP_NATIVE,
+    val resourceId: String? = null,
+    val executionLocation: String = "Desktop Runtime",
+)
+
+/** Detects only explicit Desktop-exclusive requests; it never claims that Android executed them. */
+object DesktopHandoffPlanner {
+    private val shell = Regex("(?i)(powershell|pwsh|shell|terminal|cmd(?:\\.exe)?|命令行|终端|执行命令)")
+    private val pty = Regex("(?i)(pty|交互式终端|interactive terminal)")
+    private val git = Regex("(?i)(?:\\bgit\\b|提交代码|创建分支|切换分支|合并分支|查看 diff)")
+    private val codex = Regex("(?i)(?:\\bcodex\\b|codex cli)")
+    private val stdioMcp = Regex(
+        "(?i)(?:stdio\\s*(?:/|-)?\\s*mcp|mcp\\s*(?:/|-)?\\s*stdio|桌面\\s*(?:stdio\\s*)?mcp|本地进程\\s*mcp)",
+    )
+    private val namedMcpServer = Regex("(?i)(?:server|服务器)\\s*[:=：]?\\s*([A-Za-z0-9_.-]{1,64})")
+    private val taggedMcpServer = Regex("@([A-Za-z0-9_.-]{1,64})")
+
+    fun requiredCapabilities(input: String): Set<RuntimeCapability> = buildSet {
+        if (shell.containsMatchIn(input)) add(RuntimeCapability.SHELL)
+        if (pty.containsMatchIn(input)) add(RuntimeCapability.PTY)
+        if (git.containsMatchIn(input)) add(RuntimeCapability.GIT)
+        if (codex.containsMatchIn(input)) add(RuntimeCapability.CODEX)
+        if (stdioMcp.containsMatchIn(input)) add(RuntimeCapability.MCP_STDIO)
+    }
+
+    fun plan(input: String, remotes: List<RuntimeDescriptor>): DesktopHandoffDecision {
+        val required = requiredCapabilities(input)
+        if (required.isEmpty()) return DesktopHandoffDecision(DesktopHandoffState.NOT_REQUIRED)
+        val target = remotes.asSequence()
+            .filter { it.online && it.binding.authority == RuntimeAuthority.REMOTE_RUNTIME }
+            .filter { it.capabilities.values.containsAll(required + RuntimeCapability.CHAT) }
+            .sortedWith(compareBy<RuntimeDescriptor> { it.displayName }.thenBy { it.binding.runtimeId.value })
+            .firstOrNull()
+        val isStdioMcp = RuntimeCapability.MCP_STDIO in required
+        val kind = if (isStdioMcp) DesktopHandoffKind.MCP_STDIO else DesktopHandoffKind.DESKTOP_NATIVE
+        val resource = if (isStdioMcp) requestedMcpServer(input) else null
+        return if (target == null) DesktopHandoffDecision(
+            DesktopHandoffState.UNAVAILABLE, required,
+            message = if (isStdioMcp) {
+                "Android 不支持本地 stdio MCP；当前没有声明 MCP_STDIO 的在线 Desktop Runtime。" +
+                    "即使存在同名 HTTP MCP，也不会冒充 stdio 执行；尚未调用任何工具。"
+            } else {
+                "此请求需要 Desktop Runtime 的 ${labels(required)} 能力；当前没有满足条件的在线 Runtime，尚未执行任何命令。"
+            },
+            kind = kind, resourceId = resource,
+        ) else DesktopHandoffDecision(
+            DesktopHandoffState.OFFER, required, target,
+            if (isStdioMcp) {
+                "Android 不执行本地 stdio。确认后将把 ${resource?.let { "MCP server $it" } ?: "stdio MCP"} " +
+                    "交给 ${target.displayName}；执行位置为 Desktop Runtime，远端调用仍需审批。"
+            } else {
+                "此请求需要交给 ${target.displayName} 执行 ${labels(required)}。确认后将打开远程 Runtime；Android 尚未执行任何命令。"
+            },
+            kind = kind, resourceId = resource,
+        )
+    }
+
+    fun requestedMcpServer(input: String): String? =
+        namedMcpServer.find(input)?.groupValues?.get(1)
+            ?: taggedMcpServer.find(input)?.groupValues?.get(1)
+
+    private fun labels(values: Set<RuntimeCapability>) = values.map { it.name }.sorted().joinToString(" / ")
 }
 
 data class RuntimeRecommendation(
@@ -129,6 +214,11 @@ data class HandoffPackage(
     val attachments: List<HandoffAttachment>,
     val digest: String,
     val instructionVersions: Map<String, String> = emptyMap(),
+    val kind: DesktopHandoffKind = DesktopHandoffKind.DESKTOP_NATIVE,
+    val executionLocation: String = "Desktop Runtime",
+    val transport: String? = null,
+    val resourceId: String? = null,
+    val remoteToolApprovalRequired: Boolean = true,
 )
 
 object HandoffPackageFactory {
@@ -140,6 +230,8 @@ object HandoffPackageFactory {
         attachments: List<HandoffAttachment>,
         confirmed: Boolean,
         instructionVersions: Map<String, String> = emptyMap(),
+        kind: DesktopHandoffKind = DesktopHandoffKind.DESKTOP_NATIVE,
+        resourceId: String? = null,
     ): HandoffPackage {
         require(confirmed) { "handoff_confirmation_required" }
         require(prompt.isNotBlank()) { "handoff_prompt_required" }
@@ -147,6 +239,9 @@ object HandoffPackageFactory {
         val safeInstructions = instructions.map(SensitiveDataRedactor::redact)
         require(instructionVersions.all { (source, version) -> source.isNotBlank() && version.isNotBlank() }) {
             "handoff_instruction_version_invalid"
+        }
+        require(resourceId == null || resourceId.matches(Regex("^[A-Za-z0-9_.-]{1,64}$"))) {
+            "handoff_resource_id_invalid"
         }
         attachments.forEach {
             require(it.attachmentId.isNotBlank() && it.sha256.matches(Regex("^[a-fA-F0-9]{64}$"))) {
@@ -161,6 +256,11 @@ object HandoffPackageFactory {
             .put("prompt", safePrompt)
             .put("instructions", JSONArray(safeInstructions))
             .put("instruction_versions", JSONObject(instructionVersions.toSortedMap()))
+            .put("kind", kind.name.lowercase())
+            .put("execution_location", "desktop")
+            .putOpt("transport", if (kind == DesktopHandoffKind.MCP_STDIO) "stdio" else null)
+            .putOpt("resource_id", resourceId)
+            .put("remote_tool_approval_required", true)
             .put("attachments", JSONArray(attachments.sortedBy { it.attachmentId }.map {
                 JSONObject().put("id", it.attachmentId).put("sha256", it.sha256.lowercase())
                     .put("mime_type", it.mimeType).put("size", it.size)
@@ -170,6 +270,9 @@ object HandoffPackageFactory {
         return HandoffPackage(
             1, sourceRunId, targetRuntimeId, safePrompt, safeInstructions, attachments, digest,
             instructionVersions.toSortedMap(),
+            kind = kind,
+            transport = if (kind == DesktopHandoffKind.MCP_STDIO) "stdio" else null,
+            resourceId = resourceId,
         )
     }
 
@@ -193,6 +296,7 @@ data class UnifiedRunProjection(
     val tools: Map<String, UnifiedToolState> = emptyMap(),
     val pendingApprovals: Set<String> = emptySet(),
     val artifacts: Set<String> = emptySet(),
+    val handoffs: Map<String, String> = emptyMap(),
     val terminal: String? = null,
     val seenEventIds: Set<String> = emptySet(),
 )
@@ -218,6 +322,9 @@ object UnifiedEventReducer {
             "approval.requested" -> current.copy(pendingApprovals = current.pendingApprovals + event.subjectId.orEmpty(), seenEventIds = seen)
             "approval.decided" -> current.copy(pendingApprovals = current.pendingApprovals - event.subjectId.orEmpty(), seenEventIds = seen)
             "artifact.created" -> current.copy(artifacts = current.artifacts + event.subjectId.orEmpty(), seenEventIds = seen)
+            "handoff.requested" -> current.copy(
+                handoffs = current.handoffs + (event.subjectId.orEmpty() to event.content.orEmpty()), seenEventIds = seen,
+            )
             "run.completed", "run.failed", "run.cancelled" -> current.copy(terminal = event.kind, seenEventIds = seen)
             else -> current.copy(seenEventIds = seen)
         }

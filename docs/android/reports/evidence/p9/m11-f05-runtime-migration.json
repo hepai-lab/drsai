@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "feature_id": "M11-F05",
+  "generated_at": "2026-08-05T14:15:51.302902+00:00",
+  "passed": true,
+  "gates": {
+    "v1_checkpoint_upgrades_to_checksummed_v2_without_receipt_loss": true,
+    "completed_conversation_and_run_remain_readable": true,
+    "recoverable_run_keeps_same_session_run_and_idempotency_identity": true,
+    "tool_receipt_and_skill_version_survive_checkpoint_rewrite": true,
+    "legacy_kotlin_lite_run_is_explicitly_terminal": true,
+    "future_corrupt_or_old_reader_checkpoint_is_explicitly_terminal": true,
+    "unknown_transient_storage_failure_is_not_destroyed_as_incompatible": true,
+    "legacy_active_side_effect_state_projects_to_reconciliation": true,
+    "migration_unit_suites_are_green": true,
+    "current_v156_database_reopen_and_migration_are_green_on_both_devices": true
+  },
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonCheckpointCodec.kt": "12d1ed3ff99b96b8822cfdbdf6e205fddef76da85415aea1a0f3ee4ac28e250d",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/RoomPythonCheckpointStore.kt": "6abc626fcb9b96671edfcb014c62cc2b6864519bfa59f7fc9afdd7a8b37c2f6d",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "apps/android/app/src/main/java/ai/drsai/remote/data/LocalRuntimeV2Recorder.kt": "49f9774e606f675f26eb507e8cd4c8132e87ee4418c3fed3e56665b6bf902b65",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/oaep/LegacyOaepBackfill.kt": "26e4b838353b201f84e2eaf581ae0658ff4503beaac1611f07c9dfb288df17bc",
+    "apps/android/app/src/test/java/ai/drsai/remote/PythonCheckpointCodecTest.kt": "6811332282127ae32b3da696e0bdaaeb99704d8ce8d5f0121411f4d5825e6303",
+    "apps/android/app/src/test/java/ai/drsai/remote/RuntimeV2Test.kt": "e50df59499222969c058c56796e2e9816b111616aa4c7e3e147431f53249a83a",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/P9RuntimeMigrationInstrumentedTest.kt": "d86999ab8fe1646f9177fd683ef89129ccccbf67646657682945364149bb21ad",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/LocalStoreTest.kt": "8dcf9b2bc743ff544fe0946a5def64cf56920d639b1bab7f0069e125972f81df"
+  }
+}

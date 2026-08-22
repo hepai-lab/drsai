@@ -13,8 +13,10 @@ VERSION_FILE = ROOT / "cores/VERSION"
 
 CORE_VERSION = ROOT / "cores/python/packages/drsai/src/drsai/version.py"
 WEBUI_VERSION = ROOT / "apps/webui/backend/src/drsai_ui/ui_backend/version.py"
+TUI_VERSION = ROOT / "apps/ui-tui/src/version.ts"
 DESKTOP_LOCK = ROOT / "apps/desktop/package-lock.json"
 WINDOWS_DESKTOP_PACKAGE = ROOT / "apps/desktop/windows/package.json"
+WINDOWS_DESKTOP_LOCK = ROOT / "apps/desktop/windows/package-lock.json"
 MACOS_DESKTOP_PACKAGE = ROOT / "apps/desktop/macos/package.json"
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
@@ -44,6 +46,17 @@ def update_json_version(path: Path, version: str) -> None:
     replace(path, r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{version}"')
 
 
+def update_workspace_lock_version(path: Path, workspace: str, version: str) -> None:
+    """Update only a named workspace entry, never a dependency version."""
+    replace(
+        path,
+        rf'(^\s{{4}}"{re.escape(workspace)}"\s*:\s*\{{\s*\n'
+        rf'\s{{6}}"name"\s*:\s*"[^"]+",\s*\n'
+        rf'\s{{6}}"version"\s*:\s*)"[^"]+"',
+        rf'\g<1>"{version}"',
+    )
+
+
 def main(argv: list[str]) -> int:
     version = read_target_version(argv)
     VERSION_FILE.write_text(version + "\n", encoding="utf-8")
@@ -63,9 +76,22 @@ def main(argv: list[str]) -> int:
         r'^__version__\s*=\s*"[^"]+"',
         f'__version__ = "{version}"',
     )
+    # TUI (apps/ui-tui) — TypeScript single-quote export.
+    replace(
+        TUI_VERSION,
+        r"^export const VERSION\s*=\s*'[^']+'",
+        f"export const VERSION = '{version}'",
+    )
+    replace(
+        TUI_VERSION,
+        r"^export const __version__\s*=\s*VERSION",
+        f"export const __version__ = VERSION",
+    )
     update_json_version(WINDOWS_DESKTOP_PACKAGE, version)
+    replace(WINDOWS_DESKTOP_LOCK, r'^(\s*"version"\s*:\s*)"[^"]+"', rf'\g<1>"{version}"', expected=2)
     update_json_version(MACOS_DESKTOP_PACKAGE, version)
-    replace(DESKTOP_LOCK, r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{version}"', expected=2)
+    update_workspace_lock_version(DESKTOP_LOCK, "windows", version)
+    update_workspace_lock_version(DESKTOP_LOCK, "macos", version)
 
     print(f"Synchronized DrSai version to {version}")
     return 0

@@ -25,12 +25,45 @@ class WorkspaceInstructionVersionStore(context: Context) {
         require(versions.all { (source, version) -> source.isNotBlank() && version.isNotBlank() }) {
             "instruction_version_invalid"
         }
-        preferences.edit().putString(key(subject, runtimeId, workspaceId), JSONObject(versions.toSortedMap()).toString()).apply()
+        val valueKey = key(subject, runtimeId, workspaceId)
+        val subjectIndex = subjectIndex(subject)
+        val runtimeIndex = runtimeIndex(subject, runtimeId)
+        preferences.edit()
+            .putString(valueKey, JSONObject(versions.toSortedMap()).toString())
+            .putStringSet(subjectIndex, preferences.getStringSet(subjectIndex, emptySet()).orEmpty() + valueKey)
+            .putStringSet(runtimeIndex, preferences.getStringSet(runtimeIndex, emptySet()).orEmpty() + valueKey)
+            .apply()
+    }
+
+    fun clearSubject(subject: String) {
+        val index = subjectIndex(subject)
+        preferences.edit().apply {
+            preferences.getStringSet(index, emptySet()).orEmpty().forEach(::remove)
+            preferences.all.keys.filter { it.startsWith("runtime_index_${subjectDigest(subject)}_") }.forEach(::remove)
+            remove(index)
+        }.apply()
+    }
+
+    fun clearRuntime(subject: String, runtimeId: RuntimeId) {
+        val runtimeIndex = runtimeIndex(subject, runtimeId)
+        val subjectIndex = subjectIndex(subject)
+        val removing = preferences.getStringSet(runtimeIndex, emptySet()).orEmpty()
+        preferences.edit().apply {
+            removing.forEach(::remove)
+            putStringSet(subjectIndex, preferences.getStringSet(subjectIndex, emptySet()).orEmpty() - removing)
+            remove(runtimeIndex)
+        }.apply()
     }
 
     private fun key(subject: String, runtimeId: RuntimeId, workspaceId: WorkspaceId): String =
         MessageDigest.getInstance("SHA-256")
             .digest("$subject\u001f${runtimeId.value}\u001f${workspaceId.value}".encodeToByteArray()).hex()
+
+    private fun subjectDigest(subject: String) = MessageDigest.getInstance("SHA-256")
+        .digest(subject.encodeToByteArray()).hex()
+    private fun subjectIndex(subject: String) = "subject_index_${subjectDigest(subject)}"
+    private fun runtimeIndex(subject: String, runtimeId: RuntimeId) =
+        "runtime_index_${subjectDigest(subject)}_${MessageDigest.getInstance("SHA-256").digest(runtimeId.value.encodeToByteArray()).hex()}"
 
     private fun ByteArray.hex() = joinToString("") { "%02x".format(it) }
 }

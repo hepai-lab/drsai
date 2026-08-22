@@ -70,6 +70,19 @@ jobs:
             --pattern "OpenDrSai-Windows-v*-x64.zip"
           gh release download $tag --repo $env:OPENDRSAI_RELEASE_REPOSITORY --dir release\product-evidence\remote-workspace --clobber `
             --pattern "windows-signatures.json"
+          gh release download $tag --repo $env:OPENDRSAI_RELEASE_REPOSITORY --dir release --clobber `
+            --pattern "windows-sandbox-oidc-evidence-v*.zip"
+
+      - name: Verify sealed real Windows Sandbox OIDC evidence
+        shell: pwsh
+        run: |
+          $archive = Get-ChildItem release -Filter "windows-sandbox-oidc-evidence-v*.zip" | Select-Object -First 1
+          if (-not $archive) { throw "The draft release has no sealed Windows Sandbox OIDC evidence bundle." }
+          $root = "release\product-evidence\windows-sandbox-oidc"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          Expand-Archive -LiteralPath $archive.FullName -DestinationPath $root -Force
+          $env:OPENDRSAI_SANDBOX_EVIDENCE_ROOT = (Resolve-Path $root).Path
+          npm run verify:sandbox-oidc-evidence
 
       - name: Verify draft release artifacts
         env:
@@ -88,4 +101,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release edit "${{ inputs.release_tag }}" --repo $env:OPENDRSAI_RELEASE_REPOSITORY --draft=false
+          gh release edit "${{ inputs.release_tag }}" --repo $env:OPENDRSAI_RELEASE_REPOSITORY --draft=false --latest

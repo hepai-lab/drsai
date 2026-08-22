@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "fixture": "cores/protocol/oaep/examples.json",
+  "canonicalization": "utf8-json-sort-keys-compact-no-nan",
+  "snapshot_sha256": "3a5930a8aeeb1d5e0b3948e3b55e40bab564bb5b0e41cae45a4eb791f8be69b4",
+  "events_sha256": "8179fbeaedd746008e61eca67c6d81c102901d578924836b6ab408547610d3ce",
+  "document_sha256": "3aa8870a99ec16f468c10512d53459604b75a14e25a91bd1ced8b49942cd30e1"
+}

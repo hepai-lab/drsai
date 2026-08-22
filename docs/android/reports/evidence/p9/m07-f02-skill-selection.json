@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "feature_id": "M07-F02",
+  "generated_at": "2026-08-05T14:15:19.038666+00:00",
+  "passed": true,
+  "gates": {
+    "production_selects_skills_from_task_input": true,
+    "selection_is_capability_filtered_and_run_pinned": true,
+    "explicit_and_domain_task_matching_are_supported": true,
+    "irrelevant_tasks_keep_general_agent_semantics": true,
+    "complete_manifest_is_validated_before_filtering": true,
+    "selected_skill_narrows_model_and_execution_registries": true,
+    "out_of_skill_tool_call_fails_closed": true,
+    "system_and_safety_layers_precede_untrusted_skill": true,
+    "python_selection_suite_green": true,
+    "android_selection_suite_green": true,
+    "api35_bundled_kernel_selection_test_green": true
+  },
+  "pytest": {
+    "returncode": 0,
+    "summary": "..............................................                           [100%]\n46 passed in 4.11s"
+  },
+  "android_suite": {
+    "tests": 9,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.SkillCatalogTest",
+    "sha256": "6043704714f184e5128439c363b870819a3f63038d762722fbbaf138b68574b6"
+  },
+  "connected_suite": {
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.SkillSelectionInstrumentedTest",
+    "sha256": "6b1984b987e9f0428c27929177df9d7495a86d7ab6108290b8a8ec06bf0062c4"
+  },
+  "connected_report": "docs/android/reports/evidence/p9/m07-f02-skill-selection-instrumentation.xml",
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/SkillCatalog.kt": "526fa5e68f353119db38024d9232f44da11b996ab26be61e641adc75f64b7676",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/engine.py": "be28389f4db95c1646897b0ea907274beb31aae9b29a49e1d650cc7300aa7db5",
+    "cores/python/packages/drsai/tests/test_mobile_agent_core.py": "e28a759781773bed242010c218e01ef8e2040f0a56459dfa3f9a6de5f35a0b68",
+    "apps/android/app/src/test/java/ai/drsai/remote/SkillCatalogTest.kt": "f11fe77f622586271e4cbdb07ea5aacb29c1db85827315902b2c2841479929e0",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/SkillSelectionInstrumentedTest.kt": "3282f7a00339f8333bc2abbaa2682df3c5c8a688dec5e181995534d3083e587f"
+  }
+}

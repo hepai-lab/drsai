@@ -1,4 +1,9 @@
 <resources>
     <string name="app_name">OpenDrSai</string>
     <string name="logo_content_description">OpenDrSai Logo</string>
+    <string name="run_recovery_channel">任务恢复</string>
+    <string name="run_recovery_title">OpenDrSai 任务可以恢复</string>
+    <string name="run_recovery_body">继续同一任务，或取消并关闭任务</string>
+    <string name="run_recovery_continue">继续</string>
+    <string name="run_recovery_cancel">取消</string>
 </resources>

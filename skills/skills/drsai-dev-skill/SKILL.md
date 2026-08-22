@@ -1,10 +1,10 @@
 ---
 name: drsai-dev-skill
-description: 当用户需要启动、停止、重启、验证 DrSai 前端或后端开发服务，或排查登录/访问/CORS 等开发环境问题时立即使用。适用场景包括：初次部署、环境更换、服务异常排查、服务状态查询、本地登录排错等。
+description: 当用户需要启动、停止、重启、验证 OpenDrSai 前端或后端开发服务，或排查登录/访问/CORS 等开发环境问题时立即使用。适用场景包括：初次部署、环境更换、服务异常排查、服务状态查询、本地登录排错等。
 allowed-tools: Bash(pm2:*) Bash(curl:*) Bash(yarn:*) Bash(node:*) Bash(drsai-ui:*) Bash(drsai:*) Bash(kill:*) Bash(lsof:*) Bash(ss:*) Bash(ip:*) Bash(bash:*) Bash(./drsai-dev.sh:*)
 ---
 
-# DrSai 开发环境管理指南
+# OpenDrSai 开发环境管理指南
 
 ## 首选入口：`drsai-dev.sh`
 
@@ -23,7 +23,7 @@ cd /path/to/drsai
 ```
 
 - 后端：`drsai-ui ui --host 0.0.0.0 --port 4291 --reload`（pm2 进程 `drsai-dev-backend`）
-- 前端：`GATSBY_DEV_PORT=4290 yarn develop`（pm2 进程 `drsai-dev-frontend`）
+- 前端：`GATSBY_DEV_PORT=4290 yarn dev`（pm2 进程 `drsai-dev-frontend`）
 - 端口/环境名可用 env 覆盖：`DRSAI_BACKEND_PORT`、`DRSAI_FRONTEND_PORT`、`DRSAI_CONDA_ENV`
 
 > `run_drsai_ui.sh` 现已是转发到 `./drsai-dev.sh start all` 的薄壳，保留向后兼容。
@@ -117,7 +117,7 @@ drsai-ui ui --host 0.0.0.0 --port 4291 --reload
 # 前端（HMR）
 cd /path/to/drsai/frontend
 yarn install --legacy-peer-deps        # 首次
-GATSBY_DEV_PORT=4290 yarn develop
+GATSBY_DEV_PORT=4290 yarn dev
 ```
 
 | 后端参数 | 默认 | 说明 |

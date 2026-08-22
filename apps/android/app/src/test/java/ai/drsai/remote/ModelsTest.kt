@@ -32,11 +32,26 @@ class ModelsTest {
         assertEquals(listOf("{\"choices\":[]}", "[DONE]"), events)
     }
 
-    @Test fun model_selection_prefers_deepseek_v4_pro_and_falls_back() {
+    @Test fun model_selection_prefers_tool_capable_model_and_falls_back_to_deepseek() {
         val fallback=ModelInfo("fallback")
         val preferred=ModelInfo("deepseek-ai/deepseek-v4-pro")
+        val tools=ModelInfo("gpt-5", tools = true)
+        assertEquals(tools, selectPreferredModel(listOf(fallback, preferred, tools)))
         assertEquals(preferred, selectPreferredModel(listOf(fallback, preferred)))
         assertEquals(fallback, selectPreferredModel(listOf(fallback)))
+    }
+
+    @Test fun model_tool_capability_prefers_explicit_metadata_then_conservative_names() {
+        assertTrue(modelSupportsTools(org.json.JSONObject("""{"supports_tools":true}"""), "deepseek", "DeepSeek"))
+        assertFalse(modelSupportsTools(org.json.JSONObject("""{"supports_tools":false}"""), "gpt-5", "GPT"))
+        assertTrue(modelSupportsTools(org.json.JSONObject(), "openai/gpt-5", "GPT 5"))
+        assertFalse(modelSupportsTools(org.json.JSONObject(), "deepseek-ai/deepseek-v4-pro", "DeepSeek"))
+    }
+
+    @Test fun hai_tool_names_round_trip_without_changing_canonical_oaep_identity() {
+        assertEquals("core__dot__text_stats", toHaiToolName("core.text_stats"))
+        assertEquals("core.text_stats", fromHaiToolName("core__dot__text_stats"))
+        assertEquals("get_current_time", toHaiToolName("get_current_time"))
     }
 
     @Test fun vision_capability_is_explicit_and_deepseek_is_not_assumed_multimodal() {

@@ -9,6 +9,7 @@ const preload = readFileSync(join(root, "..", "shared", "main", "preload.ts"), "
 const app = readFileSync(join(root, "..", "shared", "renderer", "src", "App.tsx"), "utf8");
 const mock = readFileSync(join(root, "..", "shared", "renderer", "src", "mockDesktopApi.ts"), "utf8");
 const smoke = readFileSync(join(root, "src", "main", "e2eSmoke.ts"), "utf8");
+const backgroundTasks = readFileSync(join(root, "src", "main", "backgroundTasks.ts"), "utf8");
 
 const checks = {
   typedDecisionContract: shared.includes('DesktopAnomalyDecision = "keep" | "exclude" | "both"') && shared.includes("DesktopAnomalyDecisionApplyResult"),
@@ -18,7 +19,9 @@ const checks = {
   outputsAndReceipt: main.includes("-保留全部.csv") && main.includes("-排除异常.csv") && main.includes("-异常处理决定.json"),
   threeExclusiveOptions: app.includes('results-anomaly-option-${value}') && app.includes('name={`anomaly-decision-${artifact.id}`}') && app.includes('["keep"') && app.includes('["exclude"') && app.includes('["both"'),
   impactExplanations: app.includes("异常值可能影响整体趋势") && app.includes("便于观察基线") && app.includes("互不覆盖"),
-  decisionPersisted: app.includes("anomalyDecision: result") && app.includes('data-testid="results-anomaly-record"') && app.includes("result.resultSummary"),
+  decisionPersisted: app.includes("anomalyDecision: result") && app.includes('data-testid="results-anomaly-record"') && app.includes("result.resultSummary")
+    && backgroundTasks.includes("normalizeAnomalyDecision(artifact.anomalyDecision)")
+    && backgroundTasks.includes("artifact.anomalyDecision.outputs.map"),
   keyboardNativeControls: app.includes('type="radio"') && app.includes('type="button"') && app.includes('role="status"'),
   packagedThreeBranchCoverage: smoke.includes("runF4AnomalyDecisionSmoke") && smoke.includes("keepBranchExact") && smoke.includes("excludeBranchExact") && smoke.includes("branchIsolation"),
   cernFixturePinned: smoke.includes("f6581e1a255b354667188b41b874b996a300f88bb48912721bc1c854183e913e") && smoke.includes("pdfSize === 7664262"),

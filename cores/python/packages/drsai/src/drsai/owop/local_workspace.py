@@ -138,9 +138,20 @@ class LocalWorkspaceOperations:
         worktree_handlers: Mapping[str, Any] | None = None,
     ):
         self.workspace_id = workspace_id
-        self.root = Path(root).resolve(strict=True)
+        supplied_root = Path(root).absolute()
+        supplied_info = supplied_root.lstat()
+        supplied_attributes = int(getattr(supplied_info, "st_file_attributes", 0))
+        if stat.S_ISLNK(supplied_info.st_mode) or supplied_attributes & int(
+            getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        ):
+            raise ValueError("Workspace root cannot be a symlink or junction")
+        self.root = supplied_root.resolve(strict=True)
+        if os.path.normcase(str(self.root)) != os.path.normcase(str(supplied_root)):
+            raise ValueError("Workspace root must already be canonical")
         if not self.root.is_dir():
             raise ValueError("Workspace root must be a directory")
+        root_info = self.root.stat()
+        self._root_identity = (int(root_info.st_dev), int(root_info.st_ino))
         self.journal = journal
         self.checkpoints = checkpoint_store or WorkspaceCheckpointStore(journal.database.parent, workspace_id, self.root)
         self.process_pty = process_pty or LocalProcessPtyOperations(
@@ -182,14 +193,33 @@ class LocalWorkspaceOperations:
 
     def _path(self, value: str, *, strict: bool) -> Path:
         try:
+            self._assert_root_identity()
             parts = relative_parts(value)
             self._reject_reparse(parts, include_leaf=strict)
             path = resolve_workspace_path(self.root, value, strict=strict)
             self._assert_boundary(path)
+            self._assert_root_identity()
             return path
         except (WorkspacePathError, FileNotFoundError, PermissionError) as exc:
             code = exc.code if isinstance(exc, WorkspacePathError) else "workspace_path_unavailable"
             raise OWOPError(code, str(exc), "operation", details={"path": value}) from exc
+
+    def _assert_root_identity(self) -> None:
+        try:
+            info = self.root.lstat()
+        except (FileNotFoundError, PermissionError) as exc:
+            raise WorkspacePathError("workspace_root_changed", "Workspace root is no longer available.") from exc
+        attributes = int(getattr(info, "st_file_attributes", 0))
+        identity = (int(info.st_dev), int(info.st_ino))
+        if (
+            stat.S_ISLNK(info.st_mode)
+            or attributes & int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+            or identity != self._root_identity
+        ):
+            raise WorkspacePathError(
+                "workspace_root_changed",
+                "Workspace root changed after registration; reopen it before continuing.",
+            )
 
     def _assert_boundary(self, path: Path) -> None:
         root = os.path.normcase(str(self.root))
@@ -215,7 +245,9 @@ class LocalWorkspaceOperations:
 
     def _secure_recheck(self, value: str, *, include_leaf: bool = False) -> None:
         try:
+            self._assert_root_identity()
             self._reject_reparse(relative_parts(value), include_leaf=include_leaf)
+            self._assert_root_identity()
         except WorkspacePathError as exc:
             raise OWOPError(exc.code, str(exc), "operation", details={"path": value}) from exc
 
@@ -263,15 +295,20 @@ class LocalWorkspaceOperations:
         result = {"path": path.relative_to(self.root).as_posix(), "kind": "directory" if path.is_dir() else "file", "size": info.st_size, "modified_ns": info.st_mtime_ns}
         if path.is_file():
             with self._open_read(path) as handle:
-                result["digest"] = _digest(handle.read())
+                snapshot = handle.read()
+                result["size"] = len(snapshot)
+                result["digest"] = _digest(snapshot)
         return result
 
     def read_file(self, params: Mapping[str, Any]) -> dict[str, Any]:
         path = self._path(str(params["path"]), strict=True)
         offset, length = int(params["offset"]), int(params["length"])
         with self._open_read(path) as handle:
-            handle.seek(0, os.SEEK_END)
-            size = handle.tell()
+            digest = hashlib.sha256()
+            size = 0
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
             handle.seek(offset)
             data = handle.read(length)
         return {
@@ -279,7 +316,7 @@ class LocalWorkspaceOperations:
             "offset": offset,
             "size": size,
             "content_base64": base64.b64encode(data).decode("ascii"),
-            "digest": _digest(path.read_bytes()),
+            "digest": f"sha256:{digest.hexdigest()}",
             "binary": b"\x00" in data,
             "eof": offset + len(data) >= size,
         }
@@ -294,7 +331,11 @@ class LocalWorkspaceOperations:
         if not parent.is_dir():
             raise OWOPError("workspace_path_unavailable", "Destination parent does not exist.", "operation")
         expected = params.get("expected_digest")
-        current = path.read_bytes() if path.exists() else None
+        if path.exists():
+            with self._open_read(path) as handle:
+                current = handle.read()
+        else:
+            current = None
         current_digest = _digest(current) if current is not None else None
         if expected is not None and expected != current_digest:
             raise OWOPError(
@@ -316,6 +357,7 @@ class LocalWorkspaceOperations:
             self._secure_recheck(value)
             os.replace(temporary, path)
             temporary = None
+            self._secure_recheck(value, include_leaf=True)
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
@@ -328,11 +370,15 @@ class LocalWorkspaceOperations:
         source = self._path(source_value, strict=True)
         destination = self._path(destination_value, strict=False)
         expected = params.get("expected_digest")
-        if expected is not None and source.is_file() and _digest(source.read_bytes()) != expected:
-            raise OWOPError("owop_conflict", "Source digest changed before move.", "operation")
+        if expected is not None and source.is_file():
+            with self._open_read(source) as handle:
+                actual_digest = _digest(handle.read())
+            if actual_digest != expected:
+                raise OWOPError("owop_conflict", "Source digest changed before move.", "operation")
         destination.parent.mkdir(parents=True, exist_ok=True)
         self._secure_recheck(destination_value)
         os.replace(source, destination)
+        self._secure_recheck(destination_value, include_leaf=True)
         event = self.journal.append(self.workspace_id, "file.renamed", {"source": source_value, "destination": destination_value})
         return {"source": source_value, "destination": destination_value, "event": event}
 
@@ -340,8 +386,12 @@ class LocalWorkspaceOperations:
         value = str(params["path"])
         path = self._path(value, strict=True)
         expected = params.get("expected_digest")
-        if expected is not None and path.is_file() and _digest(path.read_bytes()) != expected:
-            raise OWOPError("owop_conflict", "File digest changed before remove.", "operation")
+        if expected is not None and path.is_file():
+            with self._open_read(path) as handle:
+                actual_digest = _digest(handle.read())
+            if actual_digest != expected:
+                raise OWOPError("owop_conflict", "File digest changed before remove.", "operation")
+        self._secure_recheck(value, include_leaf=True)
         if path.is_dir():
             if not params.get("recursive"):
                 path.rmdir()

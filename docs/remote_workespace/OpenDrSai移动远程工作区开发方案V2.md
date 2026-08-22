@@ -8,6 +8,44 @@
 >
 > 实施进度：[OpenDrSai 移动远程工作区开发进度 V2](./OpenDrSai移动远程工作区开发进度V2.md)
 
+## 0. 当前实施快照（2026-07-26）
+
+| 口径 | 数量 | 说明 |
+| --- | ---: | --- |
+| 功能点总数 | 80 | 10 个模块，每模块 8 项 |
+| `local_pass` | 71 | 已有实现和自动测试证据，但不等同于三端最终验收 |
+| `unverified` | 9 | M01-F07、M05-F04、M09-F08、M10-F03～F08 |
+| `full_pass` | 0 | 只有完成真实 Android + ai-dev + Windows 全链路及 1 小时稳定性后才升级 |
+
+> 设备级配对扩展加入后，以上 `local_pass=71` 仅代表扩展前基线。M02-F08、
+> M04-F02/F05、M05-F03/F06/F07、M09-F04 的原有证据没有覆盖 `device_id`、
+> 设备名、设备密钥绑定和单设备撤销，必须在合同、实现和测试完成后重新生成验收账本；
+> 不得沿用旧 `local_pass` 宣称设备级能力已经通过。
+
+当前已完成到真实链路的目录阶段：Windows Runtime 2.0.0 已通过出站 WSS 接入
+ai-dev；真实 Android 已完成 OIDC 登录、扫码关联、主机/Workspace/Session
+目录与会话内容读取；真实 Workspace 分页、Session/Conversation DTO、身份归一化、
+路径脱敏和跨 Runtime/Workspace 负向门禁均已取得证据。Android 真机的“扫码前不可见”
+也已通过。
+
+当前尚未完成的是交互和最终发布阶段：发送消息、受控 Approval、Windows Tool 执行、
+SSE/Conversation 一致性、Runtime/Relay/Android 故障恢复、撤销后断流与重新关联，以及
+完整 1 小时稳定性。最近一次真机交互复测发现 Android 长会话使用了已过期 bearer；
+目录客户端具备刷新接口，但资源请求和 SSE 尚未统一接入。统一的
+`401 → OIDC refresh → 单次重试` 已写入 Android 目录、Repository、SSE 和真机测试，
+相关单元测试也已补充，但本批改动仍须完成 Gradle 编译、APK 安装和真机复验，因此
+不提前计入 `local_pass` 或 `full_pass`。
+
+验收期间同一个 `runtime_id` 只允许一个 Gateway/Runtime owner。2026-07-26 真机超时的
+直接原因已经确认：安装版 Gateway（`127.0.0.1:18642`）和仓库开发 Gateway
+（`127.0.0.1:18643`）使用同一个 `runtime_id`，持续抢占 Relay ownership。当前已停止
+开发 Gateway PID 31300/41368，只保留安装版；服务端连续 12 秒 generation 固定为
+46066，Android 真机目录恢复 200 并显示 `ZZD-Matebook-B7`。最终 E2E 不得直接启动
+18643 的开发 Gateway；确需使用时，必须先停止安装版，或使用隔离的 `runtime_id`、
+enrollment、状态目录和端口。
+ai-dev 受控故障注入当前保持关闭，只有在正常交互链路通过后才对目标 Runtime 临时启用，
+并在每次成功或失败后立即恢复关闭。
+
 ## 1. 交付目标
 
 用户在 Android 登录 HAI 账号后，扫描 Windows Desktop 生成的一次性二维码，建立当前 HAI 身份与该 Windows Runtime 的授权关联。关联成功后：
@@ -63,7 +101,7 @@ Run 1 ── N Event / Approval
 - 仓库已有 Runtime Relay Schema/OpenAPI、参考 Relay 服务和自动验收夹具。
 - Runtime Engine 已有 Session `archived` 字段和默认排除归档 Session 的查询。
 
-### 3.2 V2 关键缺口
+### 3.2 V2 起始关键缺口
 
 1. ai-dev 目前将“Runtime 注册所有者”误当作“已扫码关联用户”，同账号未扫码也能看到 Runtime。
 2. Windows Runtime 尚未在 ai-dev 形成稳定在线、心跳和 Workspace 发布闭环，Android 当前看到的是离线登记记录。
@@ -72,6 +110,11 @@ Run 1 ── N Event / Approval
 5. 会话内容主要由 Runs + Events 临时重建，缺少面向多客户端、可分页和可恢复的统一 Conversation Projection 合同。
 6. ai-dev 的 Relay 实现仍需完成持久化关联、Runtime WSS 路由、完整业务接口、多实例和审计；现有本地参考实现不能代替生产验收。
 7. 以往的 96/96 和 54/54 验收主要证明本地协议、模拟器和夹具成立，不能视为本 V2 的真实 HAI + Windows + Android 真机验收。
+
+上述条目记录的是 V2 启动时的缺口，不代表当前仍全部存在。当前状态以“0. 当前实施快照”
+和独立进度文档为准；尤其 enrollment/association 分离、在线心跳、权威 Session、
+Workspace 生命周期、Conversation Projection、HAI 多实例 Relay 与审计均已有实现和
+本地/公网分层证据，剩余工作集中在真实交互、故障恢复和最终稳定性门禁。
 
 ## 4. 开发任务总表
 
@@ -107,7 +150,7 @@ Run 1 ── N Event / Approval
 | M01-F04 | 新建 | Workspace 统一为 active/archived/removed，并为 removed 保留墓碑 | 生命周期状态机单测覆盖合法/非法迁移；缓存同步后 removed 项不复活 |
 | M01-F05 | 复用增强 | Session 统一为 active/archived/removed，列表默认只返回 active | 创建三种状态 Session，API 与 Android DAO 均只返回 active |
 | M01-F06 | 复用增强 | Runtime 是运行事实权威；Relay 和 Android 不得自行推进 Run 状态 | 注入伪造 Relay/缓存终态，重新同步后断言以 Runtime 状态覆盖 |
-| M01-F07 | 新建 | 扫码关联授权到 Runtime，并在 scope 内访问其 active Workspace 与已有 Session | 关联前列表为空，关联后可见已有 Session，撤销后全部返回 403/不可见 |
+| M01-F07 | 新建 | 扫码建立 `issuer + subject + device_id → Runtime` 的设备级关联，并在 scope 内访问其 active Workspace 与已有 Session | 同一账号两台 Android 分别配对后产生两个 association；撤销其中一台只使该设备返回 403/不可见 |
 | M01-F08 | 复用增强 | 固化 Android=HTTPS/SSE、Runtime=出站 WSS、无 SSH/公网入站依赖 | 架构规则测试扫描 Android 依赖和二维码字段，断言无 SSH 库、host/port/private_key |
 
 ### M02 Relay Protocol V2 与生成客户端（8 项）
@@ -121,7 +164,7 @@ Run 1 ── N Event / Approval
 | M02-F05 | 新建 | 定义 Session detail 与分页 Conversation Projection 合同 | 1000 条混合消息/工具事件分页，断言顺序稳定、无丢失、无重复 |
 | M02-F06 | 复用增强 | 定义 Run 创建/读取/取消及 Idempotency-Key 合同 | 同幂等键并发提交 100 次，Runtime 中只存在一个 Run |
 | M02-F07 | 复用增强 | 定义 Event SSE `after_sequence`、心跳、gap/expired 和全量恢复合同 | 丢弃一段 Event 后重连，断言自动补齐或显式触发 snapshot，不静默跳过 |
-| M02-F08 | 复用增强 | 定义 Approval 列表/详情/决策、统一错误信封，并生成三端客户端 | 运行生成器后 `git diff --exit-code`；破坏合同 fixture 时 CI 必须失败 |
+| M02-F08 | 复用增强 | 定义 Approval、设备级 Association 列表/撤销、统一错误信封，并生成三端客户端 | Python/Kotlin/TypeScript 均生成 DeviceAssociation DTO；运行生成器后 `git diff --exit-code` |
 
 ### M03 Windows Full Runtime 在线与资源发布（8 项）
 
@@ -141,10 +184,10 @@ Run 1 ── N Event / Approval
 | ID | 类型 | 功能 | 自动测试验收 |
 | --- | --- | --- | --- |
 | M04-F01 | 复用增强 | 在 ai-dev 挂载完整 `/api/runtime-relay/v2` HTTPS、SSE、WSS 路由和独立 OpenAPI | 公网 smoke：health/openapi=200，未认证业务接口=401，不得为 404 |
-| M04-F02 | 新建 | 持久化 Runtime、instance、association、grant、workspace projection 和撤销状态 | 服务重启后数据仍在；数据库迁移 up/down/up 测试通过 |
+| M04-F02 | 新建 | 持久化 Runtime、instance、设备级 association、grant、workspace projection 和撤销状态 | 服务重启后 device_id/name/last_seen 与撤销状态仍在；数据库迁移 up/down/up 测试通过 |
 | M04-F03 | 新建 | 实现 Runtime 出站 WSS 鉴权、唯一活跃 generation 和双向 request/response 路由 | 两连接抢占测试断言旧 generation 失效，请求只到新连接 |
 | M04-F04 | 新建 | 支持多实例 Relay 路由；可用 HepAI DDF/Redis 作内部通道但不改变外部协议 | 两个 Relay 实例分别接 Android/Runtime，跨实例请求和 SSE 均成功 |
-| M04-F05 | 复用增强 | 所有目录和控制 API 统一执行 issuer/subject/association/scope 校验 | 权限矩阵参数化测试覆盖跨账号、跨 issuer、跨 Runtime、跨 Workspace |
+| M04-F05 | 复用增强 | 所有目录和控制 API 统一执行 issuer/subject/device_id/association/scope 校验 | 权限矩阵覆盖跨账号、跨 issuer、跨设备、跨 Runtime、跨 Workspace；被撤销设备不能借同账号其他设备继续访问 |
 | M04-F06 | 复用增强 | 服务端分页、active 过滤、稳定排序、opaque cursor 和查询限额 | 插入 10k 资源并翻页，断言全集等于期望集合且无重复 |
 | M04-F07 | 新建 | Event 转发支持断线续传、背压、限流和 cursor 过期响应 | 慢消费者/断网故障注入，Relay 内存有界且恢复后 Event 完整 |
 | M04-F08 | 复用增强 | Run/Approval 幂等、结构化审计、指标、健康和关联追踪 | 重放请求不重复执行；按 correlation_id 可串起 Android→Relay→Runtime 日志 |
@@ -155,12 +198,65 @@ Run 1 ── N Event / Approval
 | --- | --- | --- | --- |
 | M05-F01 | 复用增强 | Windows 为在线 Runtime 创建短时、一次性 access grant | 冻结时钟测试 TTL，过期后消费返回 grant_expired |
 | M05-F02 | 复用增强 | 二维码只含 version/environment/issuer/opaque code，不含长期凭据和主机地址 | 二维码 fixture/Secret scanner 断言无 token、IP、端口、路径、SSH 字段 |
-| M05-F03 | 复用增强 | Android 严格校验 scheme、版本、issuer、环境并以已登录 OIDC 身份消费 | 参数化恶意二维码全部拒绝，合法 dev 二维码只发往 ai-dev |
-| M05-F04 | 新建 | 分离 Runtime enrollment owner 与 mobile association；同账号也必须扫码 | 新账号和同账号在扫码前 `GET runtimes` 均为空，扫码后仅目标 Runtime 出现 |
+| M05-F03 | 复用增强 | Android 严格校验 scheme、版本、issuer、环境，以已登录 OIDC 身份和应用设备身份消费 | 参数化恶意二维码全部拒绝；合法请求携带稳定随机 device_id、规范化 device_name，只发往 ai-dev |
+| M05-F04 | 新建 | 分离 Runtime enrollment owner、用户身份和物理 Android association；同账号的每台设备也必须分别扫码 | 同账号两台设备扫码前均不可见；分别扫码后各有独立 association，不能共享另一台的设备凭据 |
 | M05-F05 | 新建 | 关联生成最小权限 scope：目录读取、会话读取、Run 发送、Approval 决策 | 删除某一 scope 后，对应 API=403，其余能力仍可用 |
-| M05-F06 | 复用增强 | Grant 单次消费、并发防重放、状态轮询和 Desktop 成功反馈 | 两台客户端并发消费，仅一个 200；Windows 最终显示 consumed 主体摘要 |
-| M05-F07 | 新建 | 支持 Android/Windows 撤销关联和 Runtime 设备撤销 | 撤销后现有 access token/stream/控制请求均失效，缓存从 UI 消失 |
+| M05-F06 | 复用增强 | Grant 单次消费、并发防重放、状态轮询和 Desktop 设备名反馈 | 两台客户端并发消费仅一个 200；Windows 显示成功设备名且不显示原始 OIDC subject |
+| M05-F07 | 新建 | 支持 Android 自撤销、Windows 单设备断开和“撤销此电脑”全量撤销 | 单设备撤销不影响同账号其他设备；撤销电脑后全部 association、stream、控制请求和 enrollment 均失效 |
 | M05-F08 | 复用增强 | 配对日志、诊断包和崩溃信息全链路脱敏 | 运行固定 canary secret 后扫描日志、DB、截图 OCR 和诊断 ZIP，零命中 |
+
+#### M05 设备级配对扩展
+
+该扩展纳入上述 M01-F07、M02-F08、M04-F02/F05、M05-F03/F04/F06/F07，
+不增加功能点总数。目标是让 Windows 能识别和单独撤销同一 HAI 账号下的不同
+Android 安装实例。
+
+设备身份模型：
+
+```text
+RuntimeEnrollment
+    └─ RuntimeAssociation 1..N
+         ├─ issuer + subject
+         ├─ device_id
+         ├─ device_name
+         ├─ device_public_key / key_thumbprint
+         ├─ platform + app_version
+         ├─ created_at + last_seen_at
+         └─ status + revoked_at
+```
+
+- `device_id` 由 Android 应用随机生成并存入安全存储，不使用 IMEI、Android ID、
+  MAC、电话号码等硬件或广告标识；卸载重装后默认视为新设备。
+- `device_name` 默认取规范化后的系统市场名称，允许用户修改；它只是展示信息，
+  不能作为认证、授权或数据库唯一键。
+- 每个 association 必须绑定 `issuer + subject + device_id + runtime_id`；推荐同时
+  绑定 Android Keystore 生成的不可导出私钥公钥指纹，防止复制本地状态冒充设备。
+- Device DTO 对 Windows 只返回 `association_id`、安全设备名、脱敏主体摘要、
+  platform/app_version、created_at、last_seen_at、status；不返回 OIDC subject、
+  token、Grant code 或设备公钥原文。
+- 设备名必须执行长度、控制字符、路径、URL/IP 和双向文本字符校验，避免 UI 欺骗、
+  日志注入和路径泄露。
+- `last_seen_at` 只由通过完整 bearer、device binding、association 和 scope 校验的
+  成功请求更新，并进行写入节流。
+
+Windows Desktop 交互：
+
+```text
+Android 端                    [已启用] [撤销此电脑] [连接 Android]
+让 OpenDrSai Android 安全连接此电脑的 Runtime。
+
+    Galaxy S24 Ultra       最近访问 10:32                 [断开]
+    ZZD 的 MatePad         离线 · 昨天 18:10              [断开]
+```
+
+- Android 主行展示真实 readiness 状态图标：`ready=已启用`，其他状态显示
+  `未启用/凭据失效/离线`，不能仅依据前端缓存推断。
+- “撤销此电脑”位于“连接 Android”左侧，必须二次确认；它撤销 enrollment 和全部
+  Android association，是电脑丢失或凭据泄露时使用的高风险操作。
+- 已配对设备作为 Android 主行下方的缩进列表；每项显示设备名、状态/最近访问时间和
+  “断开”。单项断开只撤销对应 `association_id`。
+- 设备列表为空时显示“尚未配对设备”，不得显示历史 revoked 设备；刷新和撤销失败
+  需要明确错误与重试入口。
 
 ### M06 Android 主机/工作区/会话导航（8 项）
 
@@ -208,7 +304,7 @@ Run 1 ── N Event / Approval
 | M09-F01 | 复用增强 | Wi-Fi/蜂窝/VPN/短时断网只重建传输，不重复 Run/Approval | 网络切换故障注入后统计 Runtime 对象数，断言无重复 |
 | M09-F02 | 复用增强 | Runtime 重启后重新握手、刷新 capabilities、核对活跃 Run | 重启 Windows Runtime，Android 自动恢复且不复用旧 generation |
 | M09-F03 | 新建 | Relay 重启和多实例切换不丢 association，运行状态从 Runtime 恢复 | Run 中途滚动重启 Relay，最终 transcript/event hash 不变 |
-| M09-F04 | 复用增强 | 跨 issuer/subject/runtime/workspace/session 的 IDOR 与票据重放防护 | 安全参数化测试全部返回 401/403/404，目标资源无访问审计以外副作用 |
+| M09-F04 | 复用增强 | 跨 issuer/subject/device/runtime/workspace/session 的 IDOR 与票据重放防护 | 安全参数化测试全部返回 401/403/404；复制另一设备的 device_id 或 association_id 不能获得访问 |
 | M09-F05 | 复用增强 | OIDC token、设备凭据、grant、消息和命令参数在日志/缓存中脱敏 | canary secret 扫描 APK、日志、Room、Relay DB、Runtime DB 和诊断包零泄漏 |
 | M09-F06 | 新建 | 全链路 correlation_id、Runtime 在线指标、请求延迟、SSE gap、Approval 延迟可观测 | 自动执行一次 Run，并从三端日志/指标查询到同一 correlation_id |
 | M09-F07 | 复用增强 | 目录、Session 首屏和 Event 延迟达到 P95 门槛并限制内存 | 100 Workspace/10k Session/10k Event 压测：目录和首屏 P95<2s，Event P95<500ms |
@@ -221,8 +317,8 @@ Run 1 ── N Event / Approval
 | M10-F01 | 复用增强 | 建立 Protocol V2 单元、Schema、生成零漂移 CI | Windows/Android/Python CI 一键执行，合同变更未生成时失败 |
 | M10-F02 | 复用增强 | 本地可控 Relay + Windows Runtime + Android Emulator 闭环 | 一条脚本从注册、扫码、浏览、发消息到审批全部通过并输出 JSON |
 | M10-F03 | 新建 | ai-dev 公网合同与部署 smoke 纳入自动门禁 | health/openapi/WSS/401/分页/错误信封自动探测，任何 404 或漂移失败 |
-| M10-F04 | 新建 | 使用真实 HAI 测试账号完成“未扫码不可见、扫码后可见”验收 | 清理关联后列表为空；消费临时 grant 后仅目标 Runtime 出现 |
-| M10-F05 | 新建 | Windows Desktop + ai-dev + Android 真机完成主机/Workspace/Session 浏览 | 测试预置 2 Workspace、归档/移除混合数据，真机 UIAutomator 断言过滤正确 |
+| M10-F04 | 新建 | 使用真实 HAI 测试账号和两台设备完成“未扫码不可见、扫码后按设备可见”验收 | 同账号 A/B 设备分别扫码；撤销 A 后 A=403、B 继续 200，Windows 设备列表只剩 B |
+| M10-F05 | 新建 | Windows Desktop + ai-dev + Android 真机完成设备名、主机/Workspace/Session 浏览 | Windows 语义树断言启用图标、两台设备名和单独断开；Android UIAutomator 断言 active 资源过滤正确 |
 | M10-F06 | 新建 | 真机完成历史查看、发送消息、实时输出和 Approval 决策 | 唯一 canary 消息触发受控 Approval，真机批准后 Windows Tool 成功并返回结果 |
 | M10-F07 | 新建 | 真机执行断网、后台、杀进程、Runtime/Relay 重启及越权负向矩阵 | 自动收集每项结果，断言无重复 Run、无丢 Event、无越权、可恢复 |
 | M10-F08 | 新建 | 形成 80 项机器可读验收清单、证据包和发布阻断规则 | 汇总器校验 80/80、三端 commit/version、测试报告、截图和 1h 稳定性报告齐全 |
@@ -322,6 +418,7 @@ Windows Desktop + Full Agent Runtime
 固定验收数据至少包括：
 
 - 2 个 HAI 测试主体；
+- 同一 HAI 主体下至少 2 个独立 Android device_id，其中一台用于单设备撤销；
 - 2 个 Runtime，其中一个在线、一个离线；
 - 5 个 Workspace：2 active、1 archived、1 removed、1 与另一 Runtime 同名；
 - 每个 active Workspace 至少 3 个 Session：Windows 预创建、Android 创建、archived；
@@ -334,6 +431,8 @@ V2 只有同时满足以下条件才算完成：
 
 - 80/80 功能点的机器可读验收全部通过；
 - 未扫码时，即使 Android 与 Windows 使用同一个 HAI 账号，也看不到该 Runtime；
+- 同一 HAI 账号的每台 Android 必须独立配对；Windows 能显示安全设备名并单独撤销，
+  被撤销设备立即失效且不影响其他仍授权设备；
 - 扫码后真机显示正确主机、active Workspace 和 Windows 已有 active Session；
 - Android 能读取完整会话、发送消息、取消及处理 Approval；
 - Agent 和 Tool 的实际进程与副作用均发生在 Windows；

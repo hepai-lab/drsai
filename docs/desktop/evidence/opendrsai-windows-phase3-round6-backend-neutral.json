@@ -1,0 +1,27 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 6,
+  "captured_at": "2026-08-05",
+  "scope": "Backend-neutral OpenDrSai Desktop Runtime path; Codex Adapter behavior unchanged",
+  "progress": {
+    "accepted": 0,
+    "total": 50,
+    "percent": 0,
+    "in_progress": ["M09-F01", "M09-F03"]
+  },
+  "implemented": [
+    "Renamed shared active Runtime target, OAEP projection, emit, mapping, cancellation, approval, Goal confirmation, and recovery state away from Codex-specific terminology.",
+    "Kept Codex-specific account/model preflight explicitly inside the codex@1 branch.",
+    "Extracted the first-run presentation into a standalone renderer component as the first App.tsx domain split."
+  ],
+  "verified": [
+    { "command": "npm run typecheck", "cwd": "apps/desktop/windows", "result": "passed" },
+    { "command": "npm run verify:structured-conversation", "cwd": "apps/desktop/windows", "result": "passed" },
+    { "command": "npm run verify:chat-output", "cwd": "apps/desktop/windows", "result": "passed" },
+    { "command": "npm run verify:opendrsai-backend-neutral", "cwd": "apps/desktop/windows", "result": "passed", "summary": "5 legacy shared Runtime/OAEP identifiers absent" }
+  ],
+  "remaining_acceptance_evidence": {
+    "M09-F01": "Model settings, task shell, results, and diagnostics containers still need extraction; App.tsx retains domain draft state.",
+    "M09-F03": "More backend-specific local variable/type names remain outside the shared Runtime target; packaged digest parity and a full static path rule remain required."
+  }
+}

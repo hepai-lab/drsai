@@ -7,8 +7,16 @@ import sys
 import pytest
 
 
-MODULE = Path(__file__).parents[1] / "src" / "drsai" / "backend" / "terminal_state_service.py"
-SCREEN_MODULE = MODULE.with_name("terminal_screen.py")
+MODULE = (
+    Path(__file__).parents[1]
+    / "src"
+    / "drsai"
+    / "backend"
+    / "runtime"
+    / "terminal"
+    / "state_service.py"
+)
+SCREEN_MODULE = MODULE.with_name("screen.py")
 SCREEN_SPEC = importlib.util.spec_from_file_location("terminal_screen", SCREEN_MODULE)
 assert SCREEN_SPEC and SCREEN_SPEC.loader
 screen_module = importlib.util.module_from_spec(SCREEN_SPEC)

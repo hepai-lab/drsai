@@ -5,6 +5,7 @@ import type {
   DesktopShareSensitiveFindingKind,
   DesktopShareSensitiveResolution,
 } from "../api/desktopApi";
+import { scanSensitiveData } from "../api/sensitiveData";
 
 export interface SensitiveMatch {
   findingId: string;
@@ -17,41 +18,17 @@ export interface SensitiveMatch {
   value: string;
 }
 
-interface PatternDefinition {
-  kind: DesktopShareSensitiveFindingKind;
-  severity: SensitiveMatch["severity"];
-  expression: RegExp;
-  captureGroup?: number;
-}
-
-const PATTERNS: PatternDefinition[] = [
-  { kind: "api_key", severity: "high", expression: /\b(?:api[_ -]?key)\b\s*[:=]\s*["']?([A-Za-z0-9._~+\/-]{8,})/gi, captureGroup: 1 },
-  { kind: "user_secret", severity: "high", expression: /\b(?:user[_ -]?secret|token|secret|password)\b\s*[:=]\s*["']?([A-Za-z0-9._~+\/-]{8,})/gi, captureGroup: 1 },
-  { kind: "bearer_token", severity: "high", expression: /\bBearer\s+([A-Za-z0-9._~-]{12,})/gi, captureGroup: 1 },
-  { kind: "api_key", severity: "high", expression: /\bsk-[A-Za-z0-9_-]{12,}\b/g },
-  { kind: "email", severity: "personal", expression: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi },
-  { kind: "phone", severity: "personal", expression: /(?<!\d)1[3-9]\d{9}(?!\d)/g },
-];
-
 export function scanSensitiveText(text: string, artifactId: string, artifactLabel: string): SensitiveMatch[] {
-  const matches: SensitiveMatch[] = [];
-  for (const pattern of PATTERNS) {
-    pattern.expression.lastIndex = 0;
-    let result: RegExpExecArray | null;
-    while ((result = pattern.expression.exec(text)) !== null) {
-      const value = pattern.captureGroup ? result[pattern.captureGroup] : result[0];
-      if (!value) continue;
-      const offset = pattern.captureGroup ? result[0].indexOf(value) : 0;
-      const start = result.index + Math.max(0, offset);
-      const end = start + value.length;
-      if (matches.some((item) => start < item.end && end > item.start)) continue;
-      matches.push({
-        findingId: findingId(artifactId, pattern.kind, value), artifactId, artifactLabel,
-        kind: pattern.kind, severity: pattern.severity, start, end, value,
-      });
-    }
-  }
-  return matches.sort((left, right) => left.start - right.start);
+  return scanSensitiveData(text).map((match) => ({
+    findingId: findingId(artifactId, match.kind as DesktopShareSensitiveFindingKind, match.value),
+    artifactId,
+    artifactLabel,
+    kind: match.kind as DesktopShareSensitiveFindingKind,
+    severity: match.severity,
+    start: match.start,
+    end: match.end,
+    value: match.value,
+  }));
 }
 
 export function publicSensitiveFindings(matches: SensitiveMatch[]): DesktopShareSensitiveFinding[] {

@@ -9,7 +9,70 @@ import type {
 } from "./browser/types";
 import type { ExecutionActionKind } from "./executionPolicy";
 import type { DesktopPlatformDescriptor } from "./platform";
-import type { StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
+import type { InteractionOption, StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
+import type { OaepEvent } from "./oaep.generated";
+export type { InteractionOption } from "./structuredConversation";
+import type {
+  RunInspection,
+  RunInspectionOpenRequest,
+  RunItemLocator,
+  RunItemLocatorRequest,
+  RunManifestReadRequest,
+  RunManifestExportResult,
+  RunReproductionManifest,
+  SessionRunList,
+  SessionRunsReadRequest,
+} from "./runInspection";
+import type {
+  CreateReplayPlanRequest,
+  CreateRunExperimentRequest,
+  GetRunExperimentCapabilitiesRequest,
+  FinalizeRunExperimentCandidateRequest,
+  CreateRunComparisonRequest,
+  CreateRunComparisonEvaluationRequest,
+  GetRunAdoptionPreviewRequest,
+  ApplyRunAdoptionRequest,
+  DiscardRunAdoptionRequest,
+  RuntimeApprovalRequired,
+  RuntimeRunApprovalDecisionRequest,
+  RuntimeSecurityApprovalDecisionRequest,
+  DeleteRunExperimentRequest,
+  RunExperimentPackageExportResult,
+  ExecuteReplayPlanRequest,
+  GetReplayBoundariesRequest,
+  GetReplayPlanRequest,
+  GetWorktreeAdoptionPreviewRequest,
+  GetRunExperimentRequest,
+  GetRunComparisonRequest,
+  ListRunComparisonEvaluationsRequest,
+  GetRunRelationsRequest,
+  ReplayBoundaries,
+  ReplayPlan,
+  ReplayExecutionResult,
+  RunExperiment,
+  RunExperimentCapabilities,
+  RunExperimentCandidateSnapshot,
+  RunRelations,
+  RunComparison,
+  RunComparisonEvaluation,
+  RunComparisonEvaluationList,
+  RunAdoption,
+  WorktreeAdoptionPreview,
+  ApplyWorktreeAdoptionRequest,
+  WorktreeAdoptionApplyResult,
+  UpdateRunExperimentRequest,
+} from "./runExperiment";
+export type * from "./runExperiment";
+export type {
+  RunInspection,
+  RunInspectionOpenRequest,
+  RunItemLocator,
+  RunItemLocatorRequest,
+  RunManifestReadRequest,
+  RunReproductionManifest,
+  SessionRunList,
+  SessionRunsReadRequest,
+} from "./runInspection";
 import type {
   DiagnosticClearResult,
   DiagnosticEvent,
@@ -154,6 +217,28 @@ export interface GatewayStatus {
   baseUrl: string;
   pid: number | null;
   lastLog: string;
+  portOpen?: boolean;
+  diagnosticCode?: string;
+  diagnosticMessage?: string;
+  endpoints?: {
+    health: GatewayEndpointStatus;
+    models: GatewayEndpointStatus;
+  };
+}
+
+export type GatewayEndpointState =
+  | "ok"
+  | "not_checked"
+  | "unauthorized"
+  | "unreachable"
+  | "timeout"
+  | "invalid_response"
+  | "http_error";
+
+export interface GatewayEndpointStatus {
+  ok: boolean;
+  statusCode: number | null;
+  state: GatewayEndpointState;
 }
 
 export interface UpdateStatus {
@@ -185,21 +270,31 @@ export interface UpdateStatus {
   errorCode: string | null;
   error: string | null;
   recovery: "automatic-rollback" | null;
+  source: "cdn" | "github" | "test" | null;
+  fallbackUsed: boolean;
 }
 
-export type CodexBackendState = "available" | "not_installed" | "version_incompatible" | "not_logged_in" | "fault";
+export type CodexBackendState = "available" | "not_installed" | "version_incompatible" | "not_logged_in" | "account_unavailable" | "fault";
 
 export interface CodexBackendStatus {
   backendId: "codex";
   state: CodexBackendState;
   available: boolean;
+  installed?: boolean;
+  authenticated?: boolean;
+  contractCompatible?: boolean;
+  executable?: boolean;
   version: string | null;
   loggedIn: boolean;
   authMode: string | null;
   accountLabel: string | null;
   reason: string | null;
   retryable: boolean;
-  action: "none" | "install" | "upgrade" | "login" | "restart";
+  action: "none" | "install" | "upgrade" | "login" | "reconnect" | "restart";
+  appServerState?: "running" | "stopped" | "fault";
+  connectionState?: string;
+  transport?: "local-process" | "ssh" | string;
+  adapterVersion?: string;
 }
 
 export interface CodexBackendLogin {
@@ -227,6 +322,19 @@ export interface AuthSession {
   authProvider?: "ihep" | "wechat" | "hai" | "local" | null;
   accessTokenExpiresAt?: string | null;
   refreshable?: boolean;
+}
+
+// Read-only migration alias. Current Agent identities come from config.toml
+// and configs/agents, never from a product-wide constant.
+export const LEGACY_MY_DRSAI_AGENT_ID = "my-drsai";
+export const LOCAL_OPENDRSAI_AGENT_NAME = "OpenDrSai";
+
+export interface ConfiguredAgentDescriptor {
+  agent_name: string;
+  display_name: string;
+  enabled: boolean;
+  config_file: string;
+  current: boolean;
 }
 
 export interface DesktopBootstrapResult {
@@ -274,6 +382,10 @@ export interface DesktopA5ServiceGuidanceScenario {
 
 export type OidcLoginDebugStage =
   | "started"
+  | "device-code-request"
+  | "device-code-ready"
+  | "device-code-polling"
+  | "device-code-slow-down"
   | "callback-listening"
   | "discovery"
   | "authorize-url"
@@ -292,32 +404,174 @@ export interface OidcLoginDebugEvent {
   message: string;
   at: string;
   url?: string;
-}
-
-export interface DesktopSsoStartResult {
-  ok: boolean;
-  message: string;
-  deviceCode?: string;
-  loginUrl?: string;
+  userCode?: string;
   expiresAt?: string;
-  intervalSeconds?: number;
-}
-
-export interface DesktopSsoPollResult {
-  ok: boolean;
-  state: "pending" | "authorized" | "expired" | "cancelled" | "error";
-  message: string;
-  session?: AuthSession | null;
 }
 
 export type DesktopVoiceRuntimeId =
   | "mock-local"
   | "gateway-provider"
-  | "local-whisper";
+  | "local-whisper"
+  | "realtime-provider";
 
-export type DesktopVoiceInteractionMode = "serial" | "streaming";
+export type DesktopVoiceInteractionMode = "serial" | "streaming" | "duplex";
 
 export type DesktopStreamingAudioEncoding = "pcm_s16le";
+
+export const DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION = 1 as const;
+
+export type DesktopDuplexVoiceAudioEncoding = "pcm_s16le" | "pcm_f32le";
+export type DesktopDuplexVoiceTerminalState = "completed" | "cancelled" | "failed";
+export type DesktopDuplexVoiceConnectionState = "connecting" | "connected" | "reconnecting" | "reconnected" | "disconnected";
+export type DesktopDuplexVoiceErrorCode =
+  | "auth"
+  | "model"
+  | "protocol"
+  | "network"
+  | "device"
+  | "audio"
+  | "rate_limit"
+  | "policy"
+  | "cancelled"
+  | "internal";
+
+export interface DesktopDuplexVoiceError {
+  code: DesktopDuplexVoiceErrorCode;
+  message: string;
+  retryable: boolean;
+  providerCode?: string;
+  requestId?: string;
+}
+
+export interface DesktopDuplexVoiceCapabilities {
+  protocolVersion: typeof DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION;
+  inputAudioEncodings: DesktopDuplexVoiceAudioEncoding[];
+  outputAudioEncodings: DesktopDuplexVoiceAudioEncoding[];
+  inputSampleRatesHz: number[];
+  outputSampleRatesHz: number[];
+  supportsInputTranscription: boolean;
+  supportsOutputTranscription: boolean;
+  supportsServerVad: boolean;
+  supportsResponseCancel: boolean;
+  supportsConversationTruncation: boolean;
+  supportsToolCalling: boolean;
+  supportsSessionResume: boolean;
+  maxUplinkBufferedAudioMs: number;
+  maxPlaybackBufferedAudioMs: number;
+  maxSessionDurationSeconds?: number;
+}
+
+export interface DesktopDuplexVoiceSessionStartRequest {
+  protocolVersion: typeof DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION;
+  sessionId: string;
+  providerId: string;
+  modelId: string;
+  inputEncoding: DesktopDuplexVoiceAudioEncoding;
+  inputSampleRateHz: number;
+  outputEncoding: DesktopDuplexVoiceAudioEncoding;
+  outputSampleRateHz: number;
+  channels: 1;
+  languageHint?: string;
+  voice?: string;
+  instructions?: string;
+  enableInputTranscription: boolean;
+  enableOutputTranscription: boolean;
+  enableServerVad: boolean;
+  enableToolCalling: boolean;
+}
+
+export interface DesktopDuplexVoiceSessionStartResult {
+  sessionId: string;
+  acceptedAt: string;
+  runtimeId: "realtime-provider" | "mock-local";
+  providerId: string;
+  modelId: string;
+  capabilities: DesktopDuplexVoiceCapabilities;
+}
+
+export interface DesktopDuplexVoiceInterruptRequest {
+  sessionId: string;
+  responseId: string;
+  itemId: string;
+  contentIndex: number;
+  playedAudioMs: number;
+  reason: "user_speech" | "manual" | "stop_intent";
+}
+
+export interface DesktopDuplexVoiceToolResultRequest {
+  sessionId: string;
+  callId: string;
+  output: string;
+}
+
+export interface DesktopDuplexVoiceHistoryAppendRequest {
+  threadId: string;
+  messages: Array<{ id: string; role: "user" | "assistant"; content: string; statusContent?: string }>;
+}
+
+export interface DesktopDuplexVoiceAudioChunk {
+  protocolVersion: typeof DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION;
+  sessionId: string;
+  sequence: number;
+  capturedAtMs: number;
+  durationMs: number;
+  encoding: DesktopDuplexVoiceAudioEncoding;
+  sampleRateHz: number;
+  channels: 1;
+  audioData: Uint8Array;
+}
+
+export interface DesktopDuplexVoiceAudioDelta {
+  responseId: string;
+  itemId: string;
+  contentIndex: number;
+  sequence: number;
+  encoding: DesktopDuplexVoiceAudioEncoding;
+  sampleRateHz: number;
+  channels: 1;
+  audioData: Uint8Array;
+}
+
+export interface DesktopDuplexVoiceTranscriptDelta {
+  itemId: string;
+  responseId?: string;
+  contentIndex: number;
+  text: string;
+}
+
+export interface DesktopDuplexVoiceToolCall {
+  callId: string;
+  itemId: string;
+  name: string;
+  argumentsJson: string;
+}
+
+export type DesktopDuplexVoiceEvent = {
+  protocolVersion: typeof DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION;
+  sessionId: string;
+  sequence: number;
+} & (
+  | { type: "session_started"; runtimeId: "realtime-provider" | "mock-local"; providerId: string; modelId: string; capabilities: DesktopDuplexVoiceCapabilities }
+  | { type: "connection_state"; state: DesktopDuplexVoiceConnectionState; attempt?: number }
+  | { type: "input_audio_ack"; acknowledgedSequence: number; bufferedAudioMs: number }
+  | { type: "flow_control"; direction: "uplink" | "playback"; paused: boolean; bufferedAudioMs: number; reason: "high_watermark" | "low_watermark" }
+  | { type: "input_speech_started"; itemId?: string; audioStartMs?: number }
+  | { type: "input_speech_stopped"; itemId?: string; audioEndMs?: number }
+  | { type: "input_transcript_delta"; delta: DesktopDuplexVoiceTranscriptDelta }
+  | { type: "input_transcript_completed"; itemId: string; text: string }
+  | { type: "response_started"; responseId: string }
+  | { type: "response_audio_delta"; delta: DesktopDuplexVoiceAudioDelta }
+  | { type: "response_audio_completed"; responseId: string; itemId: string; contentIndex: number }
+  | { type: "response_transcript_delta"; delta: DesktopDuplexVoiceTranscriptDelta }
+  | { type: "response_transcript_completed"; responseId: string; itemId: string; text: string }
+  | { type: "tool_call"; call: DesktopDuplexVoiceToolCall }
+  | { type: "usage_update"; inputAudioMs: number; outputAudioMs: number; inputTokens: number | null; outputTokens: number | null; estimatedCostUsd: number | null; warning: boolean; exceeded: boolean }
+  | { type: "diagnostic"; metrics: { connectMs: number | null; firstInputEventMs: number | null; ttfaMs: number | null; reconnects: number; interrupts: number; maxBufferedAudioMs: number; inputAudioMs: number; outputAudioMs: number } }
+  | { type: "interrupted"; responseId: string; playedAudioMs: number; reason: "user_speech" | "manual" | "stop_intent" }
+  | { type: "completed"; terminal: "completed" }
+  | { type: "cancelled"; terminal: "cancelled" }
+  | { type: "failed"; terminal: "failed"; error: DesktopDuplexVoiceError }
+);
 
 export interface DesktopStreamingVoiceCapabilities {
   serialStt: boolean;
@@ -329,10 +583,34 @@ export interface DesktopStreamingVoiceCapabilities {
   supportsPartialTranscripts: boolean;
   supportsProviderEndpointing: boolean;
   supportsSessionResume: boolean;
+  supportsAdaptiveEndpointing?: boolean;
+  supportsContextualRepair?: boolean;
+  supportsProviderFailover?: boolean;
+  protocolVersion?: 1 | 2;
   maxBufferedAudioMs: number;
 }
 
+export type DesktopTranscriptRepairSourceType = "later_speech" | "conversation_summary" | "user_dictionary" | "workspace_term";
+
+export interface DesktopTranscriptRepairSource {
+  type: DesktopTranscriptRepairSourceType;
+  label?: string;
+}
+
+export interface DesktopTranscriptRepairCandidate {
+  id: string;
+  revision: number;
+  originalText: string;
+  suggestedText: string;
+  confidence: number;
+  sources: DesktopTranscriptRepairSource[];
+  risk: "none" | "meaning_change" | "sensitive_value" | "command_or_code";
+  autoAccept: boolean;
+  reasons: string[];
+}
+
 export interface DesktopStreamingVoiceStartRequest {
+  protocolVersion?: 1 | 2;
   turnId: string;
   languageHint?: string;
   encoding: DesktopStreamingAudioEncoding;
@@ -350,6 +628,7 @@ export interface DesktopStreamingVoiceStartResult {
 }
 
 export interface DesktopStreamingVoiceAudioChunk {
+  protocolVersion?: 1 | 2;
   sessionId: string;
   turnId: string;
   sequence: number;
@@ -377,7 +656,7 @@ export interface DesktopStreamingVoiceTranscriptSegment {
   endMs?: number;
 }
 
-export type DesktopStreamingVoiceTranscriptionEvent =
+export type DesktopStreamingVoiceTranscriptionEvent = { protocolVersion?: 1 | 2 } & (
   | { sessionId: string; turnId: string; sequence: number; type: "accepted"; runtimeId: DesktopVoiceRuntimeId }
   | { sessionId: string; turnId: string; sequence: number; type: "audio_ack"; ack: DesktopStreamingVoiceAudioAck }
   | { sessionId: string; turnId: string; sequence: number; type: "flow_control"; paused: boolean; bufferedAudioMs: number; reason: "high_watermark" | "low_watermark" }
@@ -387,7 +666,8 @@ export type DesktopStreamingVoiceTranscriptionEvent =
   | { sessionId: string; turnId: string; sequence: number; type: "endpoint"; reason: "provider" | "local_vad" | "manual" }
   | { sessionId: string; turnId: string; sequence: number; type: "completed" }
   | { sessionId: string; turnId: string; sequence: number; type: "failed"; error: DesktopVoiceError }
-  | { sessionId: string; turnId: string; sequence: number; type: "cancelled" };
+  | { sessionId: string; turnId: string; sequence: number; type: "cancelled" }
+);
 
 export interface DesktopStreamingVoiceTtsSegmentRequest {
   sessionId: string;
@@ -506,7 +786,6 @@ export interface LoginRequest {
   email?: string;
   password?: string;
   apiKey?: string;
-  defaultModel?: string;
   developerBypass?: boolean;
   oidc?: boolean;
   rememberMe?: boolean;
@@ -531,6 +810,8 @@ export interface DesktopVoiceSynthesisRequest {
   voice?: string;
   speed?: number;
   format?: DesktopVoiceAudioFormat;
+  /** Optional runtime override; defaults to the globally configured runtime. */
+  runtime?: DesktopVoiceSynthesisRuntimeId;
 }
 
 export interface DesktopVoiceSynthesisStartResult {
@@ -620,12 +901,30 @@ export interface ChatAttachment {
   blockedReason?: string;
 }
 
+export interface OaepInputResource {
+  protocol: "oaep.input/1";
+  resource_id: string;
+  kind: ChatAttachment["kind"];
+  name: string;
+  permission: "read";
+  status: "encoded";
+  reference?: string;
+  content?: string;
+  mime?: string;
+  title?: string;
+  url?: string;
+  size_bytes?: number;
+  sha256?: string;
+  captured_at?: string;
+}
+
 export interface ChatRequest {
   requestId?: string;
   agentId?: string;
   model?: string;
   workspacePath?: string;
   workspaceId?: string;
+  workspaceName?: string;
   threadId?: string;
   sessionId?: string;
   runId?: string;
@@ -636,6 +935,7 @@ export interface ChatRequest {
 
 export interface ChatToolTimelineEvent {
   id: string;
+  oaepItemId?: string;
   kind: "tool_call" | "tool_result" | "log" | "diff" | "artifact";
   title: string;
   status?: "started" | "running" | "completed" | "failed";
@@ -678,23 +978,31 @@ export interface ChatEvent {
   requestId: string;
   /** Monotonic per-request sequence assigned by the main process. */
   seq?: number;
-  type: "start" | "structured" | "chunk" | "reasoning" | "status" | "connection" | "tool_timeline" | "input_request" | "done" | "error" | "aborted";
+  type: "start" | "oaep" | "structured" | "chunk" | "reasoning" | "status" | "connection" | "tool_timeline" | "input_request" | "done" | "error" | "aborted";
   content?: string;
   error?: string;
   level?: "INFO" | "WARNING" | "ERROR" | "DEBUG" | "TRACE" | "FATAL" | string;
   toolTimeline?: ChatToolTimelineEvent;
   prompt?: string;
-  inputType?: "text_input" | "approval";
+  inputRequestId?: string;
+  inputType?: "text_input" | "approval" | "choice" | "confirmation";
+  inputOptions?: InteractionOption[];
+  inputDefault?: string;
+  inputAllowCustom?: boolean;
+  inputTimeoutAt?: string;
   sessionId?: string;
   runId?: string;
   failureRecovery?: DesktopFailureRecovery;
+  errorEnvelope?: RuntimeErrorEnvelope;
   structuredEvent?: StructuredConversationEvent;
+  /** Authoritative OAEP event, forwarded unchanged for diagnostics and protocol inspection. */
+  oaepEvent?: OaepEvent;
   connection?: {
     status: "retrying" | "restored";
     attempt: number;
     delayMs?: number;
     timestamp: string;
-    source: "gateway" | "remote-gateway" | "codex-runtime";
+    source: "gateway" | "remote-gateway" | "opendrsai-runtime" | "codex-runtime";
   };
 }
 
@@ -1132,6 +1440,58 @@ export interface DesktopProjectSkillPublishResult {
   approvalQueued?: boolean;
 }
 
+
+export interface GatewaySkill {
+  name: string;
+  category: string;
+  description: string;
+  path: string;
+  size?: number;
+  mtime?: number;
+}
+
+export interface GatewayAvailableSkill extends GatewaySkill {
+  source: string;
+  installed: boolean;
+}
+
+export interface GatewaySkillInstallRequest {
+  name: string;
+  content?: string;
+  source?: string;
+  userId?: string;
+}
+
+export interface GfsObjectInfo {
+  path: string;
+  size: number;
+  etag: string;
+  modifiedMs: number;
+  isDir: boolean;
+}
+
+export interface GfsListRequest {
+  prefix?: string;
+  recursive?: boolean;
+  maxItems?: number;
+}
+
+export interface GfsListResult {
+  items: GfsObjectInfo[];
+  prefix: string;
+  truncated: boolean;
+}
+
+export interface GfsUploadRequest {
+  localPath: string;
+  remotePath: string;
+}
+
+export interface GfsDownloadRequest {
+  remotePath: string;
+  localPath: string;
+}
+
 export type DesktopWorkflowTemplateStatus =
   | "available"
   | "preview"
@@ -1384,6 +1744,7 @@ export interface DesktopBackgroundTask {
   createdAt: string;
   updatedAt: string;
   workspacePath?: string;
+  threadId?: string;
   targetId?: string;
   approvalId?: string;
   currentStep?: string;
@@ -1410,6 +1771,7 @@ export interface DesktopTaskArtifactLink {
   label: string;
   path: string;
   kind: "file" | "presentation" | "report" | "folder";
+  provenance?: DesktopArtifactProvenance;
   quality?: DesktopArtifactQuality;
   chartQuality?: DesktopChartDataQuality;
   editLineage?: DesktopArtifactEditLineage;
@@ -1965,6 +2327,7 @@ export interface DesktopBackgroundTaskEnqueueRequest {
   source: DesktopBackgroundTaskSource;
   title: string;
   workspacePath?: string;
+  threadId?: string;
   targetId?: string;
   approvalId?: string;
   currentStep?: string;
@@ -2810,7 +3173,6 @@ export interface AgentRunRequest {
   task: string;
   executionDepth?: AgentTaskDepth;
   executionPlan?: DesktopTaskPlanStep[];
-  model?: string;
   workspacePath?: string;
   files?: unknown[];
   teamConfig?: Record<string, unknown> | null;
@@ -2855,10 +3217,49 @@ export interface DesktopAgent {
   logo?: string;
   examples?: DesktopAgentExample[] | string;
   error?: string;
+  catalogState?: "live" | "cached";
+}
+
+export interface DesktopArtifactProvenanceInput {
+  summary: string;
+  attachments: string[];
+  digest: string;
+}
+
+export interface DesktopArtifactProvenanceTarget {
+  artifactId: string;
+  version: number;
+  versionId: string;
+}
+
+/** Public, path-free identity chain for navigating and verifying a result's origin. */
+export interface DesktopArtifactProvenance {
+  schemaVersion: "opendrsai.result-provenance/1";
+  sourceTaskId: string;
+  sourceSessionId: string;
+  sourceRunId: string;
+  input: DesktopArtifactProvenanceInput;
+  target: DesktopArtifactProvenanceTarget;
+  capturedAt: string;
+  sourceDigest: string;
+}
+
+export type RuntimeErrorCategory = "binding" | "auth" | "transport" | "contract" | "model" | "approval" | "resource" | "history" | "runtime" | "backend" | "unknown";
+export type RuntimeRecoveryAction = "retry" | "login" | "sync" | "repair" | "new_task" | "select_model" | "remove_resource" | "reconnect" | "diagnostics" | "continue" | "redo" | "abandon";
+export interface RuntimeErrorEnvelope {
+  code: string;
+  category: RuntimeErrorCategory;
+  retryable: boolean;
+  user_message_key: string;
+  recovery_actions: RuntimeRecoveryAction[];
+  diagnostic_reference: string;
+  redacted_details: Record<string, unknown>;
+  message?: string;
 }
 
 export interface DesktopAgentListOptions {
   refresh?: boolean;
+  preferCache?: boolean;
 }
 
 export interface DesktopAgentPreferenceResult {
@@ -2878,8 +3279,242 @@ export interface MyDrSaiTokenizerCalibrationSample {
   tokens: number;
 }
 
+export type RuntimeModelInputModality = "text" | "image" | "audio" | "video";
+export type RuntimeModelOutputModality = "text" | "image" | "audio" | "video";
+export type RuntimeModelOperation = "chat" | "tool_calling" | "reasoning" | "image_generation" | "image_edit" | "speech_to_text" | "text_to_speech" | "video_generation";
+export type RuntimeModelAvailability = "available" | "configured_unverified" | "unavailable" | "stale" | "offline" | "unauthorized" | "error";
+export type RuntimeModelCapabilitySource = "user_override" | "provider" | "builtin" | "unknown";
+export type RuntimeModelCapabilityConfidence = "verified" | "declared" | "inferred" | "unknown";
+export type RuntimeModelCatalogState = "fresh" | "stale" | "offline" | "unauthorized" | "error";
+
+export interface RuntimeModelRef {
+  provider_id: string;
+  model_id: string;
+  catalog_revision?: string;
+}
+
+export interface RuntimeModelDescriptor {
+  ref: RuntimeModelRef;
+  display_name: string;
+  input_modalities: RuntimeModelInputModality[];
+  output_modalities: RuntimeModelOutputModality[];
+  operations: RuntimeModelOperation[];
+  reasoning_efforts: Array<"none" | "low" | "medium" | "high" | "xhigh" | "max">;
+  token_limit?: number | null;
+  max_output_tokens?: number | null;
+  availability: RuntimeModelAvailability;
+  capability_source: RuntimeModelCapabilitySource;
+  capability_confidence: RuntimeModelCapabilityConfidence;
+  updated_at?: string | null;
+}
+
+export type AgentModelSelection = { mode: "explicit"; ref?: RuntimeModelRef | null };
+
+export interface AgentModelPolicy {
+  agent_id: string;
+  primary_model: AgentModelSelection;
+  image_understanding_model?: AgentModelSelection | null;
+  image_generation_model?: AgentModelSelection | null;
+  text_to_speech_model?: AgentModelSelection | null;
+  realtime_voice_model?: AgentModelSelection | null;
+  speech_to_text_model?: AgentModelSelection | null;
+  reasoning_effort?: "none" | "low" | "medium" | "high" | "xhigh" | "max" | null;
+  /** @deprecated Migrated to image_generation_model. */
+  image_model?: AgentModelSelection | null;
+  expected_revision?: string | null;
+}
+
+export interface MyDrSaiAgentModelPolicy extends AgentModelPolicy {
+  effective_ref?: RuntimeModelRef | null;
+  effective_image_ref?: RuntimeModelRef | null;
+  effective_image_understanding_ref?: RuntimeModelRef | null;
+  effective_image_generation_ref?: RuntimeModelRef | null;
+  effective_text_to_speech_ref?: RuntimeModelRef | null;
+  effective_realtime_voice_ref?: RuntimeModelRef | null;
+  effective_speech_to_text_ref?: RuntimeModelRef | null;
+  revision: string;
+  valid: boolean;
+  error?: string | null;
+  migrated?: boolean;
+  warning?: string | null;
+}
+
+export interface ChatTurnIdentity {
+  requestId: string;
+  sessionId?: string;
+  runId?: string;
+}
+
+export interface ChatTurnCancelResult {
+  accepted: boolean;
+  state: "cancelling" | "cancelled" | "completed" | "failed" | "not_found";
+}
+
+export type AgentResourceMode = "inherit" | "explicit" | "all_enabled";
+
+export interface AgentToolPolicy {
+  agent_id: string;
+  mode: AgentResourceMode;
+  enabled: string[];
+  disabled: string[];
+  require_approval: string[];
+  revision: string;
+  expected_revision?: string | null;
+}
+
+export interface AgentToolPreviewRow {
+  tool_id: string;
+  status: "configured" | "available" | "degraded" | "credential_required" | "runtime_unavailable" | "unsupported_platform" | "disabled";
+  error?: string | null;
+  capabilities: string[];
+  selected: boolean;
+}
+
+export interface AgentToolPreview {
+  agent_id: string;
+  mode: AgentResourceMode;
+  tools: AgentToolPreviewRow[];
+  missing_ids: string[];
+  disabled_ids: string[];
+  agent_revision: string;
+  registry_revision: string;
+}
+
+export interface AgentSkillPolicy {
+  agent_id: string;
+  mode: AgentResourceMode;
+  enabled: string[];
+  disabled: string[];
+  allow_thread_override: boolean;
+  revision: string;
+  expected_revision?: string | null;
+}
+
+export interface AgentSkillPreview {
+  agent_id: string;
+  mode: AgentResourceMode;
+  skills: Array<GatewaySkill & { enabled_for_agent: boolean }>;
+  enabled_ids: string[];
+  missing_ids: string[];
+  allow_thread_override: boolean;
+  revision: string;
+}
+
+export interface AgentKnowledgePolicy {
+  agent_id: string;
+  mode: AgentResourceMode;
+  sources: string[];
+  retrieval_policy: "auto" | "always" | "never";
+  top_k: number;
+  score_threshold: number;
+  require_citations: boolean;
+  revision: string;
+  expected_revision?: string | null;
+}
+
+export interface KnowledgeBaseResource {
+  knowledge_id: string;
+  display_name: string;
+  type: "local-files" | "ragflow";
+  enabled: boolean;
+  config: Record<string, unknown>;
+  credential_configured?: boolean;
+  status?: "not_indexed" | "indexing" | "ready" | "stale" | "failed" | "credential_required" | "configured" | "disabled";
+  document_count?: number;
+  chunk_count?: number;
+  selected?: boolean;
+}
+
+export interface PerceptorResource {
+  perceptor_id: string;
+  name?: string | null;
+  kind: "public_web" | "large_facility_data";
+  adapter: "tavily" | "facility_gateway";
+  enabled: boolean;
+  capabilities: string[];
+  config: Record<string, unknown>;
+  revision: string;
+}
+
+export interface SavePerceptorRequest {
+  perceptor_id: string;
+  name?: string;
+  kind: "public_web" | "large_facility_data";
+  adapter: "tavily" | "facility_gateway";
+  enabled: boolean;
+  capabilities: string[];
+  config: Record<string, unknown>;
+}
+
+export interface SaveKnowledgeBaseRequest {
+  knowledge_id: string;
+  display_name: string;
+  type: "local-files" | "ragflow";
+  enabled: boolean;
+  config: Record<string, unknown>;
+  credential?: string;
+}
+
+export interface AgentKnowledgePreview {
+  agent_id: string;
+  mode: AgentResourceMode;
+  sources: string[];
+  missing_ids: string[];
+  knowledge_bases: KnowledgeBaseResource[];
+  retrieval_policy: "auto" | "always" | "never";
+  top_k: number;
+  score_threshold: number;
+  require_citations: boolean;
+  revision: string;
+}
+
+export interface KnowledgeSearchEvidence {
+  knowledge_id: string;
+  document_id: string;
+  chunk_id: string;
+  source: string;
+  score: number;
+  content_sha256: string;
+  content?: string;
+}
+
+export interface ModelCapabilityProbeStatus {
+  probe_id: string;
+  agent_id: string;
+  provider_id: string;
+  model_id: string;
+  operation: string;
+  protocol: string;
+  status: "verified" | "runtime_verified" | "unsupported" | "unavailable" | "inconclusive" | "stale" | "error";
+  started_at: string;
+  duration_ms: number;
+  error_code?: string | null;
+  retryable: boolean;
+}
+
+export type ModelCapabilityProbeOperation = "chat" | "tool_calling" | "reasoning" | "image_generation" | "image_edit" | "text_to_speech" | "speech_to_text";
+export interface ModelCapabilityProbeResult extends ModelCapabilityProbeStatus {
+  upstream_model_id?: string;
+  http_status?: number | null;
+  may_incur_cost?: boolean;
+  evidence_kind?: "real_provider" | "configuration";
+  assertions?: Array<{ id: string; passed: boolean; detail?: string }>;
+}
+
+export interface AgentModelCapabilityStatus {
+  agent_id: string;
+  capabilities: ModelCapabilityProbeStatus[];
+}
+
+export interface RuntimeModelCatalog {
+  models: RuntimeModelDescriptor[];
+  revision: string;
+  state: RuntimeModelCatalogState;
+}
+
 export interface MyDrSaiModelConfig {
   alias: string;
+  provider_id?: string;
   display_name?: string;
   client_type?: string;
   model?: string;
@@ -2887,12 +3522,16 @@ export interface MyDrSaiModelConfig {
   max_tokens?: number;
   tokenizer_calibration?: MyDrSaiTokenizerCalibrationSample[];
   vision?: boolean;
+  input_modalities?: RuntimeModelInputModality[];
+  output_modalities?: RuntimeModelOutputModality[];
+  operations?: RuntimeModelOperation[];
+  reasoning_efforts?: Array<"none" | "low" | "medium" | "high" | "xhigh" | "max">;
+  availability?: RuntimeModelAvailability;
+  capability_source?: RuntimeModelCapabilitySource;
   reasoning?: MyDrSaiReasoningConfig;
 }
 
 export interface MyDrSaiCliConfig {
-  user_id?: string;
-  defult_config_name?: string;
   plan_mode?: boolean;
   workspace_enabled?: boolean;
   dangerous_allowed?: boolean;
@@ -2907,13 +3546,199 @@ export interface MyDrSaiConfig {
   cliPath?: string;
   config: MyDrSaiCliConfig;
   models: MyDrSaiModelConfig[];
-  defaultModelAlias?: string;
+  /** Provider definitions and their persisted local model catalogs. This is
+   * intentionally independent from the currently effective Agent model. */
+  modelProviders?: MyDrSaiModelProvider[];
+  modelConnection?: MyDrSaiModelConnection;
+  modelCatalog?: {
+    state: RuntimeModelCatalogState | "unconfigured" | "empty" | "timeout";
+    revision?: string;
+    message?: string;
+  };
   error?: string;
 }
 
+export interface CodexWorkspaceSessionSyncResult {
+  workspaceId: string;
+  cancelled?: boolean;
+  discovered: number;
+  active: number;
+  archived: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  conflicts?: number;
+  threads: DesktopThread[];
+}
+
+export interface CodexWorkspaceSessionSyncProgress {
+  requestId: string;
+  phase: "discovered" | "read" | "projected" | "persisted" | "cancelled";
+  completed: number;
+  total: number;
+}
+
+export interface MyDrSaiModelProvider {
+  name: string;
+  base_url: string;
+  anthropic_base_url?: string;
+  google_base_url?: string;
+  wire_api: "openai" | "anthropic" | "gemini";
+  requires_api_key: boolean;
+  has_api_key: boolean;
+  api_key_source?: string;
+  models_file?: string;
+  models?: string[];
+  model_aliases?: Record<string, string>;
+  model_upstream_ids?: Record<string, string>;
+  model_operations?: Record<string, RuntimeModelOperation[]>;
+  model_configs?: Record<string, MyDrSaiProviderModelConfig>;
+}
+
+export type MyDrSaiModelApiProtocol = "openai" | "anthropic" | "gemini";
+export type MyDrSaiModelModality = "text" | "image" | "audio" | "video";
+export type MyDrSaiModelCapability = RuntimeModelOperation | "speech_to_text" | "text_to_speech" | "video_generation";
+
+export interface MyDrSaiProviderModelConfig {
+  alias?: string;
+  input_modalities: MyDrSaiModelModality[];
+  output_modalities: MyDrSaiModelModality[];
+  api_protocol: MyDrSaiModelApiProtocol;
+  enabled: boolean;
+  capabilities: MyDrSaiModelCapability[];
+  upstream_id?: string;
+}
+
+export interface MyDrSaiModelConnection {
+  model: string;
+  model_provider: string;
+  provider: MyDrSaiModelProvider;
+  providers?: MyDrSaiModelProvider[];
+  path?: string;
+  metadata?: { known_model?: boolean; metadata_source?: string; token_limit?: number; max_tokens?: number; vision?: boolean };
+  revision?: string;
+  warnings?: string[];
+  runtime?: { configured_revision: string; runtime_revisions: string[]; runtime_status: "not_started" | "applied" | "partially_applied" | "pending_next_turn"; active_runtime_count: number };
+  last_test?: { provider: string; model?: string; mode: string; ok: boolean; tested_at: string; error?: string; status_code?: number; fingerprint?: string; last_success?: { provider: string; model?: string; mode: string; ok: boolean; tested_at: string; fingerprint?: string } } | null;
+}
+
+export interface MyDrSaiProviderPreset {
+  id: string;
+  label: string;
+  base_url: string;
+  anthropic_base_url?: string;
+  google_base_url?: string;
+  default_model?: string;
+  wire_api: MyDrSaiModelApiProtocol;
+  requires_api_key: boolean;
+  api_key_env?: string;
+  base_url_editable: boolean;
+  supports_model_discovery: boolean;
+  auth_mode?: "oidc" | "api_key" | "none";
+}
+
+export interface MyDrSaiModelDiscoveryResult {
+  ok: boolean;
+  provider?: string;
+  models: string[];
+  cached?: boolean;
+  descriptors?: RuntimeModelDescriptor[];
+  catalog_revision?: string;
+  catalog_state?: RuntimeModelCatalogState;
+  updated_at?: string;
+  error?: string;
+}
+
+export interface MyDrSaiProviderReference {
+  kind:
+    | "agent_model_policy"
+    | "agent_image_model_policy"
+    | "agent_image_understanding_model_policy"
+    | "agent_text_to_speech_model_policy"
+    | "agent_speech_to_text_model_policy";
+  id: string;
+  label: string;
+  model_id: string;
+}
+
+export interface MyDrSaiProviderDeletePreflight {
+  provider: string;
+  references: MyDrSaiProviderReference[];
+  can_delete: boolean;
+}
+
+export interface MyDrSaiModelProviderDraft {
+  base_url: string;
+  anthropic_base_url?: string;
+  google_base_url?: string;
+  api_key?: string;
+  api_key_env?: string;
+  wire_api: MyDrSaiModelApiProtocol;
+  requires_api_key: boolean;
+  models?: string[] | Record<string, MyDrSaiProviderModelConfig>;
+  model_aliases?: Record<string, string>;
+  model_upstream_ids?: Record<string, string>;
+  model_operations?: Record<string, RuntimeModelOperation[]>;
+}
+
+export interface SaveMyDrSaiModelProviderRequest extends MyDrSaiModelProviderDraft {
+  expected_revision?: string;
+}
+
+export interface UpdateMyDrSaiModelConnectionRequest {
+  model: string;
+  model_provider: string;
+  base_url?: string;
+  anthropic_base_url?: string;
+  google_base_url?: string;
+  api_key?: string;
+  api_key_env?: string;
+  api_key_credential?: string;
+  wire_api?: MyDrSaiModelApiProtocol;
+  requires_api_key?: boolean;
+  models?: string[] | Record<string, MyDrSaiProviderModelConfig>;
+  model_aliases?: Record<string, string>;
+  model_upstream_ids?: Record<string, string>;
+  model_operations?: Record<string, RuntimeModelOperation[]>;
+  expected_revision?: string;
+}
+
+export interface MyDrSaiProviderTestResult {
+  ok: boolean;
+  provider?: string;
+  model?: string;
+  wire_api?: string;
+  error?: "timeout" | "connection_failed" | "authentication_failed" | "permission_denied" | "endpoint_not_found" | "model_not_found" | "invalid_response" | "model_output_empty" | "model_output_mismatch";
+  status_code?: number;
+  persisted?: boolean;
+  may_incur_cost?: boolean;
+  output?: string;
+  guidance?: { code: string; title: string; message: string; actions: string[]; retryable: boolean; localizations?: Record<string, { title: string; message: string; actions: string[] }> };
+}
+
+export interface MyDrSaiModelConfigPreview {
+  ok: true;
+  persisted: false;
+  base_revision: string;
+  effective: MyDrSaiModelConnection;
+}
+
+export interface MyDrSaiModelDoctorCheck {
+  id: string;
+  status: "ok" | "warning" | "error";
+  message: string;
+  guidance?: MyDrSaiProviderTestResult["guidance"];
+}
+
+export interface MyDrSaiModelDoctorResult {
+  ok: boolean;
+  revision: string;
+  last_known_good_available: boolean;
+  checks: MyDrSaiModelDoctorCheck[];
+  effective?: MyDrSaiModelConnection;
+}
+
 export interface UpdateMyDrSaiConfigRequest {
-  user_id?: string;
-  defult_config_name?: string;
   plan_mode?: boolean;
   workspace_enabled?: boolean;
   dangerous_allowed?: boolean;
@@ -2951,6 +3776,17 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   /** Canonical structured display representation; legacy fields remain during migration. */
   parts?: ChatMessagePart[];
   structuredTurn?: StructuredTurnState;
+  /** User-visible attachment chips; not part of the model prompt text. */
+  attachments?: ChatAttachment[];
+  inputRequest?: {
+    requestId: string;
+    prompt: string;
+    inputType: "text_input" | "approval" | "choice" | "confirmation";
+    options?: InteractionOption[];
+    defaultValue?: string;
+    allowCustom?: boolean;
+    timeoutAt?: string;
+  };
   startedAt?: number;
   lastEventAt?: number;
 }
@@ -2961,6 +3797,131 @@ export interface DesktopThreadSnapshot {
   messages: DesktopThreadMessageSnapshot[];
   updatedAt: number;
   messageCount: number;
+  history?: DesktopThreadHistoryState;
+  connectionState?: "connected" | "retrying" | "degraded" | "action-required";
+}
+
+export interface DesktopThreadHistoryState {
+  state: "loading" | "ready" | "partial" | "error";
+  source: "opendrsai" | "codex";
+  syncedAt?: string;
+  loadedRuns: number;
+  totalRuns: number;
+  loadedItems: number;
+  totalItems: number;
+  correctedItems?: number;
+  warningCount?: number;
+  message?: string;
+  nextCursor?: string | null;
+  truncated?: boolean;
+}
+
+export interface DesktopThreadSnapshotEvent {
+  version: 1;
+  projection: "oaep/1" | "conversation/1";
+  threadId: string;
+  runtimeSessionId: string;
+  sessionSequence: number;
+  generation: number;
+  snapshot: DesktopThreadSnapshot;
+  source?: "cache" | "runtime" | "persisted";
+}
+
+/**
+ * Authoritative pull response for the same transactional boundary used by
+ * pushed snapshots.  A caller must apply the snapshot, sequence and
+ * generation together; applying only the content can leave the Patch v2
+ * cursor permanently out of sync.
+ */
+export type DesktopThreadSnapshotEnvelope = DesktopThreadSnapshotEvent;
+
+export interface DesktopThreadSnapshotRequest {
+  forceFresh?: boolean;
+  minimumSequence?: number;
+  expectedGeneration?: number;
+  historyCursor?: string;
+}
+
+export interface DesktopThreadSnapshotPatchEvent {
+  version: 2;
+  threadId: string;
+  runtimeSessionId: string;
+  baseSequence: number;
+  sessionSequence: number;
+  generation: number;
+  patch: {
+    kind: "item.upsert";
+    runId: string;
+    itemId: string;
+    message: DesktopThreadMessageSnapshot;
+    insertAt: number;
+    updatedAt: number;
+    messageCount: number;
+  } | {
+    kind: "item.delta";
+    runId: string;
+    itemId: string;
+    messageId: string;
+    delta: { kind: string; text: string; segmentId?: string };
+    updatedAt: number;
+    messageCount: number;
+  } | {
+    kind: "item.remove";
+    runId: string;
+    itemId: string;
+    removeMessageIds: string[];
+    updatedAt: number;
+    messageCount: number;
+  } | {
+    kind: "run.state";
+    runId: string;
+    message?: DesktopThreadMessageSnapshot;
+    insertAt?: number;
+    updatedAt: number;
+    messageCount: number;
+  } | {
+    /** Full replacement is reserved for explicit hydrate/resync/migration. */
+    kind: "run.replace";
+    runId: string;
+    removeMessageIds: string[];
+    insertAt: number;
+    messages: DesktopThreadMessageSnapshot[];
+    updatedAt: number;
+    messageCount: number;
+  } | {
+    kind: "connection.state";
+    state: "connected" | "retrying" | "degraded" | "action-required";
+    updatedAt: number;
+  };
+}
+
+export type DesktopRuntimeLogProtocol = "runtime" | "oaep/1" | "conversation/1";
+export type DesktopRuntimeLogPhase = "capability" | "snapshot" | "replay" | "stream" | "event" | "cursor" | "retry" | "lifecycle";
+
+/** Read-only, sanitized evidence describing how Desktop consumes Runtime protocols. */
+export interface DesktopRuntimeLogEvent {
+  id: string;
+  timestamp: string;
+  level: "debug" | "info" | "warn" | "error";
+  status: "started" | "running" | "waiting" | "completed" | "failed" | "cancelled";
+  protocol: DesktopRuntimeLogProtocol;
+  phase: DesktopRuntimeLogPhase;
+  operation: string;
+  message: string;
+  threadId: string;
+  sessionId: string;
+  runId?: string;
+  itemId?: string;
+  eventType?: string;
+  sequence?: number;
+  cursor?: number;
+  source?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface DesktopThreadCatalogEvent {
+  thread: DesktopThread;
+  source: "runtime-session";
 }
 
 export interface DesktopThreadContentSearchRequest {
@@ -3049,6 +4010,11 @@ export interface DesktopWorktreeEventBatch {
     data: Record<string, unknown>;
   }>;
   nextSequence: number;
+  degraded?: {
+    code: string;
+    message: string;
+    retryable: boolean;
+  };
 }
 
 export interface DesktopWorktreeSummary {
@@ -3543,6 +4509,7 @@ export interface RemoteSshWorkspaceDescriptor {
 }
 
 export type PlatformAgentState =
+  | "loading"
   | "ready"
   | "native_api_unavailable"
   | "requires_login"
@@ -3557,6 +4524,12 @@ export interface PlatformAgentStatus {
   lastCheckedAt: string | null;
   lastSuccessfulSyncAt?: string | null;
   cacheState?: "none" | "fresh" | "stale";
+}
+
+export interface DesktopAgentCatalogSnapshot {
+  agents: DesktopAgent[];
+  platformStatus: PlatformAgentStatus;
+  loadedAt: string;
 }
 
 export type ManagerPresentationProgressPhase =
@@ -3959,6 +4932,35 @@ export interface UpdateThreadRequest {
   unread?: boolean;
 }
 
+/** Read-only conversation share (local HTML preview + optional WebUI public link). */
+export interface CreateThreadShareRequest {
+  threadId: string;
+  /** When omitted, all non-system messages are included. */
+  messageIds?: string[];
+  title?: string;
+}
+
+export interface DesktopThreadShareResult {
+  shareId: string;
+  threadId: string;
+  title: string;
+  messageCount: number;
+  filePath: string;
+  /** file:// URL for opening a local preview in a browser */
+  fileUrl: string;
+  /**
+   * Public WebUI share URL (`/share?token=...`) when publish succeeded.
+   * Prefer this for "Copy link" so others can open it.
+   */
+  publicShareUrl?: string;
+  shareToken?: string;
+  /** Present when local HTML was saved but WebUI publish failed. */
+  publishError?: string;
+  deepLink: string;
+  createdAt: string;
+  readOnly: true;
+}
+
 export interface AgentRunEvent {
   requestId: string;
   sessionId: string;
@@ -3969,6 +4971,14 @@ export interface AgentRunEvent {
   fileEvent?: AgentRunFileEvent;
   planAdjustment?: DesktopTaskPlanAdjustment;
   failureRecovery?: DesktopFailureRecovery;
+  /** Durable OAEP Item identity retained when adapting Runtime events for the Agent surface. */
+  oaepItemId?: string;
+  /** Turn-local structured event sequence used to prove ordered Replay/Live parity. */
+  structuredSequence?: number;
+  /** Stable Tool/Skill invocation identity shared with OAEP, audit, and side-effect records. */
+  callId?: string;
+  operationId?: string;
+  correlationId?: string;
 }
 
 export interface AgentRunFileEvent {
@@ -4199,7 +5209,7 @@ export type DesktopOpenRequest =
   | { kind: "settings"; source: "menu" };
 
 export interface DesktopLifecycleEvent {
-  reason: "resume" | "network-online" | "display-change" | "renderer-recovered" | "gpu-recovered";
+  reason: "suspend" | "lock-screen" | "resume" | "unlock-screen" | "network-online" | "display-change" | "renderer-recovered" | "gpu-recovered";
   recoveredGateway: boolean;
   at: string;
 }
@@ -4226,12 +5236,15 @@ export type DesktopMobilePairingReadinessState =
   | "ready"
   | "not_registered"
   | "credential_invalid"
-  | "offline";
+  | "offline"
+  | "paused";
 
 export interface DesktopMobilePairingReadiness {
   state: DesktopMobilePairingReadinessState;
   action: string;
   runtime_id?: string;
+  /** Runtime process identity used to prove Workspace/Session routing. */
+  gateway_runtime_id?: string;
   environment?: string;
 }
 
@@ -4247,9 +5260,22 @@ export interface DesktopMobilePairingGrant {
 export interface DesktopMobileAssociation {
   association_id: string;
   subject_summary: string;
+  device_summary: string;
+  device_name: string;
   status: "active" | "revoked";
+  access_state: "online" | "offline" | "accessing" | "revoked";
   created_at: string;
+  last_seen_at?: string | null;
   revoked_at?: string | null;
+  device_type: "android";
+  workspace_scope: "all" | "selected";
+  workspace_ids?: string[];
+  permissions: Array<"read" | "send" | "approve" | "files">;
+}
+
+export interface DesktopMobilePairingScope {
+  workspace_scope: "all" | "selected";
+  workspace_ids: string[];
 }
 
 export interface DesktopRuntimeEnrollmentRevocation {
@@ -4258,7 +5284,38 @@ export interface DesktopRuntimeEnrollmentRevocation {
   revoked_at?: string | null;
 }
 
+export interface DesktopRuntimeRemoteAccessState {
+  runtime_id: string;
+  status: "active" | "paused";
+  updated_at?: string | null;
+}
+
+export interface DesktopRuntimeDisplayNameResult {
+  runtime_id: string;
+  display_name: string;
+}
+
+export interface DesktopMobileRemoteDiagnostics {
+  status: "healthy" | "action_required";
+  action: "none" | "start_runtime" | "sign_in" | "retry_relay" | "repair_device_identity" | "reconnect_runtime" | "update_runtime" | "enable_notifications";
+  checks: Record<"runtime" | "relay" | "oidc" | "device_proof" | "wss" | "heartbeat" | "protocol" | "push", "ok" | "failed" | "unknown">;
+}
+
+export type ExperimentReleaseGateFeatureId = "M31-02" | "M31-03" | "M31-04" | "M31-05";
+
+export interface ExperimentReleaseGateState {
+  schema_version: "opendrsai.experiment-release-gate/1";
+  enabled: boolean;
+  required_features: ExperimentReleaseGateFeatureId[];
+  passed_features: ExperimentReleaseGateFeatureId[];
+  blocking_features: ExperimentReleaseGateFeatureId[];
+  source_ledger_sha256: string | null;
+  reason: "all_release_evidence_passed" | "release_evidence_incomplete" | "release_gate_resource_missing" | "release_gate_resource_invalid";
+}
+
 export interface DesktopApi {
+  isAppDialogE2eEnabled(): boolean;
+  isOperationalStateE2eEnabled(): boolean;
   getPlatformDescriptor(): Promise<DesktopPlatformDescriptor>;
   onOpenRequest(callback: (request: DesktopOpenRequest) => void): () => void;
   onLifecycleEvent(callback: (event: DesktopLifecycleEvent) => void): () => void;
@@ -4295,11 +5352,8 @@ export interface DesktopApi {
   login(request: LoginRequest): Promise<LoginResult>;
   startOidcLogin(request?: { rememberMe?: boolean }): Promise<LoginResult>;
   cancelOidcLogin(): Promise<boolean>;
-  startDesktopSsoLogin(): Promise<DesktopSsoStartResult>;
-  startWechatDesktopLogin(): Promise<DesktopSsoStartResult>;
-  pollDesktopSsoLogin(deviceCode: string): Promise<DesktopSsoPollResult>;
-  cancelDesktopSsoLogin(deviceCode: string): Promise<boolean>;
   logout(options?: LogoutOptions): Promise<{ ok: boolean; message: string }>;
+  restartApplication(): Promise<boolean>;
   previewLocalDataCleanup(scope: DesktopDataCleanupScope): Promise<DesktopDataCleanupPreview>;
   clearLocalData(request: DesktopDataCleanupRequest): Promise<DesktopDataCleanupResult>;
   refreshAuthSession(): Promise<AuthSession>;
@@ -4308,6 +5362,10 @@ export interface DesktopApi {
   getInstallStatus(): Promise<InstallStatus>;
   getGatewayStatus(): Promise<GatewayStatus>;
   getCodexBackendStatus(refresh?: boolean): Promise<CodexBackendStatus>;
+  restartCodexBackend(): Promise<CodexBackendStatus>;
+  syncCodexWorkspaceSessions(workspaceId: string, workspacePath: string, requestId: string): Promise<CodexWorkspaceSessionSyncResult>;
+  cancelCodexWorkspaceSessionSync(requestId: string): Promise<boolean>;
+  onCodexWorkspaceSessionSyncProgress(callback: (progress: CodexWorkspaceSessionSyncProgress) => void): () => void;
   startCodexBackendLogin(type?: "chatgpt" | "chatgptDeviceCode"): Promise<CodexBackendLogin>;
   cancelCodexBackendLogin(loginId: string): Promise<boolean>;
   logoutCodexBackend(): Promise<boolean>;
@@ -4325,11 +5383,21 @@ export interface DesktopApi {
   startGateway(): Promise<boolean>;
   stopGateway(): Promise<boolean>;
   getMobilePairingReadiness(): Promise<DesktopMobilePairingReadiness>;
-  createMobilePairingGrant(): Promise<DesktopMobilePairingGrant>;
+  enableMobileRemoteAccess(): Promise<DesktopMobilePairingReadiness>;
+  pauseMobileRemoteAccess(): Promise<DesktopRuntimeRemoteAccessState>;
+  resumeMobileRemoteAccess(): Promise<DesktopRuntimeRemoteAccessState>;
+  renameMobileRuntime(displayName: string): Promise<DesktopRuntimeDisplayNameResult>;
+  diagnoseMobileRemoteAccess(): Promise<DesktopMobileRemoteDiagnostics>;
+  createMobilePairingGrant(scope?: DesktopMobilePairingScope): Promise<DesktopMobilePairingGrant>;
   getMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant>;
   revokeMobilePairingGrant(grantId: string): Promise<DesktopMobilePairingGrant>;
   listMobileAssociations(): Promise<DesktopMobileAssociation[]>;
   revokeMobileAssociation(associationId: string): Promise<DesktopMobileAssociation>;
+  shrinkMobileAssociation(
+    associationId: string,
+    permissions: Array<"read" | "send" | "approve" | "files">,
+    scope?: DesktopMobilePairingScope,
+  ): Promise<DesktopMobileAssociation>;
   revokeMobileRuntimeEnrollment(): Promise<DesktopRuntimeEnrollmentRevocation>;
   listSshHosts(): Promise<RemoteSshHost[]>;
   diagnoseSshHost(hostAlias: string): Promise<RemoteSshConnectivityResult>;
@@ -4352,7 +5420,7 @@ export interface DesktopApi {
   listRemoteThreads(workspaceId: string): Promise<DesktopThread[]>;
   preflightRemoteGateway(hostAlias: string): Promise<RemoteGatewayPreflight>;
   getRemoteSshDiagnosticReport(): Promise<RemoteSshDiagnosticReport>;
-  installRemoteGateway(request: RemoteGatewayInstallRequest): Promise<RemoteGatewayInstallResult>;
+  installRemoteGateway(request: RemoteGatewayInstallRequest): Promise<RemoteGatewayInstallResult | null>;
   requestRemoteGatewayInstallApproval(
     request: RemoteGatewayInstallRequest,
   ): Promise<DesktopApprovalProposalResult>;
@@ -4363,6 +5431,7 @@ export interface DesktopApi {
   onRemoteWorkspaceStatus(callback: (status: RemoteWorkspaceStatus) => void): () => void;
   listWorkspaces(): Promise<WorkspaceProject[]>;
   createWorkspace(request: CreateWorkspaceRequest): Promise<WorkspaceProject>;
+  createDefaultWorkspace(): Promise<WorkspaceProject>;
   updateWorkspace(request: UpdateWorkspaceRequest): Promise<WorkspaceProject>;
   deleteWorkspace(id: string): Promise<boolean>;
   getWorkspaceContextOverview(workspacePath: string, workspaceId?: string): Promise<WorkspaceContextOverview>;
@@ -4370,7 +5439,7 @@ export interface DesktopApi {
   onWorkspaceFileChanges(callback: (event: WorkspaceFileChangeEvent) => void): () => void;
   generateManagerPresentation(
     request: ManagerPresentationGenerateRequest,
-  ): Promise<ManagerPresentationGenerateResult>;
+  ): Promise<ManagerPresentationGenerateResult | null>;
   cancelManagerPresentation(
     request: ManagerPresentationCancelRequest,
   ): Promise<ManagerPresentationCancelResult>;
@@ -4431,20 +5500,70 @@ export interface DesktopApi {
   ): Promise<WorkspaceCheckpointRestoreResult>;
   listThreads(): Promise<DesktopThread[]>;
   listAgents(options?: DesktopAgentListOptions): Promise<DesktopAgent[]>;
+  getAgentCatalogSnapshot(options?: DesktopAgentListOptions): Promise<DesktopAgentCatalogSnapshot>;
   setDefaultAgent(agentId: string): Promise<DesktopAgentPreferenceResult>;
   recordAgentUsage(agentId: string): Promise<DesktopAgentPreferenceResult>;
   getPlatformAgentStatus(): Promise<PlatformAgentStatus>;
   getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiConfig>;
+  getMyDrSaiRuntimeModelCatalog(): Promise<RuntimeModelCatalog>;
+  getMyDrSaiAgentModelPolicy(agentId?: string): Promise<MyDrSaiAgentModelPolicy>;
+  getMyDrSaiAgentToolPolicy(agentId: string): Promise<AgentToolPolicy>;
+  updateMyDrSaiAgentToolPolicy(agentId: string, policy: AgentToolPolicy): Promise<AgentToolPolicy>;
+  previewMyDrSaiAgentTools(agentId: string): Promise<AgentToolPreview>;
+  testAgentTool(toolId: string): Promise<{ ok: boolean; tool_id: string; status: string; tested: string; error?: string }>;
+  getMyDrSaiAgentSkillPolicy(agentId: string): Promise<AgentSkillPolicy>;
+  updateMyDrSaiAgentSkillPolicy(agentId: string, policy: AgentSkillPolicy): Promise<AgentSkillPolicy>;
+  previewMyDrSaiAgentSkills(agentId: string): Promise<AgentSkillPreview>;
+  getMyDrSaiAgentKnowledgePolicy(agentId: string): Promise<AgentKnowledgePolicy>;
+  updateMyDrSaiAgentKnowledgePolicy(agentId: string, policy: AgentKnowledgePolicy): Promise<AgentKnowledgePolicy>;
+  previewMyDrSaiAgentKnowledge(agentId: string): Promise<AgentKnowledgePreview>;
+  indexKnowledgeBase(knowledgeId: string): Promise<{ knowledge_id: string; status: string; document_count: number; chunk_count: number }>;
+  testKnowledgeBase(knowledgeId: string): Promise<{ ok: boolean; knowledge_id: string; type: string; status?: string; dataset_count?: number }>;
+  searchKnowledgeBase(knowledgeId: string, query: string): Promise<{ knowledge_id: string; query: string; evidence: KnowledgeSearchEvidence[] }>;
+  listKnowledgeBases(): Promise<KnowledgeBaseResource[]>;
+  listPerceptors(): Promise<PerceptorResource[]>;
+  savePerceptor(request: SavePerceptorRequest): Promise<PerceptorResource>;
+  updatePerceptor(perceptorId: string, request: SavePerceptorRequest): Promise<PerceptorResource>;
+  testPerceptor(perceptorId: string, capability?: "search" | "extract"): Promise<{ ok: boolean; perceptor_id: string; status: string; tested?: string; result_count?: number; error?: string }>;
+  deletePerceptor(perceptorId: string): Promise<{ status: string; perceptor_id: string }>;
+  createKnowledgeBase(request: SaveKnowledgeBaseRequest): Promise<KnowledgeBaseResource>;
+  deleteKnowledgeBase(knowledgeId: string): Promise<{ status: string }>;
+  getMyDrSaiAgentModelCapabilityStatus(agentId?: string): Promise<AgentModelCapabilityStatus>;
+  updateMyDrSaiAgentModelPolicy(agentId: string, policy: AgentModelPolicy): Promise<MyDrSaiAgentModelPolicy>;
+  migrateMyDrSaiAgentModelPolicy(agentId: string, legacyModel: string, expectedRevision?: string): Promise<MyDrSaiAgentModelPolicy>;
   updateMyDrSaiConfig(request: UpdateMyDrSaiConfigRequest): Promise<MyDrSaiConfig>;
+  updateMyDrSaiModelConnection(request: UpdateMyDrSaiModelConnectionRequest): Promise<MyDrSaiModelConnection>;
+  previewMyDrSaiModelConnection(request: UpdateMyDrSaiModelConnectionRequest): Promise<MyDrSaiModelConfigPreview>;
+  diagnoseMyDrSaiModelConnection(online?: boolean): Promise<MyDrSaiModelDoctorResult>;
+  restoreMyDrSaiModelConnection(expectedRevision?: string): Promise<MyDrSaiModelConnection>;
+  saveMyDrSaiModelProvider(provider: string, request: SaveMyDrSaiModelProviderRequest): Promise<MyDrSaiModelConnection>;
+  testMyDrSaiModelProvider(provider: string, model?: string): Promise<MyDrSaiProviderTestResult>;
+  probeMyDrSaiProviderModel(provider: string, request: { model: string; operation: ModelCapabilityProbeOperation; protocol?: string }): Promise<ModelCapabilityProbeResult>;
+  testMyDrSaiModelDraft(request: UpdateMyDrSaiModelConnectionRequest, mode?: "basic" | "model"): Promise<MyDrSaiProviderTestResult>;
+  listMyDrSaiModelProviderPresets(): Promise<MyDrSaiProviderPreset[]>;
+  discoverMyDrSaiProviderModels(provider: string, refresh?: boolean, draft?: MyDrSaiModelProviderDraft): Promise<MyDrSaiModelDiscoveryResult>;
+  preflightMyDrSaiModelProviderDeletion(provider: string): Promise<MyDrSaiProviderDeletePreflight>;
+  deleteMyDrSaiModelProvider(provider: string, deleteCredential?: boolean): Promise<{ ok: boolean; active?: string }>;
   createThread(request: CreateThreadRequest): Promise<DesktopThread>;
   updateThread(request: UpdateThreadRequest): Promise<DesktopThread>;
   deleteThread(threadId: string): Promise<boolean>;
   setThreadArchived(request: { threadId: string; archived: boolean }): Promise<DesktopThread>;
   getThreadSnapshot(threadId: string): Promise<DesktopThreadSnapshot | null>;
+  getThreadSnapshotEnvelope(threadId: string, requestId?: string, options?: DesktopThreadSnapshotRequest): Promise<DesktopThreadSnapshotEnvelope | null>;
+  cancelThreadSnapshotHydration(requestId: string): Promise<boolean>;
+  subscribeThreadSnapshot(threadId: string): Promise<boolean>;
+  unsubscribeThreadSnapshot(threadId: string): Promise<boolean>;
+  onThreadSnapshot(callback: (event: DesktopThreadSnapshotEvent) => void): () => void;
+  onThreadSnapshotPatch(callback: (event: DesktopThreadSnapshotPatchEvent) => void): () => void;
+  onRuntimeLogEvent(callback: (event: DesktopRuntimeLogEvent) => void): () => void;
+  onThreadCatalogUpdate(callback: (event: DesktopThreadCatalogEvent) => void): () => void;
   searchThreadMessages(
     request: DesktopThreadContentSearchRequest,
   ): Promise<DesktopThreadContentSearchResult[]>;
   updateThreadSnapshot(snapshot: DesktopThreadSnapshot): Promise<DesktopThreadSnapshot>;
+  createThreadShare(request: CreateThreadShareRequest): Promise<DesktopThreadShareResult>;
+  openThreadShare(filePath: string): Promise<boolean>;
+  revealThreadShare(filePath: string): Promise<boolean>;
   prepareForkWorktree(
     request: DesktopForkWorktreeRequest,
   ): Promise<DesktopForkWorktreeResult>;
@@ -4452,7 +5571,36 @@ export interface DesktopApi {
   listWorktreeEvents(request: DesktopWorktreeEventRequest): Promise<DesktopWorktreeEventBatch>;
   startChat(request: ChatRequest): Promise<string>;
   recoverChatRun(request: ChatRunRecoveryRequest): Promise<ChatEvent[]>;
-  abortChat(requestId: string): Promise<boolean>;
+  cancelChatTurn(request: ChatTurnIdentity): Promise<ChatTurnCancelResult>;
+  listSessionRuns(request: SessionRunsReadRequest): Promise<SessionRunList>;
+  getRunInspection(request: RunInspectionOpenRequest): Promise<RunInspection>;
+  locateRunItem(request: RunItemLocatorRequest): Promise<RunItemLocator>;
+  getRunReproductionManifest(request: RunManifestReadRequest): Promise<RunReproductionManifest>;
+  exportRunReproductionManifest(request: RunManifestReadRequest): Promise<RunManifestExportResult>;
+  getExperimentReleaseGate(): Promise<ExperimentReleaseGateState>;
+  createRunExperiment(request: CreateRunExperimentRequest): Promise<RunExperiment>;
+  getRunExperimentCapabilities(request: GetRunExperimentCapabilitiesRequest): Promise<RunExperimentCapabilities>;
+  finalizeRunExperimentCandidate(request: FinalizeRunExperimentCandidateRequest): Promise<RunExperimentCandidateSnapshot | RuntimeApprovalRequired>;
+  getRunExperiment(request: GetRunExperimentRequest): Promise<RunExperiment>;
+  updateRunExperiment(request: UpdateRunExperimentRequest): Promise<RunExperiment>;
+  deleteRunExperiment(request: DeleteRunExperimentRequest): Promise<boolean>;
+  exportRunExperimentPackage(request: GetRunExperimentRequest): Promise<RunExperimentPackageExportResult>;
+  createReplayPlan(request: CreateReplayPlanRequest): Promise<ReplayPlan>;
+  getReplayPlan(request: GetReplayPlanRequest): Promise<ReplayPlan>;
+  getReplayBoundaries(request: GetReplayBoundariesRequest): Promise<ReplayBoundaries>;
+  getRunRelations(request: GetRunRelationsRequest): Promise<RunRelations>;
+  executeReplayPlan(request: ExecuteReplayPlanRequest): Promise<ReplayExecutionResult | RuntimeApprovalRequired>;
+  createRunComparison(request: CreateRunComparisonRequest): Promise<RunComparison>;
+  getRunComparison(request: GetRunComparisonRequest): Promise<RunComparison>;
+  listRunComparisonEvaluations(request: ListRunComparisonEvaluationsRequest): Promise<RunComparisonEvaluationList>;
+  createRunComparisonEvaluation(request: CreateRunComparisonEvaluationRequest): Promise<RunComparisonEvaluation>;
+  getWorktreeAdoptionPreview(request: GetWorktreeAdoptionPreviewRequest): Promise<WorktreeAdoptionPreview>;
+  applyWorktreeAdoption(request: ApplyWorktreeAdoptionRequest): Promise<WorktreeAdoptionApplyResult>;
+  getRunAdoptionPreview(request: GetRunAdoptionPreviewRequest): Promise<RunAdoption>;
+  applyRunAdoption(request: ApplyRunAdoptionRequest): Promise<RunAdoption | RuntimeApprovalRequired>;
+  discardRunAdoption(request: DiscardRunAdoptionRequest): Promise<RunAdoption | RuntimeApprovalRequired>;
+  decideRuntimeSecurityApproval(request: RuntimeSecurityApprovalDecisionRequest): Promise<{ approval_id: string; decision: string }>;
+  decideRuntimeRunApproval(request: RuntimeRunApprovalDecisionRequest): Promise<Record<string, unknown> & { approval_id: string; status: string }>;
   respondChatInput(requestId: string, response: string | Record<string, unknown>): Promise<boolean>;
   startAgentRun(
     request: AgentRunRequest,
@@ -4465,6 +5613,17 @@ export interface DesktopApi {
   cancelVoiceTranscription(requestId: string): Promise<boolean>;
   getVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus>;
   getStreamingVoiceCapabilities(): Promise<DesktopStreamingVoiceCapabilities>;
+  getDuplexVoiceCapabilities(): Promise<DesktopDuplexVoiceCapabilities>;
+  startDuplexVoiceSession(request: DesktopDuplexVoiceSessionStartRequest): Promise<DesktopDuplexVoiceSessionStartResult>;
+  sendDuplexVoiceAudioChunk(chunk: DesktopDuplexVoiceAudioChunk): boolean;
+  updateDuplexVoiceSession(request: DesktopDuplexVoiceSessionStartRequest): Promise<boolean>;
+  interruptDuplexVoiceSession(request: DesktopDuplexVoiceInterruptRequest): Promise<boolean>;
+  submitDuplexVoiceToolResult(request: DesktopDuplexVoiceToolResultRequest): Promise<boolean>;
+  stopDuplexVoiceSession(sessionId: string): Promise<boolean>;
+  cancelDuplexVoiceSession(sessionId: string): Promise<boolean>;
+  disposeDuplexVoiceSession(sessionId: string): Promise<boolean>;
+  onDuplexVoiceEvents(callback: (events: DesktopDuplexVoiceEvent[]) => void): () => void;
+  appendDuplexVoiceHistory(request: DesktopDuplexVoiceHistoryAppendRequest): Promise<DesktopThreadSnapshot>;
   startStreamingVoiceTranscription(
     request: DesktopStreamingVoiceStartRequest,
   ): Promise<DesktopStreamingVoiceStartResult>;
@@ -4488,9 +5647,10 @@ export interface DesktopApi {
   onVoiceSynthesisEvent(
     callback: (event: DesktopVoiceSynthesisEvent) => void,
   ): () => void;
-  saveApiKey(apiKey: string, defaultModel?: string): Promise<SaveApiKeyResult>;
+  saveApiKey(apiKey: string): Promise<SaveApiKeyResult>;
   pickFiles(): Promise<PickDialogResult>;
   pickFolder(): Promise<PickDialogResult>;
+  getPathForFile(file: File): string;
   checkBrowserUrl(url: string): Promise<BrowserUrlCheck>;
   requestBrowserAction(
     request: BrowserActionRequest,
@@ -4711,6 +5871,7 @@ export interface DesktopApi {
   listPendingBrowserTaskApprovals(): Promise<BrowserTaskPendingApproval[]>;
   approveBrowserTaskAction(request: BrowserTaskApprovalRequest): Promise<boolean>;
   openExternal(url: string): Promise<void>;
+  openRegressionReference(uri: string): Promise<string>;
   openPath(path: string): Promise<string>;
   openPdfPage(request: PdfPageOpenRequest): Promise<PdfPageOpenResult>;
   getIdeContext(workspacePath: string): Promise<DesktopIdeContextSnapshot>;
@@ -4733,4 +5894,32 @@ export interface DesktopApi {
   onTerminalData(callback: (event: TerminalDataEvent) => void): () => void;
   onTerminalExit(callback: (event: TerminalExitEvent) => void): () => void;
   onBrowserTaskEvent(callback: (event: BrowserTaskEvent) => void): () => void;
+
+  // Skills (gateway-managed)
+  listInstalledSkills(request?: { userId?: string }): Promise<GatewaySkill[]>;
+  listAvailableSkills(request?: { userId?: string }): Promise<GatewayAvailableSkill[]>;
+  getSkillContent(request: { skillPath: string }): Promise<{ path: string; content: string }>;
+  installSkill(request: GatewaySkillInstallRequest): Promise<{ status: string; name: string; path: string }>;
+  updateSkill(request: { name: string; content: string; userId?: string }): Promise<{ status: string; name: string; path: string }>;
+  uninstallSkill(request: { name: string; userId?: string }): Promise<{ status: string; name: string }>;
+  reloadSkills(request?: { threadId?: string; userId?: string }): Promise<{ ok: boolean; reloaded: boolean }>;
+
+  // GFS cloud storage
+  gfsList(request: GfsListRequest): Promise<GfsListResult>;
+  gfsStat(request: { path: string }): Promise<GfsObjectInfo>;
+  gfsRead(request: { path: string }): Promise<{ path: string; content: string }>;
+  gfsWrite(request: {
+    path: string;
+    content: string;
+    contentType?: string;
+  }): Promise<{ path: string; etag: string }>;
+  gfsUploadFile(request: GfsUploadRequest): Promise<{ path: string; size: number }>;
+  gfsDownloadFile(request: GfsDownloadRequest): Promise<{ localPath: string; size: number }>;
+  gfsDelete(request: { path: string }): Promise<{ path: string }>;
+  gfsShareUrl(request: {
+    path: string;
+    ttlMinutes?: number;
+    responseContentType?: string;
+  }): Promise<{ url: string; expiresAt: string }>;
+  gfsHealthcheck(): Promise<{ ok: boolean; bucket?: string; mode?: string; reason?: string }>;
 }

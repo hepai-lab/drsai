@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "feature_id": "M12-F03",
+  "generated_at": "2026-08-05T14:56:20.689317+00:00",
+  "passed": true,
+  "gates": {
+    "golden_fixture_is_versioned_and_has_six_unique_natural_cases": true,
+    "prompts_do_not_name_implementation_tools": true,
+    "hepix_freshness_and_citation_are_green": true,
+    "workspace_edit_diff_approval_and_user_result_are_green": true,
+    "skill_selection_and_version_visibility_are_green": true,
+    "streamable_http_mcp_scope_and_result_are_green": true,
+    "stdio_mcp_requires_remote_handoff_and_confirmation": true,
+    "subagent_artifact_citation_and_terminal_e2e_are_green": true,
+    "all_required_agent_domains_are_covered": true,
+    "golden_contract_tests_are_green": true
+  },
+  "case_count": 6,
+  "pytest": {
+    "returncode": 0,
+    "summary": "..                                                                       [100%]\n2 passed in 0.15s"
+  },
+  "bound_feature_evidence": {
+    "M05-F04": "7f777531630ca2e1571f2380c22b44a7da87fec34ad1d65a0b5bc14b9e525b03",
+    "M06-F06": "cf0393e72db54cd2307548b84b85d47255d9c6e63717e8c69998eee04ed2aa2a",
+    "M07-F02": "26b5ab1690a5dd911d0819aae24e087a90cfaf0b61a280312c2ff06f4503cc51",
+    "M07-F04": "540067c8aafc2975a41cab8537d9b0dd38074d45b4648206d9e4e9c6cca346f7",
+    "M07-F05": "c4e7f80b51ace5171e5eaa5067704095991e6e5876d47b080617a98f315af1c9",
+    "M08-F06": "feb40361fe3353aaa1a0f88bebaa31d83957c82b184f9a900d4475a0785cdddd"
+  },
+  "source_sha256": {
+    "cores/protocol/android-runtime/fixtures/p9-natural-task-golden-v1.json": "2d489f6cd9158bd505f19612f0bc90c923ff00cf4873ea965fe33e033b91bb88",
+    "cores/python/packages/drsai/tests/test_p9_natural_task_golden.py": "d7979b3d73f82bdad45ec4dbf76aab33459b42d218623286ecf7094d2d6f9f39",
+    "docs/android/reports/evidence/p9/m05-f04-forced-retrieval.json": "7f777531630ca2e1571f2380c22b44a7da87fec34ad1d65a0b5bc14b9e525b03",
+    "docs/android/reports/evidence/p9/m06-f06-workspace-natural-e2e.json": "cf0393e72db54cd2307548b84b85d47255d9c6e63717e8c69998eee04ed2aa2a",
+    "docs/android/reports/evidence/p9/m07-f02-skill-selection.json": "26b5ab1690a5dd911d0819aae24e087a90cfaf0b61a280312c2ff06f4503cc51",
+    "docs/android/reports/evidence/p9/m07-f04-streamable-http-mcp.json": "540067c8aafc2975a41cab8537d9b0dd38074d45b4648206d9e4e9c6cca346f7",
+    "docs/android/reports/evidence/p9/m07-f05-stdio-mcp-handoff.json": "c4e7f80b51ace5171e5eaa5067704095991e6e5876d47b080617a98f315af1c9",
+    "docs/android/reports/evidence/p9/m08-f06-natural-multistep-e2e.json": "feb40361fe3353aaa1a0f88bebaa31d83957c82b184f9a900d4475a0785cdddd"
+  }
+}

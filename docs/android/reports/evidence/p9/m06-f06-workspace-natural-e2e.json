@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "feature_id": "M06-F06",
+  "generated_at": "2026-08-05T14:55:58.535479+00:00",
+  "passed": true,
+  "gates": {
+    "natural_chinese_task_drives_workspace_agent_loop": true,
+    "agent_lists_searches_reads_edits_and_verifies": true,
+    "write_requires_durable_approval": true,
+    "diff_is_visible_before_approval": true,
+    "mutation_is_conflict_checked_and_exactly_once": true,
+    "kernel_and_host_checkpoint_state_are_deep_merged": true,
+    "approval_survives_later_kernel_checkpoint": true,
+    "runtime_restart_resumes_then_completes": true,
+    "oaep_file_change_is_complete": true,
+    "runtime_boundary_failure_is_logged_and_redacted": true,
+    "api35_bundled_runtime_e2e_green": true,
+    "coordinator_regression_green": true
+  },
+  "connected_suite": {
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.WorkspaceNaturalTaskInstrumentedTest",
+    "sha256": "86a5ef8423f9bcd6bc593a9b79a31ce3c4ee4180945da7a589705feeefc98926"
+  },
+  "connected_report": "apps/android/app/build/outputs/androidTest-results/connected/debug/TEST-ai.drsai.remote.WorkspaceNaturalTaskInstrumentedTest.xml",
+  "coordinator_suite": {
+    "tests": 22,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.PythonAgentLoopCoordinatorTest",
+    "sha256": "7ea3ccc39183ad5ca2b0140a2ba9d3d97365d4553cfd096e56be6e03b8ab0ef6"
+  },
+  "source_sha256": {
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/WorkspaceNaturalTaskInstrumentedTest.kt": "cda7bebbfd55daa1b6025d218cfa3e1903daf7dd3371a21ed7f9050489f6b269",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonAgentLoopCoordinator.kt": "9626f5f1c8200c6ec7fd86ca32fdf4b081fc04a1cf17de98dd15409e111d344f",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRuntimeService.kt": "dfccff58aaf5214cfe3b09e162bf75ddbacd62cebbef84173a191b2980652817",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRuntimeExecutionResult.kt": "d47d5b1d5741a17e10d2bfaf5d2f3fafde89a2ae67a51c30ede9defe895da46f",
+    "apps/android/app/src/test/java/ai/drsai/remote/PythonAgentLoopCoordinatorTest.kt": "da796c0f871d701375635c0cf5765e725bf39d9b0de54a9c171a723d51d24ffa"
+  }
+}

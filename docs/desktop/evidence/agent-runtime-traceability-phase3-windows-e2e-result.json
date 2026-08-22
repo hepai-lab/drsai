@@ -1,0 +1,188 @@
+{
+  "schema_version": "opendrsai.run-traceability-phase3-windows-e2e-result/1",
+  "generated_at": "2026-08-05T09:55:51.643Z",
+  "started_at": "2026-08-05T09:55:20.686Z",
+  "command": "npm run verify:run-traceability-phase3-windows-e2e",
+  "exit_code": 0,
+  "commit": "f6518eeb16e7b63f6473a2dcfcc77114233e0832",
+  "source_files": [
+    "apps/desktop/windows/package.json",
+    "apps/desktop/windows/electron.vite.config.ts",
+    "apps/desktop/windows/scripts/verify-run-editable-phase2-windows-e2e.mjs",
+    "apps/desktop/windows/scripts/fixtures/run_editable_phase2_fixture.py",
+    "apps/desktop/windows/src/main/e2eSmoke.ts",
+    "apps/desktop/windows/src/main/index.ts",
+    "apps/desktop/shared/api/runExperiment.ts",
+    "apps/desktop/shared/main/runtimeClient.ts",
+    "apps/desktop/shared/renderer/src/components/RunExperimentPanel.tsx",
+    "apps/desktop/shared/renderer/src/components/RunInspectorPanel.tsx",
+    "apps/desktop/shared/renderer/src/components/SessionRunHistory.tsx",
+    "apps/desktop/shared/renderer/src/components/RunComparisonView.tsx",
+    "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/replay_execution.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/replay_planner.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/adoptions.py",
+    "cores/python/packages/drsai/src/drsai/backend/workspace/git_worktree_service.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/experiment_export.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/oaep.py",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/security.py",
+    "eval/regression/suites/phase3-release-smoke.yaml",
+    "eval/regression/policies/phase3-release-gate.yaml",
+    "eval/regression/src/opendrsai_regression/evidence.py",
+    "eval/regression/src/opendrsai_regression/assertions.py",
+    "eval/regression/cases/question_answering/p3_hello.yaml",
+    "eval/regression/cases/tool_use/p3_web.yaml",
+    "eval/regression/cases/knowledge/p3_runtime.yaml",
+    "eval/regression/cases/skill_use/p3_presentation.yaml",
+    "eval/regression/cases/image_input/p3_screenshot.yaml",
+    "eval/regression/cases/image_output/p3_image.yaml"
+  ],
+  "source_digest": "e8490564fb857ab277e9d110f7fe38112f5ccc957c17096fffc2ab04df07b935",
+  "application_build_digest": "03f552ad97a971eb8e35bc638cc9e0de4b4cd5b0138fc1f44b619372363008f1",
+  "desktop_result_digest": "69d63854b00f1fe54c860b8457e679c0372a7f42a143432a6821c90bd3e97fa8",
+  "platform": "win32",
+  "architecture": "x64",
+  "scenarios": [
+    "O",
+    "P",
+    "Q",
+    "R",
+    "S",
+    "T",
+    "U"
+  ],
+  "checks": {
+    "bridge": true,
+    "login": true,
+    "O": true,
+    "Q": true,
+    "P": true,
+    "R": true,
+    "S": true,
+    "U": true,
+    "secretCorpus": true
+  },
+  "details": {
+    "stage": "complete",
+    "scenarios": [
+      {
+        "id": "O",
+        "runId": "run-d511657d-7a7e-4cb9-8b6d-70f9bd632f6b",
+        "sessionId": "session-c5871355-84ca-4fc2-8032-3818a4dea4ec"
+      },
+      {
+        "id": "Q",
+        "error": "Error invoking remote method 'desktop:run-experiment-update': RemoteProtocolError: Unsupported override fields: skills"
+      },
+      {
+        "id": "P",
+        "model": "opendrsai/controlled-candidate",
+        "runId": "run-4916d1b2-6a66-4e3f-852f-051090648e7a"
+      },
+      {
+        "id": "R",
+        "planId": "replay-plan-cf2f33c7-812c-4c97-9f60-256133bed5dd"
+      },
+      {
+        "id": "S",
+        "runId": "run-adc19a8e-c3c8-450a-bc94-8d06c4b290d7",
+        "selectedPathCount": 1,
+        "fileDifferenceCount": 4,
+        "comparisonFiles": [
+          {
+            "baseline": null,
+            "candidate": {
+              "binary": null,
+              "change": "modified",
+              "digest": null,
+              "identity": "README.md"
+            },
+            "change": "added",
+            "identity": "README.md"
+          },
+          {
+            "baseline": null,
+            "candidate": {
+              "binary": null,
+              "change": "created",
+              "digest": null,
+              "identity": "p3-created.txt"
+            },
+            "change": "added",
+            "identity": "p3-created.txt"
+          },
+          {
+            "baseline": null,
+            "candidate": {
+              "binary": null,
+              "change": "deleted",
+              "digest": null,
+              "identity": "p3-delete-me.txt"
+            },
+            "change": "added",
+            "identity": "p3-delete-me.txt"
+          }
+        ],
+        "visibleFileRows": [
+          "added · README.md",
+          "added · p3-created.txt",
+          "added · p3-delete-me.txt",
+          "unattributed"
+        ]
+      },
+      {
+        "id": "U",
+        "runId": "run-10da2c5d-fc78-435e-9a28-41b632ab5f90",
+        "text": "只读运行证据运行检查器暂停实时更新跟随最新创建实验本会话运行历史状态全部排队中运行中等待审批已完成失败已取消正在加载运行历史…失败· 10 秒Run IDrun-10da2c5d-fc78-435e-9a28-41b632ab5f90执行端opendrsaiAgentopendrsai@1模型未记录开始时间2026/8/5 17:55:25结束时间2026/8/5 17:55:35消息 1运行信息 1输入 0输出 0产物 0警告 0opendrsai.run-inspection/1 · opendrsai.run-manifest/1时间线类型全部消息分析摘要计划命令文件变更工具调用产物交互/审批子任务运行信息状态全部待处理运行中等待中已完成失败已取消消息final17:55:25运行信息replay_interrupted17:55:35输入与配置{\n  \"runtime\": {\n    \"instance_id\": \"instance-54536f4b-044a-43f0-9cda-530aa6767fed\",\n    \"runtime_id\": \"runtime-92843f0a-a6e8-4640-8f41-ee42fa54cbe0\",\n    \"version\": \"1.5.5\"\n  },\n  \"backend\": {\n    \"id\": \"opendrsai\"\n  },\n  \"protocol\": {\n    \"oaep_version\": \"1.0\"\n  },\n  \"agent\": {\n    \"definition\": \"opendrsai@1\"\n  },\n  \"model\": {},\n  \"prompt\": {},\n  \"input\": {\n    \"length\": 11,\n    \"sha256\": \"7cc29ec60c4efd8409a7389b2a5b6321d9fd9db226e4fd53153f64c2e1b43779\"\n  },\n  \"attachments\": [],\n  \"workspace\": {\n    \"id\": \"workspace-94ad3cc8-ea9e-4a55-885d-125029a3ed58\",\n    \"worktree_id\": null\n  },\n  \"environment\": {\n    \"arch\": \"AMD64\",\n    \"os\": \"Windows\",\n    \"runtime_versions\": {\n      \"implementation\": \"cpython\",\n      \"python\": \"3.11.0\"\n    }\n  },\n  \"tools\": [],\n  \"skills\": [],\n  \"external_dependencies\": [],\n  \"security\": {\n    \"policy_version\": \"runtime-security-v1\"\n  }\n}产物与变更当前已加载范围内没有产物或文件变更。复现清单暂不可复现系统会列出缺失或可变的证据；这不是一键重放承诺。model.id脱敏清单摘要020e7233bd161fb55b9c92e9071c91d1408dabe412974fc4c08b8a4f93626574复制脱敏复现清单导出 JSON…打开技术诊断",
+        "htmlClass": "run-inspector-panel"
+      }
+    ],
+    "secretCorpus": {
+      "runId": "run-4b16c73a-ec3e-4889-8fc8-fa3ef4957dc3",
+      "layers": [
+        "api",
+        "oaep",
+        "manifest",
+        "renderer"
+      ],
+      "canaryCount": 4
+    },
+    "screenshot": "C:\\Users\\win11\\VSProjects\\drsai\\docs\\desktop\\evidence\\agent-runtime-traceability-phase3-windows-e2e.png",
+    "screenshotSha256": "32cbf774a7bb7e0e54381e41afb22743c006f6e479a046ac376919ba6bc737a8"
+  },
+  "regression": {
+    "suite": "phase3-release-smoke",
+    "gate": "passed",
+    "case_count": 6,
+    "cases": {
+      "p3.image.input": "passed",
+      "p3.image.output": "passed",
+      "p3.knowledge.runtime": "passed",
+      "p3.qa.hello": "passed",
+      "p3.tool.web": "passed",
+      "p3.skill.presentation": "passed"
+    },
+    "results_digest": "82b2f3ea50111d12b88e85b7044dc08ce43574fedb8248b54c107896fe3c0237"
+  },
+  "screenshot_digest": "32cbf774a7bb7e0e54381e41afb22743c006f6e479a046ac376919ba6bc737a8",
+  "real_gateway": true,
+  "real_electron": true,
+  "offline_database_verification": true,
+  "controlled_model": true,
+  "model_execution": "deterministic_runtime_acceptance",
+  "proof_scope": [
+    "gateway",
+    "electron",
+    "desktop_ipc",
+    "oaep",
+    "database",
+    "git_worktree",
+    "approval",
+    "renderer"
+  ],
+  "not_proven": [
+    "real_backend_account"
+  ]
+}

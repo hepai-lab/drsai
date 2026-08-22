@@ -9,7 +9,7 @@
 #   ./drsai-dev.sh verify                            完整健康链路检查 + 访问地址
 #   ./drsai-dev.sh logs    [backend|frontend]        查看日志
 #
-# 设计说明见 agent_skills/skills/drsai-dev-skill/SKILL.md
+# 设计说明见 skills/skills/drsai-dev-skill/SKILL.md
 set -euo pipefail
 
 # ───────────────────────── 配置（可用 env 覆盖）─────────────────────────
@@ -128,7 +128,7 @@ start_frontend() {
   pm2_up "$PM2_FRONTEND" \
     pm2 start -n "$PM2_FRONTEND" --cwd "$FRONTEND_DIR" \
       --env GATSBY_DEV_PORT="$FRONTEND_PORT" \
-      yarn -- develop
+      yarn -- dev
   pm2 set "$PM2_FRONTEND:GATSBY_DEV_PORT" "$FRONTEND_PORT" >/dev/null 2>&1 || true
   ok "前端已启动"
 }

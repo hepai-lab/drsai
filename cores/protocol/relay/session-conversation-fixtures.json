@@ -1,0 +1,95 @@
+{
+  "profile": "session-events/1",
+  "snapshot": {
+    "session_id": "session-fixture",
+    "snapshot_sequence": 3,
+    "items": [
+      {
+        "item_id": "item-user-1",
+        "session_id": "session-fixture",
+        "run_id": "run-fixture-1",
+        "kind": "message",
+        "role": "user",
+        "revision": 1,
+        "session_sequence": 1,
+        "source_client": "windows",
+        "source_message_id": "windows-message-1",
+        "created_at": "2026-07-27T00:00:01Z",
+        "updated_at": "2026-07-27T00:00:01Z",
+        "payload": {
+          "text": "fixture-user-message"
+        }
+      },
+      {
+        "item_id": "item-assistant-1",
+        "session_id": "session-fixture",
+        "run_id": "run-fixture-1",
+        "kind": "message",
+        "role": "assistant",
+        "revision": 2,
+        "session_sequence": 3,
+        "source_client": "runtime",
+        "source_message_id": null,
+        "created_at": "2026-07-27T00:00:02Z",
+        "updated_at": "2026-07-27T00:00:03Z",
+        "payload": {
+          "text": "fixture-assistant-message",
+          "status": "streaming"
+        }
+      }
+    ],
+    "next_cursor": null
+  },
+  "events_after_snapshot": [
+    {
+      "event_id": "session-event-4",
+      "runtime_id": "runtime-fixture",
+      "workspace_id": "workspace-fixture",
+      "session_id": "session-fixture",
+      "run_id": "run-fixture-1",
+      "session_sequence": 4,
+      "kind": "conversation.item.upsert",
+      "timestamp": "2026-07-27T00:00:04Z",
+      "payload": {
+        "item_id": "item-assistant-1",
+        "revision": 3,
+        "text": "fixture-assistant-message-complete",
+        "status": "completed"
+      }
+    },
+    {
+      "event_id": "session-event-5",
+      "runtime_id": "runtime-fixture",
+      "workspace_id": "workspace-fixture",
+      "session_id": "session-fixture",
+      "run_id": "run-fixture-2",
+      "session_sequence": 5,
+      "kind": "run.created",
+      "timestamp": "2026-07-27T00:00:05Z",
+      "payload": {
+        "source_client": "android",
+        "source_message_id": "android-message-1"
+      }
+    }
+  ],
+  "runtime_frame": {
+    "type": "event",
+    "scope": "session",
+    "session_id": "session-fixture",
+    "session_sequence": 4,
+    "event": {
+      "event_id": "session-event-4",
+      "runtime_id": "runtime-fixture",
+      "workspace_id": "workspace-fixture",
+      "session_id": "session-fixture",
+      "run_id": "run-fixture-1",
+      "session_sequence": 4,
+      "kind": "conversation.item.upsert",
+      "timestamp": "2026-07-27T00:00:04Z",
+      "payload": {
+        "item_id": "item-assistant-1",
+        "revision": 3
+      }
+    }
+  }
+}

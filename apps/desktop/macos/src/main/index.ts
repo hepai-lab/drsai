@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, type WebContents } from "electron";
+import { app, BrowserWindow, ipcMain, screen } from "electron";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
@@ -10,8 +10,6 @@ import { MacosAppShutdownCoordinator } from "./appShutdown";
 import { MACOS_PLATFORM_SERVICES } from "./platformServices";
 import { restoreCompletionNotificationPreference } from "../../../shared/main/completionNotifications";
 import { startGateway, stopGateway } from "./gateway";
-import { LocalRuntimeClient } from "../../../shared/main/runtimeClient";
-import { MobilePairingController } from "../../../shared/main/mobilePairingController";
 import { findWorkspaceById, listWorkspaces } from "../../../shared/main/workspaces";
 import { shutdownAgentRunJournal } from "../../../shared/main/agentRunJournal";
 import { shutdownChatRunJournal } from "../../../shared/main/chatRunJournal";
@@ -22,6 +20,7 @@ import { productionDiagnostics } from "../../../shared/main/productionDiagnostic
 import { sshHostService } from "../../../shared/main/sshHosts";
 import { remoteGatewayInstaller } from "../../../shared/main/remoteGatewayInstaller";
 import { remoteWorkspaceController } from "../../../shared/main/remoteWorkspaceController";
+import { macosThreadSnapshotController } from "./threadSnapshotController";
 import { portForwardRegistry } from "../../../shared/main/portForwards";
 import { createWorkflowRunRecipe, getWorkflowTemplate } from "../../../shared/main/workflowMarketplace";
 import { listWorkflowRuns, recoverWorkflowRunsAfterRestart, startWorkflowRun } from "../../../shared/main/workflowRuns";
@@ -32,6 +31,7 @@ import { scheduleUpdateHealthConfirmation } from "./updater";
 import { previewWorkspaceFile } from "../../../shared/main/workspaceContext";
 import { cleanupAllVoiceTempFiles } from "../../../shared/main/voice";
 import { cancelStreamingVoiceSessionsForSender } from "../../../shared/main/voiceStreaming";
+import { disposeAllDuplexVoiceSessions, disposeDuplexVoiceSessionsForSender } from "../../../shared/main/voice/duplex/controller";
 import { runPackagedSmokeIfRequested } from "./packagedSmoke";
 import { isAllowedDevelopmentRendererUrl } from "./rendererNavigationPolicy";
 import { createMacosMainWindow } from "./bootstrap/createWindow";
@@ -45,34 +45,22 @@ import { registerMacosDesktopIpc } from "./ipc/registerAllIpc";
 import type { MacosServiceContainer } from "./serviceContainer";
 import { killAllTerminalSessions, detachTerminalSessionsForOwner } from "./terminal";
 import { managedProcessRegistry } from "../../../shared/main/managedProcessRegistry";
+import { MacosMobilePairingControllerRegistry } from "./mobilePairingControllers";
+if (app.isPackaged && !process.env.OPENDRSAI_PDF_SCRIPT?.trim()) process.env.OPENDRSAI_PDF_SCRIPT = join(process.resourcesPath, "python", "presentation_pdf.py");
+
 let mainWindow: BrowserWindow | null = null;
 let appServices: MacosAppServices;
 const openRequests = new DesktopOpenRequestQueue();
 const recoveryCoordinator = new MacosLifecycleRecoveryCoordinator();
 const shutdownCoordinator = new MacosAppShutdownCoordinator();
-const singleInstanceLock = app.requestSingleInstanceLock();
+const packagedAcceptance = Boolean(process.env.OPENDRSAI_MACOS_PACKAGED_SMOKE_FILE?.trim());
+const singleInstanceLock = packagedAcceptance || app.requestSingleInstanceLock();
 let relaunchScheduled = false;
 let disposeAppIntegrations: () => void = () => {};
 let scheduledTaskWorker: ScheduledTaskWorker | null = null;
-const mobilePairingControllers = new Map<number, MobilePairingController>();
-
-function mobilePairingControllerFor(sender: WebContents): MobilePairingController {
-  const existing = mobilePairingControllers.get(sender.id);
-  if (existing) return existing;
-  const controller = new MobilePairingController(() => LocalRuntimeClient.connect());
-  mobilePairingControllers.set(sender.id, controller);
-  sender.once("destroyed", () => {
-    mobilePairingControllers.delete(sender.id);
-    void controller.close();
-  });
-  return controller;
-}
-
-async function closeMobilePairingControllers(): Promise<void> {
-  const controllers = [...mobilePairingControllers.values()];
-  mobilePairingControllers.clear();
-  await Promise.allSettled(controllers.map((controller) => controller.close()));
-}
+const mobilePairingControllers = new MacosMobilePairingControllerRegistry();
+const mobilePairingControllerFor = mobilePairingControllers.for.bind(mobilePairingControllers);
+const closeMobilePairingControllers = () => mobilePairingControllers.close();
 
 const scheduledTaskRuntime: ScheduledTaskRuntime = {
   prepare: (request) => prepareWorkflowRun(request, request.triggerKey),
@@ -248,6 +236,7 @@ function createWindow(): BrowserWindow {
     },
     onWebContentsDestroyed: (destroyedWindow, destroyedWebContents, ownerId) => {
       cancelStreamingVoiceSessionsForSender(destroyedWebContents);
+      disposeDuplexVoiceSessionsForSender(destroyedWebContents);
       detachTerminalSessionsForOwner(ownerId);
       if (mainWindow === destroyedWindow) openRequests.detach();
     },
@@ -294,6 +283,9 @@ app.whenReady().then(async () => {
     reloadMainWindow: () => { if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.reload(); },
     publish: (channel, event) => { for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(channel, event); },
   });
+  void remoteWorkspaceController.restorePersisted().catch(async () => {
+    await appServices.ipcAuditWriter({ channel: "desktop:startup-remote-workspace-restore", outcome: "failed", durationMs: 0, argumentCount: 0, errorCode: "STARTUP_DEGRADED" });
+  });
   registerMacosDesktopIpc({
     ipcMain: protectedIpcMain, rawIpcMain, services: macosServices, allowedDesktopRoots,
     diagnostics: { sourceNavigator: diagnosticSourceNavigator, interactiveDebugger: appServices.interactiveDebugger, interactiveDebugPolicy: appServices.interactiveDebugPolicy },
@@ -315,9 +307,17 @@ app.on("before-quit", (event) => {
   if (shutdownCoordinator.running) return;
   event.preventDefault();
   const plan = createMacosShutdownPlan({
+    closeRenderer: async () => {
+      openRequests.detach();
+      const window = mainWindow;
+      if (window && !window.isDestroyed()) window.destroy();
+      // Let destruction callbacks and already-dispatched IPC settle while the
+      // Gateway is still available, before the remaining services are drained.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    },
     stopScheduledTaskWorker: () => { scheduledTaskWorker?.stop(); scheduledTaskWorker = null; },
     killTerminalSessions: killAllTerminalSessions,
-    cleanupVoiceFiles: cleanupAllVoiceTempFiles,
+    cleanupVoiceFiles: () => { disposeAllDuplexVoiceSessions(); cleanupAllVoiceTempFiles(); },
     cancelRuntimeInstall: cancelBundledRuntimeInstall,
     shutdownApprovalStore: () => appServices.approvalStore.shutdown(),
     shutdownInteractiveDebugger: () => appServices.interactiveDebugger.shutdown(),
@@ -327,14 +327,14 @@ app.on("before-quit", (event) => {
     shutdownPortForwards: () => portForwardRegistry.shutdown(),
     shutdownSshHosts: () => sshHostService.shutdown(),
     shutdownRemoteGatewayInstaller: () => remoteGatewayInstaller.shutdown(),
-    shutdownRemoteWorkspaces: () => remoteWorkspaceController.shutdown(),
+    shutdownRemoteWorkspaces: async () => { macosThreadSnapshotController.stopAll(); await remoteWorkspaceController.shutdown(); },
     closeMobilePairingControllers,
     shutdownAgentJournal: shutdownAgentRunJournal,
     shutdownChatJournal: shutdownChatRunJournal,
     stopGateway: async () => { await stopGateway(); },
     shutdownManagedProcesses: () => managedProcessRegistry.shutdownAll(),
   });
-  void shutdownCoordinator.run(plan.map((step) => step.run)).finally(() => app.exit(0));
+  void shutdownCoordinator.run(plan.map((step) => step.run), 15_000).finally(() => app.exit(0));
 });
 app.on("will-quit", () => {
   disposeAppIntegrations();

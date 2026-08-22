@@ -5,7 +5,14 @@ import importlib.util
 
 import pytest
 
-_MODULE_PATH = Path(__file__).parents[1] / "src" / "drsai" / "backend" / "remote_workspace.py"
+_MODULE_PATH = (
+    Path(__file__).parents[1]
+    / "src"
+    / "drsai"
+    / "backend"
+    / "remote_ssh"
+    / "workspace.py"
+)
 _SPEC = importlib.util.spec_from_file_location("remote_workspace_policy", _MODULE_PATH)
 assert _SPEC and _SPEC.loader
 _POLICY = importlib.util.module_from_spec(_SPEC)

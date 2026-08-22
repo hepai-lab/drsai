@@ -352,9 +352,14 @@ class StructuredConversationProjector:
             "artifactType": artifact_type,
             "name": str(payload.get("name") or payload.get("title") or "Artifact"),
         }
-        for source_key, target_key in (("summary", "summary"), ("path", "path"), ("url", "url"), ("mime", "mime")):
+        for source_key, target_key in (("summary", "summary"), ("path", "path"), ("url", "url"), ("mime", "mime"), ("sha256", "sha256"), ("source_call_id", "sourceCallId")):
             if payload.get(source_key):
                 part[target_key] = str(payload[source_key])
+        if isinstance(payload.get("size"), int) and not isinstance(payload.get("size"), bool):
+            part["size"] = payload["size"]
+        for key in ("previewable", "downloadable"):
+            if isinstance(payload.get(key), bool):
+                part[key] = payload[key]
         if isinstance(payload.get("citation_ids"), list):
             part["citationIds"] = [str(value) for value in payload["citation_ids"] if value]
         self.parts[part["id"]] = part
@@ -372,6 +377,9 @@ class StructuredConversationProjector:
         for key in ("url", "path", "locator", "excerpt"):
             if payload.get(key):
                 part[key] = str(payload[key])
+        for key in ("relation", "knowledge_base_id", "revision", "document_path", "corpus_complete"):
+            if payload.get(key) is not None:
+                part[key] = payload[key]
         part["markdownPartId"] = str(payload.get("markdown_part_id") or self.markdown_part_id)
         if payload.get("artifact_id"):
             part["artifactId"] = str(payload["artifact_id"])
@@ -393,7 +401,7 @@ class StructuredConversationProjector:
     def _interaction(self, payload: dict[str, Any], source: str) -> dict[str, Any]:
         request_id = str(payload.get("request_id") or payload.get("id") or f"request-{len(self.parts) + 1}")
         interaction_type = str(payload.get("interaction_type") or "text_input")
-        if interaction_type not in {"approval", "text_input", "choice", "confirmation"}:
+        if interaction_type not in {"approval", "text_input", "choice", "confirmation", "capability_configuration"}:
             interaction_type = "text_input"
         part = {
             "id": f"{self.turn_id}:interaction:{_safe_id(request_id)}",
@@ -405,6 +413,15 @@ class StructuredConversationProjector:
         }
         if isinstance(payload.get("options"), list):
             part["options"] = payload["options"]
+        if isinstance(payload.get("request_summary"), dict):
+            summary = payload["request_summary"]
+            for source_key, target_key in (
+                ("capability", "capability"), ("resource_kind", "resourceKind"),
+                ("preferred_adapter", "preferredAdapter"), ("reason", "reason"),
+                ("query_disclosed", "queryDisclosed"),
+            ):
+                if source_key in summary:
+                    part[target_key] = summary[source_key]
         self.parts[part["id"]] = part
         return self._event("part.started", source, part=part)
 

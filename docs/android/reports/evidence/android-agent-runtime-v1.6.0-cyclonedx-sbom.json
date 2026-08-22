@@ -1,0 +1,51 @@
+{
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "92020971b3fb9d549ff08e10221bf34db13213e5206a9aa4b5222461a9f011ae"
+        }
+      ],
+      "name": "OAEP",
+      "type": "library",
+      "version": "1.0"
+    },
+    {
+      "name": "Android",
+      "type": "framework",
+      "version": "API 26-36"
+    },
+    {
+      "name": "Python shared core",
+      "type": "library",
+      "version": "3.11"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "name": "OpenDrSai Android Agent Runtime",
+      "properties": [
+        {
+          "name": "oaep.protocol",
+          "value": "1.0"
+        },
+        {
+          "name": "oaep.schema.sha256",
+          "value": "92020971b3fb9d549ff08e10221bf34db13213e5206a9aa4b5222461a9f011ae"
+        },
+        {
+          "name": "candidate.apk.sha256",
+          "value": "5f3e49b2c2620a3aaedd13f84d5879fdf99ca7ab999be0707b4faa3d372a4824"
+        }
+      ],
+      "type": "application",
+      "version": "1.6.0"
+    },
+    "timestamp": "2026-08-03T23:01:41.716741+00:00"
+  },
+  "serialNumber": "urn:uuid:android-agent-runtime-oaep-v1-6-0",
+  "specVersion": "1.5",
+  "version": 1
+}

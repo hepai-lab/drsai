@@ -18,7 +18,9 @@ try {
         request: async <T>(path: string, init?: RequestInit): Promise<T> => {
           requests.push({ path, init });
           if (path === "/v1/remote/handshake") return { runtime_id: runtimeId, instance_id: instanceId, gateway_version: "2.0.1", protocol_version: 1, capability_versions: { threads: 1, hepai: 1 } } as T;
-          if (path.startsWith("/v1/threads?")) return { data: [{ thread_id: "thread-1", name: "Remote task", updated_at: "2026-07-22T00:00:00.000Z", message_count: 3 }] } as T;
+          if (path.startsWith("/v1/sessions?")) return { data: [{ session_id: "thread-1", title: "Remote task", created_at: "2026-07-21T00:00:00.000Z", updated_at: "2026-07-22T00:00:00.000Z" }] } as T;
+          if (path === "/v1/sessions/thread-1/conversation-snapshot") return { session_id: "thread-1", snapshot_sequence: 2, next_cursor: null, items: [{ item_id: "remote-user", session_id: "thread-1", run_id: null, kind: "message", role: "user", revision: 1, session_sequence: 1, source_client: "runtime", source_message_id: null, created_at: "2026-07-22T00:00:00.000Z", updated_at: "2026-07-22T00:00:00.000Z", payload: { content: "remote question", status: "completed" } }, { item_id: "remote-assistant", session_id: "thread-1", run_id: "run-1", kind: "message", role: "assistant", revision: 1, session_sequence: 2, source_client: "runtime", source_message_id: null, created_at: "2026-07-22T00:00:01.000Z", updated_at: "2026-07-22T00:00:01.000Z", payload: { content: "remote searchable answer", status: "completed" } }] } as T;
+          if (path === "/v1/threads/thread-1") return { name: "Remote task", messages: [{ role: "user", content: "remote question" }, { role: "assistant", content: "remote searchable answer" }] } as T;
           if (path === "/v1/hepai/workers") return { data: [{ id: "worker-1", name: "Worker One", enabled: true, status: "available", callables: ["run"] }] } as T;
           if (path === "/v1/hepai/workers/worker-1/state") return {} as T;
           if (path === "/v1/workspaces/remote-workspace-1/context") return { workspacePath: "/srv/project", trusted: true, instructions: [], stats: { instructionCount: 0, changedFileCount: 1 } } as T;
@@ -31,6 +33,12 @@ try {
             if (conflictNextWrite) { conflictNextWrite = false; throw new RemoteGatewayHttpError(409, { detail: { current_sha256: "b".repeat(64) } }); }
             return { sha256: "a".repeat(64), modified_at: 2, size: 10 } as T;
           }
+          if (path === "/v1/workspaces/remote-workspace-1/checkpoints" && !init?.method) return { data: [{ id: "checkpoint-1", workspacePath: "/srv/project", label: "Remote baseline", createdAt: "2026-07-22T00:00:00.000Z", changedFileCount: 1, storedFileCount: 1, skippedFileCount: 0, entries: [] }] } as T;
+          if (path === "/v1/workspaces/remote-workspace-1/checkpoints" && init?.method === "POST") return { id: "checkpoint-2", workspacePath: "/srv/project", label: "Created", createdAt: "2026-07-22T00:00:00.000Z", changedFileCount: 1, storedFileCount: 1, skippedFileCount: 0, entries: [] } as T;
+          if (path === "/v1/workspaces/remote-workspace-1/checkpoints/preview" && init?.method === "POST") return { workspacePath: "/srv/project", checkpointId: "checkpoint-1", label: "Remote baseline", createdAt: "2026-07-22T00:00:00.000Z", totalEntries: 1, changedEntryCount: 1, skippedEntryCount: 0, truncated: false, entries: [], message: "1 changed" } as T;
+          if (path === "/v1/workspaces/remote-workspace-1/checkpoints/restore" && init?.method === "POST") return { workspacePath: "/srv/project", checkpointId: "checkpoint-1", restored: true, restoredFileCount: 1, removedFileCount: 0, skippedFileCount: 0, message: "restored" } as T;
+          if (path === "/v1/workspaces/remote-workspace-1/checkpoints/accept" && init?.method === "POST") return { id: "checkpoint-1", workspacePath: "/srv/project", label: "Remote baseline", createdAt: "2026-07-22T00:00:00.000Z", changedFileCount: 1, storedFileCount: 1, skippedFileCount: 0, entries: [], reviewStatus: "accepted" } as T;
+          if (path === "/v1/workspaces/remote-workspace-1/worktrees" && init?.method === "POST") return { worktree_id: "worktree-1", workspace_id: "remote-workspace-2", source_workspace_path: "/srv/project", repo_root: "/srv/project", worktree_path: "/srv/.worktrees/task", branch: "codex/task", base_ref: "HEAD", source_has_changes: false } as T;
           if (path.startsWith("/v1/workspaces/remote-workspace-1/git/") && init?.method === "POST") return {} as T;
           throw new Error(`unexpected request ${path}`);
         },
@@ -46,7 +54,10 @@ try {
   assert.equal(await controller.resolveTarget("/srv/project", first.id), "remote_online"); controller.bindThread("bound-thread", first.id);
   const directories = await controller.listDirectories("alpha", "~/projects"); assert.equal(directories[0].name, "demo");
   await assert.rejects(() => controller.listDirectories("../bad", "~"), /alias is invalid/i); await assert.rejects(() => controller.listDirectories("alpha", "bad\npath"), /path is invalid/i);
-  const threads = await controller.listThreads(first.id); assert.equal(threads[0].id, "thread-1"); assert.equal(threads[0].workspacePath, "/srv/project");
+  const threads = await controller.listThreads(first.id); assert.equal(threads[0].id, "thread-1"); assert.equal(threads[0].workspacePath, "/srv/project"); assert.equal(threads[0].runtimeSessionId, "thread-1");
+  const remoteSnapshot = await controller.getThreadSnapshot("thread-1"); assert.equal(remoteSnapshot?.messageCount, 2); assert.equal(remoteSnapshot?.messages[1]?.role, "assistant");
+  const remoteSearch = await controller.searchThreadMessages({ query: "searchable", threadIds: ["thread-1"], limit: 5 }); assert.equal(remoteSearch.length, 1); assert.match(remoteSearch[0].snippet, /searchable answer/);
+  assert.deepEqual(await controller.searchThreadMessages({ query: "missing", threadIds: ["thread-1"] }), []);
   const workers = await controller.listWorkers(first.id); assert.equal(workers[0].status, "available");
   assert.equal(await controller.setWorkerState(first.id, "worker-1", false), true);
   const update = requests.find((request) => request.path.endsWith("worker-1/state")); assert.equal(update?.init?.method, "PUT"); assert.equal(update?.init?.body, JSON.stringify({ enabled: false }));
@@ -62,15 +73,53 @@ try {
   conflictNextWrite = true; const conflicted = await controller.writeFile({ workspacePath: "/srv/project", workspaceId: first.id, path: "/srv/project/src/main.ts", content: "changed", expectedHash: "0".repeat(64) }); assert.equal(conflicted.status, "conflict"); assert.equal(conflicted.currentHash, "b".repeat(64));
   const expectedDiffHash = "c".repeat(64); assert.equal((await controller.mutateGit("stage-file", { workspacePath: "/srv/project", workspaceId: first.id, path: "/srv/project/src/main.ts", expectedDiffHash }) as { staged: boolean }).staged, true);
   assert.equal((await controller.mutateGit("revert-hunk", { workspacePath: "/srv/project", workspaceId: first.id, path: "/srv/project/src/main.ts", expectedDiffHash, patch: "@@" }) as { applied: boolean }).applied, true);
+  assert.equal(await controller.commitGit({ workspacePath: "/srv/project", message: "Remote commit", body: "Reviewed" }, "approval:remote-1"), true);
+  const commitRequest = requests.find((request) => request.path.endsWith("/git/commit")); assert.equal(commitRequest?.init?.method, "POST"); assert.deepEqual(JSON.parse(String(commitRequest?.init?.body)), { message: "Remote commit", body: "Reviewed", idempotency_key: "approval:remote-1" });
+  assert.equal((await controller.listCheckpoints("/srv/project", first.id))[0].id, "checkpoint-1");
+  assert.equal((await controller.createCheckpoint({ workspacePath: "/srv/project", workspaceId: first.id, label: "Created" })).id, "checkpoint-2");
+  assert.equal((await controller.previewCheckpoint({ workspacePath: "/srv/project", workspaceId: first.id, checkpointId: "checkpoint-1" })).changedEntryCount, 1);
+  assert.equal((await controller.restoreCheckpoint({ workspacePath: "/srv/project", workspaceId: first.id, checkpointId: "checkpoint-1" })).restored, true);
+  assert.equal((await controller.acceptCheckpoint({ workspacePath: "/srv/project", workspaceId: first.id, checkpointId: "checkpoint-1" })).reviewStatus, "accepted");
+  const remoteWorktree = await controller.prepareForkWorktree("/srv/project", "test task", first.id); assert.equal(remoteWorktree.location, "remote"); assert.equal(remoteWorktree.workspaceId, "remote-workspace-2"); assert.equal(controller.resolvePathTarget("/srv/.worktrees/task/src"), "remote_online");
   await assert.rejects(() => controller.previewFile({ workspacePath: "/srv/project", workspaceId: first.id, path: "/srv/project/../secret" }), /stay inside/i);
   assert.equal(controller.resolvePathTarget("/srv/project/src"), "remote_online");
 
   runtimeId = "runtime-b"; instanceId = "instance-b"; const restarted = await controller.status(first.id); assert.equal(restarted.runtimeId, "runtime-b"); assert.equal(restarted.instanceId, "instance-b"); assert(statuses.some((item) => item.instanceId === "instance-b"));
   assert.equal(await controller.disconnect(first.id), true); assert.equal(closes, 1); assert.equal(await controller.disconnect(first.id), false);
   assert.equal(controller.getAccess("/srv/project", first.id), null); assert.equal(await controller.resolveTarget("/srv/project", first.id), "remote_offline");
+  assert.equal(controller.getAccess("/srv/.worktrees/task", "remote-workspace-2"), null); assert.equal(controller.resolvePathTarget("/srv/.worktrees/task/src"), "local_or_unknown");
   await assert.rejects(() => controller.listThreads(first.id), /not connected/i); await assert.rejects(() => controller.listWorkers(first.id), /not connected/i);
   await assert.rejects(() => controller.previewFile({ workspacePath: "/srv/project", workspaceId: first.id, path: "/srv/project/src/main.ts" }), /not connected/i);
   await assert.rejects(() => controller.connect({ hostAlias: "../bad", path: "/srv/project" }), /alias is invalid/i);
   const second = await controller.connect({ hostAlias: "beta", path: "/srv/other" }); assert.equal(second.id, "remote-workspace-1"); await controller.shutdown(); assert.equal(closes, 2);
-  console.log("Remote Workspace lifecycle, file/Git routing, conflict protection and disconnect invalidation passed.");
+
+  const originalWebSocket = globalThis.WebSocket;
+  class FixtureWebSocket {
+    static instances: FixtureWebSocket[] = [];
+    readonly listeners = new Map<string, Array<(event: { data?: string }) => void>>(); sent: string[] = []; closed = false;
+    constructor(readonly url: string) { FixtureWebSocket.instances.push(this); }
+    addEventListener(name: string, listener: (event: { data?: string }) => void) { this.listeners.set(name, [...(this.listeners.get(name) ?? []), listener]); }
+    send(value: string) { this.sent.push(value); }
+    close() { this.closed = true; this.emit("close", {}); }
+    emit(name: string, event: { data?: string }) { for (const listener of this.listeners.get(name) ?? []) listener(event); }
+  }
+  globalThis.WebSocket = FixtureWebSocket as unknown as typeof WebSocket;
+  try {
+    const watcherController = new RemoteWorkspaceController(port); const changes: Array<{ workspacePath: string; changes: Array<{ path: string }> }> = [];
+    watcherController.setFilePublisher((event) => changes.push(event));
+    const watched = await watcherController.connect({ hostAlias: "watcher", path: "/srv/project" }); const socket = FixtureWebSocket.instances.at(-1)!;
+    assert.match(socket.url, /\/v1\/workspaces\/remote-workspace-1\/watch$/); socket.emit("open", {}); assert.match(socket.sent[0], /"type":"auth"/); assert.doesNotMatch(socket.sent[0], /undefined/);
+    socket.emit("message", { data: JSON.stringify({ type: "changes", sequence: 1, changes: [{ sequence: 1, path: "src/main.ts", type: "modified" }] }) });
+    socket.emit("message", { data: JSON.stringify({ type: "changes", sequence: 1, changes: [{ sequence: 1, path: "src/main.ts", type: "modified" }] }) });
+    assert.equal(changes.length, 1); assert.equal(changes[0].workspacePath, "/srv/project"); assert.equal(changes[0].changes[0].path, "src/main.ts");
+    await watcherController.disconnect(watched.id); assert.equal(socket.closed, true);
+  } finally { globalThis.WebSocket = originalWebSocket; }
+
+  const persistedSeed = new RemoteWorkspaceController(port); await persistedSeed.connect({ hostAlias: "restore", path: "/srv/project", name: "Restore me" }); await persistedSeed.shutdown();
+  const restoredController = new RemoteWorkspaceController(port); const restored = await restoredController.restorePersisted(); assert.equal(restored.restored, 1); assert.equal(restored.failed, 0); await restoredController.shutdown();
+  let releaseSlowOpen!: () => void; const slowGate = new Promise<void>((resolve) => { releaseSlowOpen = resolve; }); let slowClosed = 0;
+  const slowController = new RemoteWorkspaceController({ async open(request) { await slowGate; const opened = await port.open(request); return { ...opened, close: async () => { slowClosed += 1; await opened.close(); } }; } });
+  const slowConnect = slowController.connect({ hostAlias: "slow", path: "/srv/project" }); await new Promise((resolve) => setTimeout(resolve, 0)); const slowShutdown = slowController.shutdown(); releaseSlowOpen();
+  await assert.rejects(slowConnect, /shut down while connecting/i); await slowShutdown; assert.equal(slowClosed, 1); await assert.rejects(() => slowController.connect({ hostAlias: "slow", path: "/srv/project" }), /shutting down/i);
+  console.log("Remote Workspace lifecycle, remote Thread search, file events, startup restoration, file/Git/checkpoint/worktree routing and disconnect invalidation passed.");
 } finally { await rm(root, { recursive: true, force: true }); }

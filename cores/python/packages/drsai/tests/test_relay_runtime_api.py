@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import base64
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
 from drsai.relay.api import create_relay_app
 from drsai.relay.models import Workspace
-from drsai.relay.registry import RelayRegistry
+from drsai.relay.registry import RelayRegistry, RelayRegistryError
 from drsai.relay.runtime_domain import AgentDefinition, RuntimeAuthority
 
 
@@ -19,9 +21,9 @@ def fixture():
     public = base64.urlsafe_b64encode(key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)).rstrip(b"=").decode()
     runtime_id, token = registry.register(registry.issue_registration_code(), "PC", "1", public, "registration-key")
     _, grant, _ = registry.issue_access_grant(runtime_id, token)
-    registry.associate("alice", grant)
+    registry.associate("alice", grant, "device-alice", "Alice Device", public)
     _, second_grant, _ = registry.issue_access_grant(runtime_id, token)
-    registry.associate("bob", second_grant)
+    registry.associate("bob", second_grant, "device-bob", "Bob Device", public)
     registry.publish_workspaces(runtime_id, token, [Workspace(runtime_id=runtime_id, workspace_id="ws-a", display_name="Project")])
     authority = RuntimeAuthority(runtime_id)
     authority.add_agent_definition(AgentDefinition("agent", "1.2.3", "OpenDrSai", "opendrsai", "healthy", frozenset({"chat"})))
@@ -36,6 +38,38 @@ def control(key: str | None = None):
     body = {"request_id": str(uuid4()), "correlation_id": str(uuid4())}
     if key: body["idempotency_key"] = key
     return body
+
+
+def test_runtime_session_keyset_cursor_is_opaque_and_stable_when_catalog_changes() -> None:
+    runtime = RuntimeAuthority("runtime-one", cursor_secret=b"r" * 32)
+    runtime.add_agent_definition(AgentDefinition(
+        "agent", "1.0.0", "Agent", "backend", "healthy", frozenset()
+    ))
+    base = datetime(2026, 8, 1, tzinfo=UTC)
+    sessions = []
+    for index in range(5):
+        session = runtime.create_session(
+            "alice", "workspace-one", title=f"Session {index}",
+            definition_id="agent", definition_version="1.0.0",
+            idempotency_key=f"session-key-{index}",
+        )
+        session.updated_at = base + timedelta(seconds=index)
+        sessions.append(session)
+    first, cursor = runtime.list_sessions("workspace-one", limit=2)
+    assert [item.session_id for item in first] == [sessions[4].session_id, sessions[3].session_id]
+    assert cursor and cursor != "2" and sessions[3].session_id not in cursor
+
+    del runtime.sessions[sessions[3].session_id]
+    inserted = runtime.create_session(
+        "alice", "workspace-one", title="Inserted before cursor",
+        definition_id="agent", definition_version="1.0.0",
+        idempotency_key="session-key-inserted",
+    )
+    inserted.updated_at = base + timedelta(seconds=10)
+    second, _ = runtime.list_sessions("workspace-one", cursor=cursor, limit=2)
+    assert [item.session_id for item in second] == [sessions[2].session_id, sessions[1].session_id]
+    with pytest.raises(RelayRegistryError, match="cursor"):
+        runtime.list_sessions("other-workspace", cursor=cursor, limit=2)
 
 
 def test_android_http_session_run_event_cancel_and_approval_e2e() -> None:
@@ -58,7 +92,12 @@ def test_android_http_session_run_event_cancel_and_approval_e2e() -> None:
     )
     assert missing_result.status_code == 400
     assert missing_result.json()["code"] == "idempotency_result_not_found"
-    run_body = {**control("run-idem-1"), "message": "hello", "attachment_refs": ["att_1"]}
+    run_body = {
+        **control("run-idem-1"),
+        "message": "hello",
+        "source_message_id": "android-message-1",
+        "attachment_refs": ["att_1"],
+    }
     created_run = client.post(f"/v1/runtimes/{runtime_id}/workspaces/ws-a/sessions/{session_id}/runs", headers=headers, json=run_body)
     assert created_run.status_code == 200
     run_id = created_run.json()["run_id"]
@@ -73,8 +112,21 @@ def test_android_http_session_run_event_cancel_and_approval_e2e() -> None:
     pending = client.get(f"/v1/runtimes/{runtime_id}/workspaces/ws-a/approvals", headers=headers).json()["items"]
     assert pending[0]["approval_id"] == approval.approval_id
     decision = client.post(f"/v1/runtimes/{runtime_id}/approvals/{approval.approval_id}/decision", headers=headers,
-                           json={**control(), "decision": "deny"})
+                           json={**control("approval-decision-idem"), "decision": "deny"})
     assert decision.json()["status"] == "denied"
+    recovered_decision = client.get(
+        f"/v1/runtimes/{runtime_id}/idempotency/approval.decide/approval-decision-idem",
+        headers=headers,
+    )
+    assert recovered_decision.status_code == 200
+    assert recovered_decision.json()["resource"]["approval_id"] == approval.approval_id
+    assert recovered_decision.json()["resource"]["status"] == "denied"
+    other_subject = client.get(
+        f"/v1/runtimes/{runtime_id}/idempotency/approval.decide/approval-decision-idem",
+        headers={"x-subject": "bob"},
+    )
+    assert other_subject.status_code == 400
+    assert other_subject.json()["code"] == "idempotency_result_not_found"
     cancelled = client.post(f"/v1/runtimes/{runtime_id}/workspaces/ws-a/runs/{run_id}/cancel", headers=headers)
     assert cancelled.json()["status"] == "cancelled"
     audit = client.get(f"/v1/runtimes/{runtime_id}/workspaces/ws-a/audit?run_id={run_id}", headers=headers)
@@ -83,6 +135,17 @@ def test_android_http_session_run_event_cancel_and_approval_e2e() -> None:
         "run.created", "approval.requested", "approval.denied", "run.cancelled"
     ]
     assert all(item["correlation_id"] for item in audit.json()["items"])
+    allowed_audit_fields = {
+        "audit_id", "runtime_id", "workspace_id", "session_id", "run_id",
+        "action", "actor_label", "timestamp", "correlation_id", "approval_id",
+    }
+    unexpected_audit_fields = set().union(*(set(item) for item in audit.json()["items"])) - allowed_audit_fields
+    assert not unexpected_audit_fields, unexpected_audit_fields
+    assert all({
+        "audit_id", "runtime_id", "workspace_id", "session_id", "run_id",
+        "action", "actor_label", "timestamp", "correlation_id",
+    }.issubset(item) for item in audit.json()["items"])
+    assert "hello" not in audit.text and "command" not in audit.text
     assert isinstance(runtime.audit, tuple)
 
 

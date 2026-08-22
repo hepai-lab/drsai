@@ -1,0 +1,114 @@
+schema_version: opendrsai.agent-regression-case/1
+
+id: knowledge.absent
+revision: 2
+title: 知识库不存在默认端口答案
+description: 验证 Agent 在指定知识库缺少答案时完成检索、承认资料不足并拒绝猜测。
+owner: agent-runtime
+tags: [smoke, release, knowledge, absence, citation]
+
+agent:
+  definition: opendrsai@1
+  model_profile: default
+
+input:
+  messages:
+    - role: user
+      parts:
+        - type: text
+          text: |
+            根据提供的 OpenDrSai Runtime 知识库回答：
+
+            OpenDrSai 本地 Gateway 默认监听哪个端口？
+
+            请仅根据知识库回答，并提供依据。
+
+environment:
+  network: disabled
+  session:
+    type: new
+    history: empty
+  required_capabilities: [knowledge_search]
+  knowledge_bases:
+    - id: regression.opendrsai-runtime
+      revision: 1
+      corpus_complete: true
+      documents:
+        - path: ../../assets/knowledge_bases/opendrsai_runtime_overview_v1.md
+          sha256: 133ef96937ed236cc0d5d62e18b9f475674400835f14c380baa89ca6ff1620f3
+
+baseline:
+  answer_state: absent
+  excluded_fact: OpenDrSai 本地 Gateway 默认监听端口
+
+expect:
+  run:
+    status: completed
+
+  behavior:
+    required_capabilities: [knowledge_search]
+    knowledge_queries:
+      min: 1
+      max: 3
+    knowledge_search:
+      knowledge_base_id: regression.opendrsai-runtime
+      knowledge_base_revision: 1
+      require_completed: true
+      require_corpus_complete: true
+      require_no_supporting_match: true
+    web_search_calls:
+      max: 0
+    workspace_search_calls:
+      max: 0
+    unrelated_tool_calls:
+      max: 0
+    skill_activations:
+      max: 0
+    approvals:
+      max: 0
+    external_writes:
+      max: 0
+
+  output:
+    type: text
+    required_patterns:
+      - '(?:知识库|文档)[\s\S]{0,80}(?:并未|没有|不包含|未包含)[\s\S]{0,40}端口'
+      - '(?:(?:无法|不能)[\s\S]{0,60}(?:知识库|文档)|(?:知识库|文档)[\s\S]{0,60}(?:无法|不能))'
+    allowed_follow_up:
+      - 请求提供其他配置资料
+      - 请求允许查询其他来源
+      - 建议检查 Gateway 配置
+    forbidden_claims:
+      - 默认端口是 18642
+      - 默认端口为 18642
+      - 默认端口是 8000
+      - 默认端口为 8000
+      - 知识库说明了默认端口
+    forbidden_patterns:
+      - '\b18642\b'
+      - '\b8000\b'
+      - '\b(?:[1-9][0-9]{2,4})\b'
+
+  citations:
+    min: 1
+    presentation: interactive
+    required_sources:
+      - relation: searched_scope
+        knowledge_base_id: regression.opendrsai-runtime
+        revision: 1
+        document_path: opendrsai_runtime_overview_v1.md
+        corpus_complete: true
+    oaep:
+      require_citation_parts: true
+      require_stable_citation_id: true
+      require_markdown_relation: true
+      require_openable_target: true
+      require_bidirectional_navigation: true
+
+  artifacts:
+    max: 0
+
+execution:
+  timeout_seconds: 60
+  attempts: 1
+  isolation: required

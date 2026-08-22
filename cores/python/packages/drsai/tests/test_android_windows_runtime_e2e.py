@@ -60,6 +60,14 @@ class DirectRuntimeChannel:
         self.thread.join(timeout=5)
 
 
+class DirtyCatalogProbe:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def mark_workspaces_dirty(self) -> None:
+        self.calls += 1
+
+
 def relay_registry(workspace_id: str):
     registry = RelayRegistry()
     key = Ed25519PrivateKey.generate()
@@ -68,7 +76,13 @@ def relay_registry(workspace_id: str):
     runtime_id, token = registry.register(registry.issue_registration_code(), "Windows OpenDrSai", "1.4.7",
                                           public, "windows-e2e-registration")
     _, grant, _ = registry.issue_access_grant(runtime_id, token)
-    registry.associate("alice", grant)
+    registry.associate(
+        "alice",
+        grant,
+        "android-e2e-device",
+        "Android E2E",
+        public,
+    )
     registry.publish_workspaces(runtime_id, token, [Workspace(
         runtime_id=runtime_id, workspace_id=workspace_id, display_name="Windows E2E")])
     return registry, runtime_id
@@ -79,6 +93,55 @@ def control(key: str | None = None):
     if key:
         result["idempotency_key"] = key
     return result
+
+
+def test_windows_workspace_mutations_mark_relay_catalog_dirty_after_commit(tmp_path: Path, monkeypatch) -> None:
+    home, workspace = tmp_path / "home", tmp_path / "workspace"
+    workspace.mkdir()
+    token = "workspace-catalog-dirty-token"
+    monkeypatch.setenv("DRSAI_HOME", str(home))
+    monkeypatch.setenv("OPENDRSAI_GATEWAY_INSTANCE_TOKEN", token)
+
+    from drsai.backend import gateway
+    gateway._WORKSPACE = home / "workspace-state"
+    gateway._DATASET = gateway._WORKSPACE / "drsai"
+    gateway._DATASET.mkdir(parents=True, exist_ok=True)
+    gateway._DB_URI = f"sqlite:///{gateway._DATASET}/drsai.db"
+    gateway._db_manager = None
+    gateway._runtime_registry_instance = None
+    gateway._runtime_engine_instance = None
+    gateway._runtime_agent_service_instance = None
+    gateway._runtime_tool_dispatcher_instance = None
+    gateway._remote_workspaces.clear()
+    probe = DirtyCatalogProbe()
+    monkeypatch.setattr(gateway, "_runtime_relay_connector", probe)
+
+    with TestClient(gateway.app) as windows:
+        opened = windows.post(
+            "/v1/workspaces",
+            headers={"X-OpenDrSai-Gateway-Token": token},
+            json={"path": str(workspace), "display_name": "Temporary Catalog Workspace"},
+        )
+        assert opened.status_code == 200, opened.text
+        workspace_id = opened.json()["workspace_id"]
+        assert probe.calls == 1
+
+        renamed = windows.put(
+            f"/v1/workspaces/{workspace_id}/display-name",
+            headers={"X-OpenDrSai-Gateway-Token": token},
+            json={"display_name": "Renamed Catalog Workspace"},
+        )
+        assert renamed.status_code == 200, renamed.text
+        assert renamed.json()["workspace_id"] == workspace_id
+        assert probe.calls == 2
+
+        closed = windows.delete(
+            f"/v1/workspaces/{workspace_id}",
+            headers={"X-OpenDrSai-Gateway-Token": token},
+        )
+        assert closed.status_code == 200, closed.text
+        assert closed.json()["lifecycle"] == "archived"
+        assert probe.calls == 3
 
 
 def test_android_relay_uses_real_windows_full_runtime_opendrsai_backend(tmp_path: Path, monkeypatch) -> None:
@@ -102,6 +165,21 @@ def test_android_relay_uses_real_windows_full_runtime_opendrsai_backend(tmp_path
     monkeypatch.setenv("DRSAI_HOME", str(home))
     monkeypatch.setenv("OPENDRSAI_GATEWAY_INSTANCE_TOKEN", token)
     monkeypatch.setenv("DRSAI_RUNTIME_CONTROLLED_MODEL", "1")
+    (home / "configs" / "agents").mkdir(parents=True)
+    (home / "configs" / "models").mkdir(parents=True)
+    (home / "config.toml").write_text(
+        'config_version = 2\ncurrent_agent = "opendrsai"\nagent_config_file = "configs/agents/agent_opendrsai.toml"\n\n'
+        '[model_providers.hepai]\nbase_url = "https://controlled.invalid/v1"\nrequires_api_key = false\n'
+        'models_file = "configs/models/provider_hepai.toml"\n', encoding="utf-8",
+    )
+    (home / "configs" / "agents" / "agent_opendrsai.toml").write_text(
+        'schema_version = 2\nagent_name = "opendrsai"\n[models.primary]\nmode = "explicit"\n'
+        'provider_id = "hepai"\nmodel_id = "controlled"\n', encoding="utf-8",
+    )
+    (home / "configs" / "models" / "provider_hepai.toml").write_text(
+        '[models."controlled"]\ninput_modalities = ["text"]\noutput_modalities = ["text"]\n'
+        'api_protocol = "openai"\nenabled = true\ncapabilities = ["chat", "tool_calling"]\n', encoding="utf-8",
+    )
 
     # This is the same Full Runtime module launched by apps/desktop/windows/src/main/gateway.ts.
     from drsai.backend import gateway

@@ -99,7 +99,7 @@ class PlatformAuthTests(unittest.TestCase):
             f"Bearer {self.valid_token(issuer='https://ai.ihep.ac.cn/api')}",
             USER_ID,
         )
-        self.assertEqual(context.model_base_url, "https://ai.ihep.ac.cn/apiv2/v1")
+        self.assertEqual(context.model_base_url, "https://ai-dev.ihep.ac.cn/apiv2/v1")
 
     def test_expired_and_mismatched_tokens_are_rejected(self) -> None:
         expired = jwt({"sub": USER_ID, "iss": "https://ai-dev.ihep.ac.cn/api", "exp": int(time.time()) - 1, "aud": "hai-api"})
@@ -150,6 +150,23 @@ class PlatformAuthTests(unittest.TestCase):
             self.assertFalse(verify_gateway_instance("wrong-secret"))
             self.assertFalse(verify_gateway_instance(None))
 
+    def test_gateway_instance_token_file_survives_watcher_restart_and_invalid_file_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = os.path.join(temporary, "runtime")
+            os.makedirs(runtime)
+            token_path = os.path.join(runtime, "instance-token")
+            with patch.dict(os.environ, {"DRSAI_HOME": temporary}, clear=False):
+                os.environ.pop("OPENDRSAI_GATEWAY_INSTANCE_TOKEN", None)
+                self.assertTrue(verify_gateway_instance(None))
+                with open(token_path, "w", encoding="ascii") as handle:
+                    handle.write("f" * 43)
+                self.assertTrue(verify_gateway_instance("f" * 43))
+                self.assertFalse(verify_gateway_instance("wrong"))
+                self.assertFalse(verify_gateway_instance(None))
+                with open(token_path, "w", encoding="ascii") as handle:
+                    handle.write("invalid token")
+                self.assertFalse(verify_gateway_instance("invalid token"))
+
     def test_gateway_instance_token_expiry_and_revocation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             with patch.dict(os.environ, {
@@ -169,8 +186,42 @@ class PlatformAuthTests(unittest.TestCase):
         self.assertEqual(provider.access_token, "static-key")
         self.assertEqual(provider.openai_base_url, "https://provider.example/v1")
 
+    def test_agent_provider_credentials_take_priority_over_signed_in_session(self) -> None:
+        context = context_from_bearer(f"Bearer {self.valid_token()}", USER_ID)
+        with platform_auth_scope(context):
+            provider = get_model_credential_provider(
+                "configured-provider-key",
+                "https://api.zhizengzeng.com/v1",
+            )
+        self.assertIsNotNone(provider)
+        self.assertEqual(provider.access_token, "configured-provider-key")
+        self.assertEqual(provider.openai_base_url, "https://api.zhizengzeng.com/v1")
+
+    def test_signed_in_session_does_not_rebind_configured_provider_client(self) -> None:
+        context = context_from_bearer(f"Bearer {self.valid_token()}", USER_ID)
+        with platform_auth_scope(context):
+            client = HepAIChatCompletionClient(
+                model="deepseek-v4-flash",
+                api_key="configured-provider-key",
+                base_url="https://api.zhizengzeng.com/v1",
+            )
+            client._bind_platform_auth()
+        self.assertEqual(client._client.api_key, "configured-provider-key")
+        self.assertEqual(
+            str(client._client.base_url).rstrip("/"),
+            "https://api.zhizengzeng.com/v1",
+        )
+
     def test_oidc_only_mode_rejects_static_credential_fallback(self) -> None:
-        with patch.dict(os.environ, {"OPENDRSAI_OIDC_ONLY": "1"}):
+        from autogen_ext.models.openai import OpenAIChatCompletionClient
+
+        def capture_init(client, **kwargs):
+            client._raw_config = dict(kwargs)
+
+        with (
+            patch.dict(os.environ, {"OPENDRSAI_OIDC_ONLY": "1"}),
+            patch.object(OpenAIChatCompletionClient, "__init__", capture_init),
+        ):
             provider = get_model_credential_provider(
                 "legacy-static-key",
                 "https://provider.example/v1",
@@ -184,6 +235,69 @@ class PlatformAuthTests(unittest.TestCase):
             self.assertTrue(client._oidc_credential_pending)
             with self.assertRaisesRegex(RuntimeError, "OIDC credential context is unavailable"):
                 client._bind_platform_auth()
+
+    def test_oidc_only_mode_preserves_explicit_external_provider_credential(self) -> None:
+        from autogen_ext.models.openai import OpenAIChatCompletionClient
+
+        def capture_init(client, **kwargs):
+            client._raw_config = dict(kwargs)
+
+        with (
+            patch.dict(os.environ, {"OPENDRSAI_OIDC_ONLY": "1"}),
+            patch.object(OpenAIChatCompletionClient, "__init__", capture_init),
+        ):
+            client = HepAIChatCompletionClient(
+                model="deepseek-v4-flash",
+                api_key="configured-provider-key",
+                base_url="https://api.zhizengzeng.com/v1",
+                allow_deferred_oidc=False,
+                use_responses_api=True,
+            )
+        self.assertFalse(client._oidc_credential_pending)
+        self.assertFalse(client._uses_platform_auth)
+        self.assertEqual(client._raw_config["api_key"], "configured-provider-key")
+        self.assertEqual(
+            str(client._raw_config["base_url"]).rstrip("/"),
+            "https://api.zhizengzeng.com/v1",
+        )
+
+    def test_external_provider_without_saved_key_does_not_fall_back_to_oidc(self) -> None:
+        context = context_from_bearer(f"Bearer {self.valid_token()}", USER_ID)
+        with patch.dict(os.environ, {"HEPAI_API_KEY": ""}), platform_auth_scope(context):
+            with self.assertRaisesRegex(RuntimeError, "provider API credential is unavailable"):
+                HepAIChatCompletionClient(
+                    model="deepseek-v4-flash",
+                    api_key=None,
+                    base_url="https://api.zhizengzeng.com/v1",
+                    allow_deferred_oidc=False,
+                )
+
+    def test_external_client_recovers_saved_provider_credential_by_exact_base_url(self) -> None:
+        from drsai.config.schema import SecretValue
+        from autogen_ext.models.openai import OpenAIChatCompletionClient
+
+        config = SimpleNamespace(providers={
+            "zhizengzeng": SimpleNamespace(base_url="https://api.zhizengzeng.com/v1"),
+        })
+        resolved = SimpleNamespace(provider=SimpleNamespace(api_key=SecretValue("saved-provider-key")))
+
+        def capture_init(client, **kwargs):
+            client._raw_config = dict(kwargs)
+
+        with (
+            patch("drsai.config.load_user_config", return_value=config),
+            patch("drsai.config.resolver.resolve_model_config", return_value=resolved) as resolver,
+            patch.object(OpenAIChatCompletionClient, "__init__", capture_init),
+        ):
+            client = HepAIChatCompletionClient(
+                model="deepseek-v4-flash",
+                api_key=None,
+                base_url="https://api.zhizengzeng.com/v1",
+                allow_deferred_oidc=False,
+            )
+
+        self.assertEqual(client._raw_config["api_key"], "saved-provider-key")
+        resolver.assert_called_once()
 
     def test_cached_model_client_rebinds_to_current_request(self) -> None:
         client = object.__new__(HepAIChatCompletionClient)
@@ -241,6 +355,23 @@ class PlatformAuthTests(unittest.TestCase):
         self.assertEqual((expired["code"], expired["retryable"]), ("token_expired", True))
         invalid_token = classify_model_error(Exception("AuthenticationError: Error code: 401 - invalid_token"))
         self.assertEqual((invalid_token["code"], invalid_token["retryable"]), ("model_unauthorized", False))
+        unavailable_credential = classify_model_error(RuntimeError(
+            "The configured model provider API credential is unavailable"
+        ))
+        self.assertEqual(
+            (unavailable_credential["code"], unavailable_credential["retryable"]),
+            ("model_credential_unavailable", False),
+        )
+        local_budget = classify_model_error(ValueError("context_active_chain_budget_overflow"))
+        self.assertEqual(
+            (local_budget["code"], local_budget["retryable"]),
+            ("context_budget_exhausted", False),
+        )
+        tool_contract = classify_model_error(ValueError("model_tool_not_in_snapshot:web_search"))
+        self.assertEqual(
+            (tool_contract["code"], tool_contract["retryable"]),
+            ("model_tool_contract_violation", False),
+        )
 
     def test_default_model_name_is_a_catalog_alias(self) -> None:
         from drsai.backend.run_drsai_agent_factory import DEFAULT_CONFIG_NAME, DEFAULT_LLM_MODE_CONFIG
@@ -288,8 +419,8 @@ class PlatformAuthTests(unittest.TestCase):
                 with platform_auth_scope(context):
                     client = HepAIChatCompletionClient(
                         model="fake-model",
-                        api_key="must-be-replaced",
-                        base_url="https://wrong.invalid/v1",
+                        api_key=None,
+                        base_url=base_url,
                     )
 
                     async def call_provider() -> None:

@@ -2,13 +2,13 @@
 
 ## Objective
 
-Make the desktop shell visible and interactive before the Python agent runtime is needed. The default developer launch must not start Gateway. Chat, agent runs, bootstrap, and gateway-backed voice start it on demand through the existing main-process boundary.
+Keep Gateway lifecycle coupled to the source-launched Desktop. The default launch starts a normal Gateway; `-HotLoad` starts a source-watching Gateway. Both modes stop the complete Gateway process tree when Desktop exits.
 
 ## Acceptance criteria
 
-1. `windows-desktop-dev.cmd` starts Electron without Gateway by default.
-2. `-WithGateway` explicitly starts the hot-reload Gateway; legacy `-NoGateway` remains accepted.
-3. The Electron main process and renderer do not independently auto-start Gateway in on-demand mode.
+1. `windows-desktop-dev.cmd` starts Electron and a normal Gateway by default.
+2. `-HotLoad` changes that Gateway to source-watching hot-load mode; legacy `-NoGateway` remains accepted.
+3. Closing Desktop stops Gateway and all child processes in both modes.
 4. Chat and agent execution still ensure Gateway is ready before network work.
 5. Concurrent first-use requests share one Gateway startup attempt.
 6. Startup health rendering does not invoke Python/Git diagnostics on its critical path; deep health remains available after the first paint.
@@ -21,15 +21,15 @@ Make the desktop shell visible and interactive before the Python agent runtime i
 
 `OPENDRSAI_GATEWAY_STARTUP` supports:
 
-- `on-demand` (default): no startup-time Gateway; first runtime operation starts it.
-- `eager`: start Gateway after the renderer is loaded. Used by `-WithGateway` and integration tests.
+- `eager` (default): start Gateway after the renderer is loaded. Without `-HotLoad`, Electron owns it.
+- `on-demand`: retained for `-NoGateway`; the first explicit runtime operation may still start Gateway.
 - `external`: never spawn Gateway; report an externally managed endpoint only.
 
 ## Delivery stages
 
 ### Stage 1 — UI-first lifecycle
 
-- Make `-WithGateway` opt-in in `windows/scripts/dev.ps1`.
+- Separate default Gateway startup from the opt-in `-HotLoad` watcher.
 - Remove unconditional main-process and renderer autostart.
 - Preserve explicit start/stop controls.
 - Coalesce concurrent `startGateway()` calls.

@@ -24,12 +24,25 @@ if [[ ! -f "$LOCK_FILE" || ! -f "$BROWSER_LOCK_FILE" ]]; then
   echo "Missing reviewed Runtime dependency lock: $LOCK_FILE or $BROWSER_LOCK_FILE" >&2
   exit 1
 fi
+SOURCE_PYTHON_VERSION="$("$RUNTIME_PYTHON" -c 'import platform; print(platform.python_version())')"
+if [[ "$SOURCE_PYTHON_VERSION" != "$EXPECTED_PYTHON" ]]; then
+  echo "Runtime source interpreter must be Python $EXPECTED_PYTHON, got $SOURCE_PYTHON_VERSION from $RUNTIME_PYTHON." >&2
+  echo "Set OPENDRSAI_RUNTIME_PYTHON to the reviewed Python $EXPECTED_PYTHON executable." >&2
+  exit 1
+fi
 
 rm -rf "$STAGING"
 mkdir -p "$STAGING/drsai-agent" "$OUTPUT"
 PYTHON_BASE="$("$RUNTIME_PYTHON" -c 'import sys; print(sys.base_prefix)')"
 /usr/bin/ditto "$PYTHON_BASE" "$STAGING/drsai-agent/python-runtime"
 BUNDLED_PYTHON="$STAGING/drsai-agent/python-runtime/bin/python3"
+# A reviewed source interpreter may come from a previously sealed App and
+# therefore carry a hardened-runtime Team ID. Newly installed, hash-locked
+# extension wheels are linker/ad-hoc signed and macOS rejects them when loaded
+# by that foreign Team ID. Re-seal the staged interpreter ad-hoc for the build
+# phase; release signing later signs every Runtime Mach-O with the product
+# identity before notarization.
+/usr/bin/codesign --force --sign - --timestamp=none "$STAGING/drsai-agent/python-runtime/bin/python3.11"
 "$BUNDLED_PYTHON" -m venv "$STAGING/drsai-agent/venv"
 rm -f "$STAGING/drsai-agent/venv/bin/python" "$STAGING/drsai-agent/venv/bin/python3" "$STAGING/drsai-agent/venv/bin/python3.11"
 ln -s ../../python-runtime/bin/python3.11 "$STAGING/drsai-agent/venv/bin/python"
@@ -80,7 +93,10 @@ node -e 'const fs=require("fs"); const [path,version,pythonVersion,commit,epoch,
 # Normalize mtimes and entry order; COPYFILE_DISABLE prevents macOS AppleDouble files.
 find "$STAGING/drsai-agent" -exec touch -h -t "$(date -r "$SOURCE_DATE_EPOCH" +%Y%m%d%H%M.%S)" {} +
 ARCHIVE="opendrsai-runtime-macos-arm64-${VERSION}.tar.gz"
-(cd "$STAGING" && find drsai-agent -print | LC_ALL=C sort | COPYFILE_DISABLE=1 tar -cf - -T -) | gzip -n > "$OUTPUT/$ARCHIVE"
+# `find` already emits every entry. Without `--no-recursion`, bsdtar expands
+# every listed directory again and duplicates descendants many times, turning
+# a ~1.2 GiB Runtime into a multi-gigabyte, non-reproducible archive.
+(cd "$STAGING" && find drsai-agent -print | LC_ALL=C sort | COPYFILE_DISABLE=1 tar --no-recursion -cf - -T -) | gzip -n > "$OUTPUT/$ARCHIVE"
 SHA256="$(shasum -a 256 "$OUTPUT/$ARCHIVE" | awk '{print $1}')"
 ARCHIVE_SIZE="$(stat -f %z "$OUTPUT/$ARCHIVE")"
 

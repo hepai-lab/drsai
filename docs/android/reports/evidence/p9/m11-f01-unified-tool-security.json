@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "feature_id": "M11-F01",
+  "generated_at": "2026-08-05T13:15:05.635039+00:00",
+  "passed": true,
+  "gates": {
+    "single_versioned_pre_execution_boundary_covers_all_tool_domains": true,
+    "ssrf_scheme_authority_private_literal_and_fragment_bypasses_are_denied": true,
+    "dns_rebinding_and_redirects_stay_under_public_only_policies": true,
+    "saf_paths_reject_relative_absolute_uri_and_backslash_escape": true,
+    "mcp_requires_account_capability_run_scope_and_connector_scope": true,
+    "external_and_sensitive_side_effects_cannot_reach_handler_without_approval": true,
+    "private_network_test_escape_hatch_is_explicit_and_default_off": true,
+    "unified_adversarial_matrix_suite_is_green": true,
+    "network_saf_mcp_browser_and_registry_regressions_are_green": true
+  },
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/security/AndroidUnifiedToolSecurityPolicy.kt": "e6c81f2efebbeec6f90e01bcd8a90ceb982a126573322cf130d7c96c6a27ec31",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt": "d6a045f9eb61a7a91704d1e288b33bddf2945d9f63c675ec53153d710d5e5b43",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/NetworkSafetyPolicy.kt": "979daea6d3f0ba8808c40bd30769d3f26294fb3b00f0f62bfe444d1e5ddd191d",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ControlledBrowserTool.kt": "1bc4166c12c358d183f423cce43174c01032cda7daf8bf5caeceab0a92db9b40",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/AndroidMcpClient.kt": "dbea54b40a3c58da6752b3cae3d2aec76cb4cb7e7a49ab3cb50e21ee11f638d3",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/AndroidLocalCapabilities.kt": "892ef07104e715db15cfb8345a1c601db2370ddb4175b44e7f5758a68a49d462",
+    "apps/android/app/src/test/java/ai/drsai/remote/AndroidUnifiedToolSecurityPolicyTest.kt": "5f9e3bd0f2c2a288bdcdbda9a536e833c4401b6e97547bb200fbd029c38977ac",
+    "apps/android/app/src/test/java/ai/drsai/remote/AndroidMcpClientTest.kt": "2cbca31519a816da5ea6bb28dfdff05e281b57c4834ad7545743de59d3f77784",
+    "apps/android/app/src/test/java/ai/drsai/remote/ControlledBrowserToolTest.kt": "527c92de11e5e4fd3167ddee94acdb775633d62e7d811812796838483c5befb2"
+  }
+}

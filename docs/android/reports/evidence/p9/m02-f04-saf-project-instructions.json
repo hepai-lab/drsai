@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "feature_id": "M02-F04",
+  "generated_at": "2026-08-05T14:09:31.949658+00:00",
+  "passed": true,
+  "gates": {
+    "exact_saf_candidates": true,
+    "project_layer_required": true,
+    "source_allowlist_required": true,
+    "digest_bound": true,
+    "project_size_bounded": true,
+    "revoked_grant_short_circuits_loader": true,
+    "persisted_read_permission_checked": true,
+    "app_uses_authorized_boundary": true,
+    "engine_accepts_only_project_fields": true,
+    "engine_injects_project_layer": true,
+    "malicious_project_below_policy": true,
+    "android_behavior_fixtures_present": true
+  },
+  "authorized_sources": [
+    "saf:.drsai/DRSAI.md",
+    "saf:AGENTS.md",
+    "saf:DRSAI.md"
+  ],
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/device/AndroidLocalCapabilities.kt": "892ef07104e715db15cfb8345a1c601db2370ddb4175b44e7f5758a68a49d462",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonSharedCoreChatEngine.kt": "b2c98cc10566a79c4f505392131a6249ed1c3755576098622b754380f314ecfe",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "apps/android/app/src/test/java/ai/drsai/remote/AndroidLocalCapabilitiesTest.kt": "25f85a2383f3ba7cb5ee7988908c7e600e6fe69f1003e2c3818be21904b3668b"
+  }
+}

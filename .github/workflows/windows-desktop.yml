@@ -13,11 +13,17 @@ on:
       - "v*"
     paths:
       - "apps/desktop/windows/**"
+      - "cores/python/packages/drsai/src/drsai/config/**"
+      - "cores/python/packages/drsai/tests/test_model_provider_*.py"
+      - "scripts/verify_model_provider_compatibility.py"
       - "scripts/install.ps1"
       - ".github/workflows/windows-desktop.yml"
   pull_request:
     paths:
       - "apps/desktop/windows/**"
+      - "cores/python/packages/drsai/src/drsai/config/**"
+      - "cores/python/packages/drsai/tests/test_model_provider_*.py"
+      - "scripts/verify_model_provider_compatibility.py"
       - "scripts/install.ps1"
       - ".github/workflows/windows-desktop.yml"
   workflow_dispatch:
@@ -74,7 +80,14 @@ jobs:
         shell: pwsh
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts\prepare-ci-python-agent.ps1 `
-            -Python "$env:pythonLocation\python.exe"
+            -Python "$env:pythonLocation\python.exe" `
+            -Recreate
+
+      - name: Verify deterministic model Provider compatibility matrix
+        shell: pwsh
+        run: |
+          & $env:OPENDRSAI_GATEWAY_SMOKE_PYTHON ..\..\..\scripts\verify_model_provider_compatibility.py --local --require-all --output build\acceptance\model-provider-local-deterministic.json
+          if ($LASTEXITCODE -ne 0) { throw "Model Provider compatibility matrix failed with exit code $LASTEXITCODE." }
 
       - name: Generate Windows icon
         run: npm run icon:win
@@ -170,7 +183,8 @@ jobs:
         run: |
           powershell -ExecutionPolicy Bypass -File installer\build-msi.ps1 `
             -RuntimePath "release\bootstrapper\$env:OPENDRSAI_RUNTIME_ARCHIVE_NAME" `
-            -RuntimeUrl "$env:OPENDRSAI_RELEASE_BASE_URL/$env:OPENDRSAI_RUNTIME_ARCHIVE_NAME"
+            -RuntimeUrl "$env:OPENDRSAI_RELEASE_BASE_URL/$env:OPENDRSAI_RUNTIME_ARCHIVE_NAME" `
+            -RequireTrustedRuntime
 
       - name: Sign bootstrapper MSI
         env:
@@ -217,6 +231,7 @@ jobs:
           path: |
             apps/desktop/windows/release/bootstrapper/OpenDrSai-Windows-Installer-x64.msi
             apps/desktop/windows/release/bootstrapper/${{ env.OPENDRSAI_RUNTIME_ARCHIVE_NAME }}
+            apps/desktop/windows/release/bootstrapper/${{ env.OPENDRSAI_RUNTIME_ARCHIVE_NAME }}.receipt.json
             apps/desktop/windows/release/latest-windows.json
             apps/desktop/windows/release/release-summary.json
             apps/desktop/windows/release/product-evidence/remote-workspace/windows-signatures.json
@@ -227,12 +242,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.OPENDRSAI_RELEASE_TAG }}
-          draft: false
+          # Stable publication is a separate promotion step. The draft must
+          # first receive a sealed real Windows Sandbox OIDC evidence bundle.
+          draft: true
           prerelease: false
-          make_latest: true
+          make_latest: false
           files: |
             apps/desktop/windows/release/bootstrapper/OpenDrSai-Windows-Installer-x64.msi
             apps/desktop/windows/release/bootstrapper/${{ env.OPENDRSAI_RUNTIME_ARCHIVE_NAME }}
+            apps/desktop/windows/release/bootstrapper/${{ env.OPENDRSAI_RUNTIME_ARCHIVE_NAME }}.receipt.json
             apps/desktop/windows/release/latest-windows.json
             apps/desktop/windows/release/release-summary.json
             apps/desktop/windows/release/product-evidence/remote-workspace/windows-signatures.json

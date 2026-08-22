@@ -8,7 +8,7 @@ const base = new URL(required("OPENDRSAI_MACOS_UPDATE_LAB_BASE_URL"));
 assert.equal(base.protocol, "https:");
 assert.equal(base.username, "");
 assert.equal(base.password, "");
-const tag = required("GITHUB_REF_NAME");
+const tag = process.env.OPENDRSAI_RELEASE_TAG?.trim() || required("GITHUB_REF_NAME");
 assert.match(tag, /^v[0-9A-Za-z][0-9A-Za-z._-]{0,63}$/);
 const target = resolve(root, tag);
 assert.ok(target.startsWith(`${root}${sep}`), "update lab target escaped its configured root");

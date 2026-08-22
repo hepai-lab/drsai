@@ -23,11 +23,63 @@ export interface ToolCall {
 export const MAX_TOOL_RESULT_CHARS = parseInt(process.env.DRSAI_MAX_TOOL_RESULT || '10000', 10)
 export const TOOL_TRUNC_SUFFIX = '\n…[output truncated]'
 
+/**
+ * An ordered content part within an assistant turn. This preserves the
+ * real interleaving order of text segments and tool calls as they
+ * arrive from the LLM (e.g. text → tool → text → tool → text), which
+ * the legacy flat ``text`` + ``tools[]`` fields cannot represent.
+ *
+ * ``text`` parts hold a contiguous text segment; when a tool call
+ * interrupts the stream we close the current text part and open a new
+ * one after the tool, so the rendering can show content in the correct
+ * sequence.
+ *
+ * ── Chunk-based text accumulation ──────────────────────────────────
+ *
+ * During streaming, each text delta is pushed to ``chunks`` (O(1)
+ * amortised) instead of concatenated into ``text`` (O(n) per flush,
+ * causing O(n²) total over a long answer). The ``text`` field is
+ * lazily computed by ``getPartText()`` (see below) and serves as a
+ * cache: it is ``''`` until first accessed, then set to
+ * ``chunks.join('')``.
+ *
+ * History-loaded turns set ``text`` directly with ``chunks = []``
+ * (empty array means "no streaming chunks; text is authoritative").
+ */
+export interface TextContentPart {
+  kind: 'text'
+  id: string
+  /** Incremental text segments pushed during streaming (source of truth). */
+  chunks: string[]
+  /** Lazily-joined text cache. Use ``getPartText()`` to read. */
+  text: string
+}
+
+export type ContentPart = TextContentPart | { kind: 'tool'; id: string; toolId: string }
+
+/**
+ * Get the full text of a text ContentPart. If the part was streamed
+ * (has chunks), join them on first access and cache the result in
+ * ``part.text``. If the part has no chunks (history-loaded), return
+ * ``part.text`` directly.
+ *
+ * This avoids O(n²) string concatenation during streaming: each flush
+ * only pushes to the chunks array, and the join happens at most once
+ * per render cycle (and only for VISIBLE parts).
+ */
+export function getPartText(part: TextContentPart): string {
+  if (part.chunks.length > 0 && !part.text) {
+    part.text = part.chunks.join('')
+  }
+  return part.text
+}
+
 export interface AssistantTurn {
   role: 'assistant'
-  text: string                  // streamed body (visible)
+  text: string                  // streamed body — full concatenated text (legacy / Markdown)
   reasoning: string             // streamed thinking.delta / reasoning.delta
   tools: ToolCall[]
+  contentParts: ContentPart[]   // ordered content blocks (text ↔ tool interleaving)
   usage?: UsagePayload
   status: 'streaming' | 'complete' | 'interrupted' | 'error'
   errorMessage?: string
@@ -49,6 +101,7 @@ export function newAssistantTurn(): AssistantTurn {
     text: '',
     reasoning: '',
     tools: [],
+    contentParts: [],
     status: 'streaming',
     startedAt: Date.now(),
   }

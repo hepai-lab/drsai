@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "feature_id": "M03-F03",
+  "generated_at": "2026-08-05T14:09:39.986379+00:00",
+  "passed": true,
+  "gates": {
+    "frozen_dataset_recall_threshold": true,
+    "frozen_dataset_precision_threshold": true,
+    "adversarial_memory_rejected": true,
+    "sensitive_memory_rejected": true,
+    "selection_and_digest_deterministic": true,
+    "desktop_curated_memory_uses_shared_selection": true,
+    "android_subject_candidate_gate_passed": true,
+    "android_oaep_provenance_gate_passed": true
+  },
+  "dataset": {
+    "cases": 10,
+    "recall": 1.0,
+    "precision": 1.0,
+    "sha256": "b12a9bc111c9b555737fed8b4165c7af670d4541b3c964ff049ae54d273b5018"
+  },
+  "android": {
+    "candidate_tests": {
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "sha256": "a5abd0f26b8aee22ac8f1884253f4a8a5aeb455a6cce752bcae436e3e3cb98d7"
+    },
+    "mapper_tests": {
+      "tests": 20,
+      "failures": 0,
+      "errors": 0,
+      "sha256": "57ac7db8ffe93096f3c8608a40a9dc3e88a3869c4a6ba586cfa59fccbddf9b4d"
+    }
+  },
+  "source_sha256": {
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py": "7b1d02d13aea7e5acc6957975a9d55f31b22976480377aa7f3ab3218d0b8f06b",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/engine.py": "be28389f4db95c1646897b0ea907274beb31aae9b29a49e1d650cc7300aa7db5",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/desktop_agent_kernel_adapter.py": "26053211f2f2e87b3747d70dbbf3fa24d046ec630f3913beebd5e35b25a9968b",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonSharedCoreChatEngine.kt": "b2c98cc10566a79c4f505392131a6249ed1c3755576098622b754380f314ecfe",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRuntimeEventMapper.kt": "bcb730b9f05285290225f8f95969432c31a97517ff0ba3f154a95a257a5c7f93",
+    "apps/android/app/src/test/java/ai/drsai/remote/MemoryCandidateEnvelopeTest.kt": "0899272c11354d49787c72923782ec32aaa1c4a6c61529d6c5daa23b9095343c",
+    "cores/python/packages/drsai/tests/test_memory_selection.py": "af2a6af316b3b3f6a870e051909df95ea7728732c25a1e6c0df2b2b0985eb847",
+    "cores/python/packages/drsai/tests/test_memory_selection_dataset.py": "41fee1bff36b452ca8c6832cf1f222bde57856dcbb9c9d8f932dab67a01d5db6",
+    "cores/protocol/android-runtime/fixtures/p9-memory-selection-v1.json": "b12a9bc111c9b555737fed8b4165c7af670d4541b3c964ff049ae54d273b5018"
+  }
+}

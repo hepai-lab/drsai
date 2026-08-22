@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-04T17:30:35.808573+00:00",
+  "release": "v1.5.5",
+  "artifact": "C:\\tmp\\drsai-release-v1.5.5\\apps\\android\\app\\build\\outputs\\apk\\mvp\\OpenDrSai-Android-v1.5.5.apk",
+  "sha256": "d52b7df0cee4fab11fa817e0ba25be4db7e67a2ca3e3a4596c205e1a641321a6",
+  "size_bytes": 26370437,
+  "source_snapshot": "f739df4f",
+  "database": {
+    "name": "opendrsai.db",
+    "room_schema_version": 11,
+    "source_sha256": "e84aec11d114e83e1f62bc524c9e66e300b46fde9ab452ec5dd54be09863ffbc"
+  },
+  "purpose": "immutable upgrade input; never overwritten by v1.5.6 Debug builds"
+}

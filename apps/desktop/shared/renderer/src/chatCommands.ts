@@ -180,7 +180,12 @@ export function runChatCommand(
     case "memory":
       return describeMemoryCommand(command.args, context);
     case "skills":
-      return describeSkillsCommand(command.args, context);
+      // Temporarily hide Skills management entry — keep for later reuse.
+      // return describeSkillsCommand(command.args, context);
+      return {
+        title: "Skills",
+        content: "Skills management is temporarily unavailable.",
+      };
     case "agent":
       return describeAgentCommand(command.args, context);
     case "fork":
@@ -268,6 +273,7 @@ function expandCustomCommandPrompt(prompt: string, args: string): string {
 }
 
 function describeSkillsCommand(args: string, context: ChatCommandContext): ChatCommandResult {
+  // Temporarily unused while Skills management entry is hidden — keep for later reuse.
   const query = args.trim();
   return {
     action: {

@@ -2,6 +2,7 @@ import type { DesktopAgent, PlatformAgentStatus } from "../api/desktopApi";
 import type { PlatformAgentExecutionDescriptor } from "./agentCatalog";
 
 const AGENTS_PATH = "/api/native/v1/agents";
+const HEPAI_AGENTS_PATH = "/agents/list_agents";
 
 export interface PlatformAgentAuthProvider {
   getAccessToken(): Promise<string>;
@@ -10,7 +11,10 @@ export interface PlatformAgentAuthProvider {
 }
 
 export interface PlatformAgentClientOptions {
+  /** Portal Native API root, used for chat and preference mutations. */
   baseUrl: string;
+  /** HepAI API root, used to discover the active platform's agents. */
+  catalogBaseUrl?: string;
   auth: PlatformAgentAuthProvider;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
@@ -27,27 +31,6 @@ export interface PlatformAgentResult {
 export interface PlatformAgentMutationResult {
   ok: boolean;
   message: string;
-}
-
-export async function setPlatformDefaultAgent(
-  options: PlatformAgentClientOptions,
-  platformId: string,
-): Promise<PlatformAgentMutationResult> {
-  return mutatePlatformAgent(options, "/api/native/v1/agents/default", {
-    method: "PUT",
-    body: JSON.stringify({ agent_id: platformId }),
-  });
-}
-
-export async function recordPlatformAgentUsage(
-  options: PlatformAgentClientOptions,
-  platformId: string,
-): Promise<PlatformAgentMutationResult> {
-  return mutatePlatformAgent(
-    options,
-    `/api/native/v1/agents/${encodeURIComponent(platformId)}/usage`,
-    { method: "POST" },
-  );
 }
 
 export async function stopPlatformAgentThread(
@@ -124,16 +107,20 @@ export async function fetchPlatformAgents(
   }
   const record = readRecord(body);
   const dataRecord = readRecord(record.data);
-  const apiVersion = firstString(
+  let apiVersion = firstString(
     response.headers.get("x-opendrsai-api-version"),
     record.api_version,
     record.version,
     dataRecord.api_version,
     dataRecord.version,
   );
-  const capabilities = normalizeCapabilities(record.capabilities ?? dataRecord.capabilities);
+  let capabilities = normalizeCapabilities(record.capabilities ?? dataRecord.capabilities);
+  // The authoritative HAI /apiv2 catalog already carries version and
+  // capability metadata. A second Portal Native request used to add up to six
+  // seconds to every Agent Square load and could overwrite the DDF catalog's
+  // actual capabilities, so it is intentionally not part of discovery.
   const normalized = extractAgentArray(body)
-    .map(normalizePlatformAgent)
+    .map((value) => normalizePlatformAgent(value, options))
     .filter((item): item is NonNullable<ReturnType<typeof normalizePlatformAgent>> => item !== null);
   return {
     agents: normalized.map((item) => item.agent),
@@ -150,6 +137,68 @@ export async function fetchPlatformAgents(
   };
 }
 
+export async function respondDdfAgentInput(
+  options: PlatformAgentClientOptions,
+  input: {
+    model: string;
+    chatId: string;
+    runId: string;
+    requestId: string;
+    response: string | Record<string, unknown>;
+  },
+): Promise<PlatformAgentMutationResult> {
+  let accessToken: string;
+  try {
+    accessToken = await options.auth.getAccessToken();
+  } catch {
+    return { ok: false, message: "Sign in with HepAI to respond to the agent." };
+  }
+  const request = async (token: string): Promise<Response> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 10_000);
+    try {
+      return await (options.fetchImpl ?? fetch)(joinUrl(options.catalogBaseUrl ?? options.baseUrl, "/agents/input"), {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "Idempotency-Key": input.requestId,
+        },
+        body: JSON.stringify({
+          model: input.model,
+          chat_id: input.chatId,
+          run_id: input.runId,
+          request_id: input.requestId,
+          response: input.response,
+        }),
+        redirect: "error",
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+  let response = await request(accessToken);
+  if (response.status === 401) {
+    try {
+      accessToken = await options.auth.refreshAfterUnauthorized();
+      response = await request(accessToken);
+    } catch {
+      options.auth.invalidate();
+      return { ok: false, message: "Your HepAI session expired. Sign in again." };
+    }
+  }
+  if (response.ok) return { ok: true, message: "Agent input accepted." };
+  const messages: Record<number, string> = {
+    404: "The agent input request is no longer available.",
+    409: "The agent input request conflicts with its current state.",
+    410: "The agent input request expired.",
+    503: "The remote agent is temporarily unavailable. Retry the response.",
+  };
+  return { ok: false, message: messages[response.status] ?? `Agent input failed (HTTP ${response.status}).` };
+}
+
 async function requestAgents(
   fetchImpl: typeof fetch,
   options: PlatformAgentClientOptions,
@@ -158,7 +207,8 @@ async function requestAgents(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 6000);
   try {
-    const url = new URL(joinUrl(options.baseUrl, AGENTS_PATH));
+    const directCatalog = Boolean(options.catalogBaseUrl);
+    const url = new URL(joinUrl(options.catalogBaseUrl || options.baseUrl, directCatalog ? HEPAI_AGENTS_PATH : AGENTS_PATH));
     url.searchParams.set("refresh", options.refresh ? "true" : "false");
     return await fetchImpl(url.toString(), {
       method: "GET",
@@ -196,7 +246,7 @@ function extractAgentArray(body: unknown): unknown[] {
   return [];
 }
 
-function normalizePlatformAgent(value: unknown): {
+function normalizePlatformAgent(value: unknown, options: PlatformAgentClientOptions): {
   agent: DesktopAgent;
   executionDescriptor: PlatformAgentExecutionDescriptor;
 } | null {
@@ -217,6 +267,7 @@ function normalizePlatformAgent(value: unknown): {
     agent.description ?? config.description,
     "Platform agent.",
   );
+  const capabilities = normalizeAgentCapabilities(agent.capabilities ?? config.capabilities) ?? [];
   return {
     agent: {
       id: publicId,
@@ -229,12 +280,12 @@ function normalizePlatformAgent(value: unknown): {
       available,
       featured: agent.featured === true,
       isDefault: agent.is_default === true || agent.isDefault === true,
-      capabilities: normalizeAgentCapabilities(agent.capabilities ?? config.capabilities),
+      capabilities,
       lastUsedAt: firstString(agent.last_used_at, agent.lastUsedAt) || undefined,
       catalogGroup: normalizeCatalogGroup(agent.catalog_group, agent.catalogGroup),
       model,
       models,
-      logo: firstString(agent.logo, agent.avatar) || undefined,
+      logo: normalizePlatformLogo(firstString(agent.logo, agent.avatar), options),
       examples: normalizeExamples(agent.examples ?? config.examples),
       error: available ? undefined : "This platform agent is currently unavailable.",
       ...(mode ? { mode } : {}),
@@ -246,6 +297,7 @@ function normalizePlatformAgent(value: unknown): {
       name,
       model,
       available,
+      capabilities,
     },
   };
 }
@@ -314,17 +366,28 @@ function isModelLikeEntry(name: string, agent: Record<string, unknown>): boolean
 }
 
 function normalizeExamples(value: unknown): DesktopAgent["examples"] | undefined {
-  if (typeof value === "string" && value.trim()) return value.trim();
-  if (!Array.isArray(value)) return undefined;
+  if (typeof value === "string" && value.trim()) return value.trim().slice(0, 500);
+  if (!Array.isArray(value)) {
+    const localized = readRecord(value);
+    const zh = Array.isArray(localized.zh) ? localized.zh : [];
+    const en = Array.isArray(localized.en) ? localized.en : [];
+    const examples: Exclude<DesktopAgent["examples"], string | undefined> = [];
+    for (let index = 0; index < Math.min(4, Math.max(zh.length, en.length)); index += 1) {
+      const zhText = typeof zh[index] === "string" ? zh[index].trim().slice(0, 500) : "";
+      const enText = typeof en[index] === "string" ? en[index].trim().slice(0, 500) : "";
+      if (zhText || enText) examples.push({ zh: zhText, en: enText });
+    }
+    return examples.length > 0 ? examples : undefined;
+  }
   const examples: Exclude<DesktopAgent["examples"], string | undefined> = [];
-  for (const item of value) {
+  for (const item of value.slice(0, 4)) {
     if (typeof item === "string" && item.trim()) {
-      examples.push(item.trim());
+      examples.push(item.trim().slice(0, 500));
       continue;
     }
     const record = readRecord(item);
-    const en = firstString(record.en);
-    const zh = firstString(record.zh);
+    const en = firstString(record.en).slice(0, 500);
+    const zh = firstString(record.zh).slice(0, 500);
     if (en || zh) examples.push({ en, zh });
   }
   return examples.length > 0 ? examples : undefined;
@@ -401,6 +464,28 @@ function normalizeAgentCapabilities(value: unknown): string[] | undefined {
 function normalizeCatalogGroup(...values: unknown[]): "official" | "mine" {
   const value = firstString(...values).toLowerCase();
   return value === "mine" || value === "user" || value === "owned" ? "mine" : "official";
+}
+
+function normalizePlatformLogo(
+  value: string,
+  options: PlatformAgentClientOptions,
+): string | undefined {
+  if (!value) return undefined;
+  try {
+    const base = new URL(options.catalogBaseUrl ?? options.baseUrl);
+    const resolved = new URL(value, base);
+    if (resolved.protocol !== "https:") return undefined;
+    const trustedHosts = [options.catalogBaseUrl, options.baseUrl]
+      .filter((candidate): candidate is string => Boolean(candidate))
+      .map((candidate) => new URL(candidate).hostname.toLowerCase());
+    const host = resolved.hostname.toLowerCase();
+    if (!trustedHosts.some((trusted) => host === trusted || host.endsWith(`.${trusted}`))) {
+      return undefined;
+    }
+    return resolved.toString();
+  } catch {
+    return undefined;
+  }
 }
 
 function readRecord(value: unknown): Record<string, unknown> {

@@ -24,7 +24,16 @@ if (!existsSync(exePath)) {
   throw new Error("Build the unpacked Windows app before running verify:e2e-chat-failures.");
 }
 
-const scenarios = ["abort", "sse-error", "gateway-unreachable", "timeout", "empty-done", "chunk-disconnect", "attachments"];
+const allScenarios = ["abort", "sse-error", "gateway-unreachable", "timeout", "empty-done", "chunk-disconnect", "attachments"];
+const requestedScenarios = String(process.env.OPENDRSAI_E2E_SCENARIOS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const unknownScenarios = requestedScenarios.filter((scenario) => !allScenarios.includes(scenario));
+if (unknownScenarios.length > 0) {
+  throw new Error(`Unknown E2E chat failure scenario(s): ${unknownScenarios.join(", ")}`);
+}
+const scenarios = requestedScenarios.length > 0 ? requestedScenarios : allScenarios;
 
 for (const scenario of scenarios) {
   await runScenario(scenario);
@@ -106,6 +115,14 @@ function assertThreadPersistence(scenario, result, appHome) {
     throw new Error(`${scenario}: listThreads did not persist terminal thread status ${expectedStatus}:\n${JSON.stringify(summary, null, 2)}`);
   }
   const threadsPath = join(appHome, "desktop", "threads.json");
+  if (scenario === "gateway-unreachable") {
+    if (!existsSync(threadsPath)) return;
+    const threads = JSON.parse(readFileSync(threadsPath, "utf8"));
+    if (!Array.isArray(threads) || threads.some((thread) => thread.id === requestId || thread.status === "running")) {
+      throw new Error(`${scenario}: readiness failure unexpectedly persisted a running Chat thread:\n${JSON.stringify(threads, null, 2)}`);
+    }
+    return;
+  }
   if (!existsSync(threadsPath)) {
     throw new Error(`${scenario}: threads.json was not written.`);
   }
@@ -128,7 +145,7 @@ function createAttachmentFixture(tempDir) {
   const filePath = join(fixtureRoot, "notes.md");
   mkdirSync(folderPath, { recursive: true });
   writeFileSync(filePath, `# E2E Notes\n\n${ATTACHMENT_SENTINEL}\n\nUse this text as chat context.\n`, "utf8");
-  return { filePath, folderPath };
+  return { workspacePath: fixtureRoot, filePath, folderPath };
 }
 
 function assertScenarioDiagnostics(scenario, result) {
@@ -151,11 +168,17 @@ function assertScenarioDiagnostics(scenario, result) {
     attachments: "done",
   }[scenario];
   const summary = detailKey ? result?.details?.[detailKey] : null;
-  if (!summary || summary.firstEventType !== "start" || summary.terminalEventType !== expectedTerminal) {
+  const expectedFirst = scenario === "gateway-unreachable" ? "error" : "start";
+  if (!summary || summary.firstEventType !== expectedFirst || summary.terminalEventType !== expectedTerminal) {
     throw new Error(`${scenario}: E2E failure smoke did not record the expected terminal summary:\n${JSON.stringify(result, null, 2)}`);
   }
-  if (summary.lastEventType !== summary.terminalEventType) {
-    throw new Error(`${scenario}: last event and terminal event diverged:\n${JSON.stringify(summary, null, 2)}`);
+  const terminalIndex = summary.events.findIndex((event) => {
+    if (["done", "error", "aborted"].includes(event.type)) return true;
+    return event.type === "structured" && ["turn.completed", "turn.error", "turn.cancelled"].includes(event.structuredEvent?.type);
+  });
+  const trailingEvents = terminalIndex >= 0 ? summary.events.slice(terminalIndex + 1) : [];
+  if (terminalIndex < 0 || !trailingEvents.every((event) => event.type === "connection")) {
+    throw new Error(`${scenario}: terminal event was missing or followed by non-connection output:\n${JSON.stringify(summary, null, 2)}`);
   }
   if (!Number.isFinite(summary.durationMs) || summary.durationMs < 0) {
     throw new Error(`${scenario}: durationMs is invalid:\n${JSON.stringify(summary, null, 2)}`);
@@ -182,6 +205,11 @@ async function assertPortFree() {
 
 function startScenarioGateway(scenario, attachmentFixture) {
   const openResponses = new Set();
+  const runtimeStreams = new Map();
+  const runtimeSessions = new Map();
+  const runSessions = new Map();
+  let runtimeSessionSequence = 0;
+  let eventSequence = 0;
   const server = createServer(async (req, res) => {
     if (req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -191,6 +219,196 @@ function startScenarioGateway(scenario, attachmentFixture) {
     if (req.url === "/v1/models") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ object: "list", data: [{ id: "drsai", object: "model" }] }));
+      return;
+    }
+    if (req.url === "/v1/config/agents" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        current_agent: "opendrsai",
+        agents: [{
+          agent_name: "opendrsai",
+          display_name: "OpenDrSai",
+          current: true,
+          schema_version: 2,
+          config_file: "configs/agents/agent_opendrsai.toml",
+        }],
+      }));
+      return;
+    }
+    if (req.url === "/v1/config/agents/opendrsai/models" && req.method === "GET") {
+      const ref = { provider_id: "hepai", model_id: "deepseek-v4-pro" };
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        agent_id: "opendrsai",
+        valid: true,
+        error: null,
+        primary_model: { mode: "explicit", ref },
+        effective_ref: ref,
+        revision: "sha256:e2e-chat-failure-agent-model-policy",
+      }));
+      return;
+    }
+    if (req.url === "/v1/runtime" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        runtime_id: `failure-runtime-${scenario}`,
+        instance_id: `failure-runtime-instance-${scenario}`,
+        version: "e2e",
+        protocol_version: 1,
+        platform: "win32",
+      }));
+      return;
+    }
+    if (req.url === "/v1/workspaces" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        workspace_id: `failure-workspace-${scenario}`,
+        path: body.path,
+        display_name: body.display_name || "Failure workspace",
+        open: true,
+      }));
+      return;
+    }
+    if (req.url === "/v1/sessions" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      runtimeSessionSequence += 1;
+      const sessionId = `failure-session-${scenario}-${runtimeSessionSequence}`;
+      runtimeSessions.set(sessionId, body.workspace_id);
+      res.writeHead(201, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        session_id: sessionId,
+        workspace_id: body.workspace_id,
+        title: body.title || "Failure chat",
+      }));
+      return;
+    }
+    const snapshotMatch = req.url?.match(/^\/v1\/sessions\/([^/?]+)\/oaep-snapshot$/);
+    if (snapshotMatch && req.method === "GET") {
+      const sessionId = decodeURIComponent(snapshotMatch[1]);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ version: "1.0", session: { id: sessionId }, runs: [], items: [], snapshot_sequence: 0 }));
+      return;
+    }
+    const eventListMatch = req.url?.match(/^\/v1\/sessions\/([^/?]+)\/oaep-events(?:\?.*)?$/);
+    if (eventListMatch && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ version: "1.0", object: "list", data: [], next_sequence: eventSequence, has_more: false }));
+      return;
+    }
+    const streamMatch = req.url?.match(/^\/v1\/sessions\/([^/?]+)\/oaep-events\/stream(?:\?.*)?$/);
+    if (streamMatch && req.method === "GET") {
+      const sessionId = decodeURIComponent(streamMatch[1]);
+      res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+      res.flushHeaders();
+      runtimeStreams.set(sessionId, res);
+      openResponses.add(res);
+      res.on("close", () => {
+        openResponses.delete(res);
+        if (runtimeStreams.get(sessionId) === res) runtimeStreams.delete(sessionId);
+      });
+      return;
+    }
+    const createRunMatch = req.url?.match(/^\/v1\/sessions\/([^/?]+)\/runs$/);
+    if (createRunMatch && req.method === "POST") {
+      const sessionId = decodeURIComponent(createRunMatch[1]);
+      const runId = `failure-run-${scenario}-${runSessions.size + 1}`;
+      runSessions.set(runId, sessionId);
+      res.writeHead(201, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        run_id: runId,
+        session_id: sessionId,
+        workspace_id: runtimeSessions.get(sessionId),
+        backend_id: "opendrsai",
+        status: "queued",
+      }));
+      return;
+    }
+    const executeRunMatch = req.url?.match(/^\/v1\/runs\/([^/?]+)\/execute$/);
+    if (executeRunMatch && req.method === "POST") {
+      const runId = decodeURIComponent(executeRunMatch[1]);
+      const body = await readJsonBody(req);
+      const sessionId = runSessions.get(runId);
+      const stream = runtimeStreams.get(sessionId);
+      const requestId = body?.metadata?.desktop_request_id || "";
+      const emit = (type, data = {}, itemId) => {
+        if (!stream || stream.destroyed) return;
+        eventSequence += 1;
+        stream.write(`data: ${JSON.stringify({
+          version: "1.0",
+          event_id: `failure-${scenario}-${eventSequence}`,
+          dedupe_key: `failure-${scenario}-${eventSequence}`,
+          session_id: sessionId,
+          run_id: runId,
+          ...(itemId ? { item_id: itemId } : {}),
+          sequence: eventSequence,
+          timestamp: new Date().toISOString(),
+          type,
+          source: { backend: "opendrsai", client: "runtime" },
+          data,
+        })}\n\n`);
+      };
+      const emitText = (text) => emit("event.item.delta", { delta: { kind: "message.text.append", text } }, "failure-message");
+      const emitTerminal = (type, data = {}) => {
+        emit(type, { run: { id: runId, status: type.slice("event.run.".length), created_at: new Date().toISOString(), completed_at: new Date().toISOString() }, ...data });
+        if (stream && !stream.destroyed) stream.end();
+      };
+      if (scenario === "abort") {
+        emitText("partial before abort");
+      } else if (scenario === "sse-error") {
+        emitTerminal("event.run.failed", { error: { code: "synthetic_gateway_error", message: "synthetic gateway error" } });
+      } else if (scenario === "timeout") {
+        // The desktop timeout cancels this Run; the cancel endpoint emits the terminal.
+      } else if (scenario === "empty-done") {
+        emitTerminal("event.run.completed");
+      } else if (scenario === "chunk-disconnect") {
+        emitText("partial before disconnect");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ run: { run_id: runId, session_id: sessionId, status: "running" } }));
+        setTimeout(() => {
+          for (const response of openResponses) response.destroy();
+          server.close();
+        }, 25);
+        return;
+      } else if (scenario === "attachments") {
+        const attachmentCount = assertAttachmentBody(body, attachmentFixture);
+        if (attachmentCount === 2) {
+          emitText("fake-agent attachments: 2");
+          emitTerminal("event.run.completed");
+        } else {
+          emitTerminal("event.run.failed", { error: { code: "attachment_metadata_mismatch", message: `attachment metadata mismatch: ${attachmentCount}` } });
+        }
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ run: { run_id: runId, session_id: sessionId, status: "running" }, result: { request_id: requestId } }));
+      return;
+    }
+    const cancelRunMatch = req.url?.match(/^\/v1\/runs\/([^/?]+)\/cancel$/);
+    if (cancelRunMatch && req.method === "POST") {
+      const runId = decodeURIComponent(cancelRunMatch[1]);
+      const sessionId = runSessions.get(runId);
+      const stream = runtimeStreams.get(sessionId);
+      if (stream && !stream.destroyed) {
+        eventSequence += 1;
+        const isTimeout = scenario === "timeout";
+        stream.write(`data: ${JSON.stringify({
+          version: "1.0",
+          event_id: `failure-${scenario}-${eventSequence}`,
+          dedupe_key: `failure-${scenario}-${eventSequence}`,
+          session_id: sessionId,
+          run_id: runId,
+          sequence: eventSequence,
+          timestamp: new Date().toISOString(),
+          type: isTimeout ? "event.run.failed" : "event.run.cancelled",
+          source: { backend: "opendrsai", client: "runtime" },
+          data: isTimeout
+            ? { error: { code: "chat_timeout", message: "Chat request timed out." } }
+            : { reason: "cancelled_by_user" },
+        })}\n\n`);
+        stream.end();
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ run_id: runId, session_id: sessionId, status: scenario === "timeout" ? "failed" : "cancelled" }));
       return;
     }
     if (req.url === "/v1/chat/completions" && req.method === "POST") {
@@ -286,27 +504,25 @@ function readJsonBody(req) {
 
 function assertAttachmentBody(body, attachmentFixture) {
   if (!attachmentFixture) return -10;
-  if (typeof body?.model !== "string" || !body.model.trim()) return -11;
-  if (body?.stream !== true) return -12;
-  const attachments = body?.metadata?.attachments;
-  const files = body?.metadata?.files;
-  if (!Array.isArray(attachments) || !Array.isArray(files)) return -1;
-  if (attachments.length !== 2 || files.length !== 2) return attachments.length;
+  if (!body?.model_selection && (typeof body?.model !== "string" || !body.model.trim())) return -11;
+  const resources = body?.metadata?.input_resources;
+  const refs = body?.metadata?.attachment_refs;
+  if (!Array.isArray(resources) || !Array.isArray(refs)) return -1;
+  if (resources.length !== 2 || refs.length !== 2) return resources.length;
   const expected = [
-    { kind: "file", path: attachmentFixture.filePath, name: "notes.md" },
-    { kind: "folder", path: attachmentFixture.folderPath, name: "project" },
+    { kind: "file", reference: "notes.md", name: "notes.md" },
+    { kind: "folder", reference: "project", name: "project" },
   ];
   const matches = expected.every((item, index) =>
-    attachments[index]?.kind === item.kind &&
-    attachments[index]?.path === item.path &&
-    attachments[index]?.name === item.name &&
-    files[index]?.kind === item.kind &&
-    files[index]?.path === item.path &&
-    files[index]?.name === item.name,
+    resources[index]?.protocol === "oaep.input/1" &&
+    resources[index]?.kind === item.kind &&
+    resources[index]?.reference === item.reference &&
+    resources[index]?.name === item.name &&
+    refs[index] === item.reference,
   );
   if (!matches) return -2;
   if (body?.metadata?.desktop_request_id !== "e2e-attachments") return -3;
-  if (body?.thread_id !== "e2e-attachments") return -4;
+  if (body?.metadata?.source_message_id !== "desktop:e2e-attachments") return -4;
   const context = body?.metadata?.attachment_context;
   if (!Array.isArray(context) || context.length !== 2) return -5;
   const fileContext = context.find((item) => item?.kind === "file");
@@ -314,12 +530,14 @@ function assertAttachmentBody(body, attachmentFixture) {
   if (!fileContext?.included || fileContext?.name !== "notes.md") return -6;
   if (!String(fileContext.content || "").includes(ATTACHMENT_SENTINEL)) return -7;
   if (!folderContext || folderContext.name !== "project") return -8;
-  const messages = body?.messages;
-  if (!Array.isArray(messages) || messages.length < 2) return -9;
-  if (messages[0]?.role !== "system" || !String(messages[0]?.content || "").includes(ATTACHMENT_SENTINEL)) return -13;
-  if (!String(messages[0]?.content || "").includes("notes.md")) return -14;
-  if (!messages.some((message) => message?.role === "user" && message?.content === "use attached files")) return -15;
-  return attachments.length;
+  // Runtime receives the enriched last-user prompt plus protocol-neutral OAEP
+  // resources; it no longer receives the legacy Gateway messages/files body.
+  const userContent = String(body?.prompt || "");
+  if (!userContent.includes("use attached files")) return -15;
+  if (!userContent.includes(ATTACHMENT_SENTINEL)) return -13;
+  if (!userContent.includes("notes.md")) return -14;
+  if (!userContent.includes("The user attached the following local context.")) return -16;
+  return resources.length;
 }
 
 function runPackagedApp({ appHome, resultPath, scenario, attachmentFixture }) {
@@ -345,6 +563,7 @@ function runPackagedApp({ appHome, resultPath, scenario, attachmentFixture }) {
         ...(attachmentFixture ? {
           OPENDRSAI_E2E_ATTACHMENT_FILE: attachmentFixture.filePath,
           OPENDRSAI_E2E_ATTACHMENT_FOLDER: attachmentFixture.folderPath,
+          OPENDRSAI_E2E_ATTACHMENT_WORKSPACE: attachmentFixture.workspacePath,
         } : {}),
         OPENDRSAI_E2E_RESULT: resultPath,
         OPENDRSAI_E2E_TIMEOUT_MS: "30000",

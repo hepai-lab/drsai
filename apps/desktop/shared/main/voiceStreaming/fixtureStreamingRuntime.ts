@@ -1,5 +1,6 @@
 import type {
   DesktopStreamingVoiceAudioChunk,
+  DesktopStreamingVoiceCapabilities,
   DesktopStreamingVoiceTranscriptionEvent,
   DesktopVoiceRuntimeId,
 } from "../../api/desktopApi";
@@ -28,10 +29,12 @@ export class FixtureStreamingTranscriptionRuntime implements StreamingTranscript
   #terminal = false;
   readonly options: Required<Pick<FixtureStreamingRuntimeOptions, "partialEveryChunks" | "runtimeId">> & FixtureStreamingRuntimeOptions;
   readonly id: DesktopVoiceRuntimeId;
-  readonly capabilities = {
+  readonly capabilities: DesktopStreamingVoiceCapabilities = {
     serialStt: true, serialTts: true, streamingStt: true, streamingTts: false,
     audioEncodings: ["pcm_s16le" as const], sampleRatesHz: [16_000, 24_000, 48_000],
-    supportsPartialTranscripts: true, supportsProviderEndpointing: true, supportsSessionResume: false, maxBufferedAudioMs: 2_000,
+    supportsPartialTranscripts: true, supportsProviderEndpointing: true, supportsSessionResume: false,
+    supportsAdaptiveEndpointing: true, supportsContextualRepair: true, supportsProviderFailover: false, protocolVersion: 2,
+    maxBufferedAudioMs: 2_000,
   };
 
   constructor(options: FixtureStreamingRuntimeOptions) {

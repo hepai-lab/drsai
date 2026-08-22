@@ -10,6 +10,8 @@ export * from "./agentBackendPresentation";
 export * from "./agentTaskDepth";
 export * from "./agentTaskPlan";
 export * from "./desktopApi";
+export * from "./errorEnvelope";
+export * from "./runExperiment";
 export * from "./diagnostics";
 export * from "./executionPolicy";
 export * from "./owop.generated";

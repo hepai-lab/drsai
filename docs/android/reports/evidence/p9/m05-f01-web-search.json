@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "feature_id": "M05-F01",
+  "generated_at": "2026-08-05T14:13:36.763598+00:00",
+  "passed": true,
+  "gates": {
+    "android_manifest_declares_local_equivalent": true,
+    "host_registry_exposes_versioned_web_search": true,
+    "result_schema_has_sources_time_and_provider": true,
+    "timeout_empty_and_provider_errors_are_structured": true,
+    "provider_chain_matches_desktop_route_and_has_fallback": true,
+    "network_capability_is_run_scoped": true,
+    "unit_fixtures_cover_english_chinese_and_failures": true,
+    "real_provider_returns_english_and_chinese_https_sources": true
+  },
+  "unit": {
+    "name": "ai.drsai.remote.WebSearchToolTest",
+    "tests": 4,
+    "failures": 0,
+    "errors": 0,
+    "cases": [
+      "providerNormalizesEnglishAndChineseQueriesToStableResultSchema",
+      "emptyTimeoutHttpAndMalformedResponsesAreStructured",
+      "hostToolIsCapabilityGatedAndReturnsProviderEnvelope",
+      "bingProviderParsesBoundedDirectHttpsResultsAndFallbackSkipsFailure"
+    ],
+    "sha256": "3f3b49fd7f45df603b4e52c6cb831717e9903d509a8f63027fb6ca05d8e1eefd"
+  },
+  "instrumentation": {
+    "name": "ai.drsai.remote.WebSearchProviderInstrumentedTest",
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "cases": [
+      "realProviderReturnsNormalizedHttpsSourcesForEnglishAndChinese"
+    ],
+    "sha256": "076dd1882a4be5e8588cebea772f6584e263d39f0f1ef3e4f194fe24aa1d377d"
+  },
+  "capability_manifest_sha256": "9f1edfcab345643355b603bd8012ee4aca40ab2b50c941e2e8e8f92de81a0fe9",
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/WebSearchTool.kt": "9c9d5138a6778262424e261b36581003e80a768d0f4fa794403e94e5b6de20df",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/ToolRegistry.kt": "d6a045f9eb61a7a91704d1e288b33bddf2945d9f63c675ec53153d710d5e5b43",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/RunCapabilityDiagnostics.kt": "f71d54f45fb7f9fcb6af241ca74762ec4a347303c578b61bd387f418573fae45",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/WebSearchProviderInstrumentedTest.kt": "60c1c49491847fdd788346f5d00b5f95ffcf196a23a28bdc4d1b2e90e4b7e09c"
+  }
+}

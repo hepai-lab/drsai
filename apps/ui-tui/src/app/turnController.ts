@@ -19,6 +19,8 @@ import type { GatewayClient } from '../gatewayClient.js'
 import { $isStreaming, $current, appendTurn, setCurrent } from './turnStore.js'
 import { $memoryPreview } from './uiStore.js'
 import { newAssistantTurn } from './types.js'
+import { clearHeightCache } from './heightCache.js'
+import { cancelPendingInkThrottles, resetInkLastOutputHeight } from './inkInstanceRef.js'
 
 export interface ImageAttachment {
   /** Original file path (for display / debugging). */
@@ -56,6 +58,7 @@ export class TurnController {
     // Lock in user turn + start a placeholder assistant turn.
     appendTurn({ role: 'user', text: opts.displayText?.trim() || trimmed, ts: Date.now() })
     setCurrent(newAssistantTurn())
+    clearHeightCache()  // reset height cache for the new streaming turn
     $isStreaming.set(true)
 
     // Fire and forget: the RPC just kicks off the turn on the gateway side.
@@ -89,6 +92,23 @@ export class TurnController {
 
   /** Move the in-flight turn into the transcript and clear streaming state. */
   finalize(): void {
+    // Cancel any pending throttledLog/throttledOnRender trailing calls
+    // from the last streaming render. If left pending, the trailing
+    // call fires AFTER onImmediateRender writes the new (small) frame,
+    // overwriting it with the old (large) streaming frame — causing
+    // text overlap and bottom blank space.
+    cancelPendingInkThrottles()
+
+    // Reset Ink's lastOutputHeight to 0 to prevent the fullscreen branch
+    // from firing on the finalize render. The fullscreen branch fires
+    // when lastOutputHeight >= stdout.rows (from the PREVIOUS render,
+    // which was the tall streaming frame). It calls log.sync() which
+    // sets previousLineCount WITHOUT writing to the terminal — corrupting
+    // line tracking. On the next render, eraseLines() erases the wrong
+    // number of lines, leaving 1 blank line per turn (the "growing
+    // bottom blank space" bug).
+    resetInkLastOutputHeight()
+
     const cur = $current.get()
     if (cur) {
       const finalized = {

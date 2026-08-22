@@ -1,0 +1,82 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 32,
+  "captured_at": "2026-08-05T03:56:46.368Z",
+  "feature": "M07-F01",
+  "result": "accepted",
+  "scope": "OpenDrSai Windows App with HAI configuration and OpenDrSai Full Agent Runtime",
+  "implementation": {
+    "state_model": "apps/desktop/shared/api/operationalState.ts",
+    "persistent_ui": "apps/desktop/shared/renderer/src/components/OperationalStateBar.tsx",
+    "layers": ["identity", "runtime", "model", "workspace", "run"],
+    "run_states": ["idle", "queued", "running", "waiting_approval", "recovering", "failed", "completed", "cancelled"],
+    "priority": "identity -> runtime -> model -> workspace -> run",
+    "behavior": "Exactly one current layer is exposed. A lower-layer ready flag cannot hide an earlier blocker. When prerequisites pass, the current task lifecycle is shown."
+  },
+  "focused_tests": {
+    "property_combinations": 1152,
+    "run_mapping_checks": 5,
+    "production_ui_contracts": 6,
+    "first_run_regression_transitions": 13,
+    "typescript": true,
+    "production_build": true,
+    "passed": true,
+    "commands": [
+      "npm run verify:m07-operational-state",
+      "npm run verify:opendrsai-first-run-setup",
+      "npm run typecheck",
+      "npm run build:unpack"
+    ]
+  },
+  "packaged_ui": {
+    "real_executable": true,
+    "passed_checks": 30,
+    "total_checks": 30,
+    "state_scenarios": 7,
+    "layers_per_scenario": 5,
+    "single_current_layer_per_scenario": true,
+    "keyboard_details_toggle": true,
+    "accessibility_tree_captured": true,
+    "screenshots_captured": 7,
+    "generic_ready_masking_failures": 0,
+    "configured_retries": 0,
+    "actual_retries": 0,
+    "evidence": "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/packaged-m07-operational-state-result.json"
+  },
+  "stability": {
+    "formal_rounds": 20,
+    "passed_rounds": 20,
+    "failed_rounds": 0,
+    "checks_per_round": 30,
+    "formal_packaged_checks": 600,
+    "configured_retries": 0,
+    "actual_retries": 0,
+    "evidence": "apps/desktop/windows/release/product-evidence/m07-operational-state/stability-summary.json"
+  },
+  "acceptance": {
+    "five_layers_visible": true,
+    "dependency_priority_exact": true,
+    "single_current_layer": true,
+    "current_blocker_always_named": true,
+    "run_waiting_approval_visible": true,
+    "run_recovery_visible": true,
+    "run_completion_visible": true,
+    "accessible_current_state": true,
+    "keyboard_accessible": true,
+    "separate_backend_product_wording_removed_from_first_run": true
+  },
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:de736b7b0b9dce35ef8ee196c8a9cdb2751554396486d484816926759403c738"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:5e43c970dbfe505037fce5152033e4cbd7742b080b4c0edd5b0bce42eb0cc093"
+    },
+    "packaged_backend_source": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar.unpacked/resources/backend/drsai-backend-source.zip",
+      "sha256": "sha256:c5010289c0be4326bf715e1c035f85a8e20d198a12205dfbcbc548d11c50e411"
+    }
+  }
+}

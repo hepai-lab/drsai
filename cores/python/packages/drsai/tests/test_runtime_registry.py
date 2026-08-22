@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import importlib.util
 import os
+import sqlite3
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -57,6 +58,76 @@ def test_runtime_generates_stable_workspace_id_and_persists_registry(tmp_path: P
     assert [item.workspace_id for item in restored] == [opened.workspace_id]
     reopened = restarted_runtime.open_workspace(str(workspace))
     assert reopened.workspace_id == opened.workspace_id
+
+
+def test_workspace_display_name_is_persisted_and_not_rederived_from_basename(tmp_path: Path) -> None:
+    database = tmp_path / "runtime.sqlite3"
+    workspace = tmp_path / "drsai-agent"
+    workspace.mkdir()
+
+    registry = RuntimeRegistry(database)
+    opened = registry.open_workspace(str(workspace), display_name="默认")
+    assert opened.display_name == "默认"
+    assert opened.as_dict()["display_name"] == "默认"
+
+    restarted = RuntimeRegistry(database)
+    restored = restarted.get_workspace(opened.workspace_id)
+    assert restored is not None
+    assert restored.workspace_id == opened.workspace_id
+    assert restored.display_name == "默认"
+
+    reopened = restarted.open_workspace(str(workspace))
+    assert reopened.workspace_id == opened.workspace_id
+    assert reopened.display_name == "默认"
+
+
+def test_workspace_rename_preserves_identity_and_increments_revision(tmp_path: Path) -> None:
+    registry = RuntimeRegistry(tmp_path / "runtime.sqlite3")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    opened = registry.open_workspace(str(workspace), display_name="默认")
+
+    renamed = registry.update_workspace_display_name(opened.workspace_id, "重命名工作区")
+
+    assert renamed.workspace_id == opened.workspace_id
+    assert renamed.path == opened.path
+    assert renamed.display_name == "重命名工作区"
+    assert renamed.revision == opened.revision + 1
+    assert renamed.updated_at >= opened.updated_at
+
+
+def test_legacy_workspace_display_name_migration_is_idempotent(tmp_path: Path) -> None:
+    database = tmp_path / "runtime.sqlite3"
+    workspace = tmp_path / "drsai-agent"
+    workspace.mkdir()
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE workspaces (
+                workspace_id TEXT PRIMARY KEY,
+                canonical_path TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                last_opened_at TEXT NOT NULL,
+                closed_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO workspaces VALUES(?, ?, ?, ?, NULL)",
+            ("workspace-legacy", str(workspace.resolve()), "2026-07-28T00:00:00Z", "2026-07-28T00:00:00Z"),
+        )
+
+    migrated = RuntimeRegistry(database)
+    legacy = migrated.get_workspace("workspace-legacy")
+    assert legacy is not None
+    assert legacy.display_name == "drsai-agent"
+
+    renamed = migrated.update_workspace_display_name("workspace-legacy", "默认")
+    restarted = RuntimeRegistry(database)
+    restored = restarted.get_workspace("workspace-legacy")
+    assert restored is not None
+    assert restored.display_name == "默认"
+    assert restored.revision == renamed.revision
 
 
 def test_ten_workspaces_are_isolated_and_close_preserves_history(tmp_path: Path) -> None:

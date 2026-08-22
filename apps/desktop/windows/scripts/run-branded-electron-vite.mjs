@@ -75,7 +75,7 @@ const child = spawn(process.execPath, [electronVite, command, ...process.argv.sl
     ...(brandedElectron ? { ELECTRON_EXEC_PATH: brandedElectron } : {}),
   },
   stdio: "inherit",
-  windowsHide: false,
+  windowsHide: true,
 });
 child.once("error", (error) => {
   console.error(`Could not start Electron Vite: ${error.message}`);

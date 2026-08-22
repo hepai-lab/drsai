@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "feature_id": "M12-F02",
+  "generated_at": "2026-08-05T14:30:43.956489+00:00",
+  "passed": true,
+  "gates": {
+    "fixture_is_versioned_and_contains_no_provider_or_secret": true,
+    "desktop_uses_an_actual_drsai_assistant_instance_and_production_adapter": true,
+    "android_uses_the_bundled_isolated_runtime_process": true,
+    "kernel_and_prompt_identity_are_frozen_for_both_surfaces": true,
+    "shared_tool_schema_digest_is_identical": true,
+    "skill_manifest_digest_is_identical": true,
+    "tool_call_result_decision_and_terminal_sequence_are_exact": true,
+    "user_visible_result_is_exact": true,
+    "desktop_production_and_cross_runtime_suites_are_green": true,
+    "api35_emulator_and_api36_arm64_device_are_green": true
+  },
+  "pytest": {
+    "returncode": 0,
+    "summary": ".......                                                                  [100%]\n7 passed in 4.26s"
+  },
+  "devices": [
+    "emulator-5554",
+    "adb-R5GYB3S8ACH-VgdHyH._adb-tls-connect._tcp"
+  ],
+  "device_tests": 1,
+  "fixture_sha256": "a8759e73473238401991c2efde763137141af822676428d322bcfef85ea7b0c9",
+  "source_sha256": {
+    "cores/protocol/android-runtime/fixtures/p9-production-behavior-parity-v1.json": "a8759e73473238401991c2efde763137141af822676428d322bcfef85ea7b0c9",
+    "cores/python/packages/drsai/tests/test_p9_production_behavior_parity.py": "fc2017a73659fc98b3c69103138c67049cbbb7a31200e0985fe6a34804312f07",
+    "cores/python/packages/drsai/tests/test_agent_kernel_production_parity.py": "e90ee240a23200082e62386f47694d18d07558281a21ce9523850c55b1490b59",
+    "cores/python/packages/drsai/tests/test_mobile_cross_runtime_parity.py": "c9c384e6c2a9eb8e64c5ae7997c49cf060b1cd4a2719c7951742b1a2a3a4dfaa",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/P9ProductionBehaviorParityInstrumentedTest.kt": "4fb5a6b7bd61f28109963e180eb5ab50561dd0a0fc3954cc241fbce5d834aa31"
+  }
+}

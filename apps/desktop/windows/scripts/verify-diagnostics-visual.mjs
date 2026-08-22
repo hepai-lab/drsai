@@ -41,6 +41,13 @@ try {
   await page.getByRole("button", { name: /进入开发者工作区|Enter developer workspace/ }).click();
   await page.locator("textarea").last().waitFor({ state: "visible" });
   await page.evaluate(async () => {
+    await window.openDrSai.startChat({
+      requestId: "activity-visual-request",
+      runId: "activity-visual-turn",
+      messages: [{ role: "user", content: "__STRUCTURED_VISUAL_FIXTURE__" }],
+    });
+  });
+  await page.evaluate(async () => {
     const timestamp = new Date(Date.now() - 15_000).toISOString();
     const root = { schemaVersion: 1, id: "event-root", traceId: "trace-visual", spanId: "span-root", timestamp, kind: "operation", level: "info", status: "started", module: "runtime", component: "runtime-engine", operation: "chat.run", message: "Chat run started" };
     const waiting = { schemaVersion: 1, id: "event-wait", traceId: "trace-visual", spanId: "span-gateway", parentSpanId: "span-root", timestamp, kind: "snapshot", level: "warn", status: "waiting", module: "runtime", component: "gateway", operation: "chat.connection", message: "Waiting for Gateway response" };
@@ -55,6 +62,11 @@ try {
       findings: [{ id: "failure:event-failed", severity: "error", title: "Failure in codex-adapter", message: "Agent execution failed", module: "backend", component: "codex-adapter", traceId: "trace-error", eventId: "event-failed", suggestedAction: "Inspect the reported source location and preceding trace events." }],
       deepTracing: { performance: [{ key: "runtime:gateway:chat.connection", module: "runtime", component: "gateway", operation: "chat.connection", count: 3, failureCount: 1, totalDurationMs: 1200, averageDurationMs: 400, p95DurationMs: 800, maxDurationMs: 800 }], resources: [{ timestamp, machineId: "desktop", processId: 4242, rssBytes: 134217728, heapUsedBytes: 67108864, heapTotalBytes: 100663296, externalBytes: 1024, cpuUserMicros: 1000, cpuSystemMicros: 500, eventLoopDelayMs: 1 }], activeCheckpoints: [{ traceId: "trace-visual", rootOperation: "chat.run", status: "waiting", lastEventAt: timestamp, eventCount: 2, machineIds: ["desktop"], recovered: false }], clockOffsets: [] },
       rootCause: { analyses: [{ traceId: "trace-error", primary: { id: "cause-event-failed", traceId: "trace-error", eventId: "event-failed", category: "source-code", severity: "error", confidence: 0.92, recoverable: false, title: "source code failure in codex-adapter", explanation: "runtime.agent.failed is the first failure candidate.", evidenceEventIds: [], propagatedEventIds: [], suggestedActions: ["Open the reported source location and inspect the preceding trace events."] }, alternatives: [], facts: ["One failure event was observed."], inferences: [{ text: "The first in-app frame is the likely cause.", confidence: 0.92 }], uncertainties: [], summary: "The first in-app stack frame is the likely root cause." }], clusters: [{ id: "cluster-visual", fingerprint: "visual", title: "source code in codex-adapter", category: "source-code", state: "open", count: 1, traceIds: ["trace-error"], eventIds: ["event-failed"], firstSeenAt: timestamp, lastSeenAt: timestamp, trend: "new" }], generatedAt: new Date().toISOString() },
+      agentRuns: [{ traceId: "trace-error", runId: "activity-visual-turn", sessionId: "session-visual", backendId: "codex-adapter", model: "gpt-5", phase: "failed", status: "failed", action: "Agent execution failed", startedAt: timestamp, phaseStartedAt: timestamp, updatedAt: timestamp, endedAt: timestamp, elapsedMs: 15000, phaseElapsedMs: 15000, connectionState: "disconnected", firstFailure: failed, recentEvents: [{ ...failed, domain: "agent", visibility: "milestone", agentPhase: "failed" }] }],
+      incidents: [
+        { id: "incident-agent", fingerprint: "agent-visual", domain: "agent", severity: "error", title: "Agent execution failed", message: "Agent execution failed", component: "codex-adapter", operation: "runtime.agent.failed", traceId: "trace-error", runId: "activity-visual-turn", agentPhase: "failed", errorCode: "AGENT_EXECUTION_FAILED", source: failed.source, stack: failed.stack, impact: "The current Agent run stopped before producing a response.", suggestedActions: ["Inspect the source and retry the run."], count: 1, firstSeenAt: timestamp, lastSeenAt: timestamp, contextBefore: [], contextAfter: [] },
+        { id: "incident-app", fingerprint: "app-visual", domain: "app", severity: "error", title: "Storage update failed", message: "EPERM while replacing threads.json", component: "thread-store", operation: "workspace.save", errorCode: "EPERM", stack: [], impact: "Thread history could not be persisted.", suggestedActions: ["Check file permissions and retry."], count: 3, firstSeenAt: timestamp, lastSeenAt: timestamp, contextBefore: [], contextAfter: [] },
+      ],
       droppedEvents: 0, storage: { eventCount: 3, maxEvents: 5000, persisted: true },
     };
     window.openDrSai.getDiagnosticSnapshot = async () => snapshot;
@@ -63,15 +75,25 @@ try {
   await page.getByRole("button", { name: /显示右侧栏|Show right panel/ }).click();
   await page.getByRole("button", { name: /调试|Debug/ }).click();
   await page.getByText(/运行诊断|Diagnostics/, { exact: true }).waitFor({ state: "visible" });
+  await page.getByText(/当前 Agent 状态|Current Agent state/).waitFor({ state: "visible" });
+  await page.getByText("Agent execution failed", { exact: true }).first().waitFor({ state: "visible" });
+  const agentScreenshot = await page.screenshot({ path: join(evidenceDir, "diagnostics-agent-state.png") });
+  assert.ok(agentScreenshot.length > 20_000, "Agent diagnostics screenshot is unexpectedly small.");
+  await page.getByRole("tab", { name: /App 错误|App Errors/ }).click();
+  await page.getByText("Storage update failed", { exact: true }).waitFor({ state: "visible" });
+  const appErrorScreenshot = await page.screenshot({ path: join(evidenceDir, "diagnostics-app-errors.png") });
+  assert.ok(appErrorScreenshot.length > 20_000, "App error diagnostics screenshot is unexpectedly small.");
+  await page.getByRole("button", { name: /高级|Advanced/ }).click();
+  await page.getByRole("tab", { name: /概览|Overview/ }).click();
   await page.getByText(/当前运行位置|Current execution/).waitFor({ state: "visible" });
   assert.equal(await page.getByText("Waiting for Gateway response").count() > 0, true);
   assert.equal(await page.getByText("Failure in codex-adapter").count() > 0, true);
 
   await page.getByRole("tab", { name: /链路|Traces/ }).click();
   assert.equal(await page.getByText("chat.run", { exact: true }).count() > 0, true);
-  await page.getByRole("tab", { name: /错误|Errors/ }).click();
+  await page.getByRole("tab", { name: /全部错误|All Errors/ }).click();
   await page.getByText("Agent execution failed", { exact: true }).first().waitFor({ state: "visible" });
-  assert.equal(await page.getByText(/agent_runtime\.py:614/).count() > 0, true);
+  assert.equal(await page.getByText(/agent\.py:614/).count() > 0, true);
   await page.getByRole("button", { name: /查看代码位置|View source/ }).click();
   await page.getByRole("complementary", { name: /源码查看器|Source inspector/ }).waitFor({ state: "visible" });
   assert.equal(await page.getByText(/源码位置|Source location/, { exact: true }).count() > 0, true);
@@ -105,6 +127,25 @@ try {
   await page.getByText("SHA-256", { exact: true }).waitFor({ state: "visible" });
   const productionScreenshot = await page.screenshot({ path: join(evidenceDir, "diagnostics-production-governance.png") });
   assert.ok(productionScreenshot.length > 20_000, "Production diagnostics screenshot is unexpectedly small.");
+  await page.getByRole("tab", { name: /活动|Activity/ }).click();
+  await page.getByText("Reflector response", { exact: true }).waitFor({ state: "visible" });
+  await page.getByText(/错误详情|Error details/, { exact: true }).waitFor({ state: "visible" });
+  assert.equal(await page.getByText("REFLECTOR_TIMEOUT", { exact: false }).count() > 0, true);
+  assert.equal(await page.getByText(/调用 ID|Call ID/, { exact: true }).count() > 0, true);
+  const activityScreenshot = await page.screenshot({ path: join(evidenceDir, "diagnostics-activity-details.png") });
+  assert.ok(activityScreenshot.length > 20_000, "Activity detail screenshot is unexpectedly small.");
+  await page.getByRole("tab", { name: /运行日志|Runtime Log/ }).click();
+  assert.equal(await page.getByText("Runtime selected OAEP v1 for this session.", { exact: true }).count(), 0, "Current-task scope must hide unrelated Runtime sessions.");
+  await page.getByRole("button", { name: /全部 Agent|All Agents/ }).click();
+  await page.getByText("Runtime selected OAEP v1 for this session.", { exact: true }).waitFor({ state: "visible" });
+  await page.getByText("OAEP event stream connected after cursor 41.", { exact: true }).waitFor({ state: "visible" });
+  const oaepEventLog = page.locator(".debug-runtime-entry").filter({ hasText: "event.item.delta · sequence 42" });
+  await oaepEventLog.locator(":scope > summary").click();
+  await oaepEventLog.getByText(/协议数据|Protocol data/, { exact: true }).waitFor({ state: "visible" });
+  assert.equal(await oaepEventLog.getByText(/oaep-event-42/).count() > 0, true);
+  assert.equal(await oaepEventLog.getByText(/\[REDACTED\]/).count() > 0, true);
+  const runtimeScreenshot = await page.screenshot({ path: join(evidenceDir, "diagnostics-runtime-log-oaep.png") });
+  assert.ok(runtimeScreenshot.length > 20_000, "Runtime log screenshot is unexpectedly small.");
   console.log(`Diagnostics visual verification passed (screenshot: ${join(evidenceDir, "diagnostics-errors.png")}).`);
 } finally {
   await browser.close();

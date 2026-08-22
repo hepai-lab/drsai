@@ -21,6 +21,12 @@ import ai.drsai.remote.remote.data.PendingRemoteApprovalEntity
 import ai.drsai.remote.remote.data.RemoteCacheDao
 import ai.drsai.remote.remote.data.RemoteEventCursorEntity
 import ai.drsai.remote.remote.data.RemoteEventEntity
+import ai.drsai.remote.remote.data.RemoteConversationItemEntity
+import ai.drsai.remote.remote.data.RemoteSessionEventEntity
+import java.security.MessageDigest
+import ai.drsai.remote.remote.data.RemoteOaepRunEntity
+import ai.drsai.remote.remote.data.RemoteOaepItemEntity
+import ai.drsai.remote.remote.data.RemoteOaepEventEntity
 import ai.drsai.remote.remote.data.RemoteRunEntity
 import ai.drsai.remote.remote.data.RemoteRuntimeEntity
 import ai.drsai.remote.remote.data.RemoteSessionEntity
@@ -33,6 +39,12 @@ import ai.drsai.remote.workbench.data.WorkbenchEventEntity
 import ai.drsai.remote.workbench.data.WorkbenchRunEntity
 import ai.drsai.remote.workbench.data.WorkbenchSessionEntity
 import ai.drsai.remote.workbench.data.WorkbenchWorkspaceEntity
+import ai.drsai.remote.runtime.oaep.AndroidOaepDao
+import ai.drsai.remote.runtime.oaep.AndroidOaepEventEntity
+import ai.drsai.remote.runtime.oaep.AndroidOaepItemEntity
+import ai.drsai.remote.runtime.oaep.AndroidOaepMigrationEntity
+import ai.drsai.remote.runtime.oaep.AndroidOaepRunEntity
+import ai.drsai.remote.runtime.oaep.AndroidOaepSessionEntity
 
 @Entity(tableName = "conversations", indices = [Index("userId")])
 data class ConversationEntity(
@@ -152,6 +164,9 @@ interface ChatDao {
     @Query("SELECT * FROM conversations WHERE userId=:userId ORDER BY updatedAt DESC")
     suspend fun conversationSnapshot(userId: String): List<ConversationEntity>
 
+    @Query("SELECT * FROM conversations WHERE userId=:userId AND (:afterId IS NULL OR id > :afterId) ORDER BY id LIMIT :limit")
+    suspend fun conversationMigrationPage(userId: String, afterId: String?, limit: Int): List<ConversationEntity>
+
     @Query("SELECT * FROM messages WHERE conversationId=:id AND visible=1 ORDER BY createdAt")
     suspend fun visibleMessageSnapshot(id: String): List<MessageEntity>
 
@@ -185,6 +200,9 @@ interface ChatDao {
     @Query("UPDATE conversations SET title=:title, updatedAt=:updatedAt WHERE id=:id")
     suspend fun updateConversation(id: String, title: String, updatedAt: Long)
 
+    @Query("UPDATE conversations SET modelId=:modelId, updatedAt=:updatedAt WHERE id=:id AND userId=:userId")
+    suspend fun updateConversationModel(id: String, userId: String, modelId: String, updatedAt: Long): Int
+
     @Query("DELETE FROM conversations WHERE id=:id")
     suspend fun deleteConversation(id: String)
 
@@ -199,6 +217,9 @@ interface ChatDao {
 
     @Query("DELETE FROM memories WHERE userId=:userId AND id=:id")
     suspend fun deleteMemory(userId: String, id: Long): Int
+
+    @Query("DELETE FROM memories WHERE userId=:userId")
+    suspend fun deleteMemories(userId: String): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveConversationSummary(item: ConversationSummaryEntity)
@@ -236,16 +257,96 @@ interface ChatDao {
         ConversationSummaryEntity::class, ToolArtifactEntity::class, AgentCatalogEntity::class,
         RemoteRuntimeEntity::class, RemoteWorkspaceEntity::class, RemoteSessionEntity::class, RemoteRunEntity::class,
         RemoteEventCursorEntity::class, RemoteEventEntity::class, PendingRemoteApprovalEntity::class,
+        RemoteConversationItemEntity::class, RemoteSessionEventEntity::class,
+        RemoteOaepRunEntity::class, RemoteOaepItemEntity::class, RemoteOaepEventEntity::class,
         WorkbenchWorkspaceEntity::class, WorkbenchSessionEntity::class, WorkbenchRunEntity::class,
         WorkbenchEventEntity::class, WorkbenchApprovalEntity::class, WorkbenchApprovalGrantEntity::class,
-        WorkbenchAuditEntity::class],
-    version = 7,
+        WorkbenchAuditEntity::class, AndroidOaepSessionEntity::class, AndroidOaepRunEntity::class,
+        AndroidOaepItemEntity::class, AndroidOaepEventEntity::class, AndroidOaepMigrationEntity::class,
+        ModelProviderEntity::class, ProviderModelEntity::class],
+    version = 15,
     exportSchema = false,
 )
 abstract class ChatDatabase : RoomDatabase() {
     abstract fun dao(): ChatDao
     abstract fun remoteDao(): RemoteCacheDao
     abstract fun workbenchDao(): WorkbenchDao
+    abstract fun androidOaepDao(): AndroidOaepDao
+    abstract fun modelProviderDao(): ModelProviderDao
+}
+
+val MIGRATION_14_15 = object : Migration(14, 15) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE remote_oaep_items ADD COLUMN sourceJson TEXT NOT NULL DEFAULT '{}'")
+    }
+}
+
+val MIGRATION_13_14 = object : Migration(13, 14) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS model_providers (id TEXT NOT NULL, presetId TEXT, displayName TEXT NOT NULL, baseUrl TEXT NOT NULL, wireApi TEXT NOT NULL, builtIn INTEGER NOT NULL, enabled INTEGER NOT NULL, revision INTEGER NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(id))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS provider_models (id TEXT NOT NULL, providerId TEXT NOT NULL, upstreamId TEXT NOT NULL, displayName TEXT NOT NULL, vision INTEGER NOT NULL, tools INTEGER NOT NULL, reasoning INTEGER NOT NULL, contextTokens INTEGER, maxOutputTokens INTEGER, enabled INTEGER NOT NULL, source TEXT NOT NULL, sortOrder INTEGER NOT NULL, PRIMARY KEY(id), FOREIGN KEY(providerId) REFERENCES model_providers(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_provider_models_providerId ON provider_models(providerId)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_provider_models_providerId_upstreamId ON provider_models(providerId, upstreamId)")
+    }
+}
+
+val MIGRATION_12_13 = object : Migration(12, 13) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS android_oaep_migrations (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, migrationVersion INTEGER NOT NULL, sourceDigest TEXT NOT NULL, status TEXT NOT NULL, completedThrough TEXT, updatedAt INTEGER NOT NULL, errorCode TEXT, PRIMARY KEY(subject,organization,runtimeId,sessionId,migrationVersion))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_android_oaep_migrations_subject_organization_runtimeId_status ON android_oaep_migrations(subject,organization,runtimeId,status)")
+    }
+}
+
+val MIGRATION_11_12 = object : Migration(11, 12) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS android_oaep_sessions (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, title TEXT, status TEXT NOT NULL, backend TEXT, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, lastSequence INTEGER NOT NULL, PRIMARY KEY(subject,organization,runtimeId,sessionId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_android_oaep_sessions_subject_organization_runtimeId_workspaceId ON android_oaep_sessions(subject,organization,runtimeId,workspaceId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS android_oaep_runs (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT NOT NULL, parentRunId TEXT, runSequence INTEGER, status TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, completedAt TEXT, PRIMARY KEY(subject,organization,runtimeId,sessionId,runId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_android_oaep_runs_subject_organization_runtimeId_sessionId_updatedAt ON android_oaep_runs(subject,organization,runtimeId,sessionId,updatedAt)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS android_oaep_items (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT NOT NULL, itemId TEXT NOT NULL, backendItemId TEXT NOT NULL, itemSequence INTEGER NOT NULL, revision INTEGER NOT NULL, latestEventSequence INTEGER NOT NULL, itemJson TEXT NOT NULL, PRIMARY KEY(subject,organization,runtimeId,sessionId,itemId))")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_android_oaep_items_subject_organization_runtimeId_sessionId_runId_itemSequence ON android_oaep_items(subject,organization,runtimeId,sessionId,runId,itemSequence)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_android_oaep_items_subject_organization_runtimeId_sessionId_backendItemId ON android_oaep_items(subject,organization,runtimeId,sessionId,backendItemId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS android_oaep_events (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT, itemId TEXT, eventId TEXT NOT NULL, eventSequence INTEGER NOT NULL, dedupeKey TEXT NOT NULL, inputDedupeKey TEXT NOT NULL, eventJson TEXT NOT NULL, PRIMARY KEY(subject,organization,runtimeId,sessionId,eventId))")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_android_oaep_events_subject_organization_runtimeId_sessionId_eventSequence ON android_oaep_events(subject,organization,runtimeId,sessionId,eventSequence)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_android_oaep_events_subject_organization_runtimeId_sessionId_dedupeKey ON android_oaep_events(subject,organization,runtimeId,sessionId,dedupeKey)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_android_oaep_events_subject_organization_runtimeId_sessionId_inputDedupeKey ON android_oaep_events(subject,organization,runtimeId,sessionId,inputDedupeKey)")
+    }
+}
+
+val MIGRATION_10_11 = object : Migration(10, 11) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_oaep_runs (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT NOT NULL, parentRunId TEXT, status TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, completedAt TEXT, PRIMARY KEY(subject,organization,runtimeId,sessionId,runId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_remote_oaep_runs_subject_organization_runtimeId_sessionId_updatedAt ON remote_oaep_runs(subject,organization,runtimeId,sessionId,updatedAt)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_oaep_items (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT NOT NULL, itemId TEXT NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL, itemSequence INTEGER NOT NULL, latestEventSequence INTEGER NOT NULL, sourceBackend TEXT NOT NULL, sourceClient TEXT, sourceMessageId TEXT, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, contentJson TEXT NOT NULL, optimistic INTEGER NOT NULL, PRIMARY KEY(subject,organization,runtimeId,sessionId,itemId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_remote_oaep_items_subject_organization_runtimeId_sessionId_runId_itemSequence ON remote_oaep_items(subject,organization,runtimeId,sessionId,runId,itemSequence)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_remote_oaep_items_subject_organization_runtimeId_sessionId_sourceMessageId ON remote_oaep_items(subject,organization,runtimeId,sessionId,sourceMessageId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_oaep_events (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT, itemId TEXT, eventId TEXT NOT NULL, eventSequence INTEGER NOT NULL, type TEXT NOT NULL, timestamp TEXT NOT NULL, dedupeKey TEXT NOT NULL, eventJson TEXT NOT NULL, PRIMARY KEY(subject,organization,runtimeId,sessionId,eventId))")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_remote_oaep_events_subject_organization_runtimeId_sessionId_eventSequence ON remote_oaep_events(subject,organization,runtimeId,sessionId,eventSequence)")
+    }
+}
+
+val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE workbench_runs ADD COLUMN pythonStateJson TEXT NOT NULL DEFAULT '{}'")
+    }
+}
+
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "ALTER TABLE remote_runtimes ADD COLUMN workspaceCatalogRevision TEXT NOT NULL DEFAULT ''"
+        )
+    }
+}
+
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_conversation_items (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, itemId TEXT NOT NULL, runId TEXT, kind TEXT NOT NULL, role TEXT, revision INTEGER NOT NULL, sessionSequence INTEGER NOT NULL, sourceClient TEXT NOT NULL, sourceMessageId TEXT, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, payloadJson TEXT NOT NULL, optimistic INTEGER NOT NULL, PRIMARY KEY(subject, organization, runtimeId, sessionId, itemId))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_remote_conversation_items_subject_organization_runtimeId_sessionId_sessionSequence ON remote_conversation_items(subject, organization, runtimeId, sessionId, sessionSequence)")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_remote_conversation_items_subject_organization_runtimeId_sessionId_sourceMessageId ON remote_conversation_items(subject, organization, runtimeId, sessionId, sourceMessageId)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS remote_session_events (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, workspaceId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT, eventId TEXT NOT NULL, sessionSequence INTEGER NOT NULL, kind TEXT NOT NULL, timestamp TEXT NOT NULL, payloadJson TEXT NOT NULL, PRIMARY KEY(subject, organization, runtimeId, sessionId, eventId))")
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_remote_session_events_subject_organization_runtimeId_sessionId_sessionSequence ON remote_session_events(subject, organization, runtimeId, sessionId, sessionSequence)")
+    }
 }
 
 val MIGRATION_6_7 = object : Migration(6, 7) {
@@ -260,10 +361,13 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
 
 class MemorySettingsStore(context: Context) {
     private val preferences = context.getSharedPreferences("opendrsai_memory_settings", Context.MODE_PRIVATE)
-    fun enabled(subject: String): Boolean = preferences.getBoolean(subject.hashCode().toUInt().toString(16), true)
+    fun enabled(subject: String): Boolean = preferences.getBoolean(key(subject), true)
     fun setEnabled(subject: String, enabled: Boolean) {
-        preferences.edit().putBoolean(subject.hashCode().toUInt().toString(16), enabled).apply()
+        preferences.edit().putBoolean(key(subject), enabled).apply()
     }
+
+    private fun key(subject: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(subject.encodeToByteArray()).joinToString("") { "%02x".format(it) }
 }
 
 val MIGRATION_5_6 = object : Migration(5, 6) {

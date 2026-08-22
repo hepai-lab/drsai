@@ -7,10 +7,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import ai.drsai.remote.BuildConfig
-import ai.drsai.remote.data.AccessTokenCoordinator
-import ai.drsai.remote.data.OidcClient
-import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.*
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
@@ -31,9 +27,7 @@ class WorkspaceFilesViewModel(
     private val workspaceId: WorkspaceId,
     workspaceName: String,
 ) : AndroidViewModel(app) {
-    private val tokens = SecureTokenStore(app)
-    private val auth = AccessTokenCoordinator(tokens, OidcClient(refreshClientId = { tokens.oidcClientId }))
-    private val client = RelayWorkspaceOperationsClient(HttpOwopRelayTransport(BuildConfig.RELAY_BASE_URL, runtimeId, auth::current))
+    private val client = RemoteWorkspaceContainer.get(app).boundaries.file.client(runtimeId)
     private val mutableState = MutableStateFlow(FileTreeUiState(workspaceName = workspaceName, loading = true,
         scopeKey = "${runtimeId.value}/${workspaceId.value}"))
     val state: StateFlow<FileTreeUiState> = mutableState.asStateFlow()
@@ -50,7 +44,7 @@ class WorkspaceFilesViewModel(
         val result = client.searchFiles(workspaceId, query, null, 5_000, UUID.randomUUID().toString(), UUID.randomUUID().toString())
         result.fold(
             success = { map -> mutableState.update { it.copy(searchResults = map.nodes(), searchTruncated = map.bool("truncated")) } },
-            failure = { failure -> mutableState.update { it.copy(ignoredHint = failure.message) } },
+            failure = { failure -> mutableState.update { it.copy(ignoredHint = safeRemoteFailureMessage(failure)) } },
         )
     }
 
@@ -76,7 +70,7 @@ class WorkspaceFilesViewModel(
                 buildFilePreview(node, bytes, size > bytes.size)
             }.onSuccess { preview -> mutableState.update { it.copy(preview = preview) } }
                 .onFailure { failure -> mutableState.update { it.copy(preview = FilePreviewUiState(node.relativePath,
-                    PreviewKind.UNSUPPORTED, summary = failure.message ?: "文件预览失败", loading = false,
+                    PreviewKind.UNSUPPORTED, summary = safeRemoteFailureMessage(failure), loading = false,
                     canOpenExternal = false)) } }
         }
     }
@@ -114,7 +108,7 @@ class WorkspaceFilesViewModel(
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 getApplication<Application>().startActivity(intent)
             }.onFailure { failure -> mutableState.update { state -> state.copy(preview = state.preview?.copy(
-                summary = failure.message ?: "文件下载失败", loading = false)) } }
+                summary = safeRemoteFailureMessage(failure), loading = false)) } }
         }
     }
 
@@ -128,7 +122,7 @@ class WorkspaceFilesViewModel(
                     nextCursor = map.string("next_cursor"), truncated = map.bool("truncated"),
                     ignoredHint = map.string("ignored_hint"))
             } },
-            failure = { failure -> mutableState.update { it.copy(loading = false, ignoredHint = failure.message) } },
+            failure = { failure -> mutableState.update { it.copy(loading = false, ignoredHint = safeRemoteFailureMessage(failure)) } },
         )
     }
 
@@ -145,9 +139,7 @@ class WorkspaceGitViewModel(
     private val runtimeId: RuntimeId,
     private val workspaceId: WorkspaceId,
 ) : AndroidViewModel(app) {
-    private val tokens = SecureTokenStore(app)
-    private val auth = AccessTokenCoordinator(tokens, OidcClient(refreshClientId = { tokens.oidcClientId }))
-    private val client = RelayWorkspaceOperationsClient(HttpOwopRelayTransport(BuildConfig.RELAY_BASE_URL, runtimeId, auth::current))
+    private val client = RemoteWorkspaceContainer.get(app).boundaries.file.client(runtimeId)
     private val mutableState = MutableStateFlow(GitReadUiState(GitStatusUi(null, "loading", emptyList())))
     val state: StateFlow<GitReadUiState> = mutableState.asStateFlow()
 

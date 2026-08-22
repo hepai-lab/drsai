@@ -1,0 +1,1455 @@
+{
+  "schema_version": "opendrsai.windows.phase3.acceptance-ledger/1",
+  "plan": "docs/desktop/opendrsai-windows-full-agent-runtime-phase3-product-completion-plan.md",
+  "release_gate": "fail_closed",
+  "feature_count": 50,
+  "progress": {
+    "accepted": 39,
+    "percent": 78
+  },
+  "baseline": {
+    "captured_at": "2026-08-05",
+    "phase1": { "total": 45, "passed": 45 },
+    "phase2": { "total": 59, "passed": 56, "pending_release_evidence": 3 },
+    "product": { "total": 93, "strictly_accepted": 82 }
+  },
+  "status_definitions": {
+    "pending": "No implementation claim has been made for P3.",
+    "in_progress": "Implementation is underway but the full acceptance evidence is incomplete.",
+    "implemented": "Code and focused tests exist, but packaged/live/release evidence is incomplete.",
+    "accepted": "Implementation, focused automation, required real-path evidence, and release manifest binding all pass."
+  },
+  "features": [
+    {
+      "id": "M01-F01",
+      "status": "implemented",
+      "profile": "setup",
+      "implementation": [
+        "apps/desktop/shared/api/firstRunSetup.ts",
+        "apps/desktop/shared/renderer/src/components/FirstRunSetup.tsx",
+        "apps/desktop/shared/renderer/src/App.tsx"
+      ],
+      "tests": ["apps/desktop/windows/scripts/verify-opendrsai-first-run-setup.mts"],
+      "evidence": ["docs/desktop/evidence/opendrsai-windows-phase3-round5-first-run.json"]
+    },
+    {
+      "id": "M01-F02",
+      "status": "accepted",
+      "profile": "setup",
+      "implementation": [
+        "apps/desktop/shared/renderer/src/components/FirstRunSetup.tsx",
+        "apps/desktop/shared/renderer/src/App.tsx"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-opendrsai-first-run-setup.mts",
+        "apps/desktop/windows/scripts/verify-opendrsai-first-run-restart.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs",
+        "apps/desktop/windows/scripts/verify-m5-accessibility.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round5-first-run.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round8-packaged-smoke.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round8-packaged-usability.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round9-first-run-restart.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "cold_start_first_interactive_ms": [1164, 1068],
+        "maximum_ms": 3000,
+        "primary_input_autofocus": true,
+        "packaged_accessibility": true,
+        "artifact_sha256": "sha256:7019e02b23fc3e0bdd6b01690e0e39f1d140de023de725b7d7f29f4a4256d79c"
+      }
+    },
+    {
+      "id": "M01-F03",
+      "status": "in_progress",
+      "profile": "setup",
+      "implementation": [
+        "apps/desktop/shared/api/firstRunSetup.ts",
+        "apps/desktop/shared/renderer/src/App.tsx"
+      ],
+      "tests": ["apps/desktop/windows/scripts/verify-opendrsai-first-run-setup.mts"],
+      "evidence": ["docs/desktop/evidence/opendrsai-windows-phase3-round5-first-run.json"]
+    },
+    {
+      "id": "M01-F04",
+      "status": "in_progress",
+      "profile": "setup",
+      "implementation": [
+        "apps/desktop/shared/renderer/src/App.tsx",
+        "apps/desktop/shared/renderer/src/auth/AuthProvider.tsx"
+      ],
+      "tests": ["apps/desktop/windows/scripts/verify-opendrsai-first-run-setup.mts"],
+      "evidence": ["docs/desktop/evidence/opendrsai-windows-phase3-round5-first-run.json"]
+    },
+    {
+      "id": "M01-F05",
+      "status": "accepted",
+      "profile": "setup",
+      "implementation": [
+        "apps/desktop/shared/renderer/src/App.tsx",
+        "apps/desktop/shared/renderer/src/components/FirstRunSetup.tsx",
+        "apps/desktop/shared/renderer/src/styles.css"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-opendrsai-first-run-setup.mts",
+        "apps/desktop/windows/scripts/verify-opendrsai-first-run-restart.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round9-first-run-restart.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "restart_processes": 2,
+        "restored": ["task_text", "attachment", "workspace"],
+        "handoff_target": "production_composer",
+        "draft_cleared_after_handoff": true,
+        "sent_before_confirmation": false,
+        "approvals_created": false,
+        "artifact_sha256": "sha256:7019e02b23fc3e0bdd6b01690e0e39f1d140de023de725b7d7f29f4a4256d79c"
+      }
+    },
+    { "id": "M02-F01", "status": "pending", "profile": "model" },
+    {
+      "id": "M02-F02",
+      "status": "accepted",
+      "profile": "model",
+      "implementation": [
+        "apps/desktop/shared/api/desktopApi.ts",
+        "apps/desktop/shared/main/myDrSaiConfig.ts",
+        "apps/desktop/shared/main/preload.ts",
+        "apps/desktop/windows/src/main/index.ts",
+        "apps/desktop/shared/renderer/src/App.tsx"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-model-provider-config.mjs",
+        "cores/python/packages/drsai/tests/test_model_provider_config_service.py",
+        "cores/python/packages/drsai/tests/test_model_provider_gateway.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-model-preview-packaged.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round2-setup-model.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round13-model-preview.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "packaged_ui_checks": 12,
+        "preview_calls": 2,
+        "writes_after_cancel": 0,
+        "writes_after_confirm": 1,
+        "confirmed_request_matches_preview": true,
+        "preview_fields": ["provider", "model", "base_url", "credential_source", "impact"],
+        "plaintext_key_in_ui_or_evidence": false,
+        "artifact_sha256": "sha256:1acaf3271979cfb709fd17695e4db75e20fd2679cea0feac78d522f694ed2e85"
+      }
+    },
+    { "id": "M02-F03", "status": "pending", "profile": "model", "verification_tier": "nightly_rc" },
+    {
+      "id": "M02-F04",
+      "status": "implemented",
+      "profile": "model",
+      "implementation": [
+        "apps/desktop/shared/api/desktopApi.ts",
+        "apps/desktop/shared/main/myDrSaiConfig.ts",
+        "apps/desktop/shared/renderer/src/App.tsx",
+        "cores/python/packages/drsai/src/drsai/config/doctor.py",
+        "cores/python/packages/drsai/src/drsai/config/service.py"
+      ],
+      "tests": [
+        "cores/python/packages/drsai/tests/test_model_provider_doctor.py",
+        "cores/python/packages/drsai/tests/test_model_provider_config_service.py",
+        "apps/desktop/windows/scripts/verify-model-provider-config.mjs"
+      ],
+      "evidence": ["docs/desktop/evidence/opendrsai-windows-phase3-round2-setup-model.json"]
+    },
+    {
+      "id": "M02-F05",
+      "status": "accepted",
+      "profile": "model",
+      "implementation": [
+        "cores/python/packages/drsai/src/drsai/config/service.py",
+        "cores/python/packages/drsai/src/drsai/config/model_discovery.py",
+        "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py"
+      ],
+      "tests": [
+        "cores/python/packages/drsai/tests/test_model_provider_config_service.py",
+        "cores/python/packages/drsai/tests/test_model_provider_discovery.py",
+        "cores/python/packages/drsai/tests/test_model_provider_gateway.py",
+        "cores/python/packages/drsai/tests/test_agent_runtime.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-model-commit-activation.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round12-model-commit-activation.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "atomic_commit_count": 1,
+        "running_run_interrupted": false,
+        "next_run_uses_new_revision": true,
+        "agent_swap": "next_turn_atomic_client_swap",
+        "old_cache_result_reinserted": false,
+        "commit_paths_with_cache_invalidation": 4,
+        "packaged_backend_sha256": "sha256:09d95a79ab1f81a0ba75f0455c4dbc7d2af8d06ce9efe524f95fbb08225c03c4"
+      }
+    },
+    {
+      "id": "M03-F01",
+      "status": "accepted",
+      "profile": "runtime",
+      "implementation": [
+        "apps/desktop/shared/main/chat.ts",
+        "apps/desktop/shared/main/agentRuns.ts",
+        "apps/desktop/shared/main/runtimeClient.ts",
+        "apps/desktop/shared/main/oaepSessionStream.ts"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round14-unified-runtime.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "surfaces": ["chat", "agent_run"],
+        "tasks": 2,
+        "runtime_sessions": 2,
+        "runtime_runs": 2,
+        "runtime_executes": 2,
+        "legacy_chat_completion_calls": 0,
+        "agent_definition": "opendrsai@1",
+        "artifact_sha256": "sha256:ccab2f660c3f4530bdfd75caa2d75265a0cc1f549bb86d52ac3db4f9262ee70a"
+      }
+    },
+    {
+      "id": "M03-F02",
+      "status": "accepted",
+      "profile": "runtime",
+      "implementation": [
+        "apps/desktop/shared/main/oaepSessionStream.ts",
+        "apps/desktop/shared/main/oaepPresentationProjector.ts",
+        "apps/desktop/shared/main/threadRuntimeProjection.ts",
+        "apps/desktop/shared/main/oaepAgentRunBridge.ts",
+        "apps/desktop/shared/main/agentRuns.ts",
+        "apps/desktop/shared/main/agentRunJournal.ts"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-opendrsai-oaep-item-parity.mts",
+        "apps/desktop/windows/scripts/verify-oaep-session-stream.mts",
+        "apps/desktop/windows/scripts/verify-oaep-presentation-projector.mts",
+        "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round15-oaep-item-parity.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "backend": "opendrsai",
+        "paths": ["snapshot", "replay", "live", "agent_ui_bridge"],
+        "item_types": ["plan", "progress", "tool_call", "file_change", "subtask", "artifact", "message"],
+        "item_count": 7,
+        "golden_digest": "sha256:20611fc6ddf52c02c9d86e2d6dcc9173c0527e7d187b04c076615404fe97e7a3",
+        "item_identity_retained": true,
+        "sequence_order_retained": true,
+        "single_terminal": true,
+        "packaged_checks": 18,
+        "legacy_chat_completion_calls": 0,
+        "artifact_sha256": "sha256:4ad055487443a395f3c8bcc3f55f19fca0a1d44c887ce2410405cce5bfc7382d"
+      }
+    },
+    {
+      "id": "M03-F03",
+      "status": "accepted",
+      "profile": "runtime",
+      "implementation": ["apps/desktop/shared/main/chat.ts"],
+      "tests": ["apps/desktop/windows/scripts/verify-opendrsai-attachments.mts"],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round2-setup-model.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round10-attachments.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "filesystem_checks": 14,
+        "preflight_before_session_or_run": true,
+        "rejected_before_run": ["missing_file", "large_file", "windows_acl_unreadable", "outside_workspace_folder", "unsupported_screenshot", "cache_capacity"],
+        "post_run_stage_failure_cancels_run": true,
+        "cancelled_copy_partial_files": 0,
+        "artifact_sha256": "sha256:663970858253ca98c88fd48ab2cee5bfd397580107a424375f9d1dec36f94b2c"
+      }
+    },
+    {
+      "id": "M03-F04",
+      "status": "accepted",
+      "profile": "runtime",
+      "implementation": [
+        "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py"
+      ],
+      "tests": [
+        "cores/python/packages/drsai/tests/test_agent_runtime.py",
+        "cores/python/packages/drsai/tests/test_model_provider_config_service.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-model-run-snapshot.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round4-goal-safety.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round11-model-run-snapshot.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "models": ["model-a", "model-b"],
+        "provider_bound": true,
+        "revision_bound": true,
+        "running_run_hot_switched": false,
+        "next_run_uses_committed_snapshot": true,
+        "packaged_backend_sha256": "sha256:a92f8ed38fa8ba154ba2843e71a2b79790b577ad08784f48594e7ff2fb8805be"
+      }
+    },
+    {
+      "id": "M03-F05",
+      "status": "accepted",
+      "profile": "migration",
+      "implementation": [
+        "apps/desktop/shared/main/legacyAgentRunMigration.ts",
+        "apps/desktop/shared/main/agentRunJournal.ts",
+        "apps/desktop/shared/main/runtimeClient.ts",
+        "apps/desktop/windows/src/main/index.ts",
+        "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "cores/python/packages/drsai/src/drsai/backend/gateway.py"
+      ],
+      "tests": [
+        "cores/python/packages/drsai/tests/test_runtime_engine.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs",
+        "apps/desktop/windows/scripts/verify-bundled-backend-source.mjs",
+        "apps/desktop/windows/scripts/verify-bundled-backend-install.ps1"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round16-legacy-agent-migration.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "backend": "opendrsai",
+        "source_formats": ["v0", "v1"],
+        "history_preserved": true,
+        "file_events_preserved": true,
+        "terminal_preserved": true,
+        "repeat_import_items_created": 0,
+        "packaged_migration_calls": 1,
+        "packaged_checks": 20,
+        "runtime_engine_tests": 25,
+        "bundled_backend_install": true,
+        "artifact_sha256": "sha256:52ad87246a585c09fcae708f23173649ef4b6bf869a991fcc0baf709bfecc9e6"
+      }
+    },
+    {
+      "id": "M04-F01",
+      "status": "accepted",
+      "profile": "goal",
+      "implementation": [
+        "cores/python/packages/drsai/src/drsai/backend/runtime/goals.py",
+        "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "apps/desktop/shared/main/runtimeClient.ts",
+        "apps/desktop/shared/main/chat.ts"
+      ],
+      "tests": [
+        "cores/python/packages/drsai/tests/test_runtime_goals.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-goal-flow.mjs",
+        "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round17-goal-semantics.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "semantic_cases": 20,
+        "semantic_passed": 20,
+        "minimum_required": 17,
+        "packaged_clarification_visible": true,
+        "clarification_questions_maximum": 3,
+        "execution_before_confirmation": 0,
+        "side_effects_before_confirmation": 0,
+        "packaged_checks": 23,
+        "backend": "opendrsai",
+        "artifact_sha256": "sha256:b95f4126542ce28364207def1610280da671cfabbb95a644151e4c49606e11af"
+      }
+    },
+    {
+      "id": "M04-F02",
+      "status": "accepted",
+      "profile": "goal",
+      "implementation": [
+        "cores/python/packages/drsai/src/drsai/backend/runtime/goals.py",
+        "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "apps/desktop/shared/main/runtimeClient.ts",
+        "apps/desktop/shared/main/chat.ts"
+      ],
+      "tests": [
+        "cores/python/packages/drsai/tests/test_runtime_goals.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-goal-flow.mjs",
+        "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round18-goal-clarification.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "missing_field_scenarios": 4,
+        "source_matrix_passed": 4,
+        "clarification_rounds_minimum": 1,
+        "clarification_rounds_maximum": 3,
+        "packaged_rounds": 3,
+        "repeated_fields": 0,
+        "required_fields_complete": true,
+        "execution_before_completion": 0,
+        "packaged_checks": 24,
+        "artifact_sha256": "sha256:87b31d5463cf1670383aab2f9ac807bd38f4e973a91b3c21e5b22d221c4c32c5"
+      }
+    },
+    {
+      "id": "M04-F03",
+      "status": "accepted",
+      "profile": "goal",
+      "implementation": [
+        "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "apps/desktop/shared/main/runtimeClient.ts",
+        "apps/desktop/shared/main/chat.ts",
+        "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
+        "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
+        "apps/desktop/shared/renderer/src/adapters/useDesktopChatAdapter.ts",
+        "apps/desktop/shared/renderer/src/styles.css"
+      ],
+      "tests": [
+        "cores/python/packages/drsai/tests/test_runtime_goals.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-goal-flow.mjs",
+        "apps/desktop/windows/scripts/verify-opendrsai-goal-card-ui.mjs",
+        "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round4-goal-safety.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round7-production-goal.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round19-goal-confirmation-ui.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round19-goal-confirmation-packaged.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "fields_visible": ["objective", "materials", "outputs", "constraints"],
+        "edit": true,
+        "supplement": true,
+        "confirm": true,
+        "chat_turn_identity_routing": true,
+        "bridge_calls": 2,
+        "execution_before_confirmation": 0,
+        "side_effects_before_confirmation": 0,
+        "packaged_checks": 24,
+        "artifact_sha256": "sha256:5d1741139e117ff14df79017df0d47c148f0d775997cf55a82c35c2a86bcbb19"
+      }
+    },
+    {
+      "id": "M04-F04",
+      "status": "accepted",
+      "profile": "goal",
+      "implementation": [
+        "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "apps/desktop/shared/main/chat.ts",
+        "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx"
+      ],
+      "tests": [
+        "cores/python/packages/drsai/tests/test_runtime_goals.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-goal-flow.mjs",
+        "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round4-goal-safety.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round7-production-goal.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round20-goal-revision.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "old_version_read_only": true,
+        "old_plan_invalidated": true,
+        "latest_version_confirmed": 2,
+        "goal_revisions": 1,
+        "execution_with_superseded_goal": 0,
+        "goal_and_engine_tests": 55,
+        "packaged_checks": 25,
+        "artifact_sha256": "sha256:44e56c7afe85ff0bea8503adc32651ab01faa7be6ca573ec2013efd4b77844b5"
+      }
+    },
+    {
+      "id": "M04-F05",
+      "status": "accepted",
+      "profile": "goal",
+      "implementation": [
+        "cores/python/packages/drsai/src/drsai/backend/runtime/goals.py",
+        "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "apps/desktop/shared/main/runtimeClient.ts"
+      ],
+      "tests": [
+        "cores/python/packages/drsai/tests/test_runtime_goals.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-goal-flow.mjs",
+        "apps/desktop/windows/scripts/verify-opendrsai-goal-card-ui.mjs",
+        "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round4-goal-safety.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round7-production-goal.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round21-goal-defaults-ui.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round21-goal-defaults-packaged.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "defaults": ["language", "length", "citation_style", "format"],
+        "all_defaults_attributed": true,
+        "result_metadata_bound": true,
+        "execution_with_unattributed_defaults": 0,
+        "final_goal_version": 2,
+        "packaged_checks": 25,
+        "artifact_sha256": "sha256:42bbd5e17dc15922d5245a6d0063e8a077f25d55118cff32b33b1e8a716d2e7c"
+      }
+    },
+    {
+      "id": "M05-F01",
+      "status": "accepted",
+      "profile": "execution",
+      "implementation": [
+        "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "apps/desktop/shared/api/structuredConversation.ts",
+        "apps/desktop/shared/api/desktopApi.ts",
+        "apps/desktop/shared/main/threadRuntimeProjection.ts",
+        "apps/desktop/shared/main/oaepAgentRunBridge.ts",
+        "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx"
+      ],
+      "tests": [
+        "cores/python/packages/drsai/tests/test_gateway_opendrsai_approval.py",
+        "cores/python/packages/drsai/tests/test_agent_runtime.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round3-runtime-approval.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round22-tool-skill-identity.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "identities": ["run_id", "call_id", "operation_id", "correlation_id"],
+        "tool_and_skill_covered": true,
+        "missing_call_identity_fail_closed": true,
+        "oaep_operation_ref_retained": true,
+        "agent_ui_bridge_retained": true,
+        "backend_tests": 27,
+        "backend_subtests": 12,
+        "packaged_checks": 26,
+        "artifact_sha256": "sha256:f56887d4afacafb71a2a874ae81ee0c2ee1d1cca83536d7e7b19abb3b4fb9e1f"
+      }
+    },
+    {
+      "id": "M05-F02",
+      "status": "accepted",
+      "profile": "approval",
+      "implementation": [
+        "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "apps/desktop/shared/main/chat.ts"
+      ],
+      "tests": [
+        "cores/python/packages/drsai/tests/test_gateway_opendrsai_approval.py",
+        "cores/python/packages/drsai/tests/test_runtime_engine.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round3-runtime-approval.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round23-runtime-approval.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "source_matrix": { "allow": 5, "deny": 5, "timeout": 5, "restart": 5 },
+        "source_rounds": 20,
+        "packaged_suspend_resume_once": true,
+        "packaged_approval_requests": 1,
+        "packaged_approval_decisions": 1,
+        "packaged_side_effects": 1,
+        "approval_and_engine_tests": 52,
+        "packaged_checks": 27,
+        "artifact_sha256": "sha256:f2ba11032581a9698ec6ef56dc1b055f660fe920f833aa8b7c4888ec77bbf382"
+      }
+    },
+    {
+      "id": "M05-F03",
+      "status": "accepted",
+      "profile": "approval",
+      "implementation": [
+        "apps/desktop/shared/api/executionPolicy.ts",
+        "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "apps/desktop/windows/scripts/lib/opendrsai-approval-runtime-fixture.mjs",
+        "apps/desktop/windows/scripts/verify-f1-low-risk-approvals.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-f2-approvals.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-f3-approvals.mjs"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-f1-low-risk-approval-policy.mjs",
+        "apps/desktop/windows/scripts/verify-f1-low-risk-approvals.mjs",
+        "apps/desktop/windows/scripts/verify-f2-approval-security.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-f2-approvals.mjs",
+        "apps/desktop/windows/scripts/verify-f3-approval-business-info.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-f3-approvals.mjs",
+        "cores/python/packages/drsai/tests/test_gateway_opendrsai_approval.py"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round24-risk-policy.json",
+        "apps/desktop/windows/release/product-evidence/f1-low-risk-approvals/round24-final/packaged-f1-low-risk-summary.json",
+        "docs/desktop/evidence/round24-f2-packaged-final/summary.json",
+        "docs/desktop/evidence/round24-f3-packaged-final/summary.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "classified_actions": 18,
+        "source_policy_checks": 63,
+        "low_risk_operations": 5,
+        "low_risk_approval_requests": 0,
+        "low_risk_approval_wait_ms": 0,
+        "high_risk_scenarios": 6,
+        "rejected_side_effects": 0,
+        "authorized_side_effects": 6,
+        "business_information_checks": 71,
+        "runtime_backend_tests": 42,
+        "technical_internal_actions_interrupt_user": false,
+        "artifact_sha256": "sha256:748e0666bf4c4f3f3e8df433282370889f0766c4ab35cc6afaf0bb6eaee6ce7c"
+      }
+    },
+    {
+      "id": "M05-F04",
+      "status": "accepted",
+      "profile": "security",
+      "implementation": [
+        "cores/python/packages/drsai/src/drsai/backend/workspace/paths.py",
+        "cores/python/packages/drsai/src/drsai/owop/local_workspace.py",
+        "cores/python/packages/drsai/src/drsai/owop/process_pty.py",
+        "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+        "apps/desktop/windows/src/main/e2eSmoke.ts",
+        "apps/desktop/windows/scripts/verify-opendrsai-workspace-guard.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-workspace-guard.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-f6-workspace-guard.mjs"
+      ],
+      "tests": [
+        "cores/python/packages/drsai/tests/test_workspace_paths.py",
+        "cores/python/packages/drsai/tests/test_owop_local_workspace.py",
+        "cores/python/packages/drsai/tests/test_owop_process_pty.py",
+        "cores/python/packages/drsai/tests/test_agent_runtime.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-workspace-guard.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-f6-workspace-guard.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round4-goal-safety.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round25-workspace-guard.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round25-workspace-guard-probe.json",
+        "docs/desktop/evidence/round25-f6-packaged-final/summary.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "formal_packaged_rounds": 20,
+        "formal_packaged_checks": 360,
+        "path_escape_successes": 0,
+        "outside_mutations": 0,
+        "packaged_backend_probe_checks": 21,
+        "focused_tests": 33,
+        "focused_subtests": 24,
+        "junction_coverage": true,
+        "registered_root_identity_pinned": true,
+        "same_handle_read_digest": true,
+        "app_asar_sha256": "sha256:232c74e5a977cca2530d857790058d52e9f1cfd183671d3d18e4592b38628a16",
+        "packaged_backend_sha256": "sha256:2269f5fbd9dd6719e361e0511db4c1282ab93c1d01c1d0795ceaf502e7003719"
+      }
+    },
+    {
+      "id": "M05-F05",
+      "status": "accepted",
+      "profile": "execution",
+      "implementation": [
+        "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+        "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "cores/python/packages/drsai/src/drsai/backend/gateway.py"
+      ],
+      "tests": [
+        "cores/python/packages/drsai/tests/test_agent_runtime.py",
+        "cores/python/packages/drsai/tests/test_gateway_opendrsai_approval.py",
+        "cores/python/packages/drsai/tests/test_gateway_opendrsai_backend.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-cancellation.py",
+        "apps/desktop/windows/scripts/verify-opendrsai-cancellation.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round4-goal-safety.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round7-production-goal.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round26-cancellation.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round26-cancellation-probe.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "focused_tests": 59,
+        "packaged_probe_checks": 30,
+        "stages": ["model", "tool", "approval", "subtask"],
+        "interruption_modes": ["double_cancel", "disconnect", "runtime_restart"],
+        "one_cancelled_terminal": true,
+        "active_execution_stopped": true,
+        "completed_side_effect_preserved_without_reexecution": true,
+        "backend_cancel_failure_cannot_block_terminal": true,
+        "full_runtime_process_restart": true,
+        "app_asar_sha256": "sha256:232c74e5a977cca2530d857790058d52e9f1cfd183671d3d18e4592b38628a16",
+        "packaged_backend_sha256": "sha256:a379ac79f4a26ec409499075424ca979c7b59d673bee885abb939244614dd814"
+      }
+    },
+    {
+      "id": "M06-F01",
+      "status": "accepted",
+      "profile": "decision",
+      "implementation": [
+        "apps/desktop/shared/main/anomalyDecision.ts",
+        "apps/desktop/shared/renderer/src/App.tsx",
+        "apps/desktop/windows/src/main/backgroundTasks.ts",
+        "apps/desktop/windows/src/main/e2eSmoke.ts",
+        "apps/desktop/windows/scripts/verify-packaged-f4-anomaly-decision.mjs"
+      ],
+      "tests": [
+        "apps/desktop/shared/test-kit/verify-anomaly-decision.mts",
+        "apps/desktop/windows/scripts/verify-f4-anomaly-decision.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-f4-anomaly-decision.mjs",
+        "apps/desktop/windows/scripts/verify-f4-anomaly-decision-stability.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round27-anomaly-decision.json",
+        "docs/desktop/evidence/round27-f4-packaged-final8/summary.json",
+        "docs/desktop/evidence/round27-f4-stability-final/summary.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "contract_checks": 12,
+        "single_packaged_branches": 3,
+        "single_packaged_checks": 60,
+        "formal_packaged_rounds": 20,
+        "formal_packaged_scenarios": 60,
+        "formal_packaged_checks": 1200,
+        "configured_retries": 0,
+        "actual_retries": 0,
+        "decision_persisted_and_visible": true,
+        "branch_outputs_and_isolation_exact": true,
+        "source_files_unchanged": true,
+        "side_effect_ledger_exact": true,
+        "app_asar_sha256": "sha256:8b85068f6437394b6142df8915dd121ee07e80574b0926187262387c705c6255",
+        "packaged_backend_sha256": "sha256:80d0bb58255f89eaa6e53c6df9be5de53260aae7c45fe6cf57208634bd037423"
+      }
+    },
+    {
+      "id": "M06-F02",
+      "status": "accepted",
+      "profile": "security",
+      "implementation": [
+        "apps/desktop/shared/api/sensitiveData.ts",
+        "apps/desktop/shared/main/shareSensitivity.ts",
+        "apps/desktop/shared/main/secretRedaction.ts",
+        "apps/desktop/shared/main/diagnostics.ts",
+        "apps/desktop/shared/main/gateway.ts",
+        "apps/desktop/shared/main/completionNotifications.ts",
+        "apps/desktop/shared/renderer/src/debugLogStore.ts",
+        "apps/desktop/shared/renderer/src/userPreferenceIntent.ts",
+        "apps/desktop/shared/renderer/src/localDataExport.ts",
+        "apps/desktop/shared/renderer/src/adapters/useDesktopChatAdapter.ts",
+        "apps/desktop/shared/renderer/src/App.tsx"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-f5-sensitive-data-pipeline.mjs",
+        "apps/desktop/shared/test-kit/verify-f5-sensitive-data-pipeline.mts",
+        "apps/desktop/windows/scripts/verify-l3-sensitive-share-review.mjs",
+        "apps/desktop/windows/scripts/verify-c8-chinese-privacy.mjs",
+        "apps/desktop/windows/scripts/verify-c8-chinese-privacy-stability.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round28-sensitive-data-pipeline.json",
+        "apps/desktop/windows/release/product-evidence/c8-chinese-privacy/round28-f5-single5/packaged-c8-chinese-privacy-summary.json",
+        "apps/desktop/windows/release/product-evidence/c8-chinese-privacy/stability-summary.json",
+        "apps/desktop/windows/release/product-evidence/l3-sensitive-share-review/packaged-l3-sensitive-share-review-result.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "f5_contract_checks": 9,
+        "single_packaged_checks": 25,
+        "formal_packaged_rounds": 20,
+        "formal_packaged_checks": 500,
+        "configured_retries": 0,
+        "actual_retries": 0,
+        "raw_sensitive_value_hits": 0,
+        "external_share_review_required": true,
+        "app_asar_sha256": "sha256:ef9422a18576b22492e931891630f81de1bd8a63a3fd4ac1a8315679e0e370a9",
+        "packaged_backend_sha256": "sha256:3f53ec3f6a164255222fcdff5023eaf6cfb6cd86dff2d00bf9946316aceb64a9"
+      }
+    },
+    {
+      "id": "M06-F03",
+      "status": "accepted",
+      "profile": "security",
+      "implementation": [
+        "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+        "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+        "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "apps/desktop/shared/main/runtimeClient.ts"
+      ],
+      "tests": [
+        "cores/python/packages/drsai/tests/test_agent_runtime.py",
+        "cores/python/packages/drsai/tests/test_gateway_opendrsai_approval.py",
+        "cores/python/packages/drsai/tests/test_gateway_opendrsai_backend.py",
+        "cores/python/packages/drsai/tests/test_gateway_session_events.py",
+        "apps/desktop/windows/scripts/verify-m06-side-effect-ledger.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-m06-side-effect-ledger.mjs",
+        "apps/desktop/windows/scripts/verify-m06-side-effect-ledger-stability.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round29-side-effect-ledger.json",
+        "apps/desktop/windows/release/product-evidence/m06-side-effect-ledger/packaged-m06-side-effect-ledger-result.json",
+        "apps/desktop/windows/release/product-evidence/m06-side-effect-ledger/stability-summary.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "contract_checks": 14,
+        "python_tests": 71,
+        "python_subtests": 12,
+        "packaged_checks": 10,
+        "formal_packaged_rounds": 20,
+        "formal_packaged_checks": 200,
+        "configured_retries": 0,
+        "actual_retries": 0,
+        "unauthorized_effects": 0,
+        "duplicate_effects": 0,
+        "crash_recovery_exactly_once": true,
+        "unknown_outcome_fails_closed": true,
+        "app_asar_sha256": "sha256:cd2dedcbbfc5f4acc716e6d8df85d81d76174f45f4c580a9560bc66afad94cdb",
+        "packaged_backend_sha256": "sha256:f25871c34fc1c5fe62e39353c56d934a5e99b6d6773aeb492dc1132555e4db6b"
+      }
+    },
+    {
+      "id": "M06-F04",
+      "status": "accepted",
+      "profile": "usability",
+      "implementation": [
+        "apps/desktop/shared/renderer/src/userFacingLanguage.ts",
+        "apps/desktop/shared/renderer/src/userFacingErrors.ts",
+        "apps/desktop/shared/renderer/src/components/ApprovalCenterView.tsx",
+        "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
+        "apps/desktop/shared/renderer/src/components/RunInspectorPanel.tsx",
+        "apps/desktop/shared/renderer/src/App.tsx",
+        "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
+        "apps/desktop/shared/renderer/src/components/WorkspaceShell.tsx",
+        "apps/desktop/shared/renderer/src/components/AgentSquareView.tsx",
+        "apps/desktop/shared/renderer/src/components/PreviewBrowserPanel.tsx"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-m06-user-facing-language.mjs",
+        "apps/desktop/shared/test-kit/verify-m06-user-facing-language.mts",
+        "apps/desktop/windows/scripts/verify-f3-approval-business-info.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-f3-approvals.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round30-user-facing-language.json",
+        "apps/desktop/windows/release/product-evidence/m06-user-facing-language/packaged-final/summary.json",
+        "apps/desktop/windows/release/product-evidence/m06-user-facing-language/packaged-final/approval-accessibility-tree.json",
+        "apps/desktop/windows/release/product-evidence/m06-user-facing-language/packaged-final/approval-business-cards.png"
+      ],
+      "acceptance": {
+        "passed": true,
+        "contract_checks": 23,
+        "negative_term_and_error_checks": 14,
+        "packaged_checks": 71,
+        "business_scenarios": 5,
+        "configured_retries": 0,
+        "actual_retries": 0,
+        "unauthorized_effects": 0,
+        "raw_primary_exception_paths": 0,
+        "primary_protocol_term_hits": 0,
+        "app_asar_sha256": "sha256:1a5ae545abe49d617bb19ae0619dd9ffd471dc01b0c2fc553e91117d38e85bd4"
+      }
+    },
+    {
+      "id": "M06-F05",
+      "status": "accepted",
+      "profile": "usability",
+      "implementation": [
+        "apps/desktop/shared/renderer/src/components/AppDecisionDialog.tsx",
+        "apps/desktop/shared/renderer/src/App.tsx",
+        "apps/desktop/shared/renderer/src/components/DebugPanel.tsx",
+        "apps/desktop/shared/renderer/src/components/files/FilesContextPanel.tsx",
+        "apps/desktop/shared/renderer/src/components/files/PatchReviewPanel.tsx",
+        "apps/desktop/shared/renderer/src/components/PreviewBrowserPanel.tsx",
+        "apps/desktop/shared/renderer/src/components/SkillsManager.tsx",
+        "apps/desktop/shared/renderer/src/components/GfsView.tsx",
+        "apps/desktop/shared/renderer/src/components/WorkspaceShell.tsx"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-m06-app-dialog-contract.mjs",
+        "apps/desktop/windows/scripts/verify-m06-app-dialog.mjs",
+        "apps/desktop/windows/scripts/verify-m06-app-dialog-stability.mjs",
+        "apps/desktop/windows/src/main/e2eSmoke.ts"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round31-app-dialog.json",
+        "apps/desktop/windows/release/product-evidence/m06-app-dialog/latest/packaged-m06-app-dialog-result.json",
+        "apps/desktop/windows/release/product-evidence/m06-app-dialog/latest/m06-app-dialog-accessibility-tree.json",
+        "apps/desktop/windows/release/product-evidence/m06-app-dialog/latest/m06-app-dialog.png",
+        "apps/desktop/windows/release/product-evidence/m06-app-dialog/stability-summary.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "contract_checks": 17,
+        "packaged_checks": 26,
+        "formal_packaged_rounds": 20,
+        "formal_packaged_checks": 520,
+        "configured_retries": 0,
+        "actual_retries": 0,
+        "native_confirm_alert_calls": 0,
+        "cancelled_side_effects": 0,
+        "approved_effects_exactly_once": true,
+        "focus_and_keyboard_contract": true,
+        "decision_queue_ordered_and_lossless": true,
+        "decisions_audited": true,
+        "app_asar_sha256": "sha256:3a0594da4354be242adfeecd361c6bc0e60aaf4255f17a3210e8be5caed4e9a9"
+      }
+    },
+    {
+      "id": "M07-F01",
+      "status": "accepted",
+      "profile": "recovery",
+      "implementation": [
+        "apps/desktop/shared/api/operationalState.ts",
+        "apps/desktop/shared/renderer/src/components/OperationalStateBar.tsx",
+        "apps/desktop/shared/renderer/src/App.tsx",
+        "apps/desktop/shared/renderer/src/components/FirstRunSetup.tsx"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-m07-operational-state.mts",
+        "apps/desktop/windows/scripts/verify-m07-operational-state-packaged.mjs",
+        "apps/desktop/windows/scripts/verify-m07-operational-state-stability.mjs",
+        "apps/desktop/windows/src/main/e2eSmoke.ts"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round32-operational-state.json",
+        "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/packaged-m07-operational-state-result.json",
+        "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/m07-operational-accessibility-tree.json",
+        "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/m07-operational-identity.png",
+        "apps/desktop/windows/release/product-evidence/m07-operational-state/stability-summary.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "property_combinations": 1152,
+        "packaged_checks": 30,
+        "formal_packaged_rounds": 20,
+        "formal_packaged_checks": 600,
+        "configured_retries": 0,
+        "actual_retries": 0,
+        "five_layers_visible": true,
+        "single_current_layer": true,
+        "generic_ready_masking_failures": 0,
+        "keyboard_and_accessibility_contract": true,
+        "app_asar_sha256": "sha256:5e43c970dbfe505037fce5152033e4cbd7742b080b4c0edd5b0bce42eb0cc093"
+      }
+    },
+    {
+      "id": "M07-F02",
+      "status": "accepted",
+      "profile": "recovery",
+      "implementation": [
+        "apps/desktop/shared/renderer/src/components/OperationalStateBar.tsx",
+        "apps/desktop/shared/renderer/src/App.tsx",
+        "apps/desktop/shared/api/operationalState.ts"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-m07-recovery-actions.mjs",
+        "apps/desktop/windows/scripts/verify-m07-operational-state-packaged.mjs",
+        "apps/desktop/windows/scripts/verify-m07-operational-state-stability.mjs",
+        "apps/desktop/windows/src/main/e2eSmoke.ts"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round33-recovery-actions.json",
+        "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/packaged-m07-operational-state-result.json",
+        "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/m07-operational-accessibility-tree.json",
+        "apps/desktop/windows/release/product-evidence/m07-operational-state/stability-summary.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "contract_checks": 14,
+        "packaged_checks": 39,
+        "formal_packaged_rounds": 20,
+        "formal_packaged_checks": 780,
+        "configured_retries": 0,
+        "actual_retries": 0,
+        "five_fault_layers_covered": true,
+        "real_recovery_paths_executed": true,
+        "infinite_loading_failures": 0,
+        "redacted_diagnostics_copied": true,
+        "app_asar_sha256": "sha256:cbbc91ff37c378f09fbd17fb110b8aabf67045de32d837c4f163eaeb46b3bbf3"
+      }
+    },
+    {
+      "id": "M07-F03",
+      "status": "accepted",
+      "profile": "recovery",
+      "implementation": [
+        "apps/desktop/shared/main/oaepSessionStream.ts",
+        "apps/desktop/shared/main/chat.ts",
+        "apps/desktop/shared/api/desktopApi.ts"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-m07-oaep-gap-recovery.mts",
+        "apps/desktop/windows/scripts/verify-m07-operational-state-packaged.mjs",
+        "apps/desktop/windows/scripts/verify-m07-operational-state-stability.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round34-oaep-gap-recovery.json",
+        "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/packaged-m07-operational-state-result.json",
+        "apps/desktop/windows/release/product-evidence/m07-operational-state/stability-summary.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "formal_gap_rounds": 20,
+        "passed_gap_rounds": 20,
+        "logical_outage_seconds_min": 60,
+        "logical_outage_seconds_max": 180,
+        "minimum_recovery_window_ms": 184880,
+        "expected_gap_reconnects": 20,
+        "actual_gap_reconnects": 20,
+        "duplicate_event_ids": 0,
+        "duplicate_item_events": 0,
+        "duplicate_tool_events": 0,
+        "run_execution_calls_during_recovery": 0,
+        "unauthorized_side_effects": 0,
+        "resnapshots_for_recoverable_gap": 0,
+        "packaged_regression_checks": 39,
+        "formal_packaged_rounds": 20,
+        "formal_packaged_checks": 780,
+        "configured_test_reruns": 0,
+        "actual_test_reruns": 0,
+        "app_asar_sha256": "sha256:0d023602a634e1b48f044fa377eb8011d921852b54620807b331c451afbc54d7"
+      }
+    },
+    {
+      "id": "M07-F04",
+      "status": "accepted",
+      "profile": "recovery",
+      "implementation": [
+        "apps/desktop/shared/api/runtimeRestartRecovery.ts",
+        "apps/desktop/shared/main/chat.ts",
+        "apps/desktop/shared/main/gateway.ts",
+        "apps/desktop/shared/renderer/src/userFacingErrors.ts",
+        "apps/desktop/shared/renderer/src/adapters/useDesktopChatAdapter.ts",
+        "apps/desktop/shared/renderer/src/App.tsx"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-m07-runtime-restart-recovery.mts",
+        "apps/desktop/windows/scripts/verify-local-runtime-lifecycle.mjs",
+        "cores/python/packages/drsai/tests/test_run_inspection_scenarios.py",
+        "cores/python/packages/drsai/tests/test_oaep_runtime_four_path.py",
+        "apps/desktop/windows/scripts/verify-m07-operational-state-packaged.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round35-runtime-restart-recovery.json",
+        "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/packaged-m07-operational-state-result.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "formal_runtime_crash_rounds": 20,
+        "passed_runtime_crash_rounds": 20,
+        "runtime_id_changes": 0,
+        "instance_id_rotation_failures": 0,
+        "workspace_loss_failures": 0,
+        "completed_run_reexecutions": 0,
+        "decision_matrix_rounds": 20,
+        "restart_actions": 3,
+        "full_oaep_history_paged": true,
+        "same_instance_live_resubscription": true,
+        "old_instance_fail_closed": true,
+        "unauthorized_side_effects": 0,
+        "packaged_regression_checks": 39,
+        "configured_formal_reruns": 0,
+        "actual_formal_reruns": 0,
+        "app_asar_sha256": "sha256:bd0b80ec0571bb624a2db90cfbe5847252df9db14f2108ed03b983b131771724"
+      }
+    },
+    {
+      "id": "M07-F05",
+      "status": "accepted",
+      "profile": "performance",
+      "implementation": [
+        "apps/desktop/shared/main/threads.ts",
+        "apps/desktop/shared/renderer/src/App.tsx",
+        "apps/desktop/shared/renderer/src/threadSnapshotStore.ts"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-opendrsai-thread-hydration-performance.mts",
+        "apps/desktop/windows/scripts/verify-long-conversation-performance.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round45-thread-hydration-performance.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "directory_sessions": 1000,
+        "directory_p95_ms": 1.8,
+        "first_paint_body_reads": 0,
+        "selected_session_body_reads": 1,
+        "idle_directory_growth_bytes": 0,
+        "selection_feedback_before_hydration": true,
+        "renderer_cache_maximum_sessions": 128,
+        "renderer_cache_maximum_bytes": 67108864,
+        "long_history_messages": 1000,
+        "long_history_heavy_nodes": 12,
+        "active_delta_click_p95_ms": 25.5,
+        "packaged_real_ipc_passed": true,
+        "app_asar_sha256": "sha256:9d93d4f4f1a9c0f531de1ebd8281049dbf189379bd44d28aa21a009b25a5217a"
+      }
+    },
+    {
+      "id": "M08-F01",
+      "status": "accepted",
+      "profile": "results",
+      "implementation": [
+        "apps/desktop/shared/renderer/src/completionDeliveryTracker.ts",
+        "apps/desktop/shared/renderer/src/App.tsx"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-opendrsai-result-first-completion.mts",
+        "apps/desktop/windows/scripts/verify-opendrsai-result-first-completion-visual.mjs",
+        "apps/desktop/windows/scripts/verify-k3-structured-summary.mjs",
+        "apps/desktop/windows/scripts/verify-g7-completion-summary.mjs",
+        "apps/desktop/windows/scripts/verify-g1-results-center.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round46-results-release-gates.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "historical_results_reopened_on_startup": 0,
+        "running_tasks_disclosed_as_results": 0,
+        "active_session_prioritized": true,
+        "completion_disclosed_once": true,
+        "fast_initial_completion_disclosed": true,
+        "production_renderer_transition": "running_to_completed_to_automatic_delivery",
+        "result_visible": true,
+        "next_action_visible": true,
+        "incomplete_items_visible": true,
+        "debug_or_run_inspector_required": false,
+        "app_asar_sha256": "sha256:981da2ad38cc8014084a887092a32c00069be4943ac2a4fd6276125039d23bdd"
+      }
+    },
+    {
+      "id": "M08-F02",
+      "status": "accepted",
+      "profile": "results",
+      "implementation": [
+        "apps/desktop/shared/renderer/src/boundedProcessWindow.ts",
+        "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
+        "apps/desktop/shared/renderer/src/styles.css"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-opendrsai-process-virtualization.mts",
+        "apps/desktop/windows/scripts/verify-opendrsai-process-virtualization-visual.mjs",
+        "apps/desktop/windows/scripts/verify-structured-message-renderer.mjs",
+        "apps/desktop/windows/scripts/verify-remote-agent-tool-ui.mjs",
+        "apps/desktop/windows/scripts/verify-structured-visual.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round47-process-virtualization.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "activity_items": 10000,
+        "accessible_items": 10000,
+        "collapsed_process_body_nodes": 0,
+        "mounted_evidence_items": 17,
+        "maximum_allowed_dom_items": 200,
+        "first_paint_ms": 830.8,
+        "core_result_visible_on_first_paint": true,
+        "approval_visible_and_actionable": true,
+        "approval_outside_process_disclosure": true,
+        "app_asar_sha256": "sha256:230b110cba99b10346a6095eb8f306162fdb04d2ec8bdf5f332af3200814fbf4"
+      }
+    },
+    {
+      "id": "M08-F03",
+      "status": "accepted",
+      "profile": "results",
+      "implementation": [
+        "apps/desktop/shared/api/resultProvenance.ts",
+        "apps/desktop/shared/main/resultProvenance.ts",
+        "apps/desktop/shared/api/desktopApi.ts",
+        "apps/desktop/windows/src/main/backgroundTasks.ts",
+        "apps/desktop/shared/renderer/src/App.tsx",
+        "apps/desktop/shared/renderer/src/styles.css"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-opendrsai-result-provenance.mts",
+        "apps/desktop/windows/scripts/verify-opendrsai-result-provenance-visual.mjs",
+        "apps/desktop/windows/scripts/verify-g1-results-center.mjs",
+        "apps/desktop/windows/scripts/verify-e2e-agent-run.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round48-result-provenance.json",
+        "apps/desktop/windows/release/product-evidence/g1-results-center/packaged-g1-results-center-result.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "schema": "opendrsai.result-provenance/1",
+        "verified_fields": ["task", "session", "run", "input", "targetVersion"],
+        "tamper_cases": 5,
+        "legacy_backfill": true,
+        "packaged_results_verified": 4,
+        "source_task_navigation": true,
+        "source_run_navigation": true,
+        "public_absolute_paths": 0,
+        "app_asar_sha256": "sha256:2eca5fe3a72ef985aa83f2fbcfb735567b696b585a6315dc6fbc9b029fd45233"
+      }
+    },
+    {
+      "id": "M08-F04",
+      "status": "accepted",
+      "profile": "security",
+      "implementation": [
+        "apps/desktop/shared/api/runInspectionSafety.ts",
+        "apps/desktop/windows/src/main/index.ts",
+        "apps/desktop/shared/renderer/src/components/RunInspectorPanel.tsx",
+        "cores/python/packages/drsai/src/drsai/backend/runtime/run_inspection.py"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-opendrsai-run-inspection-safety.mts",
+        "apps/desktop/windows/scripts/verify-opendrsai-run-inspection-safety-visual.mjs",
+        "apps/desktop/windows/scripts/verify-run-inspector-ui.mjs",
+        "apps/desktop/windows/scripts/verify-run-editable-phase2-windows-e2e.mjs",
+        "cores/python/packages/drsai/tests/test_run_inspection.py",
+        "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round49-run-inspection-safety.json",
+        "docs/desktop/evidence/run-inspection-safety-windows-e2e-result.json",
+        "docs/desktop/evidence/run-inspection-safety-windows-e2e.png"
+      ],
+      "acceptance": {
+        "passed": true,
+        "public_reasoning_summaries": 1,
+        "raw_reasoning_segments": 0,
+        "unit_canaries": 11,
+        "cross_layer_canaries": 7,
+        "raw_chain_of_thought_matches": 0,
+        "secret_matches": 0,
+        "private_path_matches": 0,
+        "real_gateway": true,
+        "real_electron": true,
+        "packaged_main_preload_ipc_smoke": true,
+        "app_asar_sha256": "sha256:c841bb1f5eda9f41f943eee88375bc9b3e40c7a8b68f4d5359a139ed3db9d1ae"
+      }
+    },
+    {
+      "id": "M08-F05",
+      "status": "accepted",
+      "profile": "release",
+      "implementation": [
+        "apps/desktop/shared/main/experimentReleaseGate.ts",
+        "apps/desktop/shared/main/preload.ts",
+        "apps/desktop/shared/renderer/src/App.tsx",
+        "apps/desktop/windows/src/main/index.ts",
+        "apps/desktop/windows/resources/release/experiment-release-gate.json"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/generate-experiment-release-gate.mjs",
+        "apps/desktop/windows/scripts/verify-opendrsai-experiment-release-gate.mts",
+        "apps/desktop/windows/scripts/verify-opendrsai-experiment-release-gate-visual.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round46-results-release-gates.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "required_p2_features": ["M31-02", "M31-03", "M31-04", "M31-05"],
+        "current_passed_features": ["M31-03"],
+        "current_blocking_features": ["M31-02", "M31-04", "M31-05"],
+        "current_gate_enabled": false,
+        "missing_or_invalid_resource_fails_closed": true,
+        "forged_enabled_bit_rejected": true,
+        "all_four_passed_opens_gate": true,
+        "renderer_incomplete_hidden_complete_visible": true,
+        "guarded_main_ipc_operations": 17,
+        "packaged_mutation_rejected_before_runtime": true,
+        "gate_resource_sha256": "sha256:1fe9e435f6c5e3a53037c6260c5d94b8aa38845691683479445e9d663bcc2515"
+      }
+    },
+    {
+      "id": "M09-F01",
+      "status": "accepted",
+      "profile": "architecture",
+      "implementation": [
+        "apps/desktop/shared/renderer/src/containers/SetupContainer.tsx",
+        "apps/desktop/shared/renderer/src/containers/ModelSettingsContainer.tsx",
+        "apps/desktop/shared/renderer/src/containers/TaskShellContainer.tsx",
+        "apps/desktop/shared/renderer/src/containers/ResultsContainer.tsx",
+        "apps/desktop/shared/renderer/src/containers/DiagnosticsContainer.tsx",
+        "apps/desktop/shared/renderer/src/App.tsx",
+        "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-opendrsai-frontend-containers.mjs",
+        "apps/desktop/windows/scripts/verify-opendrsai-frontend-containers-visual.mjs",
+        "apps/desktop/windows/scripts/verify-opendrsai-first-run-setup.mts",
+        "apps/desktop/windows/scripts/verify-opendrsai-first-run-restart.mjs",
+        "apps/desktop/windows/scripts/verify-m07-operational-state.mts",
+        "apps/desktop/windows/scripts/verify-m07-operational-state-packaged.mjs",
+        "apps/desktop/windows/scripts/verify-g1-results-center.mjs",
+        "apps/desktop/windows/scripts/verify-model-provider-config.mjs",
+        "apps/desktop/windows/scripts/verify-model-config-state-recovery.mjs",
+        "apps/desktop/windows/scripts/verify-renderer-visual.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round50-frontend-container-boundaries.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round50-first-run-restart.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "independent_containers": 5,
+        "authenticated_app_domain_drafts": 0,
+        "app_model_drafts": 0,
+        "production_renderer_runtime_errors": 0,
+        "packaged_first_run_restart": true,
+        "packaged_operational_state_checks": "42/42",
+        "empty_task_recovery_visible": true,
+        "typecheck_passed": true,
+        "unpacked_build_passed": true,
+        "packaged_real_ipc_passed": true,
+        "artifact_sha256": "sha256:979f7de63978da801af5d6a7a835cca2cd342fbeb8ee332e6036c5b747acd24a"
+      }
+    },
+    {
+      "id": "M09-F02",
+      "status": "accepted",
+      "profile": "architecture",
+      "implementation": [
+        "apps/desktop/windows/electron.vite.config.ts",
+        "apps/desktop/windows/tsconfig.web.json"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-opendrsai-single-renderer-root.mjs",
+        "apps/desktop/windows/package.json"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round44-architecture-release-evidence.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "duplicate_renderer_files": 0,
+        "single_renderer_root": "apps/desktop/shared/renderer",
+        "typecheck_passed": true,
+        "unpacked_build_passed": true,
+        "packaged_real_ipc_passed": true
+      }
+    },
+    {
+      "id": "M09-F03",
+      "status": "in_progress",
+      "profile": "architecture",
+      "implementation": ["apps/desktop/shared/main/chat.ts"],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-opendrsai-backend-neutral.mjs",
+        "apps/desktop/windows/scripts/verify-structured-conversation.mjs",
+        "apps/desktop/windows/scripts/verify-chat-output-model.mjs"
+      ],
+      "evidence": ["docs/desktop/evidence/opendrsai-windows-phase3-round6-backend-neutral.json"]
+    },
+    { "id": "M09-F04", "status": "pending", "profile": "localization" },
+    {
+      "id": "M09-F05",
+      "status": "accepted",
+      "profile": "accessibility",
+      "implementation": [
+        "apps/desktop/shared/renderer/src/styles.css",
+        "apps/desktop/windows/src/main/e2eSmoke.ts"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-m3-window-scaling.mjs",
+        "apps/desktop/windows/scripts/verify-m4-keyboard.mjs",
+        "apps/desktop/windows/scripts/verify-m5-accessibility.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-round8-packaged-smoke.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round8-packaged-usability.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "package_version": "1.5.5",
+        "keyboard_checks": 51,
+        "axe_ax_checks": 35,
+        "scaling_checks": 97,
+        "max_zoom_percent": 200
+      }
+    },
+    { "id": "M10-F01", "status": "pending", "profile": "release", "verification_tier": "windows_matrix" },
+    { "id": "M10-F02", "status": "pending", "profile": "release", "verification_tier": "nightly_rc" },
+    {
+      "id": "M10-F03",
+      "status": "accepted",
+      "profile": "release",
+      "implementation": [
+        "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+        "apps/desktop/shared/main/chat.ts",
+        "apps/desktop/shared/renderer/src/App.tsx"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-run-traceability-phase1-windows-e2e.mjs",
+        "apps/desktop/windows/scripts/verify-run-editable-phase2-windows-e2e.mjs",
+        "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs",
+        "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-model-convergence-mc08.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round44-architecture-release-evidence.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "binary_resolvable_in_isolated_path": false,
+        "packaged_checks": 27,
+        "tasks": 2,
+        "sessions": 2,
+        "runs": 2,
+        "legacy_chat_calls": 0,
+        "legacy_model_catalog_calls": 0,
+        "packaged_real_ipc_passed": true
+      }
+    },
+    {
+      "id": "M10-F04",
+      "status": "accepted",
+      "profile": "evidence",
+      "implementation": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-acceptance-ledger.json",
+        "apps/desktop/windows/scripts/verify-opendrsai-phase3-ledger.mjs",
+        "apps/desktop/windows/scripts/generate-opendrsai-phase3-release-manifest.mjs",
+        "apps/desktop/windows/package.json"
+      ],
+      "tests": [
+        "apps/desktop/windows/scripts/verify-opendrsai-phase3-ledger.mjs",
+        "apps/desktop/windows/scripts/generate-opendrsai-phase3-release-manifest.mjs"
+      ],
+      "evidence": [
+        "docs/desktop/evidence/opendrsai-windows-phase3-release-manifest.json",
+        "docs/desktop/evidence/opendrsai-windows-phase3-round44-architecture-release-evidence.json"
+      ],
+      "acceptance": {
+        "passed": true,
+        "feature_count": 50,
+        "per_feature_hash_bindings": true,
+        "model_evidence_bindings": 8,
+        "package_artifact_bindings": true,
+        "stale_manifest_fails_closed": true,
+        "incomplete_release_ready": false
+      }
+    },
+    { "id": "M10-F05", "status": "pending", "profile": "release" }
+  ]
+}

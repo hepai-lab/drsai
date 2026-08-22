@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "budget_version": "p9-android-performance-v1",
+  "frozen_at": "2026-08-05",
+  "device_matrix": {
+    "api_levels": [26, 30, 35, 36],
+    "required_abis": ["x86_64", "arm64-v8a"]
+  },
+  "limits": {
+    "runtime_cold_start_p95_ms": 3000,
+    "runtime_foreground_pss_p95_mb": 220,
+    "runtime_peak_pss_mb": 256,
+    "runtime_cpu_p95_percent": 200,
+    "local_probe_network_rx_bytes": 4096,
+    "local_probe_network_tx_bytes": 4096,
+    "installed_apk_plus_data_mb": 256,
+    "database_growth_mb": 64,
+    "recovery_p95_ms": 2000,
+    "ten_start_battery_drop_percent": 2,
+    "maximum_thermal_status": 4,
+    "anr_count": 0
+  },
+  "stress": {
+    "runs": 500,
+    "tool_runs": 50,
+    "recovery_runs": 20,
+    "duplicate_side_effects": 0,
+    "data_corruption": 0,
+    "permanent_running": 0
+  }
+}

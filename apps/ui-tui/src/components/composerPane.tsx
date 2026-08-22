@@ -11,13 +11,13 @@ import { useEffect, useRef, useState } from 'react'
 
 import { loadPromptHistory, savePromptHistory } from '../app/promptHistory.js'
 import { isTerminalFocusEvent } from '../app/focusEvents.js'
-import { $isStreaming } from '../app/turnStore.js'
+import { $isStreaming, $transcript, $current } from '../app/turnStore.js'
 import type { ImageAttachment, TurnController } from '../app/turnController.js'
-import { $activeOverlay, $showReasoning } from '../app/uiStore.js'
-import type { SessionInfo, SessionListResult } from '../gatewayTypes.js'
+import { $activeOverlay, $showReasoning, $userId, $sessionMeta, $memoryPreview, $lastUsage, $remoteHost } from '../app/uiStore.js'
+import type { SessionInfo, SessionListResult, SessionResumeResult, SessionCreateResult } from '../gatewayTypes.js'
 import { theme } from '../theme.js'
 
-import { ModelEditor, type ModelEditorValues } from './modelEditor.js'
+import { ModelEditor, type ModelEditorValues, type ModelProviderPreset } from './modelEditor.js'
 import { ModelPicker, type ModelEntry } from './modelPicker.js'
 import { SessionPicker } from './sessionPicker.js'
 import { SmartSearchPane } from './smartSearchPane.js'
@@ -28,8 +28,10 @@ import { AgentPicker } from './agentPicker.js'
 import { SchedulerPanel } from './schedulerPanel.js'
 import { WeChatPanel } from './wechatPanel.js'
 import { GfsPanel } from './gfsPanel.js'
+import { SshRemotePanel } from './sshRemotePanel.js'
 import { SlashOutputOverlay } from './slashOutputOverlay.js'
 import { TextInput } from './textInput.js'
+import { parseHistory } from '../app/historyParser.js'
 
 function sessionSortTimestamp(session: SessionInfo): number {
   const raw = session.last_interaction_ts ?? session.updated_at ?? session.created_at ?? 0
@@ -237,6 +239,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   const [schedulerPanelOpen, setSchedulerPanelOpen] = useState(false)
   const [wechatPanelOpen, setWechatPanelOpen] = useState(false)
   const [gfsPanelOpen, setGfsPanelOpen] = useState(false)
+  const [remotePanelOpen, setRemotePanelOpen] = useState(false)
   const [modelPicker, setModelPicker] = useState<
     { models: ModelEntry[]; currentAlias?: string } | null
   >(null)
@@ -245,9 +248,11 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
         isNew: boolean
         originalAlias?: string
         initial?: Partial<ModelEditorValues>
+        revision?: string
       }
     | null
   >(null)
+  const [modelProviderPresets, setModelProviderPresets] = useState<ModelProviderPreset[]>([])
   const [completions, setCompletions] = useState<string[]>([])
   const [initialHistory] = useState(() => loadPromptHistory())
   const historyRef = useRef<string[]>(initialHistory)
@@ -302,6 +307,14 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
     return () => {
       cancelled = true
     }
+  }, [controller])
+
+  useEffect(() => {
+    let cancelled = false
+    controller.gw.request<{ presets: ModelProviderPreset[] }>('model.config.presets', {})
+      .then(result => { if (!cancelled) setModelProviderPresets(result.presets || []) })
+      .catch(() => { if (!cancelled) setModelProviderPresets([]) })
+    return () => { cancelled = true }
   }, [controller])
 
   // While streaming, capture Ctrl+C to cancel without exiting the app.
@@ -359,7 +372,8 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
         'model.options',
         {},
       )
-      setModelPicker({ models: result.models || [], currentAlias: result.current })
+      const models = result.models || []
+      setModelPicker({ models, currentAlias: result.current })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       showSlashOutput(`Error loading models: ${msg}`, 5000)
@@ -372,32 +386,44 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
       setModelEditor({ isNew: true })
       return
     }
-    // Fetch the current entry to pre-fill the form.
+    // The compact editor always edits the active Provider/model. The picker
+    // alias is only used as a suggested model when it differs from current.
     try {
       const result = await controller.gw.request<{
-        alias: string
         model: string
-        token_limit: number
-        max_tokens: number
-        client_type: 'auto' | 'openai' | 'anthropic'
-        reasoning: { supported: boolean; effort_levels: string[]; param_type: string }
-      }>('model.get', { alias })
+        model_provider: string
+        provider: {
+          name: string
+          base_url: string
+          wire_api: 'openai' | 'anthropic'
+          requires_api_key: boolean
+        }
+        revision?: string
+        token_limit?: number
+        max_tokens?: number
+        vision?: boolean
+        client_type?: string
+        yaml_base_url?: string
+        yaml_api_key_env?: string
+        yaml_requires_api_key?: boolean
+        yaml_use_responses_api?: boolean | null
+      }>('model.config.get', {})
       setModelEditor({
         isNew: false,
         originalAlias: alias,
         initial: {
-          alias: result.alias,
-          model: result.model,
+          provider: result.model_provider,
+          model: alias || result.model,
+          base_url: result.yaml_base_url || result.provider.base_url,
+          wire_api: (result.client_type as 'openai' | 'anthropic') || result.provider.wire_api,
+          requires_api_key: result.yaml_requires_api_key ?? result.provider.requires_api_key,
+          api_key_env: result.yaml_api_key_env,
           token_limit: result.token_limit,
           max_tokens: result.max_tokens,
-          client_type: result.client_type,
-          reasoning: {
-            supported: result.reasoning.supported,
-            effort_levels: result.reasoning.effort_levels,
-            // Cast: backend has already validated against the enum.
-            param_type: result.reasoning.param_type as ModelEditorValues['reasoning']['param_type'],
-          },
+          vision: result.vision,
+          use_responses_api: result.yaml_use_responses_api ?? null,
         },
+        revision: result.revision,
       })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -429,15 +455,14 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   }
 
   async function deleteModelWithConfirm(alias: string) {
-    // Single-step delete with explicit confirm in the toast.
     try {
-      const result = await controller.gw.request<{ ok: boolean; fell_back_to: string | null }>(
-        'model.delete',
-        { alias, session_id: sessionId },
+      const active = await controller.gw.request<{ model_provider: string; revision?: string }>('model.config.get', {})
+      const result = await controller.gw.request<{ ok: boolean; active: string }>(
+        'model.config.delete',
+        { provider: active.model_provider, session_id: sessionId, expected_revision: active.revision },
       )
       if (result.ok) {
-        const tail = result.fell_back_to ? ` (now on ${result.fell_back_to})` : ''
-        showSlashOutput(`Deleted ${alias}${tail}`, 4000)
+        showSlashOutput(`Deleted provider ${active.model_provider}; active provider is ${result.active}`, 4000)
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -502,6 +527,46 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   function resetPasteSnips() {
     pasteSnipsRef.current = []
     pasteCounterRef.current = 0
+  }
+
+  /**
+   * Path completion callback for the TextInput @-mode.
+   *
+   * Splits the user's prefix into a directory part and a name part,
+   * resolves the directory to an absolute path (using DRSAI_USER_CWD
+   * so relative paths map to the user's real cwd, not the ui-tui
+   * package dir), and calls the ``complete.path`` RPC.
+   *
+   * Returns items whose ``text`` is relative to the resolved directory,
+   * so the TextInput can build the full path as ``dirPart + candidate.text``.
+   */
+  async function completePath(prefix: string): Promise<Array<{
+    text: string; display: string; meta: string
+  }>> {
+    const baseCwd = process.env.DRSAI_USER_CWD?.trim() || process.cwd()
+
+    // Split "src/app" → dir="src/", name="app"
+    // Split "src/"   → dir="src/", name=""
+    // Split "app"    → dir="",     name="app"
+    let dir = ''
+    let name = prefix
+    const lastSlash = prefix.lastIndexOf('/')
+    if (lastSlash >= 0) {
+      dir = prefix.substring(0, lastSlash + 1)
+      name = prefix.substring(lastSlash + 1)
+    }
+
+    // Resolve the directory part to an absolute path
+    const absCwd = dir ? resolveFilePath(dir) : baseCwd
+
+    try {
+      const result = await controller.gw.request<{
+        items: Array<{ text: string; display: string; meta: string }>
+      }>('complete.path', { prefix: name, cwd: absCwd })
+      return result.items || []
+    } catch {
+      return []
+    }
   }
 
   async function handleSubmit(text: string) {
@@ -591,12 +656,14 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   Ctrl+C (2x)     - Exit TUI
   Ctrl+D          - Exit TUI
   Tab             - Autocomplete slash commands
+  @ <path>        - Insert file/directory path (Tab/↑↓ navigate)
 
 🖱️  Mouse:
   Scroll wheel    - Native terminal scrollback
   Drag select     - In copy mode (Ctrl+Y) to copy text
 
 💡 Tips:
+  • Type @ to browse files — images (@/path/to.png) are sent as multimodal
   • Completed turns flow into terminal scrollback (scroll natively)
   • Token usage shown in status bar
   • History loads automatically on restart
@@ -644,6 +711,12 @@ For more info: https://github.com/yourusername/drsai
       return
     }
 
+    // ── /remote — open SSH remote connection panel ──────────────────
+    if (/^\/remote$/i.test(trimmed)) {
+      setRemotePanelOpen(true)
+      return
+    }
+
     // ── /image or /img without valid paths ──────────────────────────
     // parseImageCommand() returns null when the regex matches but no image
     // paths were found, OR when the input is just "/image" with no args.
@@ -665,45 +738,53 @@ For more info: https://github.com/yourusername/drsai
     }
 
     // Detect slash command
+    // Only treat input as a slash command if the first token matches a
+    // known command from the catalog. This prevents pasted paths like
+    // /tmp/file.txt from being misinterpreted as slash commands.
     if (trimmed.startsWith('/')) {
       const parts = trimmed.slice(1).split(/\s+/)
       const command = parts[0]
       const args = parts.slice(1).join(' ')
 
-      // Special case: /quit should exit
-      if (command === 'quit' || command === 'exit' || command === 'q') {
-        controller.gw.kill()
-        exit()
-        return
-      }
+      // Check if this is a known command. If completions are loaded and
+      // the command is not in the catalog, treat the input as plain text.
+      if (completions.length > 0 && !completions.includes('/' + command.toLowerCase())) {
+        // Not a known slash command — fall through to normal message submission
+      } else {
+        // Special case: /quit should exit
+        if (command === 'quit' || command === 'exit' || command === 'q') {
+          controller.gw.kill()
+          exit()
+          return
+        }
 
-      // /find without args: open empty smart search
-      if (command === 'find' && !args) {
-        setSmartSearch({ query: '', results: [] })
-        return
-      }
+        // /find without args: open empty smart search
+        if (command === 'find' && !args) {
+          setSmartSearch({ query: '', results: [] })
+          return
+        }
 
-      // Interactive pickers (when called with no args)
-      if ((command === 'list' || command === 'ls' || command === 'switch') && !args) {
-        await openSessionPicker()
-        return
-      }
-      if ((command === 'model' || command === 'm') && !args) {
-        await openModelPicker()
-        return
-      }
+        // Interactive pickers (when called with no args)
+        if ((command === 'list' || command === 'ls' || command === 'switch') && !args) {
+          await openSessionPicker()
+          return
+        }
+        if ((command === 'model' || command === 'm') && !args) {
+          await openModelPicker()
+          return
+        }
 
-      // Execute via slash.exec RPC
-      try {
-        const result = await controller.gw.request('slash.exec', {
-          session_id: sessionId,
-          command,
-          args,
-        }) as { output?: string; ui_action?: string; name?: string; target?: string; n?: number }
-        const output = result.output || '(no output)'
+        // Execute via slash.exec RPC
+        try {
+          const result = await controller.gw.request('slash.exec', {
+            session_id: sessionId,
+            command,
+            args,
+          }) as { output?: string; ui_action?: string; name?: string; target?: string; n?: number }
+          const output = result.output || '(no output)'
 
-        // Handle UI actions returned by handlers
-        switch (result.ui_action) {
+          // Handle UI actions returned by handlers
+          switch (result.ui_action) {
           case 'session.new': {
             try {
               const created = await controller.gw.request<{
@@ -771,7 +852,7 @@ For more info: https://github.com/yourusername/drsai
             const presetAlias = (result as { alias?: string }).alias
             setModelEditor({
               isNew: true,
-              initial: presetAlias ? { alias: presetAlias } : undefined,
+              initial: presetAlias ? { model: presetAlias } : undefined,
             })
             return
           }
@@ -800,6 +881,10 @@ For more info: https://github.com/yourusername/drsai
             setDaemonPanelOpen(true)
             return
           }
+          case 'remote.panel': {
+            setRemotePanelOpen(true)
+            return
+          }
           case 'agent.picker': {
             setAgentPickerOpen(true)
             return
@@ -816,11 +901,12 @@ For more info: https://github.com/yourusername/drsai
 
         // Keep informational slash-command output visible until the user dismisses it.
         showSlashOutput(output)
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        showSlashOutput(`Error: ${msg}`, 5000)
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          showSlashOutput(`Error: ${msg}`, 5000)
+        }
+        return
       }
-      return
     }
 
     // Regular prompt
@@ -922,6 +1008,97 @@ For more info: https://github.com/yourusername/drsai
     )
   }
 
+  // SSH remote panel overlay
+  if (remotePanelOpen) {
+    return (
+      <SshRemotePanel
+        gw={controller.gw}
+        onDismiss={() => setRemotePanelOpen(false)}
+        onRemoteConnect={async (result) => {
+          // Switch gateway client to WebSocket attach mode, then resolve
+          // a session from the REMOTE gateway so the UI reflects the remote
+          // workspace — not stale local state.
+          try {
+            await controller.gw.switchToWebSocket(result.ws_attach_url)
+            $remoteHost.set(result.remote_hostname || '')
+
+            // Clear local session state — the remote gateway has its own
+            // session database; we must not show local chat history.
+            $transcript.set([])
+            $current.set(null)
+            $sessionMeta.set(null)
+            $memoryPreview.set('')
+            $lastUsage.set(null)
+
+            // Resolve session: most_recent for remote cwd → create new
+            const recent = await controller.gw.request<{
+              session: SessionInfo | null
+              user_id?: string
+            }>('session.most_recent', {})
+            if (recent.user_id) $userId.set(recent.user_id)
+
+            let sid: string | null = recent.session?.session_id ?? null
+            if (!sid) {
+              const created = await controller.gw.request<SessionCreateResult>('session.create', {})
+              sid = created.session?.session_id ?? null
+              if (created.user_id) $userId.set(created.user_id)
+            }
+
+            if (sid) {
+              await switchSession(sid)
+            }
+
+            showSlashOutput(
+              `✅ Connected to ${result.remote_hostname} via SSH tunnel` +
+              (result.remote_cwd ? `\n   Remote workdir: ${result.remote_cwd}` : ''),
+              4000,
+            )
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            showSlashOutput(`❌ Failed to attach to remote gateway: ${msg}`, 5000)
+          }
+        }}
+        onRemoteDisconnect={async () => {
+          // Switch back to local subprocess mode and resolve a local session.
+          try {
+            await controller.gw.switchToSubprocess()
+            $remoteHost.set('')
+
+            // Clear remote session state
+            $transcript.set([])
+            $current.set(null)
+            $sessionMeta.set(null)
+            $memoryPreview.set('')
+            $lastUsage.set(null)
+
+            // Resolve local session (same flow as startup)
+            const recent = await controller.gw.request<{
+              session: SessionInfo | null
+              user_id?: string
+            }>('session.most_recent', {})
+            if (recent.user_id) $userId.set(recent.user_id)
+
+            let sid: string | null = recent.session?.session_id ?? null
+            if (!sid) {
+              const created = await controller.gw.request<SessionCreateResult>('session.create', {})
+              sid = created.session?.session_id ?? null
+              if (created.user_id) $userId.set(created.user_id)
+            }
+
+            if (sid) {
+              await switchSession(sid)
+            }
+
+            showSlashOutput('✅ Switched back to local gateway', 3000)
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            showSlashOutput(`⚠ Local gateway restart: ${msg}`, 5000)
+          }
+        }}
+      />
+    )
+  }
+
   // Session picker overlay
   if (sessionPicker) {
     return (
@@ -1018,19 +1195,35 @@ For more info: https://github.com/yourusername/drsai
         isNew={modelEditor.isNew}
         originalAlias={modelEditor.originalAlias}
         initial={modelEditor.initial}
+        presets={modelProviderPresets}
         onCancel={() => setModelEditor(null)}
+        onTest={async values => {
+          try {
+            const result = await controller.gw.request<{ ok: boolean; error?: string; guidance?: { title?: string; actions?: string[] } }>(
+              'model.config.test_draft',
+              { ...values },
+            )
+            return result.ok ? { ok: true } : { ok: false, error: result.guidance ? `${result.guidance.title}: ${(result.guidance.actions || []).join(' / ')}` : result.error }
+          } catch (err) {
+            return { ok: false, error: err instanceof Error ? err.message : String(err) }
+          }
+        }}
         onSubmit={async values => {
           try {
             const result = await controller.gw.request<{
               ok: boolean
-              alias: string
-              is_new: boolean
-              switched_to: string | null
-            }>('model.save', { ...values, session_id: sessionId })
+              model: string
+              model_provider: string
+              runtime_applied?: boolean
+              warning?: string
+            }>('model.config.save', { ...values, session_id: sessionId, expected_revision: modelEditor.revision })
             setModelEditor(null)
-            const switched = result.switched_to ? ` (switched to ${result.switched_to})` : ''
-            const verb = result.is_new ? 'Saved' : 'Updated'
-            showSlashOutput(`${verb} model ${result.alias}${switched}`, 4000)
+            showSlashOutput(
+              result.runtime_applied === false
+                ? (result.warning || `Saved ${result.model}, but the current session kept its previous model`)
+                : `Saved ${result.model} via ${result.model_provider}`,
+              5000,
+            )
             return { ok: true }
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
@@ -1115,12 +1308,13 @@ For more info: https://github.com/yourusername/drsai
         isActive={activeOverlay === null}
         placeholder={isStreaming
           ? '⏳ streaming… (Ctrl+C to cancel)'
-          : 'Send a message · Ctrl+O newline · / commands · Tab complete · Ctrl+P/N history'}
+          : 'Send a message · @ files · / commands · Tab complete · Ctrl+O newline'}
         onSubmit={handleSubmit}
         completions={completions}
         history={historyRef.current}
         onHistoryChange={savePromptHistory}
         onPaste={maybeCollapsePaste}
+        onCompletePath={completePath}
       />
     </Box>
   )

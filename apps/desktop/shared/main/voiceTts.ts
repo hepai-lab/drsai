@@ -9,9 +9,10 @@ import type {
   DesktopVoiceSynthesisRuntimeStatus,
   DesktopVoiceSynthesisStartResult,
 } from "../api/desktopApi";
-import { getGatewayRequestHeaders, getGatewayStatus, startGateway } from "./gateway";
-import { hasSavedApiKey, syncSavedApiKeyToGateway } from "./settings";
+import { getAuthenticatedGatewayRequestHeaders, getGatewayStatus, startGateway } from "./gateway";
+import { syncSavedApiKeyToGateway } from "./settings";
 import { desktopDiagnostics, type DiagnosticOperationHandle } from "./diagnostics";
+import { getVoiceProviderReadiness } from "./voiceProviderReadiness";
 import {
   MAX_TTS_TEXT_CHARS,
   normalizeAndValidateTtsAudio,
@@ -22,6 +23,17 @@ import {
 } from "./voiceTtsValidation";
 
 const TTS_TIMEOUT_MS = 60_000;
+
+export type SystemVoiceSynthesizer = (
+  request: NormalizedVoiceSynthesisRequest,
+  signal: AbortSignal,
+) => Promise<DesktopVoiceSynthesisResult>;
+
+let systemVoiceSynthesizer: SystemVoiceSynthesizer | null = null;
+
+export function configureSystemVoiceSynthesizer(synthesizer: SystemVoiceSynthesizer | null): void {
+  systemVoiceSynthesizer = synthesizer;
+}
 
 interface ActiveTtsTask {
   cleanupSenderListener: () => void;
@@ -39,17 +51,26 @@ function configuredRuntimeId(): DesktopVoiceSynthesisRuntimeId {
   return "gateway-provider";
 }
 
+function resolveRuntimeId(request: DesktopVoiceSynthesisRequest): DesktopVoiceSynthesisRuntimeId {
+  if (request.runtime === "system" || request.runtime === "mock-local" || request.runtime === "gateway-provider") {
+    return request.runtime;
+  }
+  return configuredRuntimeId();
+}
+
 export async function getVoiceSynthesisRuntimeStatus(): Promise<DesktopVoiceSynthesisRuntimeStatus> {
   const runtimeId = configuredRuntimeId();
   if (runtimeId === "system") {
     return {
       runtimeId,
-      state: "ready",
-      supportsSynthesisTask: false,
-      supportedFormats: [],
+      state: systemVoiceSynthesizer ? "ready" : "unavailable",
+      supportsSynthesisTask: Boolean(systemVoiceSynthesizer),
+      supportedFormats: systemVoiceSynthesizer ? ["wav"] : [],
       maxTextChars: MAX_TTS_TEXT_CHARS,
-      providerDisclosure: "System speech is generated and played locally in the desktop renderer.",
-      message: "System speech is available through message playback controls.",
+      providerDisclosure: "System speech is synthesized locally with Windows Speech API.",
+      message: systemVoiceSynthesizer
+        ? "Windows system speech synthesis is ready."
+        : "Native system speech synthesis is only available on Windows.",
     };
   }
   if (runtimeId === "mock-local") {
@@ -64,12 +85,16 @@ export async function getVoiceSynthesisRuntimeStatus(): Promise<DesktopVoiceSynt
     };
   }
   const status = await getGatewayStatus();
-  const hasCredential = Boolean(
-    process.env.HEPAI_API_KEY?.trim()
-    || process.env.OPENAI_API_KEY?.trim()
-    || hasSavedApiKey(),
-  );
-  const state = !status.ready ? "unavailable" : hasCredential ? "ready" : "auth_required";
+  const readiness = status.ready
+    ? await getVoiceProviderReadiness(status.baseUrl, await getAuthenticatedGatewayRequestHeaders(), "text_to_speech").catch(() => ({ state: "unconfigured" as const }))
+    : { state: "unconfigured" as const };
+  const state = !status.ready
+    ? "unavailable"
+    : readiness.state === "ready"
+      ? "ready"
+      : readiness.state === "auth_required"
+        ? "auth_required"
+        : "unavailable";
   return {
     runtimeId,
     state,
@@ -81,7 +106,9 @@ export async function getVoiceSynthesisRuntimeStatus(): Promise<DesktopVoiceSynt
       ? "Voice synthesis runtime is ready."
       : state === "auth_required"
         ? "Configure a speech synthesis provider API key."
-        : "Start the local gateway and configure a speech synthesis provider.",
+        : status.ready
+          ? "Assign a text-to-speech model in Agent settings."
+          : "Start the local gateway and configure a speech synthesis provider.",
   };
 }
 
@@ -89,15 +116,18 @@ export function startVoiceSynthesis(
   sender: WebContents,
   request: DesktopVoiceSynthesisRequest,
 ): DesktopVoiceSynthesisStartResult {
-  const runtimeId = configuredRuntimeId();
-  if (runtimeId === "system") {
-    throw ttsFailure("runtime_unavailable", "System speech is controlled directly by the message playback UI.", false);
+  const runtimeId = resolveRuntimeId(request);
+  if (runtimeId === "system" && !systemVoiceSynthesizer) {
+    throw ttsFailure("runtime_unavailable", "Native system speech synthesis is only available on Windows.", false);
   }
   if (activeTtsTasks.size >= 3) throw ttsFailure("runtime_unavailable", "Too many active voice synthesis tasks.", true);
   if ([...activeTtsTasks.values()].some((task) => task.sender === sender && !task.terminal)) {
     throw ttsFailure("runtime_unavailable", "A voice synthesis task is already active for this window.", true);
   }
-  const normalizedRequest = normalizeVoiceSynthesisRequest(request);
+  const normalizedRequest = normalizeVoiceSynthesisRequest({
+    ...request,
+    format: runtimeId === "system" ? "wav" : request.format,
+  });
   const requestId = randomUUID();
   const controller = new AbortController();
   const handleSenderDestroyed = (): void => controller.abort();
@@ -143,14 +173,16 @@ export function cancelVoiceSynthesisForSender(sender: WebContents): void {
 async function runVoiceSynthesis(
   requestId: string,
   request: NormalizedVoiceSynthesisRequest,
-  runtimeId: Exclude<DesktopVoiceSynthesisRuntimeId, "system">,
+  runtimeId: DesktopVoiceSynthesisRuntimeId,
   task: ActiveTtsTask,
 ): Promise<void> {
   try {
     emitTtsEvent(task, { requestId, type: "progress", stage: "preparing", message: "Preparing reply text..." });
     const result = runtimeId === "mock-local"
       ? await synthesizeFixture(request, task.controller.signal)
-      : await synthesizeThroughGateway(request, task.controller.signal);
+      : runtimeId === "system"
+        ? await synthesizeWithSystemVoice(request, task.controller.signal)
+        : await synthesizeThroughGateway(request, task.controller.signal);
     finishTtsTask(requestId, task, { requestId, type: "completed", result });
   } catch (error) {
     if (task.controller.signal.aborted) {
@@ -176,6 +208,16 @@ async function synthesizeFixture(
   };
 }
 
+async function synthesizeWithSystemVoice(
+  request: NormalizedVoiceSynthesisRequest,
+  parentSignal: AbortSignal,
+): Promise<DesktopVoiceSynthesisResult> {
+  if (!systemVoiceSynthesizer) {
+    throw ttsFailure("runtime_unavailable", "System speech synthesis is unavailable on this platform.", false);
+  }
+  return systemVoiceSynthesizer(request, parentSignal);
+}
+
 async function synthesizeThroughGateway(
   request: NormalizedVoiceSynthesisRequest,
   parentSignal: AbortSignal,
@@ -190,7 +232,7 @@ async function synthesizeThroughGateway(
   try {
     response = await fetch(`${gateway.baseUrl}/v1/audio/speech`, {
       method: "POST",
-      headers: { ...getGatewayRequestHeaders(), "Content-Type": "application/json" },
+      headers: { ...await getAuthenticatedGatewayRequestHeaders(), "Content-Type": "application/json" },
       body: JSON.stringify(request),
       signal,
     });
@@ -219,12 +261,12 @@ function emitTtsEvent(task: ActiveTtsTask, event: DesktopVoiceSynthesisEvent): v
   if (!task.sender.isDestroyed()) task.sender.send("desktop:voice-synthesis-event", event);
 }
 
-function finishTtsTask(requestId: string, task: ActiveTtsTask, event: DesktopVoiceSynthesisEvent): void {
+function finishTtsTask(taskRequestId: string, task: ActiveTtsTask, event: DesktopVoiceSynthesisEvent): void {
   if (task.terminal) return;
   task.terminal = true;
   task.cleanupSenderListener();
   emitTtsEvent(task, event);
-  activeTtsTasks.delete(requestId);
+  activeTtsTasks.delete(taskRequestId);
   void task.diagnostic.then((diagnostic) => {
     if (event.type === "completed") return diagnostic.complete("Voice synthesis completed", { runtime: event.result.runtimeId, audioBytes: event.result.audioData.byteLength });
     if (event.type === "cancelled") return diagnostic.cancel("Voice synthesis cancelled");

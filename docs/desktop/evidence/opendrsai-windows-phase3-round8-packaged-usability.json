@@ -1,0 +1,74 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 8,
+  "captured_at": "2026-08-05",
+  "scope": "Packaged Windows first-run, keyboard, accessibility, scaling, and artifact-bound smoke",
+  "progress": {
+    "accepted": 1,
+    "total": 50,
+    "percent": 2,
+    "newly_accepted": ["M09-F05"],
+    "implemented_not_accepted": ["M01-F02", "M10-F04"]
+  },
+  "package": {
+    "version": "1.5.5",
+    "platform": "windows",
+    "arch": "x64",
+    "artifacts": {
+      "executable": "sha256:8585a3053d072611ee857fcb1a344474bc0b9cc9a64e4ec5b6921eb2cf5fa1cd",
+      "app_asar": "sha256:550ea85579a080d5ffa7a7ea48ac1e399967735898dfacdfc6de26ae648d365b",
+      "backend_source": "sha256:ee2f5f297e78d96e84a185e8e67e4123e784d78f5cb1e4fec4a5701ae6824b6c"
+    }
+  },
+  "verified": [
+    {
+      "command": "npm run verify:packaged",
+      "cwd": "apps/desktop/windows",
+      "result": "passed",
+      "summary": "91 packaged main/preload/IPC checks; first-run Full Agent Runtime and Codex-independence copy, primary task entry, autofocus, and artifact hashes verified."
+    },
+    {
+      "command": "npm run verify:m3-window-scaling",
+      "cwd": "apps/desktop/windows",
+      "result": "passed",
+      "summary": "97/97 checks across five profiles, including 200% zoom, for chat, results, and approvals."
+    },
+    {
+      "command": "npm run verify:m4-keyboard",
+      "cwd": "apps/desktop/windows",
+      "result": "passed",
+      "summary": "51/51 checks, 17 deterministic focus milestones, zero pointer events; unowned approval allow fails closed and keyboard rejection converges."
+    },
+    {
+      "command": "npm run verify:m5-accessibility",
+      "cwd": "apps/desktop/windows",
+      "result": "passed",
+      "summary": "35/35 checks; four axe scans and four Chromium Accessibility Trees with zero serious/critical violations or unresolved incomplete rules."
+    },
+    {
+      "command": "npm run build:unpack",
+      "cwd": "apps/desktop/windows",
+      "result": "passed",
+      "summary": "Production main, preload, renderer, bundled Full Agent Runtime source, and unpacked Windows executable built successfully."
+    }
+  ],
+  "product_changes": [
+    "Removed two animated translucent empty-state pseudo-elements that made text contrast indeterminate and added continuous paint cost.",
+    "At compact viewport heights, optional sample prompts are hidden so the primary task composer and Send button remain fully visible.",
+    "Packaged M3/M4/M5 fixtures now use isolated OpenDrSai Runtime identities, capabilities, workspaces, and current stable navigation selectors.",
+    "M3 now includes a mandatory 200% zoom profile."
+  ],
+  "acceptance": {
+    "M09-F05": {
+      "passed": true,
+      "keyboard": "51/51; zero pointer events; no keyboard trap",
+      "screen_reader": "35/35; four axe scans and four AX Trees; serious/critical zero",
+      "scaling": "97/97; 100%, 125%, 150%, 200%, and returned-display profiles",
+      "artifact_binding": "OpenDrSai.exe, app.asar, and bundled backend source SHA-256 recorded above"
+    }
+  },
+  "remaining_acceptance_evidence": {
+    "M01-F02": "Primary entry, autofocus, and packaged accessibility pass; measured cold-start-to-interactive time must still prove the 3-second gate.",
+    "M10-F04": "Package hashes exist, but every one of the 50 features still needs complete source, suite, artifact, Runtime/model version, and hash binding."
+  }
+}

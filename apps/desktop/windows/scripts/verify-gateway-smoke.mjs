@@ -5,6 +5,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+for (const key of ["NO_PROXY", "no_proxy"]) {
+  const entries = String(process.env[key] || "").split(",").map((value) => value.trim()).filter(Boolean);
+  for (const host of ["127.0.0.1", "localhost"]) if (!entries.includes(host)) entries.push(host);
+  process.env[key] = entries.join(",");
+}
+
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repoRoot = resolve(root, "..", "..", "..");
 const pythonSrc = join(repoRoot, "cores", "python", "packages", "drsai", "src");
@@ -14,6 +20,7 @@ const tempHome = mkdtempSync(join(tmpdir(), "opendrsai-gateway-smoke-"));
 const tempUserProfile = join(tempHome, "user-profile");
 const gatewayInstanceToken = "gateway-smoke-instance-token";
 const temporaryOidcSecret = "temporary-gateway-smoke-oidc-secret";
+const gatewayReadyTimeoutMs = Number(process.env.OPENDRSAI_GATEWAY_READY_TIMEOUT_MS || "60000");
 
 let gatewayProcess = null;
 
@@ -26,6 +33,7 @@ try {
       DRSAI_API_HOST: "127.0.0.1",
       DRSAI_API_PORT: String(port),
       DRSAI_GATEWAY_FAKE_AGENT: "1",
+      OPENDRSAI_DESKTOP_RUNTIME: "1",
       OPENDRSAI_GATEWAY_INSTANCE_TOKEN: gatewayInstanceToken,
       OPENDRSAI_OIDC_HS256_SECRET: temporaryOidcSecret,
       DRSAI_HOME: tempHome,
@@ -38,7 +46,7 @@ try {
   });
 
   const logs = collectLogs(gatewayProcess);
-  await waitForJson("/health", 25_000, logs);
+  await waitForJson("/health", gatewayReadyTimeoutMs, logs);
 
   const health = await requestJson("/health");
   assert(health.statusCode === 200, `/health returned ${health.statusCode}`);
@@ -47,6 +55,25 @@ try {
   const models = await requestJson("/v1/models");
   assert(models.statusCode === 200, `/v1/models returned ${models.statusCode}`);
   assert(models.body?.object === "list" && Array.isArray(models.body.data), `/v1/models body was ${JSON.stringify(models.body)}`);
+
+  const unauthorizedConfig = await fetch(`${baseUrl}/v1/config/model-state`);
+  assert(unauthorizedConfig.status === 401, `unauthorized config read returned ${unauthorizedConfig.status}`);
+  const presets = await requestJson("/v1/config/model-providers/presets");
+  assert(presets.statusCode === 200 && presets.body?.presets?.some((item) => item.id === "deepseek"), "provider presets are unavailable");
+  const initialModelState = await requestJson("/v1/config/model-state");
+  assert(initialModelState.statusCode === 200, `initial model-state returned ${initialModelState.statusCode}`);
+  const providers = await requestJson("/v1/config/model-providers");
+  assert(providers.statusCode === 200, `provider list returned ${providers.statusCode}`);
+  assert(providers.body?.providers?.some((provider) => provider.name === "hepai" && provider.requires_api_key === false), `OIDC HepAI Provider is unavailable: ${JSON.stringify(providers.body)}`);
+  const agents = await requestJson("/v1/config/agents");
+  assert(agents.statusCode === 200 && agents.body?.current_agent === "opendrsai", `default Agent is unavailable: ${JSON.stringify(agents.body)}`);
+  const agentModels = await requestJson("/v1/config/agents/opendrsai/models");
+  assert(agentModels.statusCode === 200 && agentModels.body?.valid === true, `default Agent model policy is invalid: ${JSON.stringify(agentModels.body)}`);
+  assert(agentModels.body?.primary_model?.ref?.provider_id === "hepai", `default Agent is not bound to HepAI: ${JSON.stringify(agentModels.body)}`);
+  const runtimeModels = await requestJson("/v1/config/runtime-models");
+  assert(runtimeModels.statusCode === 200 && runtimeModels.body?.models?.some((model) => model.ref?.provider_id === "hepai"), `runtime model catalog is unavailable: ${JSON.stringify(runtimeModels.body)}`);
+  const doctor = await requestJson("/v1/config/model/doctor", { method: "POST", body: { online: false } });
+  assert(doctor.statusCode === 200 && doctor.body?.ok === true, `model doctor failed: ${JSON.stringify(doctor.body)}`);
 
   const chat = await requestText("/v1/chat/completions", {
     method: "POST",
@@ -99,7 +126,27 @@ try {
   });
   assert(wrongSubject.statusCode === 403, `OIDC subject mismatch returned ${wrongSubject.statusCode}`);
 
-  console.log("Gateway smoke passed: /health, /v1/models, and chat SSE returned chunk + [DONE].");
+  const identityHeaders = {
+    Authorization: `Bearer ${fakeOidcToken(oidcUser)}`,
+    "X-OpenDrSai-Auth-Mode": "oidc",
+    "X-OpenDrSai-Principal": oidcUser,
+  };
+  const derivedIdentityMemory = await requestText("/v1/memory", { method: "GET", headers: identityHeaders });
+  assert(derivedIdentityMemory.statusCode === 200, `OIDC-derived memory identity returned ${derivedIdentityMemory.statusCode}: ${derivedIdentityMemory.text.slice(0, 300)}`);
+  const matchingIdentityMemory = await requestText(`/v1/memory?user_id=${encodeURIComponent(oidcUser)}`, { method: "GET", headers: identityHeaders });
+  assert(matchingIdentityMemory.statusCode === 200, `matching memory identity returned ${matchingIdentityMemory.statusCode}`);
+  const forgedIdentityMemory = await requestText("/v1/memory?user_id=d0b66156-3680-4405-8c87-01b186b92a8c", { method: "GET", headers: identityHeaders });
+  assert(forgedIdentityMemory.statusCode === 403, `forged memory identity returned ${forgedIdentityMemory.statusCode}`);
+  const expiredIdentityMemory = await requestText("/v1/memory", {
+    method: "GET",
+    headers: {
+      ...identityHeaders,
+      Authorization: `Bearer ${fakeOidcToken(oidcUser, Math.floor(Date.now() / 1000) - 1)}`,
+    },
+  });
+  assert(expiredIdentityMemory.statusCode === 401, `expired OIDC identity returned ${expiredIdentityMemory.statusCode}`);
+
+  console.log("Gateway smoke passed: health, desktop bootstrap, Agent/Provider model policy, auth, and chat SSE.");
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
@@ -182,9 +229,11 @@ async function waitForJson(path, timeoutMs, logs) {
   throw new Error(`Gateway did not become ready at ${baseUrl}${path} within ${timeoutMs}ms.\n${logs.tail()}`);
 }
 
-async function requestJson(path) {
+async function requestJson(path, init = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
-    headers: { "X-OpenDrSai-Gateway-Token": gatewayInstanceToken },
+    method: init.method || "GET",
+    headers: { "X-OpenDrSai-Gateway-Token": gatewayInstanceToken, ...(init.body ? { "Content-Type": "application/json" } : {}) },
+    body: init.body ? JSON.stringify(init.body) : undefined,
   });
   let body = null;
   try {
@@ -206,14 +255,14 @@ async function requestText(path, init) {
   return { statusCode: response.status, headers: response.headers, text: await response.text() };
 }
 
-function fakeOidcToken(subject) {
+function fakeOidcToken(subject, expiresAt = Math.floor(Date.now() / 1000) + 600) {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
   const header = encode({ alg: "HS256", typ: "JWT" });
   const payload = encode({
     iss: "https://ai-dev.ihep.ac.cn/api",
     sub: subject,
     aud: "hai-api",
-    exp: Math.floor(Date.now() / 1000) + 600,
+    exp: expiresAt,
     typ: "access_token",
     scope: "openid hai_api",
     org_id: "gateway-smoke-org",

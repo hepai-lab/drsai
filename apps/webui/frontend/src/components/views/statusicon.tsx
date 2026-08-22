@@ -14,8 +14,10 @@ export const getStatusIcon = (
   status: Run["status"],
   errorMessage?: string,
   stopReason?: string,
-  inputRequest?: InputRequest
+  inputRequest?: InputRequest,
+  _t?: (key: string, ...args: (string | number)[]) => string
 ) => {
+  const t = _t || ((s: string) => s);
   switch (status) {
     case "active":
     case "created":
@@ -26,7 +28,7 @@ export const getStatusIcon = (
             size={20}
             className="inline-block mr-1 text-accent animate-spin"
           />
-          <span className="inline-block mr-2 ml-1 ">Processing</span>
+          <span className="inline-block mr-2 ml-1 ">{t("statusIcon.processing")}</span>
         </div>
       );
     case "awaiting_input":
@@ -38,7 +40,7 @@ export const getStatusIcon = (
             <div>
               <div className="flex items-center">
                 <span>
-                  <span className="font-semibold">Approval Request:</span>{" "}
+                  <span className="font-semibold">{t("statusIcon.approval")}</span>{" "}
                   {inputRequest.prompt || "Waiting for approval"}
                 </span>
               </div>
@@ -49,25 +51,15 @@ export const getStatusIcon = (
                 size={20}
                 className="flex-shrink-0 mr-2 text-accent"
               />
-              <span className="flex-1">Waiting for your input</span>
+              <span className="flex-1">{t("statusIcon.waitingInput")}</span>
             </>
           )}
         </div>
       );
     case "complete":
-      return (
-        <div className="text-sm mb-2">
-          <AlertTriangle size={20} className="inline-block mr-2 text-red-500" />
-          {errorMessage || "An error occurred"}
-        </div>
-      );
     case "error":
-      return (
-        <div className="text-sm mb-2">
-          <AlertTriangle size={20} className="inline-block mr-2 text-red-500" />
-          {errorMessage || "An error occurred"}
-        </div>
-      );
+      // Silenced — no user-visible status prompts for terminal states
+      return null;
     case "stopped":
       return (
         <div className="text-sm mb-2">
@@ -79,14 +71,14 @@ export const getStatusIcon = (
       return (
         <div className="text-sm mb-2">
           <PauseCircle size={20} className="inline-block mr-2 text-accent" />
-          <span className="inline-block mr-2 ml-1">Pausing</span>
+          <span className="inline-block mr-2 ml-1">{t("statusIcon.pausing")}</span>
         </div>
       );
     case "paused":
       return (
         <div className="text-sm mb-2">
           <PauseCircle size={20} className="inline-block mr-2 text-accent" />
-          <span className="inline-block mr-2 ml-1">Pausing</span>
+          <span className="inline-block mr-2 ml-1">{t("statusIcon.pausing")}</span>
         </div>
       );
     case "resuming":
@@ -96,7 +88,7 @@ export const getStatusIcon = (
             size={20}
             className="inline-block mr-2 text-accent animate-spin"
           />
-          <span className="inline-block mr-2 ml-1">Resuming</span>
+          <span className="inline-block mr-2 ml-1">{t("statusIcon.resuming")}</span>
         </div>
       );
     default:

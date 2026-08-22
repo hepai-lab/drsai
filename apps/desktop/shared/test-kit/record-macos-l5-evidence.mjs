@@ -4,6 +4,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { currentCommit } from "./acceptanceEvidence.mjs";
+import { catalogLevelReceipt } from "./platformFeatureEvidence.mjs";
 
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("L5 evidence must be recorded on Apple Silicon macOS.");
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
@@ -17,7 +18,7 @@ assert.equal(snapshot.commit, currentCommit(repoRoot));
 assert.equal(l4.passed, true);
 assert.equal(l4.commit, snapshot.commit);
 
-const testIds = ["packaged-core-journeys", "packaged-product-journeys", "restart-stability", "fault-injection"];
+const testIds = ["packaged-core-journeys", "packaged-auth-cycles", "packaged-product-journeys", "managed-process-crash-recovery", "packaged-system-events", "restart-resource-growth", "packaged-resource-sampling", "packaged-performance-budget", "restart-stability", "fault-injection"];
 const receipts = testIds.map((testId) => {
   const path = resolve(acceptance, `${testId}.json`);
   const receipt = readJson(path);
@@ -27,10 +28,30 @@ const receipts = testIds.map((testId) => {
   assert.equal(receipt.passed, true);
   return { path, receipt };
 });
+const catalog = catalogLevelReceipt("L5", readJson(resolve(acceptance, "feature-test-results.json")));
 const core = receipts.find(({ receipt }) => receipt.testId === "packaged-core-journeys").receipt;
 assert.ok(core.checks >= 4 && core.gatewayOrphans === 0 && core.ptyOrphans === 0);
+assert.ok(core.consecutiveIterations >= 20 && core.formalTwentyRoundRequirementSatisfied === true, "L5 requires 20 consecutive core golden-task rounds");
+const auth = receipts.find(({ receipt }) => receipt.testId === "packaged-auth-cycles").receipt;
+assert.ok(auth.loginLogoutIterations >= 20 && auth.formalTwentyRoundRequirementSatisfied === true && auth.failedIterations === 0, "L5 requires 20 login/logout rounds");
 const product = receipts.find(({ receipt }) => receipt.testId === "packaged-product-journeys").receipt;
 assert.ok(product.checks >= 17 && product.unexpectedSideEffects === 0);
+const managedCrash = receipts.find(({ receipt }) => receipt.testId === "managed-process-crash-recovery").receipt;
+assert.ok(managedCrash.gatewayForcedCrashes >= 20 && managedCrash.nativeHelperForcedCrashes >= 20 && managedCrash.formalTwentyRoundRequirementSatisfied === true, "L5 requires 20 managed Runtime/Helper crash-recovery rounds");
+assert.equal(managedCrash.gatewayRecovered, true);
+assert.equal(managedCrash.nativeHelperRecovered, true);
+assert.equal(managedCrash.residualProcessCount, 0);
+const systemEvents = receipts.find(({ receipt }) => receipt.testId === "packaged-system-events").receipt;
+assert.ok(systemEvents.checks >= 2 && systemEvents.unexpectedSideEffects === 0);
+const resources = receipts.find(({ receipt }) => receipt.testId === "packaged-resource-sampling").receipt;
+assert.equal(resources.formalHundredRestartBudgetSatisfied, true);
+assert.equal(resources.residualProcessCount, 0);
+const restartGrowth = receipts.find(({ receipt }) => receipt.testId === "restart-resource-growth").receipt;
+assert.equal(restartGrowth.sampleIterations, 100);
+assert.equal(restartGrowth.withinBudget, true);
+assert.equal(restartGrowth.iterations.length, 100);
+const performance = receipts.find(({ receipt }) => receipt.testId === "packaged-performance-budget").receipt;
+assert.equal(performance.withinBudget, true);
 const stability = receipts.find(({ receipt }) => receipt.testId === "restart-stability").receipt;
 assert.ok(stability.restartIterations >= 100, "L5 requires at least 100 complete App restarts");
 assert.ok(stability.forcedCrashes >= 1 && stability.recoveredCrashes === stability.forcedCrashes);
@@ -46,7 +67,7 @@ assert.equal(faults.unexpectedSideEffects, 0);
 const appExecutable = resolve(desktopRoot, "macos/release/mac-arm64/OpenDrSai.app/Contents/MacOS/OpenDrSai");
 assert.ok(existsSync(appExecutable), "packaged App executable is missing");
 const artifacts = [...receipts.map(({ path }) => artifact(path)), artifact(appExecutable)];
-const featureIds = verifiedFeatureIds(receipts.map(({ receipt }) => receipt));
+const featureIds = verifiedFeatureIds([...receipts.map(({ receipt }) => receipt), catalog]);
 const evidence = {
   schemaVersion: 2,
   level: "L5",
@@ -57,7 +78,7 @@ const evidence = {
   passed: true,
   featureIds,
   previousLevelEvidenceSha256: sha256(Buffer.from(JSON.stringify(l4))),
-  tests: receipts.map(({ receipt }) => ({ testId: receipt.testId, passed: true, featureIds: receipt.featureIds, generatedAt: receipt.generatedAt })),
+  tests: [...receipts.map(({ receipt }) => ({ testId: receipt.testId, passed: true, featureIds: receipt.featureIds, generatedAt: receipt.generatedAt })), catalog],
   artifacts,
   generatedAt: new Date().toISOString(),
 };

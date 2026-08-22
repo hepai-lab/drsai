@@ -1,0 +1,80 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-evidence/1",
+  "captured_at": "2026-08-05T21:03:48+08:00",
+  "round": 47,
+  "status": "accepted_local",
+  "features": {
+    "M08-F02": {
+      "passed": true,
+      "production_renderer": {
+        "activity_items": 10000,
+        "window_size": 16,
+        "page_count": 625,
+        "accessible_items": 10000,
+        "collapsed_process_body_nodes": 0,
+        "mounted_evidence_items": 17,
+        "maximum_allowed_dom_items": 200,
+        "first_paint_ms": 830.8,
+        "maximum_first_paint_ms": 3000,
+        "last_window": [9984, 10000],
+        "core_result_visible_on_first_paint": true,
+        "approval_visible_and_actionable": true,
+        "approval_outside_process_disclosure": true,
+        "failed_final_activity_reachable": true
+      },
+      "structured_visual_screenshots": 20,
+      "structured_renderer_contract_passed": true,
+      "remote_agent_hil_regression_passed": true,
+      "build_unpack_passed": true,
+      "packaged_real_main_preload_ipc_passed": true
+    }
+  },
+  "tests": [
+    "npm run typecheck:web",
+    "npm run verify:structured-renderer",
+    "node scripts/verify-remote-agent-tool-ui.mjs",
+    "npm run verify:opendrsai-process-virtualization",
+    "npm run verify:structured-visual",
+    "npm run build:unpack",
+    "node scripts/verify-packaged-app-smoke.mjs"
+  ],
+  "artifacts": {
+    "bounded_window": {
+      "path": "apps/desktop/shared/renderer/src/boundedProcessWindow.ts",
+      "sha256": "9b648a8165184cacab6a43a3892800f8c81efbad5dbef3811062efed47019320"
+    },
+    "structured_renderer": {
+      "path": "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
+      "sha256": "3fdb1a2d2858e618c931a11ccf5318d4de04403454df4e005e4de1d7e8ebdb73"
+    },
+    "renderer_styles": {
+      "path": "apps/desktop/shared/renderer/src/styles.css",
+      "sha256": "e4aa5d9e33bb1d7623bd613ed8fc7c45a2380186edb2a0a54dcf5c0bfe5733fa"
+    },
+    "production_renderer_fixture": {
+      "path": "apps/desktop/shared/renderer/src/mockDesktopApi.ts",
+      "sha256": "326f5d15d08806a31287eddaa8ff2d61950f15748e6c36b1c7f403453b710641"
+    },
+    "unit_verifier": {
+      "path": "apps/desktop/windows/scripts/verify-opendrsai-process-virtualization.mts",
+      "sha256": "e1c18d399a61d7a91ef50a93ab7bf12b855bf10e8812677810ffc4141947a2b8"
+    },
+    "visual_verifier": {
+      "path": "apps/desktop/windows/scripts/verify-opendrsai-process-virtualization-visual.mjs",
+      "sha256": "43d751db9803d2a4c5add919ce9098edccd49bc531e5ea0dfc8aa8c135fe8ff8"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "230b110cba99b10346a6095eb8f306162fdb04d2ec8bdf5f332af3200814fbf4"
+    },
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "e91bf2d3751f2f7f2e4bf2c920b2a1c1b88dfbb7fe3b11bebfcab3eb66c108df"
+    }
+  },
+  "progress_after_acceptance": {
+    "accepted": 36,
+    "total": 50,
+    "percent": 72
+  }
+}

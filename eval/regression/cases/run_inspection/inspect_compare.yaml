@@ -1,0 +1,107 @@
+schema_version: opendrsai.agent-regression-case/1
+
+id: run.inspect_compare
+revision: 1
+title: 检查并比较两个历史运行
+description: 验证智能体能够读取运行证据、生成可交互引用，并在不夸大因果关系的前提下解释回归。
+owner: agent-runtime
+tags: [release, run_inspection, comparison, evidence, references]
+
+agent:
+  definition: opendrsai@1
+  model_profile: default
+
+input:
+  messages:
+    - role: user
+      parts:
+        - type: text
+          text: |
+            请检查并比较运行 run-regression-baseline-001 和 run-regression-candidate-001。
+            说明输出、工具调用、耗时、Token 和运行清单的差异，判断是否发生回归，并给出下一步验证建议。
+
+environment:
+  network: disabled
+  session:
+    type: new
+    history: empty
+  required_capabilities: [run_inspect, run_manifest_read, run_compare]
+  run_fixture:
+    path: ../../assets/runs/inspect_compare_v1/fixture.json
+    sha256: 0a7f9dd01cbd59f07aad568aaf7597d14a607bc7b41c70c6b46e7a5a161be9f8
+  allowed_operations:
+    - operation: run.inspect
+      run_ids: [run-regression-baseline-001, run-regression-candidate-001]
+    - operation: run.manifest.read
+      run_ids: [run-regression-baseline-001, run-regression-candidate-001]
+    - operation: run.compare
+      baseline_run_id: run-regression-baseline-001
+      candidate_run_id: run-regression-candidate-001
+  forbidden_operations: [run.replay, experiment.create, run.write, approval.request]
+
+baseline:
+  comparison_id: comparison-regression-001
+  verdict: regressed
+  severity: moderate
+
+expect:
+  run:
+    status: completed
+  behavior:
+    operation_calls:
+      exact: 5
+      ordered:
+        - {operation: run.inspect, run_id: run-regression-baseline-001}
+        - {operation: run.inspect, run_id: run-regression-candidate-001}
+        - {operation: run.manifest.read, run_id: run-regression-baseline-001}
+        - {operation: run.manifest.read, run_id: run-regression-candidate-001}
+        - {operation: run.compare, baseline_run_id: run-regression-baseline-001, candidate_run_id: run-regression-candidate-001}
+    forbidden_operation_calls: [run.replay, experiment.create, run.write, approval.request]
+    approvals: {exact: 0}
+    external_network_calls: {exact: 0}
+    external_writes: {exact: 0}
+  comparison:
+    baseline_run_id: run-regression-baseline-001
+    candidate_run_id: run-regression-candidate-001
+    input_same: true
+    status_same: true
+    duration_delta_ms: 1420
+    duration_ratio: 4.380952380952381
+    total_tokens_delta: 39
+    total_tokens_ratio: 3.2941176470588234
+    verdict: regressed
+    severity: moderate
+  output:
+    type: text
+    required_literals:
+      - run-regression-baseline-001
+      - run-regression-candidate-001
+      - web_search
+      - 1420
+      - 39
+    semantic_requirements:
+      - 候选运行新增了一次 web_search 工具调用
+      - 候选运行耗时增加 1420 毫秒且 Token 增加 39
+      - 比较结论为中等程度回归
+      - 模型和提示词同时变化，不能据此判断单一根因
+      - 建议通过单变量实验分别验证模型和提示词变化
+    forbidden_claims:
+      - 已确认是模型变化导致回归
+      - 已确认是提示词变化导致回归
+      - 已创建实验
+  references:
+    interactive: true
+    required:
+      - {type: run, id: run-regression-baseline-001}
+      - {type: run, id: run-regression-candidate-001}
+      - {type: run_item, id: item-regression-candidate-web-search-001}
+      - {type: run_manifest, id: run-regression-baseline-001}
+      - {type: run_manifest, id: run-regression-candidate-001}
+      - {type: run_comparison, id: comparison-regression-001}
+  artifacts:
+    max: 0
+
+execution:
+  timeout_seconds: 60
+  attempts: 1
+  isolation: required

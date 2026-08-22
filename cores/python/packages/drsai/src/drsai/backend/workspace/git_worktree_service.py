@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import shutil
 import subprocess
@@ -54,6 +55,7 @@ class GitWorktreeService:
         minimum_free_bytes: int = 16 * 1024 * 1024,
         active_resource_probe: Callable[[str], list[dict[str, Any]]] | None = None,
         event_journal: Any | None = None,
+        fault_injector: Callable[[str], None] | None = None,
     ):
         self.registry = registry
         self.worktree_root = worktree_root.expanduser().resolve(strict=False)
@@ -61,6 +63,7 @@ class GitWorktreeService:
         self.minimum_free_bytes = minimum_free_bytes
         self.active_resource_probe = active_resource_probe or (lambda _workspace_id: [])
         self.event_journal = event_journal
+        self.fault_injector = fault_injector or (lambda _stage: None)
         self._lock = threading.RLock()
 
     def create(
@@ -170,6 +173,211 @@ class GitWorktreeService:
         if record is None or record.source_workspace_id != source_workspace_id:
             raise GitWorktreeError("worktree_not_found", "Worktree does not belong to this Source Workspace.")
         return record
+
+    def finalize_candidate_snapshot(
+        self,
+        source_workspace_id: str,
+        worktree_id: str,
+        *,
+        experiment_id: str,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Commit the isolated candidate state so Comparison/Adoption sees real Agent writes."""
+        with self._lock:
+            record = self.describe(source_workspace_id, worktree_id)
+            if record.status not in {"active", "review", "merge_pending"}:
+                raise GitWorktreeError("worktree_state_conflict", "Worktree is not available for candidate finalization.")
+            worktree = Path(record.canonical_path)
+            status = self._git_output(
+                worktree, ["status", "--porcelain=v1", "--untracked-files=normal"],
+                "candidate_snapshot_status_failed", allow_empty=True,
+            )
+            previous_head = self._git_output(worktree, ["rev-parse", "HEAD"], "git_head_unavailable")
+            if not status:
+                return {
+                    "worktree_id": worktree_id,
+                    "experiment_id": experiment_id,
+                    "run_id": run_id,
+                    "snapshot_created": False,
+                    "candidate_head": previous_head,
+                    "change_count": 0,
+                }
+            self._git(worktree, ["add", "-A"], code="candidate_snapshot_stage_failed")
+            message = f"OpenDrSai experiment snapshot\n\nExperiment: {experiment_id}\nRun: {run_id}"
+            self._git(worktree, [
+                "-c", "user.name=OpenDrSai Runtime",
+                "-c", "user.email=runtime@opendrsai.local",
+                "commit", "-m", message,
+            ], code="candidate_snapshot_commit_failed")
+            candidate_head = self._git_output(worktree, ["rev-parse", "HEAD"], "git_head_unavailable")
+            self._require_clean(worktree, "candidate_snapshot_not_clean")
+            result = {
+                "worktree_id": worktree_id,
+                "experiment_id": experiment_id,
+                "run_id": run_id,
+                "snapshot_created": True,
+                "previous_head": previous_head,
+                "candidate_head": candidate_head,
+                "change_count": len([line for line in status.splitlines() if line]),
+                "status_digest": "sha256:" + hashlib.sha256(status.encode()).hexdigest(),
+            }
+            self._emit("worktree.candidate.snapshot", record)
+            return result
+
+    def adoption_preview(self, source_workspace_id: str, worktree_id: str) -> dict[str, Any]:
+        """Describe an immutable merge/selective-adoption candidate without writing either tree."""
+        with self._lock:
+            record = self.describe(source_workspace_id, worktree_id)
+            if record.status not in {"active", "review", "merge_pending"}:
+                raise GitWorktreeError("worktree_state_conflict", "Worktree is not available for adoption review.")
+            source = Path(record.repo_root)
+            worktree = Path(record.canonical_path)
+            source_head = self._git_output(source, ["rev-parse", "HEAD"], "git_head_unavailable")
+            candidate_head = self._git_output(worktree, ["rev-parse", "HEAD"], "git_head_unavailable")
+            source_status = self._git_output(source, ["status", "--porcelain=v1"], "git_status_failed", allow_empty=True)
+            candidate_status = self._git_output(worktree, ["status", "--porcelain=v1"], "git_status_failed", allow_empty=True)
+            raw = self._git_output(
+                worktree, ["diff", "--name-status", "-z", f"{record.base_commit}..{candidate_head}"],
+                "worktree_preview_failed", allow_empty=True,
+            )
+            changes = self._parse_name_status(raw)
+            source_changed = set(filter(None, self._git_output(
+                source, ["diff", "--name-only", f"{record.base_commit}..{source_head}"],
+                "worktree_preview_failed", allow_empty=True,
+            ).splitlines()))
+            for change in changes:
+                affected = {str(change.get("path") or ""), str(change.get("old_path") or ""), str(change.get("new_path") or "")}
+                change["conflict_possible"] = bool(source_changed.intersection(affected))
+            facts = {
+                "source_workspace_id": source_workspace_id,
+                "worktree_id": worktree_id,
+                "base_commit": record.base_commit,
+                "source_head": source_head,
+                "candidate_head": candidate_head,
+                "source_status_digest": hashlib.sha256(source_status.encode()).hexdigest(),
+                "candidate_status_digest": hashlib.sha256(candidate_status.encode()).hexdigest(),
+                "changes": changes,
+            }
+            digest = "sha256:" + hashlib.sha256(
+                json.dumps(facts, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            return {
+                **facts,
+                "preview_digest": digest,
+                "source_clean": not source_status,
+                "candidate_clean": not candidate_status,
+                "conflict_count": sum(bool(item["conflict_possible"]) for item in changes),
+                "can_apply": not source_status and not candidate_status and bool(changes),
+            }
+
+    def adopt_selection(
+        self,
+        source_workspace_id: str,
+        worktree_id: str,
+        *,
+        preview_digest: str,
+        selected_paths: list[str],
+        operation_id: str | None = None,
+    ) -> WorktreeRecord:
+        """Apply reviewed paths atomically enough for a clean Git source, then commit them."""
+        with self._lock:
+            if operation_id and not re.fullmatch(r"adoption-[0-9a-f-]{36}", operation_id):
+                raise GitWorktreeError("adoption_operation_invalid", "Adoption operation identity is invalid.")
+            record = self.describe(source_workspace_id, worktree_id)
+            source = Path(record.repo_root)
+            if operation_id and self._adoption_commit_present(source, operation_id):
+                return self._complete_adoption_registry(record)
+            preview = self.adoption_preview(source_workspace_id, worktree_id)
+            if preview["preview_digest"] != preview_digest:
+                if not operation_id or not self._recover_precommit_selection(
+                    source, str(preview["candidate_head"]), selected_paths,
+                ):
+                    raise GitWorktreeError("adoption_preview_stale", "Workspace or experiment Worktree changed after preview.")
+                self._commit_adoption(source, worktree_id, operation_id)
+                self.fault_injector("after_commit")
+                merged = self._complete_adoption_registry(record)
+                self.fault_injector("after_registry_transition")
+                return merged
+            if not preview["can_apply"]:
+                raise GitWorktreeError("adoption_not_applicable", "Adoption requires clean source and experiment Worktrees with changes.")
+            available: set[str] = set()
+            rename_groups: list[set[str]] = []
+            for change in preview["changes"]:
+                group = {str(change[key]) for key in ("path", "old_path", "new_path") if change.get(key)}
+                available.update(group)
+                if change["status"] == "renamed":
+                    rename_groups.append(group)
+            selected = set(selected_paths)
+            if not selected or not selected <= available or any(group & selected and not group <= selected for group in rename_groups):
+                raise GitWorktreeError("adoption_selection_invalid", "Selected paths are invalid or omit one side of a rename.")
+            if any(
+                change["conflict_possible"]
+                and selected.intersection({str(change.get(key) or "") for key in ("path", "old_path", "new_path")})
+                for change in preview["changes"]
+            ):
+                raise GitWorktreeError("adoption_conflict", "Selected paths changed in the source Workspace after the experiment base.")
+            try:
+                self._git(
+                    source,
+                    ["restore", "--source", str(preview["candidate_head"]), "--staged", "--worktree", "--", *sorted(selected)],
+                    code="adoption_apply_failed",
+                )
+                self.fault_injector("after_restore")
+                self._commit_adoption(source, worktree_id, operation_id)
+                self.fault_injector("after_commit")
+            except Exception:
+                subprocess.run(
+                    ["git", "restore", "--staged", "--worktree", "--", *sorted(selected)],
+                    cwd=source, capture_output=True, text=True, check=False, timeout=self.command_timeout_seconds,
+                )
+                raise
+            merged = self._complete_adoption_registry(record)
+            self.fault_injector("after_registry_transition")
+            return merged
+
+    def _commit_adoption(self, source: Path, worktree_id: str, operation_id: str | None) -> None:
+        message = f"Adopt OpenDrSai experiment {worktree_id}"
+        if operation_id:
+            message += f"\n\nOpenDrSai-Adoption: {operation_id}"
+        self._git(source, ["commit", "-m", message], code="adoption_commit_failed")
+
+    def _adoption_commit_present(self, source: Path, operation_id: str) -> bool:
+        messages = self._git_output(
+            source, ["log", "-50", "--format=%B"], "adoption_log_failed", allow_empty=True,
+        )
+        return f"OpenDrSai-Adoption: {operation_id}" in messages.splitlines()
+
+    def _recover_precommit_selection(
+        self, source: Path, candidate_head: str, selected_paths: list[str],
+    ) -> bool:
+        selected = set(selected_paths)
+        changed: set[str] = set()
+        for args in (
+            ["diff", "--name-only", "-z", "HEAD"],
+            ["diff", "--cached", "--name-only", "-z", "HEAD"],
+            ["ls-files", "--others", "--exclude-standard", "-z"],
+        ):
+            raw = self._git_output(source, args, "adoption_recovery_status_failed", allow_empty=True)
+            changed.update(path for path in raw.split("\x00") if path)
+        if not changed or not changed <= selected:
+            return False
+        for path in selected:
+            compared = subprocess.run(
+                ["git", "diff", "--quiet", candidate_head, "--", path], cwd=source,
+                capture_output=True, text=True, timeout=self.command_timeout_seconds,
+            )
+            if compared.returncode != 0:
+                return False
+        return True
+
+    def _complete_adoption_registry(self, record: WorktreeRecord) -> WorktreeRecord:
+        current = self.describe(record.source_workspace_id, record.worktree_id)
+        if current.status == "merged":
+            return current
+        reviewed = current if current.status == "review" else self.registry.transition_worktree(current.worktree_id, "review")
+        merged = self.registry.transition_worktree(reviewed.worktree_id, "merged", expected_status="review")
+        self._emit("worktree.merged", merged)
+        return merged
 
     def adopt(
         self,
@@ -440,6 +648,31 @@ class GitWorktreeService:
             return None
         preview = "; ".join(lines[:10])
         return preview + (f"; +{len(lines) - 10} more" if len(lines) > 10 else "")
+
+    @staticmethod
+    def _parse_name_status(raw: str) -> list[dict[str, Any]]:
+        tokens = raw.split("\x00") if raw else []
+        result: list[dict[str, Any]] = []
+        index = 0
+        while index < len(tokens) and tokens[index]:
+            status = tokens[index]
+            index += 1
+            if status.startswith("R") or status.startswith("C"):
+                if index + 1 >= len(tokens):
+                    break
+                old_path, new_path = tokens[index], tokens[index + 1]
+                index += 2
+                result.append({"status": "renamed" if status.startswith("R") else "copied", "old_path": old_path, "new_path": new_path})
+            else:
+                if index >= len(tokens):
+                    break
+                path = tokens[index]
+                index += 1
+                result.append({
+                    "status": {"A": "added", "M": "modified", "D": "deleted", "T": "type_changed"}.get(status[:1], "modified"),
+                    "path": path,
+                })
+        return result
 
     @staticmethod
     def _assert_entry_matches(record: WorktreeRecord, entry: GitWorktreeEntry) -> None:

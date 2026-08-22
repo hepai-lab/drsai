@@ -112,6 +112,23 @@ class RuntimeV2Test {
         assertTrue(cancelled.terminal)
     }
 
+    @Test fun legacyCheckpointWithoutFullRuntimeStateCanBeClosedExplicitly() = runTest {
+        val journal = MemoryJournal()
+        journal.items["run"] = RunCheckpoint(command(), WorkbenchRunStatus.RUNNING, 2)
+        val recorder = RuntimeV2EventRecorder(journal)
+        val interrupted = recorder.recover("alice").single()
+
+        val failed = recorder.failUnrecoverable(
+            interrupted.command.runId,
+            "legacy_kotlin_checkpoint_unrecoverable",
+        )
+
+        assertEquals(WorkbenchRunStatus.FAILED, failed.status)
+        assertEquals("legacy_kotlin_checkpoint_unrecoverable", failed.failureCode)
+        assertEquals("run.failed", journal.events.last().kind)
+        assertTrue(failed.terminal)
+    }
+
     @Test fun journalFailureNeverAdvancesPastTheLastAtomicBoundary() = runTest {
         val journal = object : MemoryJournal() {
             override suspend fun append(event: WorkbenchEvent, next: RunCheckpoint): EventAppendDecision {

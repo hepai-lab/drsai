@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -32,7 +33,8 @@ try {
   assert.equal((await threads.listThreads()).some((thread) => thread.id === created.id), false);
   assert.equal(await threads.getThreadSnapshot(created.id), null, "Deleting a thread must delete its persisted snapshot.");
   assert.deepEqual(JSON.parse(await readFile(join(root, "desktop", "threads.json"), "utf8")), []);
-  assert.deepEqual(JSON.parse(await readFile(join(root, "desktop", "thread-snapshots.json"), "utf8")), {});
+  const shard = join(root, "desktop", "thread-snapshots", `${createHash("sha256").update(created.id).digest("hex")}.json`);
+  await assert.rejects(access(shard), /ENOENT/, "Deleting a thread must remove its snapshot shard.");
   console.log("Thread lifecycle and persistence verification passed.");
 } finally {
   await rm(root, { recursive: true, force: true });

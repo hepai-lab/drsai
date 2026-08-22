@@ -8,11 +8,12 @@ const shutdownPlan = await readFile(new URL("../../macos/src/main/bootstrap/shut
 const processes = await readFile(new URL("../../macos/src/main/platformProcesses.ts", import.meta.url), "utf8");
 const terminal = await readFile(new URL("../../macos/src/main/terminal.ts", import.meta.url), "utf8");
 
-for (const contract of ["gatewayStartPromise", "gatewayStopPromise", "checkGatewayEndpoints", "externalConflict", "Gateway exited before its health checks became ready", "terminateGatewayProcessTree", "requestRuntimeShutdown"]) {
+for (const contract of ["gatewayStartPromise", "gatewayStopPromise", "checkGatewayEndpoints", "externalConflict", "Gateway did not become ready within", "terminateGatewayProcessTree", "requestRuntimeShutdown"]) {
   assert.ok(gateway.includes(contract), `Gateway lifecycle is missing ${contract}.`);
 }
 assert.match(gateway, /gatewayProcess\.once\("error"/, "Gateway spawn errors must be observed.");
 assert.match(processes, /SIGTERM[\s\S]*SIGKILL/, "macOS process groups require graceful then forced termination.");
+assert.match(processes, /signalledGroup \? group : pid/, "macOS process cleanup must check the PID fallback when the child is not a process-group leader.");
 assert.match(terminal, /signalProcessGroup\(session\.pid, "SIGTERM"\)[\s\S]*signalProcessGroup\(session\.pid, "SIGKILL"\)/, "PTY process groups require graceful then forced termination.");
 assert.match(terminal, /process\.kill\(-Math\.abs\(pid\), signal\)/, "PTY signals must target the process group.");
 assert.match(terminal, /Promise\.race\(\[session\.exitPromise, delay\(TERMINATE_GRACE_MS\)\]\)/, "PTY cleanup must wait for graceful exit before forcing termination.");
@@ -20,8 +21,11 @@ assert.match(main, /before-quit[\s\S]{0,180}event\.preventDefault\(\)/, "App qui
 for (const cleanup of ["terminal-sessions", "voice-files", "runtime-install", "gateway", "managed-process-registry"]) {
   assert.ok(shutdownPlan.includes(`name: "${cleanup}"`), `App shutdown plan omits ${cleanup}.`);
 }
+assert.ok(shutdownPlan.indexOf('name: "renderer"') < shutdownPlan.indexOf('name: "scheduled-task-worker"'), "Renderer must stop before service cleanup starts.");
+assert.ok(shutdownPlan.indexOf('name: "gateway"') > shutdownPlan.indexOf('name: "chat-journal"'), "Gateway must remain available until dependent resources drain.");
+assert.match(main, /closeRenderer:\s*async[\s\S]*window\.destroy\(\)[\s\S]*setImmediate/, "App shutdown must destroy the renderer and drain dispatched IPC before service cleanup.");
 assert.ok(main.includes("createMacosShutdownPlan({"), "App shutdown dependencies must be injected by the composition root.");
-assert.ok(main.includes("shutdownCoordinator.run(plan.map((step) => step.run))"), "App shutdown must run the named plan through the bounded coordinator.");
+assert.match(main, /shutdownCoordinator\.run\(plan\.map\(\(step\) => step\.run\), 15_000\)/, "App shutdown must run the named plan through the calibrated bounded coordinator.");
 assert.ok(main.includes("managedProcessRegistry.beginShutdown()"), "App shutdown must reject new managed child processes before cleanup starts.");
 
 const coordinator = new MacosAppShutdownCoordinator();

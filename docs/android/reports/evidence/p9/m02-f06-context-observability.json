@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "feature_id": "M02-F06",
+  "generated_at": "2026-08-05T12:10:43.417846+00:00",
+  "passed": true,
+  "gates": {
+    "prompt_body_redacted": true,
+    "absolute_path_redacted": true,
+    "active_layers_have_digest": true,
+    "absent_layers_explained": true,
+    "token_estimate_exported": true,
+    "budget_digest_exported": true,
+    "trimming_explained": true,
+    "android_allowlist_mapper": true
+  },
+  "diagnostic": {
+    "schema_version": 1,
+    "layers": [
+      {
+        "id": "system",
+        "source": "kernel",
+        "chars": 411,
+        "estimated_tokens": 137,
+        "sha256": "b51717d3f9f42a31f4cd52c1f59fb9307aa1c23c5d06d42e7b94033b3f0f8faa",
+        "status": "applied",
+        "trim_reason": "none"
+      },
+      {
+        "id": "safety_tool_policy",
+        "source": "kernel",
+        "chars": 601,
+        "estimated_tokens": 201,
+        "sha256": "cb2738e0deb689c28ed617a8f7c7ff0d6f1d1fadbba4d8aede594d519553a38d",
+        "status": "applied",
+        "trim_reason": "none"
+      },
+      {
+        "id": "skill:private",
+        "source": "external-source",
+        "chars": 45,
+        "estimated_tokens": 15,
+        "sha256": "6d49d68147bfc4b610f7d9a9bdb496d2cc8155eb2509872d00572bf634129fb7",
+        "status": "applied",
+        "trim_reason": "none"
+      },
+      {
+        "id": "project",
+        "source": "project-host",
+        "chars": 32,
+        "estimated_tokens": 11,
+        "sha256": "94711423533f97414f66403cfd724e4e9b453d42b439ed7c3c57397977824df3",
+        "status": "applied",
+        "trim_reason": "none"
+      },
+      {
+        "id": "agent_profile",
+        "source": "not-configured",
+        "chars": 0,
+        "estimated_tokens": 0,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "status": "absent",
+        "trim_reason": "not_configured"
+      },
+      {
+        "id": "memory",
+        "source": "not-configured",
+        "chars": 0,
+        "estimated_tokens": 0,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "status": "absent",
+        "trim_reason": "not_configured"
+      }
+    ],
+    "context": {
+      "policy_version": "p9-context-budget-v1",
+      "context_window_tokens": 4096,
+      "reserved_output_tokens": 1024,
+      "input_tokens": 3072,
+      "max_messages": 10,
+      "summary_tokens": 256,
+      "sha256": "32ba18456e4c541f80b303c64e78bf0eeb697c6c9e3c761507de4f081c6c0116",
+      "estimated_input_tokens": 1427,
+      "message_count": 10,
+      "remaining_input_tokens": 1645
+    },
+    "history_message_count": 100,
+    "included_history_messages": 7,
+    "omitted_history_messages": 93,
+    "summary_applied": true,
+    "trim_reason": "token_or_message_budget"
+  },
+  "source_sha256": {
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py": "7b1d02d13aea7e5acc6957975a9d55f31b22976480377aa7f3ab3218d0b8f06b",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/engine.py": "be28389f4db95c1646897b0ea907274beb31aae9b29a49e1d650cc7300aa7db5",
+    "cores/python/packages/drsai/tests/test_context_budget_policy.py": "f589cd7611c00baca289e14ff7f88f45ca68f0c96a5ec92bd84147167ee8588d",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRuntimeEventMapper.kt": "bcb730b9f05285290225f8f95969432c31a97517ff0ba3f154a95a257a5c7f93",
+    "apps/android/app/src/test/java/ai/drsai/remote/PythonRuntimeEventMapperTest.kt": "5c3822ae42302be6a581ace5d23f0511ffb2df8750da313bb6be48a9095de830"
+  }
+}

@@ -10,9 +10,11 @@ import type {
   DesktopBackgroundTaskListRequest,
   DesktopBackgroundTaskSource,
   DesktopBackgroundTaskStatus,
+  DesktopAnomalyDecisionRecord,
   DesktopBackgroundTaskUpdateRequest,
   DesktopTaskDeliverySummary,
   DesktopTaskArtifactLink,
+  DesktopArtifactProvenance,
   DesktopArtifactQuality,
   DesktopChartDataQuality,
   DesktopTaskPlanAdjustment,
@@ -26,6 +28,8 @@ import type {
 import { DRSAI_HOME } from "./paths";
 import { requireAuthContext } from "./auth";
 import { buildAgentTaskPlan, isMultiMaterialSynthesisTask } from "../../../shared/api/agentTaskPlan";
+import { RESULT_PROVENANCE_SCHEMA } from "../../../shared/api/resultProvenance";
+import { buildResultProvenance, ensureTaskArtifactProvenance } from "../../../shared/main/resultProvenance";
 import { readDurableJson, writeDurableJson } from "../../../shared/main/durableJsonStore";
 
 const BACKGROUND_TASKS_FILE = join(DRSAI_HOME, "desktop", "background-tasks.json");
@@ -69,6 +73,7 @@ export async function enqueueBackgroundTask(
     createdAt: now,
     updatedAt: now,
     ...(typed.workspacePath ? { workspacePath: typed.workspacePath } : {}),
+    ...(typed.threadId ? { threadId: typed.threadId } : {}),
     ...(typed.targetId ? { targetId: typed.targetId } : {}),
     ...(typed.approvalId ? { approvalId: typed.approvalId } : {}),
     ...(typed.currentStep ? { currentStep: typed.currentStep } : {}),
@@ -307,6 +312,7 @@ export async function upsertBackgroundTaskForAgentRun(
     (task) => task.targetId === event.requestId && task.kind === "agent_run",
   );
   const existing = existingIndex >= 0 ? currentTasks[existingIndex] : undefined;
+  const taskId = existing?.id ?? createBackgroundTaskId("agent_run", now);
   const planSteps = request.executionPlan?.length ? request.executionPlan : buildAgentTaskPlan(request.task);
   const planAdjustments = event.planAdjustment
     ? [...(existing?.planAdjustments ?? []), event.planAdjustment]
@@ -317,10 +323,10 @@ export async function upsertBackgroundTaskForAgentRun(
   const deliverySummary = event.type === "done"
     ? buildAgentDeliverySummary(request, existing)
     : event.type === "file_event" && event.fileEvent?.action === "artifact"
-      ? await buildAgentArtifactSummary(request, event.fileEvent.path, existing)
+      ? await buildAgentArtifactSummary(request, event, existing, taskId)
       : existing?.deliverySummary;
   const task: DesktopBackgroundTask = {
-    id: existing?.id ?? createBackgroundTaskId("agent_run", now),
+    id: taskId,
     ...(existing?.ownerUserId ? { ownerUserId: existing.ownerUserId } : ownerUserId ? { ownerUserId } : {}),
     kind: "agent_run",
     source: "agent",
@@ -333,6 +339,7 @@ export async function upsertBackgroundTaskForAgentRun(
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     ...(request.workspacePath ? { workspacePath: request.workspacePath } : {}),
+    ...(request.threadId ? { threadId: request.threadId } : existing?.threadId ? { threadId: existing.threadId } : {}),
     targetId: event.requestId,
     currentStep: agentRunStepLabel(event, planSteps, hasIncompleteAdjustment),
     progress: agentRunProgress(event.type),
@@ -365,6 +372,16 @@ function agentInputFileName(request: AgentRunRequest): string | undefined {
     ? basename(firstFile.path)
     : undefined;
 }
+
+function agentInputLabels(request: AgentRunRequest): string[] {
+  return (request.files ?? []).flatMap((file) => {
+    if (!file || typeof file !== "object") return [];
+    if ("name" in file && typeof file.name === "string" && file.name.trim()) return [file.name.trim()];
+    if ("path" in file && typeof file.path === "string" && file.path.trim()) return [basename(file.path.trim())];
+    return [];
+  }).slice(0, 50);
+}
+
 
 function mapAgentRunStatus(type: AgentRunEvent["type"], hasIncompleteAdjustment = false): DesktopBackgroundTaskStatus {
   if (type === "done") return hasIncompleteAdjustment ? "blocked" : "completed";
@@ -551,6 +568,9 @@ function normalizeEnqueueRequest(
     title: normalizeRequiredText(typed.title, "Background task title is required."),
     ...(typeof typed.workspacePath === "string" && typed.workspacePath.trim()
       ? { workspacePath: typed.workspacePath.trim() }
+      : {}),
+    ...(typeof typed.threadId === "string" && /^thread-[A-Za-z0-9-]{1,160}$/.test(typed.threadId)
+      ? { threadId: typed.threadId }
       : {}),
     ...(typeof typed.targetId === "string" && typed.targetId.trim()
       ? { targetId: typed.targetId.trim() }
@@ -766,13 +786,16 @@ async function currentOwnerUserId(): Promise<string | undefined> {
 }
 
 function cloneBackgroundTask(task: DesktopBackgroundTask): DesktopBackgroundTask {
+  const deliverySummary = task.deliverySummary
+    ? ensureTaskArtifactProvenance(task, cloneDeliverySummary(task.deliverySummary))
+    : undefined;
   return {
     ...task,
     ...(task.planSteps ? { planSteps: task.planSteps.map((step) => ({ ...step })) } : {}),
     ...(task.planAdjustments ? { planAdjustments: task.planAdjustments.map((item) => ({ ...item })) } : {}),
     ...(task.completedSteps ? { completedSteps: [...task.completedSteps] } : {}),
     ...(task.pendingDecisions ? { pendingDecisions: [...task.pendingDecisions] } : {}),
-    ...(task.deliverySummary ? { deliverySummary: cloneDeliverySummary(task.deliverySummary) } : {}),
+    ...(deliverySummary ? { deliverySummary } : {}),
   };
 }
 
@@ -874,9 +897,11 @@ function buildAgentDeliverySummary(
 
 async function buildAgentArtifactSummary(
   request: AgentRunRequest,
-  artifactPath: string,
+  event: AgentRunEvent,
   existing: DesktopBackgroundTask | undefined,
+  sourceTaskId: string,
 ): Promise<DesktopTaskDeliverySummary> {
+  const artifactPath = event.fileEvent?.path ?? "";
   const absolutePath = isAbsolute(artifactPath)
     ? artifactPath
     : resolve(request.workspacePath || process.cwd(), artifactPath);
@@ -889,19 +914,32 @@ async function buildAgentArtifactSummary(
     ? await evaluateSvgChartQuality(absolutePath, request)
     : undefined;
   const analysisRoute = buildArtifactAnalysisRoute(request);
+  const artifactId = `${request.requestId}:artifact:${createHash("sha256").update(absolutePath).digest("hex").slice(0, 12)}`;
+  const previousArtifact = existing?.deliverySummary?.artifacts.find((artifact) => artifact.path === absolutePath);
+  const provenance = buildResultProvenance({
+    sourceTaskId,
+    sourceSessionId: event.sessionId || request.sessionId || request.threadId || sourceTaskId,
+    sourceRunId: event.runId || request.runId || request.requestId || sourceTaskId,
+    inputSummary: request.task,
+    attachmentLabels: agentInputLabels(request),
+    artifactId,
+    version: (previousArtifact?.provenance?.target.version ?? 0) + 1,
+    capturedAt: event.fileEvent?.timestamp || new Date().toISOString(),
+  });
   const artifacts = [
-    ...(existing?.deliverySummary?.artifacts ?? []),
+    ...(existing?.deliverySummary?.artifacts ?? []).filter((artifact) => artifact.path !== absolutePath),
     {
-      id: `${request.requestId}:artifact:${createHash("sha256").update(absolutePath).digest("hex").slice(0, 12)}`,
+      id: artifactId,
       label: basename(absolutePath),
       path: absolutePath,
       kind: /\.(?:md|markdown|txt)$/i.test(absolutePath) ? "report" as const : "file" as const,
+      provenance,
       ...(quality ? { quality } : {}),
       ...(chartQuality ? { chartQuality } : {}),
       ...(editLineage ? { editLineage } : {}),
       ...(analysisRoute ? { analysisRoute } : {}),
     },
-  ].filter((artifact, index, all) => all.findIndex((candidate) => candidate.path === artifact.path) === index);
+  ];
   return normalizeDeliverySummary({
     findingSummary: `正在完成“${request.task}”。`,
     importance: "medium",
@@ -1149,9 +1187,11 @@ function normalizeDeliverySummary(value: DesktopTaskDeliverySummary): DesktopTas
       label: normalizeRequiredText(artifact.label, "Artifact label is required."),
       path: normalizeRequiredText(artifact.path, "Artifact path is required."),
       kind: ["file", "presentation", "report", "folder"].includes(artifact.kind) ? artifact.kind : "file",
+      ...(artifact.provenance ? { provenance: normalizeArtifactProvenance(artifact.provenance) } : {}),
       ...(artifact.quality ? { quality: normalizeArtifactQuality(artifact.quality) } : {}),
       ...(artifact.chartQuality ? { chartQuality: normalizeChartQuality(artifact.chartQuality) } : {}),
       ...(artifact.analysisRoute ? { analysisRoute: normalizeAnalysisRoute(artifact.analysisRoute) } : {}),
+      ...(artifact.anomalyDecision ? { anomalyDecision: normalizeAnomalyDecision(artifact.anomalyDecision) } : {}),
       ...(artifact.consistencyCheck ? { consistencyCheck: {
         checkedAt: normalizeOptionalText(artifact.consistencyCheck.checkedAt) ?? new Date().toISOString(),
         status: artifact.consistencyCheck.status === "passed" ? "passed" : "issues_found",
@@ -1396,11 +1436,76 @@ function isDeliverySummary(value: unknown): value is DesktopTaskDeliverySummary 
         && summary.completionCriteria.incomplete.every((item) => typeof item === "string")));
 }
 
+function normalizeArtifactProvenance(value: DesktopArtifactProvenance): DesktopArtifactProvenance {
+  const digest = (candidate: unknown, label: string): string => {
+    const normalized = normalizeRequiredText(candidate, `${label} is required.`);
+    if (!/^sha256:[a-f0-9]{64}$/i.test(normalized)) throw new Error(`${label} is invalid.`);
+    return normalized.toLowerCase();
+  };
+  if (value.schemaVersion !== RESULT_PROVENANCE_SCHEMA) throw new Error("Result provenance schema is invalid.");
+  const version = Math.floor(Number(value.target?.version));
+  if (!Number.isFinite(version) || version < 1) throw new Error("Result target version is invalid.");
+  return {
+    schemaVersion: RESULT_PROVENANCE_SCHEMA,
+    sourceTaskId: normalizeRequiredText(value.sourceTaskId, "Result source task is required."),
+    sourceSessionId: normalizeRequiredText(value.sourceSessionId, "Result source session is required."),
+    sourceRunId: normalizeRequiredText(value.sourceRunId, "Result source run is required."),
+    input: {
+      summary: normalizeRequiredText(value.input?.summary, "Result input summary is required."),
+      attachments: Array.isArray(value.input?.attachments)
+        ? value.input.attachments.map((item) => normalizeRequiredText(item, "Result input attachment is invalid.")).slice(0, 50)
+        : [],
+      digest: digest(value.input?.digest, "Result input digest"),
+    },
+    target: {
+      artifactId: normalizeRequiredText(value.target?.artifactId, "Result target artifact is required."),
+      version,
+      versionId: digest(value.target?.versionId, "Result target version id"),
+    },
+    capturedAt: normalizeRequiredText(value.capturedAt, "Result provenance capture time is required."),
+    sourceDigest: digest(value.sourceDigest, "Result source digest"),
+  };
+}
+
+function normalizeAnomalyDecision(value: DesktopAnomalyDecisionRecord): DesktopAnomalyDecisionRecord {
+  const decision = value.decision === "keep" || value.decision === "exclude" || value.decision === "both"
+    ? value.decision
+    : undefined;
+  return {
+    sourcePath: normalizeRequiredText(value.sourcePath, "Anomaly source path is required."),
+    anomalyColumn: normalizeRequiredText(value.anomalyColumn, "Anomaly column is required."),
+    totalRows: Math.max(0, Math.floor(Number(value.totalRows) || 0)),
+    anomalyRows: Math.max(0, Math.floor(Number(value.anomalyRows) || 0)),
+    normalRows: Math.max(0, Math.floor(Number(value.normalRows) || 0)),
+    ...(decision ? { decision } : {}),
+    ...(value.decidedAt ? { decidedAt: normalizeRequiredText(value.decidedAt, "Anomaly decision time is required.") } : {}),
+    ...(value.resultSummary ? { resultSummary: normalizeRequiredText(value.resultSummary, "Anomaly result summary is required.") } : {}),
+    ...(value.sourceSha256 ? { sourceSha256: normalizeRequiredText(value.sourceSha256, "Anomaly source hash is required.") } : {}),
+    ...(value.receiptPath ? { receiptPath: normalizeRequiredText(value.receiptPath, "Anomaly receipt path is required.") } : {}),
+    ...(Array.isArray(value.outputs) ? {
+      outputs: value.outputs.slice(0, 2).map((output) => ({
+        role: output.role === "excluded_anomalies" ? "excluded_anomalies" : "kept_all",
+        path: normalizeRequiredText(output.path, "Anomaly output path is required."),
+        rowCount: Math.max(0, Math.floor(Number(output.rowCount) || 0)),
+        anomalyCount: Math.max(0, Math.floor(Number(output.anomalyCount) || 0)),
+        sha256: normalizeRequiredText(output.sha256, "Anomaly output hash is required."),
+      })),
+    } : {}),
+  };
+}
+
 function cloneDeliverySummary(summary: DesktopTaskDeliverySummary): DesktopTaskDeliverySummary {
   return {
     ...summary,
     artifacts: summary.artifacts.map((artifact) => ({
       ...artifact,
+      ...(artifact.provenance ? {
+        provenance: {
+          ...artifact.provenance,
+          input: { ...artifact.provenance.input, attachments: [...artifact.provenance.input.attachments] },
+          target: { ...artifact.provenance.target },
+        },
+      } : {}),
       ...(artifact.quality ? {
         quality: {
           ...artifact.quality,
@@ -1412,6 +1517,14 @@ function cloneDeliverySummary(summary: DesktopTaskDeliverySummary): DesktopTaskD
       } : {}),
       ...(artifact.chartQuality ? { chartQuality: { ...artifact.chartQuality, checks: [...artifact.chartQuality.checks] } } : {}),
       ...(artifact.analysisRoute ? { analysisRoute: { ...artifact.analysisRoute } } : {}),
+      ...(artifact.anomalyDecision ? {
+        anomalyDecision: {
+          ...artifact.anomalyDecision,
+          ...(artifact.anomalyDecision.outputs
+            ? { outputs: artifact.anomalyDecision.outputs.map((output) => ({ ...output })) }
+            : {}),
+        },
+      } : {}),
       ...(artifact.consistencyCheck ? { consistencyCheck: {
         ...artifact.consistencyCheck,
         items: artifact.consistencyCheck.items.map((item) => ({ ...item })),

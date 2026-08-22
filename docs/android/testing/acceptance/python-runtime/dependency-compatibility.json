@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-02T07:06:16.865807+00:00",
+  "python": {
+    "version": "3.11",
+    "license": "PSF-2.0",
+    "abis": [
+      "arm64-v8a",
+      "x86_64"
+    ]
+  },
+  "chaquopy": {
+    "version": "17.0.0",
+    "license": "MIT"
+  },
+  "drsai_core_mobile": {
+    "version": "1",
+    "license": "MIT",
+    "stdlib_imports": [
+      "__future__",
+      "asyncio",
+      "base64",
+      "dataclasses",
+      "enum",
+      "json",
+      "typing"
+    ],
+    "external_dependencies": [],
+    "forbidden_dependencies": [],
+    "files": [
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/__init__.py",
+        "sha256": "61e0550e7ff9359b452fbf2436b633f669e8e6133b1f7f0f73e3d1572d0c7dab",
+        "bytes": 1276
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/context.py",
+        "sha256": "6db7693153132b15f39a25d60873fb8e9eeda3a707bdc38769be91b20a7568b1",
+        "bytes": 2084
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/engine.py",
+        "sha256": "7d3686b3c81e740541ce3c5897c8879800169c39b23e89f40ef54c7da11f9f6f",
+        "bytes": 31779
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/factory.py",
+        "sha256": "cc1f49f1028fddef6d5f171ad85f1de206310bd979c400ef65f63ca08b31bb2a",
+        "bytes": 533
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/ports.py",
+        "sha256": "816c1779ca4266f8e08f77522b93d0314a38f4daf38dd19647f6bfdda26dc301",
+        "bytes": 2515
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/protocol.py",
+        "sha256": "7f28110aee222dde60b70fb8a0ff73ae7e3811aea25bc9b0359b1ca24d74ac82",
+        "bytes": 3912
+      },
+      {
+        "path": "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/subagents.py",
+        "sha256": "4b5b776e1f4cfa597262234c8defa94a69c4aec8649e69f648ce66b089e889e2",
+        "bytes": 4175
+      }
+    ]
+  },
+  "native_files": [
+    {
+      "path": "lib/arm64-v8a/libchaquopy_java.so",
+      "sha256": "79de059106ef396ca04f083d1cde9d6849f4371e1883fbae5eb23e8103eb77b6",
+      "bytes": 153312
+    },
+    {
+      "path": "lib/arm64-v8a/libcrypto_chaquopy.so",
+      "sha256": "766c1744b32da624ca78d3996806b43631f28222576ba80bb5688e5c3041f0be",
+      "bytes": 3784
+    },
+    {
+      "path": "lib/arm64-v8a/libcrypto_python.so",
+      "sha256": "c6c31b928c480e77ca85f9e34286ca922d6c56fd79567b34d442bbcc6817d10e",
+      "bytes": 3721048
+    },
+    {
+      "path": "lib/arm64-v8a/libpython3.11.so",
+      "sha256": "bcbf0b2cedc14925bc820ed606033e04cc369c6698a8169fc07185cf1108975e",
+      "bytes": 5389896
+    },
+    {
+      "path": "lib/arm64-v8a/libsqlite3_chaquopy.so",
+      "sha256": "1e348dceef9c46754e6be14f2a58e6d34441afb03974b36fa0710f8ee50ebf2d",
+      "bytes": 3784
+    },
+    {
+      "path": "lib/arm64-v8a/libsqlite3_python.so",
+      "sha256": "6b0f0012ffff95d2420e88fd420d0d65dc4d63d943c1011567978f6203d118dd",
+      "bytes": 886520
+    },
+    {
+      "path": "lib/arm64-v8a/libssl_chaquopy.so",
+      "sha256": "024d7a7696e789443642645df35929994aa8a4a3cb4d46b2fe7415d64f9a2282",
+      "bytes": 3768
+    },
+    {
+      "path": "lib/arm64-v8a/libssl_python.so",
+      "sha256": "60b083de76e184b19bb830e80f9f6b155f6db87e309018d007db6439db45145e",
+      "bytes": 623736
+    },
+    {
+      "path": "assets/chaquopy/bootstrap-native/arm64-v8a/_bz2.cpython-311.so",
+      "sha256": "f8cf0aec85135121536aea2981081f3534c973496f3457e092abe3349155977e",
+      "bytes": 82632
+    },
+    {
+      "path": "assets/chaquopy/bootstrap-native/arm64-v8a/_ctypes.cpython-311.so",
+      "sha256": "673e90b1be6dc1a96a5175662fe007b13463841959a5d2a1dcc891dbad72c2b1",
+      "bytes": 218272
+    },
+    {
+      "path": "assets/chaquopy/bootstrap-native/arm64-v8a/_datetime.cpython-311.so",
+      "sha256": "94739342dc95342b30523f0c3d51c5f3ea719c66b9283d317d6286aafa5e48b6",
+      "bytes": 106712
+    },
+    {
+      "path": "assets/chaquopy/bootstrap-native/arm64-v8a/_lzma.cpython-311.so",
+      "sha256": "662946f372e9ffc578973b8d45d5ef3038c01d04aab7ea90eadcb4cfa691fd33",
+      "bytes": 242824
+    },
+    {
+      "path": "assets/chaquopy/bootstrap-native/arm64-v8a/_random.cpython-311.so",
+      "sha256": "f9ac07ab294a7786001db5ed68dc9b8be575a78712b4fff71468a0cae0346e76",
+      "bytes": 13952
+    },
+    {
+      "path": "assets/chaquopy/bootstrap-native/arm64-v8a/_sha512.cpython-311.so",
+      "sha256": "008f550dec5d96ee4a1d00c041cd7859d95a4d56f39d537cf75a73b89291aee2",
+      "bytes": 22896
+    },
+    {
+      "path": "assets/chaquopy/bootstrap-native/arm64-v8a/_struct.cpython-311.so",
+      "sha256": "82da00584039d88b3c12bb53586efa6c911453a2089880bad3c27b826cc66399",
+      "bytes": 46328
+    },
+    {
+      "path": "assets/chaquopy/bootstrap-native/arm64-v8a/binascii.cpython-311.so",
+      "sha256": "0790c2ae67f90545d99c5054b72914daf98f175f5961c43d7d8eb8f210c77145",
+      "bytes": 24880
+    },
+    {
+      "path": "assets/chaquopy/bootstrap-native/arm64-v8a/java/chaquopy.so",
+      "sha256": "6b086d12b14a295c8e6730bf6646ad21530dde23ab766ce66b61ff68a668f1af",
+      "bytes": 771744
+    },
+    {
+      "path": "assets/chaquopy/bootstrap-native/arm64-v8a/math.cpython-311.so",
+      "sha256": "ee3d59dc72b8ca885940e9f620c332f226b97558098da21a80b0d6088a4b1bc3",
+      "bytes": 60184
+    },
+    {
+      "path": "assets/chaquopy/bootstrap-native/arm64-v8a/mmap.cpython-311.so",
+      "sha256": "7611b0a4709825d809b0756ea2a122e1ee98162b6f8a3c696a1f72a50c099163",
+      "bytes": 25784
+    },
+    {
+      "path": "assets/chaquopy/bootstrap-native/arm64-v8a/zlib.cpython-311.so",
+      "sha256": "db931d00d398a324ff1b84fce981e9b664a05aee91dc80e0167010ecc2b58cf5",
+      "bytes": 37840
+    }
+  ],
+  "build_policy": {
+    "dynamic_pip_install": false,
+    "downloaded_code_execution": false,
+    "hashes_complete": true
+  },
+  "result": "passed",
+  "apk_sha256": "5cb297406123a2ce3f07958d8cbf25b4e63ae9f30369a61d777aa4e254296288"
+}

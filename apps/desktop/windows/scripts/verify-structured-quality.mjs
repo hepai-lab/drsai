@@ -35,10 +35,11 @@ assert.ok(sharedSource.includes("serialized.length <= 80_000"));
 assert.ok(debugStoreSource.includes("const MAX_RAW_LENGTH = 256 * 1024"));
 
 assert.ok(adapterSource.includes("pendingStructuredEventsByRequest"));
-assert.ok(adapterSource.includes("window.setTimeout(flushStructuredEventDeltas, 16)"));
-assert.ok(styles.includes("content-visibility:auto") && styles.includes("contain-intrinsic-block-size:auto 160px"));
+assert.ok(adapterSource.includes("window.requestAnimationFrame(flushStructuredEventDeltas)"));
+assert.ok(workspaceSource.includes("VirtualizedMessage") && workspaceSource.includes("estimateVirtualMessageHeight"));
+assert.equal(styles.includes(".message-list > .message { content-visibility:auto"), false, "Message list scroll height must not be browser-estimated by content-visibility.");
 
-assert.ok(structuredRendererSource.includes("<details") && structuredRendererSource.includes("<summary>"));
+assert.ok(structuredRendererSource.includes("<details") && structuredRendererSource.includes("<summary"));
 assert.ok(structuredRendererSource.includes('aria-label={`${language === "zh" ? "定位引用"'));
 assert.ok(structuredRendererSource.includes("structured-citation-back"));
 assert.ok(styles.includes(".structured-message-parts button:focus-visible"));
@@ -85,4 +86,15 @@ assert.equal(state.parts[0].markdown.length, 10_000);
 assert.equal(state.seenDedupeKeys.length, 500, "Reducer dedupe memory must stay bounded.");
 assert.ok(elapsedMs < 5_000, `10,000 deltas took ${elapsedMs} ms; expected under 5,000 ms.`);
 
-console.log(`Structured quality verification passed (security, bounds, accessibility, 10k deltas in ${elapsedMs} ms).`);
+let largeState = createStructuredTurnState("large-turn");
+largeState = applyStructuredConversationEvent(largeState, { ...identity, turnId: "large-turn", type: "turn.started", sequence: 1, dedupeKey: "large:start" });
+largeState = applyStructuredConversationEvent(largeState, { ...identity, turnId: "large-turn", type: "part.started", sequence: 2, dedupeKey: "large:part", part: { id: "large-answer", kind: "markdown", status: "running", markdown: "" } });
+const largeStartedAt = Date.now();
+for (let index = 0; index < 100; index += 1) {
+  largeState = applyStructuredConversationEvent(largeState, { ...identity, turnId: "large-turn", type: "part.delta", sequence: index + 3, dedupeKey: `large:${index}`, partId: "large-answer", delta: { kind: "markdown.append", text: "x".repeat(10_000) } });
+}
+const largeElapsedMs = Date.now() - largeStartedAt;
+assert.equal(largeState.parts[0].markdown.length, 1_000_000);
+assert.ok(largeElapsedMs < 2_000, `1 MB structured output took ${largeElapsedMs} ms; expected under 2,000 ms.`);
+
+console.log(`Structured quality verification passed (security, bounds, accessibility, 10k deltas in ${elapsedMs} ms, 1 MB in ${largeElapsedMs} ms).`);

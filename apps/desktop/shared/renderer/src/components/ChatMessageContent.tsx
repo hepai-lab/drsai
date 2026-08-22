@@ -1,31 +1,32 @@
-import { memo, useRef, useState, type ReactNode } from "react";
+import { memo, Profiler, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { parseChatOutput } from "../chatOutputModel";
 import { copyTextSafely } from "../clipboard";
+import { copyTextReliable } from "../threadShareClient";
+import { createStreamingTextFadePlugin, useStreamingTextSegments } from "../streamingTextFade";
+import { splitStreamingMarkdown } from "../streamingMarkdown";
+import { useStreamingDisplayBuffer } from "../streamingDisplayBuffer";
+import { observeStreamingRenderMetric } from "../streamingRenderMetrics";
 
 interface ChatMessageContentProps {
   content: string;
   streaming?: boolean;
   language: "en" | "zh";
   onOpenLink: (href: string | undefined) => void;
+  /** When true, treat the whole string as markdown and do not emit nested reasoning blocks. */
+  plainMarkdown?: boolean;
 }
 
 function CopyButton({ value, label }: { value: string; label: string }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
   async function copy(): Promise<void> {
+    if (!value) return;
     try {
       if (!await copyTextSafely(value)) throw new Error("Clipboard copy is not available.");
     } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = value;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      textarea.remove();
+      return;
     }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1600);
@@ -38,10 +39,13 @@ function CopyButton({ value, label }: { value: string; label: string }): React.J
   );
 }
 
-function MarkdownContent({ content, onOpenLink }: Pick<ChatMessageContentProps, "content" | "onOpenLink">): React.JSX.Element {
+const MarkdownRenderer = memo(function MarkdownRenderer({ content, onOpenLink, streaming = false }: Pick<ChatMessageContentProps, "content" | "onOpenLink" | "streaming">): React.JSX.Element {
+  const streamingSegments = useStreamingTextSegments(content, streaming);
+  const rehypePlugins = useMemo(() => streamingSegments.length ? [createStreamingTextFadePlugin(streamingSegments)] : [], [streamingSegments]);
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      rehypePlugins={rehypePlugins}
       components={{
         a: ({ href, children }) => (
           <button className="markdown-link" type="button" onClick={() => onOpenLink(href)}>
@@ -74,6 +78,23 @@ function MarkdownContent({ content, onOpenLink }: Pick<ChatMessageContentProps, 
     >
       {content}
     </ReactMarkdown>
+  );
+});
+
+function MarkdownContent({ content, onOpenLink, streaming = false }: Pick<ChatMessageContentProps, "content" | "onOpenLink" | "streaming">): React.JSX.Element {
+  const renderStartedAt = performance.now();
+  const displayedContent = useStreamingDisplayBuffer(content, streaming);
+  const split = useMemo(() => streaming ? splitStreamingMarkdown(displayedContent) : { stable: "", tail: displayedContent }, [displayedContent, streaming]);
+  useLayoutEffect(() => {
+    if (streaming) observeStreamingRenderMetric("commit-layout", performance.now() - renderStartedAt);
+  }, [displayedContent, streaming]);
+  return (
+    <Profiler id="streaming-markdown" onRender={(_id, _phase, actualDuration) => {
+      if (streaming) observeStreamingRenderMetric("markdown-render", actualDuration);
+    }}>
+      {split.stable ? <MarkdownRenderer content={split.stable} onOpenLink={onOpenLink} /> : null}
+      {split.tail ? <MarkdownRenderer content={split.tail} onOpenLink={onOpenLink} streaming={streaming} /> : null}
+    </Profiler>
   );
 }
 
@@ -123,11 +144,9 @@ function isSafeImageSource(src: string): boolean {
   }
 }
 
-function ReasoningPart({ text, complete, language }: { text: string; complete: boolean; language: "en" | "zh" }): React.JSX.Element {
+function ReasoningPart({ text, complete }: { text: string; complete: boolean; language: "en" | "zh" }): React.JSX.Element {
   const [open, setOpen] = useState(false);
-  const labels = language === "zh"
-    ? { reasoning: "Reasoning", thinking: "Thinking" }
-    : { reasoning: "Reasoning", thinking: "Thinking" };
+  const labels = { reasoning: "Reasoning", thinking: "Thinking" };
   const title = complete ? labels.reasoning : labels.thinking;
   return (
     <details className="chat-reasoning" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
@@ -147,7 +166,17 @@ export const ChatMessageContent = memo(function ChatMessageContent({
   streaming = false,
   language,
   onOpenLink,
+  plainMarkdown = false,
 }: ChatMessageContentProps): React.JSX.Element {
+  if (plainMarkdown) {
+    return (
+      <div className="chat-output">
+        <div className="chat-markdown">
+          <MarkdownContent content={content} onOpenLink={onOpenLink} streaming={streaming} />
+        </div>
+      </div>
+    );
+  }
   const parts = parseChatOutput(content, { streaming });
   return (
     <div className="chat-output">
@@ -155,7 +184,7 @@ export const ChatMessageContent = memo(function ChatMessageContent({
         <ReasoningPart key={part.id} text={part.text} complete={part.complete && !streaming} language={language} />
       ) : (
         <div className="chat-markdown" key={part.id}>
-          <MarkdownContent content={part.text} onOpenLink={onOpenLink} />
+          <MarkdownContent content={part.text} onOpenLink={onOpenLink} streaming={streaming} />
         </div>
       ))}
     </div>

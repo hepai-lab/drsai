@@ -1,0 +1,71 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 1,
+  "captured_at": "2026-08-05",
+  "scope": "Standalone OpenDrSai Windows App using HAI model configuration and the OpenDrSai Full Agent Runtime; Codex is optional and excluded from accepted progress.",
+  "progress": {
+    "accepted": 0,
+    "total": 50,
+    "percent": 0,
+    "implemented_not_accepted": ["M10-F03", "M10-F04"]
+  },
+  "verified": [
+    {
+      "command": ".venv\\Scripts\\python.exe -m pytest cores/python/packages/drsai/tests/test_runtime_sqlite_lifecycle.py cores/python/packages/drsai/tests/test_agent_runtime.py cores/python/packages/drsai/tests/test_model_provider_config.py cores/python/packages/drsai/tests/test_model_provider_gateway.py -q",
+      "result": "passed",
+      "summary": "54 passed, 12 subtests passed"
+    },
+    {
+      "command": "npm run verify:opendrsai-phase3-ledger",
+      "cwd": "apps/desktop/windows",
+      "result": "passed",
+      "summary": "50 ordered feature ids; 0 accepted"
+    },
+    {
+      "command": "npm run verify:model-provider-config",
+      "cwd": "apps/desktop/windows",
+      "result": "passed"
+    },
+    {
+      "command": "npm run typecheck",
+      "cwd": "apps/desktop/windows",
+      "result": "passed"
+    },
+    {
+      "command": "npm run verify:run-traceability-phase1-windows-e2e",
+      "cwd": "apps/desktop/windows",
+      "result": "passed",
+      "summary": "A-F plus waiting/denied approval"
+    },
+    {
+      "command": "npm run verify:run-editable-phase2-windows-e2e",
+      "cwd": "apps/desktop/windows",
+      "result": "passed",
+      "summary": "G-N"
+    },
+    {
+      "command": ".venv\\Scripts\\python.exe -m pytest cores/python/packages/drsai/tests/test_run_inspection.py cores/python/packages/drsai/tests/test_run_inspection_gateway.py cores/python/packages/drsai/tests/test_run_inspection_scenarios.py cores/python/packages/drsai/tests/test_runtime_engine.py cores/python/packages/drsai/tests/test_oaep_protocol.py cores/python/packages/drsai/tests/test_oaep_runtime_four_path.py cores/python/packages/drsai/tests/test_oaep_delta_parity.py -q",
+      "result": "passed",
+      "summary": "95 passed"
+    }
+  ],
+  "open_gates": [
+    {
+      "command": "npm run verify:run-editable-phase2-release",
+      "result": "failed_closed",
+      "reason": "Real account-backed HAI Backend nightly/RC evidence is missing."
+    },
+    {
+      "command": "npm run verify:run-traceability-phase1-release",
+      "result": "not_yet_stable",
+      "reason": "The backend group failed once under the aggregate runner but passed independently with 95 tests; full aggregate rerun evidence remains required."
+    }
+  ],
+  "fixed_defects": [
+    "Runtime SQLite context managers now release Windows file handles deterministically.",
+    "P1/P2 Electron E2E uses isolated development Home and Gateway port variables.",
+    "Standalone OpenDrSai Gateway startup no longer hard-depends on importing Codex Adapter.",
+    "Ordinary RuntimeAgentService execution no longer references an undefined replay variable.",
+    "P1 release runner now emits redacted per-stage diagnostics."
+  ]
+}

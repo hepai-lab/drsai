@@ -1,0 +1,68 @@
+{
+  "schema_version": "opendrsai.windows.phase3.model-convergence-evidence/1",
+  "captured_at": "2026-08-05T20:25:00+08:00",
+  "feature_id": "P3-MC07",
+  "status": "accepted_local",
+  "scope": "OpenDrSai native Full Agent Runtime model usability and recovery; Codex Adapter excluded",
+  "checks": {
+    "agent_models_are_grouped_by_provider": true,
+    "new_tasks_only_select_available_or_configured_unverified_models": true,
+    "current_unavailable_selection_remains_visible_but_disabled": true,
+    "unavailable_selection_preserves_provider_aware_model_ref": true,
+    "unconfigured_and_real_empty_catalog_are_distinct": true,
+    "unauthorized_offline_timeout_stale_unavailable_and_error_are_distinct": true,
+    "catalog_failure_does_not_disable_other_running_runtime_configuration": true,
+    "refresh_action_is_available_for_all_recoverable_catalog_states": true,
+    "unauthorized_state_offers_reauthentication": true,
+    "empty_or_unavailable_state_offers_explicit_provider_default": true,
+    "provider_save_marks_catalog_stale_then_automatically_refetches": true,
+    "electron_e2e_observed_post_save_config_refetch": true,
+    "model_select_has_accessible_name_and_native_provider_groups": true,
+    "recovery_status_is_announced_and_actions_are_keyboard_operable": true,
+    "windows_unpacked_package_and_real_ipc_smoke_pass": true
+  },
+  "tests": [
+    {
+      "command": "npm run verify:opendrsai-model-usability-recovery",
+      "result": "passed; eight bilingual recovery states, admission filtering, Provider-aware preservation, refresh and API contracts"
+    },
+    {
+      "command": "npm run typecheck && npm run verify:model-provider-config && npm run verify:opendrsai-model-convergence-p3",
+      "result": "passed; Electron main/renderer types and existing model convergence contracts"
+    },
+    {
+      "command": "npm run verify:model-provider-ui-e2e",
+      "result": "passed; real Electron window observed Provider optgroup, accessible selector, fresh-state behavior and automatic post-save config refetch"
+    },
+    {
+      "command": "npm run build:unpack",
+      "result": "passed; production main/preload/renderer and Windows x64 unpacked package rebuilt"
+    },
+    {
+      "command": "npm run verify:packaged",
+      "result": "passed; packaged app smoke with real main/preload/IPC"
+    }
+  ],
+  "artifacts": {
+    "desktop_api": {"path": "apps/desktop/shared/api/desktopApi.ts", "sha256": "f30b82edd2ffb02c35944ad7bfa9b6912c4363a2792511e58b2ca8066b64211f"},
+    "desktop_config_loader": {"path": "apps/desktop/shared/main/myDrSaiConfig.ts", "sha256": "8c3023af6719727ef06877756eb12b57ef0d74a283cac206b309f10ac71351d0"},
+    "desktop_renderer": {"path": "apps/desktop/shared/renderer/src/App.tsx", "sha256": "61d8ec1c171b928b666d13d99a2c0a2404d9996dddc6fae671ca529e4de4f500"},
+    "recovery_state_module": {"path": "apps/desktop/shared/renderer/src/modelCatalogRecovery.ts", "sha256": "c05fe28e2351227ead40b057cef4335cb244402b9bd995d6c1b5a76737eb8974"},
+    "recovery_verifier": {"path": "apps/desktop/windows/scripts/verify-opendrsai-model-usability-recovery.mts", "sha256": "d12c46fa3ee03a037d888f869274eec3941743198297fc13f1698b2a750021bf"},
+    "packaged_backend_source": {"path": "apps/desktop/windows/resources/backend/backend-source.json", "sha256": "5f39093baf7733293f22ab2c3ba88d4465ed1ae4115c97b432d4b0eee4886712"},
+    "desktop_main_bundle": {"path": "apps/desktop/windows/out/main/index.js", "sha256": "693d6913f41c4a2b26001bde7d5e9ed3a79994fa8e8e259b5aa0aefd0e7aa7b7"},
+    "desktop_renderer_bundle": {"path": "apps/desktop/windows/out/renderer/assets/index-Dzf75F1Y.js", "sha256": "7f5126a9991ae15bfdc8ed41bd12040333d6514d50e247f13de9d79640fe91f2"},
+    "unpacked_app_asar": {"path": "apps/desktop/windows/release/win-unpacked/resources/app.asar", "sha256": "4cf91c30c0028b7f20d48af30d4e058afe29636172fee384a2a07e2788d87452"}
+  },
+  "release_gates_remaining": [
+    "A real authenticated HAI discovery, text, vision, image generation and image editing matrix is required in the RC environment.",
+    "P3-MC08 legacy-write removal, upgrade/rollback, secret scanning and final release evidence remain open."
+  ],
+  "progress": {
+    "model_convergence": "7/8 (87.5%) local implementation acceptance",
+    "phase3_product_ledger": "29/50 (58%)",
+    "product_baseline": "82/93 (88.2%)",
+    "note": "The model-convergence sub-ledger is additive detail and does not inflate the fixed P3 or product-baseline ledgers."
+  },
+  "next": "P3-MC08 legacy-write retirement, migration/rollback/security gates, and no-Codex Windows packaged real-HAI RC acceptance"
+}

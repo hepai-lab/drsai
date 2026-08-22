@@ -17,7 +17,6 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.math.BigInteger
 import java.net.InetAddress
-import java.net.URI
 import java.net.ServerSocket
 import java.net.SocketTimeoutException
 import java.nio.charset.StandardCharsets
@@ -36,22 +35,6 @@ internal const val OIDC_SCOPE = "openid email profile roles groups hai_api offli
 internal const val OIDC_APP_RETURN_URI = "opendrsai://oauth2redirect"
 internal const val OIDC_NATIVE_REDIRECT_URI = "ai.drsai.remote:/oauth2redirect"
 internal const val OIDC_AUTH_TIMEOUT_MS = 5 * 60 * 1000L
-
-internal fun normalizeOidcAvatarUrl(raw: String?, issuerValue: String = OIDC_ISSUER): String? {
-    if (raw.isNullOrBlank()) return null
-    return runCatching {
-        val issuer = URI(issuerValue)
-        val candidate = issuer.resolve(raw)
-        candidate.toString().takeIf {
-            candidate.scheme == "https" &&
-                candidate.host == issuer.host &&
-                effectivePort(candidate) == effectivePort(issuer)
-        }
-    }.getOrNull()
-}
-
-private fun effectivePort(uri: URI): Int =
-    if (uri.port >= 0) uri.port else if (uri.scheme == "https") 443 else 80
 
 data class OidcConfiguration(
     val clientId: String,
@@ -331,48 +314,12 @@ class OidcClient(
         if (subject.isBlank()) throw ApiException(401, "OIDC Token 缺少用户标识")
         val refreshToken = token.optString("refresh_token", previousRefreshToken.orEmpty())
         if (refreshToken.isBlank()) throw ApiException(401, "OIDC 未返回 Refresh Token")
-        val userInfo = userInfo(accessToken, subject)
         return AuthTokens(
             accessToken = accessToken,
             refreshToken = refreshToken,
-            user = User(
-                id = subject,
-                name = userInfo?.optString("name")?.ifBlank { null }
-                    ?: idClaims.optString("name", idClaims.optString("email", subject)),
-                avatarUrl = normalizeOidcAvatarUrl(
-                    userInfo?.optString("picture")?.ifBlank { null }
-                        ?: idClaims.optString("picture").ifBlank { null },
-                ),
-            ),
+            user = oidcUser(idClaims, accessClaims),
         )
     }
-
-    private fun userInfo(accessToken: String, expectedSubject: String): JSONObject? {
-        return try {
-            val endpoint = metadataBlocking().optString("userinfo_endpoint")
-            if (endpoint.isBlank()) return null
-            http.newCall(
-                Request.Builder()
-                    .url(endpoint)
-                    .header("Accept", "application/json")
-                    .header("Authorization", "Bearer $accessToken")
-                    .get()
-                    .build(),
-            ).execute().use { response ->
-                if (!response.isSuccessful) return null
-                val profile = JSONObject(response.body?.string().orEmpty())
-                if (profile.optString("sub") != expectedSubject) {
-                    throw ApiException(401, "OIDC UserInfo 用户标识不匹配", retryable = false)
-                }
-                profile
-            }
-        } catch (error: ApiException) {
-            throw error
-        } catch (_: Exception) {
-            null
-        }
-    }
-
 
     private fun validateClaims(claims: JSONObject, audience: String) {
         if (claims.optString("iss") != OIDC_ISSUER) throw ApiException(401, "OIDC issuer 校验失败")

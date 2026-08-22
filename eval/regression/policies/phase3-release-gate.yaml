@@ -1,0 +1,18 @@
+schema_version: opendrsai.agent-regression-gate/1
+id: phase3-release-smoke
+suite: phase3-release-smoke
+fail_closed: true
+require_all_cases_terminal: true
+require_complete_evidence: true
+require_adapter: gateway
+critical_cases:
+  - p3.qa.hello
+  - p3.tool.web
+  - p3.knowledge.runtime
+  - p3.skill.presentation
+  - p3.image.input
+  - p3.image.output
+zero_tolerance_categories:
+  - safety_violation
+  - unauthorized_side_effect
+  - secret_leak

@@ -1,0 +1,4979 @@
+{
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "group": "androidx.activity",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b62b528c917de9be497eb6f88830197c20e9d21267c3916c613492e5ee837d4d"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "0ae4de888974f5cef982660900ec32a33f10968750db7afa9438daec183f14e7"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "893b73a4b16d19c0338675ad0b9fa5122d9c69c44f611871bd8c407d3be23a68"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "activity",
+      "purl": "pkg:maven/androidx.activity/activity@1.10.1",
+      "type": "library",
+      "version": "1.10.1"
+    },
+    {
+      "group": "androidx.activity",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1ed13a50edbb885962751e1bcb5b8a4207a20cb780ea248ffa653aab3fb10fe9"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f89af1b26ccc834634387c857c2dd4f4654d37650890039c527c2fed07db6a61"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "e64db6b7126fb512394bc3cf4332a38828009daa8dd56ecbe6c0c7300b2127f5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "activity-compose",
+      "purl": "pkg:maven/androidx.activity/activity-compose@1.10.1",
+      "type": "library",
+      "version": "1.10.1"
+    },
+    {
+      "group": "androidx.activity",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "4213490e4ce2b5750e4445246dfe9de4f6655c2123c04a79a8248cc8893e2bf4"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "7c183895189a27fd7aa59fdcf5029fa64fad28e9d39129a9cb30e40b5e4267ae"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f396f58dbd772c065b873696b74a3d4d087554b3766280e63b49b25dbb53ab16"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "activity-ktx",
+      "purl": "pkg:maven/androidx.activity/activity-ktx@1.10.1",
+      "type": "library",
+      "version": "1.10.1"
+    },
+    {
+      "group": "androidx.annotation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c733881c2e17d5f7c8661cc02a9159cb160b7b2094a27d593916c87d3e250636"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f204b05b728a97561718bc716242e47c629c0085a80ee74fca53d4d638bcbe3f"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "annotation",
+      "purl": "pkg:maven/androidx.annotation/annotation@1.9.1",
+      "type": "library",
+      "version": "1.9.1"
+    },
+    {
+      "group": "androidx.annotation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "783a221a7c1093ff8932053998a69a24489f7930806a32b55366108146d29c1d"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "6bd4c7c7476f8260cd3bdbb81183583e93fc9f790c27dea7dc314181cbf87aa0"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "fe57b228417f4d7c677903dc61fb4a7cf993d603499de26d8d8113e477cc4f1b"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "2ac2f7106e12f263425b4a4dfc80989447fb895675fe902d86759aa74fd12b7d"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "annotation-experimental",
+      "purl": "pkg:maven/androidx.annotation/annotation-experimental@1.4.1",
+      "type": "library",
+      "version": "1.4.1"
+    },
+    {
+      "group": "androidx.annotation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "89b99c218d60019316b50aab79816707bc21696c896a030e1b1ae038961bcb8e"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "03fb659177c8618e47425925c11bc91f384703ea26c265be9b25cd79292b511c"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "1e343917ebf27ba96fe4dc52b1cad7fd32b738fbc6355bb6cd5b3b305d7212d0"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "annotation-jvm",
+      "purl": "pkg:maven/androidx.annotation/annotation-jvm@1.9.1",
+      "type": "library",
+      "version": "1.9.1"
+    },
+    {
+      "group": "androidx.arch.core",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "edf4200cfdc2d946232252c99e5dcb9c61bb909eb5450b2613d1d4fdc974b981"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "65308a06b1c00ee186cb9e19321383f043b993813f1522c47f4a3e3303bdba41"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "1e17d4af8d6425be2a69f8af4d654a87e0456259a9eef1542869bcb023547e28"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "563d430880d847890029234386ef03adb95403c34f3c9dec3a7002e2f4007ae4"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "core-common",
+      "purl": "pkg:maven/androidx.arch.core/core-common@2.2.0",
+      "type": "library",
+      "version": "2.2.0"
+    },
+    {
+      "group": "androidx.arch.core",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a1be5e0caa2b07623862af6ae21b3ab0718123245184d0e30dea81b53f990a47"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "4adaab3a8ab711634d566d2e239e199af8b5ac92c1de85540dc34c7040754e96"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a8b17513949e5db6c9601c30be19df953762dd877512f1e2cfcfae81d2440944"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "0f953706598140d9d8735cdd5aeb1fa35933f4e2f31c0bf3eb81a053a4c8c1a5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "core-runtime",
+      "purl": "pkg:maven/androidx.arch.core/core-runtime@2.2.0",
+      "type": "library",
+      "version": "2.2.0"
+    },
+    {
+      "group": "androidx.autofill",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "3677abead5d4e06cf76cbacb954151e051779c2274494451fb424e375aa9e450"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "c9468f56e05006ea151a426c54957cd0799b8b83a579d2846dd22061f33e5ecd"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "autofill",
+      "purl": "pkg:maven/androidx.autofill/autofill@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "group": "androidx.browser",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b13a2b7c64c0f2f349a19df512360ed917a63f894fc3de297a1fde4fb287546c"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "8c9d7d544a81be5f1e8ded2a4ff474c27e95d52d508f59d479291eaf7fe0337f"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "2d6167b33bf6a064c37501501543702349e850ac62c732d1efa4e71063675456"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "browser",
+      "purl": "pkg:maven/androidx.browser/browser@1.8.0",
+      "type": "library",
+      "version": "1.8.0"
+    },
+    {
+      "group": "androidx.collection",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "bfeb7bd84f3f7dda7bd73b6709d4a1f61f5a37f843728bae08a067e3df9a0aef"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "2d65c8d0b36d4b4faadc44aff9bade23d871d7159eedf2b3f02d802b34b77a57"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "collection",
+      "purl": "pkg:maven/androidx.collection/collection@1.5.0",
+      "type": "library",
+      "version": "1.5.0"
+    },
+    {
+      "group": "androidx.collection",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "70b35924e4babcdffa37d0e575ee039c56a2d97123342624c48b603233704341"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "dde85e292509231b5471bb091b575099d4f43161eb281e87385038a0161072e6"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "11c415864d3402f61d426e67210158dce1b04680412526a994f1823ecd3cb388"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "collection-jvm",
+      "purl": "pkg:maven/androidx.collection/collection-jvm@1.5.0",
+      "type": "library",
+      "version": "1.5.0"
+    },
+    {
+      "group": "androidx.collection",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "939b4a8697640e77d83e4e8b4c4a9d18f8130198c5961194af8dd9db9dc7c353"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "983f8d0630d072d5bfcd166a498ac7213f3a44a98c09051004ce96429d867cea"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "4228894e25eec7e17329b206ba72e8aad255bc535018dc62acc5eff3b5c7aaa5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "collection-ktx",
+      "purl": "pkg:maven/androidx.collection/collection-ktx@1.5.0",
+      "type": "library",
+      "version": "1.5.0"
+    },
+    {
+      "group": "androidx.compose.animation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "0743515a6a7bdeddce7cbf0c0f6cb8bc8841c8de3c39cab8e21d87ff55228f70"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "849188c50e0289582f233eb9af2650e79ba3d40e9aa676c380d5defd3bf4e0ee"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "animation",
+      "purl": "pkg:maven/androidx.compose.animation/animation@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.animation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "01c7ccea4579bd2096f3a01dea58a7891900e96db8c80e127be1c44c78a8f7f9"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "3f902c2ea58e8cbfb53f594f85a992cdc0583a3a5bef57b53e93403a2feba541"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "e7bceacc6dcdb26416554a35dd06a07b8aa512859a2ce99362bb33f503532e57"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "animation-android",
+      "purl": "pkg:maven/androidx.compose.animation/animation-android@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.animation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "226f64acdd7e13231741f46fa5c6916d0eaf62f6354d8fa0202775b7640e9f42"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f4f4af3d1cc85c449347775a7059ce745fe0f3ee6b12b06411e7625a4a1a332a"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "animation-core",
+      "purl": "pkg:maven/androidx.compose.animation/animation-core@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.animation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "24a964ca12d87a5e0cb15a084ec80a7da5588e49ed2a7195c4a640916bc08917"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ccb58ff68ab6188b143f9b45d5b7e67838e3b7127a0ed76cd05ac80dd773c136"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "035f4eef2fc781dab781d50b6d94f3bc8e8936b6cde43919771340a5d78cf0ec"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "animation-core-android",
+      "purl": "pkg:maven/androidx.compose.animation/animation-core-android@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.foundation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "7334756ad41416a342cfbb7b8a69ee287552eeeb506af0f4138f6e77a3253409"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "8498d717acd70ceadd8d052ca63559e71d5ac0c65c4de2560ab78cd8ae83f282"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "foundation",
+      "purl": "pkg:maven/androidx.compose.foundation/foundation@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.foundation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "bd49a5c056d81d2dde528729a7a3604b5d00e0d7053305772cc1ccf0f29530b9"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ddc815d857480c018c960ee73f1ee5bbebd012b2562864672c3a1ac7304278e5"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "077a2c858553a17c8e2c1115cdbb9b693665d332b18e741ae47a2db555a1d360"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "foundation-android",
+      "purl": "pkg:maven/androidx.compose.foundation/foundation-android@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.foundation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d22bc21066ea4e125d7770e796ad483adaf3c2e86cbfc7d23acaf64b2410f0dd"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "e7fc2f5fdb59377d46c7042c4077dc5e84159890927e2f2f7a9eadc6fd58d569"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "foundation-layout",
+      "purl": "pkg:maven/androidx.compose.foundation/foundation-layout@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.foundation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "053fc28015c454bf68a2ebf298c031ad6329b5628ae4a8d2370831be1dc4320d"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ff5f18aa5c2383dc9418345b0e5bb46f80f54b0fb154d10deff12ce2294052b4"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ddd806fbca9ad9cb442d187de860df7f681aa68952d07fdd95bc2df23f10bd40"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "foundation-layout-android",
+      "purl": "pkg:maven/androidx.compose.foundation/foundation-layout-android@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.material3",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a44e5fb483d2b7557f14860b7c3f92d28d3249a9400cba73c6a57ba75a01f413"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "2f338a1aa3a9c029b6e65871387faa8e975426faef1c6f7ab9f758c3955f58e7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "material3",
+      "purl": "pkg:maven/androidx.compose.material3/material3@1.3.2",
+      "type": "library",
+      "version": "1.3.2"
+    },
+    {
+      "group": "androidx.compose.material3",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "0161280e41b42bad9282e65b51a7abb5098552a8c826be6deb6d21230ff1b4cb"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "847666d9fc2d4348b6ec76a6a6094f14fb60de631ee4f6992004ec71a4f44336"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "6f7aa2f96e971fab29637c01e1427116deed4f01b9be6ffb465a67520d9bdf74"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "material3-android",
+      "purl": "pkg:maven/androidx.compose.material3/material3-android@1.3.2",
+      "type": "library",
+      "version": "1.3.2"
+    },
+    {
+      "group": "androidx.compose.material",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "eeefc6cd1c66baf21dbf4e916c46504017787784cd2327233cec23806422299a"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f9d63655bac19ff7f27abf68a9c0f38f5e42c85e365655b990e6e1a317f92e2f"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "material-icons-core",
+      "purl": "pkg:maven/androidx.compose.material/material-icons-core@1.7.8",
+      "type": "library",
+      "version": "1.7.8"
+    },
+    {
+      "group": "androidx.compose.material",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "df671e1144120b43f83464e1e94ff828d0ded8132b3b15b86de07f1b82d0d932"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "332c06b25e662cc417fb087e76b8faa5cb249f4992ffa3360084a3d4ab882284"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "99a1ca83e54261a65eb96d44ea02fae43588be45ade5e97963d73e8489ea4a54"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "material-icons-core-android",
+      "purl": "pkg:maven/androidx.compose.material/material-icons-core-android@1.7.8",
+      "type": "library",
+      "version": "1.7.8"
+    },
+    {
+      "group": "androidx.compose.material",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "dad3723163c1b04d0c4cce4d280e7ddc1041b08d73b8c4f8d07a67c755758515"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "db90152cc18a7f2c3d0931f2032d2c3016f35f82471bf4c9f5620702a0cded95"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "material-icons-extended",
+      "purl": "pkg:maven/androidx.compose.material/material-icons-extended@1.7.8",
+      "type": "library",
+      "version": "1.7.8"
+    },
+    {
+      "group": "androidx.compose.material",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e1582bfe84d5df59487c3ed2d3399601dc2a16241708ecb6721a25809df8558e"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "64e86269f1106848981dd76f0046f81b46f3bd92efb22645de8fd044c0402b61"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d4d502935e175255fd7730b1c2dce4261799c3a70ae427e1a6a845079fe297f1"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "material-icons-extended-android",
+      "purl": "pkg:maven/androidx.compose.material/material-icons-extended-android@1.7.8",
+      "type": "library",
+      "version": "1.7.8"
+    },
+    {
+      "group": "androidx.compose.material",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "632a536c4afc137bd4fe07fd148266e913b3e8044469aebdc4f8f7a2005cf6ba"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "5490cd56c8f34c2bd98c4d65d860de134318e1876e644195a9c4b0389850ae60"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "material-ripple",
+      "purl": "pkg:maven/androidx.compose.material/material-ripple@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.material",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "24ac2d4d4bb9f790d12b12132ea586c7e15dc2a1fd75dc9ec0137eb9853768fa"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d8edfb61e976fe413c30bb7a5581af693115f6bf100f1bb25871525c797d83c2"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "5709ee08c1236f0a0575bf015cf18c302c2b55ba2bf3e0cbdd157cee7cb076bb"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "material-ripple-android",
+      "purl": "pkg:maven/androidx.compose.material/material-ripple-android@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.runtime",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2099f90dc5ba4ae73dcfb880da1d2b5c4eadb3f47c825065d8cba8452f45f6a5"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f0f40ea3598b1d9e10bbab72c882f7328330c88d26fce1bf016655c721f6715d"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "runtime",
+      "purl": "pkg:maven/androidx.compose.runtime/runtime@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.runtime",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "038732e3ef283b8a974b7d79e2eafd91e2d0dd8e123644ecc5096c06ccb515ef"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "5c9c61f1d7e35bd1055aaaa4f064659434368bb216e9829188fa4170372b55ae"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ab1d6cc48de4cd6bbd6ae89beee0472bff780ea462f61bd99b00919b19519928"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "runtime-android",
+      "purl": "pkg:maven/androidx.compose.runtime/runtime-android@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.runtime",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "fd10b06df99cdd0a77c27f60f1bd4ce3e2c1ae5b9691a3889207cf87bdbcf570"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "6227306852a088371b9d77a5f928927a5a2745c1c04e3bdf603358df1c5c2713"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "runtime-saveable",
+      "purl": "pkg:maven/androidx.compose.runtime/runtime-saveable@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.runtime",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d67cb1afd04caa540cb852c415f5c24b9c0b6770bf46076f1dd8e542865670f0"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "514823b1f2fcf51f1804c30e87698bc2089d8301f0de53418320ffbd36348adc"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ef81bbff631ffc2903df746bca008f1dee9e32ef923472d46be3e50384b02ea7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "runtime-saveable-android",
+      "purl": "pkg:maven/androidx.compose.runtime/runtime-saveable-android@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "6025e1efa9969995c90793c2b4b2c81abb2ee24494d24f09f28f1daf89460127"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "aff21341154040256f773a950c39d273c157c746cd5a939aec3f5f45cb52c15f"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui",
+      "purl": "pkg:maven/androidx.compose.ui/ui@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "7384663a766e3131682264f2f3a66d779db0e1d6ea1295c7e364e2b4eed60d1c"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "8792ea8a3c68c9ed709bbff03f5b57c2427c1293a7295813cae12d0a9e19fd0a"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "b4ac5be52e40d0c58003eea027f544264cada8ac94b17e8cf5b0acd2666fcd35"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui-android",
+      "purl": "pkg:maven/androidx.compose.ui/ui-android@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "28a6c6a3b675ae9e849191efb05727dba6d1feb2bebfa8ea98deaaa74f549b1e"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "992d9422051da57e90986d1a907179949e5c55a59b3e8ea36e38544d6dbf2d5b"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui-geometry",
+      "purl": "pkg:maven/androidx.compose.ui/ui-geometry@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "cad8c47bbdca615c96c2d80e487a41e94cfe2ab8f4c5a491ec80a6be02f71bb6"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "49668609f3ca7dde6f6f40c705acb9cad1bbdd2a10acb55bca42773c30273c2d"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "3b6b6a3871ce3a31565db6e6832556a0d1da555f5c8449ff937df4f509e06edb"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui-geometry-android",
+      "purl": "pkg:maven/androidx.compose.ui/ui-geometry-android@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "dc16f798a517ce10d473484bdd9b4cb59aad6d3a5f17834d4850e0c8b8af5340"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "074576fb046d768f4e68b4a751936dbe1dad8d909144c8a80e949c32b414913d"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui-graphics",
+      "purl": "pkg:maven/androidx.compose.ui/ui-graphics@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f247cdeda5e98865b9d9465fda28ae44418191cb62a82678e2df3e48615ccf18"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "58f04cf2001375b70b98ce3a7532391247108cd989891578efa4e3959bb219ae"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "295a26052eef0d6fd6a520d98aa5c1ee164d41db1fe3f5cc3bd14da13d32390e"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui-graphics-android",
+      "purl": "pkg:maven/androidx.compose.ui/ui-graphics-android@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5f10beff876bc3f84155b5f3b1df760b59cd838d99dc48c4f3eba7815b3c38ee"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d53595d694b0c9f03ef5a4a08533aac741f022fa6026c447b902fcf28052da41"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a1150d374bc4680730e12b5476657c6753da6ae3d002b392dfe8532447e6a3ab"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui-test-manifest",
+      "purl": "pkg:maven/androidx.compose.ui/ui-test-manifest@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "73ace8394e5d16deac27d9af6fba4904d332ddbb82abde7d0df47ca4060c0688"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "388f95d6970478c73d4bb4995baeda8dd9e82d214d647aaa357e1785ba41c342"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui-text",
+      "purl": "pkg:maven/androidx.compose.ui/ui-text@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "8d61d5f697ff7e40aa955a2215dd79963667b41390ec59d256eac079d5b31df7"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "3d8191b48686e48a843b4902143bd339e6bfa6a037c485cf281b83c4c4c72a93"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "4a68eca940c799a726c493c6b280cd0b938e86dd87f748763450268e1ce6af64"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui-text-android",
+      "purl": "pkg:maven/androidx.compose.ui/ui-text-android@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9c96001c12c64e721114558ce8b6733693ee94e35d8f8e04f4bdcaafe011a646"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "1f697c87cfec9da7dc7c02833609eba1702c858d70997f8230147fa242810378"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui-tooling-preview",
+      "purl": "pkg:maven/androidx.compose.ui/ui-tooling-preview@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2fdefff1e1492a322d1d4ee6c3816371c3a601bfbfcc3819878bda5dbff69fc2"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "fdea08b5d3201d02b689a68b1f3c0be60c1b0f807cb93758fa0e5c0f46bdcac3"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "17a0c4cc6da3338087a218756e63113e6d15a17043197e69b2d50c17966013d0"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui-tooling-preview-android",
+      "purl": "pkg:maven/androidx.compose.ui/ui-tooling-preview-android@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "cffb02cde49bf3c1cb926e7cc602a0902c524cec456514d786762ac0c2ef8bed"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "daa7bad4f194e56fe88eb3fe96136e89143a374892a914157235fd10b6e679d2"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui-unit",
+      "purl": "pkg:maven/androidx.compose.ui/ui-unit@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "7f6ebcae5ca9ec45c9f6e467cd96a7cb17bfe770cbe598afd767f1e14bf1ec80"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "1bc7011b35339e016b61787e6ef854817b11d35ea3a70b47142d7d3336e6f386"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f75bf064eae88997eb3807adecc784a069e06e63b106d98459b795b1f8d72376"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui-unit-android",
+      "purl": "pkg:maven/androidx.compose.ui/ui-unit-android@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "4c4cc657ac723e7d6fab5e89523f0daf8475ec8a25c72b1838285de33c163960"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "27fc379c887b5a9a2276f4b523bf472ee77cd2b7840d7d7b249d528919c45ede"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui-util",
+      "purl": "pkg:maven/androidx.compose.ui/ui-util@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose.ui",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b99318c68c2354573ab02ab01ffb2539459becc07e4a20357290f58defab5b50"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "6962813e6a8c86167b1878623e3fcce31c7471c228dccd695a7d240ccdc04e38"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "123818b76aa874db83cc9e842dd9fa14eae4c5f82bec1d7336bd354d98651dfe"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "ui-util-android",
+      "purl": "pkg:maven/androidx.compose.ui/ui-util-android@1.8.3",
+      "type": "library",
+      "version": "1.8.3"
+    },
+    {
+      "group": "androidx.compose",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "ef9b4ba4e0c4236e6da565bdb471b196aab00d2cd5ccfcf246b5ee8ff1e94ee9"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "compose-bom",
+      "purl": "pkg:maven/androidx.compose/compose-bom@2025.06.01",
+      "type": "library",
+      "version": "2025.06.01"
+    },
+    {
+      "group": "androidx.concurrent",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "748a34eb5d13d19d187adecaea82667fded5f1b0b98a655e13ed2e4a8b3d8ae6"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "77639a0b051e22510bad93affcea0ebd781ef124bf9b7621a95749937bcfcdfd"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "0ce067c514a0d1049d1bebdf709e344ed3266fe9744275682937cdcb13334e9e"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "concurrent-futures",
+      "purl": "pkg:maven/androidx.concurrent/concurrent-futures@1.1.0",
+      "type": "library",
+      "version": "1.1.0"
+    },
+    {
+      "group": "androidx.concurrent",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1968bf52039e38636aa6f114cd17d7256919d1e8997417716fef9d1da1f24d85"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "69b79724566d49140846700690b8d2165231c577e93e66726a443e8f976bbe19"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "c903f8f51e3f4ea5e7e1f0a6fe3be873c357221227d103d08d7fd042f4b7570c"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "concurrent-futures-ktx",
+      "purl": "pkg:maven/androidx.concurrent/concurrent-futures-ktx@1.1.0",
+      "type": "library",
+      "version": "1.1.0"
+    },
+    {
+      "group": "androidx.core",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f56a83aa404e6bba2065b7bacfb18b38f070c8861068fed656dd04570644a0e3"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "7b42513b7a33535365c4606d46e5dd9c0c747ed704bcdc39ae1db665c3d00b8d"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "e168ae56064b8e5a40bce415ef95ffd5a813abb5456d2775f0fef426ed49e35a"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "432b85a1974076e14b487ece4a28c59a84f1b9efc3fc8be72cd7f05d32055e51"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "e8a6c386e1765d870012fed2221173d4a2e8d2fd5aec732c51afb4a9f4684519"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "core",
+      "purl": "pkg:maven/androidx.core/core@1.15.0",
+      "type": "library",
+      "version": "1.15.0"
+    },
+    {
+      "group": "androidx.core",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "bee9b44664ff37e2e222ebcde4b30e38294a3f927451edc611fec7f454ffa442"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "417c6aa0279ec78db02fe395d401a09bcaaa9d82d935148a3e2de90fdf38d94c"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "c72c97ff4a32308bcaf3061eea5ddf33455ce413cee4aa1d5c82440c5759d4bc"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "5bedb726f4388be868bb5e35d5f726e1c5745d3ea285fd5138288571182860c1"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "core-ktx",
+      "purl": "pkg:maven/androidx.core/core-ktx@1.15.0",
+      "type": "library",
+      "version": "1.15.0"
+    },
+    {
+      "group": "androidx.core",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "dc1b678d58ebcf2bfa1587be68ff826694ce3d221251b9ef30d4d4b36297e6de"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d4f2ed1176fa8c5612b80f74c952a8799142a9ed36022a1a238fde5b140580d9"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "11386cfa46cbbfddb6a4059f14354c00691cf65d3d63c3618818a83326ef3c7f"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "core-viewtree",
+      "purl": "pkg:maven/androidx.core/core-viewtree@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "group": "androidx.customview",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "20e5b8f6526a34595a604f56718da81167c0b40a7a94a57daa355663f2594df2"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ce9e47b87184f5bd5e139e9becd5b26476d42d78c31bf2fdedc37acb41b9ad49"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "customview",
+      "purl": "pkg:maven/androidx.customview/customview@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "group": "androidx.customview",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9fa62196c4c4e79b6a58dbb38a8c022bef8db21989d7dae2da0f6f5b66289a9c"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "3584102fc49bf399c56e3b7be4bfe12000c46112320cd8cf85cc0a8f93f3e752"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "903034d5152dd2e0162b1468ea25a22e1ca384006b3d282d5a143cc760321a01"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "customview-poolingcontainer",
+      "purl": "pkg:maven/androidx.customview/customview-poolingcontainer@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "group": "androidx.datastore",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "705450d5e0d0a84c1599ae1421a9969e3aa704bc39640ebcd671e4643d2fc8f8"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "1f7dc83fe4bc96d9fbd2b00e105d41a6f00d9a5302028edd30e2def424100770"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "datastore",
+      "purl": "pkg:maven/androidx.datastore/datastore@1.1.7",
+      "type": "library",
+      "version": "1.1.7"
+    },
+    {
+      "group": "androidx.datastore",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "30a077aec57ed8931be7d97d8423f6ab6547264339c508e85958165d2f35bb77"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "26c12c6417e7e4cfd36386aa8cc2b9839fe87a6792f820805827bde4d27f9e6e"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "669f2695add59bab604dc5090a879e4163ddff550ef75a1298c4ec2250c837f9"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "datastore-android",
+      "purl": "pkg:maven/androidx.datastore/datastore-android@1.1.7",
+      "type": "library",
+      "version": "1.1.7"
+    },
+    {
+      "group": "androidx.datastore",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b2284564c24f4d1bca9f1aabaa329e3ba45ff1d7e29e7bbeee37ca91fcadebfa"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "4821397339e3272f95139e408985bc91384ada3ca66e424ed8af6577070de489"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "datastore-core",
+      "purl": "pkg:maven/androidx.datastore/datastore-core@1.1.7",
+      "type": "library",
+      "version": "1.1.7"
+    },
+    {
+      "group": "androidx.datastore",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "adca1d7cde73406fcca2a0eeabac63459adc9d1fe201b79ba08711fa2e331984"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "c85fbe122a236c82a2babe68e3ea862c49b7b38db336c1929ca8352ec9025646"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a38beb4eda9e2f92c06842dbba77aae924e5ee22c36e533c6960f1b054313bdd"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "datastore-core-android",
+      "purl": "pkg:maven/androidx.datastore/datastore-core-android@1.1.7",
+      "type": "library",
+      "version": "1.1.7"
+    },
+    {
+      "group": "androidx.datastore",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b075b36b395c19246370f86f0d865f91914be8619e76083dc855ea8ce1c767cd"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "47fadb8caff5982ac29ccc1ff38d4206ee29ecb947fa06d4070c0ebc1086a7eb"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "datastore-core-okio",
+      "purl": "pkg:maven/androidx.datastore/datastore-core-okio@1.1.7",
+      "type": "library",
+      "version": "1.1.7"
+    },
+    {
+      "group": "androidx.datastore",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "09ceb29d3ee5462c76e2dd3fac657ab1c4c503738deccc3476dcfa8fe94d4d7f"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "05b2108ff565eb2b1aafb6b9e4d51f834a7bfaac2f4dfc7a81b3992d7e6bed21"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "291506b4fce398249793e327207635bd4df25181d9539808d7181a4abd0875f5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "datastore-core-okio-jvm",
+      "purl": "pkg:maven/androidx.datastore/datastore-core-okio-jvm@1.1.7",
+      "type": "library",
+      "version": "1.1.7"
+    },
+    {
+      "group": "androidx.datastore",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "24f6866605ed027c6e13158ca18464d2a1af1ba8a5f0ce3ff2224b7604fe0a2b"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ce31988f3ad73dffecad5b39d18571ffd9f4ddf2b9dfb52bbb56c32f8f6a2b36"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "datastore-preferences",
+      "purl": "pkg:maven/androidx.datastore/datastore-preferences@1.1.7",
+      "type": "library",
+      "version": "1.1.7"
+    },
+    {
+      "group": "androidx.datastore",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "49d055ae6611ad770f6e3d22eec6875b5f5ab3a7398841cf84cae18d5c89d3a2"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a279688b852024be8dd1acbe59ae5a63a299a7da16a43b60b03eaf003a3167fe"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "1b3d703abc765b60517334b04c5b520e6e25168a2f2d73d5b0cd975d20054f8d"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "datastore-preferences-android",
+      "purl": "pkg:maven/androidx.datastore/datastore-preferences-android@1.1.7",
+      "type": "library",
+      "version": "1.1.7"
+    },
+    {
+      "group": "androidx.datastore",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5281efaff017a7ea1655bad1bd3ce4f64645cec76cfbdde0281f76d6ceceb089"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "109dc49114519f2672fb3178de01fb53953e9559be83394dc259444550caed99"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "datastore-preferences-core",
+      "purl": "pkg:maven/androidx.datastore/datastore-preferences-core@1.1.7",
+      "type": "library",
+      "version": "1.1.7"
+    },
+    {
+      "group": "androidx.datastore",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "aa76e59310d9aa389efbc417934533ccc3563aed3f911186e16df787c40ffb00"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "494d15645800d279dce7f00750bed1d9b50e8115787b1e43d9b603a3e6f82e77"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "31cebf4444b1df57876e695109a0a63c9a93ff05df503d27a3927b86af0cfac0"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "datastore-preferences-core-android",
+      "purl": "pkg:maven/androidx.datastore/datastore-preferences-core-android@1.1.7",
+      "type": "library",
+      "version": "1.1.7"
+    },
+    {
+      "group": "androidx.datastore",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "87863e6b93a416dc00f857713edf683914b64ac6ebcf220e5826e336a841bfa5"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "5ee57d2ba9659bee9ed1a51a2851880161b1d91917ec41973514a1d0b1266cd9"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "fcb3f373cf743426c85ebb0d3cc644aefaf26f39b7fa55bb90238d41b689eca7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause",
+            "url": "https://opensource.org/licenses/BSD-3-Clause"
+          }
+        }
+      ],
+      "name": "datastore-preferences-external-protobuf",
+      "purl": "pkg:maven/androidx.datastore/datastore-preferences-external-protobuf@1.1.7",
+      "type": "library",
+      "version": "1.1.7"
+    },
+    {
+      "group": "androidx.datastore",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "3da01b6fb8751c39237202b8fe668c55347c0e35960db6d7776bd482f2e6ef3e"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "63686a612f39b8ca603bebe3376d55fb6c9ee28a4a5173efa49c89cbcca8a127"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a67ccf3b30ae474da732d37b19deac9a9c1e91a6adb91af15d6314f713abeed5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "datastore-preferences-proto",
+      "purl": "pkg:maven/androidx.datastore/datastore-preferences-proto@1.1.7",
+      "type": "library",
+      "version": "1.1.7"
+    },
+    {
+      "group": "androidx.documentfile",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "7a11bf7829b9bcad5caf98b957f8ec15662ec5dab07ba2433331f7c476c6baac"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "9c53d24ce55e7836b44e5a85b3f6fa006fdf8742d4a1a80d8d432deea66108d1"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "documentfile",
+      "purl": "pkg:maven/androidx.documentfile/documentfile@1.0.1",
+      "type": "library",
+      "version": "1.0.1"
+    },
+    {
+      "group": "androidx.emoji2",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "92be16cccb757f807bddd92f1fca95a038a810ccca051c4149c11682478954b8"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "1f67221484f7d1260eb6e2b490cd4e7046bf5cb536276d79f972ad3f198b474d"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "433febd3434a45667176c76a64f3f205ca6335a6b544c5b5d57f25a38a375242"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "emoji2",
+      "purl": "pkg:maven/androidx.emoji2/emoji2@1.4.0",
+      "type": "library",
+      "version": "1.4.0"
+    },
+    {
+      "group": "androidx.exifinterface",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "0e8f1832266c5b0667ad3d3b1098e624e49a09075493a014a7e88af01fd30ad3"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "37dbc6b87a2409cea5588d58c8f3acab9ea82cc688ee57a201a210450ff30e0e"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f70819519ecc320028345c7c0c318d8157055e83fc466c899cd344dd4f630a31"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "exifinterface",
+      "purl": "pkg:maven/androidx.exifinterface/exifinterface@1.3.7",
+      "type": "library",
+      "version": "1.3.7"
+    },
+    {
+      "group": "androidx.fragment",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a14c8b8f2153f128e800fbd266a6beab1c283982a29ec570d2cc05d307d81496"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ef78eb27ac02ddf3545d5f8a3857c73a2837a01853f8d5fcf77251011db52544"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "fragment",
+      "purl": "pkg:maven/androidx.fragment/fragment@1.1.0",
+      "type": "library",
+      "version": "1.1.0"
+    },
+    {
+      "group": "androidx.graphics",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "866fb357c7146f5f7678ad44e4bc6c2823d568defce1ed2805bb6c899606b228"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "8ca4032b6d79b351f0b59ad4b580eddbb9423e1652f7c958830687f1eee2ec03"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "3f6fc7e96f8a1fd21045da7f2e332aef528aa1f56b6455fb8f25043aafa0e1b8"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "graphics-path",
+      "purl": "pkg:maven/androidx.graphics/graphics-path@1.0.1",
+      "type": "library",
+      "version": "1.0.1"
+    },
+    {
+      "group": "androidx.interpolator",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "33193135a64fe21fa2c35eec6688f1a76e512606c0fc83dc1b689e37add7732a"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "0ddc07cc39699f48ecd9ec894b5830c0f09e22e82959294edf37217224c88b7b"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "fa13ada71fe7bd9461f622f418e7c16a18e85da7708fb505c75229a9b8830345"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "interpolator",
+      "purl": "pkg:maven/androidx.interpolator/interpolator@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "group": "androidx.legacy",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "dff5a95a7a706957b16edbf5b36c619fc869742bdf18845520d0cf71748c8070"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "8fd093008b3ee7c06e52c78da2af980a7b47b69b967fa91dad7af466f7a00a38"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a7edcf01d5b52b3034073027bc4775b78a4764bb6202bb91d61c829add8dd1c7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "legacy-support-core-utils",
+      "purl": "pkg:maven/androidx.legacy/legacy-support-core-utils@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "67a89ee16389d5eb31792d8ceaccc3cf200900c14c20bb947536e326c16ce0ad"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "68635facb41349b06b869ce8fb2c630edd25a57c97e5ff098bbad15ffcf31ff6"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-common",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-common@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "cf39cf63ce66ddeb9f3b307d62c1044657acfee1fd9bfe438956cfa27955ef3d"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "497dd84de9f2fd46324f25f9a3af032d3a23d087e87af515c4b19435f6d6a651"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "7de38d4c16978fd9276e6d51e7e85ecb446536298be6d57bb0aefe56bd8f0be3"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-common-java8",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-common-java8@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "73fad6c31db3b94608ac90854736012c9c12cf3f42fa1438997280baac0520a6"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "54beadc62da90fbe038dc30ead0605522b3697b61d91f76e4969b60202483cc1"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "37d89b2101f074ac6c260917dabb185607645ee200aa3018c7c5bde70edcf184"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-common-jvm",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-common-jvm@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "46382ddfba348db97846cfa81d67d72304dc156bb96224358b429fe748bc6ab4"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f3c8cb314e7a31e9e57ae5c28fc2d4c430237350b0806e87143f15855e4aaa29"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "87056d33c5acdddde61b7b44599872b5b7271be27e140a393ca688d456aef908"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-livedata",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-livedata@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "20363ac987c763e48870234a0ed8fc7fd9a0597583e7c8b3b8416def7354a271"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "0c1fb0b0edd007b017ebf5c5de3f5215eb7745e1270894554ebe81af4c4b8998"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "64f96b52c70895807f3020e2e8fa11f3ec2da9c157f62aae21a2c9d3b484a747"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-livedata-core",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-livedata-core@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2377ddd0f460ea0fe4d16657e8f28cb6004b34e5713004f6d0b8d6b45b36a259"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f265a665819e51322b3eea2a6ff2ab90186cadf1787a81dd8bef0ce93c4a600a"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "518914acacf1115df27c8807c2bcfaaaca30c43e8dfa3bf121707d2f6f0de0a0"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-livedata-core-ktx",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-livedata-core-ktx@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b2ed7677a2c4fb5735b03f141ebb1e22b2f0fbe13ac9eeefce8e9262b074bccc"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ad86f00646155856b83456ed6f04c3165c4f9205088d555b93c7e7deaf560916"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "c15ce972cc28936a596a9cd256b32f22768a61d5dd810fa56ba945522a0ee7a5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-process",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-process@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f31e0464e75dc733995ba52daa7b3b14eac5946cc5cb5d873c88f13d9bda6d33"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d0142198185e44992924aa0e8c67b0795b127139203abc8715957c56756957f8"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-runtime",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-runtime@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b7ed9a5cc87eec1ab1f1d230f3d5e8deee2507c98a0088d349dc3576c0572927"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d4223ae6a8447677267dff22863b6d6988ca68b4d27ca6d74b81046b04794257"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "5db05802cf540514dcc2ea581a4f67f996546cba568d9bb14bf273b29cd0233c"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-runtime-android",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-runtime-android@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5d48bc6e62c8075b3b30bc9f12fc0c376a69a95388f47a442117bc6b18392099"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "53974619ca92981f4c935cbdb1c46c0c7f64108e66ade3cd085a6dfb2203a458"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-runtime-compose",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-runtime-compose@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e3dbf11d16a7872fa98add5916522f4b179eb3d5f4fc1e04748d38f5910df060"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "5f68bcea0cf1daac5320a2fd57157237e30945cf7e6586717fbc714b35b32e6f"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "7fc6dceef502c0132d8c5f5ec8ff2901e80eec40388f7d473c3c13f8d0427ccb"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-runtime-compose-android",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-runtime-compose-android@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "df6ba56cb9ba2f180fe2f97d6863abadf9f7dba65eaf425757e0b9b83da61479"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "b4545401dbd055fd04903d4698623d5bb406dde2e32800d80a61e5824f477da9"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-runtime-ktx",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-runtime-ktx@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "333fa2ce6db70ac372b791dfeba99c02c0d97b1a8b4ab4a84d4762466d12b207"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "8dd817a9b6767b2b9e93698bda6b6c9dd72306a530c028f807bcdf36b31cb119"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "0fe1bc94930bcae1fb7db6cc5c3576e025a36ae3187352c12d48fefe05d9d680"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-runtime-ktx-android",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-runtime-ktx-android@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c33c8748c13aaedf4c7c006bbce38b0da96ada0a300187451cf3739541a62ad0"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "c78580ca38cd14e474323861ebe822d04c04231cb7e59b24de801406a511376a"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "6838189383bee6e2e448b54c4aa72fe3929a81eff2ccc569dfdd2beca4898f5e"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-service",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-service@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "cab404b05d5faed209104a2aef14c0cbb316ab9fabe4a8f037b043e5d2f43435"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "e8a90f3642f71d6db034598c77bcdfc3f76e7c5f6db2bb986962dd42c40cd888"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f49d4b68b6854111e4d193c90c9a4b75840ad2f373b2ed1842cb56ac50b6a846"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-viewmodel",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "fa9d7511a8fe0d5edc53099706d64f37621dcfeb9f2c557369ed83645fc87a23"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "874ba10c7bb1acd9662468ac15e27fcbf2556f1c282f875c6c07ad63c8672b03"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "75d3a8e143aaaf489b07434c4e30030942b1a82a699b229bf887377b603c3f91"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-viewmodel-android",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-android@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d3375ede03d92b2d4f513e1eb1a6060545c78f068e75387f781dd6f43baa015b"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "690cd4bd77dac0c984736c8e0b254d232189837a272fac9f7701710db59c630b"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-viewmodel-compose",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-compose@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "7d7ffc0cc76c9581413ca8a9ae3f67696e49eca80b3643cbad924287911f4e80"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f4b04cb11e1a921c09ea6739d4a80ce1529898434770772844c67d999d8b5dfc"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "0ab47afaead4893211d33210bdb56a2a49653f7ef9fb49ebe4ea7621e159ae8a"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-viewmodel-compose-android",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-compose-android@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "99c4a88d509f4c43a681d14d20948182641691b74f6dd6c4d6996caabbd4c677"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "3d035842bc404807aedb69d6b6a8a6bcb42ba8ec1c5417f7f57377cd014e1800"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "af42fd84f4e52b44dcabaf9ecf94120553929bc1a059beb2240a9ec1dbee814f"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-viewmodel-ktx",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-ktx@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "76ca959ea12a33a3c608fd1f2448a48909d38e930d8f38c580374ea60f1a38cc"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "9e724daa2045fde8c2aacb0ba18a61a106c82c3c183210915b9f7eb328720ef1"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-viewmodel-savedstate",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-savedstate@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "db367838716e55866823c6deed62fcec23fce487bf2a8fa565a36f149ab3d1ef"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "42783d40d49423ca9f51c1a826f4c47371856854c8ad32ee2e9a168d0c61bb43"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "02f383e140adfc2bd5c94e15ec994d9069a4d4538a3700f5cf31b2774f156768"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "lifecycle-viewmodel-savedstate-android",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-savedstate-android@2.9.0",
+      "type": "library",
+      "version": "2.9.0"
+    },
+    {
+      "group": "androidx.loader",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c978d550808b47434aa49a63164110a50b55b0bcc6160a93a2e37d5110df8c5e"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "11f735cb3b55c458d470bed9e25254375b518b4b1bad6926783a7026db0f5025"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "efcbafaac8fc06bd5b162b57ac1e146d11919b79dea2202339470c931cecdc67"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "loader",
+      "purl": "pkg:maven/androidx.loader/loader@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "group": "androidx.localbroadcastmanager",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e71c328ceef5c4a7d76f2d86df1b65d65fe2acf868b1a4efd84a3f34336186d8"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "952b8567a76d6484aa96f9712b9dc90f21b83a73e2496daf243e2e1adfb65dd4"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a000041f5a1f79283c5175e1bb60cf3683780f401c6a9d34fbe9751253fa6ff9"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "localbroadcastmanager",
+      "purl": "pkg:maven/androidx.localbroadcastmanager/localbroadcastmanager@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "group": "androidx.navigation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f6f9d2449938f3e9aded7bdb88f4e35818972cb0aed0d8feb5fafb9d9b95ace6"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a4d9a3f1b33d1f1514370c2abf967e6c4bccd0d80d9caa72d38041160fef5aa5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "navigation-common",
+      "purl": "pkg:maven/androidx.navigation/navigation-common@2.9.1",
+      "type": "library",
+      "version": "2.9.1"
+    },
+    {
+      "group": "androidx.navigation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "281dda9aef3c81eed3ced77368b340ea3ab2bdca06a4dce4a9a6ebff30494df5"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "e36a9f6d424e699e111013fa0d522a50e3aa3953645c69483a68e148d0c774d9"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d820a9e00d63ad9d323d3333b278c5120e9e43813f73379d283524a4bf24c6b6"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "navigation-common-android",
+      "purl": "pkg:maven/androidx.navigation/navigation-common-android@2.9.1",
+      "type": "library",
+      "version": "2.9.1"
+    },
+    {
+      "group": "androidx.navigation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "639f988350b1a8a0fc45b331dbfb782da20c0b0ce89f12ad794ebb50edea43d8"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d88033837f9c15638b30c0d77aa1b8cb302c9f9f96744e884bd0cfce0c83fa09"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "navigation-compose",
+      "purl": "pkg:maven/androidx.navigation/navigation-compose@2.9.1",
+      "type": "library",
+      "version": "2.9.1"
+    },
+    {
+      "group": "androidx.navigation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "bab8c2d42327db98d2efad9ee525ff493dfabd4b6cef68b988b8f69c4bf3f377"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "32a2298bf6498a22bb4884e5f9adc844329f2c022471caf1669f13858490242a"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "0a6976dd6816e66c79dfb6771e8221bbe98082917e225740a3b5cae74ac3f9d7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "navigation-compose-android",
+      "purl": "pkg:maven/androidx.navigation/navigation-compose-android@2.9.1",
+      "type": "library",
+      "version": "2.9.1"
+    },
+    {
+      "group": "androidx.navigation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "6c39d0a1dd289e18ddec50002081d48dc9a8c428b5e93630407bf59ec26711f4"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "52d309ea3c61ce95f2ef5d0485c71b3883cd8593eebf078d22d93383689a3ee5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "navigation-runtime",
+      "purl": "pkg:maven/androidx.navigation/navigation-runtime@2.9.1",
+      "type": "library",
+      "version": "2.9.1"
+    },
+    {
+      "group": "androidx.navigation",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "06e55fa50d42c62f7b06d3fe13b747efdf0fc4c9737ef8a92408c054b24306ca"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "76654bf09f3e8b73330114b202a1e17a6af9122b3ef75f7eb0bd2a52005f9133"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "22b6e8297c88dc728b56a5e570f0c935d58a565a9395dc3d88ff280fb0a10481"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "navigation-runtime-android",
+      "purl": "pkg:maven/androidx.navigation/navigation-runtime-android@2.9.1",
+      "type": "library",
+      "version": "2.9.1"
+    },
+    {
+      "group": "androidx.print",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "659b6e2047484dbae409b9b49c19f9ebd9540bb7ef3610438e2c2b15064fc217"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "1d5c7f3135a1bba661fc373fd72e11eb0a4adbb3396787826dd8e4190d5d9edd"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "62482c0594841bee24bb996abb6cb7b320a6a3b77dca9f0a0ba4fe3be5530aa7"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "print",
+      "purl": "pkg:maven/androidx.print/print@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "group": "androidx.profileinstaller",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d502141fcce902430f62b674c32aecd0f75262e7ee2cd15c74adb617cd13130a"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d5fe39981a3b4b7c39585130da0bfc93835054c834a438d3e63e065e5f78be55"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "39bf997a28d8eed2cb319819f6f352a1ba3a78b9c979004fbe05e26b8f7d160b"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "profileinstaller",
+      "purl": "pkg:maven/androidx.profileinstaller/profileinstaller@1.4.0",
+      "type": "library",
+      "version": "1.4.0"
+    },
+    {
+      "group": "androidx.room",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9e229812ee33850ad99a2621dca200c62085488ddc59f65e063a2449d79741f0"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "fe83621e1cce455fd6ffb8d8bf725b54fc17c3399eb7e29368071e24ee83d38e"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "room-common",
+      "purl": "pkg:maven/androidx.room/room-common@2.7.2",
+      "type": "library",
+      "version": "2.7.2"
+    },
+    {
+      "group": "androidx.room",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b2a00b88c8b8d810d07ecbdf92fdff47db7f0ea884efe5c31cda7a526c9b1ae5"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "0cdf9b35e6df499aa052729af4feaf93a232fbd9f9a9c77f6f7c922f2a220358"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d764d1efb35cdee517152f0312d78397d93ac157ee1ae782e17f4fefbff65bbb"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "room-common-jvm",
+      "purl": "pkg:maven/androidx.room/room-common-jvm@2.7.2",
+      "type": "library",
+      "version": "2.7.2"
+    },
+    {
+      "group": "androidx.room",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "0d9198e79aea483fa56415a82e7b2995fbfb3a6e3b99da5edf128da6de021ce4"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "721e00a36367d9e6e43f86de1ce5bfa43043ab7091170e44100a239d0ebda4ab"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "394fa4d2759f160983b5b065e7e8cad8df2fbb9d221d5c8764719ef273f60338"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "room-ktx",
+      "purl": "pkg:maven/androidx.room/room-ktx@2.7.2",
+      "type": "library",
+      "version": "2.7.2"
+    },
+    {
+      "group": "androidx.room",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "674d71a3b93c8efe252e89bbfbcb767735ce733f2ecf4673dc081821ed057bb2"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "e1cccbd109e43c170d9453baf7727383f2103c9f32356ba0deb3c76e92998227"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "room-runtime",
+      "purl": "pkg:maven/androidx.room/room-runtime@2.7.2",
+      "type": "library",
+      "version": "2.7.2"
+    },
+    {
+      "group": "androidx.room",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "99469a033aaf4e5f7c7444a25a11b9ed02d0031e3d062df7e83f4946f260864b"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "20e7d7f47777ff3015de1cf7fed71f298c63175164655d8c2b22904d92bb9ec2"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "1382348cc0b63869b1019f35bfc75c7d86e8b3991d87be96e1a245e42314910c"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "room-runtime-android",
+      "purl": "pkg:maven/androidx.room/room-runtime-android@2.7.2",
+      "type": "library",
+      "version": "2.7.2"
+    },
+    {
+      "group": "androidx.savedstate",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "dc5a6c42f3f4ecd3747f6dfece0cdf68b67842c70945686af17c74030df9e515"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "19d2501e044c61f224e24fec5869cbc9dbf2010920f64765905ef4d1941a5e6b"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "savedstate",
+      "purl": "pkg:maven/androidx.savedstate/savedstate@1.3.0",
+      "type": "library",
+      "version": "1.3.0"
+    },
+    {
+      "group": "androidx.savedstate",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "210b6909bbd515dbf415905cbb220fca93a87fa546838f754077ebc8e0488590"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "22ebd3d8b1e2c8bfa0ded23fe2f0179961683daa25b476deb991350c6ca94c38"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "b1d6f10a9442ad3243ee7d4ba1074d4ab7019e19d72222a2654e8158bf7c06e6"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "savedstate-android",
+      "purl": "pkg:maven/androidx.savedstate/savedstate-android@1.3.0",
+      "type": "library",
+      "version": "1.3.0"
+    },
+    {
+      "group": "androidx.savedstate",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "15a07a0fdb8ed58a48ca21e981d38ab72b2bbfd96463c33a7050df1c27699a75"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "de0d5abbaa76bc12e2b400d2a856b1565ee6a3c2ffdb8dae995e5f0d88132296"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "savedstate-compose",
+      "purl": "pkg:maven/androidx.savedstate/savedstate-compose@1.3.0",
+      "type": "library",
+      "version": "1.3.0"
+    },
+    {
+      "group": "androidx.savedstate",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "ab71562c138019ad6084dc8fc690af6cb9359bfe2743a79062065b28bdef7c6e"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "823a95006413fc1fd7676241df3a60e0e7102ede3b73a0a1514dfb82b4a6f018"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "4da17fbd1db36fa931fbdbf873ada793a16d76138fd4446517d8172aa21eaf31"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "savedstate-compose-android",
+      "purl": "pkg:maven/androidx.savedstate/savedstate-compose-android@1.3.0",
+      "type": "library",
+      "version": "1.3.0"
+    },
+    {
+      "group": "androidx.savedstate",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "757560e597520f07044b1e033bbde439bf1fbe47eec916186735eed0999cd3e7"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "45c5f6412840f50de7bf7d9b1c4a8c81ea236832487a1138cb320b8c997416f2"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "dcf657881d46352128aa0bf48f32775b55e3661361ebf2d2c217ed117fad881f"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "savedstate-ktx",
+      "purl": "pkg:maven/androidx.savedstate/savedstate-ktx@1.3.0",
+      "type": "library",
+      "version": "1.3.0"
+    },
+    {
+      "group": "androidx.security",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "672940777402e5e91450bd238ad6c28c89b47160f7c3211c3836efaefb517ffd"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a14f78edccaf30c82ba16956c250069b67b53e6fff65af099a9facb36acfa1c8"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "976111170b3f13d2f0f9457d9f9f579347143cb65c054265906d33c7618a4c2a"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "security-crypto",
+      "purl": "pkg:maven/androidx.security/security-crypto@1.1.0-alpha06",
+      "type": "library",
+      "version": "1.1.0-alpha06"
+    },
+    {
+      "group": "androidx.sqlite",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c7334ab1545e44b5e99b582d0fd59e6e5917e6f3da054452e5dde45082cc81b9"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "fccd4124343daffbd5cdcc90566bc4b64e42a5fd15073e95f65efd11642f6124"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "sqlite",
+      "purl": "pkg:maven/androidx.sqlite/sqlite@2.5.1",
+      "type": "library",
+      "version": "2.5.1"
+    },
+    {
+      "group": "androidx.sqlite",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "4b0494c5d7e22f7448a8bf2b73f4e995fa3165030554bc39673803c9d046a416"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "c503c36a0bcf66e1dfab4567a5e3f6802d2d364a3514e2518cb12f5be3c890de"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "9e40dc225ff2e6f293a5158eea4e4774b13c78b38117df1e649012534a68ba27"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "sqlite-android",
+      "purl": "pkg:maven/androidx.sqlite/sqlite-android@2.5.1",
+      "type": "library",
+      "version": "2.5.1"
+    },
+    {
+      "group": "androidx.sqlite",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "04fe5db534236849bfd8dacff7b8339de884c501ac4bd3bab80e8bcd250fecdc"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "b5d86d2cdd851840f3803d796592e65a613e7c51e20ff24d26ffd192ca6c22fd"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "sqlite-framework",
+      "purl": "pkg:maven/androidx.sqlite/sqlite-framework@2.5.1",
+      "type": "library",
+      "version": "2.5.1"
+    },
+    {
+      "group": "androidx.sqlite",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "648d5337f5ca3e673900e901aee1ea2ceeeeae55f0a848f8a5a4ea211a7bfe7d"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d96481998593017f70a5bee65af3d93e5370e734f50e2d39c03f8540dcac10f0"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "fb2cbae463280caa382e13cafc22e7ae76564f22bdb352a1b01fdf7069f11d72"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "sqlite-framework-android",
+      "purl": "pkg:maven/androidx.sqlite/sqlite-framework-android@2.5.1",
+      "type": "library",
+      "version": "2.5.1"
+    },
+    {
+      "group": "androidx.startup",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f4114b5c6859bb1bc3caf281cb6d6f25998fa7f7292c64ceaea74a93210e746b"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "cfd96cf6450c6e2b697598924729ad9a0495c5a4fcf4ebee7e2f81b07e415865"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "e0a6329a371262fe4c450372b70fdaf33b769ef6917094723787cfce896b1dd3"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "startup-runtime",
+      "purl": "pkg:maven/androidx.startup/startup-runtime@1.1.1",
+      "type": "library",
+      "version": "1.1.1"
+    },
+    {
+      "group": "androidx.tracing",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f34bec4eb58871d31002901377108aaa1ebfe77fa6d882b8b86200b158e26ea1"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d0d8d486b6bd33206dbf3f1a6d167e9b43c268ea63c3321c886b1543ad05ece3"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "6faa90390d1fdbf0adb9a99bf99de67b94c6c6f35aea9510593a9d17973736a2"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "tracing",
+      "purl": "pkg:maven/androidx.tracing/tracing@1.2.0",
+      "type": "library",
+      "version": "1.2.0"
+    },
+    {
+      "group": "androidx.tracing",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "8958b5a0153c1a82cb133703d3d11155898738280a354e92ca1817d7ca6f4cb7"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "39288b23c71a4391132aec9951f5e27f41727a2cdff69c6e4b4ece49f63e540c"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "c33f9cbd931e6190ca38aa09bf8a7a8a19391d4b0fb7a7605a6b59f2d42580d1"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "tracing-ktx",
+      "purl": "pkg:maven/androidx.tracing/tracing-ktx@1.2.0",
+      "type": "library",
+      "version": "1.2.0"
+    },
+    {
+      "group": "androidx.versionedparcelable",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "57e8d93260d18d5b9007c9eed3c64ad159de90c8609ebfc74a347cbd514535a4"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "5f51e65873ca612de3838fa90d2ee95b8d040efd31b9c390a19bf94d615cdb2f"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "135016af471acf4cd9583d36ceb779710c6b46812ccaaef7c526d5d60eae6b0b"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "versionedparcelable",
+      "purl": "pkg:maven/androidx.versionedparcelable/versionedparcelable@1.1.1",
+      "type": "library",
+      "version": "1.1.1"
+    },
+    {
+      "group": "androidx.viewpager",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "147af4e14a1984010d8f155e5e19d781f03c1d70dfed02a8e0d18428b8fc8682"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "1f72f836339d03c6eb013f65075e76ca87075a577578eb4f95f74a3a5d253128"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d4f9a044ab8c23392b12a3f2930d5fd6b5982421a746f2f2a812e9619431fbfd"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "viewpager",
+      "purl": "pkg:maven/androidx.viewpager/viewpager@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "group": "androidx.work",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b79c3f92fbf9d3f19482472ad2c16ed1b590b542f26c55268e4991d3d1b8274a"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "05c300906f138ca6f893b79a5d5747a175097d1eb34cb2833be8622889ca450f"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "c5b97873987e50fbc19ddcab971a6a0f108087423a8cebd15c274db0d07e2245"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "work-runtime",
+      "purl": "pkg:maven/androidx.work/work-runtime@2.10.1",
+      "type": "library",
+      "version": "2.10.1"
+    },
+    {
+      "group": "androidx.work",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "7c9691b00b04aa92ec5fe03ef1738d168a86d2e2523af39e9e9e4761b997847d"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "bb5315eaf9f9cd93da3c6abd42546402ff9cfd960afe29c06bccb506368bfe87"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "0b9fb7194ea6a198d7dacd69218bbf2c4369a7337c066a6c6e433c669e15da8d"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "work-runtime-ktx",
+      "purl": "pkg:maven/androidx.work/work-runtime-ktx@2.10.1",
+      "type": "library",
+      "version": "2.10.1"
+    },
+    {
+      "group": "com.google.android.datatransport",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2560c245693d1f2d619903b6dd1b7cf9df11f774180bc3f09c21598e186f8648"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "7dafc39f0ea835473366acc346f7e67fc8443f4c645d999c3e987bcad6b88c7b"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "transport-api",
+      "purl": "pkg:maven/com.google.android.datatransport/transport-api@3.1.0",
+      "type": "library",
+      "version": "3.1.0"
+    },
+    {
+      "group": "com.google.android.datatransport",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "3ce9eb56f52c15e96683030fffc8db553bc41d1e999e207cb904cbec45d4fd49"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "07a32025a65b08ee7e11d14dc539a758b66713f0c1d13900a81599ceadbaf44d"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "transport-backend-cct",
+      "purl": "pkg:maven/com.google.android.datatransport/transport-backend-cct@3.1.9",
+      "type": "library",
+      "version": "3.1.9"
+    },
+    {
+      "group": "com.google.android.datatransport",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "41745c5b8f427d24439015b84f651ad420718991867d2afc262c264009b802c1"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "86f452b74551062623fad0b0bb6bc4dc2a6ba9f44a99834d0e50fb047051357b"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "transport-runtime",
+      "purl": "pkg:maven/com.google.android.datatransport/transport-runtime@3.1.9",
+      "type": "library",
+      "version": "3.1.9"
+    },
+    {
+      "group": "com.google.android.gms",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "90deac635270f027af44aa3bcc640b2f8935159f686acbcffc76d2217534d82f"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a071d2f2b09a81182db7b10fe62f5ce24ec8646529400ff1423f9be1178c2cb5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Android Software Development Kit License",
+            "url": "https://developer.android.com/studio/terms.html"
+          }
+        }
+      ],
+      "name": "play-services-base",
+      "purl": "pkg:maven/com.google.android.gms/play-services-base@18.9.0",
+      "type": "library",
+      "version": "18.9.0"
+    },
+    {
+      "group": "com.google.android.gms",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c6ed7236b1b3ce0296b508a5c0a09108fd52d83559d35cad2639505cd04ab255"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "601ef047167c6c280b8b190942d9e94a0463e891acd9c6ccf532eb298a5efe5b"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Android Software Development Kit License",
+            "url": "https://developer.android.com/studio/terms.html"
+          }
+        }
+      ],
+      "name": "play-services-basement",
+      "purl": "pkg:maven/com.google.android.gms/play-services-basement@18.9.0",
+      "type": "library",
+      "version": "18.9.0"
+    },
+    {
+      "group": "com.google.android.gms",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "eadc1e8daa4c2fbe4af80105a87e6352a4707babb1563cc686a363013660aef3"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "c525314ab50fb6bb915da1dab99ea71b45fdb2aeb5ea6b857e7b9562ebbb8c85"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Android Software Development Kit License",
+            "url": "https://developer.android.com/studio/terms.html"
+          }
+        }
+      ],
+      "name": "play-services-cloud-messaging",
+      "purl": "pkg:maven/com.google.android.gms/play-services-cloud-messaging@17.4.0",
+      "type": "library",
+      "version": "17.4.0"
+    },
+    {
+      "group": "com.google.android.gms",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "92e374e9af54c18d4ca6ea98bd7dc5a19070865861769c434aebaadb1aa53753"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "bc2ed0ddc8f2e3a27275d0bea19236fa726054ac1deb66714d13fd11e1530416"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "ML Kit Terms of Service",
+            "url": "https://developers.google.com/ml-kit/terms"
+          }
+        }
+      ],
+      "name": "play-services-code-scanner",
+      "purl": "pkg:maven/com.google.android.gms/play-services-code-scanner@16.1.0",
+      "type": "library",
+      "version": "16.1.0"
+    },
+    {
+      "group": "com.google.android.gms",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "dd4314a53f49a378ec146103d36232b96c75454d29526336ccbdf132941764d3"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "68bb2bc131c0939858e3166f777c63903b990c7fcae3c1dea70a312937f6a73f"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Android Software Development Kit License",
+            "url": "https://developer.android.com/studio/terms.html"
+          }
+        }
+      ],
+      "name": "play-services-stats",
+      "purl": "pkg:maven/com.google.android.gms/play-services-stats@17.0.2",
+      "type": "library",
+      "version": "17.0.2"
+    },
+    {
+      "group": "com.google.android.gms",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5e2631340ca2a8b85fe4a928fd7f272aa13527c75654b21232c14763c14f0eb3"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "e3f7666ca0532142ab7c0c3f4e2dbf34113d590c3542845ce03ce79ea6b83d29"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Android Software Development Kit License",
+            "url": "https://developer.android.com/studio/terms.html"
+          }
+        }
+      ],
+      "name": "play-services-tasks",
+      "purl": "pkg:maven/com.google.android.gms/play-services-tasks@18.4.0",
+      "type": "library",
+      "version": "18.4.0"
+    },
+    {
+      "group": "com.google.android.odml",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "795f4793c375eedf4332a0381082981a5ce70b7a0a776221ca24ad9d40cbea1c"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "2e71aa31f83a9415277f119de67195726f07d1760e9542c111778c320e3aa1f2"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Android Software Development Kit License",
+            "url": "https://developer.android.com/studio/terms.html"
+          }
+        }
+      ],
+      "name": "image",
+      "purl": "pkg:maven/com.google.android.odml/image@1.0.0-beta1",
+      "type": "library",
+      "version": "1.0.0-beta1"
+    },
+    {
+      "group": "com.google.code.gson",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d3999291855de495c94c743761b8ab5176cfeabe281a5ab0d8e8d45326fd703e"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "afded6e6a690fbf3ad4ae65ada397f0a90a5f630b303d1b741b9c97926fdd4de"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "gson",
+      "purl": "pkg:maven/com.google.code.gson/gson@2.8.9",
+      "type": "library",
+      "version": "2.8.9"
+    },
+    {
+      "group": "com.google.crypto.tink",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5efe8f1cb6e75814ae06793d5ff8d9b01e6f88ef97ecc062d14ebc27027dbf78"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "83e3b5cdd1fee04f3fad72c4ce584a54d0a637b93d2bb2bd85da4ae67a673e3e"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "tink-android",
+      "purl": "pkg:maven/com.google.crypto.tink/tink-android@1.8.0",
+      "type": "library",
+      "version": "1.8.0"
+    },
+    {
+      "group": "com.google.errorprone",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c35a2780423fc7e535922a1a6f7e754728e6f9adaa26ada4c37f7d9d356b9e43"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "53cdfc0beb2d766fe03b78f0b11d020554cd419879d20380c38fa1dcf2ba1b50"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "error_prone_annotations",
+      "purl": "pkg:maven/com.google.errorprone/error_prone_annotations@2.26.0",
+      "type": "library",
+      "version": "2.26.0"
+    },
+    {
+      "group": "com.google.firebase",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "675f71742599d8ca6e86e20b972fc3439755a4c603108d85525f2aacfadb2337"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "7ac92dfc3fbbdf6d68c8068edfc47505e8c737fee58946788cf14148c17f76d2"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f80305e6f7b5d111278d4df9504f51f7230e06c6457a0fa7c16e236c7613cc71"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "firebase-annotations",
+      "purl": "pkg:maven/com.google.firebase/firebase-annotations@17.0.0",
+      "type": "library",
+      "version": "17.0.0"
+    },
+    {
+      "group": "com.google.firebase",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a233d99f3b5525015d319cb43fa2c81b8a34d3231cdd36adfcd60bc0f027e4e2"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "firebase-bom",
+      "purl": "pkg:maven/com.google.firebase/firebase-bom@34.16.0",
+      "type": "library",
+      "version": "34.16.0"
+    },
+    {
+      "group": "com.google.firebase",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "94d98d0a65e22dbc6168c2fb3c3b9ea5ac974f526ec482b97f2cc8aed1e8b5db"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "acb5ccf3b68bc747e61b7ffe5579fe106c558c178228653e8dbc1b9c7f1a40b3"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "firebase-common",
+      "purl": "pkg:maven/com.google.firebase/firebase-common@22.1.0",
+      "type": "library",
+      "version": "22.1.0"
+    },
+    {
+      "group": "com.google.firebase",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5d79597f7774b2f68ad57e91c2592e89ecef4d09a5f1c5c03c75f573f00cb3e4"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "45fd1e8fd3e8d43a868948ee31771b78d2e5fc281b77254d90a995e14e299691"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "firebase-components",
+      "purl": "pkg:maven/com.google.firebase/firebase-components@19.0.0",
+      "type": "library",
+      "version": "19.0.0"
+    },
+    {
+      "group": "com.google.firebase",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b8be11825ba56c04de8374094840b56383df24634931802668d70268d0c7bbe8"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "b2b28f6ba173f5e0c4fe3d36a2d7ee5239c7acbf4143b549ecf031a3485b35bb"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "firebase-datatransport",
+      "purl": "pkg:maven/com.google.firebase/firebase-datatransport@18.2.0",
+      "type": "library",
+      "version": "18.2.0"
+    },
+    {
+      "group": "com.google.firebase",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "282a5a703f9b7eb56508dde97ea918e95d73318b157050f457f7a86dca750150"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "423575e3500e9910e3aa83f9d7a6d755b5f76ac591823baf67570fb6ce7ea816"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "firebase-encoders",
+      "purl": "pkg:maven/com.google.firebase/firebase-encoders@17.0.0",
+      "type": "library",
+      "version": "17.0.0"
+    },
+    {
+      "group": "com.google.firebase",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "80aece7e1ef58957ca2fc1957bc9208ec92a3a9528201331d3c63e3182570f97"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "3a7d59795a799683afa6435931066c5bb634adfebd2883a08b4765f38cdd3ea1"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "firebase-encoders-json",
+      "purl": "pkg:maven/com.google.firebase/firebase-encoders-json@18.0.0",
+      "type": "library",
+      "version": "18.0.0"
+    },
+    {
+      "group": "com.google.firebase",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5f5fb74af3fff0e1f961fcb5f3f99267c103b16a23c89b556c8cb4a711a8dcb2"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "293db96a0d1d43f033167881b638d8fde844e4e5495f5101cf52295765295e0e"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "firebase-encoders-proto",
+      "purl": "pkg:maven/com.google.firebase/firebase-encoders-proto@16.0.0",
+      "type": "library",
+      "version": "16.0.0"
+    },
+    {
+      "group": "com.google.firebase",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "0b7c3721c84b62e70415307239ed4a7f998989084bf2833f90b9f5bea3095a05"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "53f269f5e127ac21eba2d80a985abc8d2c8f24cdca9be0284448ee9ea343e34b"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Android Software Development Kit License",
+            "url": "https://developer.android.com/studio/terms.html"
+          }
+        }
+      ],
+      "name": "firebase-iid-interop",
+      "purl": "pkg:maven/com.google.firebase/firebase-iid-interop@17.1.0",
+      "type": "library",
+      "version": "17.1.0"
+    },
+    {
+      "group": "com.google.firebase",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "3a561cba4bce00fa6ff515857ccc9d5550bc1ee239549799a091486137c2f3da"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "49beea7fe31e142be5b4c1c7f3ab4e6e7487137c74fb43f17c815bff1ac1f4e2"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "firebase-installations",
+      "purl": "pkg:maven/com.google.firebase/firebase-installations@19.1.2",
+      "type": "library",
+      "version": "19.1.2"
+    },
+    {
+      "group": "com.google.firebase",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "8d8f643fdee27700c4cc865b38c6fe834a9e3f569e4eaa219ba3567dae794276"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ac99cedb507981ea21cc35dc24c70142a14d03369da0fb63ce7c44eda9fc009e"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "firebase-installations-interop",
+      "purl": "pkg:maven/com.google.firebase/firebase-installations-interop@17.3.0",
+      "type": "library",
+      "version": "17.3.0"
+    },
+    {
+      "group": "com.google.firebase",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "dba74d6bf94647ee397bf7afb2ab07f6fe8d13157e56785fa540a2a13ed82c99"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "9544235442a95b542eed5f63e3dfe786e3ed0bf26a1f6031dab4dfa965a4cc1a"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Android Software Development Kit License",
+            "url": "https://developer.android.com/studio/terms.html"
+          }
+        }
+      ],
+      "name": "firebase-measurement-connector",
+      "purl": "pkg:maven/com.google.firebase/firebase-measurement-connector@19.0.0",
+      "type": "library",
+      "version": "19.0.0"
+    },
+    {
+      "group": "com.google.firebase",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "18a233d06978410ceef3d0becb7aa3192299fc7f3b8a28e566782e73f1ea3500"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "7b5f54a80179d72b14f5e0269a2bdd08c1d4e14beb4546ed227292e2e357c954"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "firebase-messaging",
+      "purl": "pkg:maven/com.google.firebase/firebase-messaging@25.1.1",
+      "type": "library",
+      "version": "25.1.1"
+    },
+    {
+      "group": "com.google.guava",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "53873caf26bc1ed8a567ea6c939ab2aaa3f47a5e32d5cade95ddf5080d23238a"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "e4ad7607e5c0477c6f890ef26a49cb8d1bb4dffb650bab4502afee64644e3069"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "listenablefuture",
+      "purl": "pkg:maven/com.google.guava/listenablefuture@1.0",
+      "type": "library",
+      "version": "1.0"
+    },
+    {
+      "group": "com.google.mlkit",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f5caf8b670a7f048c13ee637536f21da52b59b4f2218081df320986a6e3ad3b4"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "cd0e9e71b834078d4a8a7f09e72d7d7c3a22e258e9602da7ac86146677043f14"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "ML Kit Terms of Service",
+            "url": "https://developers.google.com/ml-kit/terms"
+          }
+        }
+      ],
+      "name": "barcode-scanning-common",
+      "purl": "pkg:maven/com.google.mlkit/barcode-scanning-common@17.0.0",
+      "type": "library",
+      "version": "17.0.0"
+    },
+    {
+      "group": "com.google.mlkit",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9150a287f77563a01dfab7aff2c2c3446544c5bd2dc701c7edd3e6ace157751f"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "420b6df597bffe1bcc872b4d4512ce7e5c1a4fb5d8aa1e79d2b1bcd1967c1010"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "ML Kit Terms of Service",
+            "url": "https://developers.google.com/ml-kit/terms"
+          }
+        }
+      ],
+      "name": "common",
+      "purl": "pkg:maven/com.google.mlkit/common@18.9.0",
+      "type": "library",
+      "version": "18.9.0"
+    },
+    {
+      "group": "com.google.mlkit",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "479110f1ea8aedbef6d0e1ba8b49d826de03778dca670370da693bbc5b6c18ac"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "0f173b3ce33c67b9097c2ce7dbf0db922bcabca5b4e4eab93fa19ca70b036c88"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "ML Kit Terms of Service",
+            "url": "https://developers.google.com/ml-kit/terms"
+          }
+        }
+      ],
+      "name": "vision-common",
+      "purl": "pkg:maven/com.google.mlkit/vision-common@17.0.0",
+      "type": "library",
+      "version": "17.0.0"
+    },
+    {
+      "group": "com.squareup.okhttp3",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b1050081b14bb7a3a7e55a4d3ef01b5dcfabc453b4573a4fc019767191d5f4e0"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "7c737040a9419522e7c50cc027416a70fe7c7629e52b219935ade6b4119c7d38"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a059c7271b66e4c107ab2e2fce42e50ba3ef644eabf843903f95ad99bb5bc4de"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d91a769a4140e542cddbac4e67fcf279299614e8bfd53bd23b85e60c2861341c"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "607e220ff8215b929d829bbf54f332894f1459b4d795979aeafcbcc1cea54cf3"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "okhttp",
+      "purl": "pkg:maven/com.squareup.okhttp3/okhttp@4.12.0",
+      "type": "library",
+      "version": "4.12.0"
+    },
+    {
+      "group": "com.squareup.okio",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "aeb3b70a24c103ed0c54541f35f5c511d27ce60cae376a596d7d653697f8cc95"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "6a47ac50364e6598459401fb86f9b6cfcdf637b9b3a3045b1cc33cbf4c408218"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "okio",
+      "purl": "pkg:maven/com.squareup.okio/okio@3.6.0",
+      "type": "library",
+      "version": "3.6.0"
+    },
+    {
+      "group": "com.squareup.okio",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "61b4d7c515a0894ffad925fd7052620c1425a86433fd35113b5fab0de890a57f"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "67543f0736fc422ae927ed0e504b98bc5e269fda0d3500579337cb713da28412"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "870a42a7b468af8fd24d67b7b62e5861aab398c56f15a80b10642e7001564e2f"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "b1c2199e1c0cc969ef61cbbe4af2ecaf9b06411bdde01cbaf6fc9134dfe04e8a"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "1b6e5a82ce6f8b1298372d3854d9f9b39b459bc532de99f4aac5636b6d2f8c82"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "okio-jvm",
+      "purl": "pkg:maven/com.squareup.okio/okio-jvm@3.6.0",
+      "type": "library",
+      "version": "3.6.0"
+    },
+    {
+      "group": "javax.inject",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "91c77044a50c481636c32d916fd89c9118a72195390452c81065080f957de7ff"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "c4b87ee2911c139c3daf498a781967f1eb2e75bc1a8529a2e7b328a15d0e433e"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "943e12b100627804638fa285805a0ab788a680266531e650921ebfe4621a8bfa"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "javax.inject",
+      "purl": "pkg:maven/javax.inject/javax.inject@1",
+      "type": "library",
+      "version": "1"
+    },
+    {
+      "group": "org.bouncycastle",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "64d6c5a6121fcd927152dd182cbed39afe0fda641a970d9bcc0c9cb1858b2731"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ce7abb4a91ba5d2a73fdf17a3df4762e3605a0392cc7983ef2f1ae16cd384cc3"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Bouncy Castle Licence",
+            "url": "https://www.bouncycastle.org/licence.html"
+          }
+        }
+      ],
+      "name": "bcprov-jdk18on",
+      "purl": "pkg:maven/org.bouncycastle/bcprov-jdk18on@1.84",
+      "type": "library",
+      "version": "1.84"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "73bc8813701afeca3706d55e264ce0ee4125ccfb38dfd82a0cfc05f75c3950ce"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f00537c7023e604933f6a9563b1bb3b83e61fbfd2cc3d0e9900d616bab6862a4"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "kotlin-android-extensions-runtime",
+      "purl": "pkg:maven/org.jetbrains.kotlin/kotlin-android-extensions-runtime@1.9.22",
+      "type": "library",
+      "version": "1.9.22"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "ab8fc408b4a72aa5e3687bbcd5acdde84c84cc1828bcfe4ea5c71e8671fa94b4"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "f0077f35ec828e148ac92d0c6aa141a732b5eb7a4a391679aeefa59fa9a1a5cc"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "kotlin-parcelize-runtime",
+      "purl": "pkg:maven/org.jetbrains.kotlin/kotlin-parcelize-runtime@1.9.22",
+      "type": "library",
+      "version": "1.9.22"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "4922121d3f0bc60ce407f372de42d02a0b7e94e75d0c3d1508b6835721f249ef"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "8d2c1d717c73546d56382d136c8650b59a7159940172263818934ace44cb048d"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "5f2ac1ca8dc8b37a3f4314e716d36969ebf0227a75181d32699d0a8f645b1c21"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "kotlin-stdlib",
+      "purl": "pkg:maven/org.jetbrains.kotlin/kotlin-stdlib@2.1.10",
+      "type": "library",
+      "version": "2.1.10"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "bbcc5fad3f7ede4b469d49dba6c03e1993133655b5e81713b5e6a1bedd1ceb42"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "7e0ba5dd49599ce276c286be334858f251284a20f76db9bc0f5da0fbc99bb5f5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "kotlin-stdlib-common",
+      "purl": "pkg:maven/org.jetbrains.kotlin/kotlin-stdlib-common@2.1.10",
+      "type": "library",
+      "version": "2.1.10"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "ea10d3e5e6e695d8a5283cbf116321acae6ba42d0bdd3eda50f7c34a26fa25cb"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "69e1a62e5752ca3f43fb1607f161379bbe88b64af89c1a543c126160adf7cc53"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ac6361bf9ad1ed382c2103d9712c47cdec166232b4903ed596e8876b0681c9b7"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "c7fa67c7961320b89d85a3ca59a2e18c2c65850845595dcae4b46af6945edcd5"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "kotlin-stdlib-jdk7",
+      "purl": "pkg:maven/org.jetbrains.kotlin/kotlin-stdlib-jdk7@1.9.10",
+      "type": "library",
+      "version": "1.9.10"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "40e9a80f6b953d12389623760d438e69914098d0c4d7053f70f90533ec041259"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "5f4b94dd3065a7764c37fa15de2ad6d81f40d59f8cb33f17d181c6384fb7a72e"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "69e1a62e5752ca3f43fb1607f161379bbe88b64af89c1a543c126160adf7cc53"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a4c74d94d64ce1abe53760fe0389dd941f6fc558d0dab35e47c085a11ec80f28"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "kotlin-stdlib-jdk8",
+      "purl": "pkg:maven/org.jetbrains.kotlin/kotlin-stdlib-jdk8@1.9.10",
+      "type": "library",
+      "version": "1.9.10"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "be86020cd5b93b8a68ca43185a049b9b0baa345fd1be1fdaa014fdaef92d6e7c"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "a514b175aa666f112c9353c5398d9786dac687c49a924177b5313f7651eee414"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "dd4d70dbc424eb0492126446b4035821d40d255664a8a36091d357f11390bc50"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "bd783acd2f9738845d58380f46f45b5cde95d0cb03027d56725338b26bfc4d72"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "7df1e04d77f0cc411890d999a9449b0e3bcd4f159a46c3060b110204ca607d43"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "kotlinx-coroutines-android",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.9.0",
+      "type": "library",
+      "version": "1.9.0"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "bea5511e9001f2c593ab5080df131b219ab5e2085cc5979ce583eacd4946fd78"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "kotlinx-coroutines-bom",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-bom@1.9.0",
+      "type": "library",
+      "version": "1.9.0"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "ad534034a953b4e12cbeeb874c66adf8b1ca14df15fe0d2e6547aa34e86dfeca"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "770f2793d05e2b027b9c799938ec1d2d4ef141ce5819c780c32c3995cadb0a47"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "kotlinx-coroutines-core",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core@1.9.0",
+      "type": "library",
+      "version": "1.9.0"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b321a899e40d3ce345707aa2cfda9983ad0dcc69fea74a9b8bf906a16c1cf8a9"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "78cf3bb8616e459c506295bde2f37c2d5fe1486e7ef3c6b56b94d4695afe01ac"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "01e0f26a274d8f2f2ae702b161bc0980cea817bfcaf66ca4944434ea7b601771"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ad89c2892235e670f222d819cb3d81188143cb19a05b59df9889ae4269f5c70a"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "19c4889941b3aa098bd57cc64f02f9adacc654d571a12a956de4b5bb148c6499"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "kotlinx-coroutines-core-jvm",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm@1.9.0",
+      "type": "library",
+      "version": "1.9.0"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "93dcee9a831a2f9dcda9528bab28d724e15e8a0bfec4194ef81d4ec7e7301ff2"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "4cb6b6321df1664b99fee756de63f6af65ccb4f68936f26cf76c211dea1b23ae"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "04c9253aaaab33a1034462fffee9d73a43622a948187f80348ba5cb97ab274b1"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "kotlinx-coroutines-play-services",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-play-services@1.9.0",
+      "type": "library",
+      "version": "1.9.0"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "4226a491c5b59ce909f73b65aa98944191c8dcac3825637c6be1069e6b589a46"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "kotlinx-serialization-bom",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-bom@1.7.3",
+      "type": "library",
+      "version": "1.7.3"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "31d111776b9af777ca167103f2d61fbeeaa32dae6dd6635906b76d8278ba5730"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "39d09a6e02df2b32558440a64c628f9c605fae8c4f6090321798334c82177e64"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "kotlinx-serialization-core",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core@1.7.3",
+      "type": "library",
+      "version": "1.7.3"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f0adde45864144475385cf4aa7e0b7feb27f61fcf9472665ed98cc971b06b1eb"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "73bb4c02793f87c29ef64bea4ba0258076f4d4c963fcda633d1248ef24b4b4ef"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "734f5f749208dd0bef3d98caa594cf9222afdf0fee5b6843347a8fe64e240427"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "kotlinx-serialization-core-jvm",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core-jvm@1.7.3",
+      "type": "library",
+      "version": "1.7.3"
+    },
+    {
+      "group": "org.jetbrains",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "631038d3c232e65f0f427885c397a9ea13a368b2e67a2748d6f874781cb884a2"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "7b0f19724082cbfcbc66e5abea2b9bc92cf08a1ea11e191933ed43801eb3cd05"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "ff2309b42f7584520497bb48bc609aca04c9886cf48708f14be83f00423ec144"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "c9490f655132328df2cfbcfdf743f53fc3916d6c1d10437175a6ca6e3a67771c"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "annotations",
+      "purl": "pkg:maven/org.jetbrains/annotations@23.0.0",
+      "type": "library",
+      "version": "23.0.0"
+    },
+    {
+      "group": "org.jspecify",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1fad6e6be7557781e4d33729d49ae1cdc8fdda6fe477bb0cc68ce351eafdfbab"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "d307ca77a54e18ac1ef1aaed4e5bbe014bd2f49f29e1d2f813e47c278283195b"
+        },
+        {
+          "alg": "SHA-256",
+          "content": "cdab929a3b95211f43d2090c5e2d0dfe8465960e378bc32b35841dab324433a6"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+          }
+        }
+      ],
+      "name": "jspecify",
+      "purl": "pkg:maven/org.jspecify/jspecify@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "535f2027514f94c58df5f0fdde8852940875678162feb8dcbc7337d09cc5a4ac"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "PSF-2.0"
+          }
+        }
+      ],
+      "name": "CPython",
+      "properties": [
+        {
+          "name": "opendrsai:source-files",
+          "value": "[{\"path\":\"apps/android/app/src/main/python/runtime_probe.py\",\"sha256\":\"ea9232d7e17d190a2d59195217320b99ba6032682d7fbba26904634ab21a2088\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/__init__.py\",\"sha256\":\"b8c53780c77c2e67a8b9fe7f93427e6c9ef6cc0c86a98f9dc50f037d4d141245\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/adapter_registry.py\",\"sha256\":\"5b2d6c2e7d243bb0d59724ca5e56328dbd7fcfb68559c26e88625ccd5df39fd6\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/adoptions.py\",\"sha256\":\"0717cc444b3d34f08d7aef8c8f97ab3ad96fc1d744b81a6b5e5d07e622d97c22\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/agent.py\",\"sha256\":\"ab1471946ae81befaee6afdf3480257dcaecd55113164398d4f0fecf83bf52a7\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/agent_bindings.py\",\"sha256\":\"d7454a4000e72502c152fd26786c4c59ceb4a3353ffab66e2c3dd287a534c121\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py\",\"sha256\":\"7b1d02d13aea7e5acc6957975a9d55f31b22976480377aa7f3ab3218d0b8f06b\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel_factory.py\",\"sha256\":\"483e9d79dd3c4cb543a5a570b2cd179b4072d0d15b303ea7f9434762c54165a0\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/artifacts.py\",\"sha256\":\"b9bfdd94ad4445e6e9ffc4651b9b5ec303ed583d20caea9c438a9103f070c750\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/conversation.py\",\"sha256\":\"426a7efb69e9f230ef9bfb020bc62c36337cce31f6c85776d2db1c5b56041934\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/desktop_agent_kernel_adapter.py\",\"sha256\":\"26053211f2f2e87b3747d70dbbf3fa24d046ec630f3913beebd5e35b25a9968b\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/desktop_autogen_ports.py\",\"sha256\":\"744cfa4539bf454255f21742422d10c222e30980d678d3999730fc10e808864e\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/desktop_kernel_coordinator.py\",\"sha256\":\"630b533eb699490044d879207c20f3d22a2151021c0255cd65e25dcd2d44a7ef\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/desktop_kernel_events.py\",\"sha256\":\"768d0284b5c074bdab29219f8c4041e7dee8da5c503de0faf24a6718b1ca2002\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/desktop_kernel_run_stream.py\",\"sha256\":\"d7cfbaa4c9fac21bb81e7df1896b4320b941d12e9c048df05c6e7e16e7f488ab\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/desktop_manager_ports.py\",\"sha256\":\"e2a9ef2710754f01170cc8685627c655f43534343b75690b8e98464efc6e3c71\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/desktop_oaep_bridge.py\",\"sha256\":\"23c917ce82b41d33607facb6d2ebe282f89058824afe1a5235efa68ec539c71b\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/desktop_threads.py\",\"sha256\":\"a34d4e8bd6a910201b74d5a7b356df1f63d523c158576428b60e2e17855148b7\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/engine.py\",\"sha256\":\"c7f7dfa0a34bf17489a8a37ce1e29daa8c0fa8b5b14b516a5b7983ca3dca608b\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/error_contract.py\",\"sha256\":\"b28b33e40ab5d25e969955dc45a1572ef666ff4b16c6d659a2b4ec8b85f7f121\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/evidence.py\",\"sha256\":\"1fb0f96a0360b3de73ea90b57b36f4ad44f42fed168dfcc2d3ae1bbf318cb55d\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/experiment_export.py\",\"sha256\":\"91bf0bee4f0380f5497415784617f465317a367c874556a0f86fbaa3d99d0e57\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/experiment_overrides.py\",\"sha256\":\"64fdf255cd18dd7c5dc86e000625f7203ba1cfbbf65bb43b080b06e02000fcad\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/experiments.py\",\"sha256\":\"f391a9424a83901db38a523783a6464fcb05b0a4752634788fcbd3ea0be2dafb\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/goals.py\",\"sha256\":\"a11748aef8a7642ee10e1528d8a293af64475d5aeecfabad1b9c277af532cbc8\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/history.py\",\"sha256\":\"0efe950949ed6e554b884fc57463ec31442144497cc3994c416eaf404e73f173\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/image_operations.py\",\"sha256\":\"f8930d3c9b142bdc37a453723dd81ed8db80a9266269ce96adef3c04bd11a04b\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/input_resources.py\",\"sha256\":\"a4eb21c63f2e0e44810311ed53f0b848f37771487a0ad22feb9bc85c98268b5c\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/journal.py\",\"sha256\":\"f8680ee4133fc2a9d3b35d545ae0184a3b3b5a8c4c87417368ef493f8120b1cc\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/migrations.py\",\"sha256\":\"c86955d83130d278a759200e92e881b1e5eaffbaaec30f17e3fcfea1f8ac9683\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/mobile_adapter.py\",\"sha256\":\"7417f50b22ff67799c6297b4c31b99b8d3f6d6d9fd355e606b484977447eef84\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/__init__.py\",\"sha256\":\"11d61eb1ce2c8dba3cbf4089149ca51212a1ec3947dfc93b9303728003882986\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/context.py\",\"sha256\":\"8545051946d8239c514d9e05e4f44811d16e934295244efb57d4a9ca2b5a2df3\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/engine.py\",\"sha256\":\"be28389f4db95c1646897b0ea907274beb31aae9b29a49e1d650cc7300aa7db5\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/factory.py\",\"sha256\":\"a15b78c1b82a6b93bc2e6705617446eafeb0a2c6d06abf220fe5e53a85ebee77\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/plan_state.py\",\"sha256\":\"f823706d64b6c37870944853697b9afa6d2042f84feebf12f9b4f05c013fe0f6\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/ports.py\",\"sha256\":\"816c1779ca4266f8e08f77522b93d0314a38f4daf38dd19647f6bfdda26dc301\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/protocol.py\",\"sha256\":\"7f28110aee222dde60b70fb8a0ff73ae7e3811aea25bc9b0359b1ca24d74ac82\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/subagents.py\",\"sha256\":\"75870754aff2ad2bc5639e9ec7059ee276465cce46ae2872abcfd2ce5d08cd1b\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/normalized_events.py\",\"sha256\":\"fb91f45c0a3fecd8bef5dbc284d7caf1785ac4ede11ce3ad92225fd03ac45f96\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/normalized_writer.py\",\"sha256\":\"b7ff9ba46529df4c49bf4423cd06ed8ee7d7a312fba2458a7aa8afb343819ae8\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/oaep.py\",\"sha256\":\"b26abf6d569cf1548354f87f2ec3848ebd186746dcdb091bfbd08ea72111bebd\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/observability.py\",\"sha256\":\"0067c68b89e1ce59b3cb9733d512bfa7528beffbabc0791143e07fc34e5d8a63\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/operation_metrics.py\",\"sha256\":\"669299025f8fccb6ae696d50b1fc6f21720cf319ce5caf1af2c130bbf3933e28\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/real_model_statistics.py\",\"sha256\":\"fdaa5c8a00b651fbc24acdaf949be7782cca1effe52d2ab34f3ac1598ac557fb\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/registry.py\",\"sha256\":\"aa13dbac6792964bdc294a328a4245b797b834c71cb900f0070da46746c0c736\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/replay_execution.py\",\"sha256\":\"fad2a5a48c9a3c609a8f83bddad6016868e465a25cc1438288125fba63c8cd90\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/replay_planner.py\",\"sha256\":\"3d1b666b9674f715e8b08d12e33e2d32b3180932966407284119544b29bb3dba\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/replay_policy.py\",\"sha256\":\"31aefc13516639cb89ca22fc4cc0f93385a492512ce5028897267e106ea7fe19\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/run_comparison.py\",\"sha256\":\"0afe6cf4f25b46196714509ea4664e86fc822c97e6e231245328f4e1a5ba3aba\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/run_inspection.py\",\"sha256\":\"b191eb9eb95103177f508b18c82934bc06f3ab29d8f3c0ede97d04678576a1f7\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/sandbox_compute.py\",\"sha256\":\"683dbe025d0a623513edaef9aad088e0f9e029db9b18d6200a0c5f24f3bb15a4\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/security.py\",\"sha256\":\"f1dec4e5698a5707667cf16704dd47925ebfb51e52fdc58d4a9d1cb0f10ced0b\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/sqlite_connection.py\",\"sha256\":\"8b06c91a4ffffb2a76eb05017b225dff09a02ded5bb928ccc5b7a4dd0e9c55ce\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/terminal/__init__.py\",\"sha256\":\"4ec9bb98e5b246dd0b33350f7b10440999e365362596c6da34133375a20a69dd\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/terminal/screen.py\",\"sha256\":\"3a203302d14a4f8af07f02f3deb1fd70253ebe1ef985ab398c64a330f6f99dd0\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/terminal/state_service.py\",\"sha256\":\"36f21adafbed6ba04b840a037944b322b2361d6128f9c4ae5fd2828cfbf89c70\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/tool_selection_eval.py\",\"sha256\":\"f1e94c06080676ebf8be3e64e5627f410cde9c3b8cd4245ae63131604a0a2516\"},{\"path\":\"cores/python/packages/drsai/src/drsai/backend/runtime/turn_coordinator.py\",\"sha256\":\"3bb64df7d269116972ddc708f4b520b3c9dce5cc82586dbbbf0ec9cd589831ed\"}]"
+        },
+        {
+          "name": "opendrsai:apk-runtime-artifacts",
+          "value": "[{\"path\":\"assets/chaquopy/app.imy\",\"sha256\":\"cd9de3050c1e27febebfb0ce0076cde613a14ff4cdb8f270e58be185e2f7d0f4\"},{\"path\":\"assets/chaquopy/bootstrap-native/arm64-v8a/_bz2.cpython-311.so\",\"sha256\":\"f8cf0aec85135121536aea2981081f3534c973496f3457e092abe3349155977e\"},{\"path\":\"assets/chaquopy/bootstrap-native/arm64-v8a/_ctypes.cpython-311.so\",\"sha256\":\"673e90b1be6dc1a96a5175662fe007b13463841959a5d2a1dcc891dbad72c2b1\"},{\"path\":\"assets/chaquopy/bootstrap-native/arm64-v8a/_datetime.cpython-311.so\",\"sha256\":\"94739342dc95342b30523f0c3d51c5f3ea719c66b9283d317d6286aafa5e48b6\"},{\"path\":\"assets/chaquopy/bootstrap-native/arm64-v8a/_lzma.cpython-311.so\",\"sha256\":\"662946f372e9ffc578973b8d45d5ef3038c01d04aab7ea90eadcb4cfa691fd33\"},{\"path\":\"assets/chaquopy/bootstrap-native/arm64-v8a/_random.cpython-311.so\",\"sha256\":\"f9ac07ab294a7786001db5ed68dc9b8be575a78712b4fff71468a0cae0346e76\"},{\"path\":\"assets/chaquopy/bootstrap-native/arm64-v8a/_sha512.cpython-311.so\",\"sha256\":\"008f550dec5d96ee4a1d00c041cd7859d95a4d56f39d537cf75a73b89291aee2\"},{\"path\":\"assets/chaquopy/bootstrap-native/arm64-v8a/_struct.cpython-311.so\",\"sha256\":\"82da00584039d88b3c12bb53586efa6c911453a2089880bad3c27b826cc66399\"},{\"path\":\"assets/chaquopy/bootstrap-native/arm64-v8a/binascii.cpython-311.so\",\"sha256\":\"0790c2ae67f90545d99c5054b72914daf98f175f5961c43d7d8eb8f210c77145\"},{\"path\":\"assets/chaquopy/bootstrap-native/arm64-v8a/java/chaquopy.so\",\"sha256\":\"6b086d12b14a295c8e6730bf6646ad21530dde23ab766ce66b61ff68a668f1af\"},{\"path\":\"assets/chaquopy/bootstrap-native/arm64-v8a/math.cpython-311.so\",\"sha256\":\"ee3d59dc72b8ca885940e9f620c332f226b97558098da21a80b0d6088a4b1bc3\"},{\"path\":\"assets/chaquopy/bootstrap-native/arm64-v8a/mmap.cpython-311.so\",\"sha256\":\"7611b0a4709825d809b0756ea2a122e1ee98162b6f8a3c696a1f72a50c099163\"},{\"path\":\"assets/chaquopy/bootstrap-native/arm64-v8a/zlib.cpython-311.so\",\"sha256\":\"db931d00d398a324ff1b84fce981e9b664a05aee91dc80e0167010ecc2b58cf5\"},{\"path\":\"assets/chaquopy/bootstrap-native/x86_64/_bz2.cpython-311.so\",\"sha256\":\"9f8b4f61b63e6a9434e68398ba0d7be67dc0d75898147356a395be22812ccf43\"},{\"path\":\"assets/chaquopy/bootstrap-native/x86_64/_ctypes.cpython-311.so\",\"sha256\":\"d8406c3e130246e12ebd51925eb1957d899f1171e5e395ef9d563691984154b6\"},{\"path\":\"assets/chaquopy/bootstrap-native/x86_64/_datetime.cpython-311.so\",\"sha256\":\"e9e65d95270c9b97f70d5396eb4c6660eb9191e235d4b724c2a8f81a8baeda80\"},{\"path\":\"assets/chaquopy/bootstrap-native/x86_64/_lzma.cpython-311.so\",\"sha256\":\"6a5260336296ad6eef3d289de940bdc6fef4971e5b64cd1bb22fd3ec1ceeab4d\"},{\"path\":\"assets/chaquopy/bootstrap-native/x86_64/_random.cpython-311.so\",\"sha256\":\"4071b32d44c011e8ab3e8428303c813ef67c8937e0b52c174ab88bdaf43eafee\"},{\"path\":\"assets/chaquopy/bootstrap-native/x86_64/_sha512.cpython-311.so\",\"sha256\":\"29e8f7f44fcd4c9314aab31be41d5106b0eb79e37df8a16a691d4458981c9ad0\"},{\"path\":\"assets/chaquopy/bootstrap-native/x86_64/_struct.cpython-311.so\",\"sha256\":\"db1ee7c50f1d8ffed8eda6ee386cfdd60d0bd31831a952f0eea6a499cbd42a5d\"},{\"path\":\"assets/chaquopy/bootstrap-native/x86_64/binascii.cpython-311.so\",\"sha256\":\"f04b07be4bfb6a4828d15d80989c434b19eac788ff609b1ebc7b581f41b7089b\"},{\"path\":\"assets/chaquopy/bootstrap-native/x86_64/java/chaquopy.so\",\"sha256\":\"8f7c832a03f549913571ebb9878293dcb668a914cec56a9b398eb87d073e634e\"},{\"path\":\"assets/chaquopy/bootstrap-native/x86_64/math.cpython-311.so\",\"sha256\":\"8ea91f86cef11afbe926994aff8258eaac091b0f485b26ef7706f09dd671eb2a\"},{\"path\":\"assets/chaquopy/bootstrap-native/x86_64/mmap.cpython-311.so\",\"sha256\":\"d94a8c1116074b84aa5734a81c23a739744e758f46a77b26a88bdda76d89673a\"},{\"path\":\"assets/chaquopy/bootstrap-native/x86_64/zlib.cpython-311.so\",\"sha256\":\"af19819f400d76128f9a0b3d19526729c2681f429b4e337b7269324b7feb4376\"},{\"path\":\"assets/chaquopy/bootstrap.imy\",\"sha256\":\"6f36c6371e9f91e6f2bc9390a1bf18479ffcf16d0c23ee8a8e0714d6f1b766e2\"},{\"path\":\"assets/chaquopy/build.json\",\"sha256\":\"74f133fbe53ec2ff81858044280a2e07ee39d1a15f5578682191474278f98554\"},{\"path\":\"assets/chaquopy/cacert.pem\",\"sha256\":\"9102e6a3644a071ba6cdbd4a53698f291c4a64b18450a08bc046548b6db5cc8b\"},{\"path\":\"assets/chaquopy/requirements-arm64-v8a.imy\",\"sha256\":\"8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85\"},{\"path\":\"assets/chaquopy/requirements-common.imy\",\"sha256\":\"8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85\"},{\"path\":\"assets/chaquopy/requirements-x86_64.imy\",\"sha256\":\"8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85\"},{\"path\":\"assets/chaquopy/stdlib-arm64-v8a.imy\",\"sha256\":\"54fda556e83312edb4e8ca72dedce1f8936036f3dd58ec278be193f36fb82855\"},{\"path\":\"assets/chaquopy/stdlib-common.imy\",\"sha256\":\"f073506702d3ab29130444a8c3be8b43476d8d4cb718de9a579c7287f164d697\"},{\"path\":\"assets/chaquopy/stdlib-x86_64.imy\",\"sha256\":\"f21828d610bc3148ddf7961ac133f478943de0b177227ca1d8a1a4437ddc1f96\"},{\"path\":\"lib/arm64-v8a/libchaquopy_java.so\",\"sha256\":\"79de059106ef396ca04f083d1cde9d6849f4371e1883fbae5eb23e8103eb77b6\"},{\"path\":\"lib/arm64-v8a/libcrypto_chaquopy.so\",\"sha256\":\"766c1744b32da624ca78d3996806b43631f28222576ba80bb5688e5c3041f0be\"},{\"path\":\"lib/arm64-v8a/libcrypto_python.so\",\"sha256\":\"c6c31b928c480e77ca85f9e34286ca922d6c56fd79567b34d442bbcc6817d10e\"},{\"path\":\"lib/arm64-v8a/libpython3.11.so\",\"sha256\":\"bcbf0b2cedc14925bc820ed606033e04cc369c6698a8169fc07185cf1108975e\"},{\"path\":\"lib/arm64-v8a/libsqlite3_chaquopy.so\",\"sha256\":\"1e348dceef9c46754e6be14f2a58e6d34441afb03974b36fa0710f8ee50ebf2d\"},{\"path\":\"lib/arm64-v8a/libsqlite3_python.so\",\"sha256\":\"6b0f0012ffff95d2420e88fd420d0d65dc4d63d943c1011567978f6203d118dd\"},{\"path\":\"lib/arm64-v8a/libssl_chaquopy.so\",\"sha256\":\"024d7a7696e789443642645df35929994aa8a4a3cb4d46b2fe7415d64f9a2282\"},{\"path\":\"lib/arm64-v8a/libssl_python.so\",\"sha256\":\"60b083de76e184b19bb830e80f9f6b155f6db87e309018d007db6439db45145e\"},{\"path\":\"lib/x86_64/libchaquopy_java.so\",\"sha256\":\"8e80b2ab71dd080e080cb1217a06e9a397f75eb2029f8981b748cfe1b477edd5\"},{\"path\":\"lib/x86_64/libcrypto_chaquopy.so\",\"sha256\":\"b582c9ede7b21e16bfbd05ad7ad6fc428e785035a6f222810a9bee52966b6e66\"},{\"path\":\"lib/x86_64/libcrypto_python.so\",\"sha256\":\"d59de34d0dcee304e06681c8022bd4805dab5ea336b9af8fd58a00f5598062be\"},{\"path\":\"lib/x86_64/libpython3.11.so\",\"sha256\":\"d6e5a2dc1a8032d341e242a835acc0ed01f881cf97adafe9762271a2ef48e774\"},{\"path\":\"lib/x86_64/libsqlite3_chaquopy.so\",\"sha256\":\"fbaa66914e0971e119c50e7eca3df8593d1c59cdc1c7b045815b8bf06f1868ee\"},{\"path\":\"lib/x86_64/libsqlite3_python.so\",\"sha256\":\"909cccb83a9e8fe07a84bb1539a18e4197fdd7efc83dcd51bf74476f45034e24\"},{\"path\":\"lib/x86_64/libssl_chaquopy.so\",\"sha256\":\"4a3f2907be854faf1a7def9209489e65045a0a52fb1080aa6b0af85feac34fee\"},{\"path\":\"lib/x86_64/libssl_python.so\",\"sha256\":\"06c6228376f4557500f9a38f8e0e56be66d22d8b3c5a7e45bb6a650e548d05cb\"}]"
+        }
+      ],
+      "type": "framework",
+      "version": "3.11"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2af5378301cfa4f2341adb74274297f4b6a9fae3c33f1eed66261b353668627f"
+        }
+      ],
+      "name": "OpenDrSai.Dev",
+      "type": "application",
+      "version": "1.5.6"
+    },
+    "timestamp": "2026-08-05T15:12:37.945612+00:00"
+  },
+  "properties": [
+    {
+      "name": "opendrsai:skill-count",
+      "value": "0"
+    },
+    {
+      "name": "opendrsai:skill-inventory",
+      "value": "[]"
+    },
+    {
+      "name": "opendrsai:osv-evidence-sha256",
+      "value": "4faf5a29d0fd186c03573323580e9e28bf1fc0e58ddf7dac5b1d7dff817e04e3"
+    }
+  ],
+  "serialNumber": "urn:uuid:0f886820-e05a-41f6-81e1-2769d49ddd2c",
+  "specVersion": "1.5",
+  "version": 1
+}

@@ -6,6 +6,14 @@ assert.equal(getAssistantSpeechText({
   content: "Private reasoning\n\nFinal answer",
   reasoningContent: "Private reasoning",
 }), "Final answer");
+assert.equal(
+  getAssistantSpeechText({
+    content: "Same text in both fields",
+    reasoningContent: "Same text in both fields",
+  }),
+  "Same text in both fields",
+  "identical content/reasoning must remain speakable",
+);
 assert.equal(getAssistantSpeechText({
   content: "ignored aggregate",
   structuredTurn: {

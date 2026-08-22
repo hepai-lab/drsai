@@ -41,6 +41,7 @@ for line in sys.stdin:
         {'id':'gpt-5.4','displayName':'GPT-5.4','isDefault':True,'hidden':False,
          'supportedReasoningEfforts':['medium','high'],'inputModalities':['text','image']}
     ]}})
+    elif method=='large': send({'id':identity,'result':{'value':'x' * 200000}})
     elif method=='batch':
         pending.append((identity,message.get('params')))
         if len(pending)==100:
@@ -56,7 +57,7 @@ for line in sys.stdin:
         send({'id':identity,'result':{'emitted':10}})
     elif method=='ask':
         asking[900]=identity
-        send({'id':900,'method':'approval/request','params':{'reason':'test'}})
+        send({'id':900,'method':'item/commandExecution/requestApproval','params':{'reason':'test'}})
     elif method=='ask_unknown':
         asking[901]=identity
         send({'id':901,'method':'future/serverRequest','params':{}})
@@ -76,7 +77,11 @@ def _client(tmp_path: Path, code: str = SERVER, *, timeout: float = 2) -> tuple[
         provider, verify_binary=False, arguments=("-u", "-c", code),
         policy=CodexRestartPolicy(base_delay=0, max_delay=0, startup_grace=0.02),
     )
-    return CodexJSONRPCClient(supervisor, request_timeout=timeout), supervisor
+    # This harness intentionally exercises generic JSON-RPC behavior with
+    # synthetic methods. Product construction keeps contract enforcement on.
+    return CodexJSONRPCClient(
+        supervisor, request_timeout=timeout, enforce_stable_contract=False,
+    ), supervisor
 
 
 @pytest.mark.anyio
@@ -103,6 +108,7 @@ async def test_initialize_jsonl_framing_concurrent_out_of_order_and_timeout(tmp_
             await never
         assert caught.value.code == "codex_request_timeout"
         assert await client.request("echo", {"after": "timeout"}) == {"after": "timeout"}
+        assert len((await client.request("large"))["value"]) == 200000
     finally:
         await client.close()
 
@@ -130,7 +136,7 @@ async def test_notifications_route_by_thread_turn_and_unknown_is_safe_summary(tm
 @pytest.mark.anyio
 async def test_server_requests_always_receive_result_or_method_not_found(tmp_path: Path):
     client, _ = _client(tmp_path)
-    client.handle_server_request("approval/request", lambda message: {"decision": "decline", "request": message["id"]})
+    client.handle_server_request("item/commandExecution/requestApproval", lambda message: {"decision": "decline", "request": message["id"]})
     try:
         await client.connect()
         handled = await client.request("ask")
@@ -145,6 +151,9 @@ async def test_server_requests_always_receive_result_or_method_not_found(tmp_pat
 async def test_invalid_json_and_eof_fail_all_pending_without_hanging(tmp_path: Path):
     for method, expected in (("invalid", "codex_json_invalid"), ("exit", "codex_connection_eof")):
         client, _ = _client(tmp_path / method)
+        observed: list[str] = []
+        client.on_connection_failure(lambda _error: (_ for _ in ()).throw(RuntimeError("observer failed")))
+        client.on_connection_failure(lambda error: observed.append(error.code))
         try:
             await client.connect()
             pending = asyncio.create_task(client.request("never", {}, timeout=5))
@@ -153,6 +162,7 @@ async def test_invalid_json_and_eof_fail_all_pending_without_hanging(tmp_path: P
             assert all(isinstance(result, RuntimeExecutionError) for result in results)
             assert any(result.code == expected for result in results)
             assert not client._pending
+            assert observed == [expected]
         finally:
             await client.close()
 
@@ -174,6 +184,27 @@ for line in sys.stdin:
 
 
 @pytest.mark.anyio
+async def test_direction_params_response_and_frame_guards_are_bounded(tmp_path: Path):
+    client, _ = _client(tmp_path)
+    try:
+        await client.connect()
+        await client._handle_message({"method": "turn/start", "params": {}}, client.generation)
+        await client._handle_message({"method": "turn/completed", "params": "invalid"}, client.generation)
+        await client._handle_message({"id": 999999, "result": {}}, client.generation)
+        assert client.protocol_violations == [
+            {"code": "wrong_direction", "identity": "turn/start"},
+            {"code": "invalid_notification_params", "identity": "turn/completed"},
+            {"code": "unexpected_response_id", "identity": "999999"},
+        ]
+        with pytest.raises(RuntimeExecutionError) as caught:
+            await client.request("echo", {"oversized": "x" * (17 * 1024 * 1024)})
+        assert caught.value.code == "codex_jsonl_frame_too_large"
+        assert not client._pending
+    finally:
+        await client.close()
+
+
+@pytest.mark.anyio
 async def test_model_list_requires_explicit_compatible_selection(tmp_path: Path):
     client, _ = _client(tmp_path)
     try:
@@ -189,11 +220,55 @@ async def test_model_list_requires_explicit_compatible_selection(tmp_path: Path)
         assert caught.value.code == "codex_model_incompatible"
         assert caught.value.detail["requested_model"] == "gpt-5.6-sol"
         assert caught.value.detail["server_defaults"] == ["gpt-5.4"]
-        with pytest.raises(RuntimeExecutionError) as caught:
-            catalog.select("")
-        assert caught.value.code == "codex_model_required"
+        assert catalog.select("").model_id == "gpt-5.4"
+        capability = catalog.capability(current_generation=client._generation)
+        assert capability["default_model"] == "gpt-5.4"
+        assert capability["models"][0] == {
+            "id": "gpt-5.4", "display_name": "GPT-5.4", "default": True, "hidden": False,
+            "reasoning_efforts": ["medium", "high"], "modalities": ["text", "image"],
+        }
     finally:
         await client.close()
+
+
+@pytest.mark.anyio
+async def test_model_catalog_is_bound_to_app_server_generation():
+    class GenerationRpc:
+        def __init__(self):
+            self.generation = 1
+
+        async def request(self, method, _params):
+            assert method == "model/list"
+            return {"data": [{"id": f"model-generation-{self.generation}", "isDefault": True}]}
+
+    rpc = GenerationRpc()
+    catalog = CodexModelCatalog(rpc)  # type: ignore[arg-type]
+    first = await catalog.refresh(generation=rpc.generation)
+    assert list(first) == ["model-generation-1"]
+    assert catalog.is_current(1)
+    rpc.generation = 2
+    assert not catalog.is_current(2)
+    second = await catalog.refresh(generation=rpc.generation)
+    assert list(second) == ["model-generation-2"]
+    assert "model-generation-1" not in second
+
+
+@pytest.mark.anyio
+async def test_model_catalog_refresh_is_singleflight_per_generation():
+    class GenerationRpc:
+        calls = 0
+
+        async def request(self, method, _params):
+            assert method == "model/list"
+            self.calls += 1
+            await asyncio.sleep(0.01)
+            return {"data": [{"id": "dynamic-model", "isDefault": True}]}
+
+    rpc = GenerationRpc()
+    catalog = CodexModelCatalog(rpc)  # type: ignore[arg-type]
+    results = await asyncio.gather(*(catalog.refresh(generation=7) for _ in range(50)))
+    assert rpc.calls == 1
+    assert all(list(result) == ["dynamic-model"] for result in results)
 
 
 @pytest.mark.anyio

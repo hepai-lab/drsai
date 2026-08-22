@@ -27,6 +27,7 @@ def build_codex_adapter(state_root: Path, runtime_state: Any, *, environ: Mappin
     if bridge_url:
         supervisor = RemoteCodexSupervisor(
             bridge_url, environment.get("OPENDRSAI_CODEX_BRIDGE_TOKEN", ""),
+            expected_host_id=environment.get("OPENDRSAI_CODEX_BRIDGE_HOST_ID") or None,
         )
     else:
         supervisor = CodexAppServerProcess(provider, verify_binary=not development)

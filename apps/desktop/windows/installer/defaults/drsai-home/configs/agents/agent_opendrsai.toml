@@ -1,0 +1,49 @@
+schema_version = 2
+agent_name = "opendrsai"
+display_name = "OpenDrSai"
+enabled = true
+
+[models.primary]
+mode = "explicit"
+provider_id = "hepai"
+model_id = "deepseek-v4-flash"
+
+[models.image_understanding]
+mode = "explicit"
+provider_id = "hepai"
+model_id = "gpt-5.6-luna"
+
+[models.image_generation]
+mode = "explicit"
+provider_id = "hepai"
+model_id = "gemini-3.1-flash-lite-image"
+
+[models.text_to_speech]
+mode = "explicit"
+provider_id = "hepai"
+model_id = "tts-1"
+
+[models.speech_to_text]
+mode = "explicit"
+provider_id = "hepai"
+model_id = "whisper-1"
+
+[tools]
+mode = "inherit"
+enabled = []
+disabled = []
+require_approval = []
+
+[skills]
+mode = "inherit"
+enabled = []
+disabled = []
+allow_thread_override = true
+
+[knowledge]
+mode = "inherit"
+sources = []
+retrieval_policy = "auto"
+top_k = 6
+score_threshold = 0.35
+require_citations = true

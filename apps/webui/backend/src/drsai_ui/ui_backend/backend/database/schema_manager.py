@@ -146,7 +146,9 @@ from sqlmodel import SQLModel
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Preserve loggers owned by the hosting application when Alembic runs
+    # in-process; fileConfig otherwise disables them globally by default.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = SQLModel.metadata
 
@@ -157,7 +159,8 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        compare_type=True
+        compare_type=True,
+        render_as_batch=True,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -172,7 +175,8 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            compare_type=True
+            compare_type=True,
+            render_as_batch=True,
         )
         with context.begin_transaction():
             context.run_migrations()
@@ -273,33 +277,21 @@ datefmt = %H:%M:%S
                 "target_metadata = None", "target_metadata = SQLModel.metadata"
             )
 
-            # Update both configure blocks properly
-            content = content.replace(
-                """context.configure(
-            url=url,
-            target_metadata=target_metadata,
-            literal_binds=True,
-            dialect_opts={"paramstyle": "named"},
-        )""",
-                """context.configure(
-            url=url,
-            target_metadata=target_metadata,
-            literal_binds=True,
-            dialect_opts={"paramstyle": "named"},
-            compare_type=True,
-        )""",
-            )
-
-            content = content.replace(
-                """        context.configure(
-                connection=connection, target_metadata=target_metadata
-            )""",
-                """        context.configure(
-                connection=connection,
-                target_metadata=target_metadata,
-                compare_type=True,
-            )""",
-            )
+            # Ensure render_as_batch=True for SQLite compat (ALTER constraints)
+            if "render_as_batch=True" not in content:
+                content = content.replace(
+                    "compare_type=True",
+                    "compare_type=True,\n            render_as_batch=True",
+                )
+                # Also add to configure calls without compare_type
+                content = content.replace(
+                    'dialect_opts={"paramstyle": "named"},\n    )',
+                    'dialect_opts={"paramstyle": "named"},\n            compare_type=True,\n            render_as_batch=True,\n    )',
+                )
+                content = content.replace(
+                    "connection=connection, target_metadata=target_metadata\n        )",
+                    "connection=connection, target_metadata=target_metadata,\n            compare_type=True,\n            render_as_batch=True,\n        )",
+                )
 
             with open(env_path, "w") as f:
                 f.write(content)

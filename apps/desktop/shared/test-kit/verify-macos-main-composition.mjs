@@ -85,6 +85,9 @@ assert.equal(index.includes('ipcMain.handle("desktop:terminal-create"'), false, 
 assert.equal(index.includes('rawIpcMain.on("desktop:voice-streaming-audio-port"'), false, "voice raw IPC channel must not leak back into the composition root");
 assert.equal(index.includes('ipcMain.handle("desktop:get-auth-session"'), false, "runtime services IPC channels must not leak back into the composition root");
 assert.equal(index.includes('ipcMain.handle("desktop:mobile-pairing-create"'), false, "catalog IPC channels must not leak back into the composition root");
+for (const channel of ["list-perceptors", "save-perceptor", "update-perceptor", "test-perceptor", "delete-perceptor"]) {
+  assert.ok(catalogIpc.includes(`ipcMain.handle("desktop:${channel}"`), `catalog IPC registrar omits ${channel}`);
+}
 assert.equal([...index.matchAll(/ipcMain\.handle\(\s*["']desktop:/g)].length, 0, "all desktop invoke channels must live outside the composition root");
 assert.equal(index.includes("function isRemoteWorkspaceTarget"), false, "remote workspace routing helper must not leak back into the composition root");
 assert.equal(index.includes("async function proposeChannelOutboundDraft"), false, "connections approval workflow must not leak back into the composition root");
@@ -137,7 +140,7 @@ for (const contract of ["createMacosShutdownPlan", 'name: "scheduled-task-worker
   assert.ok(shutdownPlan.includes(contract), `shutdown plan omits ordered resource ${contract}`);
 }
 assert.ok(index.includes("createMacosShutdownPlan({"), "composition root must inject shutdown dependencies explicitly");
-assert.ok(index.includes("shutdownCoordinator.run(plan.map((step) => step.run))"), "composition root must execute the named shutdown plan through the coordinator");
+assert.ok(index.includes("shutdownCoordinator.run(plan.map((step) => step.run), 15_000)"), "composition root must execute the named shutdown plan through the bounded coordinator");
 for (const contract of ["runMacosAppReadyPlan", "for (const step of steps)", "if (step.critical) throw error", "degraded.push(failure)"]) {
   assert.ok(appReadyPlan.includes(contract), `app-ready plan omits ${contract}`);
 }
@@ -157,13 +160,15 @@ assert.ok(index.includes("appServices = createMacosAppServices({"), "heavy app s
 for (const construction of ["new InteractiveDebugPolicyStore", "new InteractiveDebuggerService", "new BrowserTaskService", "new BrowserUseWorkerClient", "createDesktopIpcAuditWriter(", "new PersistentApprovalStore"]) {
   assert.equal(index.includes(construction), false, `composition root retains import-time heavy service construction ${construction}`);
 }
-for (const contract of ["installMacosAppIntegrations", 'powerMonitor.on("suspend"', 'powerMonitor.on("resume"', 'powerMonitor.on("lock-screen"', 'powerMonitor.on("unlock-screen"', 'powerMonitor.on("shutdown"', 'screen.on("display-added"', 'app.on("child-process-gone"', "portForwardRegistry.suspendAll()", "portForwardRegistry.resumeAll()", "return () => clearInterval(networkMonitor)"]) {
+for (const contract of ["installMacosAppIntegrations", 'powerMonitor.on("suspend"', 'powerMonitor.on("resume"', 'powerMonitor.on("lock-screen"', 'powerMonitor.on("unlock-screen"', 'powerMonitor.on("shutdown"', 'screen.on("display-added"', 'app.on("child-process-gone"', "portForwardRegistry.suspendAll()", "portForwardRegistry.resumeAll()", "clearInterval(networkMonitor)", "packagedNetworkOnlineOverride = null"]) {
   assert.ok(appIntegrations.includes(contract), `app integrations omit ${contract}`);
 }
 assert.ok(index.includes("disposeAppIntegrations = installMacosAppIntegrations({"), "app-ready integrations must be installed explicitly");
 assert.ok(index.includes("disposeAppIntegrations();"), "app-ready integration monitor must be disposed on quit");
 
 const channels = (source) => new Set([...source.matchAll(/ipcMain\.handle\(\s*["'](desktop:[^"']+)["']/g)].map((match) => match[1]));
-assert.equal(channels(macosIpcSource(desktopRoot)).size, 270, "composition refactoring must preserve all 270 macOS IPC channels");
+const preloadChannels = new Set([...read("shared/main/preload.ts").matchAll(/ipcRenderer\.invoke\(\s*["'](desktop:[^"']+)["']/g)].map((match) => match[1]));
+const ipcCount = channels(macosIpcSource(desktopRoot)).size;
+assert.equal(ipcCount, preloadChannels.size, `composition must expose all ${preloadChannels.size} shared preload IPC channels`);
 
-console.log(`macOS main composition verified (index=${lineCount(index)} lines, window=${lineCount(windowModule)} lines, platformIpc=${lineCount(platformIpc)} lines, sharingIpc=${lineCount(sharingIpc)} lines, customizationIpc=${lineCount(customizationIpc)} lines, automationIpc=${lineCount(automationIpc)} lines, connectionsIpc=${lineCount(connectionsIpc)} lines, workspaceIpc=${lineCount(workspaceIpc)} lines, workspaceHistoryIpc=${lineCount(workspaceHistoryIpc)} lines, remoteAccessIpc=${lineCount(remoteAccessIpc)} lines, diagnosticsIpc=${lineCount(diagnosticsIpc)} lines, trustIpc=${lineCount(trustIpc)} lines, terminalIpc=${lineCount(terminalIpc)} lines, voiceIpc=${lineCount(voiceIpc)} lines, runtimeServicesIpc=${lineCount(runtimeServicesIpc)} lines, catalogIpc=${lineCount(catalogIpc)} lines, presentationIpc=${lineCount(presentationIpc)} lines, executionIpc=${lineCount(executionIpc)} lines, services=${lineCount(serviceContainer)} lines, IPC=270).`);
+console.log(`macOS main composition verified (index=${lineCount(index)} lines, window=${lineCount(windowModule)} lines, platformIpc=${lineCount(platformIpc)} lines, sharingIpc=${lineCount(sharingIpc)} lines, customizationIpc=${lineCount(customizationIpc)} lines, automationIpc=${lineCount(automationIpc)} lines, connectionsIpc=${lineCount(connectionsIpc)} lines, workspaceIpc=${lineCount(workspaceIpc)} lines, workspaceHistoryIpc=${lineCount(workspaceHistoryIpc)} lines, remoteAccessIpc=${lineCount(remoteAccessIpc)} lines, diagnosticsIpc=${lineCount(diagnosticsIpc)} lines, trustIpc=${lineCount(trustIpc)} lines, terminalIpc=${lineCount(terminalIpc)} lines, voiceIpc=${lineCount(voiceIpc)} lines, runtimeServicesIpc=${lineCount(runtimeServicesIpc)} lines, catalogIpc=${lineCount(catalogIpc)} lines, presentationIpc=${lineCount(presentationIpc)} lines, executionIpc=${lineCount(executionIpc)} lines, services=${lineCount(serviceContainer)} lines, IPC=${ipcCount}).`);

@@ -1,0 +1,138 @@
+schema_version: opendrsai.agent-regression-case/1
+
+id: image.output.simple
+revision: 7
+title: 生成 OpenDrSai Agent Runtime 科技插图
+description: 验证图片生成能力、16:9 PNG、视觉约束和可交互 Artifact；不使用图片文件基准。
+owner: agent-runtime
+tags: [smoke, release, image_output, image_generation, artifact, visual]
+
+agent:
+  definition: opendrsai@1
+  model_profile: default
+
+input:
+  messages:
+    - role: user
+      parts:
+        - type: text
+          text: |
+            请生成一张 16:9 横版科技插图，主题是“OpenDrSai Agent Runtime”。
+
+            画面要求：
+            - 深蓝色背景；
+            - 画面中央是一个发光的智能体核心；
+            - 核心连接五个无标签的抽象图标：对话气泡、扳手、打开的书、风景画框和盾牌；
+            - 五个外围图标只允许使用几何图形表达含义，图标旁边和图标内部都必须完全留空，不得添加说明标签；
+            - 使用蓝色和青色作为主要强调色；
+            - 整体简洁、现代，有科技感；
+            - 不要出现人物；
+            - 不要包含任何文字、字母、数字、Logo 或水印；这是一条硬性要求，即使主题名和能力名也绝对不能画在图片中；
+            - 输出 PNG 图片。
+
+environment:
+  # This case validates the configured provider's real image-generation
+  # capability. It must not be presented as an offline Fixture run.
+  network: required
+  session:
+    type: new
+    history: empty
+  required_capabilities: [image_generation]
+  # The user request already authorizes this exact generation operation. The
+  # harness resolves the Runtime's external-side-effect checkpoint so Desktop
+  # does not stall waiting for a second human confirmation during automation.
+  approval_harness:
+    decision: approved
+    allowed_operations: [image_generation]
+  workspace:
+    isolation: required
+    allowed_write_paths:
+      - artifacts/
+      - tmp/image-generation/
+  forbidden_capabilities:
+    - web_search
+    - knowledge_search
+    - pptx
+
+baseline:
+  kind: specification_only
+  reference_image: null
+  comparison: structural_semantic_and_visual_thresholds
+
+expect:
+  run:
+    status: completed
+
+  behavior:
+    required_capabilities: [image_generation]
+    image_generation_calls:
+      min: 1
+      max: 2
+    web_search_calls:
+      max: 0
+    knowledge_queries:
+      max: 0
+    unrelated_skill_activations:
+      max: 0
+    approvals:
+      max: 0
+    external_writes:
+      max: 0
+
+  image:
+    format: png
+    orientation: landscape
+    color_mode:
+      any_of: [RGB, RGBA]
+    dimensions:
+      min_width: 1280
+      min_height: 720
+    aspect_ratio:
+      width: 16
+      height: 9
+      tolerance: 0.02
+    visual_requirements:
+      - 画面为横版构图
+      - 背景以深蓝色为主
+      - 中央存在一个明显的发光智能体核心
+      - 核心与外围能力节点存在可见连接
+      - 外围包含五类不同能力的视觉表达
+      - 蓝色和青色是主要强调色
+      - 整体风格简洁、现代、有科技感
+    visual_forbidden:
+      - 人物
+      - 人脸
+      - 可识别文字
+      - 字母
+      - 数字
+      - Logo
+      - 水印
+      - 大面积暖色背景
+    ocr:
+      max_recognized_characters: 0
+      ignore_confidence_below: 0.75
+
+  output:
+    type: text
+    require_artifact_link: true
+    artifact_link_interactive: true
+
+  artifacts:
+    exact: 1
+    required:
+      type: image
+      mime_type: image/png
+      extension: .png
+      relative_path: artifacts/opendrsai-agent-runtime.png
+      min_size_bytes: 20000
+      sha256_required: true
+      openable: true
+      require_run_relation: true
+      require_generation_call_relation: true
+
+execution:
+  # A real provider generation can consume close to three minutes; reserve a
+  # separate budget for the three independent visual-judge rounds.
+  timeout_seconds: 360
+  attempts: 1
+  isolation: required

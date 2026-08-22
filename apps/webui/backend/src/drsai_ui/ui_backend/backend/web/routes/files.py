@@ -4,9 +4,11 @@ from fastapi import (
     APIRouter, 
     File, 
     UploadFile, 
+    Form,
     Depends, 
     Request,
     HTTPException,
+    status,
     )
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -18,6 +20,8 @@ load_dotenv()
 # from ..initialization import AppInitializer
 from ..deps import get_db
 from ...datamodel.db import UserFiles
+
+from .....drsai_adapter.sso.jwt import get_current_user_id
 
 from openai import OpenAI
 from .....drsai_adapter.singleton import personal_key_config_fetcher as fetcher
@@ -159,7 +163,15 @@ def _skill_md_description_from_zip_path(zip_path: str) -> Optional[str]:
 async def upload_file_to_hepai(
     user_id: str,
     file: UploadFile = File(...),
+    display_name: str | None = Form(None),
+    slug: str | None = Form(None),
+    icon: str | None = Form(None),
+    description: str | None = Form(None),
+    version: str | None = Form(None),
+    changelog: str | None = Form(None),
+    source: str | None = Form(None),
     db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
 ) -> Dict:
     """
     Upload a single file to HepAI Files (purpose=user_data) and return its preview URL.
@@ -167,8 +179,8 @@ async def upload_file_to_hepai(
     This endpoint exists to avoid browser CORS issues when uploading directly to
     `https://aiapi.ihep.ac.cn/apiv2/files`.
     """
-    if not user_id:
-        raise HTTPException(status_code=400, detail="missing user_id")
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     if not file.filename:
         raise HTTPException(status_code=400, detail="missing file")
 
@@ -196,6 +208,23 @@ async def upload_file_to_hepai(
 
         # Persist hepai file info into DB for refresh/reload
         try:
+            # Build user-supplied metadata from form fields
+            user_meta: Dict[str, Any] = {}
+            if display_name and display_name.strip():
+                user_meta["display_name"] = display_name.strip()
+            if slug and slug.strip():
+                user_meta["slug"] = slug.strip()
+            if icon and icon.strip():
+                user_meta["icon"] = icon.strip()
+            if description and description.strip():
+                user_meta["description"] = description.strip()
+            if version and version.strip():
+                user_meta["version"] = version.strip()
+            if changelog and changelog.strip():
+                user_meta["changelog"] = changelog.strip()
+            if source and source.strip():
+                user_meta["source"] = source.strip()
+
             response = db.get(UserFiles, filters={"user_id": user_id})
             if not response.status or not response.data:
                 userfiles = UserFiles(user_id=user_id, files={})
@@ -212,9 +241,8 @@ async def upload_file_to_hepai(
                 "filename": file.filename,
                 "url": file_obj.get("url"),
                 "createdAtMs": int(__import__("time").time() * 1000),
-                "source": "hepai",
                 "uploadedBy": user_id,
-                "metadata": api_metadata,
+                "metadata": user_meta,
                 **({"description": resolved_description} if resolved_description else {}),
             }
             userfiles.files["hepai_files"] = hepai_files
@@ -232,10 +260,14 @@ async def upload_file_to_hepai(
 
 
 @router.get("/hepai/list")
-async def list_hepai_files(user_id: str, db=Depends(get_db)) -> Dict:
+async def list_hepai_files(
+    user_id: str,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
     """List HepAI uploaded files persisted for the user."""
-    if not user_id:
-        raise HTTPException(status_code=400, detail="missing user_id")
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     response = db.get(UserFiles, filters={"user_id": user_id})
     if not response.status or not response.data:
         return {"status": True, "data": []}
@@ -251,16 +283,122 @@ async def list_hepai_files(user_id: str, db=Depends(get_db)) -> Dict:
     return {"status": True, "data": rows}
 
 
+@router.put("/hepai/{file_id}")
+async def update_hepai_file(
+    file_id: str,
+    user_id: str,
+    file: UploadFile | None = File(None),
+    display_name: str | None = Form(None),
+    icon: str | None = Form(None),
+    description: str | None = Form(None),
+    version: str | None = Form(None),
+    changelog: str | None = Form(None),
+    source: str | None = Form(None),
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
+    """Update a HepAI file. All fields optional — only provided fields are changed.
+
+    If a new zip file is provided, it replaces the HepAI blob and the entry's
+    id/url/filename are updated, but the dict key stays the same so the frontend
+    can still reference the file by the original file_id.
+    """
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    if not file_id:
+        raise HTTPException(status_code=400, detail="missing file_id")
+
+    response = db.get(UserFiles, filters={"user_id": user_id})
+    if not response.status or not response.data:
+        raise HTTPException(status_code=404, detail="No files for user")
+    userfiles: UserFiles = response.data[0]
+    if not userfiles.files:
+        raise HTTPException(status_code=404, detail="No files for user")
+    hepai_files = userfiles.files.get("hepai_files")
+    if not isinstance(hepai_files, dict) or file_id not in hepai_files:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    entry = hepai_files[file_id]
+
+    # ── Handle new zip file if provided ──
+    if file is not None and file.filename:
+        if not file.filename.lower().endswith(".zip"):
+            raise HTTPException(status_code=400, detail="Only .zip files are supported")
+
+        tmp_dir = tempfile.mkdtemp(prefix="hepai-update-")
+        try:
+            tmp_path = os.path.join(tmp_dir, file.filename)
+            with open(tmp_path, "wb") as out:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+
+            file_obj = upload_to_filesystem(tmp_path, user_id)
+            entry["id"] = file_obj["id"]
+            entry["url"] = file_obj.get("url", entry.get("url", ""))
+            if file.filename:
+                entry["filename"] = file.filename
+
+            # Re-extract description from new SKILL.md if not being overridden
+            if description is None:
+                skill_md_desc = _skill_md_description_from_zip_path(tmp_path)
+                if skill_md_desc:
+                    entry["description"] = skill_md_desc
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # ── Apply metadata overrides ──
+    metadata = entry.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if display_name is not None and display_name.strip():
+        metadata["display_name"] = display_name.strip()
+    if icon is not None and icon.strip():
+        metadata["icon"] = icon.strip()
+    if description is not None and description.strip():
+        metadata["description"] = description.strip()
+        entry["description"] = description.strip()
+    if version is not None and version.strip():
+        metadata["version"] = version.strip()
+    if changelog is not None and changelog.strip():
+        metadata["changelog"] = changelog.strip()
+    if source is not None and source.strip():
+        metadata["source"] = source.strip()
+    entry["metadata"] = metadata
+
+    userfiles.files["hepai_files"] = hepai_files
+    db.upsert(userfiles)
+
+    return {
+        "status": True,
+        "message": "Update successful",
+        "data": {
+            "id": entry["id"],
+            "filename": entry.get("filename", ""),
+            "url": entry.get("url", ""),
+            "createdAtMs": entry.get("createdAtMs", 0),
+            "description": entry.get("description", ""),
+            "uploadedBy": entry.get("uploadedBy", ""),
+            "metadata": metadata,
+        },
+    }
+
+
 @router.get("/hepai/skill-md/{file_id}")
-async def get_hepai_zip_skill_md(file_id: str, user_id: str) -> Dict:
+async def get_hepai_zip_skill_md(
+    file_id: str, user_id: str,
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
     """
     Read `SKILL.md` from a ZIP stored in HepAI Files (purpose=user_data).
 
     - Supports root `SKILL.md`
     - Supports single-subdir `*/SKILL.md`
     """
-    if not user_id:
-        raise HTTPException(status_code=400, detail="missing user_id")
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     if not file_id:
         raise HTTPException(status_code=400, detail="missing file_id")
 
@@ -272,11 +410,14 @@ async def get_hepai_zip_skill_md(file_id: str, user_id: str) -> Dict:
 async def upload_files(
     user_id: str,
     files: List[UploadFile] = File(...),
-    db=Depends(get_db)
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
     ) -> Dict:
     '''
     接受上传的文件列表，解析上传到本地
     '''
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     try:
         initializer = get_initializer()
         userfiles_path =  str(initializer.user_files / user_id)
@@ -344,8 +485,14 @@ async def upload_files(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 @router.get("/download/{file_uuid}")
-async def download_user_file(file_uuid: str, user_id: str, db=Depends(get_db)) -> FileResponse:
+async def download_user_file(
+    file_uuid: str, user_id: str,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> FileResponse:
     """Download a file previously uploaded by the user (local disk path)."""
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     response = db.get(UserFiles, filters={"user_id": user_id})
     if not response.status or not response.data:
         raise HTTPException(status_code=404, detail="No files for user")
@@ -361,8 +508,14 @@ async def download_user_file(file_uuid: str, user_id: str, db=Depends(get_db)) -
 
 
 @router.delete("/item/{file_uuid}")
-async def delete_user_file(file_uuid: str, user_id: str, db=Depends(get_db)) -> Dict:
+async def delete_user_file(
+    file_uuid: str, user_id: str,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
     """Remove one file from the user's library and delete it from disk if present."""
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     response = db.get(UserFiles, filters={"user_id": user_id})
     if not response.status or not response.data:
         raise HTTPException(status_code=404, detail="No files for user")
@@ -381,10 +534,16 @@ async def delete_user_file(file_uuid: str, user_id: str, db=Depends(get_db)) -> 
 
 
 @router.get("/{session_id}")
-async def get_user_session_files(session_id: str, user_id: str, db=Depends(get_db)) -> Dict:
+async def get_user_session_files(
+    session_id: str, user_id: str,
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
+) -> Dict:
     """
     检索用户上传的文件列表
     """
+    if current_user != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     response = db.get(UserFiles, filters={"user_id": user_id})
     if not response.status:
         return {"status": False, "data": {}}
@@ -410,21 +569,22 @@ class EditDocxRequest(BaseModel):
 @router.post("/docx/edit")
 async def edit_docx_file(
     req: EditDocxRequest,
-    db=Depends(get_db)
+    db=Depends(get_db),
+    current_user: str = Depends(get_current_user_id),
 ) -> Dict:
     """
     Edit a .docx file using structured edits with content-based paragraph matching.
-    
+
     This endpoint:
     1. Applies edits to the docx using DocumentProcessor
     2. Copies the edited file to user's files space
     3. Registers the new file in UserFiles database
-    
+
     The source file can be provided via one of three methods (tried in order):
     - file_path: Direct path to a docx file on disk
     - file_url:  URL to download the docx from (e.g. HepAI filesystem)
     - file_base64: Base64-encoded docx content
-    
+
     Args:
         user_id: User identifier
         file_name: Original file name
@@ -433,10 +593,12 @@ async def edit_docx_file(
         file_path: (Optional) Path to the docx file on disk
         file_url: (Optional) URL to download the docx from
         file_base64: (Optional) Base64-encoded docx content
-    
+
     Returns:
         {status: True, data: {success, saved_name, path, uuid, ...}}
     """
+    if current_user != req.user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     from drsai_ext.tools.docx_processor import edit_docx_by_content_match
     import datetime
     import requests as http_requests

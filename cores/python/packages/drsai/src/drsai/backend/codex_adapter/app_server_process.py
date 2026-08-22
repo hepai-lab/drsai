@@ -26,6 +26,12 @@ _SECRET_PATTERNS = (
     re.compile(r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|cookie|authorization[_-]?code)\s*[:=]\s*)[^\s,;]+"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"),
 )
+from drsai.backend.codex_adapter.jsonl_frames import CODEX_JSONL_FRAME_LIMIT
+
+_WINDOWS_BACKGROUND_PROCESS_FLAGS = (
+    getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+) if os.name == "nt" else 0
 
 
 def redact_secrets(value: str, explicit_secrets: Sequence[str] = ()) -> str:
@@ -119,7 +125,8 @@ class CodexAppServerProcess:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+                    limit=CODEX_JSONL_FRAME_LIMIT,
+                    creationflags=_WINDOWS_BACKGROUND_PROCESS_FLAGS,
                 )
             except (OSError, ValueError) as exc:
                 self._record_failure()
@@ -271,6 +278,7 @@ class CodexAppServerProcess:
                 killer = await asyncio.create_subprocess_exec(
                     "taskkill", "/PID", str(process.pid), "/T", "/F",
                     stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
                 )
                 await asyncio.wait_for(killer.wait(), timeout=5)
             except (OSError, asyncio.TimeoutError):

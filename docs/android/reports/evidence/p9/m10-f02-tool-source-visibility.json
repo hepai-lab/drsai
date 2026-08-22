@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "feature_id": "M10-F02",
+  "generated_at": "2026-08-05T13:00:36.584464+00:00",
+  "passed": true,
+  "gates": {
+    "oaep_citations_and_tool_receipts_keep_safe_source_links": true,
+    "search_read_and_delegate_have_user_facing_progress": true,
+    "tool_mcp_subagent_and_remote_execution_locations_are_explicit": true,
+    "compose_renders_clickable_sources_failure_and_execution_location": true,
+    "projection_fixture_covers_source_failure_and_location": true,
+    "compose_fixture_covers_visible_search_read_delegate_source_and_failure": true,
+    "projection_jvm_suite_is_green": true,
+    "physical_device_compose_suite_is_green": true,
+    "emulator_and_sm_x936c_screenshots_are_valid_and_distinct": true
+  },
+  "screenshots": {
+    "emulator": {
+      "path": "docs/android/reports/evidence/p9/screenshots/m10-f02-emulator.png",
+      "size": [
+        1080,
+        1197
+      ],
+      "sha256": "52891dcf7819429d8d527927ca487fa2551ba6ec6f184c5298a825751ae521b2"
+    },
+    "sm_x936c": {
+      "path": "docs/android/reports/evidence/p9/screenshots/m10-f02-sm-x936c.png",
+      "size": [
+        2960,
+        796
+      ],
+      "sha256": "23d6479055b95f323557b953b6acdaa5e67e3f87c339dfb63b27a2129cc35050"
+    }
+  },
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/remote/model/OaepPresentation.kt": "87e4f1d888abc724a231c7ca90dbcf37991b905c9f6e880523204ff11ba71997",
+    "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt": "5e78c7262c9456967e5f440ecfa593499ffb0e8b2ba90f1292bd6e8716d91baa",
+    "apps/android/app/src/test/java/ai/drsai/remote/OaepProjectionTest.kt": "7b6a5cc9391d1a9a671a54f3a4d9aee0c041e8c4e10d491cdd1436e176ac5eec",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/ui/OaepToolVisibilityUiTest.kt": "e793ef658b22dd19c54172edb700e3cf5ad849fb3c27155818e8ddcf34146e63"
+  }
+}

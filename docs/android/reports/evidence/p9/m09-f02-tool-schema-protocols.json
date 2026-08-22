@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "feature_id": "M09-F02",
+  "generated_at": "2026-08-05T11:46:58.668724+00:00",
+  "passed": true,
+  "gates": {
+    "single_protocol_adapter_routes_openai_and_anthropic": true,
+    "openai_function_shape_and_name_mapping_are_exact": true,
+    "anthropic_input_schema_shape_is_exact": true,
+    "unicode_enum_nested_object_and_array_are_preserved": true,
+    "complete_full_runtime_catalog_adapts_to_both_protocols": true,
+    "malformed_schema_fails_before_network": true,
+    "provider_rejection_has_stable_nonretryable_code": true,
+    "host_preserves_structured_compatibility_errors": true,
+    "focused_jvm_suites_are_green": true
+  },
+  "jvm_suites": {
+    "tests": 30,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "reports": [
+      {
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "name": "ai.drsai.remote.ModelToolSchemaProtocolAdapterTest",
+        "sha256": "22aa7f817c871b71fbb54d6cb3903c0e46d7cd13de70e19f4c997804b1e87534"
+      },
+      {
+        "tests": 15,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "name": "ai.drsai.remote.HaiModelClientTest",
+        "sha256": "94a66e1b8e49b8bdd159754e59bdd48be723dc8f9627aab0540f7fe04630627e"
+      },
+      {
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "name": "ai.drsai.remote.AndroidPythonHostAdaptersTest",
+        "sha256": "25e3efcaf9706aee79187832a6909445bca64eca306f05969fb0766a2c8e0188"
+      }
+    ]
+  },
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/data/ModelToolSchemaProtocolAdapter.kt": "c595d5d753bd289a87256b658dd809f9d3b5f566a4b0620237679b6a79a38574",
+    "apps/android/app/src/main/java/ai/drsai/remote/data/HaiModelClient.kt": "8884dc4a653928c2c7c274302d4957067606e2ed26cfd3f0999347641090e394",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/AndroidPythonHostAdapters.kt": "0755a605cc98bdef694a376e3e55e8ac7a0daabc2bd7163afbe6dbe2128da183",
+    "apps/android/app/src/test/java/ai/drsai/remote/ModelToolSchemaProtocolAdapterTest.kt": "3d0010547b32645fa08dd4bbaef23875eb5fed19fe331d7acc1a2857f1244bb9",
+    "apps/android/app/src/test/java/ai/drsai/remote/HaiModelClientTest.kt": "b5fce17e497ed1ef523dbfd91597e1a02e3d971a78b8b866b18a6fbb39239753"
+  }
+}

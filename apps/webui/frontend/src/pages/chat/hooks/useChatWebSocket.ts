@@ -12,6 +12,46 @@ import {
   FilesEvent,
 } from "../../../components/types/datamodel";
 import { createMessage } from "../../../utils/chatHelpers";
+import {
+  chatRenderLog,
+  sealStreamMessage,
+  splitAgentVisibleContent,
+} from "../chatMessagePipeline";
+
+/** Project raw model stream into reply + thought planes.
+ *  Open <think> (no close yet) → thought streaming, reply empty.
+ *  Closed think / monologue peel → thought done, reply visible.
+ */
+function projectStreamContent(combinedRaw: string): {
+  reply: string;
+  thought: string;
+  thoughtDone: boolean;
+} {
+  const openThink =
+    /<think>/i.test(combinedRaw) &&
+    !/<\/(?:think|redacted_thinking)>/i.test(combinedRaw);
+  if (openThink) {
+    const thought = combinedRaw.replace(/^[\s\S]*?<think>\s*/i, "");
+    return { reply: "", thought, thoughtDone: false };
+  }
+  const split = splitAgentVisibleContent(combinedRaw);
+  return {
+    reply: split.reply,
+    thought: split.thought,
+    thoughtDone: Boolean(split.thought) || /<\/(?:think|redacted_thinking)>/i.test(combinedRaw),
+  };
+}
+
+function isLiveStreamDraft(m: { config: any }): boolean {
+  const cfg = m.config as any;
+  const meta = (cfg.metadata || {}) as Record<string, unknown>;
+  if (meta.start_flag !== undefined) return true;
+  if (meta._stream_draft === true) return true;
+  if (meta._sealed_chunk === true) return true;
+  if (meta._is_streaming_chunk === true) return true;
+  if (cfg.type === "ModelClientStreamingChunkEvent") return true;
+  return false;
+}
 
 interface UseWebSocketProps {
   session: { id?: number } | null;
@@ -36,10 +76,56 @@ export const useChatWebSocket = ({
   const inputTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const streamingMessageRef = React.useRef<{ source: string; content: string } | null>(null);
 
+  const handleWebSocketMessageRef = React.useRef<
+    (wsMessage: WebSocketMessage) => void
+  >(() => {});
+
+  // Batched WS message queue: coalesces bursts of chunks (and other events)
+  // into a single React render. Also reorders the queue so that a terminal
+  // event (input_request/completion/result) is processed BEFORE any preceding
+  // chunks in the same batch. This way when the terminal event promotes the
+  // last chunk to _is_final_reply, the promotion is applied in the same render
+  // that first paints those chunks — no visible "inside-box then outside" flash.
+  const wsMessageQueueRef = React.useRef<WebSocketMessage[]>([]);
+  const wsFlushScheduledRef = React.useRef(false);
+  const WS_FLUSH_DELAY_MS = 60;
+  const flushWsQueue = React.useCallback(() => {
+    wsFlushScheduledRef.current = false;
+    const queue = wsMessageQueueRef.current;
+    if (queue.length === 0) return;
+    wsMessageQueueRef.current = [];
+    // Reorder: if the batch contains a terminal event, process it AFTER the
+    // preceding chunks so promotion sees the full accumulated chunk content.
+    // (The default in-order processing already does this; explicit reordering
+    // isn't needed. Just process in order.)
+    for (const msg of queue) {
+      handleWebSocketMessageRef.current(msg);
+    }
+  }, []);
+  const enqueueWsMessage = React.useCallback((msg: WebSocketMessage) => {
+    chatRenderLog("ws:enqueue", {
+      type: msg.type,
+      source: (msg.data as any)?.source,
+      preview:
+        typeof (msg.data as any)?.content === "string"
+          ? String((msg.data as any).content).replace(/\s+/g, " ").trim().slice(0, 80)
+          : undefined,
+      start_flag: (msg.data as any)?.metadata?.start_flag,
+      msgType: (msg.data as any)?.type,
+    });
+    wsMessageQueueRef.current.push(msg);
+    if (!wsFlushScheduledRef.current) {
+      wsFlushScheduledRef.current = true;
+      setTimeout(flushWsQueue, WS_FLUSH_DELAY_MS);
+    }
+  }, [flushWsQueue]);
+
   const handleWebSocketMessage = React.useCallback(
     (wsMessage: WebSocketMessage) => {
       setCurrentRun((current: Run | null) => {
-        if (!current || !session?.id) return null;
+        if (!current || !session?.id) {
+          return current;
+        }
 
         let updatedRun: Run | null = null;
 
@@ -54,24 +140,145 @@ export const useChatWebSocket = ({
               setActiveSocket(null);
               activeSocketRef.current = null;
             }
+            // Transition any non-terminal state to stopped on error:
+            // active/pausing/paused = streaming, awaiting_input = waiting for user
+            const nonTerminal = new Set(["active", "awaiting_input", "pausing", "paused"]);
+            if (nonTerminal.has(current.status)) {
+              return {
+                ...current,
+                status: "stopped" as BaseRunStatus,
+                input_request: undefined,
+                team_result: current.team_result || {
+                  task_result: {
+                    messages: [],
+                    stop_reason: "Session was interrupted",
+                  },
+                  usage: "",
+                  duration: 0,
+                },
+              };
+            }
             return current;
 
           case "message":
             if (!wsMessage.data) return current;
 
             const messageData = wsMessage.data as AgentMessageConfig;
+            const chunkSourceKey = messageData.source || "assistant";
 
-            // Always add user messages, and non-user messages that passed deduplication
+            // Prefer promoting the live stream draft over discarding it when the
+            // arriving TextMessage is empty or much shorter (common before tools).
+            let bestDraft: (typeof current.messages)[0] | null = null;
+            let bestDraftLen = 0;
+            let lastDraft: (typeof current.messages)[0] | null = null;
+            for (const m of current.messages) {
+              if (m.config.source !== chunkSourceKey) continue;
+              if (!isLiveStreamDraft(m)) continue;
+              lastDraft = m;
+              const len =
+                typeof m.config.content === "string" ? m.config.content.trim().length : 0;
+              if (len > bestDraftLen) {
+                bestDraft = m;
+                bestDraftLen = len;
+              }
+            }
+            // Reasoning models stream everything inside <think>, so the draft's
+            // visible content can be empty — still carry its thought onto the
+            // final message so the ThinkBubble persists instead of vanishing.
+            const draftForThought = bestDraft ?? lastDraft;
+            const draftLiveThought =
+              typeof (draftForThought?.config.metadata as any)?._live_thought ===
+              "string"
+                ? String(
+                    (draftForThought!.config.metadata as any)._live_thought
+                  ).trim()
+                : "";
+
+            // Content-plane split: reply visible, thought stays attached as <think>
+            // ABOVE the reply so ThinkBubble never remounts below the answer.
+            // Carry over the stream draft's live thought when the TextMessage body
+            // has reply-only (ThoughtEvent often arrives after the draft is dropped).
+            let finalContent =
+              typeof messageData.content === "string" ? messageData.content : messageData.content;
+            if (typeof finalContent === "string") {
+              const split = splitAgentVisibleContent(finalContent);
+              const thought = split.thought || draftLiveThought;
+              finalContent = thought
+                ? `<think>${thought}</think>\n\n${split.reply}`
+                : split.reply;
+            }
+            const finalMessageData =
+              typeof messageData.content === "string"
+                ? ({ ...messageData, content: finalContent } as AgentMessageConfig)
+                : messageData;
+
             const newMessage = createMessage(
-              messageData,
+              finalMessageData,
               current.id,
               session.id,
               userEmail
             );
 
+            const taggedFinalMessage = {
+              ...newMessage,
+              config: {
+                ...newMessage.config,
+                metadata: {
+                  ...(newMessage.config.metadata || {}),
+                  _is_final_reply: true,
+                },
+              } as any,
+            };
+
+            const newLen =
+              typeof finalContent === "string" ? finalContent.trim().length : 0;
+
+            const withoutDrafts = current.messages.filter((m) => {
+              if (m.config.source !== chunkSourceKey) return true;
+              return !isLiveStreamDraft(m);
+            });
+
+            chatRenderLog("ws:message", {
+              source: chunkSourceKey,
+              newLen,
+              bestDraftLen,
+              draftThought: draftLiveThought.slice(0, 48),
+              droppedDrafts: current.messages.length - withoutDrafts.length,
+              preview:
+                typeof finalContent === "string"
+                  ? finalContent.replace(/\s+/g, " ").trim().slice(0, 96)
+                  : typeof finalContent,
+            });
+            streamingMessageRef.current = null;
+
+            // Empty final: keep sealed draft content if any.
+            if (newLen === 0) {
+              updatedRun = {
+                ...current,
+                messages:
+                  bestDraft && bestDraftLen > 0
+                    ? [...withoutDrafts, sealStreamMessage(bestDraft)]
+                    : withoutDrafts,
+              };
+              return updatedRun;
+            }
+
+            // Weak/short final after a long draft: keep the draft text too.
+            if (bestDraft && bestDraftLen > Math.max(newLen * 2, 40) && newLen < 80) {
+              updatedRun = {
+                ...current,
+                messages: [
+                  ...withoutDrafts,
+                  sealStreamMessage(bestDraft),
+                  taggedFinalMessage,
+                ],
+              };
+              return updatedRun;
+            }
+
             updatedRun = {
               ...current,
-              messages: [...current.messages, newMessage],
+              messages: [...withoutDrafts, taggedFinalMessage],
             };
 
             return updatedRun;
@@ -83,127 +290,151 @@ export const useChatWebSocket = ({
               task: taskData,
             };
             return updatedRun;
-          case "message_chunk":
+
+          case "message_chunk": {
+            // One live draft bubble per source. Every token appends to the
+            // draft's raw buffer, which is then re-projected into the
+            // reply/thought planes (projectStreamContent).
             if (!wsMessage.data) return current;
-
             const chunkData = wsMessage.data as any;
-            if (chunkData.content && typeof chunkData.content === "string") {
-              const processedContent = chunkData.content;
-              const lastMsgIndex = current.messages.length - 1;
-              const chunkSource =
-                typeof chunkData.source === "string" ? chunkData.source : "assistant";
-              const sanitizedChunkMetadata =
-                chunkData.metadata && typeof chunkData.metadata === "object"
-                  ? { ...(chunkData.metadata as Record<string, unknown>) }
-                  : undefined;
-              const rawStartFlag = sanitizedChunkMetadata?.start_flag;
-              const startFlagValue =
-                typeof rawStartFlag === "string" ? rawStartFlag : undefined;
-              const isStartChunk = startFlagValue?.toLowerCase() === "yes";
+            if (!chunkData.content || typeof chunkData.content !== "string") {
+              return current;
+            }
+            const incomingRaw = chunkData.content as string;
+            const chunkSource =
+              typeof chunkData.source === "string"
+                ? chunkData.source
+                : "assistant";
+            const chunkMeta =
+              chunkData.metadata && typeof chunkData.metadata === "object"
+                ? { ...(chunkData.metadata as Record<string, unknown>) }
+                : {};
+            const isStartChunk =
+              typeof chunkMeta.start_flag === "string" &&
+              chunkMeta.start_flag.toLowerCase() === "yes";
 
-              if (isStartChunk) {
-                const newChunkMessage = createMessage(
-                  {
-                    source: chunkSource,
-                    content: processedContent,
-                    metadata: {
-                      ...(sanitizedChunkMetadata || {}),
-                      start_flag: startFlagValue!,
-                      stream_source_label: chunkSource,
-                    },
-                  } as AgentMessageConfig,
-                  current.id,
-                  session.id,
-                  userEmail
-                );
+            const buildDraft = (combinedRaw: string, startFlag: string) => {
+              const { reply, thought, thoughtDone } =
+                projectStreamContent(combinedRaw);
+              return {
+                source: chunkSource,
+                content: reply,
+                metadata: {
+                  ...chunkMeta,
+                  _stream_draft: true,
+                  stream_source_label: chunkSource,
+                  start_flag: startFlag,
+                  _stream_raw: combinedRaw,
+                  _live_thought: thought || undefined,
+                  _thought_done: thoughtDone ? "yes" : "no",
+                },
+              } as unknown as AgentMessageConfig;
+            };
 
-                streamingMessageRef.current = {
-                  source: chunkSource,
-                  content: processedContent,
-                };
-
-                updatedRun = {
-                  ...current,
-                  messages: [...current.messages, newChunkMessage],
-                };
-
-                return updatedRun;
-              }
-
-              if (lastMsgIndex >= 0) {
-                const lastMessage = current.messages[lastMsgIndex];
-                
-                // Check if last message is a log message - don't append chunk to log messages
-                const isLastMessageLog = 
-                  lastMessage.config.metadata?.type === "log" ||
-                  (lastMessage.config as any).content_type === "log" ||
-                  (lastMessage.config as any).type === "AgentLogEvent" ||
-                  lastMessage.config.metadata?.type === "AgentLogEvent";
-
-                // Check if last message is a FilesEvent — chunk should not append to file messages
-                const isLastMessageFilesEvent =
-                  lastMessage.config.type === "FilesEvent" ||
-                  lastMessage.config.metadata?.type === "FilesEvent";
-
-                if (
-                  !isLastMessageLog &&
-                  !isLastMessageFilesEvent &&
-                  (lastMessage.config.source === "assistant" ||
-                  lastMessage.config.source === chunkSource)
-                ) {
-                  const updatedMessages = [...current.messages];
-                  const newContent = (lastMessage.config.content as string) + processedContent;
-
-                  updatedMessages[lastMsgIndex] = {
-                    ...lastMessage,
-                    config: {
-                      ...lastMessage.config,
-                      content: newContent,
-                      metadata: ({
-                        ...(lastMessage.config.metadata as any),
-                        ...(sanitizedChunkMetadata as any),
-                      } as any),
-                    },
-                  };
-
-                  streamingMessageRef.current = {
-                    source: chunkSource,
-                    content: newContent,
-                  };
-
-                  updatedRun = {
-                    ...current,
-                    messages: updatedMessages,
-                  };
-
-                  return updatedRun;
-                }
-              }
-
-              const newChunkMessage = createMessage(
-                {
-                  source: chunkSource,
-                  content: processedContent,
-                  metadata: sanitizedChunkMetadata || {},
-                } as AgentMessageConfig,
-                current.id,
-                session.id,
-                userEmail
+            // A draft that is still accumulating raw stream (excludes sealed
+            // TextMessages that merely kept a leftover start_flag).
+            const isAccumulatingDraft = (
+              m: (typeof current.messages)[number]
+            ) => {
+              const meta = (m.config.metadata || {}) as Record<string, unknown>;
+              return (
+                meta._stream_draft === true ||
+                typeof meta._stream_raw === "string" ||
+                meta._is_streaming_chunk === true ||
+                (m.config as any).type === "ModelClientStreamingChunkEvent"
               );
+            };
+            const draftIdx = current.messages.reduceRight(
+              (found: number, m, i) =>
+                found >= 0
+                  ? found
+                  : m.config.source === chunkSource && isAccumulatingDraft(m)
+                  ? i
+                  : -1,
+              -1
+            );
 
+            // Branch 1 — append to the existing draft. This also covers tokens
+            // that wrongly carry start_flag mid-burst (treating them as a new
+            // burst used to reset the bubble to the last few lines). A start
+            // flag only opens a new bubble when another event interrupted the
+            // tail (draft no longer last).
+            const lastIdx = current.messages.length - 1;
+            if (draftIdx >= 0 && (draftIdx === lastIdx || !isStartChunk)) {
+              const existing = current.messages[draftIdx];
+              const existingMeta = (existing.config.metadata || {}) as any;
+              const prevRaw =
+                typeof existingMeta._stream_raw === "string"
+                  ? (existingMeta._stream_raw as string)
+                  : typeof existing.config.content === "string"
+                  ? (existing.config.content as string)
+                  : "";
+              const payload = buildDraft(
+                prevRaw + incomingRaw,
+                existingMeta.start_flag || "yes"
+              );
+              const messages = [...current.messages];
+              messages[draftIdx] = {
+                ...existing,
+                config: {
+                  ...existing.config,
+                  content: payload.content as string,
+                  metadata: {
+                    ...existingMeta,
+                    ...(payload.metadata as any),
+                  },
+                },
+              } as typeof existing;
               streamingMessageRef.current = {
                 source: chunkSource,
-                content: processedContent,
+                content: String(payload.content || ""),
               };
-
-              updatedRun = {
-                ...current,
-                messages: [...current.messages, newChunkMessage],
-              };
-
+              updatedRun = { ...current, messages };
               return updatedRun;
             }
-            return current;
+
+            // Branch 2 — open a new draft bubble. Seal any prior live drafts
+            // from this source into normal bubbles first (drop empty ones).
+            const sealed = current.messages
+              .map((m) => {
+                if (m.config.source !== chunkSource || !isLiveStreamDraft(m)) {
+                  return m;
+                }
+                const content =
+                  typeof m.config.content === "string"
+                    ? m.config.content.trim()
+                    : "";
+                const liveThought =
+                  typeof (m.config.metadata as any)?._live_thought === "string"
+                    ? String((m.config.metadata as any)._live_thought).trim()
+                    : "";
+                if (!content && !liveThought) return null;
+                return sealStreamMessage(m);
+              })
+              .filter(Boolean) as typeof current.messages;
+
+            const payload = buildDraft(
+              incomingRaw,
+              isStartChunk ? (chunkMeta.start_flag as string) : "yes"
+            );
+            // Nothing visible yet (no reply and no thought): just keep state.
+            if (!payload.content && !(payload.metadata as any)?._live_thought) {
+              updatedRun = { ...current, messages: sealed };
+              return updatedRun;
+            }
+            streamingMessageRef.current = {
+              source: chunkSource,
+              content: String(payload.content || ""),
+            };
+            updatedRun = {
+              ...current,
+              messages: [
+                ...sealed,
+                createMessage(payload, current.id, session.id, userEmail),
+              ],
+            };
+            return updatedRun;
+          }
 
           case "message_log":
             if (!wsMessage.data) return current;
@@ -360,6 +591,29 @@ export const useChatWebSocket = ({
             return updatedRun;
           }
 
+          case "tool.progress": {
+            // Real-time tool output streaming (from run_bash line-by-line)
+            if (!wsMessage.data) return current;
+            const progressData = wsMessage.data as any;
+            const toolId = progressData.tool_id || "";
+            const preview = progressData.preview || "";
+            if (!toolId) return current;
+
+            // Accumulate progress into the run's metadata for the timeline panel
+            const existingProgress = (current as any)._toolProgress || {};
+            const existingLines = existingProgress[toolId] || [];
+            const updatedProgress = {
+              ...existingProgress,
+              [toolId]: [...existingLines, preview],
+            };
+
+            updatedRun = {
+              ...current,
+              ...({ _toolProgress: updatedProgress } as any),
+            };
+            return updatedRun;
+          }
+
           case "message_files":
             if (!wsMessage.data) return current;
             const filesEvent = wsMessage.data as FilesEvent;
@@ -375,6 +629,157 @@ export const useChatWebSocket = ({
               messages: [...current.messages, filesMessage],
             };
             return updatedRun;
+          case "message_thinking": {
+            if (!wsMessage.data) return current;
+            const thinkSrc = (wsMessage.data as any)?.source || "assistant";
+            const thinkBody =
+              typeof (wsMessage.data as any)?.content === "string"
+                ? String((wsMessage.data as any).content).trim()
+                : "";
+
+            // Prefer folding into the live stream bubble so ThinkBubble never remounts.
+            const liveIdx = current.messages.reduceRight(
+              (found: number, m, i) =>
+                found >= 0
+                  ? found
+                  : m.config.source === thinkSrc && isLiveStreamDraft(m)
+                  ? i
+                  : -1,
+              -1
+            );
+            if (liveIdx >= 0 && thinkBody) {
+              const live = current.messages[liveIdx];
+              const updatedMessages = [...current.messages];
+              updatedMessages[liveIdx] = {
+                ...live,
+                config: {
+                  ...live.config,
+                  metadata: {
+                    ...(live.config.metadata || {}),
+                    _live_thought:
+                      thinkBody ||
+                      (live.config.metadata as any)?._live_thought,
+                    _thought_done: "yes",
+                  },
+                },
+              } as typeof live;
+              return { ...current, messages: updatedMessages };
+            }
+
+            // Prefer merging into the final TextMessage so think stays ABOVE the
+            // reply in one bubble (never a trailing ThoughtEvent under the answer).
+            const replyIdx = current.messages.reduceRight(
+              (found: number, m, i) => {
+                if (found >= 0) return found;
+                if (m.config.source !== thinkSrc) return found;
+                const meta = (m.config.metadata || {}) as any;
+                const type = (m.config as any).type;
+                const isReply =
+                  type === "TextMessage" ||
+                  meta._is_final_reply ||
+                  meta._sealed_from_stream ||
+                  meta._sealed_chunk;
+                return isReply ? i : found;
+              },
+              -1
+            );
+            if (replyIdx >= 0 && thinkBody) {
+              const replyMsg = current.messages[replyIdx];
+              const raw =
+                typeof replyMsg.config.content === "string"
+                  ? replyMsg.config.content
+                  : "";
+              const split = splitAgentVisibleContent(raw);
+              if (
+                split.thought &&
+                (split.thought.includes(thinkBody.slice(0, 80)) ||
+                  thinkBody.includes(split.thought.slice(0, 80)))
+              ) {
+                return current;
+              }
+              const mergedThought = [split.thought, thinkBody]
+                .filter(Boolean)
+                .join("\n\n");
+              const content = `<think>${mergedThought}</think>\n\n${split.reply}`;
+              const updatedMessages = [...current.messages];
+              updatedMessages[replyIdx] = {
+                ...replyMsg,
+                config: {
+                  ...replyMsg.config,
+                  content,
+                  metadata: {
+                    ...(replyMsg.config.metadata || {}),
+                    _is_final_reply: true,
+                  },
+                } as any,
+              };
+              chatRenderLog("ws:thinking:merge-into-reply", {
+                source: thinkSrc,
+                replyIdx,
+                thought: thinkBody.slice(0, 64),
+              });
+              return { ...current, messages: updatedMessages };
+            }
+
+            // Final TextMessage already embeds <think> — skip duplicate ThoughtEvent.
+            const hasEmbeddedThink = current.messages.some((m) => {
+              if (m.config.source !== thinkSrc) return false;
+              const c =
+                typeof m.config.content === "string" ? m.config.content : "";
+              return (
+                /<think>/i.test(c) &&
+                thinkBody.length > 0 &&
+                (c.includes(thinkBody.slice(0, 80)) ||
+                  thinkBody.includes(
+                    c.replace(/[\s\S]*?<think>/i, "").slice(0, 80)
+                  ))
+              );
+            });
+            if (hasEmbeddedThink) return current;
+
+            const thinkingMessage = createMessage(
+              wsMessage.data as AgentMessageConfig,
+              current.id,
+              session.id,
+              userEmail
+            );
+            let insertBeforeIdx = -1;
+            for (let i = current.messages.length - 1; i >= 0; i--) {
+              const m = current.messages[i];
+              const meta = m.config.metadata as any;
+              if (m.config.source !== thinkSrc) continue;
+              const type = (m.config as any).type;
+              const isChunkOrReply =
+                type === "TextMessage" ||
+                meta?.start_flag !== undefined ||
+                meta?._stream_draft ||
+                meta?._sealed_chunk ||
+                meta?._sealed_from_stream ||
+                meta?._is_final_reply;
+              if (!isChunkOrReply) continue;
+              const prev = i > 0 ? current.messages[i - 1] : null;
+              const prevIsThought =
+                prev &&
+                ((prev.config as any).type === "ThoughtEvent" ||
+                  (prev.config.metadata as any)?.type === "ThoughtEvent");
+              if (prevIsThought) continue;
+              insertBeforeIdx = i;
+              break;
+            }
+            const thinkMessages =
+              insertBeforeIdx >= 0
+                ? [
+                    ...current.messages.slice(0, insertBeforeIdx),
+                    thinkingMessage,
+                    ...current.messages.slice(insertBeforeIdx),
+                  ]
+                : [...current.messages, thinkingMessage];
+            updatedRun = {
+              ...current,
+              messages: thinkMessages,
+            };
+            return updatedRun;
+          }
           case "input_request":
             let input_request: InputRequest;
             switch (wsMessage.input_type) {
@@ -392,6 +797,9 @@ export const useChatWebSocket = ({
                 break;
             }
 
+            // Don't touch messages. The tail streaming chunk stays at the tail
+            // and continues to render OUTSIDE the process box (see isSingleSegment:
+            // "chunk at tail" = final reply). No promotion needed.
             updatedRun = {
               ...current,
               status: "awaiting_input",
@@ -432,6 +840,8 @@ export const useChatWebSocket = ({
               activeSocketRef.current = null;
             }
 
+            // Don't touch messages — tail chunk stays at tail and renders outside
+            // via isSingleSegment's tail-chunk rule.
             updatedRun = {
               ...current,
               status,
@@ -450,6 +860,9 @@ export const useChatWebSocket = ({
     },
     [session?.id, activeSocket, setCurrentRun, userEmail]
   );
+
+  // Keep ref in sync so socket.onmessage always calls the latest handler
+  handleWebSocketMessageRef.current = handleWebSocketMessage;
 
   const setupWebSocket = React.useCallback(
     (
@@ -475,7 +888,9 @@ export const useChatWebSocket = ({
       socket.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-          handleWebSocketMessage(message);
+          // Enqueue instead of calling directly — flushed once per animation frame
+          // so bursts of chunks coalesce into a single render.
+          enqueueWsMessage(message);
         } catch (error) {
           console.error("WebSocket message parsing error:", error);
         }
@@ -498,12 +913,15 @@ export const useChatWebSocket = ({
           if (activeSocketRef.current !== socket) {
             return current;
           }
-          if (current.status === "awaiting_input") {
+          // Transition any non-terminal state to stopped on disconnect:
+          // active/pausing/paused = streaming, awaiting_input = waiting for user
+          const nonTerminal = new Set(["active", "awaiting_input", "pausing", "paused"]);
+          if (nonTerminal.has(current.status)) {
             const updatedRun = {
               ...current,
               status: "stopped" as BaseRunStatus,
               input_request: undefined,
-              team_result: {
+              team_result: current.team_result || {
                 task_result: {
                   messages: [],
                   stop_reason: "Cancelled by user",
@@ -512,7 +930,7 @@ export const useChatWebSocket = ({
                 duration: 0,
               } as TeamResult,
             };
-return updatedRun;
+            return updatedRun;
           }
           return current;
         });
@@ -520,6 +938,12 @@ return updatedRun;
         if (activeSocketRef.current === socket) {
           activeSocketRef.current = null;
           setActiveSocket(null);
+        }
+      };
+
+      socket.onopen = () => {
+        if (activeSocketRef.current === socket) {
+          // Socket reconnected — no-op; runTask's readyState polling will see OPEN
         }
       };
 

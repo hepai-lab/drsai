@@ -92,8 +92,9 @@ const checks = [
   [
     "selecting a conversation hydrates its persisted messages",
     app.includes("void hydrateThreadSnapshot(threadId)") &&
-      app.includes("desktopApi.getThreadSnapshot(threadId)") &&
-      app.includes("[threadId]: snapshot"),
+      app.includes("desktopApi.getThreadSnapshotEnvelope(threadId, requestId, options)") &&
+      app.includes("threadSnapshotCoordinatorRef.current.commitEnvelope(envelope") &&
+      app.includes("threadSnapshotStore.set(threadId, snapshot)"),
   ],
   [
     "chat updates persist the conversation snapshot",

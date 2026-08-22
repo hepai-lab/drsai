@@ -5,6 +5,7 @@ import base64
 import hashlib
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -194,6 +195,38 @@ def test_parent_replaced_by_reparse_point_during_atomic_write_is_rejected(local_
     elif os.name == "nt":
         safe.rmdir()
     backup.rename(safe)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction identity is the production acceptance target")
+def test_registered_workspace_root_replacement_is_rejected_for_files_and_commands(local_workspace, tmp_path: Path) -> None:
+    root, _journal, _operations, call = local_workspace
+    registered_root = root
+    original_root = tmp_path / "workspace-original"
+    outside = tmp_path / "root-swap-outside"
+    outside.mkdir()
+    registered_root.rename(original_root)
+    created = subprocess.run(
+        ["cmd.exe", "/d", "/c", "mklink", "/J", str(registered_root), str(outside)],
+        capture_output=True,
+        text=True,
+    )
+    assert created.returncode == 0, created.stderr or created.stdout
+    try:
+        write = asyncio.run(call("files.write", {
+            "path": "escaped.txt",
+            "content_base64": base64.b64encode(b"must-not-escape").decode(),
+        }))
+        assert write["error"]["code"] == "workspace_root_changed"
+        process = asyncio.run(call("process.start", {
+            "argv": [sys.executable, "-c", "from pathlib import Path; Path('process-escaped.txt').write_text('bad')"],
+            "cwd": ".",
+        }))
+        assert process["error"]["code"] == "workspace_root_changed"
+        assert not (outside / "escaped.txt").exists()
+        assert not (outside / "process-escaped.txt").exists()
+    finally:
+        registered_root.rmdir()
+        original_root.rename(registered_root)
 
 
 @pytest.mark.slow

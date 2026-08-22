@@ -1,0 +1,37 @@
+schema_version: opendrsai.agent-regression-case/1
+id: p3.image.output
+revision: 1
+title: P3 formal image output Artifact
+owner: agent-runtime
+tags: [p3, release, smoke, image_output, artifact]
+agent: {definition: regression-smoke@1, model_profile: default}
+input:
+  messages:
+    - role: user
+      parts: [{type: text, text: Generate an OpenDrSai Runtime image.}]
+environment:
+  network: disabled
+  required_capabilities: [image_generation]
+  workspace:
+    isolation: required
+    fixture: ../../assets/images
+    fixture_sha256: 8ea449cb8c6f57b9d538351e51461f1e5d1120569cb476f0df7f28ab7d83229b
+  tool_fixtures:
+    image_generation:
+      successful_result: {status: completed, fixture: true}
+  session: {type: new, history: empty}
+expect:
+  run: {status: completed}
+  behavior:
+    required_capabilities: [image_generation]
+    image_generation_calls: {exact: 1}
+  output:
+    type: text
+    required_literals: [Image, artifact, published]
+  artifacts:
+    exact: 1
+    required:
+      mime_type: image/png
+      relative_path: opendrsai-runtime-model-unauthorized.png
+      sha256_required: true
+execution: {timeout_seconds: 30, attempts: 1, isolation: required}

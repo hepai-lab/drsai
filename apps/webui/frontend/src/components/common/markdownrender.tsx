@@ -3,6 +3,7 @@ import ReactMarkdown, { type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism, SyntaxHighlighterProps } from "react-syntax-highlighter";
 import { tomorrow } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { useLang } from "../../i18n/useLang";
 
 /** Fenced ``` blocks become hast <pre><code>; inline `x` is only <code>. Used to pick CodeBlock vs chip. */
 const MarkdownCodeInFenceContext = createContext(false);
@@ -354,203 +355,172 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
     typeof attributes.duration === "number"
       ? Math.max(0, attributes.duration)
       : Math.max(0, Math.floor((currentTime - startTime) / 1000));
-  const showDoneBadge =
-    type === "reasoning" &&
-    isDone &&
-    cleanContent.length === 0;
   const shouldShowSpinner = !isDone;
-  const statusTextColor =
-    type === "reasoning" && isDone
-      ? "var(--color-text-secondary)"
-      : isDone
-        ? "var(--color-text-primary)"
-        : "var(--color-text-secondary)";
-  const accentColor = isDone
-    ? "var(--color-magenta-600)"
-    : "var(--color-border-secondary)";
+
+  const { t } = useLang();
 
   const getReasoningTitle = () => {
-    if (!isDone) return "Thinking...";
-    if (cleanContent.length === 0) return "Thought";
-    if (durationSeconds < 1) return "Thought Completed";
-    if (durationSeconds < 60) return `Thought for ${durationSeconds} seconds`;
+    if (!isDone) return t("thinkBubble.reasoning.thinking");
+    if (cleanContent.length === 0) return t("thinkBubble.reasoning.thought");
+    if (durationSeconds < 1) return t("thinkBubble.reasoning.thoughtCompleted");
+    if (durationSeconds < 60) return t("thinkBubble.reasoning.forSeconds", durationSeconds);
     const minutes = Math.floor(durationSeconds / 60);
     const seconds = durationSeconds % 60;
-    if (seconds === 0) return `Thought for ${minutes}m`;
-    return `Thought for ${minutes}m ${seconds}s`;
+    if (seconds === 0) return t("thinkBubble.reasoning.forMinutes", minutes);
+    return t("thinkBubble.reasoning.forMinSec", minutes, seconds);
   };
 
   const getTitle = () => {
     if (type === "reasoning") return getReasoningTitle();
-    if (type === "code_interpreter") return isDone ? "Analysis complete" : "Analyzing...";
+    if (type === "code_interpreter") return isDone ? t("thinkBubble.codeInterpreter.complete") : t("thinkBubble.codeInterpreter.analyzing");
     if (type === "tool_calls") {
-      const toolName = attributes.name || "Tool";
-      return isDone ? `Result ready: ${toolName}` : `Executing ${toolName}...`;
+      const toolName = attributes.name || t("thinkBubble.default.done");
+      return isDone ? t("thinkBubble.toolCalls.resultReady", toolName) : t("thinkBubble.toolCalls.executing", toolName);
     }
-    return isDone ? "Done" : "Working...";
+    return isDone ? t("thinkBubble.default.done") : t("thinkBubble.default.working");
   };
 
 
 
-  const renderTitle = () => {
-    if (showDoneBadge) {
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-md bg-secondary/25 px-2 py-0.5 text-xs font-medium text-secondary">
-          <span aria-hidden className="text-magenta-600/80">
-            ✓
-          </span>
-          <span>Thought</span>
-        </span>
-      );
-    }
-    return getTitle();
-  };
+  const renderTitle = () => getTitle();
+
+  // Empty completed thought — nothing to show (reasoning already in process panel or stripped).
+  if (isDone && cleanContent.length === 0) {
+    return null;
+  }
+
+  const hasExpandableBody = cleanContent.length > 0;
 
   return (
-    <div className="think-bubble-container w-full my-1.5 first:mt-0 last:mb-0">
-      <div className="think-bubble-shell rounded-xl overflow-hidden border-0 bg-secondary/[0.07]">
-        <button
-          type="button"
-          className="think-bubble-header w-full flex items-center justify-between gap-2.5 border-0 py-2.5 cursor-pointer select-none text-left bg-transparent transition-colors duration-200 hover:bg-secondary/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-magenta-500/25 focus-visible:ring-inset"
-          onClick={handleToggle}
-        >
-          <div className="flex items-center gap-2 w-full min-w-0">
-            {/* Tight cluster: multiple gap-2.5 segments read as a large empty band before the title */}
-            <div className="flex items-center gap-1.5 shrink-0">
-              <div className="flex shrink-0 text-secondary" aria-hidden>
-                {isExpanded ? (
-                  <svg
-                    width="15"
-                    height="15"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="m18 15-6-6-6 6" />
-                  </svg>
-                ) : (
-                  <svg
-                    width="15"
-                    height="15"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="m9 18 6-6-6-6" />
-                  </svg>
-                )}
-              </div>
-              <span
-                aria-hidden
-                className="shrink-0 rounded-full w-2 h-2"
-                style={{
-                  backgroundColor: accentColor,
-                  boxShadow: isDone
-                    ? "none"
-                    : "0 0 0 3px color-mix(in oklab, var(--color-magenta-600) 22%, transparent)",
-                }}
-              />
-              {shouldShowSpinner && !isStreaming && <Spinner className="size-4 shrink-0" />}
-            </div>
-
-            <div className="flex-1 min-w-0">
-              <div
-                className="text-[0.92rem] font-semibold leading-snug truncate"
-                style={{ color: statusTextColor }}
-              >
-                {renderTitle()}
-              </div>
-
-            </div>
-          </div>
-        </button>
-        {isExpanded && (
-          <div
-            className="think-bubble-content relative border-0 bg-primary px-3 py-2.5 pl-[1.35rem] overflow-hidden transition-[opacity,transform] duration-200 ease-out"
+    <div className="think-bubble-container w-full my-0.5 first:mt-0 last:mb-1">
+      <button
+        type="button"
+        className="group w-full flex items-center gap-1.5 px-1 py-0.5 min-w-0 rounded-md text-left transition-colors hover:bg-secondary/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-magenta-500/20 focus-visible:ring-inset disabled:cursor-default"
+        onClick={hasExpandableBody ? handleToggle : undefined}
+        aria-expanded={hasExpandableBody ? isExpanded : false}
+        disabled={!hasExpandableBody}
+      >
+        {shouldShowSpinner && !isStreaming ? (
+          <Spinner className="size-3 shrink-0 text-secondary/45" />
+        ) : (
+          <span
+            className="flex shrink-0 text-secondary/40 group-hover:text-secondary/55 transition-colors"
+            aria-hidden
           >
-            <div
-              className="absolute left-2.5 top-2.5 bottom-2.5 w-0.5 rounded-full transition-opacity duration-200"
-              style={{
-                backgroundColor: accentColor,
-                opacity: isDone ? 0.5 : 0.38,
-              }}
-            />
-
-            <div className="relative">
-              <MarkdownInlineCodeVariantContext.Provider value="compact">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    pre: MarkdownFencePre,
-                    p: ({ children }) => (
-                      <p
-                        style={{
-                          color: "var(--color-text-primary)",
-                          fontSize: "0.85rem",
-                          lineHeight: "1.62",
-                          // Keep paragraphs compact inside the bubble (especially within list items)
-                          margin: "0 0 6px 0",
-                        }}
-                      >
-                        {renderWithSingleNewlineBreaks(children)}
-                      </p>
-                    ),
-                    code: MarkdownCode,
-                    ul: ({ children }) => (
-                      <ul
-                        style={{
-                          margin: "0 0 10px 0",
-                          paddingLeft: "1.15rem",
-                          color: "var(--color-text-primary)",
-                        }}
-                      >
-                        {children}
-                      </ul>
-                    ),
-                    ol: ({ children }) => (
-                      <ol
-                        style={{
-                          margin: "0 0 10px 0",
-                          paddingLeft: "1.15rem",
-                          color: "var(--color-text-primary)",
-                        }}
-                      >
-                        {children}
-                      </ol>
-                    ),
-                    li: ({ children }) => (
-                      <li
-                        style={{
-                          color: "var(--color-text-primary)",
-                          margin: "2px 0",
-                        }}
-                      >
-                        {children}
-                      </li>
-                    ),
-                    strong: ({ children }) => (
-                      <strong style={{ color: "var(--color-text-primary)", fontWeight: 650 }}>
-                        {children}
-                      </strong>
-                    ),
-                    em: ({ children }) => (
-                      <em style={{ color: "var(--color-text-primary)" }}>{children}</em>
-                    ),
-                  }}
-                >
-                  {content}
-                </ReactMarkdown>
-              </MarkdownInlineCodeVariantContext.Provider>
-            </div>
-          </div>
+            {hasExpandableBody && isExpanded ? (
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="m18 15-6-6-6 6" />
+              </svg>
+            ) : (
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+            )}
+          </span>
         )}
-      </div>
+        <span className="text-[11px] font-medium text-secondary/55 truncate">
+          {renderTitle()}
+        </span>
+      </button>
+      {hasExpandableBody && isExpanded && (
+        <div
+          className="think-bubble-content mt-0.5 ml-2.5 pl-2 border-l border-secondary/15 overflow-hidden"
+        >
+          <div className="relative py-0.5">
+            <MarkdownInlineCodeVariantContext.Provider value="compact">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  pre: MarkdownFencePre,
+                  p: ({ children }) => (
+                    <p
+                      style={{
+                        color: "var(--color-text-secondary)",
+                        fontSize: "0.75rem",
+                        lineHeight: "1.55",
+                        margin: "0 0 4px 0",
+                      }}
+                    >
+                      {renderWithSingleNewlineBreaks(children)}
+                    </p>
+                  ),
+                  code: MarkdownCode,
+                  ul: ({ children }) => (
+                    <ul
+                      style={{
+                        margin: "0 0 6px 0",
+                        paddingLeft: "1rem",
+                        color: "var(--color-text-secondary)",
+                        fontSize: "0.75rem",
+                      }}
+                    >
+                      {children}
+                    </ul>
+                  ),
+                  ol: ({ children }) => (
+                    <ol
+                      style={{
+                        margin: "0 0 6px 0",
+                        paddingLeft: "1rem",
+                        color: "var(--color-text-secondary)",
+                        fontSize: "0.75rem",
+                      }}
+                    >
+                      {children}
+                    </ol>
+                  ),
+                  li: ({ children }) => (
+                    <li
+                      style={{
+                        color: "var(--color-text-secondary)",
+                        margin: "1px 0",
+                        fontSize: "0.75rem",
+                      }}
+                    >
+                      {children}
+                    </li>
+                  ),
+                  strong: ({ children }) => (
+                    <strong
+                      style={{
+                        color: "var(--color-text-secondary)",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {children}
+                    </strong>
+                  ),
+                  em: ({ children }) => (
+                    <em style={{ color: "var(--color-text-secondary)" }}>
+                      {children}
+                    </em>
+                  ),
+                }}
+              >
+                {content}
+              </ReactMarkdown>
+            </MarkdownInlineCodeVariantContext.Provider>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -643,6 +613,14 @@ const parseThinkTags = (
     });
   }
 
+  // Always render ThinkBubble above answer text, even if the payload had
+  // reply-then-<think> order (e.g. trailing monologue wrapped late).
+  const thinkParts = parts.filter((p) => p.type === "think");
+  const textParts = parts.filter((p) => p.type === "text");
+  if (thinkParts.length > 0 && textParts.length > 0) {
+    return { parts: [...thinkParts, ...textParts] };
+  }
+
   return { parts };
 };
 
@@ -720,7 +698,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             if (part.type === "think") {
               return (
                 <ThinkBubble
-                  key={index}
+                  key="reasoning-bubble"
                   content={part.content}
                   attributes={part.attributes}
                 />
@@ -728,7 +706,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             } else {
               return (
                 <div
-                  key={index}
+                  key={`html-text-${index}`}
                   dangerouslySetInnerHTML={{
                     __html: toHtmlWithLineBreaks(
                       part.content.replace(/<think>(.*?)<\/think>/gs, "")
@@ -799,7 +777,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           if (part.type === "think") {
             return (
               <ThinkBubble
-                key={index}
+                key="reasoning-bubble"
                 content={part.content}
                 attributes={part.attributes}
               />
@@ -808,7 +786,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             // Render regular text content with markdown
             return (
               <ReactMarkdown
-                key={index}
+                key={`md-text-${index}`}
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[]}
                 components={{

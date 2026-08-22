@@ -297,7 +297,7 @@ const systemPortForwardPlatform: PortForwardPlatform = {
     if (!controlPath) throw new Error("SSH ControlMaster is unavailable.");
     const config = process.env.OPENDRSAI_SSH_CONFIG?.trim() ?? join(homedir(), ".ssh", "config");
     const executable = process.env.OPENDRSAI_SSH_EXECUTABLE?.trim() ?? (process.platform === "darwin" ? "/usr/bin/ssh" : "ssh");
-    return spawn(executable, ["-F", config, "-S", controlPath, "-o", `UserKnownHostsFile=${sshHostService.knownHostsPath}`, "-o", "StrictHostKeyChecking=yes", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2", "-N", "-L", `${resource.bindAddress}:${resource.localPort}:${resource.remoteHost}:${resource.remotePort}`, resource.hostAlias], { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
+    return spawn(executable, ["-F", config, "-S", "none", "-o", `UserKnownHostsFile=${sshHostService.knownHostsPath}`, "-o", "StrictHostKeyChecking=yes", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2", "-N", "-L", `${resource.bindAddress}:${resource.localPort}:${resource.remoteHost}:${resource.remotePort}`, resource.hostAlias], { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
   },
   choosePort,
   waitForStart,

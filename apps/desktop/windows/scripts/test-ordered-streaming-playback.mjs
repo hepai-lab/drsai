@@ -35,6 +35,21 @@ assert.equal(missing.phase, "draining", "missing index zero must never play inde
 missing.stop(); assert.equal(missing.phase, "cancelled"); assert.equal(missing.bufferedCount, 0);
 assert.ok(released.includes(1), "cancel must release prepared buffered audio");
 
+const underrunGaps = [];
+let underrunClock = 1_000;
+const underrun = new OrderedStreamingAudioPlaybackQueue(adapter, { now: () => underrunClock, onGap: (gap, previous, next) => underrunGaps.push({ gap, previous, next }) });
+underrun.enqueue(segment(0));
+const underrunFirst = controls.at(-1);
+underrun.finish(1);
+underrunFirst.onEnded();
+assert.equal(underrun.phase, "draining", "missing next audio must enter a recoverable underrun state");
+underrunClock += 150;
+assert.equal(underrun.enqueue(segment(1)), true);
+assert.equal(underrun.phase, "playing", "late audio must resume playback without reordering");
+assert.deepEqual(underrunGaps, [{ gap: 150, previous: 0, next: 1 }]);
+controls.at(-1).onEnded();
+assert.equal(underrun.phase, "completed");
+
 const failing = new OrderedStreamingAudioPlaybackQueue(adapter);
 failing.enqueue(segment(0)); controls.at(-1).onError(new Error("device lost"));
 assert.equal(failing.phase, "failed");
@@ -45,4 +60,4 @@ synchronous.enqueue(segment(0)); synchronous.finish(0);
 await new Promise((resolve) => setTimeout(resolve, 0));
 assert.equal(syncPlays, 1); assert.equal(synchronous.phase, "completed", "synchronous completion must not leave a stale handle");
 
-console.log("Ordered streaming playback tests passed (out-of-order buffering, strict order, pause/resume, drain, stop, failure, duplicates, and synchronous completion race).");
+console.log("Ordered streaming playback tests passed (out-of-order buffering, strict order, pause/resume, underrun recovery, drain, stop, failure, duplicates, and synchronous completion race).");

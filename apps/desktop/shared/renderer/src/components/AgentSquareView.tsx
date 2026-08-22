@@ -1,7 +1,9 @@
-import { ArrowLeft, ArrowRight, Brain, RefreshCw, Save, Search, Server, Settings, Sparkles, Star, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ArrowRight, Brain, RefreshCw, Save, Search, Server, Settings, Sparkles, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  AuthUser,
   DesktopAgent,
+  DesktopAgentCatalogSnapshot,
   DesktopProjectMemoryEntry,
   DesktopTeamMemoryEntry,
   DesktopUserPreference,
@@ -11,51 +13,72 @@ import type {
   PlatformAgentStatus,
   UpdateMyDrSaiConfigRequest,
 } from "@shared/desktopApi";
+import { LOCAL_OPENDRSAI_AGENT_NAME } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
+import { userFacingFailureMessage } from "../userFacingLanguage";
 
 interface AgentSquareViewProps {
   language: AppLanguage;
-  userEmail?: string;
+  user: AuthUser | null;
   userGroups?: string[];
   workspacePath?: string;
   selectedAgentId?: string | null;
   onStartChat: (agent: DesktopAgent) => void;
-  onSetDefault?: (agent: DesktopAgent) => void;
 }
 
 export function AgentSquareView({
   language,
+  user,
   userGroups = [],
   workspacePath,
   selectedAgentId,
   onStartChat,
-  onSetDefault,
 }: AgentSquareViewProps): React.JSX.Element {
   const zh = language === "zh";
   const [agents, setAgents] = useState<DesktopAgent[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [platformStatus, setPlatformStatus] = useState<PlatformAgentStatus | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [group, setGroup] = useState<"all" | "local" | "official" | "mine">("all");
   const [availability, setAvailability] = useState<"all" | "available" | "unavailable">("all");
-  const [sort, setSort] = useState<"default" | "recent" | "name">("default");
+  const [sort, setSort] = useState<"default" | "name">("default");
   const [detailAgent, setDetailAgent] = useState<DesktopAgent | null>(null);
-  const [preferenceMessage, setPreferenceMessage] = useState<string | null>(null);
-  const [preferenceBusy, setPreferenceBusy] = useState<string | null>(null);
 
   useEffect(() => {
-    void refreshAgents(false);
-  }, []);
+    let cancelled = false;
+    async function loadInitialCatalog(): Promise<void> {
+      setLoading(true);
+      try {
+        const initial = await loadAgentCatalogSnapshot({ preferCache: true });
+        if (cancelled) return;
+        applyCatalogSnapshot(initial);
+        setLoading(false);
+        setRefreshing(true);
+        const fresh = await loadAgentCatalogSnapshot({ refresh: true });
+        if (!cancelled) applyCatalogSnapshot(fresh);
+      } catch (agentError) {
+        if (!cancelled) setError(userFacingFailureMessage(agentError, language, "connection"));
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }
+    }
+    void loadInitialCatalog();
+    return () => { cancelled = true; };
+  }, [user?.id]);
 
   const filteredAgents = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
-    const visible = agents.filter((agent) => {
+    const visible = agents.filter((agent) => agent.id !== "my-codex").filter((agent) => {
       const catalogGroup = agent.catalogGroup ?? (agent.source === "local" ? "local" : "official");
       if (group !== "all" && catalogGroup !== group) return false;
-      const isAvailable = agent.available !== false && agent.status === "running";
+      const isAvailable = isAgentUsable(agent);
       if (availability === "available" && !isAvailable) return false;
       if (availability === "unavailable" && isAvailable) return false;
       if (!normalizedSearch) return true;
@@ -76,51 +99,38 @@ export function AgentSquareView({
     });
     return [...visible].sort((left, right) => {
       if (sort === "name") return left.name.localeCompare(right.name, zh ? "zh-CN" : "en");
-      if (sort === "recent") return (right.lastUsedAt ?? "").localeCompare(left.lastUsedAt ?? "") || left.name.localeCompare(right.name);
-      const leftDefault = left.isDefault || left.id === selectedAgentId ? 1 : 0;
-      const rightDefault = right.isDefault || right.id === selectedAgentId ? 1 : 0;
-      return rightDefault - leftDefault || Number(Boolean(right.featured)) - Number(Boolean(left.featured)) || left.name.localeCompare(right.name);
+      const leftSelected = left.id === selectedAgentId ? 1 : 0;
+      const rightSelected = right.id === selectedAgentId ? 1 : 0;
+      return rightSelected - leftSelected || Number(Boolean(right.featured)) - Number(Boolean(left.featured)) || left.name.localeCompare(right.name);
     });
   }, [agents, availability, group, search, selectedAgentId, sort, zh]);
 
   async function refreshAgents(forceRefresh: boolean): Promise<void> {
-    setLoading(true);
+    if (agents.length === 0) setLoading(true);
+    setRefreshing(true);
     setError(null);
     try {
-      setAgents(await loadAgents(forceRefresh));
-      setPlatformStatus(await desktopApi.getPlatformAgentStatus());
+      applyCatalogSnapshot(await loadAgentCatalogSnapshot({ refresh: forceRefresh }));
     } catch (agentError) {
-      setError(agentError instanceof Error ? agentError.message : String(agentError));
+      setError(userFacingFailureMessage(agentError, language, "connection"));
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
-  async function setDefault(agent: DesktopAgent): Promise<void> {
-    setPreferenceBusy(agent.id);
-    setPreferenceMessage(null);
-    try {
-      const result = await desktopApi.setDefaultAgent(agent.id);
-      if (!result.saved) throw new Error(result.message);
-      setAgents((current) => current.map((item) => ({ ...item, isDefault: item.id === agent.id })));
-      setPreferenceMessage(zh ? `已将 ${agent.name} 设为默认智能体。` : `${agent.name} is now the default agent.`);
-      onSetDefault?.(agent);
-    } catch (preferenceError) {
-      setPreferenceMessage(preferenceError instanceof Error ? preferenceError.message : String(preferenceError));
-    } finally {
-      setPreferenceBusy(null);
-    }
+  function applyCatalogSnapshot(snapshot: DesktopAgentCatalogSnapshot): void {
+    setAgents(snapshot.agents);
+    setPlatformStatus(snapshot.platformStatus);
+    setError(null);
   }
 
   function startChat(agent: DesktopAgent): void {
-    const usedAt = new Date().toISOString();
-    setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, lastUsedAt: usedAt } : item));
-    void desktopApi.recordAgentUsage(agent.id).catch(() => undefined);
     onStartChat(agent);
   }
 
-  const myDrSai = filteredAgents.find((agent) => agent.id === "my-drsai");
-  const otherAgents = filteredAgents.filter((agent) => agent.id !== "my-drsai");
+  const openDrSai = filteredAgents.find((agent) => agent.source === "local");
+  const otherAgents = filteredAgents.filter((agent) => agent !== openDrSai);
   const sections = (["local", "official", "mine"] as const)
     .map((sectionGroup) => ({
       group: sectionGroup,
@@ -162,45 +172,42 @@ export function AgentSquareView({
           </select>
           <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} aria-label={zh ? "排序" : "Sort"}>
             <option value="default">{zh ? "推荐排序" : "Recommended"}</option>
-            <option value="recent">{zh ? "最近使用" : "Recently used"}</option>
             <option value="name">{zh ? "名称" : "Name"}</option>
           </select>
           <button
             className="agent-square-refresh"
             type="button"
             onClick={() => void refreshAgents(true)}
-            disabled={loading}
+            disabled={loading || refreshing}
           >
-            <RefreshCw size={14} className={loading ? "spinning" : ""} />
-            {zh ? "检查状态" : "Check"}
+            <RefreshCw size={14} className={loading || refreshing ? "spinning" : ""} />
+            {refreshing ? (zh ? "更新中" : "Refreshing") : (zh ? "刷新" : "Refresh")}
           </button>
         </div>
       </div>
 
       <div className="agent-square-content agent-square-empty-content">
         {error && <div className="agent-square-error">{error}</div>}
-        {platformStatus && platformStatus.state !== "ready" && (
-          <div className="agent-square-error" role="status">
-            <span>{platformStatus.message}</span>
+        {platformStatus && (platformStatus.state !== "ready" || platformStatus.cacheState === "stale") && (
+          <div className={platformStatus.state === "error" || platformStatus.state === "forbidden" || platformStatus.state === "requires_login" ? "agent-square-error" : "agent-square-notice"} role="status">
+            <span>{getPlatformStatusMessage(platformStatus, zh)}</span>
             <small>
               {formatPlatformStatusMeta(platformStatus, zh)}
             </small>
           </div>
         )}
-        {preferenceMessage && <div className="agent-square-preference-message" role="status">{preferenceMessage}</div>}
-        {myDrSai && (
+        {openDrSai && (
           <section className="agent-square-section">
             <h3>
-              <Star size={14} fill="currentColor" />
-              {zh ? "我的智能体" : "My Agent"}
+              <Server size={14} />
+              {zh ? "本机 OpenDrSai" : "Local OpenDrSai"}
             </h3>
             <AgentFeaturedCard
-              agent={myDrSai}
+              agent={openDrSai}
               zh={zh}
               onConfigure={() => setConfigOpen((open) => !open)}
               onStartChat={startChat}
             />
-            {configOpen && <MyDrSaiConfigPanel zh={zh} userGroups={userGroups} workspacePath={workspacePath} />}
           </section>
         )}
 
@@ -212,11 +219,9 @@ export function AgentSquareView({
                 {section.agents.map((agent) => (
                   <AgentCard
                     key={`${agent.source}:${agent.id}`}
-                    agent={{ ...agent, isDefault: agent.isDefault || agent.id === selectedAgentId }}
+                    agent={agent}
                     zh={zh}
-                    preferenceBusy={preferenceBusy === agent.id}
                     onDetails={() => setDetailAgent(agent)}
-                    onSetDefault={() => void setDefault(agent)}
                     onStartChat={startChat}
                   />
                 ))}
@@ -229,11 +234,15 @@ export function AgentSquareView({
             <span>
               {loading
                 ? zh
-                  ? "正在检查本机和远程智能体..."
-                  : "Checking local and remote agents..."
+                  ? "正在读取智能体目录..."
+                  : "Loading agents..."
+                : search.trim() || group !== "all" || availability !== "all"
+                  ? zh
+                    ? "没有符合当前筛选条件的智能体。"
+                    : "No agents match the current filters."
                 : zh
-                  ? "暂无其他已连接智能体。"
-                  : "No other connected agents are available yet."}
+                  ? "当前账号没有其他可用的 HAI 智能体。"
+                  : "No additional HAI agents are available for this account."}
             </span>
           </div>
         )}
@@ -245,6 +254,11 @@ export function AgentSquareView({
           onClose={() => setDetailAgent(null)}
           onStart={() => startChat(detailAgent)}
         />
+      )}
+      {configOpen && (
+        <AgentConfigDialog zh={zh} onClose={() => setConfigOpen(false)}>
+          <OpenDrSaiConfigPanel zh={zh} user={user} userGroups={userGroups} workspacePath={workspacePath} />
+        </AgentConfigDialog>
       )}
     </section>
   );
@@ -267,7 +281,7 @@ function AgentFeaturedCard({
   onConfigure: () => void;
   onStartChat: (agent: DesktopAgent) => void;
 }): React.JSX.Element {
-  const running = agent.status === "running";
+  const running = isAgentUsable(agent);
   return (
     <article className="agent-featured-card my-drsai-card">
       <AgentLogo agent={agent} large />
@@ -276,7 +290,7 @@ function AgentFeaturedCard({
           <h2>{agent.name}</h2>
           <AgentStatusPill agent={agent} zh={zh} />
         </div>
-        {agent.id === "my-drsai" ? (
+        {agent.source === "local" ? (
           <div className="my-drsai-subtitle">
             <span>运行在本机的智能体。</span>
             <span>专属于您的AI智能体❤</span>
@@ -305,7 +319,7 @@ function AgentFeaturedCard({
   );
 }
 
-function MyDrSaiConfigPanel({ zh, userGroups, workspacePath }: { zh: boolean; userGroups: string[]; workspacePath?: string }): React.JSX.Element {
+function OpenDrSaiConfigPanel({ zh, user, userGroups, workspacePath }: { zh: boolean; user: AuthUser | null; userGroups: string[]; workspacePath?: string }): React.JSX.Element {
   const [view, setView] = useState<"config" | "memory">("config");
   const [config, setConfig] = useState<MyDrSaiConfig | null>(null);
   const [draft, setDraft] = useState<UpdateMyDrSaiConfigRequest>({});
@@ -324,15 +338,12 @@ function MyDrSaiConfigPanel({ zh, userGroups, workspacePath }: { zh: boolean; us
       const nextConfig = await loadMyDrSaiConfig();
       setConfig(nextConfig);
       setDraft({
-        user_id: nextConfig.config.user_id || "",
-        defult_config_name:
-          nextConfig.config.defult_config_name || nextConfig.defaultModelAlias || "",
         plan_mode: Boolean(nextConfig.config.plan_mode),
         workspace_enabled: nextConfig.config.workspace_enabled !== false,
         dangerous_allowed: Boolean(nextConfig.config.dangerous_allowed),
       });
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(userFacingFailureMessage(error, zh ? "zh" : "en", "operation"));
     } finally {
       setLoading(false);
     }
@@ -346,26 +357,22 @@ function MyDrSaiConfigPanel({ zh, userGroups, workspacePath }: { zh: boolean; us
       setConfig(saved);
       setMessage(zh ? "配置已保存。" : "Configuration saved.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(userFacingFailureMessage(error, zh ? "zh" : "en", "operation"));
     } finally {
       setSaving(false);
     }
   }
-
-  const selectedModel = config?.models.find(
-    (model) => model.alias === draft.defult_config_name,
-  );
 
   if (view === "memory") {
     return <UserMemoryManager zh={zh} userGroups={userGroups} workspacePath={workspacePath} onBack={() => setView("config")} />;
   }
 
   return (
-    <section className="my-drsai-config-panel" aria-label={zh ? "My DrSai 配置" : "My DrSai config"}>
+    <section className="my-drsai-config-panel" aria-label={zh ? "OpenDrSai 配置" : "OpenDrSai config"}>
       <div className="my-drsai-config-header">
         <div>
-          <strong>{zh ? "My DrSai 配置" : "My DrSai Config"}</strong>
-          <span>{config?.cliPath || config?.baseUrl || (zh ? "读取本机配置" : "Local config")}</span>
+          <strong>{zh ? "OpenDrSai 配置" : "OpenDrSai Config"}</strong>
+          <span>{zh ? "仅影响此设备上的 OpenDrSai" : "Applies to OpenDrSai on this device"}</span>
         </div>
         <div className="my-drsai-config-header-actions">
           <button type="button" data-testid="open-user-memory-manager" onClick={() => setView("memory")}>
@@ -382,47 +389,18 @@ function MyDrSaiConfigPanel({ zh, userGroups, workspacePath }: { zh: boolean; us
       {message && <div className="my-drsai-config-message">{message}</div>}
 
       <div className="my-drsai-config-grid">
-        <label>
-          <span>{zh ? "默认模型" : "Default model"}</span>
-          <select
-            value={draft.defult_config_name || ""}
-            onChange={(event) =>
-              setDraft((current) => ({ ...current, defult_config_name: event.target.value }))
-            }
-            disabled={loading || saving || !config?.ready}
-          >
-            <option value="">{zh ? "未选择" : "Not selected"}</option>
-            {config?.models.map((model) => (
-              <option key={model.alias} value={model.alias}>
-                {model.display_name || model.alias}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label>
-          <span>{zh ? "用户 ID" : "User ID"}</span>
-          <input
-            value={draft.user_id || ""}
-            onChange={(event) =>
-              setDraft((current) => ({ ...current, user_id: event.target.value }))
-            }
-            disabled={loading || saving || !config?.ready}
-            placeholder="desktop"
-          />
-        </label>
-      </div>
-
-      {selectedModel && (
-        <div className="my-drsai-model-meta">
-          <span>{selectedModel.client_type || "model"}</span>
-          <span>{selectedModel.model || selectedModel.alias}</span>
-          {typeof selectedModel.token_limit === "number" && (
-            <span>{zh ? "上下文" : "Context"} {selectedModel.token_limit}</span>
+        <div className="opendrsai-account-card" data-testid="opendrsai-effective-identity">
+          <span>{zh ? "当前 HepAI 账号" : "Current HepAI account"}</span>
+          <strong>{user?.name || user?.email || (zh ? "未登录" : "Not signed in")}</strong>
+          {user?.email && <small>{user.email} · {zh ? "已通过 HepAI 登录" : "Signed in with HepAI"}</small>}
+          {user?.id && (
+            <details>
+              <summary>{zh ? "技术账号标识" : "Technical principal"}</summary>
+              <code>{user.id}</code>
+            </details>
           )}
-          {selectedModel.vision && <span>{zh ? "视觉" : "Vision"}</span>}
         </div>
-      )}
+      </div>
 
       <div className="my-drsai-toggle-list">
         <ConfigToggle
@@ -505,7 +483,7 @@ function UserMemoryManager({
       setProjectEntries(nextProjectEntries);
       setTeamEntries(nextTeamEntries);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(userFacingFailureMessage(error, zh ? "zh" : "en", "operation"));
     } finally {
       setLoading(false);
     }
@@ -521,7 +499,7 @@ function UserMemoryManager({
       await refresh();
       setMessage(zh ? "当前项目记忆已保存。" : "Current-project memory saved.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(userFacingFailureMessage(error, zh ? "zh" : "en", "operation"));
       setLoading(false);
     }
   }
@@ -533,7 +511,7 @@ function UserMemoryManager({
       await desktopApi.clearProjectMemory({ workspacePath, entryId });
       await refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(userFacingFailureMessage(error, zh ? "zh" : "en", "operation"));
       setLoading(false);
     }
   }
@@ -548,7 +526,7 @@ function UserMemoryManager({
       await refresh();
       setMessage(zh ? "团队记忆已保存，仅对该团队成员生效。" : "Team memory saved for authorized members only.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(userFacingFailureMessage(error, zh ? "zh" : "en", "operation"));
       setLoading(false);
     }
   }
@@ -559,7 +537,7 @@ function UserMemoryManager({
       await desktopApi.deleteTeamMemory({ teamId: entry.teamId, entryId: entry.id });
       await refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(userFacingFailureMessage(error, zh ? "zh" : "en", "operation"));
       setLoading(false);
     }
   }
@@ -572,7 +550,7 @@ function UserMemoryManager({
       setPreferences(await desktopApi.listUserPreferences());
       setMessage(zh ? "记忆已修改，将从下一项任务立即生效。" : "Memory updated. It will apply to the next task immediately.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(userFacingFailureMessage(error, zh ? "zh" : "en", "operation"));
     } finally {
       setBusyCategory(null);
     }
@@ -586,7 +564,7 @@ function UserMemoryManager({
       setPreferences(await desktopApi.listUserPreferences());
       setMessage(zh ? "记忆已删除，不会再用于后续任务。" : "Memory deleted. It will no longer be used for future tasks.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(userFacingFailureMessage(error, zh ? "zh" : "en", "operation"));
     } finally {
       setBusyCategory(null);
     }
@@ -754,33 +732,19 @@ function ConfigToggle({
 function AgentCard({
   agent,
   zh,
-  preferenceBusy,
   onDetails,
-  onSetDefault,
   onStartChat,
 }: {
   agent: DesktopAgent;
   zh: boolean;
-  preferenceBusy: boolean;
   onDetails: () => void;
-  onSetDefault: () => void;
   onStartChat: (agent: DesktopAgent) => void;
 }): React.JSX.Element {
-  const running = agent.available !== false && agent.status === "running";
+  const running = isAgentUsable(agent);
   return (
     <article className="agent-card">
       <div className="agent-card-top">
         <AgentStatusPill agent={agent} zh={zh} />
-        <button
-          type="button"
-          className={`agent-default-button${agent.isDefault ? " active" : ""}`}
-          disabled={agent.isDefault || preferenceBusy}
-          onClick={onSetDefault}
-          aria-label={agent.isDefault ? (zh ? "当前默认智能体" : "Current default agent") : (zh ? "设为默认智能体" : "Set as default agent")}
-          title={agent.isDefault ? (zh ? "当前默认" : "Current default") : (zh ? "设为默认" : "Set as default")}
-        >
-          {preferenceBusy ? <RefreshCw size={15} className="spinning" /> : <Star size={16} fill={agent.isDefault ? "currentColor" : "none"} />}
-        </button>
       </div>
       <div className="agent-card-main">
         <AgentLogo agent={agent} />
@@ -790,8 +754,7 @@ function AgentCard({
         </div>
       </div>
       <p>{getAgentDescription(agent, zh)}</p>
-      {agent.url && <code className="agent-url">{agent.url}</code>}
-      {agent.error && <small className="agent-card-error">{agent.error}</small>}
+      {!running && <small className="agent-card-error">{getAgentUnavailableReason(agent, zh)}</small>}
       <div className="agent-card-actions">
         <button type="button" className="secondary" onClick={onDetails}>{zh ? "详情" : "Details"}</button>
         <button type="button" disabled={!running} onClick={() => onStartChat(agent)}>
@@ -810,7 +773,7 @@ function AgentStatusPill({
   zh: boolean;
 }): React.JSX.Element {
   return (
-    <span className={`agent-status-pill ${agent.source} ${agent.status}`}>
+    <span className={`agent-status-pill ${agent.source} ${agent.status}${agent.catalogState === "cached" ? " cached" : ""}`}>
       <Server size={12} />
       {getStatusLabel(agent, zh)}
     </span>
@@ -845,23 +808,23 @@ function AgentDetailDialog({
   onClose: () => void;
   onStart: () => void;
 }): React.JSX.Element {
+  const { dialogRef, initialFocusRef } = useAccessibleDialog(onClose);
   const examples = Array.isArray(agent.examples) ? agent.examples : agent.examples ? [agent.examples] : [];
-  const available = agent.available !== false && agent.status === "running";
+  const available = isAgentUsable(agent);
   return (
     <div className="agent-detail-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="agent-detail-dialog" role="dialog" aria-modal="true" aria-label={agent.name}>
+      <section ref={dialogRef} className="agent-detail-dialog" role="dialog" aria-modal="true" aria-label={agent.name}>
         <header>
           <AgentLogo agent={agent} large />
           <div><h2>{agent.name}</h2><span>{agent.owner}</span></div>
-          <button type="button" className="icon-button" onClick={onClose} aria-label={zh ? "关闭" : "Close"}><X size={17} /></button>
+          <button ref={initialFocusRef} type="button" className="icon-button" onClick={onClose} aria-label={zh ? "关闭" : "Close"}><X size={17} /></button>
         </header>
         <p>{getAgentDescription(agent, zh)}</p>
         <dl>
-          <div><dt>{zh ? "运行模式" : "Mode"}</dt><dd>{agent.mode || (zh ? "未标注" : "Not specified")}</dd></div>
-          <div><dt>{zh ? "可用状态" : "Availability"}</dt><dd>{available ? (zh ? "可用" : "Available") : (zh ? "当前不可用" : "Currently unavailable")}</dd></div>
+          <div><dt>{zh ? "可用状态" : "Availability"}</dt><dd>{available ? (zh ? "在线可用" : "Online & available") : (zh ? "当前不可用" : "Currently unavailable")}</dd></div>
           <div><dt>{zh ? "来源" : "Source"}</dt><dd>{getGroupLabel(agent.catalogGroup ?? (agent.source === "local" ? "local" : "official"), zh)}</dd></div>
         </dl>
-        {(agent.capabilities ?? []).length > 0 && <div className="agent-detail-section"><strong>{zh ? "能力" : "Capabilities"}</strong><div className="agent-card-tags">{agent.capabilities?.map((item) => <span key={item}>{item}</span>)}</div></div>}
+        {(agent.capabilities ?? []).length > 0 && <div className="agent-detail-section"><strong>{zh ? "能力" : "Capabilities"}</strong><div className="agent-card-tags">{agent.capabilities?.map((item) => <span key={item}>{getCapabilityLabel(item, zh)}</span>)}</div></div>}
         {examples.length > 0 && <div className="agent-detail-section"><strong>{zh ? "示例任务" : "Example tasks"}</strong><ul>{examples.map((example, index) => <li key={index}>{typeof example === "string" ? example : (zh ? example.zh ?? example.en : example.en ?? example.zh)}</li>)}</ul></div>}
         <div className="agent-detail-note">{agent.error || (zh ? "调用平台智能体时，任务内容会发送到其运行服务；请勿提交无授权的敏感数据。" : "Tasks sent to a platform agent are processed by its runtime. Do not submit unauthorized sensitive data.")}</div>
         <footer><button type="button" className="secondary" onClick={onClose}>{zh ? "关闭" : "Close"}</button><button type="button" disabled={!available} onClick={onStart}>{zh ? "开始使用" : "Use agent"}</button></footer>
@@ -871,10 +834,104 @@ function AgentDetailDialog({
 }
 
 function getStatusLabel(agent: DesktopAgent, zh: boolean): string {
-  const source = agent.source === "local" ? (zh ? "本机" : "Local") : (zh ? "远程" : "Remote");
-  if (agent.status === "running") return `${source} · ${zh ? "运行中" : "Running"}`;
-  if (agent.status === "stopped") return `${source} · ${zh ? "未启动" : "Stopped"}`;
-  return `${source} · ${zh ? "不可达" : "Unreachable"}`;
+  if (agent.source === "local") return zh ? "本机" : "Local";
+  if (agent.catalogState === "cached") return zh ? "缓存结果" : "Cached";
+  return isAgentUsable(agent)
+    ? (zh ? "在线可用" : "Online & available")
+    : (zh ? "不可用" : "Unavailable");
+}
+
+function isAgentUsable(agent: DesktopAgent): boolean {
+  if (agent.available === false || agent.catalogState === "cached") return false;
+  if (agent.source === "local") return true;
+  const capabilities = new Set((agent.capabilities ?? []).map((item) => item.toLowerCase()));
+  return agent.status === "running" && capabilities.has("chat") && capabilities.has("streaming");
+}
+
+function getAgentUnavailableReason(agent: DesktopAgent, zh: boolean): string {
+  if (agent.catalogState === "cached") {
+    return zh ? "这是上次缓存的目录结果，刷新成功后才能使用。" : "This is a cached catalog result. Refresh successfully before using it.";
+  }
+  if (agent.available === false || agent.status !== "running") {
+    return zh ? "该智能体当前不可用。" : "This agent is currently unavailable.";
+  }
+  return zh ? "该智能体未声明对话和流式回复能力。" : "This agent does not advertise chat and streaming support.";
+}
+
+function AgentConfigDialog({
+  zh,
+  onClose,
+  children,
+}: {
+  zh: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const { dialogRef, initialFocusRef } = useAccessibleDialog(onClose);
+  return (
+    <div className="agent-detail-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section ref={dialogRef} className="agent-config-dialog" role="dialog" aria-modal="true" aria-label={zh ? "OpenDrSai 配置" : "OpenDrSai configuration"}>
+        <header>
+          <strong>{zh ? "OpenDrSai 设置" : "OpenDrSai settings"}</strong>
+          <button ref={initialFocusRef} type="button" className="icon-button" onClick={onClose} aria-label={zh ? "关闭" : "Close"}><X size={17} /></button>
+        </header>
+        {children}
+      </section>
+    </div>
+  );
+}
+
+function useAccessibleDialog(onClose: () => void): {
+  dialogRef: React.RefObject<HTMLElement | null>;
+  initialFocusRef: React.RefObject<HTMLButtonElement | null>;
+} {
+  const dialogRef = useRef<HTMLElement>(null);
+  const initialFocusRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    initialFocusRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )];
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [onClose]);
+  return { dialogRef, initialFocusRef };
+}
+
+function getCapabilityLabel(capability: string, zh: boolean): string {
+  const key = capability.trim().toLowerCase();
+  const labels: Record<string, [string, string]> = {
+    chat: ["对话", "Chat"],
+    streaming: ["流式回复", "Streaming"],
+    "attachment-upload": ["上传附件", "Attachments"],
+    "document-input": ["读取文档", "Documents"],
+    workspace: ["工作区", "Workspace"],
+    tools: ["工具调用", "Tools"],
+  };
+  const label = labels[key];
+  return label ? label[zh ? 0 : 1] : capability;
 }
 
 function getAgentDescription(agent: DesktopAgent, zh: boolean): string {
@@ -907,29 +964,56 @@ function formatPlatformStatusMeta(status: PlatformAgentStatus, zh: boolean): str
   return zh ? `最近检查：${checkedAt} · ${cache}` : `Last checked: ${checkedAt} · ${cache}`;
 }
 
-async function loadAgents(refresh = false): Promise<DesktopAgent[]> {
-  const bridge = window.openDrSai as
-    | { listAgents?: (options?: { refresh?: boolean }) => Promise<DesktopAgent[]> }
-    | undefined;
-  if (typeof bridge?.listAgents === "function") {
-    return bridge.listAgents({ refresh });
-  }
+function getPlatformStatusMessage(status: PlatformAgentStatus, zh: boolean): string {
+  if (status.state === "loading") return zh ? "正在后台更新 HAI 智能体目录。" : "Refreshing the HAI agent catalog in the background.";
+  if (status.state === "requires_login") return zh ? "HepAI 登录已失效，请重新登录。" : "Your HepAI session expired. Sign in again.";
+  if (status.state === "forbidden") return zh ? "当前账号无权读取 HAI 智能体目录。" : "This account cannot access the HAI agent catalog.";
+  if (status.state === "native_api_unavailable") return zh ? "HAI 智能体目录当前不可用，本机 OpenDrSai 仍可使用。" : "The HAI agent catalog is unavailable. Local OpenDrSai remains usable.";
+  if (status.cacheState === "stale") return zh ? "目录更新失败，当前显示上次缓存结果。" : "Catalog refresh failed; showing the last cached result.";
+  return zh ? "HAI 智能体目录更新失败，本机 OpenDrSai 仍可使用。" : "The HAI agent catalog could not be refreshed. Local OpenDrSai remains usable.";
+}
 
-  const gateway = await desktopApi.getGatewayStatus();
-  return [
-    {
-      id: "my-drsai",
-      name: "My DrSai",
+async function loadAgentCatalogSnapshot(
+  options: { refresh?: boolean; preferCache?: boolean },
+): Promise<DesktopAgentCatalogSnapshot> {
+  const bridge = window.openDrSai as
+    | {
+        getAgentCatalogSnapshot?: (options?: { refresh?: boolean; preferCache?: boolean }) => Promise<DesktopAgentCatalogSnapshot>;
+        listAgents?: (options?: { refresh?: boolean; preferCache?: boolean }) => Promise<DesktopAgent[]>;
+      }
+    | undefined;
+  if (typeof bridge?.getAgentCatalogSnapshot === "function") {
+    return bridge.getAgentCatalogSnapshot(options);
+  }
+  if (typeof bridge?.listAgents === "function") {
+    const agents = await bridge.listAgents(options);
+    return {
+      agents,
+      platformStatus: await desktopApi.getPlatformAgentStatus(),
+      loadedAt: new Date().toISOString(),
+    };
+  }
+  return {
+    agents: [{
+      id: "local-agent-unavailable",
+      name: LOCAL_OPENDRSAI_AGENT_NAME,
       description: "专属于您的AI智能体❤",
       owner: "运行在本机的智能体。",
       source: "local",
-      status: gateway.ready ? "running" : "stopped",
-      url: gateway.baseUrl,
-      error: gateway.ready
-        ? undefined
-        : "当前桌面桥尚未提供 listAgents，已降级检查本机运行时服务。",
+      status: "stopped",
+      available: true,
+      catalogGroup: "local",
+    }],
+    platformStatus: {
+      state: "native_api_unavailable",
+      apiVersion: null,
+      capabilities: [],
+      message: "The desktop bridge does not expose the Agent catalog.",
+      lastCheckedAt: null,
+      cacheState: "none",
     },
-  ];
+    loadedAt: new Date().toISOString(),
+  };
 }
 
 async function loadMyDrSaiConfig(): Promise<MyDrSaiConfig> {

@@ -15,8 +15,17 @@ function fail(stage, status) {
 }
 
 async function json(response, stage) {
-  if (!response.ok) fail(stage, response.status);
-  return response.json();
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    const detail = body && typeof body === "object" && body.detail && typeof body.detail === "object"
+      ? body.detail
+      : body;
+    const code = detail && typeof detail === "object" && typeof detail.code === "string"
+      ? detail.code
+      : null;
+    throw new Error(`${stage}_failed:${response.status}${code ? `:${code}` : ""}`);
+  }
+  return body;
 }
 
 async function run() {

@@ -32,6 +32,7 @@ import type {
 } from "@shared/desktopApi";
 import type { AppLanguage } from "../../navigation";
 import { desktopApi } from "../../desktopApi";
+import { requestAppDecision } from "../AppDecisionDialog";
 import {
   AgentFileActivityPanel,
   createTraceEventsFromAttachments,
@@ -318,9 +319,9 @@ export function FilesContextPanel({
     }
   }
 
-  function addSelectedFile(): void {
+  async function addSelectedFile(): Promise<void> {
     if (!selectedNode || selectedNode.type !== "file" || selectedInBasket) return;
-    commitAttachments([createFileAttachment(selectedNode, preview)]);
+    await commitAttachments([createFileAttachment(selectedNode, preview)]);
   }
 
   function toggleContextSelection(node: WorkspaceFileNode): void {
@@ -332,7 +333,7 @@ export function FilesContextPanel({
     });
   }
 
-  function attachSelectedContextNodes(): void {
+  async function attachSelectedContextNodes(): Promise<void> {
     const attachments = selectedContextNodes
       .filter((node) => !basket.some((item) => item.path === node.path))
       .map((node) =>
@@ -341,14 +342,14 @@ export function FilesContextPanel({
           : createFileAttachment(node, preview?.path === node.path ? preview : null),
       );
     if (attachments.length === 0) return;
-    commitAttachments(attachments);
+    await commitAttachments(attachments);
   }
 
-  function attachSelectedDirectory(): void {
+  async function attachSelectedDirectory(): Promise<void> {
     if (!selectedNode || selectedNode.type !== "directory") return;
-    if (!confirmUntrustedContextShare()) return;
+    if (!await confirmUntrustedContextShare()) return;
     const files = collectFileNodes(selectedNode);
-    if (files.length > 200 && !confirmLargeDirectoryContext(files.length)) return;
+    if (files.length > 200 && !await confirmLargeDirectoryContext(files.length)) return;
     const attachment = createDirectoryAttachment(selectedNode, workspacePath);
     const nextBasket = [...basket.filter((item) => item.path !== selectedNode.path), attachment];
     onBasketChange(nextBasket);
@@ -356,28 +357,24 @@ export function FilesContextPanel({
     recordSnapshot(nextBasket);
   }
 
-  function confirmLargeDirectoryContext(fileCount: number): boolean {
-    return window.confirm(
-      zh
-        ? `该目录包含 ${fileCount} 个文件，交给智能体的文件清单会被截断。确认加入？`
-        : `This folder contains ${fileCount} files and the agent manifest will be truncated. Attach it?`,
-    );
+  function confirmLargeDirectoryContext(fileCount: number): Promise<boolean> {
+    return requestAppDecision({ id: "attach-large-directory", title: zh ? "加入大型目录？" : "Attach a large folder?", description: zh ? `该目录包含 ${fileCount} 个文件。` : `This folder contains ${fileCount} files.`, impact: zh ? "交给智能体的文件清单会被截断；原始文件不会修改。" : "The file list provided to the agent will be truncated; source files are unchanged.", confirmLabel: zh ? "仍然加入" : "Attach anyway" });
   }
 
   async function attachSelectedDiff(): Promise<void> {
     if (!selectedNode) return;
-    if (!confirmUntrustedContextShare()) return;
+    if (!await confirmUntrustedContextShare()) return;
     await loadDiff(false);
   }
 
   async function attachSelectedStagedDiff(): Promise<void> {
     if (!selectedNode) return;
-    if (!confirmUntrustedContextShare()) return;
+    if (!await confirmUntrustedContextShare()) return;
     await loadDiff(true);
   }
 
   async function attachWorkspaceDiff(): Promise<void> {
-    if (!confirmUntrustedContextShare()) return;
+    if (!await confirmUntrustedContextShare()) return;
     const diff = await desktopApi.getWorkspaceGitDiff({
       workspacePath,
       workspaceId,
@@ -499,8 +496,8 @@ export function FilesContextPanel({
     if (result) setError(result);
   }
 
-  function commitAttachments(attachments: ChatAttachment[]): boolean {
-    if (!confirmUntrustedContextShare()) return false;
+  async function commitAttachments(attachments: ChatAttachment[]): Promise<boolean> {
+    if (!await confirmUntrustedContextShare()) return false;
     const nextBasket = [...basket, ...attachments];
     onBasketChange(nextBasket);
     recordTrace(attachments);
@@ -508,9 +505,9 @@ export function FilesContextPanel({
     return true;
   }
 
-  function prepareManagerPresentation(): void {
+  async function prepareManagerPresentation(): Promise<void> {
     if (!selectedNode || !canCreateManagerPresentation) return;
-    if (!selectedInBasket && !commitAttachments([createFileAttachment(selectedNode, preview)])) return;
+    if (!selectedInBasket && !await commitAttachments([createFileAttachment(selectedNode, preview)])) return;
     onPrepareTask(buildManagerPresentationTask(language));
   }
 
@@ -519,7 +516,7 @@ export function FilesContextPanel({
     audience: ManagerPresentationAudience = "non_expert_managers",
   ): Promise<void> {
     if (!selectedNode || !canCreateManagerPresentation) return;
-    if (!selectedInBasket && !commitAttachments([createFileAttachment(selectedNode, preview)])) return;
+    if (!selectedInBasket && !await commitAttachments([createFileAttachment(selectedNode, preview)])) return;
     const interrupted = managerPresentationProgress?.phase === "interrupted"
       && managerPresentationRequestRef.current === managerPresentationProgress.requestId;
     if (mode === "restart" && interrupted && managerPresentationProgress) {
@@ -560,6 +557,12 @@ export function FilesContextPanel({
         requirements: recovering ? managerPresentationRequirements : [],
       });
       if (managerPresentationRequestRef.current !== requestId) return;
+      if (!result) {
+        setManagerPresentationProgress((current) => current?.requestId === requestId && current.phase === "cancelled"
+          ? current
+          : { requestId, phase: "cancelled", progress: 100, message: zh ? "已取消生成；未保留未完成的 PPT 文件。" : "Generation cancelled; no incomplete PPT was kept." });
+        return;
+      }
       setManagerPresentationResult(result);
       setAudienceResults((current) => ({ ...current, [result.audience]: result }));
       const artifactEvent: AgentFileTraceEvent = {
@@ -713,11 +716,11 @@ export function FilesContextPanel({
     ]);
   }
 
-  function handleBasketChange(nextBasket: ChatAttachment[]): void {
+  async function handleBasketChange(nextBasket: ChatAttachment[]): Promise<void> {
     const added = nextBasket.filter(
       (next) => !basket.some((current) => current.path === next.path && current.name === next.name),
     );
-    if (added.length > 0 && !confirmUntrustedContextShare()) return;
+    if (added.length > 0 && !await confirmUntrustedContextShare()) return;
     onBasketChange(nextBasket);
     if (added.length > 0) {
       recordTrace(added);
@@ -725,13 +728,9 @@ export function FilesContextPanel({
     }
   }
 
-  function confirmUntrustedContextShare(): boolean {
-    if (workspaceTrusted) return true;
-    return window.confirm(
-      zh
-        ? "该工作区尚未信任。确认要把这些文件材料交给智能体？"
-        : "This workspace is not trusted. Attach this file context to the agent anyway?",
-    );
+  function confirmUntrustedContextShare(): Promise<boolean> {
+    if (workspaceTrusted) return Promise.resolve(true);
+    return requestAppDecision({ id: "attach-untrusted-workspace-context", tone: "danger", title: zh ? "使用未信任工作区的材料？" : "Use files from an untrusted workspace?", description: zh ? "这些文件材料将提供给当前智能体任务。" : "These files will be provided to the current agent task.", impact: zh ? "请先确认文件来源可信；原始文件不会因加入上下文而修改。" : "Confirm the file source is trusted. Attaching context does not modify source files.", confirmLabel: zh ? "确认使用材料" : "Use these files" });
   }
 
   function recordSnapshot(
@@ -840,19 +839,15 @@ export function FilesContextPanel({
       : (zh ? `已打开 ${entry.relativePath} 的这个版本。` : `Opened this version of ${entry.relativePath}.`));
   }
 
-  const managerBusinessProgress = managerPresentationProgress
-    ? getManagerBusinessProgress(managerPresentationProgress, language)
-    : null;
-
   return (
-    <section className="files-context-panel" aria-label="Files context">
+    <section className="files-context-panel files-preview-only" aria-label="Files preview">
       <header className="files-context-header">
         <div className="files-context-title">
           <FileText size={16} />
           <div>
             <strong>{selectedNode?.name || (zh ? "文件" : "Files")}</strong>
             <span>
-              {overview?.git?.branch || "workspace"} · {changedCount} changed · {instructionCount} instructions
+              {overview?.git?.branch || "workspace"}
               {!workspaceTrusted ? " · read only" : ""}
             </span>
           </div>
@@ -869,15 +864,6 @@ export function FilesContextPanel({
           </label>
           <button type="button" onClick={() => void refresh()} title="Refresh" aria-label="Refresh files">
             <RefreshCw size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => selectedNode && onInsertPath(selectedNode.path)}
-            disabled={!selectedNode}
-            title={zh ? "插入路径" : "Insert path"}
-            aria-label={zh ? "插入路径" : "Insert path"}
-          >
-            <Folder size={14} />
           </button>
           <button
             type="button"
@@ -919,619 +905,52 @@ export function FilesContextPanel({
           >
             <FileText size={14} />
           </button>
-          <button
-            type="button"
-            onClick={selectedContextNodes.length > 0 ? attachSelectedContextNodes : addSelectedFile}
-            disabled={
-              selectedContextNodes.length === 0 &&
-              (!selectedNode || selectedNode.type !== "file" || selectedInBasket)
-            }
-            title={zh ? "交给智能体使用" : "Attach to agent context"}
-            aria-label={zh ? "交给智能体使用" : "Attach to agent context"}
-          >
-            <ListPlus size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => void attachSelectedDiff()}
-            disabled={!selectedNode || selectedNode.gitStatus === "clean"}
-            title={zh ? "加入 diff" : "Attach diff"}
-            aria-label={zh ? "加入 diff" : "Attach diff"}
-          >
-            <GitCompare size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => void attachWorkspaceDiff()}
-            disabled={changedCount === 0}
-            title={zh ? "加入工作区 diff" : "Attach workspace diff"}
-            aria-label={zh ? "加入工作区 diff" : "Attach workspace diff"}
-          >
-            <GitCompare size={14} />
-            <span className="files-toolbar-mini-label">W</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => void attachSelectedStagedDiff()}
-            disabled={!selectedNode || selectedNode.gitStatus === "clean"}
-            title="Attach staged diff"
-            aria-label="Attach staged diff"
-          >
-            <GitCompare size={14} />
-            <span className="files-toolbar-mini-label">S</span>
-          </button>
         </div>
       </header>
 
       {error ? <p className="files-context-error">{error}</p> : null}
+      {pendingAgentCheckpoint ? (
+        <div className="files-agent-change-review" role="status" data-testid="agent-change-review">
+          <span>{zh ? "智能体变更等待确认" : "Agent changes are ready for review"}</span>
+          <div>
+            <button type="button" onClick={() => void restoreRollbackCheckpoint(pendingAgentCheckpoint)}>
+              {zh ? "拒绝并恢复运行前" : "Reject and restore before run"}
+            </button>
+            <button type="button" className="primary" onClick={() => void acceptAgentChangeSet(pendingAgentCheckpoint)}>
+              {zh ? "接受本次变更" : "Accept changes"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {checkpointMessage ? <p className="files-context-checkpoint-message" role="status">{checkpointMessage}</p> : null}
 
       <div className="files-context-body">
         <main className="files-context-preview" aria-label="File preview">
-          {canCreateManagerPresentation ? (
-            <section className="presentation-pdf-action" aria-label={zh ? "演示报告操作" : "Presentation report actions"}>
-              <div>
-                <Presentation size={18} />
-                <span>
-                  <strong>{zh ? "这是一份演示型 PDF" : "This is a presentation-style PDF"}</strong>
-                  <small>{zh ? "可转换为面向管理者的可编辑演示文稿，并保留讲稿与来源页码。" : "Turn it into an editable manager deck with speaker notes and source pages."}</small>
-                </span>
-              </div>
-              {preview?.presentationStory ? (
-                <section
-                  className="presentation-storyline"
-                  data-quality-status={preview.presentationStory.quality.status}
-                  data-testid="presentation-storyline"
-                >
-                  <header>
-                    <span>
-                      <strong>{preview.presentationStory.title}</strong>
-                      <small>{zh ? "已经按原演示顺序整理，并保留每项来源页码。" : "Organized in source order with a page reference for every item."}</small>
-                    </span>
-                    <b data-testid="presentation-story-quality">
-                      {preview.presentationStory.quality.status === "passed"
-                        ? zh ? "故事线检查已通过" : "Storyline check passed"
-                        : zh ? "故事线检查未通过" : "Storyline check failed"}
-                    </b>
-                  </header>
-                  <div className="presentation-storyline-grid">
-                    <article data-testid="presentation-story-sections">
-                      <h4>{zh ? "报告怎么展开" : "Storyline"}</h4>
-                      <ol>
-                        {preview.presentationStory.storySections.map((item) => (
-                          <li key={`story:${item.page}:${item.text}`}>
-                            <span>{item.text}</span>
-                            <button type="button" data-story-page={item.page} onClick={() => void openSourcePage(item.page)}>p.{item.page}</button>
-                          </li>
-                        ))}
-                      </ol>
-                    </article>
-                    <article data-testid="presentation-story-numbers">
-                      <h4>{zh ? "关键数据" : "Key numbers"}</h4>
-                      <ul>
-                        {selectPresentationKeyNumbers(preview.presentationStory.numericHighlights).map((item) => (
-                          <li key={`number:${item.page}:${item.text}`}>
-                            <span>{item.text}</span>
-                            <button type="button" data-number-page={item.page} onClick={() => void openSourcePage(item.page)}>p.{item.page}</button>
-                          </li>
-                        ))}
-                      </ul>
-                    </article>
-                  </div>
-                  <details data-testid="presentation-story-summary">
-                    <summary>{zh ? `查看总结与自动核对（${preview.presentationStory.summaryPoints.length} 项）` : `Summary and checks (${preview.presentationStory.summaryPoints.length})`}</summary>
-                    <ul>
-                      {preview.presentationStory.summaryPoints.map((item) => <li key={`summary:${item.page}:${item.text}`}>{item.text} <button type="button" onClick={() => void openSourcePage(item.page)}>p.{item.page}</button></li>)}
-                    </ul>
-                    <p>{preview.presentationStory.quality.checks.join(" · ")}</p>
-                  </details>
-                  {!managerPresentationResult && sourcePageReview ? (
-                    <p className={`presentation-source-review-status ${sourcePageReview.state}`} data-testid="story-source-page-status" data-opened-page={sourcePageReview.state === "opened" ? sourcePageReview.page : undefined}>{sourcePageReview.message}</p>
-                  ) : null}
-                </section>
-              ) : null}
-              <div className="presentation-pdf-action-controls">
-                <button
-                  type="button"
-                  data-testid="generate-manager-presentation"
-                  disabled={managerPresentationActive}
-                  onClick={() => void createManagerPresentation()}
-                >
-                  {managerPresentationActive
-                    ? `${managerPresentationProgress.progress}%`
-                    : managerPresentationProgress?.phase === "interrupted"
-                      ? zh ? "继续未完成任务" : "Resume unfinished task"
-                    : managerPresentationProgress && ["failed", "cancelled"].includes(managerPresentationProgress.phase)
-                      ? zh ? "重试生成" : "Retry generation"
-                      : zh ? "生成管理者版 PPT" : "Create manager PPT"}
-                </button>
-                <button
-                  type="button"
-                  className="secondary"
-                  data-testid="generate-technical-presentation"
-                  disabled={managerPresentationActive}
-                  onClick={() => void createManagerPresentation("resume", "technical_experts")}
-                >
-                  {zh ? "生成技术专家版 PPT" : "Create technical PPT"}
-                </button>
-                {managerPresentationActive ? (
-                  <button
-                    type="button"
-                    className="secondary"
-                    data-testid={managerPresentationProgress?.phase === "paused"
-                      ? "resume-manager-presentation"
-                      : "pause-manager-presentation"}
-                    disabled={["pausing", "resuming", "cancelling"].includes(managerPresentationProgress?.phase || "")}
-                    onClick={() => managerPresentationProgress?.phase === "paused"
-                      ? void resumeManagerPresentation()
-                      : void pauseManagerPresentation()}
-                  >
-                    {managerPresentationProgress?.phase === "paused"
-                      ? zh ? "继续生成" : "Resume"
-                      : managerPresentationProgress?.phase === "pausing"
-                        ? zh ? "正在暂停…" : "Pausing…"
-                        : zh ? "暂停生成" : "Pause"}
-                  </button>
-                ) : null}
-                {managerPresentationActive ? (
-                  <button
-                    type="button"
-                    className="secondary danger"
-                    data-testid="cancel-manager-presentation"
-                    disabled={managerPresentationProgress?.phase === "cancelling"}
-                    onClick={() => void cancelManagerPresentation()}
-                  >
-                    {managerPresentationProgress?.phase === "cancelling"
-                      ? zh ? "正在取消…" : "Cancelling…"
-                      : zh ? "取消生成" : "Cancel"}
-                  </button>
-                ) : null}
-                {managerPresentationProgress?.phase === "interrupted" ? (
-                  <button
-                    type="button"
-                    className="secondary"
-                    data-testid="restart-manager-presentation"
-                    onClick={() => void createManagerPresentation("restart")}
-                  >
-                    {zh ? "重新开始" : "Start over"}
-                  </button>
-                ) : null}
-                {managerPresentationProgress?.phase === "interrupted" ? (
-                  <button
-                    type="button"
-                    className="secondary danger"
-                    data-testid="abandon-manager-presentation"
-                    onClick={() => void abandonInterruptedManagerPresentation()}
-                  >
-                    {zh ? "放弃任务" : "Abandon task"}
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="secondary"
-                  data-testid="prepare-manager-presentation-task"
-                  onClick={prepareManagerPresentation}
-                >
-                  {zh ? "编辑生成要求" : "Edit requirements"}
-                </button>
-              </div>
-              {managerPresentationActive ? (
-                <div className="presentation-live-requirement" data-testid="manager-presentation-live-requirement">
-                  <label htmlFor="manager-presentation-requirement">
-                    {zh ? "运行中补充要求" : "Add a requirement while running"}
-                  </label>
-                  <div>
-                    <input
-                      id="manager-presentation-requirement"
-                      data-testid="manager-presentation-requirement-input"
-                      value={managerPresentationRequirementText}
-                      maxLength={240}
-                      placeholder={zh ? "例如：重点强调 4.8 和 9.6 Tbps 带宽需求" : "Example: emphasize the 4.8 and 9.6 Tbps bandwidth requirements"}
-                      onChange={(event) => setManagerPresentationRequirementText(event.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="secondary"
-                      data-testid="submit-manager-presentation-requirement"
-                      disabled={!managerPresentationRequirementText.trim()}
-                      onClick={() => void updateManagerPresentationRequirement()}
-                    >
-                      {zh ? "应用到当前任务" : "Apply to current task"}
-                    </button>
-                  </div>
-                  <small>{managerPresentationProgress?.activeStage === "validating"
-                    ? zh ? "当前已进入验收；新要求需要重新执行规划和生成阶段。" : "Validation has started; a new requirement needs planning and generation to run again."
-                    : zh ? "将应用到当前任务尚未完成的规划、生成和验收阶段。" : "Applies to unfinished planning, generation, and validation stages in this task."}</small>
-                </div>
-              ) : null}
-              {managerPresentationRequirementStatus ? (
-                <p
-                  className={`presentation-live-requirement-status ${managerPresentationRequirementStatus.accepted ? "accepted" : "rejected"}`}
-                  data-scope={managerPresentationRequirementStatus.scope}
-                  data-testid="manager-presentation-requirement-status"
-                  role="status"
-                >
-                  {managerPresentationRequirementStatus.message}
-                </p>
-              ) : null}
-              {managerPresentationProgress ? (
-                <div
-                  className={`presentation-pdf-progress ${managerPresentationProgress.phase}`}
-                  data-phase={managerPresentationProgress.phase}
-                  data-active-stage={managerPresentationProgress.activeStage}
-                  data-progress={managerPresentationProgress.progress}
-                  data-request-id={managerPresentationProgress.requestId}
-                  data-output-path={managerPresentationProgress.outputPath}
-                  data-testid="manager-presentation-progress"
-                  role="status"
-                  aria-live="polite"
-                >
-                  {managerBusinessProgress ? (
-                    <section
-                      className="manager-business-progress"
-                      data-business-stage={managerBusinessProgress.id}
-                      data-source-phase={managerPresentationProgress.phase}
-                      data-testid="manager-business-progress"
-                      aria-label={zh ? "当前业务进度" : "Current business progress"}
-                    >
-                      <header>
-                        <strong>{managerBusinessProgress.title}</strong>
-                        <span>{managerPresentationProgress.progress}%</span>
-                      </header>
-                      <p data-testid="manager-business-progress-message">{managerPresentationProgress.message}</p>
-                      <small><strong>{zh ? "接下来：" : "Next: "}</strong>{managerBusinessProgress.nextAction}</small>
-                      <ol aria-label={zh ? "任务阶段" : "Task stages"}>
-                        {managerBusinessProgress.stages.map((stage) => (
-                          <li
-                            data-stage={stage.id}
-                            data-state={stage.state}
-                            key={stage.id}
-                            aria-current={stage.state === "current" ? "step" : undefined}
-                          >
-                            <span aria-hidden="true">{stage.state === "done" ? "✓" : stage.state === "current" ? "▶" : "○"}</span>
-                            {stage.label}
-                          </li>
-                        ))}
-                      </ol>
-                    </section>
-                  ) : null}
-                  {managerPresentationProgress.stageArtifacts?.length ? (
-                    <section
-                      className="presentation-stage-artifacts"
-                      data-testid="manager-presentation-stage-artifacts"
-                      aria-label={zh ? "临时阶段成果" : "Temporary stage results"}
-                    >
-                      <header>
-                        <strong>{zh ? "可查看的阶段成果" : "Viewable stage results"}</strong>
-                        <span>{zh ? "临时快照 · 最终成果会单独生成，不会覆盖" : "Temporary snapshots · final output is created separately"}</span>
-                      </header>
-                      {managerPresentationProgress.stageArtifacts.map((artifact) => (
-                        <article
-                          key={artifact.id}
-                          data-immutable={artifact.immutable}
-                          data-path={artifact.path}
-                          data-stage={artifact.stage}
-                          data-task-elapsed-ms={artifact.taskElapsedMs}
-                          data-temporary={artifact.temporary}
-                        >
-                          <div>
-                            <strong>{artifact.label}</strong>
-                            <span className="presentation-stage-temporary">{zh ? "临时结果" : "Temporary"}</span>
-                          </div>
-                          <p>{artifact.summary}</p>
-                          <button type="button" onClick={() => void desktopApi.openPath(artifact.path)}>
-                            <SquareArrowOutUpRight aria-hidden="true" size={13} />
-                            {zh ? "打开快照" : "Open snapshot"}
-                          </button>
-                        </article>
-                      ))}
-                    </section>
-                  ) : null}
-                  {managerPresentationProgress.failureRecovery ? (
-                    <div
-                      className="presentation-failure-recovery"
-                      data-kind={managerPresentationProgress.failureRecovery.kind}
-                      data-escalation={managerPresentationProgress.failureRecovery.escalationLevel}
-                      data-exhausted={managerPresentationProgress.failureRecovery.exhausted}
-                      data-affected-object={managerPresentationProgress.failureRecovery.affectedObject}
-                      data-recovery-action={managerPresentationProgress.failureRecovery.recoveryAction}
-                      data-testid="manager-presentation-failure-recovery"
-                    >
-                      <strong>{managerPresentationProgress.failureRecovery.reason}</strong>
-                      <span><strong>{zh ? "错误类别：" : "Category: "}</strong>{failureKindLabel(managerPresentationProgress.failureRecovery.kind, zh)}</span>
-                      <span><strong>{zh ? "受影响对象：" : "Affected object: "}</strong>{managerPresentationProgress.failureRecovery.affectedObject}</span>
-                      <span>
-                        {zh ? "已尝试" : "Attempts"}: {managerPresentationProgress.failureRecovery.attempts}/{managerPresentationProgress.failureRecovery.retryLimit}
-                      </span>
-                      <span>{managerPresentationProgress.failureRecovery.suggestedAction}</span>
-                      <button type="button" data-testid="manager-presentation-recovery-action" onClick={() => void createManagerPresentation()}>
-                        {zh ? "重试" : "Retry"}
-                      </button>
-                    </div>
-                  ) : null}
-                  <progress max={100} value={managerPresentationProgress.progress} />
-                  {Object.keys(audienceResults).length > 0 ? (
-                    <section className="presentation-audience-results" data-testid="presentation-audience-results">
-                      {(["non_expert_managers", "technical_experts"] as const).map((audience) => {
-                        const result = audienceResults[audience];
-                        if (!result) return null;
-                        return (
-                          <article
-                            key={audience}
-                            data-acronyms={result.audienceProfile.acronymOccurrences}
-                            data-audience={audience}
-                            data-content-hash={result.audienceProfile.contentHash}
-                            data-facts={result.audienceProfile.goldenFactIds.join(",")}
-                            data-impact-signals={result.audienceProfile.impactDecisionSignals}
-                            data-output-path={result.outputPath}
-                            data-technical-signals={result.audienceProfile.technicalDetailSignals}
-                          >
-                            <strong>{audience === "technical_experts" ? (zh ? "技术专家版" : "Technical") : (zh ? "非专业管理者版" : "Manager")}</strong>
-                            <span>{result.slideCount} {zh ? "页" : "slides"} · {Math.round(result.sourcePageCoverage * 100)}% {zh ? "来源覆盖" : "sources"}</span>
-                            <button type="button" onClick={() => void desktopApi.openPath(result.outputPath)}>{zh ? "打开" : "Open"}</button>
-                          </article>
-                        );
-                      })}
-                    </section>
-                  ) : null}
-                  {audienceComparison ? (
-                    <section className="presentation-audience-comparison" data-status={audienceComparison.passed ? "passed" : "failed"} data-testid="presentation-audience-comparison">
-                      <strong>{audienceComparison.passed ? (zh ? "双版本自动核对已通过" : "Audience comparison passed") : (zh ? "双版本自动核对未通过" : "Audience comparison failed")}</strong>
-                      <ul>
-                        <li>{zh ? `核心事实 ${audienceComparison.sharedFacts}/5 完全一致` : `${audienceComparison.sharedFacts}/5 core facts match`}</li>
-                        <li>{zh ? `管理者版影响/决策信号 ${audienceComparison.managerImpact}` : `Manager impact signals: ${audienceComparison.managerImpact}`}</li>
-                        <li>{zh ? `技术版技术细节信号 ${audienceComparison.technicalDetails}` : `Technical detail signals: ${audienceComparison.technicalDetails}`}</li>
-                        <li>{zh ? `两版内容哈希不同：${audienceComparison.contentDistinct ? "是" : "否"}` : `Content differs: ${audienceComparison.contentDistinct ? "yes" : "no"}`}</li>
-                      </ul>
-                    </section>
-                  ) : null}
-                  {managerPresentationResult ? (
-                    <span
-                      className="presentation-pdf-result"
-                      data-output-path={managerPresentationResult.outputPath}
-                      data-testid="manager-presentation-result"
-                    >
-                      {zh
-                        ? `${managerPresentationResult.slideCount} 页 · 讲稿 ${Math.round(managerPresentationResult.speakerNotesCoverage * 100)}% · 来源 ${Math.round(managerPresentationResult.sourcePageCoverage * 100)}%`
-                        : `${managerPresentationResult.slideCount} slides · notes ${Math.round(managerPresentationResult.speakerNotesCoverage * 100)}% · sources ${Math.round(managerPresentationResult.sourcePageCoverage * 100)}%`}
-                      <button
-                        type="button"
-                        title={managerPresentationResult.outputPath}
-                        onClick={() => void desktopApi.openPath(managerPresentationResult.outputPath)}
-                      >
-                        {zh ? "打开 PPT" : "Open PPT"}
-                      </button>
-                      {managerPresentationResult.appliedRequirements.length > 0 ? (
-                        <small data-testid="manager-presentation-applied-requirements">
-                          {zh ? "已应用补充要求：" : "Applied requirements: "}
-                          {managerPresentationResult.appliedRequirements.join("；")}
-                        </small>
-                      ) : null}
-                    </span>
-                  ) : null}
-                  {managerPresentationResult ? (
-                    <section
-                      className="presentation-key-conclusions"
-                      data-testid="presentation-key-conclusions"
-                      data-traceability-rate={managerPresentationResult.conclusionTraceabilityRate}
-                      data-status={managerPresentationResult.conclusionTraceabilityRate === 1 ? "passed" : "failed"}
-                      aria-label={zh ? "关键结论与原始依据" : "Key conclusions and original evidence"}
-                    >
-                      <div className="presentation-source-review-heading">
-                        <strong>{zh ? "关键结论与原始依据" : "Key conclusions and evidence"}</strong>
-                        <small>
-                          {zh
-                            ? `可追溯 ${managerPresentationResult.keyConclusions.filter((item) => item.verified).length}/${managerPresentationResult.keyConclusions.length} · 点击页码回到原文`
-                            : `${managerPresentationResult.keyConclusions.filter((item) => item.verified).length}/${managerPresentationResult.keyConclusions.length} traceable · open the source page`}
-                        </small>
-                      </div>
-                      <div className="presentation-key-conclusion-list">
-                        {managerPresentationResult.keyConclusions.map((item) => (
-                          <article
-                            key={item.id}
-                            data-testid="presentation-key-conclusion"
-                            data-conclusion-id={item.id}
-                            data-evidence-text={item.evidenceText}
-                            data-page={item.page}
-                            data-source-path={item.sourcePath}
-                            data-verified={item.verified ? "true" : "false"}
-                          >
-                            <div>
-                              <strong>{item.conclusion}</strong>
-                              <small>{item.evidenceText || (zh ? "没有找到可核对的原文" : "No verifiable source excerpt found")}</small>
-                              <span
-                                className={`presentation-trust-card ${item.trust.status}`}
-                                data-testid="presentation-trust-card"
-                                data-trust-status={item.trust.status}
-                                data-trust-label={item.trust.label}
-                                data-trust-icon={item.trust.icon}
-                                data-trust-rule={item.trust.evidenceRule}
-                                data-trust-rule-satisfied={String(item.trust.ruleSatisfied)}
-                                role="group"
-                                aria-label={`${item.trust.label}。${item.trust.definition}。建议动作：${item.trust.recommendedAction}`}
-                              >
-                                <strong><span aria-hidden="true">{item.trust.icon === "check" ? "✓" : item.trust.icon === "question" ? "?" : item.trust.icon === "warning" ? "!" : item.trust.icon === "compare" ? "⇄" : "≈"}</span> {item.trust.label}</strong>
-                                <small>{item.trust.definition}</small>
-                                <small>{zh ? "建议：" : "Next: "}{item.trust.recommendedAction}</small>
-                              </span>
-                              {item.citations.map((citation) => (
-                                <span
-                                  className="presentation-citation"
-                                  key={citation.id}
-                                  data-testid="presentation-citation"
-                                  data-citation-title={citation.title}
-                                  data-citation-authors={citation.authors.join(";")}
-                                  data-citation-locator={citation.locator}
-                                  data-citation-relation={citation.relation}
-                                  data-citation-score={citation.supportScore}
-                                >
-                                  {citation.title} · {citation.authors.join("、")} · {citation.locator} · {citation.relation === "supports" ? (zh ? "支持结论" : "supports") : citation.relation}
-                                </span>
-                              ))}
-                              {item.numericEvidence.map((numeric) => (
-                                <span
-                                  className={`presentation-numeric-evidence ${numeric.status}`}
-                                  key={numeric.id}
-                                  data-testid="presentation-numeric-evidence"
-                                  data-numeric-id={numeric.id}
-                                  data-display-value={numeric.displayValue}
-                                  data-reported-value={numeric.reportedValue}
-                                  data-recalculated-value={numeric.recalculatedValue}
-                                  data-numeric-unit={numeric.unit}
-                                  data-numeric-kind={numeric.kind}
-                                  data-numeric-status={numeric.status}
-                                  data-numeric-formula={numeric.formula}
-                                  data-numeric-locator={numeric.locator}
-                                  data-source-values={JSON.stringify(numeric.sourceValues)}
-                                >
-                                  <strong>{numeric.label}：{numeric.displayValue}</strong>
-                                  <small>{numeric.formula} · {numeric.status === "verified" ? (zh ? "复算一致" : "recalculated") : (zh ? "无法验证，已明确标记" : "unverifiable, explicitly flagged")}</small>
-                                </span>
-                              ))}
-                              {item.uncertainty ? (
-                                <span
-                                  className={`presentation-uncertainty ${item.uncertainty.status}`}
-                                  data-testid="presentation-uncertainty"
-                                  data-uncertainty-status={item.uncertainty.status}
-                                  data-requires-qualification={item.uncertainty.requiresQualification ? "true" : "false"}
-                                  data-claim-count={item.uncertainty.claims.length}
-                                  data-qualifying-language={item.uncertainty.qualifyingLanguage.join(";")}
-                                >
-                                  <strong>{item.uncertainty.status === "source_conflict" ? (zh ? "来源冲突" : "Source conflict") : item.uncertainty.status === "insufficient_data" ? (zh ? "数据不足" : "Insufficient data") : (zh ? "推测" : "Inference")}：{item.uncertainty.label}</strong>
-                                  <small>{item.uncertainty.explanation}</small>
-                                  <small>{zh ? "建议：" : "Next: "}{item.uncertainty.recommendedAction}</small>
-                                </span>
-                              ) : null}
-                            </div>
-                            <span className="presentation-key-conclusion-actions">
-                              <em>{item.verified ? (zh ? "原文已核对" : "Verified") : (zh ? "待核对" : "Unverified")}</em>
-                              <button
-                                type="button"
-                                data-conclusion-source-page={item.page}
-                                aria-label={zh ? `查看这条结论的原 PDF 第 ${item.page} 页依据` : `Open evidence for this conclusion on PDF page ${item.page}`}
-                                onClick={() => void openSourcePage(item.page)}
-                              >
-                                p.{item.page}
-                              </button>
-                            </span>
-                          </article>
-                        ))}
-                      </div>
-                    </section>
-                  ) : null}
-                  {managerPresentationResult ? (
-                    <section
-                      className="presentation-source-review"
-                      data-testid="manager-presentation-sources"
-                      aria-label={zh ? "演示文稿来源复核" : "Presentation source review"}
-                    >
-                      <div className="presentation-source-review-heading">
-                        <strong>{zh ? "核对原始依据" : "Review original evidence"}</strong>
-                        <small>{zh ? "点击页码，在原 PDF 对应页中复核。" : "Open the matching page in the original PDF."}</small>
-                      </div>
-                      <div className="presentation-source-review-list">
-                        {managerPresentationResult.sourceLinks
-                          .filter((link) => link.role !== "cover" && link.role !== "sources")
-                          .map((link) => (
-                            <div className="presentation-source-review-row" key={`${link.slide}:${link.role}`}>
-                              <span title={link.title}>{zh ? `第 ${link.slide} 页` : `Slide ${link.slide}`} · {link.title}</span>
-                              <span className="presentation-source-page-links">
-                                {link.sourcePages.map((page) => (
-                                  <button
-                                    type="button"
-                                    key={`${link.slide}:${page}`}
-                                    data-source-page={page}
-                                    aria-label={zh ? `打开原 PDF 第 ${page} 页` : `Open source PDF page ${page}`}
-                                    onClick={() => void openSourcePage(page)}
-                                  >
-                                    p.{page}
-                                  </button>
-                                ))}
-                              </span>
-                            </div>
-                          ))}
-                      </div>
-                      {sourcePageReview ? (
-                        <p
-                          className={`presentation-source-review-status ${sourcePageReview.state}`}
-                          data-testid="source-page-review-status"
-                          data-source-page={sourcePageReview.page}
-                          data-opened-page={sourcePageReview.state === "opened" ? sourcePageReview.page : undefined}
-                          data-viewer-url={sourcePageReview.viewerUrl}
-                          role="status"
-                          aria-live="polite"
-                        >
-                          {sourcePageReview.message}
-                        </p>
-                      ) : null}
-                    </section>
-                  ) : null}
-                </div>
-              ) : null}
-            </section>
-          ) : null}
-          {previewState === "loading" ? (
-            <div className="files-preview-empty">
+          {!selectedNode ? (
+            <div className="files-context-empty-state">
               <FileText size={24} />
-              <h3>{zh ? "读取中" : "Loading"}</h3>
-              <p>{zh ? "正在加载文件预览。" : "Loading file preview."}</p>
+              <h3>{zh ? "选择文件以预览" : "Select a file to preview"}</h3>
+              <p>{zh ? "从右侧文件树选择文件或文件夹。" : "Pick a file or folder from the tree."}</p>
             </div>
-          ) : previewState === "error" ? (
-            <div className="files-preview-empty">
+          ) : loadState === "loading" && !preview ? (
+            <div className="files-context-empty-state">
+              <FileText size={24} />
+              <h3>{zh ? "正在加载预览..." : "Loading preview..."}</h3>
+            </div>
+          ) : error && !preview ? (
+            <div className="files-context-empty-state">
               <FileText size={24} />
               <h3>{zh ? "预览失败" : "Preview failed"}</h3>
               <p>{error || (zh ? "无法读取该文件。" : "Could not read this file.")}</p>
             </div>
+          ) : selectedNode.type === "directory" ? (
+            <DirectoryContextPreview
+              files={collectFileNodes(selectedNode)}
+              language={language}
+              node={selectedNode}
+            />
           ) : (
-            diffPreview ? (
-              <GitDiffPreview diff={diffPreview} language={language} />
-            ) : selectedNode?.type === "directory" ? (
-              <DirectoryContextPreview
-                files={collectFileNodes(selectedNode)}
-                language={language}
-                node={selectedNode}
-                onAttach={attachSelectedDirectory}
-              />
-            ) : (
-              <>
-                <FilePreview language={language} preview={preview} />
-                {preview?.fileHash && preview.content !== undefined && !preview.truncated && ["text", "code", "markdown", "html", "json", "config", "structured", "table"].includes(preview.kind) ? (
-                  <section className="files-safe-edit" data-testid="safe-file-edit" data-edit-state={safeEdit?.state || "closed"}>
-                    {!safeEdit ? (
-                      <button type="button" data-testid="safe-file-edit-open" onClick={beginSafeEdit}>{zh ? "编辑并安全保存" : "Edit with conflict protection"}</button>
-                    ) : (
-                      <>
-                        <header><strong>{zh ? "安全编辑" : "Protected edit"}</strong><small>{zh ? "如果文件被其他程序修改，保存会自动停止。" : "Saving stops automatically if another program changed the file."}</small></header>
-                        <textarea data-testid="safe-file-edit-draft" aria-label={zh ? "待保存内容" : "Draft content"} value={safeEdit.draft} onChange={(event) => setSafeEdit((current) => current ? { ...current, draft: event.target.value, state: "editing" } : current)} rows={10} />
-                        <div className="files-safe-edit-actions">
-                          <button type="button" data-testid="safe-file-edit-save" disabled={safeEdit.state === "saving"} onClick={() => void applySafeEdit("save")}>{zh ? "保存修改" : "Save changes"}</button>
-                          <button type="button" onClick={() => setSafeEdit(null)}>{zh ? "关闭编辑" : "Close editor"}</button>
-                        </div>
-                        <p role="status" data-testid="safe-file-edit-status" data-state={safeEdit.state}>{safeEdit.message}</p>
-                        {safeEdit.state === "conflict" && safeEdit.conflict ? (
-                          <section className="files-external-conflict" data-testid="external-file-conflict" data-expected-hash={safeEdit.conflict.expectedHash} data-current-hash={safeEdit.conflict.currentHash}>
-                            <header><AlertTriangle size={16} /><div><strong>{zh ? "文件已被其他程序修改" : "Another program changed this file"}</strong><small>{zh ? "为避免丢失外部内容，本次写入已停止。" : "This write was stopped so the external content is not lost."}</small></div></header>
-                            <dl><div><dt>{zh ? "读取时版本" : "Version read"}</dt><dd>{safeEdit.conflict.expectedHash.slice(0, 20)}…</dd></div><div><dt>{zh ? "当前外部版本" : "Current external version"}</dt><dd>{safeEdit.conflict.currentHash.slice(0, 20)}…</dd></div></dl>
-                            <div className="files-external-conflict-actions">
-                              <button type="button" data-testid="external-conflict-reload" onClick={() => void reloadExternalVersion()}>{zh ? "重新读取" : "Reload"}</button>
-                              <button type="button" data-testid="external-conflict-save-as" onClick={() => void applySafeEdit("save_as")}>{zh ? "另存为我的版本" : "Save as my version"}</button>
-                              <button type="button" data-testid="external-conflict-manual" onClick={() => setSafeEdit((current) => current ? { ...current, manualChoice: true } : current)}>{zh ? "人工选择" : "Choose manually"}</button>
-                            </div>
-                            {safeEdit.manualChoice ? (
-                              <section className="files-external-manual-choice" data-testid="external-conflict-manual-choice">
-                                <strong>{zh ? "选择最终保留方式" : "Choose what to keep"}</strong>
-                                <p>{zh ? "保留外部版本会重新载入最新内容；明确覆盖只会在当前哈希仍未变化时执行。" : "Keeping the external version reloads it; overwrite runs only if its latest hash still matches."}</p>
-                                <button type="button" data-testid="external-conflict-keep-external" onClick={() => void reloadExternalVersion()}>{zh ? "保留外部版本" : "Keep external version"}</button>
-                                <button type="button" data-testid="external-conflict-overwrite" onClick={() => void applySafeEdit("overwrite")}>{zh ? "明确覆盖外部版本" : "Explicitly overwrite external version"}</button>
-                              </section>
-                            ) : null}
-                          </section>
-                        ) : null}
-                      </>
-                    )}
-                  </section>
-                ) : null}
-              </>
-            )
+            <FilePreview language={language} preview={preview} />
           )}
         </main>
 
@@ -1546,123 +965,12 @@ export function FilesContextPanel({
             <FilesTree
               autoExpand={Boolean(query.trim())}
               nodes={nodes}
-              selectedForContext={selectedForContext}
               selectedPath={selectedNode?.path}
               onSelect={(node) => void selectNode(node)}
-              onToggleContext={toggleContextSelection}
             />
           )}
           {nextOffset !== null ? <button type="button" className="files-context-load-more" onClick={() => void loadMore()}>{zh ? "加载更多" : "Load more"}</button> : null}
         </aside>
-      </div>
-
-      <div className="files-context-groups" aria-label="Files context controls">
-        <FilesSectionGroup
-          defaultOpen
-          icon={<ShieldCheck size={13} />}
-          summary={`${basket.length} context · ${instructionCount} instructions`}
-          title={zh ? "上下文准备" : "Context Prep"}
-        >
-          <ContextBasket
-            attachments={basket}
-            language={language}
-            onChange={handleBasketChange}
-          />
-
-          <InstructionChainPreview
-            attachments={basket}
-            instructions={overview?.instructions ?? []}
-            language={language}
-            onChange={handleBasketChange}
-          />
-        </FilesSectionGroup>
-
-        <FilesSectionGroup
-          defaultOpen
-          icon={<GitCompare size={13} />}
-          summary={`${changedCount} changed · ${diffPreview ? "diff loaded" : "no diff"}`}
-          title={zh ? "变更审阅" : "Change Review"}
-        >
-          {pendingAgentCheckpoint ? (
-            <section className="files-checkpoint-panel" aria-label={zh ? "智能体变更审阅" : "Agent change set review"}>
-              <div className="files-checkpoint-header">
-                <div>
-                  <strong>{zh ? "智能体变更待审阅" : "Agent changes awaiting review"}</strong>
-                  <small>{pendingAgentCheckpoint.label}</small>
-                </div>
-                <div className="files-checkpoint-actions">
-                  <button type="button" onClick={() => void acceptAgentChangeSet(pendingAgentCheckpoint)}>
-                    {zh ? "接受本次变更" : "Accept changes"}
-                  </button>
-                  <button type="button" onClick={() => void restoreRollbackCheckpoint(pendingAgentCheckpoint)}>
-                    {zh ? "拒绝并恢复运行前" : "Reject and restore"}
-                  </button>
-                </div>
-              </div>
-            </section>
-          ) : null}
-
-          <PatchReviewPanel
-            diff={diffPreview}
-            language={language}
-            onReverted={() => {
-              setDiffPreview(null);
-              void refresh();
-            }}
-          />
-
-          <WorkspaceCheckpointPanel
-            checkpoints={workspaceCheckpoints}
-            language={language}
-            message={checkpointMessage}
-            preview={checkpointPreview}
-            onCreate={() => void createRollbackCheckpoint()}
-            onPreview={(checkpoint) => void previewRollbackCheckpoint(checkpoint)}
-            onRefresh={() => void loadWorkspaceCheckpoints()}
-            onRestore={(checkpoint, includePaths) => void restoreRollbackCheckpoint(checkpoint, includePaths)}
-            onOpenVersion={(checkpoint) => void openCheckpointVersion(checkpoint)}
-            onContinueQuestion={(checkpoint) => onPrepareTask(zh
-              ? `继续询问版本 V${checkpoint.versionNumber || "?"}（${checkpoint.objectLabel || checkpoint.label}，${checkpoint.versionPhase === "before" ? "修改前" : "修改后"}）：请结合该版本的修改原因“${checkpoint.changeReason || "自动记录成果变化"}”回答：`
-              : `Continue asking about version V${checkpoint.versionNumber || "?"} (${checkpoint.objectLabel || checkpoint.label}, ${checkpoint.versionPhase === "before" ? "before" : "after"}): Use its change reason “${checkpoint.changeReason || "automatic result change"}” to answer: `)}
-          />
-
-          <ArtifactsPanel
-            events={fileTraceEvents}
-            language={language}
-            nodes={nodes}
-            onOpen={(node) => void desktopApi.openPath(node.path)}
-            onPreview={(node) => void selectNode(node)}
-          />
-        </FilesSectionGroup>
-
-        <FilesSectionGroup
-          icon={<Activity size={13} />}
-          summary={`${fileTraceEvents.length} events · ${contextSnapshots.length} snapshots`}
-          title={zh ? "智能体操作记录" : "Agent Trace"}
-        >
-          <AgentFileActivityPanel
-            currentAttachments={basket}
-            events={fileTraceEvents}
-            language={language}
-            scopeId={scopeId}
-          />
-
-          <FileConflictPanel events={fileTraceEvents} language={language} />
-
-          <ContextSnapshotPanel
-            currentAttachments={basket}
-            language={language}
-            snapshots={contextSnapshots}
-          />
-        </FilesSectionGroup>
-
-        <FilesSectionGroup
-          icon={<Network size={13} />}
-          summary={zh ? "依赖 / symbol / 热点" : "deps / symbols / hotspots"}
-          title={zh ? "Repo 洞察" : "Repo Insight"}
-        >
-          <RepoMapPanel language={language} nodes={nodes} preview={preview} />
-        </FilesSectionGroup>
       </div>
     </section>
   );

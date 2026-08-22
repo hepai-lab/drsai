@@ -7,6 +7,7 @@ import type {
 } from "@shared/desktopApi";
 import drsaiLogo from "../assets/drsai.png";
 import { desktopApi } from "../desktopApi";
+import { copyTextSafely } from "../clipboard";
 import type { AppLanguage } from "../navigation";
 import { useAuth } from "./AuthProvider";
 
@@ -17,9 +18,11 @@ export function LoginScreen(): React.JSX.Element {
   const [loginEvents, setLoginEvents] = useState<OidcLoginDebugEvent[]>([]);
   const [rememberMe, setRememberMe] = useState(true);
   const [diagnosticMessage, setDiagnosticMessage] = useState<string | null>(null);
+  const [deviceActionMessage, setDeviceActionMessage] = useState<string | null>(null);
   const zh = language === "zh";
   const authGuide = getAvailabilityGuide("auth_required", zh);
   const latestLoginEvent = loginEvents[loginEvents.length - 1] ?? null;
+  const activeDeviceEvent = [...loginEvents].reverse().find((event) => event.stage === "device-code-ready");
   const loginDebugTitle = zh ? "登录调试" : "Login Debug";
   const currentStepLabel = useMemo(() => {
     if (!latestLoginEvent) return zh ? "尚未开始" : "Not started";
@@ -58,7 +61,7 @@ export function LoginScreen(): React.JSX.Element {
 
   function getSubmitLabel(): string {
     if (auth.loginBusy) return zh ? "正在等待浏览器登录..." : "Waiting for browser sign-in...";
-    return zh ? "使用 HepAI 登录" : "Sign in with HepAI";
+    return zh ? "使用 HepAI 继续" : "Continue with HepAI";
   }
 
   async function handleCopyDiagnostics(): Promise<void> {
@@ -120,6 +123,24 @@ export function LoginScreen(): React.JSX.Element {
             {getSubmitLabel()}
           </button>
 
+          {auth.loginBusy && activeDeviceEvent?.userCode && (
+            <div className="login-device-code" role="status" aria-live="polite" data-testid="oidc-device-code">
+              <span>{zh ? "在浏览器中输入设备码" : "Enter this device code in your browser"}</span>
+              <strong>{activeDeviceEvent.userCode}</strong>
+              <div className="login-device-code-actions">
+                <button type="button" onClick={() => void copyTextSafely(activeDeviceEvent.userCode!).then(() => setDeviceActionMessage(zh ? "设备码已复制" : "Device code copied"))}>
+                  {zh ? "复制设备码" : "Copy code"}
+                </button>
+                {activeDeviceEvent.url && (
+                  <button type="button" onClick={() => void desktopApi.openExternal(activeDeviceEvent.url!)}>
+                    {zh ? "重新打开验证页面" : "Open verification page"}
+                  </button>
+                )}
+              </div>
+              {deviceActionMessage && <small>{deviceActionMessage}</small>}
+            </div>
+          )}
+
           {auth.loginBusy && (
             <button className="login-mode-link" type="button" onClick={() => auth.cancelOidcLogin()}>
               {zh ? "取消登录" : "Cancel sign-in"}
@@ -136,9 +157,18 @@ export function LoginScreen(): React.JSX.Element {
           </label>
         </form>
 
-        {(import.meta.env.DEV || new URLSearchParams(window.location.search).get("structuredVisualFixture") === "1") && (
+        {auth.loginFailed && (
+          <div className="login-message login-error-message" role="alert" data-testid="login-error-message">
+            {zh ? "登录失败，按F12调试。" : "Sign-in failed. Press F12 to debug."}
+          </div>
+        )}
+
+        {((import.meta.env.DEV && import.meta.env.VITE_OPENDRSAI_LAUNCH_MODE !== "production")
+          || new URLSearchParams(window.location.search).get("structuredVisualFixture") === "1"
+          || new URLSearchParams(window.location.search).get("developerBypassFixture") === "1") && (
           <button
             className="developer-bypass"
+            data-testid="developer-workspace-login"
             type="button"
             disabled={auth.loginBusy}
             onClick={() => auth.login({ developerBypass: true, rememberMe })}
@@ -190,7 +220,7 @@ export function LoginScreen(): React.JSX.Element {
           <ol className="login-debug-list">
             {loginEvents.length === 0 ? (
               <li className="login-debug-empty">
-                {zh ? "暂无日志。点击“使用 HepAI 登录”开始。" : "No logs yet. Click Sign in with HepAI to start."}
+                {zh ? "暂无日志。点击“使用 HepAI 继续”开始。" : "No logs yet. Click Continue with HepAI to start."}
               </li>
             ) : (
               loginEvents.map((event, index) => (
@@ -213,6 +243,10 @@ export function LoginScreen(): React.JSX.Element {
 
 function getDebugStageLabel(stage: OidcLoginDebugEvent["stage"], zh: boolean): string {
   const labels: Record<OidcLoginDebugEvent["stage"], [string, string]> = {
+    "device-code-request": ["正在申请设备码", "Requesting device code"],
+    "device-code-ready": ["设备码已生成", "Device code ready"],
+    "device-code-polling": ["等待设备授权", "Waiting for device approval"],
+    "device-code-slow-down": ["降低轮询频率", "Polling slowed down"],
     started: ["已开始", "Started"],
     "callback-listening": ["本地回调监听中", "Loopback callback listening"],
     discovery: ["已读取 Discovery", "Discovery loaded"],

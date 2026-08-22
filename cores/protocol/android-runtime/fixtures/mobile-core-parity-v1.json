@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "id": "text-stream-terminal",
+      "commands": [
+        {
+          "protocol_version": 1,
+          "message_type": "start_run",
+          "request_id": "text-0",
+          "run_id": "parity-text",
+          "session_id": "parity-session-text",
+          "sequence": 0,
+          "idempotency_key": "text-start",
+          "payload": {"input": "hello", "model_id": "model-1"}
+        },
+        {
+          "protocol_version": 1,
+          "message_type": "model_chunk",
+          "request_id": "text-1",
+          "run_id": "parity-text",
+          "session_id": "parity-session-text",
+          "sequence": 1,
+          "idempotency_key": "text-chunk",
+          "payload": {"delta": "hello"}
+        },
+        {
+          "protocol_version": 1,
+          "message_type": "model_completed",
+          "request_id": "text-2",
+          "run_id": "parity-text",
+          "session_id": "parity-session-text",
+          "sequence": 2,
+          "idempotency_key": "text-completed",
+          "payload": {"content": "hello"}
+        }
+      ],
+      "expected_events": ["run.started", "message.delta", "tool.decision", "message.completed", "run.completed"]
+    },
+    {
+      "id": "pure-core-tool",
+      "commands": [
+        {
+          "protocol_version": 1,
+          "message_type": "start_run",
+          "request_id": "tool-0",
+          "run_id": "parity-tool",
+          "session_id": "parity-session-tool",
+          "sequence": 0,
+          "idempotency_key": "tool-start",
+          "payload": {
+            "input": "count words",
+            "model_id": "model-1",
+            "tools": [
+              {
+                "name": "core.text_stats",
+                "version": 1,
+                "source": "shared-core",
+                "classification": "shared",
+                "description": "Count characters, words, and lines in text.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {"text": {"type": "string"}},
+                  "required": ["text"]
+                },
+                "requires_approval": false,
+                "risk": "read_only",
+                "required_capabilities": []
+              }
+            ]
+          }
+        },
+        {
+          "protocol_version": 1,
+          "message_type": "model_completed",
+          "request_id": "tool-1",
+          "run_id": "parity-tool",
+          "session_id": "parity-session-tool",
+          "sequence": 1,
+          "idempotency_key": "tool-call",
+          "payload": {
+            "tool_calls": [
+              {"call_id": "stats-1", "name": "core.text_stats", "arguments": {"text": "one two"}}
+            ]
+          }
+        },
+        {
+          "protocol_version": 1,
+          "message_type": "model_completed",
+          "request_id": "tool-2",
+          "run_id": "parity-tool",
+          "session_id": "parity-session-tool",
+          "sequence": 2,
+          "idempotency_key": "tool-completed",
+          "payload": {"content": "There are two words."}
+        }
+      ],
+      "expected_events": ["run.started", "tool.decision", "tool.started", "tool.result", "tool.decision", "message.completed", "run.completed"]
+    }
+  ]
+}

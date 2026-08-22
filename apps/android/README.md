@@ -14,7 +14,7 @@ IHEP 开发客户端仍使用平台注册的 `https://ai-dev.ihep.ac.cn/umt/call
 
 OpenDrSai 的原生 Android 最小 MVP：真实 HAI/IHEP 登录、Kotlin 本地 Agent Runtime、HAI 平台智能体、流式回答、安全本地工具和本机会话记忆。
 
-产品与技术规划见 [`docs/android_app/README.md`](../../docs/android_app/README.md)。
+产品与技术文档见统一入口 [`docs/android/README.md`](../../docs/android/README.md)。
 
 ## 本地运行
 
@@ -45,10 +45,11 @@ loopback 回调。若确需兼容旧环境，可以显式覆盖客户端和回�
 
 ## 构建与测试
 
-要求 JDK 17 和 Android SDK 35：
+要求 JDK 17、Python 3.12 和 Android SDK 35。Android Full Runtime 使用 CPython 3.12，覆盖 API 26 至 Android 16/API 36：
 
 ```powershell
 $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
+$env:OPENDRSAI_ANDROID_BUILD_PYTHON="C:\path\to\Python312\python.exe"
 .\gradlew.bat testDebugUnitTest connectedDebugAndroidTest lintDebug assembleMvp
 ```
 

@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import ReactDOM from "react-dom";
-import { Run, Message, RunLogEntry } from "../../components/types/datamodel";
-import { RenderMessage, messageUtils } from "./rendermessage";
+import { Run, Message, RunLogEntry, FilesEvent } from "../../components/types/datamodel";
+import { RenderMessage, messageUtils, FilesEventCard } from "./rendermessage";
+import MarkdownRenderer from "../../components/common/markdownrender";
 import QuestionNavRail from "./QuestionNavRail";
 import { getStatusIcon } from "../../components/views/statusicon";
+import { useLang } from "../../i18n/useLang";
 import { IPlanStep, IPlan } from "../../components/types/plan";
 import ApprovalButtons from "./approval_buttons";
 import ChatInput from "./chat/chatinput";
@@ -11,6 +13,9 @@ import type { ServerUploadedFileInfo } from "./chat/hooks/useFileUpload";
 import { IStatus } from "../../components/types/app";
 import { RcFile } from "antd/es/upload";
 import AgentPanel from "./panels/AgentPanel";
+import ToolCallTimeline from "./panels/ToolCallTimeline";
+import LogExecutionDrawer from "./panels/LogExecutionDrawer";
+import { Terminal, X } from "lucide-react";
 import { AgentConfiguration } from "./config/agentConfigs";
 import { BESIIITask, BESIIIServerGlobalInfo } from "./panels/types";
 import { useRightPanelStore } from "../../store/rightPanel";
@@ -18,8 +23,219 @@ import {
   formatApiDateTimeZhCN,
   formatUnixForDisplayZhCN,
 } from "../../utils/apiDatetime";
+import {
+  chatRenderLog,
+  collapseMessagesForDisplay,
+  classifyMessage,
+  type ChatMsgKind,
+} from "./chatMessagePipeline";
+import ProcessMessageGroup from "./ProcessMessageGroup";
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
 const CHAT_INPUT_BASE_HEIGHT_PX = 78;
+
+type ScrollMetrics = {
+  scrollHeight: number;
+  scrollTop: number;
+  clientHeight: number;
+};
+
+/** True when the user actively scrolled up (not content growth lag during auto-follow). */
+function isUserScrollUp(
+  container: HTMLDivElement,
+  prev: ScrollMetrics
+): boolean {
+  return prev.scrollHeight > 0 && container.scrollTop < prev.scrollTop - 2;
+}
+
+/** True when content grew while the view was pinned to the bottom (streaming/images). */
+function isPassiveGrowthFromBottom(
+  container: HTMLDivElement,
+  prev: ScrollMetrics
+): boolean {
+  if (prev.scrollHeight <= 0) return false;
+  const wasPinned =
+    prev.scrollTop >= prev.scrollHeight - prev.clientHeight - 48;
+  return wasPinned && container.scrollHeight > prev.scrollHeight;
+}
+
+/** Stable live reply: ThinkBubble + answer in one tree so thinking never remounts away. */
+const StreamingChunkRender = React.memo(
+  ({
+    content,
+    thought,
+    thoughtDone,
+  }: {
+    content: string;
+    thought?: string;
+    thoughtDone?: boolean;
+  }) => {
+    const composed = thought
+      ? thoughtDone || content
+        ? `<think>${thought}</think>\n\n${content || ""}`
+        : `<think>${thought}`
+      : content;
+    return (
+      <div className="w-full py-2 px-1 text-sm leading-relaxed">
+        <MarkdownRenderer content={composed} />
+      </div>
+    );
+  },
+  (prev, next) =>
+    prev.content === next.content &&
+    prev.thought === next.thought &&
+    prev.thoughtDone === next.thoughtDone
+);
+StreamingChunkRender.displayName = "StreamingChunkRender";
+
+/** Returns true for "process" messages that should be grouped into the scrollable container:
+ *  log/AgentLogEvent, ThoughtEvent, ToolCallSummaryMessage, tools content_type. */
+function isProcessMsg(msg: Message): boolean {
+  const cfg = msg.config as any;
+  const meta = (msg.config.metadata || {}) as Record<string, unknown>;
+  return (
+    meta.type === "log" ||
+    cfg.content_type === "log" ||
+    cfg.type === "AgentLogEvent" ||
+    meta.type === "AgentLogEvent" ||
+    cfg.type === "ThoughtEvent" ||
+    meta.type === "ThoughtEvent" ||
+    cfg.type === "ToolCallSummaryMessage" ||
+    meta.type === "ToolCallSummaryMessage" ||
+    cfg.content_type === "tools" ||
+    meta.content_type === "tools"
+  );
+}
+
+type MessageSegment =
+  | { kind: "single"; idx: number; msg: Message }
+  | { kind: "process"; items: Array<{ idx: number; msg: Message }> };
+
+/** True when this reply is the last assistant answer before the next user turn. */
+function isFinalReplyInTurn(messages: Message[], idx: number): boolean {
+  const kind = classifyMessage(messages[idx]);
+  if (kind !== "reply") return false;
+  for (let j = idx + 1; j < messages.length; j++) {
+    const nextKind = classifyMessage(messages[j]);
+    if (nextKind === "user") break;
+    if (nextKind === "reply") return false;
+    if (
+      nextKind === "process" ||
+      nextKind === "thought" ||
+      nextKind === "other"
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isRunLive(runStatus: string | undefined): boolean {
+  return (
+    runStatus === "active" ||
+    runStatus === "streaming" ||
+    runStatus === "connected" ||
+    runStatus === "pausing" ||
+    runStatus === "resuming"
+  );
+}
+
+/** Any process/thought steps in the current user turn before idx (excludes idx). */
+function hasProcessActivityInTurnBefore(
+  messages: Message[],
+  idx: number
+): boolean {
+  let lastUserIdx = -1;
+  for (let i = 0; i <= idx; i++) {
+    if (classifyMessage(messages[i]) === "user") lastUserIdx = i;
+  }
+  for (let i = lastUserIdx + 1; i < idx; i++) {
+    const k = classifyMessage(messages[i]);
+    if (k === "process" || k === "thought") return true;
+  }
+  return false;
+}
+
+function shouldTreatReplyAsFinal(
+  messages: Message[],
+  idx: number,
+  runStatus: string | undefined
+): boolean {
+  if (!isFinalReplyInTurn(messages, idx)) return false;
+
+  if (isRunLive(runStatus) && idx === messages.length - 1) {
+    // While the run is still going, a trailing TextMessage is usually interim
+    // narration — keep it inside the process group if tools/thoughts already ran.
+    return !hasProcessActivityInTurnBefore(messages, idx);
+  }
+
+  return true;
+}
+
+function shouldRenderAsSingleSegment(
+  msg: Message,
+  idx: number,
+  messages: Message[],
+  runStatus: string | undefined
+): boolean {
+  const kind = classifyMessage(msg);
+  const meta = (msg.config.metadata || {}) as Record<string, unknown>;
+  const cfg = msg.config as any;
+
+  if (kind === "user") return true;
+  if (messageUtils.isPlanMessage(meta) || messageUtils.isStepExecution(meta)) {
+    return true;
+  }
+  if (cfg.type === "FilesEvent" || meta.type === "FilesEvent") return true;
+  if (meta._is_streaming_chunk) return true;
+  if (
+    kind === "reply" &&
+    shouldTreatReplyAsFinal(messages, idx, runStatus)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function buildMessageSegments(
+  messages: Message[],
+  runStatus: string | undefined
+): MessageSegment[] {
+  const segments: MessageSegment[] = [];
+  let processBatch: Array<{ idx: number; msg: Message }> = [];
+
+  const flushProcess = () => {
+    if (processBatch.length > 0) {
+      segments.push({ kind: "process", items: [...processBatch] });
+      processBatch = [];
+    }
+  };
+
+  for (let idx = 0; idx < messages.length; idx++) {
+    const msg = messages[idx];
+    if (shouldRenderAsSingleSegment(msg, idx, messages, runStatus)) {
+      flushProcess();
+      segments.push({ kind: "single", idx, msg });
+      continue;
+    }
+
+    const kind = classifyMessage(msg) as ChatMsgKind;
+    if (
+      kind === "process" ||
+      kind === "thought" ||
+      kind === "other" ||
+      kind === "reply"
+    ) {
+      processBatch.push({ idx, msg });
+      continue;
+    }
+
+    flushProcess();
+    segments.push({ kind: "single", idx, msg });
+  }
+
+  flushProcess();
+  return segments;
+}
 
 /** Next index that bounds the "segment" after messageIndex (plan, final answer, or next non-duplicate step). */
 function getNextSignificantMessageIndex(
@@ -158,6 +374,7 @@ const RunView: React.FC<RunViewProps> = ({
   serverFilesPrefill,
   viewOnly = false,
 }) => {
+  const { t } = useLang();
   const resolvedSessionId =
     sessionIdProp && sessionIdProp > 0
       ? sessionIdProp
@@ -173,7 +390,7 @@ const RunView: React.FC<RunViewProps> = ({
    *  resize as messages are added, giving us a reliable streaming-follow trigger. */
   const messagesContentRef = useRef<HTMLDivElement | null>(null);
   const autoScrollLockedRef = useRef(false);
-  const [autoScrollLocked, setAutoScrollLocked] = useState(false);
+  const prevMessageCountRef = useRef(run.messages.length);
   /** Last scroll metrics — used so ResizeObserver can tell "was pinned to bottom" when content height grows (streaming). */
   const scrollMetricsRef = useRef({
     scrollHeight: 0,
@@ -195,12 +412,12 @@ const RunView: React.FC<RunViewProps> = ({
   const [besiiiActiveTab, setBesiiiActiveTab] = useState<
     "logs" | "global_info" | "terminal"
   >("global_info");
+  const [showToolTimeline, setShowToolTimeline] = useState(false);
   const [hiddenMessageIndices, setHiddenMessageIndices] = useState<
     Set<number>
   >(new Set());
   const [hiddenStepExecutionIndices, setHiddenStepExecutionIndices] =
     useState<Set<number>>(new Set());
-  const [localMessages, setLocalMessages] = useState<Message[]>([]);
 
   /** Step indices where the user explicitly expanded; auto-collapse skips these. */
   const userPinnedExpandedStepIndicesRef = useRef<Set<number>>(new Set());
@@ -265,6 +482,7 @@ const RunView: React.FC<RunViewProps> = ({
     if (!container) return;
 
     if (!force && autoScrollLockedRef.current) {
+      console.log("[DEBUG-scroll] scrollToBottom: locked, skip");
       return;
     }
 
@@ -274,7 +492,6 @@ const RunView: React.FC<RunViewProps> = ({
     }
 
     autoScrollLockedRef.current = false;
-    setAutoScrollLocked(false);
 
     programmaticScrollRef.current = true;
 
@@ -459,12 +676,18 @@ const RunView: React.FC<RunViewProps> = ({
     if (!container) return;
 
     const handleScroll = () => {
+      const prev = scrollMetricsRef.current;
+
       if (programmaticScrollRef.current) {
+        if (isUserScrollUp(container, prev)) {
+          autoScrollLockedRef.current = true;
+          programmaticScrollRef.current = false;
+        } else if (isPassiveGrowthFromBottom(container, prev)) {
+          container.scrollTop = container.scrollHeight;
+        }
         scrollMetricsRef.current = {
           scrollHeight: container.scrollHeight,
-          scrollTop: userNavScrollRef.current
-            ? container.scrollTop
-            : container.scrollHeight - container.clientHeight,
+          scrollTop: container.scrollTop,
           clientHeight: container.clientHeight,
         };
         return;
@@ -480,12 +703,29 @@ const RunView: React.FC<RunViewProps> = ({
         container.scrollHeight - container.scrollTop - container.clientHeight;
       const isAtBottom = distanceFromBottom <= 32;
 
-      if (!isAtBottom && !autoScrollLockedRef.current) {
+      // When content passively grows (e.g. an image finishes loading and
+      // increases scrollHeight without the user scrolling), scrollTop stays
+      // the same or increases.  Treating that as the user scrolling away
+      // would lock auto-scroll too early and make the view "stuck" at the
+      // image message.  Skip the lock when scrollHeight grew but scrollTop
+      // did not decrease.
+      const contentPassivelyGrew =
+        prev.scrollHeight > 0 &&
+        container.scrollHeight > prev.scrollHeight &&
+        container.scrollTop >= prev.scrollTop;
+      const passiveGrowthFromBottom = isPassiveGrowthFromBottom(container, prev);
+
+      if (
+        !isAtBottom &&
+        !autoScrollLockedRef.current &&
+        !contentPassivelyGrew &&
+        !passiveGrowthFromBottom
+      ) {
         autoScrollLockedRef.current = true;
-        setAutoScrollLocked(true);
+        console.log("[DEBUG-scroll] handleScroll: LOCKED. distanceFromBottom:", distanceFromBottom, "scrollTop:", container.scrollTop, "scrollHeight:", container.scrollHeight, "contentPassivelyGrew:", contentPassivelyGrew);
       } else if (isAtBottom && autoScrollLockedRef.current) {
         autoScrollLockedRef.current = false;
-        setAutoScrollLocked(false);
+        console.log("[DEBUG-scroll] handleScroll: UNLOCKED");
       }
     };
 
@@ -532,10 +772,29 @@ const RunView: React.FC<RunViewProps> = ({
     if (!content) return;
 
     const ro = new ResizeObserver(() => {
-      if (autoScrollLockedRef.current) return;
-      // If a programmatic scroll is already in progress, its RAF will read the
-      // latest scrollHeight when it fires — no need to queue another scroll.
-      if (programmaticScrollRef.current) return;
+      if (autoScrollLockedRef.current) {
+        console.log("[DEBUG-scroll] messagesContentRO: locked, skip");
+        return;
+      }
+      if (programmaticScrollRef.current) {
+        const container = threadContainerRef.current;
+        if (container) {
+          const prev = scrollMetricsRef.current;
+          if (isUserScrollUp(container, prev)) {
+            autoScrollLockedRef.current = true;
+            programmaticScrollRef.current = false;
+          } else {
+            container.scrollTop = container.scrollHeight;
+            scrollMetricsRef.current = {
+              scrollHeight: container.scrollHeight,
+              scrollTop: container.scrollTop,
+              clientHeight: container.clientHeight,
+            };
+          }
+        }
+        return;
+      }
+      console.log("[DEBUG-scroll] messagesContentRO: calling scrollToBottom");
       scrollToBottom("auto");
     });
 
@@ -549,29 +808,40 @@ const RunView: React.FC<RunViewProps> = ({
       return;
     }
 
-    // When the user sends a new message, always unlock auto-scroll so the view
-    // follows the new content regardless of where the user was previously scrolled.
+    const prevCount = prevMessageCountRef.current;
+    prevMessageCountRef.current = run.messages.length;
+
+    // Only unlock when the user actually sent a new message — not merely because
+    // the last message in history happens to be from the user.
     const lastMsg = run.messages[run.messages.length - 1];
-    if (lastMsg && messageUtils.isUser(lastMsg.config.source)) {
+    const userJustSent =
+      run.messages.length > prevCount &&
+      lastMsg &&
+      messageUtils.isUser(lastMsg.config.source);
+
+    if (userJustSent) {
       autoScrollLockedRef.current = false;
-      setAutoScrollLocked(false);
     }
 
     if (autoScrollLockedRef.current) {
+      console.log("[DEBUG-scroll] messagesEffect: locked, skip");
       return;
     }
 
     // Use a small delay to ensure the DOM has updated
     const timeout = setTimeout(() => {
+      if (autoScrollLockedRef.current) {
+        return;
+      }
       scrollToBottom("auto");
     }, 100);
 
     return () => clearTimeout(timeout);
-  }, [run.messages, run.status, autoScrollLocked, scrollToBottom]);
+  }, [run.messages, run.status, scrollToBottom]);
 
   useEffect(() => {
     autoScrollLockedRef.current = false;
-    setAutoScrollLocked(false);
+    prevMessageCountRef.current = run.messages.length;
 
     const timeout = setTimeout(() => {
       scrollToBottom("auto", true);
@@ -586,7 +856,6 @@ const RunView: React.FC<RunViewProps> = ({
     if (!container || !element) return;
 
     autoScrollLockedRef.current = true;
-    setAutoScrollLocked(true);
     programmaticScrollRef.current = true;
     userNavScrollRef.current = true;
 
@@ -624,6 +893,295 @@ const RunView: React.FC<RunViewProps> = ({
       }
     }, 800);
   }, []);
+
+  const localMessages = useMemo((): Message[] => {
+    if (!run.messages.length) return [];
+
+    const updatedMessages = [...run.messages];
+
+    updatedMessages.forEach((msg: Message, idx: number) => {
+      // Parse and validate attached_files from metadata if present
+      if (msg.config.metadata?.attached_files) {
+        try {
+          const attachedFilesStr = msg.config.metadata.attached_files;
+          // If it's a string, parse it to validate and ensure it's valid JSON
+          if (typeof attachedFilesStr === "string") {
+            const parsed = JSON.parse(attachedFilesStr);
+            // Ensure it's an array, then stringify it back to keep metadata type consistent
+            const validArray = Array.isArray(parsed) ? parsed : [];
+            // Update the message with validated attached_files (as JSON string)
+            updatedMessages[idx] = {
+              ...msg,
+              config: {
+                ...msg.config,
+                metadata: {
+                  ...msg.config.metadata,
+                  attached_files: JSON.stringify(validArray),
+                },
+              },
+            };
+          }
+        } catch (e) {
+          // If parsing fails, set to empty array as JSON string
+          updatedMessages[idx] = {
+            ...msg,
+            config: {
+              ...msg.config,
+              metadata: {
+                ...msg.config.metadata,
+                attached_files: "[]",
+              },
+            },
+          };
+        }
+      }
+
+      if (idx === 0) return;
+
+      const userPlans = messageUtils.findUserPlan(msg.config.content);
+
+      // Check if this is a user message with a plan
+      if (
+        messageUtils.isUser(msg.config.source) &&
+        userPlans.length > 0
+      ) {
+        const prevIdx = idx - 1;
+        const prevMsg = updatedMessages[prevIdx];
+
+        // Check if previous message is a plan
+        if (
+          prevMsg &&
+          messageUtils.isPlanMessage(prevMsg.config.metadata)
+        ) {
+          try {
+            // Create a new message object with updated content
+            const updatedContent = messageUtils.updatePlan(
+              prevMsg.config.content,
+              userPlans
+            );
+
+            if (updatedContent !== prevMsg.config.content) {
+              updatedMessages[prevIdx] = {
+                ...prevMsg,
+                config: {
+                  ...prevMsg.config,
+                  content: updatedContent,
+                  version: (prevMsg.config.version || 0) + 1,
+                },
+              };
+            }
+          } catch (error) {
+            console.error(
+              `Error updating plan for message at index ${prevIdx}:`,
+              error
+            );
+          }
+        }
+      }
+    });
+
+    const mergedMessages: Message[] = [];
+
+    // Pre-collect all ThoughtEvent content strings from this batch so the chunk
+    // stripping below can see them even though they arrive after the chunk in the array.
+    const allThoughtTexts: string[] = [];
+    for (let mi = 0; mi < updatedMessages.length; mi++) {
+      const cfg = updatedMessages[mi].config as any;
+      if (cfg.type === "ThoughtEvent" || cfg.metadata?.type === "ThoughtEvent") {
+        if (typeof cfg.content === "string" && cfg.content.trim()) {
+          allThoughtTexts.push(cfg.content.trim());
+        }
+      }
+    }
+
+    for (let mi = 0; mi < updatedMessages.length; mi++) {
+      // Keep streaming chunks with start_flag as "active" (render outside the box).
+      // Any older chunk got sealed by useChatWebSocket (start_flag removed) so it
+      // renders inside the box as static content — those don't hit this branch.
+      if (
+        updatedMessages[mi].config.metadata?.start_flag !== undefined ||
+        updatedMessages[mi].config.metadata?._stream_draft === true
+      ) {
+        // If a final TextMessage from the same source has already arrived AFTER
+        // this specific chunk, drop it — the real message replaces it.
+        const chunkSource = updatedMessages[mi].config.source;
+        const finalTextArrived = updatedMessages
+          .slice(mi + 1)
+          .some(
+            (m) =>
+              (m.config as any).type === "TextMessage" &&
+              m.config.source === chunkSource
+          );
+        if (finalTextArrived) continue;
+
+        const chunk = updatedMessages[mi];
+        let chunkContent = typeof chunk.config.content === "string" ? chunk.config.content : "";
+        const meta = (chunk.config.metadata || {}) as any;
+        // Prefer the live thought plane kept on the draft (stable ThinkBubble).
+        // Fall back to open <think> extraction for older payloads.
+        let liveThought =
+          typeof meta._live_thought === "string" ? meta._live_thought : "";
+        let thoughtDone =
+          meta._thought_done === true || meta._thought_done === "yes";
+        if (!liveThought && /<think>/i.test(chunkContent) && !/<\/(?:think|redacted_thinking)>/i.test(chunkContent)) {
+          liveThought = chunkContent.replace(/^[\s\S]*?<think>\s*/i, "");
+          thoughtDone = false;
+          chunkContent = "";
+        } else {
+          chunkContent = chunkContent.replace(
+            /<think>[\s\S]*?<\/(?:think|redacted_thinking)>\s*/gi,
+            ""
+          );
+        }
+        // Strip ThoughtEvent content from the chunk — the raw LLM stream begins with
+        // the thought text, so the chunk starts with the same content as the ThoughtEvent.
+        // Skip when the draft already has a thought plane: `content` is the reply,
+        // and stripping a long ThoughtEvent prefix would leave only the last lines.
+        if (!liveThought) {
+          for (const thoughtText of allThoughtTexts) {
+            if (thoughtText && chunkContent.trimStart().startsWith(thoughtText)) {
+              chunkContent = chunkContent.trimStart().slice(thoughtText.length).trimStart();
+              liveThought = thoughtText;
+              thoughtDone = true;
+            }
+          }
+        }
+        if (chunkContent.trim() === "" && !liveThought.trim()) continue;
+        // Only the latest start_flag/_stream_draft chunk per source is live.
+        const hasLaterStreamChunk = updatedMessages
+          .slice(mi + 1)
+          .some(
+            (m) =>
+              m.config.source === chunkSource &&
+              (m.config.metadata?.start_flag !== undefined ||
+                m.config.metadata?._stream_draft === true)
+          );
+        if (hasLaterStreamChunk) continue;
+        const tagged = {
+          ...chunk,
+          config: {
+            ...chunk.config,
+            content: chunkContent,
+            metadata: {
+              ...(chunk.config.metadata || {}),
+              _is_streaming_chunk: true,
+              _live_thought: liveThought || undefined,
+              _thought_done: thoughtDone,
+            },
+          } as any,
+        };
+        mergedMessages.push(tagged);
+        continue;
+      }
+
+      // Legacy sealed marker: keep content (now classified as reply via pipeline).
+      // Do not drop — that previously erased tool-interrupted narration on reload.
+      if (updatedMessages[mi].config.metadata?._sealed_chunk) {
+        const sealed = updatedMessages[mi];
+        let sealedContent =
+          typeof sealed.config.content === "string" ? sealed.config.content : "";
+        sealedContent = sealedContent.replace(
+          /<think>[\s\S]*?<\/(?:think|redacted_thinking)>\s*/g,
+          ""
+        );
+        if (sealedContent.trim() === "") continue;
+        mergedMessages.push({
+          ...sealed,
+          config: {
+            ...sealed.config,
+            content: sealedContent,
+            type: (sealed.config as any).type || "TextMessage",
+            metadata: {
+              ...(sealed.config.metadata || {}),
+              _is_final_reply: true,
+              _sealed_from_stream: true,
+            },
+          } as any,
+        });
+        continue;
+      }
+
+      let msg = updatedMessages[mi];
+      const cfg = msg.config as any;
+
+      // Keep embedded <think>…</think> on TextMessage — ThinkBubble must render
+      // ABOVE the reply in the same bubble. Do not strip the think prefix here
+      // (old path assumed a separate ThoughtEvent carried reasoning).
+      // Drop only when the body is think-only (ThoughtEvent / duplicate of prev).
+      if (
+        cfg.type === "TextMessage" &&
+        typeof msg.config.content === "string"
+      ) {
+        let content = msg.config.content;
+        const thinkOnly = content
+          .replace(/^<think>[\s\S]*?<\/(?:think|redacted_thinking)>\s*/i, "")
+          .trim();
+        if (thinkOnly === "" && /<think>/i.test(content)) {
+          // Pure thought TextMessage — drop if a ThoughtEvent already carries it.
+          const prev = mergedMessages[mergedMessages.length - 1];
+          if (
+            prev &&
+            ((prev.config as any).type === "ThoughtEvent" ||
+              (prev.config.metadata as any)?.type === "ThoughtEvent")
+          ) {
+            continue;
+          }
+        }
+        // Drop if content duplicates the immediately preceding ThoughtEvent
+        const prev = mergedMessages[mergedMessages.length - 1];
+        if (
+          prev &&
+          ((prev.config as any).type === "ThoughtEvent" ||
+            (prev.config.metadata as any)?.type === "ThoughtEvent") &&
+          typeof prev.config.content === "string" &&
+          prev.config.content.trim() === thinkOnly.trim() &&
+          thinkOnly.trim() !== ""
+        ) {
+          continue;
+        }
+        msg = { ...msg, config: { ...msg.config, content } as any };
+      }
+
+      const last = mergedMessages[mergedMessages.length - 1];
+      const isToolSummary = (m: Message | undefined) =>
+        !!m && (m.config as any)?.type === "ToolCallSummaryMessage";
+
+      if (
+        isToolSummary(last) &&
+        isToolSummary(msg) &&
+        typeof last!.config.content === "string" &&
+        typeof msg.config.content === "string"
+      ) {
+        const prev = last!.config.content.trim();
+        const next = msg.config.content.trim();
+        mergedMessages[mergedMessages.length - 1] = {
+          ...last!,
+          config: {
+            ...last!.config,
+            content: prev ? `${prev}\n\n${next}` : next,
+            version: ((last!.config as any).version || 0) + 1,
+          } as any,
+        };
+        continue;
+      }
+
+      mergedMessages.push(msg);
+    }
+
+    const { messages: collapsed } = collapseMessagesForDisplay(mergedMessages);
+    chatRenderLog("localMessages", {
+      runId: run.id,
+      raw: run.messages.length,
+      merged: mergedMessages.length,
+      collapsed: collapsed.length,
+      kinds: collapsed.map((m, i) => ({
+        i,
+        kind: classifyMessage(m),
+        source: m.config.source,
+      })),
+    });
+    return collapsed;
+  }, [run.messages, run.id]);
 
   const userQuestions = useMemo(() => {
     let questionNumber = 0;
@@ -805,6 +1363,9 @@ const RunView: React.FC<RunViewProps> = ({
       setBesiiiActiveTab('logs');
       setIsPanelMinimized(false);
       setShowPanel(true);
+    } else {
+      // For all other agent types: toggle tool timeline
+      setShowToolTimeline(prev => !prev);
     }
   }, [agentConfig.panel.type]);
 
@@ -1083,122 +1644,6 @@ const RunView: React.FC<RunViewProps> = ({
     })();
   }, [run.messages]);
 
-  useEffect(() => {
-    if (!run.messages.length) return;
-
-    const updatedMessages = [...run.messages];
-
-    updatedMessages.forEach((msg: Message, idx: number) => {
-      // Parse and validate attached_files from metadata if present
-      if (msg.config.metadata?.attached_files) {
-        try {
-          const attachedFilesStr = msg.config.metadata.attached_files;
-          // If it's a string, parse it to validate and ensure it's valid JSON
-          if (typeof attachedFilesStr === "string") {
-            const parsed = JSON.parse(attachedFilesStr);
-            // Ensure it's an array, then stringify it back to keep metadata type consistent
-            const validArray = Array.isArray(parsed) ? parsed : [];
-            // Update the message with validated attached_files (as JSON string)
-            updatedMessages[idx] = {
-              ...msg,
-              config: {
-                ...msg.config,
-                metadata: {
-                  ...msg.config.metadata,
-                  attached_files: JSON.stringify(validArray),
-                },
-              },
-            };
-          }
-        } catch (e) {
-          // If parsing fails, set to empty array as JSON string
-          updatedMessages[idx] = {
-            ...msg,
-            config: {
-              ...msg.config,
-              metadata: {
-                ...msg.config.metadata,
-                attached_files: "[]",
-              },
-            },
-          };
-        }
-      }
-
-      if (idx === 0) return;
-
-      const userPlans = messageUtils.findUserPlan(msg.config.content);
-
-      // Check if this is a user message with a plan
-      if (
-        messageUtils.isUser(msg.config.source) &&
-        userPlans.length > 0
-      ) {
-        const prevIdx = idx - 1;
-        const prevMsg = updatedMessages[prevIdx];
-
-        // Check if previous message is a plan
-        if (
-          prevMsg &&
-          messageUtils.isPlanMessage(prevMsg.config.metadata)
-        ) {
-          try {
-            // Create a new message object with updated content
-            const updatedContent = messageUtils.updatePlan(
-              prevMsg.config.content,
-              userPlans
-            );
-
-            if (updatedContent !== prevMsg.config.content) {
-              updatedMessages[prevIdx] = {
-                ...prevMsg,
-                config: {
-                  ...prevMsg.config,
-                  content: updatedContent,
-                  version: (prevMsg.config.version || 0) + 1,
-                },
-              };
-            }
-          } catch (error) {
-            console.error(
-              `Error updating plan for message at index ${prevIdx}:`,
-              error
-            );
-          }
-        }
-      }
-    });
-
-    const mergedMessages: Message[] = [];
-    for (const msg of updatedMessages) {
-      const last = mergedMessages[mergedMessages.length - 1];
-      const isToolSummary = (m: Message | undefined) =>
-        !!m && (m.config as any)?.type === "ToolCallSummaryMessage";
-
-      if (
-        isToolSummary(last) &&
-        isToolSummary(msg) &&
-        typeof last!.config.content === "string" &&
-        typeof msg.config.content === "string"
-      ) {
-        const prev = last!.config.content.trim();
-        const next = msg.config.content.trim();
-        mergedMessages[mergedMessages.length - 1] = {
-          ...last!,
-          config: {
-            ...last!.config,
-            content: prev ? `${prev}\n\n${next}` : next,
-            version: ((last!.config as any).version || 0) + 1,
-          } as any,
-        };
-        continue;
-      }
-
-      mergedMessages.push(msg);
-    }
-
-    setLocalMessages(mergedMessages);
-  }, [run.messages]);
 
   // Update useEffect to find the last plan message
   useEffect(() => {
@@ -1226,6 +1671,24 @@ const RunView: React.FC<RunViewProps> = ({
   const isPlanMsg =
     lastMessage && messageUtils.isPlanMessage(lastMessage.config.metadata);
 
+  // Group consecutive process messages into one scrollable segment per turn.
+  //
+  // Everything is a "process message" (goes in the scrollable box) EXCEPT:
+  //   - user / user_proxy messages
+  //   - plan / step-execution / final_answer / FilesEvent messages
+  //     (these render as their own cards in the main thread)
+  //   - the FINAL assistant TextMessage of a turn (the "final reply",
+  //     rendered full-width outside the box).
+  //
+  // Any other message type — ToolCallRequestEvent, ToolCallExecutionEvent,
+  // ToolCallSummaryMessage, AgentLogEvent, ThoughtEvent, LLMCallEventMessage,
+  // HandoffMessage, StopMessage, MultiModal, or intermediate assistant
+  // TextMessages — is grouped into the scrollable box.
+  const messageSegments = useMemo(
+    (): MessageSegment[] => buildMessageSegments(localMessages, run.status),
+    [localMessages, run.status]
+  );
+
   // Add this effect to handle scrolling when status changes
   useEffect(() => {
     if (run.status === "awaiting_input" && buttonsContainerRef.current) {
@@ -1252,8 +1715,100 @@ const RunView: React.FC<RunViewProps> = ({
         >
           {/* Inner wrapper observed by ResizeObserver — grows with streaming content */}
           <div ref={messagesContentRef}>
-          {localMessages.length > 0 &&
-            localMessages.map((msg: Message, idx: number) => {
+          {messageSegments.length > 0 &&
+            messageSegments.map((segment) => {
+              if (segment.kind === "process") {
+                return (
+                  <ProcessMessageGroup
+                    key={`process-${segment.items.map((i) => i.idx).join("-")}`}
+                    items={segment.items}
+                    runStatus={run.status}
+                    onLogMessageClick={handleSwitchToLogExecution}
+                  />
+                );
+              }
+
+              const { idx, msg } = segment;
+
+              // Fast path for active streaming chunks: skip the heavy RenderMessage
+              // machinery (avatar, copy buttons, action-button parsing, plan/step
+              // detection) and render plain markdown via a memoized component.
+              // Dramatically reduces per-chunk render cost during live streaming.
+              const chunkMeta = (msg.config.metadata || {}) as any;
+              if (
+                chunkMeta._is_streaming_chunk &&
+                !chunkMeta._is_final_reply
+              ) {
+                const chunkContent =
+                  typeof msg.config.content === "string" ? msg.config.content : "";
+                const liveThought =
+                  typeof chunkMeta._live_thought === "string"
+                    ? chunkMeta._live_thought
+                    : "";
+                const sourceKey = String(msg.config.source || "assistant");
+                return (
+                  <StreamingChunkRender
+                    key={`stream-${run.id}-${sourceKey}`}
+                    content={chunkContent}
+                    thought={liveThought || undefined}
+                    thoughtDone={
+                      chunkMeta._thought_done === true ||
+                      chunkMeta._thought_done === "yes"
+                    }
+                  />
+                );
+              }
+
+              // ThoughtEvent: skip if the live stream for this source already shows
+              // the same reasoning (avoids think appearing → vanishing → reappearing).
+              const cfgAny = msg.config as any;
+              if (
+                cfgAny.type === "ThoughtEvent" ||
+                chunkMeta.type === "ThoughtEvent" ||
+                chunkMeta._is_streaming_think
+              ) {
+                const thoughtContent =
+                  typeof msg.config.content === "string" ? msg.config.content : "";
+                if (!thoughtContent.trim()) return null;
+                const sourceKey = String(msg.config.source || "assistant");
+                const coveredByLiveStream = localMessages.some((m) => {
+                  const meta = (m.config.metadata || {}) as any;
+                  if (m.config.source !== msg.config.source) return false;
+                  if (!meta._is_streaming_chunk) return false;
+                  const live =
+                    typeof meta._live_thought === "string" ? meta._live_thought : "";
+                  if (!live) return false;
+                  return (
+                    live.includes(thoughtContent.slice(0, 80)) ||
+                    thoughtContent.includes(live.slice(0, 80))
+                  );
+                });
+                if (coveredByLiveStream) return null;
+                // Same reasoning already embedded as <think> on a TextMessage —
+                // skip so we never render a second ThinkBubble under the answer.
+                const coveredByEmbedded = localMessages.some((m) => {
+                  if (m.config.source !== msg.config.source) return false;
+                  const c =
+                    typeof m.config.content === "string" ? m.config.content : "";
+                  if (!/<think>/i.test(c)) return false;
+                  return (
+                    c.includes(thoughtContent.slice(0, 80)) ||
+                    thoughtContent.includes(
+                      c.replace(/[\s\S]*?<think>/i, "").slice(0, 80)
+                    )
+                  );
+                });
+                if (coveredByEmbedded) return null;
+                // Render via ThinkBubble path (same as streaming) for consistent UX.
+                return (
+                  <div key={`thought-${run.id}-${sourceKey}`} className="w-full py-2 px-1">
+                    <MarkdownRenderer
+                      content={`<think>${thoughtContent}</think>`}
+                    />
+                  </div>
+                );
+              }
+
               const isCurrentMessagePlan =
                 typeof msg.config.content === "string" &&
                 messageUtils.isPlanMessage(msg.config.metadata);
@@ -1265,32 +1820,11 @@ const RunView: React.FC<RunViewProps> = ({
               const shouldForceCollapse =
                 isCurrentMessagePlan && idx !== lastPlanIndex;
 
-              // Check if current message is log message
-              const isLogMessage =
-                msg.config.metadata?.type === "log" ||
-                (msg.config as any).content_type === "log" ||
-                (msg.config as any).type === "AgentLogEvent" ||
-                msg.config.metadata?.type === "AgentLogEvent";
-
-              // Check if next message is chunk message (streaming message)
-              const nextMessage = idx < localMessages.length - 1 ? localMessages[idx + 1] : null;
-              const isNextChunkMessage = nextMessage && (
-                // Chunk messages typically have start_flag or are streaming messages from assistant
-                (nextMessage.config.metadata?.start_flag?.toLowerCase() === "yes") ||
-                // Or it's an assistant message that's not a log message and has stream_source_label
-                ((nextMessage.config.source === "assistant" ||
-                  nextMessage.config.metadata?.stream_source_label) &&
-                  !messageUtils.isUser(nextMessage.config.source) &&
-                  nextMessage.config.metadata?.type !== "log" &&
-                  (nextMessage.config as any).type !== "AgentLogEvent" &&
-                  nextMessage.config.metadata?.type !== "AgentLogEvent")
-              );
-
               const isUserMessage = messageUtils.isUser(msg.config.source);
 
               return (
+                <React.Fragment key={`seg-${idx}-${run.id}`}>
                 <div
-                  key={`message-${idx}-${run.id}`}
                   className="w-full"
                   data-user-message-index={isUserMessage ? idx : undefined}
                   ref={
@@ -1300,32 +1834,20 @@ const RunView: React.FC<RunViewProps> = ({
                   }
                 >
                   <RenderMessage
-                    key={`render-${idx}-${msg.config.version || 0
-                      }`}
+                    key={`render-${idx}-${msg.config.version || 0}`}
                     message={msg.config}
                     sessionId={msg.session_id}
                     messageIdx={idx}
-                    isLast={
-                      idx === localMessages.length - 1
-                    }
-                    isEditable={
-                      isEditable &&
-                      idx === localMessages.length - 1
-                    }
+                    isLast={idx === localMessages.length - 1}
+                    isEditable={isEditable && idx === localMessages.length - 1}
                     hidden={
                       hiddenMessageIndices.has(idx) ||
                       hiddenStepExecutionIndices.has(idx)
                     }
-                    is_step_repeated={repeatedStepIndices.has(
-                      idx
-                    )}
-                    is_step_failed={failedStepIndices.has(
-                      idx
-                    )}
+                    is_step_repeated={repeatedStepIndices.has(idx)}
+                    is_step_failed={failedStepIndices.has(idx)}
                     onSavePlan={onSavePlan}
-                    onImageClick={() =>
-                      handleImageClick(idx)
-                    }
+                    onImageClick={() => handleImageClick(idx)}
                     onToggleHide={(expanded: boolean) =>
                       handleToggleHide(idx, expanded, true)
                     }
@@ -1335,13 +1857,8 @@ const RunView: React.FC<RunViewProps> = ({
                         : undefined
                     }
                     runStatus={run.status}
-                    onRegeneratePlan={
-                      isLatestPlan
-                        ? handleRegeneratePlan
-                        : undefined
-                    }
+                    onRegeneratePlan={isLatestPlan ? handleRegeneratePlan : undefined}
                     onResendMessage={(content: string) => {
-                      // awaiting_input: answer HITL via input_response. Paused: continue with new start (not input_response — that sends accepted:false and replans / re-prompts).
                       if (run.status === "awaiting_input") {
                         onInputResponse?.(content, false, undefined, []);
                       } else {
@@ -1357,9 +1874,61 @@ const RunView: React.FC<RunViewProps> = ({
                     }}
                     forceCollapsed={shouldForceCollapse}
                     onLogMessageClick={handleSwitchToLogExecution}
-                    className={isLogMessage && isNextChunkMessage ? "!mb-8" : ""}
                   />
                 </div>
+                {/* File cards: FilesEvent messages that arrived in this turn appear
+                    below the final assistant TextMessage, outside the process box. */}
+                {(() => {
+                  const cfg = msg.config as any;
+                  // This block only runs on messages already routed as "single" by
+                  // isSingleSegment (final reply). So we just need to exclude the
+                  // non-content specials that also become singles (users, plans, etc.).
+                  const isRealAssistant =
+                    !messageUtils.isUser(msg.config.source) &&
+                    cfg.type !== "FilesEvent" &&
+                    msg.config.metadata?.type !== "FilesEvent" &&
+                    !isProcessMsg(msg);
+                  if (!isRealAssistant) return null;
+                  // While the run is still actively streaming the tail, defer file
+                  // cards until it settles.
+                  if (idx === localMessages.length - 1 && run.status === "active") return null;
+                  // Verify no later assistant TextMessage exists in this turn
+                  const hasLaterAssistantText = localMessages.slice(idx + 1).some((m) => {
+                    if (
+                      messageUtils.isUser(m.config.source) ||
+                      m.config.source === "user_proxy"
+                    ) return false;
+                    const mc = m.config as any;
+                    return mc.type === "TextMessage";
+                  });
+                  if (hasLaterAssistantText) return null;
+                  // Collect FilesEvent messages that sit between the previous user
+                  // message and this one — skip over ALL intermediate messages
+                  // (tool events, thought events, intermediate text, logs, etc.).
+                  const cards: FilesEvent[] = [];
+                  for (let i = idx - 1; i >= 0; i--) {
+                    const m = localMessages[i].config as any;
+                    if (m.type === "FilesEvent" || localMessages[i].config.metadata?.type === "FilesEvent") {
+                      cards.unshift(m);
+                      continue;
+                    }
+                    if (
+                      messageUtils.isUser(localMessages[i].config.source) ||
+                      localMessages[i].config.source === "user_proxy"
+                    ) {
+                      break;
+                    }
+                  }
+                  if (cards.length === 0) return null;
+                  return (
+                    <div className="mb-2">
+                      {cards.map((event, i) => (
+                        <FilesEventCard key={i} message={event} />
+                      ))}
+                    </div>
+                  );
+                })()}
+                </React.Fragment>
               );
             })}
 
@@ -1370,7 +1939,8 @@ const RunView: React.FC<RunViewProps> = ({
                 run.status,
                 run.error_message,
                 run.team_result?.task_result?.stop_reason,
-                run.input_request
+                run.input_request,
+                t
               )}
             </div>
           </div>
@@ -1515,6 +2085,39 @@ const RunView: React.FC<RunViewProps> = ({
           </div>,
           overviewSlot
         )}
+
+      {/* Tool call timeline — floating drawer, toggled by clicking the tool icon in chat */}
+      {showToolTimeline && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/20 dark:bg-black/40"
+            onClick={() => setShowToolTimeline(false)}
+          />
+
+          {/* Drawer panel */}
+          <div className="relative w-96 max-w-[90vw] h-full bg-white dark:bg-neutral-900 shadow-2xl border-l border-secondary/30 flex flex-col">
+            {/* Drawer header */}
+            <div className="flex items-center justify-between px-3 py-2 border-b border-secondary/30">
+              <div className="flex items-center gap-2">
+                <Terminal size={15} className="text-violet-600 dark:text-violet-400" />
+                <span className="text-sm font-medium">工具调用时间线</span>
+              </div>
+              <button
+                className="p-1 rounded hover:bg-secondary/20 transition-colors text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                onClick={() => setShowToolTimeline(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Timeline content */}
+            <div className="flex-1 overflow-hidden">
+              <ToolCallTimeline run={run} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

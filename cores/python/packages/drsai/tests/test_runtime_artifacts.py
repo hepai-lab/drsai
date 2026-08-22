@@ -38,6 +38,28 @@ def test_artifact_is_persistent_scoped_and_chunked_with_digest(tmp_path: Path) -
     assert cross_workspace.value.code == "artifact_not_found"
 
 
+def test_runtime_owned_tool_output_is_persistent_opaque_and_chunked(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    database = tmp_path / "runtime" / "artifacts.sqlite3"
+    content = b"\x00\x01binary-tool-output"
+    store = RuntimeArtifactStore(database, lambda _: root)
+
+    published = store.publish_content(
+        _context(), content, display_name="tool-output.bin", mime_type="application/octet-stream"
+    )
+    assert "path" not in published
+    assert published["sha256"] == hashlib.sha256(content).hexdigest()
+    assert not (root / published["relative_path"]).exists()
+
+    restarted = RuntimeArtifactStore(database, lambda _: root)
+    metadata = restarted.metadata("workspace-a", published["artifact_id"])
+    chunk = restarted.chunk("workspace-a", published["artifact_id"], 0, len(content))
+    assert metadata["storage_kind"] == "runtime"
+    assert base64.b64decode(chunk["content_base64"]) == content
+    assert chunk["eof"] is True
+
+
 @pytest.mark.parametrize("offset,length", [(-1, 1), (0, 0), (0, 1024 * 1024 + 1)])
 def test_artifact_rejects_invalid_ranges(tmp_path: Path, offset: int, length: int) -> None:
     root = tmp_path / "workspace"

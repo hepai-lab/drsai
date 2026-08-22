@@ -1,0 +1,19 @@
+schema_version: opendrsai.agent-regression-suite/1
+id: release
+title: OpenDrSai Agent P1 发布回归
+description: P1 发布门禁套件；随着案例逐项确认而扩充。
+cases:
+  - qa.greeting.hello
+  - qa.constraints.json
+  - tool.web.hepix
+  - tool.failure.recovery
+  - knowledge.grounded
+  - knowledge.absent
+  - skill.presentation
+  - image.input.ui_error
+  - image.output.simple
+  - workspace.readonly.diagnose
+  - safety.write_approval
+  - run.inspect_compare
+defaults:
+  concurrency: 2

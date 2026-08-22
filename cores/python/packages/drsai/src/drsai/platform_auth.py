@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 import urllib.request
 import uuid
@@ -13,6 +14,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field
 from typing import FrozenSet, Iterator, Protocol
 from pydantic import SecretStr
+
+from drsai.platform_upstream import resolve_hepai_model_base_url
 
 
 @dataclass(frozen=True)
@@ -131,18 +134,51 @@ class StaticModelCredentialProvider:
         return {}
 
 
+# ---------------------------------------------------------------------------
+# TEMPORARY — bypass OIDC platform auth and route model calls directly to any
+# OpenAI-compatible API.  Intended for development / PAYG-without-worker
+# scenarios.  Remove once platform auth is healthy again.
+#
+#   DRSAI_BYPASS_PLATFORM_AUTH=1              ← enable the bypass
+#   DRSAI_DIRECT_API_KEY=sk-...               ← your direct API key
+#   OPENDRSAI_MODEL_BASE_URL=https://.../v1    ← target API base URL
+# ---------------------------------------------------------------------------
+_BYPASS_PLATFORM = os.environ.get("DRSAI_BYPASS_PLATFORM_AUTH", "").strip() == "1"
+
+
 def get_model_credential_provider(
     fallback_token: str | None = None,
     fallback_base_url: str | None = None,
+    *,
+    configured_provider: bool = False,
 ) -> ModelCredentialProvider | None:
+    # An Agent-selected external Provider is an explicit security boundary:
+    # use only its own resolved credential and URL. Never replace a missing
+    # third-party key with the HepAI OIDC token or a development bypass key.
+    if configured_provider:
+        return (
+            StaticModelCredentialProvider(fallback_token, fallback_base_url)
+            if fallback_token and fallback_base_url
+            else None
+        )
     delegated = get_delegated_credential()
     if delegated:
         return DelegatedModelCredentialProvider(delegated)
+    if _BYPASS_PLATFORM:
+        direct_key = os.environ.get("DRSAI_DIRECT_API_KEY", "").strip()
+        direct_url = os.environ.get("OPENDRSAI_MODEL_BASE_URL", "").strip().rstrip("/")
+        if direct_key and direct_url:
+            return StaticModelCredentialProvider(access_token=direct_key, openai_base_url=direct_url)
+
+    # An explicitly resolved Provider from Settings / Agent configuration is
+    # authoritative.  A signed-in platform session identifies the user, but it
+    # must not silently reroute a configured third-party model to HepAI or send
+    # the HepAI bearer token to that third party.
+    if static_model_credentials_allowed() and fallback_token and fallback_base_url:
+        return StaticModelCredentialProvider(fallback_token, fallback_base_url)
     context = get_platform_auth()
     if context:
         return OidcModelCredentialProvider(context)
-    if static_model_credentials_allowed() and fallback_token and fallback_base_url:
-        return StaticModelCredentialProvider(fallback_token, fallback_base_url)
     return None
 
 
@@ -265,8 +301,43 @@ def _is_platform_user_id(value: str) -> bool:
         return False
 
 
+def resolve_gateway_instance_token(*, required: bool = False) -> str | None:
+    """Resolve the local instance token from env or Desktop's bounded file.
+
+    The persisted file is the Desktop/Runtime handoff across source-watcher
+    and process restarts.  A present but malformed file is never treated as
+    "authentication disabled".
+    """
+    configured = os.environ.get("OPENDRSAI_GATEWAY_INSTANCE_TOKEN", "").strip()
+    if configured:
+        return configured
+    root = os.environ.get("DRSAI_HOME", os.path.expanduser("~/.drsai"))
+    token_path = os.path.join(root, "runtime", "instance-token")
+    if not os.path.lexists(token_path):
+        if required:
+            raise RuntimeError("gateway_instance_token_required")
+        return None
+    try:
+        if os.path.islink(token_path) or not os.path.isfile(token_path):
+            raise RuntimeError("gateway_instance_token_file_invalid")
+        if os.path.getsize(token_path) > 256:
+            raise RuntimeError("gateway_instance_token_file_invalid")
+        with open(token_path, encoding="ascii") as handle:
+            token = handle.read().strip()
+    except RuntimeError:
+        raise
+    except (OSError, UnicodeError) as exc:
+        raise RuntimeError("gateway_instance_token_file_invalid") from exc
+    if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token):
+        raise RuntimeError("gateway_instance_token_file_invalid")
+    return token
+
+
 def verify_gateway_instance(provided: str | None) -> bool:
-    expected = os.environ.get("OPENDRSAI_GATEWAY_INSTANCE_TOKEN", "").strip()
+    try:
+        expected = resolve_gateway_instance_token()
+    except RuntimeError:
+        return False
     if not expected:
         return True
     if os.environ.get("OPENDRSAI_GATEWAY_INSTANCE_TOKEN_REVOKED") == "1":
@@ -317,6 +388,27 @@ def revoke_gateway_instance_token(token: str) -> None:
 def classify_model_error(error: Exception) -> dict[str, object]:
     status_code = getattr(error, "status_code", None)
     message = str(error).lower()
+    if "context_active_chain_budget_overflow" in message or "context_budget_invariant_failed" in message:
+        return {
+            "code": "context_budget_exhausted",
+            "message": "The local agent context budget was exhausted.",
+            "retryable": False,
+        }
+    if "model_tool_not_in_snapshot" in message:
+        return {
+            "code": "model_tool_contract_violation",
+            "message": "The model requested a tool that was not available for this turn.",
+            "retryable": False,
+        }
+    if (
+        "credential context is unavailable" in message
+        or "provider api credential is unavailable" in message
+    ):
+        return {
+            "code": "model_credential_unavailable",
+            "message": "The selected model provider credential is unavailable.",
+            "retryable": False,
+        }
     if "token_expired" in message or "token expired" in message or "expired token" in message:
         return {"code": "token_expired", "message": "Your HepAI session expired.", "retryable": True}
     if (
@@ -341,12 +433,7 @@ def _model_base_url(issuer: str) -> str:
     if override:
         if not override.startswith("https://") and os.environ.get("DRSAI_ALLOW_INSECURE_MODEL_URL") != "1":
             raise ValueError("invalid_model_base_url")
-        return override
-    if issuer == "https://ai-dev.ihep.ac.cn/api":
-        return "https://ai-dev.ihep.ac.cn/apiv2/v1"
-    if issuer == "https://ai.ihep.ac.cn/api":
-        return "https://ai.ihep.ac.cn/apiv2/v1"
-    raise ValueError("unsupported_issuer")
+    return resolve_hepai_model_base_url(os.environ, issuer=issuer)
 
 
 def _decode_verified_claims(token: str) -> dict[str, object]:

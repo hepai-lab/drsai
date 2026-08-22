@@ -1,0 +1,85 @@
+{
+  "contract": "oaep-snapshot-window/1",
+  "expected_snapshot_hash": "7b96a4bc0d4a4138cc37dc40a25e7e17147ef99802a76edd61cc98e6cbe50798",
+  "expected_item_ids": ["message-older", "message-newer"],
+  "pages": [
+    {
+      "version": "1.0",
+      "session": {
+        "id": "session-window-1",
+        "workspace_id": "workspace-1",
+        "title": "Window fixture",
+        "status": "active",
+        "backend": "opendrsai",
+        "created_at": "2026-08-04T00:00:00Z",
+        "updated_at": "2026-08-04T00:00:02Z"
+      },
+      "runs": [{
+        "id": "run-window-1",
+        "session_id": "session-window-1",
+        "status": "completed",
+        "created_at": "2026-08-04T00:00:00Z",
+        "updated_at": "2026-08-04T00:00:02Z",
+        "completed_at": "2026-08-04T00:00:02Z"
+      }],
+      "items": [{
+        "id": "message-newer",
+        "session_id": "session-window-1",
+        "run_id": "run-window-1",
+        "type": "message",
+        "status": "completed",
+        "sequence": 2,
+        "created_at": "2026-08-04T00:00:01Z",
+        "updated_at": "2026-08-04T00:00:02Z",
+        "source": {"backend": "opendrsai"},
+        "content": {"role": "assistant", "phase": "final", "text": "newer", "parts": [], "citations": []}
+      }],
+      "snapshot_sequence": 20,
+      "checkpoint": {
+        "sequence": 20,
+        "snapshot_hash": "7b96a4bc0d4a4138cc37dc40a25e7e17147ef99802a76edd61cc98e6cbe50798",
+        "item_count": 2
+      },
+      "window": {"limit": 1, "has_more": true, "next_cursor": "opaque-window-token"}
+    },
+    {
+      "version": "1.0",
+      "session": {
+        "id": "session-window-1",
+        "workspace_id": "workspace-1",
+        "title": "Window fixture",
+        "status": "active",
+        "backend": "opendrsai",
+        "created_at": "2026-08-04T00:00:00Z",
+        "updated_at": "2026-08-04T00:00:02Z"
+      },
+      "runs": [{
+        "id": "run-window-1",
+        "session_id": "session-window-1",
+        "status": "completed",
+        "created_at": "2026-08-04T00:00:00Z",
+        "updated_at": "2026-08-04T00:00:02Z",
+        "completed_at": "2026-08-04T00:00:02Z"
+      }],
+      "items": [{
+        "id": "message-older",
+        "session_id": "session-window-1",
+        "run_id": "run-window-1",
+        "type": "message",
+        "status": "completed",
+        "sequence": 1,
+        "created_at": "2026-08-04T00:00:00Z",
+        "updated_at": "2026-08-04T00:00:00Z",
+        "source": {"backend": "opendrsai"},
+        "content": {"role": "user", "phase": "final", "text": "older", "parts": [], "citations": []}
+      }],
+      "snapshot_sequence": 20,
+      "checkpoint": {
+        "sequence": 20,
+        "snapshot_hash": "7b96a4bc0d4a4138cc37dc40a25e7e17147ef99802a76edd61cc98e6cbe50798",
+        "item_count": 2
+      },
+      "window": {"limit": 1, "has_more": false, "next_cursor": null}
+    }
+  ]
+}

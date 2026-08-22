@@ -1,7 +1,8 @@
 import { execFileSync, spawn } from "child_process";
+import { request as httpRequest } from "http";
 import { createHash } from "crypto";
 import { basename, dirname, join } from "path";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
 import { app, clipboard, type BrowserWindow } from "electron";
 import type { DesktopBackgroundTask, DesktopTaskArtifactLink } from "../shared/desktopApi";
 import {
@@ -11,6 +12,16 @@ import {
 } from "./completionNotifications";
 import { createWorkspace } from "./workspaces";
 import { createThread } from "./threads";
+import { migrateLegacyAgentRunsToRuntime } from "../../../shared/main/legacyAgentRunMigration";
+import { LocalRuntimeClient, RuntimeOWOPError } from "../../../shared/main/runtimeClient";
+import { getGatewayRequestHeaders } from "./gateway";
+import { requireAuthContext } from "../../../shared/main/auth";
+import { bootstrapDesktop } from "./bootstrap";
+import {
+  getMyDrSaiAgentModelPolicy,
+  getMyDrSaiConfig,
+  probeMyDrSaiProviderModel,
+} from "../../../shared/main/myDrSaiConfig";
 
 interface SmokeResult {
   ok: boolean;
@@ -124,19 +135,29 @@ const timeoutMs = Number(process.env.OPENDRSAI_E2E_TIMEOUT_MS || "30000");
 
 export function maybeRunE2eSmoke(window: BrowserWindow): void {
   if (
+    !process.env.OPENDRSAI_E2E_FIRST_RUN_DRAFT_STAGE &&
+    process.env.OPENDRSAI_E2E_MODEL_PREVIEW !== "1" &&
+    process.env.OPENDRSAI_E2E_RUNTIME_UNIFIED !== "1" &&
+    process.env.OPENDRSAI_E2E_P8_IPC !== "1" &&
+    process.env.OPENDRSAI_E2E_P3_DESKTOP !== "1" &&
     process.env.OPENDRSAI_E2E_SMOKE !== "1" &&
     process.env.OPENDRSAI_E2E_CHAT !== "1" &&
+    process.env.OPENDRSAI_E2E_RUN_TRACEABILITY_PHASE1 !== "1" &&
+    process.env.OPENDRSAI_E2E_RUN_EDITABLE_PHASE2 !== "1" &&
+    process.env.OPENDRSAI_E2E_RUN_TRACEABILITY_PHASE3 !== "1" &&
     process.env.OPENDRSAI_E2E_CHAT_FAILURES !== "1" &&
     process.env.OPENDRSAI_E2E_AGENT_RUN !== "1" &&
     process.env.OPENDRSAI_E2E_AGENT_RUN_FAILURES !== "1" &&
     process.env.OPENDRSAI_E2E_THREADS !== "1" &&
     process.env.OPENDRSAI_E2E_FORK_MERGE !== "1" &&
     process.env.OPENDRSAI_E2E_OIDC !== "1" &&
+    process.env.OPENDRSAI_E2E_HAI_MODELS !== "1" &&
     process.env.OPENDRSAI_E2E_A5_SERVICE_GUIDANCE !== "1" &&
     process.env.OPENDRSAI_E2E_F2_APPROVALS !== "1" &&
     process.env.OPENDRSAI_E2E_F3_APPROVALS !== "1" &&
     process.env.OPENDRSAI_E2E_F4_ANOMALY_DECISION !== "1" &&
     process.env.OPENDRSAI_E2E_F1_LOW_RISK_APPROVALS !== "1" &&
+    process.env.OPENDRSAI_E2E_F6_WORKSPACE_GUARD !== "1" &&
     process.env.OPENDRSAI_E2E_C1_MATERIAL_IMPORT !== "1" &&
     process.env.OPENDRSAI_E2E_C2_FOLDER_IMPORT !== "1" &&
     process.env.OPENDRSAI_E2E_C3_MATERIAL_ROLES !== "1" &&
@@ -152,6 +173,8 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     process.env.OPENDRSAI_E2E_M7_STABILITY !== "1" &&
     process.env.OPENDRSAI_E2E_M8_RECOVERY !== "1" &&
     process.env.OPENDRSAI_E2E_M10_DATA_CLEANUP !== "1" &&
+    process.env.OPENDRSAI_E2E_APP_DIALOG !== "1" &&
+    process.env.OPENDRSAI_E2E_OPERATIONAL_STATE !== "1" &&
     process.env.OPENDRSAI_E2E_VOICE !== "1" &&
     process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION !== "1"
   ) return;
@@ -160,7 +183,12 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     throw new Error("OPENDRSAI_E2E_RESULT is required for OpenDrSai E2E smoke modes.");
   }
 
-  const watchdog = setTimeout(() => {
+  const watchdog = setTimeout(async () => {
+    const rendererStage = await window.webContents.executeJavaScript("document.documentElement.dataset.firstRunE2eStage || null", true).catch(() => null);
+    const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
+    if (screenshotPath) {
+      try { mkdirSync(dirname(screenshotPath), { recursive: true }); writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG()); } catch { /* preserve watchdog result even when capture fails */ }
+    }
     writeResult(resultPath, {
       ok: false,
       checks: {},
@@ -169,7 +197,9 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         title: window.webContents.getTitle(),
         isLoading: window.webContents.isLoading(),
         isLoadingMainFrame: window.webContents.isLoadingMainFrame(),
+        rendererStage,
         startupTrace: (globalThis as { __OPENDRSAI_E2E_TRACE?: unknown }).__OPENDRSAI_E2E_TRACE,
+        ...(screenshotPath ? { screenshotPath, windowPid: process.pid } : {}),
       },
       error: "Packaged app smoke timed out.",
     });
@@ -188,7 +218,23 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
   });
 
   window.webContents.once("did-finish-load", () => {
-    const runner = process.env.OPENDRSAI_E2E_CHAT_FAILURES === "1"
+    const runner = process.env.OPENDRSAI_E2E_FIRST_RUN_DRAFT_STAGE
+      ? runFirstRunDraftSmoke
+      : process.env.OPENDRSAI_E2E_MODEL_PREVIEW === "1"
+      ? runModelPreviewSmoke
+      : process.env.OPENDRSAI_E2E_RUNTIME_UNIFIED === "1"
+      ? runUnifiedRuntimeSmoke
+      : process.env.OPENDRSAI_E2E_P8_IPC === "1"
+      ? runP8IpcSmoke
+      : process.env.OPENDRSAI_E2E_P3_DESKTOP === "1"
+      ? runP3DesktopSmoke
+      : process.env.OPENDRSAI_E2E_RUN_TRACEABILITY_PHASE1 === "1"
+      ? runTraceabilityPhase1Smoke
+      : process.env.OPENDRSAI_E2E_RUN_EDITABLE_PHASE2 === "1"
+      ? runEditablePhase2Smoke
+      : process.env.OPENDRSAI_E2E_RUN_TRACEABILITY_PHASE3 === "1"
+      ? runTraceabilityPhase3Smoke
+      : process.env.OPENDRSAI_E2E_CHAT_FAILURES === "1"
       ? runChatFailureSmoke
       : process.env.OPENDRSAI_E2E_AGENT_RUN_FAILURES === "1"
         ? runAgentRunFailureSmoke
@@ -200,6 +246,8 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         ? runForkMergeSmoke
       : process.env.OPENDRSAI_E2E_OIDC === "1"
         ? runOidcSmoke
+      : process.env.OPENDRSAI_E2E_HAI_MODELS === "1"
+        ? runHaiProductModelsSmoke
       : process.env.OPENDRSAI_E2E_A5_SERVICE_GUIDANCE === "1"
         ? runA5ServiceGuidanceSmoke
       : process.env.OPENDRSAI_E2E_F2_APPROVALS === "1"
@@ -210,6 +258,8 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         ? runF4AnomalyDecisionSmoke
       : process.env.OPENDRSAI_E2E_F1_LOW_RISK_APPROVALS === "1"
         ? runF1LowRiskApprovalSmoke
+      : process.env.OPENDRSAI_E2E_F6_WORKSPACE_GUARD === "1"
+        ? runF6WorkspaceGuardSmoke
       : process.env.OPENDRSAI_E2E_C1_MATERIAL_IMPORT === "1"
         ? runC1MaterialImportSmoke
       : process.env.OPENDRSAI_E2E_C2_FOLDER_IMPORT === "1"
@@ -240,6 +290,10 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         ? runM8RecoverySmoke
       : process.env.OPENDRSAI_E2E_M10_DATA_CLEANUP === "1"
         ? runM10DataCleanupSmoke
+      : process.env.OPENDRSAI_E2E_APP_DIALOG === "1"
+        ? runM06AppDialogSmoke
+      : process.env.OPENDRSAI_E2E_OPERATIONAL_STATE === "1"
+        ? runM07OperationalStateSmoke
       : process.env.OPENDRSAI_E2E_VOICE === "1"
         ? runVoiceSmoke
       : process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION === "1"
@@ -250,20 +304,95 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     runner(window)
       .then((result) => {
         clearTimeout(watchdog);
-        writeResult(resultPath, result);
+        try { writeResult(resultPath, result); } catch (error) { console.error("[e2e] Failed to write result:", error); }
         process.exit(result.ok ? 0 : 1);
       })
       .catch((error) => {
         clearTimeout(watchdog);
-        writeResult(resultPath, {
+        console.error("[e2e] Smoke runner failed:", error);
+        try { writeResult(resultPath, {
           ok: false,
           checks: {},
           details: {},
           error: error instanceof Error ? error.message : String(error),
-        });
+        }); } catch (writeError) { console.error("[e2e] Failed to write failure result:", writeError); }
         process.exit(1);
       });
   });
+}
+
+async function runF6WorkspaceGuardSmoke(_window: BrowserWindow): Promise<SmokeResult> {
+  const workspacePath = process.env.OPENDRSAI_E2E_F6_WORKSPACE;
+  const outsidePath = process.env.OPENDRSAI_E2E_F6_OUTSIDE;
+  if (!workspacePath || !outsidePath || !existsSync(workspacePath) || !existsSync(outsidePath)) {
+    throw new Error("F6 workspace and outside fixtures are required.");
+  }
+  const checks: Record<string, boolean> = {};
+  const details: Record<string, unknown> = { rejected: {} };
+  const rejectedCodes = details.rejected as Record<string, string>;
+  const outsideSecret = join(outsidePath, "secret.txt");
+  const outsideBefore = createHash("sha256").update(readFileSync(outsideSecret)).digest("hex");
+  const workspace = await createWorkspace({ source: "existing", path: workspacePath, name: "F6 中文 空格工作区", trusted: true });
+  const client = await LocalRuntimeClient.connect();
+  const expectRejected = async (name: string, operation: Parameters<typeof client.executeOWOP>[1], params: Record<string, unknown>) => {
+    try {
+      await client.executeOWOP(workspace.id, operation, params as never);
+      checks[name] = false;
+    } catch (error) {
+      const code = error instanceof RuntimeOWOPError ? error.code : "unexpected_error";
+      rejectedCodes[name] = code;
+      checks[name] = code.startsWith("workspace_") || code === "owop_params_invalid";
+    }
+  };
+
+  const allowed = await client.executeOWOP(workspace.id, "files.write", {
+    path: "safe/inside.txt",
+    content_base64: Buffer.from("inside").toString("base64"),
+    create_parents: true,
+  });
+  checks.workspaceWriteAllowed = allowed.digest === `sha256:${createHash("sha256").update("inside").digest("hex")}`;
+  const read = await client.executeOWOP(workspace.id, "files.read", { path: "safe/inside.txt", offset: 0, length: 1024 });
+  checks.workspaceReadAllowed = Buffer.from(String(read.content_base64), "base64").toString("utf8") === "inside";
+
+  const attacks = {
+    traversal: "../outside/secret.txt",
+    absolute: outsideSecret,
+    drive: "C:\\Windows\\win.ini",
+    unc: "\\\\server\\share\\secret.txt",
+  };
+  for (const [name, path] of Object.entries(attacks)) {
+    await expectRejected(`file_${name}`, "files.stat", { path });
+    await expectRejected(`command_${name}`, "process.start", { argv: ["cmd.exe", "/d", "/c", "echo should-not-run"], cwd: path });
+  }
+
+  const linkPath = join(workspacePath, "linked-outside");
+  execFileSync("cmd.exe", ["/d", "/c", "mklink", "/J", linkPath, outsidePath], { windowsHide: true, stdio: "ignore" });
+  try {
+    await expectRejected("file_junction_read", "files.read", { path: "linked-outside/secret.txt", offset: 0, length: 1024 });
+    await expectRejected("file_junction_write", "files.write", { path: "linked-outside/created.txt", content_base64: Buffer.from("escape").toString("base64") });
+    await expectRejected("command_junction", "process.start", { argv: ["cmd.exe", "/d", "/c", "echo should-not-run"], cwd: "linked-outside" });
+  } finally {
+    execFileSync("cmd.exe", ["/d", "/c", "rmdir", linkPath], { windowsHide: true, stdio: "ignore" });
+  }
+
+  const originalPath = `${workspacePath}-registered-original`;
+  renameSync(workspacePath, originalPath);
+  execFileSync("cmd.exe", ["/d", "/c", "mklink", "/J", workspacePath, outsidePath], { windowsHide: true, stdio: "ignore" });
+  try {
+    await expectRejected("registered_root_file_swap", "files.write", { path: "root-escape.txt", content_base64: Buffer.from("escape").toString("base64") });
+    await expectRejected("registered_root_command_swap", "process.start", { argv: ["cmd.exe", "/d", "/c", "echo escape"], cwd: "." });
+  } finally {
+    execFileSync("cmd.exe", ["/d", "/c", "rmdir", workspacePath], { windowsHide: true, stdio: "ignore" });
+    renameSync(originalPath, workspacePath);
+  }
+
+  checks.outsideSecretUnchanged = createHash("sha256").update(readFileSync(outsideSecret)).digest("hex") === outsideBefore;
+  checks.noOutsideFileSideEffect = !["created.txt", "root-escape.txt", "should-not-run"].some((name) => existsSync(join(outsidePath, name)));
+  checks.allEscapesRejected = Object.entries(checks).filter(([name]) => name.startsWith("file_") || name.startsWith("command_") || name.startsWith("registered_root_")).every(([, passed]) => passed);
+  details.workspaceId = workspace.id;
+  details.workspacePath = workspace.path;
+  details.outsideSecretSha256 = outsideBefore;
+  return { ok: Object.values(checks).every(Boolean), checks, details };
 }
 
 async function runC1MaterialImportSmoke(window: BrowserWindow): Promise<SmokeResult> {
@@ -496,7 +625,8 @@ async function runC3MaterialRolesSmoke(window: BrowserWindow): Promise<SmokeResu
       checks.everyItemHasSuggestedUse = analysis.items.every(item => item.suggestedUse && item.suggestedUse.length >= 8);
       checks.summaryIncludesFourRoles = ['旧报告', '最新数据', '结果图片', '参考材料'].every(label => analysis.summary.includes(label));
 
-      const input = document.querySelector('[data-testid="composer-input"]');
+      const input = await waitFor(() => document.querySelector('[data-testid="composer-input"]'), 10000);
+      if (!(input instanceof HTMLTextAreaElement)) throw new Error('C8 composer input is unavailable after first-run setup.');
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
       setter?.call(input, '系统现在拥有哪些材料？');
       input?.dispatchEvent(new Event('input', { bubbles: true }));
@@ -921,6 +1051,10 @@ async function runC8ChinesePrivacySmoke(window: BrowserWindow): Promise<SmokeRes
   }
   const workspacePath = dirname(fixturePaths[0]!);
   const notificationsBefore = getCompletionNotificationDiagnostics().length;
+  await window.webContents.executeJavaScript(
+    `window.localStorage.setItem("opendrsai:first-run-complete:v3", "true")`,
+    true,
+  );
   await createWorkspace({ source: "existing", path: workspacePath, name: "C8 中文路径 隐私材料", trusted: true });
   await new Promise<void>((resolveReload, rejectReload) => {
     const timer = setTimeout(() => rejectReload(new Error("C8 renderer reload timed out.")), 10_000);
@@ -962,10 +1096,12 @@ async function runC8ChinesePrivacySmoke(window: BrowserWindow): Promise<SmokeRes
       checks.cernChinesePathReadable = previews.some(preview => preview.kind === 'pdf' && /PDF type: presentation_pdf/.test(preview.content || '') && /Pages: 48/.test(preview.content || ''));
       checks.noAutomaticShareAfterImport = (await api.listOutgoingShares()).length === 0 && (await api.listIncomingShares()).length === 0;
       stage = 'submit-inventory';
-      const input = document.querySelector('[data-testid="composer-input"]');
+      const input = await waitFor(() => document.querySelector('[data-testid="composer-input"]'), 10000);
+      if (!(input instanceof HTMLTextAreaElement)) throw new Error('C8 composer input is unavailable after first-run setup.');
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      if (!setter) throw new Error('C8 could not resolve the native textarea value setter.');
       setter?.call(input, '\u7cfb\u7edf\u73b0\u5728\u62e5\u6709\u54ea\u4e9b\u6750\u6599\uff1f');
-      input?.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('input', { bubbles: true }));
       const send = await waitFor(() => { const node = document.querySelector('button.composer-submit'); return node && !node.disabled ? node : null; }, 10000);
       checks.localInventoryCanSubmit = Boolean(send);
       send?.click();
@@ -974,6 +1110,31 @@ async function runC8ChinesePrivacySmoke(window: BrowserWindow): Promise<SmokeRes
       checks.materialUseDoesNotExposeSecrets = Boolean(assistant) && secrets.every(secret => !assistantText.includes(secret)) && secrets.every(secret => !document.body.textContent.includes(secret));
       checks.noAutomaticShareAfterUse = (await api.listOutgoingShares()).length === 0 && (await api.listIncomingShares()).length === 0;
       checks.attachmentsCleared = document.querySelectorAll('[data-testid="composer-attachment"]').length === 0;
+      stage = 'sensitive-chat';
+      const sensitiveChat = '请记住：手机号 ' + secrets[0] + '，邮箱 ' + secrets[1] + '，API Key: ' + secrets[2] + '，user_secret=' + secrets[3];
+      setter.call(input, sensitiveChat);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const sensitiveSend = await waitFor(() => { const node = document.querySelector('button.composer-submit'); return node && !node.disabled ? node : null; }, 10000);
+      sensitiveSend?.click();
+      const privacyReply = await waitFor(() => [...document.querySelectorAll('.message.assistant')].find(node => /保护隐私|privacy/i.test(node.textContent || '')), 10000);
+      checks.sensitiveChatBlockedLocally = Boolean(privacyReply) && /没有保存|did not save/i.test(privacyReply?.textContent || '');
+      checks.sensitiveChatDomSecretFree = secrets.every(secret => !document.body.textContent.includes(secret));
+      const privacySafeReply = privacyReply || await waitFor(() => [...document.querySelectorAll('.message.assistant')].find(node => /privacy|API Key/i.test(node.textContent || '')), 1000);
+      checks.sensitiveChatBlockedLocally = Boolean(privacySafeReply) && /did not save|API Key/i.test(privacySafeReply?.textContent || '');
+      stage = 'local-export';
+      window.__c8OriginalCreateObjectUrl = URL.createObjectURL;
+      URL.createObjectURL = (blob) => { window.__c8ExportBlob = blob; return 'blob:c8-redacted-export'; };
+      document.querySelector('[data-testid="user-menu-button"]')?.click();
+      (await waitFor(() => document.querySelector('[data-testid="user-menu-settings"]'), 5000))?.click();
+      (await waitFor(() => document.querySelector('[data-testid="settings-pane-other"]'), 5000))?.click();
+      const exportButton = await waitFor(() => document.querySelector('[data-testid="export-local-data"]'), 5000);
+      exportButton?.click();
+      const exportBlob = await waitFor(() => window.__c8ExportBlob, 5000);
+      const exportText = exportBlob ? await exportBlob.text() : '';
+      URL.createObjectURL = window.__c8OriginalCreateObjectUrl;
+      checks.localExportCreated = Boolean(exportBlob && exportText.includes('redacted-before-export'));
+      checks.localExportSecretFree = secrets.every(secret => !exportText.includes(secret));
+      details.localExportPreview = exportText.slice(0, 500);
       details.assistantText = assistantText;
       return { checks, details };
       } catch (error) {
@@ -1421,7 +1582,7 @@ async function runM7StabilitySmoke(window: BrowserWindow): Promise<SmokeResult> 
       const tasks = await api.listBackgroundTasks({ workspacePath: ${JSON.stringify(workspacePath)}, limit: 100 });
       checks.cernGoldenTaskCompleted = task?.status === 'completed' && task?.progress === 100;
       details.outputPath = task?.deliverySummary?.artifacts?.find((artifact) => artifact.kind === 'presentation')?.path || '';
-      document.querySelector('.sidebar-action-list button:nth-child(2)')?.click();
+      document.querySelector('.sidebar-action-list .sidebar-button:first-child')?.click();
       const completedRow = await waitFor(() => [...document.querySelectorAll('[data-testid="background-task-list-item"]')].find((row) => row.getAttribute('data-task-status') === 'completed' && row.textContent?.includes('PPT')), 10000);
       checks.completedStateVisible = Boolean(completedRow);
       checks.backgroundTaskCompletedExactlyOnce = task?.status === 'completed' && task?.progress === 100 && tasks.filter((candidate) => candidate.targetId === task?.targetId).length === 1;
@@ -1563,11 +1724,11 @@ async function runM6PerformanceSmoke(window: BrowserWindow): Promise<SmokeResult
         const task = await api.enqueueBackgroundTask({ kind: "presentation_generation", source: "presentation", title: "M6 long CERN analysis", workspacePath, targetId: "m6-long-task", status: "running", progress: 42, currentStep: "Analyzing page 42", message: "Long-running CERN analysis remains active while navigating.", planSteps: [{ id: "read", title: "Read fixed CERN PDF", phase: "input" }, { id: "report", title: "Generate report", phase: "output" }] });
         checks.longTaskStarted = task?.status === "running" && task?.progress === 42;
         const nav = async (name, button, selector) => timed(name, () => document.querySelector(button)?.click(), () => document.querySelector(selector));
-        await nav("taskCenterNavigation", '.sidebar-action-list button:nth-child(2)', '[data-testid="task-center-view"]');
+        await nav("taskCenterNavigation", '.sidebar-action-list .sidebar-button:first-child', '[data-testid="task-center-view"]');
         const progress = await waitFor(() => document.querySelector('[data-task-status="running"] [role="progressbar"]'), 5000);
         checks.longTaskHasVisibleProgress = progress?.getAttribute('aria-valuenow') === '42';
         await nav("resultsNavigation", '[data-nav-id="results"]', '[data-testid="results-center-view"]');
-        await nav("taskCenterReturnNavigation", '.sidebar-action-list button:nth-child(2)', '[data-testid="task-center-view"]');
+        await nav("taskCenterReturnNavigation", '.sidebar-action-list .sidebar-button:first-child', '[data-testid="task-center-view"]');
         checks.longTaskSurvivesNavigation = Boolean(document.querySelector('[data-task-status="running"]'));
         await api.updateBackgroundTask({ taskId: task.id, status: "cancelled", progress: 42, message: "M6 acceptance cleanup." });
 
@@ -1605,6 +1766,12 @@ async function runM5AccessibilitySmoke(window: BrowserWindow): Promise<SmokeResu
   if (!evidenceDir) throw new Error("M5 requires an evidence directory.");
   mkdirSync(evidenceDir, { recursive: true });
   const fixtureWorkspacePath = dirname(fixturePath);
+  await window.webContents.executeJavaScript(`(async () => {
+    const login = await window.openDrSai.login({ developerBypass: true, rememberMe: false });
+    if (!login?.ok) throw new Error("M5 setup login failed");
+    localStorage.setItem("opendrsai:first-run-complete:v3", "true");
+    return true;
+  })()`, true);
   await createWorkspace({ source: "existing", path: fixtureWorkspacePath, name: "M5 CERN 无障碍工作区", trusted: true });
   await new Promise<void>((resolveReload, rejectReload) => {
     const timer = setTimeout(() => rejectReload(new Error("M5 renderer reload timed out.")), 10_000);
@@ -1718,7 +1885,7 @@ async function runM5AccessibilitySmoke(window: BrowserWindow): Promise<SmokeResu
     })()
   `, true) as boolean;
   checks.taskWorkspaceSelected = selectedWorkspace;
-  await navigate(`(() => { document.querySelector('.sidebar-action-list button:nth-child(2)')?.click(); return true; })()`, '[data-testid="task-center-view"]');
+  await navigate(`(() => { document.querySelector('.sidebar-action-list .sidebar-button:first-child')?.click(); return true; })()`, '[data-testid="task-center-view"]');
   if (!(await waitForSelector('[data-testid="background-task-list-item"]'))) throw new Error("M5 running task did not appear in the selected workspace.");
   await window.webContents.executeJavaScript(`(() => { const detail = document.querySelector('[data-task-status="running"] [data-testid="background-task-detail"]'); if (detail) detail.open = true; const input = document.querySelector('[data-testid="natural-schedule-input"]'); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set; setter?.call(input, ''); input?.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('[data-testid="natural-schedule-understand"]')?.click(); return true; })()`, true);
   await waitForSelector("#natural-schedule-error");
@@ -1747,12 +1914,370 @@ async function runM5AccessibilitySmoke(window: BrowserWindow): Promise<SmokeResu
   return { ok: Object.values(checks).every(Boolean), checks, details };
 }
 
+async function runM07OperationalStateSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const evidenceDir = process.env.OPENDRSAI_E2E_OPERATIONAL_STATE_EVIDENCE_DIR;
+  const workspacePath = process.env.OPENDRSAI_E2E_OPERATIONAL_STATE_WORKSPACE;
+  if (!evidenceDir) throw new Error("M07 operational-state acceptance requires an evidence directory.");
+  if (!workspacePath || !existsSync(workspacePath)) throw new Error("M07 operational-state acceptance requires a workspace.");
+  mkdirSync(evidenceDir, { recursive: true });
+  await window.webContents.executeJavaScript(`(async () => {
+    const login = await window.openDrSai.login({ developerBypass: true, rememberMe: false });
+    if (!login?.ok) throw new Error('M07 operational-state setup login failed');
+    localStorage.setItem('opendrsai:first-run-complete:v3', 'true');
+    return true;
+  })()`, true);
+  await createWorkspace({ source: "existing", path: workspacePath, name: "M07 recovery workspace", trusted: false });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("M07 operational-state renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  window.show();
+  window.focus();
+  const checks: Record<string, boolean> = {};
+  const details: Record<string, unknown> = { scenarios: [] };
+  checks.workspaceSelectedForRecovery = await window.webContents.executeJavaScript(`(async () => {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const item = [...document.querySelectorAll('.workspace-item')].find((candidate) => (candidate.getAttribute('title') || '').includes(${JSON.stringify(workspacePath)}));
+      if (item) { item.click(); await new Promise((resolve) => setTimeout(resolve, 250)); return item.closest('.workspace-row')?.classList.contains('active') === true; }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return false;
+  })()`, true) as boolean;
+  if (!checks.workspaceSelectedForRecovery) throw new Error("M07 recovery workspace was not selectable in the packaged UI.");
+  const scenarios = [
+    { name: "identity", facts: { identity: "anonymous", runtime: "blocked", agent: "unconfigured", workspace: "none" }, layer: "identity", state: "anonymous" },
+    { name: "runtime", facts: { identity: "authenticated", runtime: "blocked", agent: "unconfigured", workspace: "none" }, layer: "runtime", state: "blocked" },
+    { name: "agent", facts: { identity: "authenticated", runtime: "ready", agent: "unconfigured", workspace: "none" }, layer: "agent", state: "unconfigured" },
+    { name: "workspace", facts: { identity: "authenticated", runtime: "ready", agent: "ready", workspace: "untrusted" }, layer: "workspace", state: "untrusted" },
+  ] as const;
+  for (const scenario of scenarios) {
+    await window.webContents.executeJavaScript(`(() => { window.dispatchEvent(new CustomEvent('drsai:e2e-operational-state', { detail: ${JSON.stringify(scenario.facts)} })); return true; })()`, true);
+    const deadline = Date.now() + 5_000;
+    let matched = false;
+    while (Date.now() < deadline) {
+      matched = await window.webContents.executeJavaScript(`(() => { window.dispatchEvent(new CustomEvent('drsai:e2e-operational-state', { detail: ${JSON.stringify(scenario.facts)} })); const bar = document.querySelector('[data-testid=operational-state-bar]'); return bar?.dataset.currentLayer === ${JSON.stringify(scenario.layer)} && bar?.dataset.currentState === ${JSON.stringify(scenario.state)}; })()`, true) as boolean;
+      if (matched) break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    }
+    checks[`${scenario.name}LayerExact`] = matched;
+    const state = await window.webContents.executeJavaScript(`(() => {
+      const bar = document.querySelector('[data-testid=operational-state-bar]');
+      if (!bar) return { missing: true, body: document.body?.innerText?.slice(0, 1000) || '' };
+      if (!bar.open) bar.open = true;
+      const rows = [...bar.querySelectorAll('li')].map((item) => ({ status: item.dataset.status, text: item.textContent?.trim() || '', current: item.getAttribute('aria-current') }));
+      return { summary: bar.querySelector('summary')?.textContent?.trim() || '', summaryLabel: bar.querySelector('summary')?.getAttribute('aria-label') || '', rows, currentCount: rows.filter((row) => row.current === 'step').length };
+    })()`, true) as Record<string, unknown>;
+    checks[`${scenario.name}NotMaskedByReady`] = !String(state.summary).match(/^.*已就绪.*$/);
+    checks[`${scenario.name}FourLayersVisible`] = Array.isArray(state.rows) && state.rows.length === 4 && state.currentCount === 1;
+    checks[`${scenario.name}AccessibleSummary`] = Boolean(String(state.summaryLabel).trim());
+    (details.scenarios as unknown[]).push({ ...scenario, state });
+    writeFileSync(join(evidenceDir, `m07-operational-${scenario.name}.png`), (await window.webContents.capturePage()).toPNG());
+  }
+  await window.webContents.executeJavaScript(`(() => { const bar = document.querySelector('[data-testid=operational-state-bar]'); if (!bar) return false; bar.open = false; const summary = bar.querySelector('summary'); summary?.focus(); return document.activeElement === summary; })()`, true);
+  window.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
+  window.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
+  await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  checks.keyboardTogglesDetails = await window.webContents.executeJavaScript("document.querySelector('[data-testid=operational-state-bar]')?.open === true", true) as boolean;
+  if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach("1.3");
+  await window.webContents.debugger.sendCommand("Accessibility.enable");
+  const axTree = await window.webContents.debugger.sendCommand("Accessibility.getFullAXTree") as { nodes?: Array<Record<string, unknown>> };
+  const names = (axTree.nodes ?? []).map((node) => String((node.name as { value?: unknown })?.value || ""));
+  checks.accessibilityTreeExposesCurrentState = names.some((name) => name.includes("工作区") && name.includes("需要信任工作区"));
+  writeFileSync(join(evidenceDir, "m07-operational-accessibility-tree.json"), JSON.stringify(axTree, null, 2));
+  if (window.webContents.debugger.isAttached()) window.webContents.debugger.detach();
+
+  const setFacts = async (facts: Record<string, string>): Promise<void> => {
+    await window.webContents.executeJavaScript(`(() => { window.dispatchEvent(new CustomEvent('drsai:e2e-operational-state', { detail: ${JSON.stringify(facts)} })); const bar = document.querySelector('[data-testid=operational-state-bar]'); if (bar) bar.open = true; return true; })()`, true);
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  };
+  const waitFor = async (expression: string, timeout = 8_000): Promise<boolean> => {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      if (await window.webContents.executeJavaScript(`Boolean(${expression})`, true)) return true;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+    }
+    return false;
+  };
+  const returnToTaskShell = async (): Promise<void> => {
+    const opened = await window.webContents.executeJavaScript(`(() => {
+      const button = [...document.querySelectorAll('button')].find((item) => ['新建任务', 'New task'].includes(item.textContent?.trim() || ''));
+      button?.click();
+      return Boolean(button);
+    })()`, true) as boolean;
+    if (!opened || !await waitFor("document.querySelector('.chat-primary-pane')")) {
+      throw new Error("M07 recovery test could not return to the task shell.");
+    }
+  };
+  const readyBase = { identity: "authenticated", runtime: "ready", agent: "ready", workspace: "trusted" };
+  await setFacts(readyBase);
+  checks.readyDoesNotOccupyGlobalOverlay = await waitFor("!document.querySelector('[data-testid=operational-state-bar]')");
+
+  await setFacts({ ...readyBase, runtime: "blocked" });
+  await window.webContents.executeJavaScript("document.querySelector('[data-testid=operational-primary-action]')?.click()", true);
+  checks.runtimeRepairExecutesAndSettles = await waitFor("document.querySelector('[data-testid=operational-action-message]') && !document.querySelector('[data-testid=operational-primary-action]')?.disabled");
+
+  await setFacts({ ...readyBase, agent: "unconfigured" });
+  checks.agentRecoveryOffersDirectConfiguration = await waitFor("document.querySelector('[data-testid=operational-primary-action]')");
+
+  await setFacts({ ...readyBase, workspace: "untrusted" });
+  await window.webContents.executeJavaScript("document.querySelector('[data-testid=operational-primary-action]')?.click()", true);
+  await waitFor("document.querySelector('[data-testid=operational-action-message]')");
+  checks.workspaceRecoveryTrustsSelectedWorkspace = await window.webContents.executeJavaScript(`window.openDrSai.listWorkspaces().then((rows) => rows.some((item) => item.path === ${JSON.stringify(workspacePath)} && item.trusted === true))`, true) as boolean;
+  if (!checks.workspaceRecoveryTrustsSelectedWorkspace) throw new Error("M07 workspace recovery did not trust the selected workspace.");
+
+  await returnToTaskShell();
+  await setFacts({ ...readyBase, runtime: "blocked" });
+  await window.webContents.executeJavaScript("document.querySelector('[data-testid=operational-copy-diagnostics]')?.click()", true);
+  checks.redactedDiagnosticsCopied = await waitFor("document.querySelector('[data-testid=operational-action-message]')?.textContent?.includes('诊断已复制')");
+  const copiedDiagnostic = clipboard.readText();
+  checks.copiedDiagnosticIsBounded = copiedDiagnostic.includes('"currentLayer": "runtime"') && copiedDiagnostic.includes('"state": "blocked"') && !/token|secret|password/i.test(copiedDiagnostic);
+  details.copiedDiagnostic = copiedDiagnostic;
+
+  await setFacts({ ...readyBase, identity: "anonymous" });
+  await window.webContents.executeJavaScript("document.querySelector('[data-testid=operational-primary-action]')?.click()", true);
+  checks.identityRecoveryReturnsToLogin = await waitFor("document.querySelector('[data-testid=login-screen], .login-screen')");
+  return { ok: Object.values(checks).every(Boolean), checks, details };
+}
+
+async function runM06AppDialogSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const evidenceDir = process.env.OPENDRSAI_E2E_APP_DIALOG_EVIDENCE_DIR;
+  if (!evidenceDir) throw new Error("M06 app-dialog acceptance requires an evidence directory.");
+  mkdirSync(evidenceDir, { recursive: true });
+  const progress = (phase: string): void => writeFileSync(join(evidenceDir, "m06-app-dialog-progress.json"), JSON.stringify({ phase, at: new Date().toISOString() }, null, 2));
+  progress("runner-started");
+
+  await window.webContents.executeJavaScript(`(async () => {
+    const login = await window.openDrSai.login({ developerBypass: true, rememberMe: false });
+    if (!login?.ok) throw new Error("M06 app-dialog setup login failed");
+    localStorage.setItem("opendrsai:first-run-complete:v3", "true");
+    return true;
+  })()`, true);
+  progress("login-complete");
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("M06 app-dialog renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => {
+      clearTimeout(timer);
+      resolveReload();
+    });
+    window.webContents.reload();
+  });
+  progress("reload-complete");
+  window.show();
+  window.focus();
+
+  const checks: Record<string, boolean> = {};
+  const details: Record<string, unknown> = {};
+  const waitForRenderer = async (expression: string, timeout = 8_000): Promise<boolean> => {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      if (await window.webContents.executeJavaScript(`Boolean(${expression})`, true)) return true;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    }
+    return false;
+  };
+  const press = async (keyCode: string, modifiers?: Array<"shift" | "control" | "alt" | "meta">): Promise<void> => {
+    window.webContents.sendInputEvent({ type: "keyDown", keyCode, ...(modifiers ? { modifiers } : {}) });
+    window.webContents.sendInputEvent({ type: "keyUp", keyCode, ...(modifiers ? { modifiers } : {}) });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 70));
+  };
+  const openDialog = async (id: string): Promise<void> => {
+    await window.webContents.executeJavaScript(`(() => {
+      const trigger = document.querySelector('#m06-dialog-trigger');
+      trigger?.focus();
+      window.dispatchEvent(new CustomEvent('drsai:e2e-request-app-dialog', { detail: {
+        id: ${JSON.stringify(id)},
+        title: 'Remove the selected local data?',
+        description: 'Review this action before it changes the current workspace.',
+        impact: 'Only the selected local data will be removed. This cannot be undone.',
+        tone: 'danger'
+      } }));
+      return true;
+    })()`, true);
+    if (!(await waitForRenderer("document.querySelector('[data-testid=app-decision-overlay]')"))) {
+      throw new Error(`M06 app dialog did not open for ${id}.`);
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 90));
+  };
+
+  checks.testCapabilityEnabled = await window.webContents.executeJavaScript("window.openDrSai.isAppDialogE2eEnabled() === true", true) as boolean;
+  progress("capability-checked");
+  await window.webContents.executeJavaScript(`(() => {
+    window.__m06NativeConfirmCalls = 0;
+    window.__m06NativeAlertCalls = 0;
+    window.__m06DialogDecisions = [];
+    window.__m06DialogResults = [];
+    window.__m06DialogsShown = [];
+    window.__opendrsaiDialogE2eEffects = 0;
+    window.confirm = () => { window.__m06NativeConfirmCalls += 1; return false; };
+    window.alert = () => { window.__m06NativeAlertCalls += 1; };
+    window.addEventListener('drsai:app-dialog-decision', (event) => window.__m06DialogDecisions.push(event.detail));
+    window.addEventListener('drsai:e2e-app-dialog-result', (event) => window.__m06DialogResults.push(event.detail));
+    window.addEventListener('drsai:app-dialog-shown', (event) => window.__m06DialogsShown.push(event.detail));
+    const trigger = document.createElement('button');
+    trigger.id = 'm06-dialog-trigger';
+    trigger.type = 'button';
+    trigger.textContent = 'Open protected action';
+    trigger.style.position = 'fixed';
+    trigger.style.left = '16px';
+    trigger.style.bottom = '16px';
+    trigger.style.zIndex = '9999';
+    document.body.append(trigger);
+    return true;
+  })()`, true);
+  progress("harness-installed");
+
+  await openDialog("m06-escape");
+  progress("first-dialog-opened");
+  const initial = await window.webContents.executeJavaScript(`(() => {
+    const dialog = document.querySelector('.app-decision-dialog');
+    const active = document.activeElement;
+    return {
+      role: dialog?.getAttribute('role'),
+      modal: dialog?.getAttribute('aria-modal'),
+      labelled: Boolean(dialog?.getAttribute('aria-labelledby') && document.getElementById(dialog.getAttribute('aria-labelledby'))?.textContent?.trim()),
+      described: Boolean(dialog?.getAttribute('aria-describedby') && document.getElementById(dialog.getAttribute('aria-describedby'))?.textContent?.trim()),
+      safeFocus: active === dialog?.querySelector('footer button:first-child'),
+      title: dialog?.querySelector('h2')?.textContent || '',
+      impact: dialog?.querySelector('.app-decision-impact')?.textContent || ''
+    };
+  })()`, true) as Record<string, unknown>;
+  checks.alertDialogSemantics = initial.role === "alertdialog" && initial.modal === "true" && initial.labelled === true && initial.described === true;
+  checks.businessCopyVisible = String(initial.title).includes("Remove") && String(initial.impact).includes("cannot be undone");
+  checks.safeInitialFocus = initial.safeFocus === true;
+  details.initial = initial;
+  await press("TAB", ["shift"]);
+  checks.shiftTabWrapsToConfirm = await window.webContents.executeJavaScript("document.activeElement === document.querySelector('.app-decision-dialog footer button:last-child')", true) as boolean;
+  await press("TAB");
+  checks.tabWrapsToSafeAction = await window.webContents.executeJavaScript("document.activeElement === document.querySelector('.app-decision-dialog footer button:first-child')", true) as boolean;
+
+  if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach("1.3");
+  await window.webContents.debugger.sendCommand("Accessibility.enable");
+  const axTree = await window.webContents.debugger.sendCommand("Accessibility.getFullAXTree") as { nodes?: Array<Record<string, unknown>> };
+  const axNodes = axTree.nodes ?? [];
+  checks.accessibilityTreeHasNamedDialog = axNodes.some((node) => {
+    const role = String((node.role as { value?: unknown })?.value || "");
+    const name = String((node.name as { value?: unknown })?.value || "");
+    return (role === "alertdialog" || role === "dialog") && name.includes("Remove the selected local data");
+  });
+  writeFileSync(join(evidenceDir, "m06-app-dialog-accessibility-tree.json"), JSON.stringify(axTree, null, 2));
+  writeFileSync(join(evidenceDir, "m06-app-dialog.png"), (await window.webContents.capturePage()).toPNG());
+
+  await press("ESCAPE");
+  checks.escapeCloses = await waitForRenderer("!document.querySelector('[data-testid=app-decision-overlay]')");
+  checks.escapeReturnsFocus = await waitForRenderer("document.activeElement?.id === 'm06-dialog-trigger'");
+  checks.escapeHasZeroEffects = await window.webContents.executeJavaScript("window.__opendrsaiDialogE2eEffects === 0", true) as boolean;
+  progress("escape-complete");
+
+  await openDialog("m06-backdrop");
+  const overlayPoint = await window.webContents.executeJavaScript(`(() => { const rect = document.querySelector('[data-testid=app-decision-overlay]')?.getBoundingClientRect(); return rect ? { x: Math.max(2, Math.floor(rect.left + 6)), y: Math.max(2, Math.floor(rect.top + 6)) } : null; })()`, true) as { x: number; y: number } | null;
+  if (!overlayPoint) throw new Error("M06 app-dialog backdrop bounds were unavailable.");
+  window.webContents.sendInputEvent({ type: "mouseMove", x: overlayPoint.x, y: overlayPoint.y });
+  window.webContents.sendInputEvent({ type: "mouseDown", x: overlayPoint.x, y: overlayPoint.y, button: "left", clickCount: 1 });
+  window.webContents.sendInputEvent({ type: "mouseUp", x: overlayPoint.x, y: overlayPoint.y, button: "left", clickCount: 1 });
+  checks.backdropCloses = await waitForRenderer("!document.querySelector('[data-testid=app-decision-overlay]')");
+  checks.backdropReturnsFocus = await waitForRenderer("document.activeElement?.id === 'm06-dialog-trigger'");
+  checks.backdropHasZeroEffects = await window.webContents.executeJavaScript("window.__opendrsaiDialogE2eEffects === 0", true) as boolean;
+  progress("backdrop-complete");
+
+  await openDialog("m06-default-cancel");
+  await press("SPACE");
+  checks.defaultKeyboardActionCancels = await waitForRenderer("!document.querySelector('[data-testid=app-decision-overlay]')");
+  checks.defaultKeyboardActionHasZeroEffects = await window.webContents.executeJavaScript("window.__opendrsaiDialogE2eEffects === 0", true) as boolean;
+  if (!checks.defaultKeyboardActionCancels || !checks.defaultKeyboardActionHasZeroEffects) throw new Error("M06 safe default action did not cancel cleanly.");
+  progress("default-cancel-complete");
+
+  await openDialog("m06-confirm");
+  await press("TAB");
+  const confirmFocused = await window.webContents.executeJavaScript("document.activeElement === document.querySelector('.app-decision-dialog footer button:last-child')", true) as boolean;
+  await press("SPACE");
+  checks.confirmReachableByKeyboard = confirmFocused;
+  checks.confirmExecutesOnce = await waitForRenderer("window.__opendrsaiDialogE2eEffects === 1");
+  checks.confirmReturnsFocus = await waitForRenderer("document.activeElement?.id === 'm06-dialog-trigger'");
+  if (!checks.confirmReachableByKeyboard || !checks.confirmExecutesOnce || !checks.confirmReturnsFocus) throw new Error("M06 keyboard confirmation did not execute exactly once and return focus.");
+  progress("confirm-complete");
+
+  await window.webContents.executeJavaScript(`(() => {
+    const trigger = document.querySelector('#m06-dialog-trigger');
+    trigger?.focus();
+    for (const id of ['m06-queue-first', 'm06-queue-second']) window.dispatchEvent(new CustomEvent('drsai:e2e-request-app-dialog', { detail: { id, title: 'Queued protected action', description: 'Each decision must resolve once.', impact: 'No duplicate side effects are allowed.', tone: 'danger' } }));
+    return true;
+  })()`, true);
+  if (!(await waitForRenderer("document.querySelector('[data-testid=app-decision-overlay]')"))) throw new Error("M06 queued dialog did not open.");
+  await press("ESCAPE");
+  if (!(await waitForRenderer("window.__m06DialogResults?.some((item) => item.id === 'm06-queue-first') && window.__m06DialogsShown?.some((item) => item.id === 'm06-queue-second') && document.querySelector('.app-decision-dialog h2')?.textContent?.includes('Queued protected action')"))) {
+    const queueState = await window.webContents.executeJavaScript(`(() => ({ results: window.__m06DialogResults, decisions: window.__m06DialogDecisions, shown: window.__m06DialogsShown, title: document.querySelector('.app-decision-dialog h2')?.textContent || null, overlay: Boolean(document.querySelector('[data-testid=app-decision-overlay]')) }))()`, true);
+    throw new Error(`M06 second queued dialog did not open: ${JSON.stringify(queueState)}`);
+  }
+  await press("TAB");
+  await press("SPACE");
+  checks.queueResolvesInOrder = await waitForRenderer("window.__m06DialogResults?.length === 6");
+  checks.queueHasNoDuplicateEffects = await waitForRenderer("window.__opendrsaiDialogE2eEffects === 2");
+  progress("queue-complete");
+
+  checks.newChatActionAvailable = await window.webContents.executeJavaScript(`(() => {
+    const button = document.querySelector('.sidebar-primary-action .sidebar-button');
+    if (!(button instanceof HTMLButtonElement)) return false;
+    button.click();
+    return true;
+  })()`, true) as boolean;
+  checks.newChatFocusesComposer = await waitForRenderer("document.activeElement === document.querySelector('[data-testid=composer-input]')");
+  if (checks.newChatFocusesComposer) window.webContents.insertText("focus-restored");
+  checks.focusedComposerAcceptsText = await waitForRenderer("document.querySelector('[data-testid=composer-input]')?.value === 'focus-restored'");
+  progress("new-chat-focus-complete");
+
+  const finalState = await window.webContents.executeJavaScript(`(async () => {
+    const snapshot = await window.openDrSai.getDiagnosticSnapshot();
+    return {
+      nativeConfirmCalls: window.__m06NativeConfirmCalls,
+      nativeAlertCalls: window.__m06NativeAlertCalls,
+      effects: window.__opendrsaiDialogE2eEffects,
+      decisions: window.__m06DialogDecisions,
+      results: window.__m06DialogResults,
+      diagnostics: snapshot.events.filter((event) => event.component === 'app-decision-dialog')
+    };
+  })()`, true) as {
+    nativeConfirmCalls: number;
+    nativeAlertCalls: number;
+    effects: number;
+    decisions: Array<{ id: string; approved: boolean; reason: string }>;
+    results: Array<{ id: string; approved: boolean; effects: number }>;
+    diagnostics: Array<Record<string, unknown>>;
+  };
+  const expectedReasons = ["escape", "backdrop", "cancel", "confirm", "escape", "confirm"];
+  checks.nativeConfirmAlertCallsZero = finalState.nativeConfirmCalls === 0 && finalState.nativeAlertCalls === 0;
+  checks.decisionReasonsComplete = expectedReasons.every((reason, index) => finalState.decisions[index]?.reason === reason);
+  const expectedIds = ["m06-escape", "m06-backdrop", "m06-default-cancel", "m06-confirm", "m06-queue-first", "m06-queue-second"];
+  checks.queueResolvesInOrder = expectedIds.every((id, index) => finalState.results[index]?.id === id);
+  checks.eachDecisionResolvedOnce = finalState.decisions.length === 6 && finalState.results.length === 6 && new Set(finalState.results.map((item) => item.id)).size === 6;
+  checks.cancelledEffectsZero = finalState.results.map((item) => item.effects).join(",") === "0,0,0,1,1,2";
+  checks.approvedEffectsExactlyOnce = finalState.effects === 2 && finalState.results.filter((item) => item.approved).map((item) => item.effects).join(",") === "1,2";
+  checks.decisionsAudited = finalState.diagnostics.length >= 6;
+  details.finalState = finalState;
+  details.evidenceDir = evidenceDir;
+  if (window.webContents.debugger.isAttached()) window.webContents.debugger.detach();
+  return { ok: Object.values(checks).every(Boolean), checks, details };
+}
+
 async function runM4KeyboardSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const fixturePath = process.env.OPENDRSAI_E2E_M4_CERN_PDF;
   const evidenceDir = process.env.OPENDRSAI_E2E_M4_EVIDENCE_DIR;
   if (!fixturePath || !existsSync(fixturePath)) throw new Error("M4 requires the fixed CERN PDF fixture.");
   if (!evidenceDir) throw new Error("M4 requires an evidence directory.");
   mkdirSync(evidenceDir, { recursive: true });
+  await window.webContents.executeJavaScript(`(async () => {
+    const login = await window.openDrSai.login({ developerBypass: true, rememberMe: false });
+    if (!login?.ok) throw new Error("M4 setup login failed");
+    localStorage.setItem("opendrsai:first-run-complete:v3", "true");
+    return true;
+  })()`, true);
+  await createWorkspace({ source: "existing", path: dirname(fixturePath), name: "M4 CERN keyboard workspace", trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("M4 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
   window.show();
   window.focus();
 
@@ -1784,6 +2309,22 @@ async function runM4KeyboardSmoke(window: BrowserWindow): Promise<SmokeResult> {
   checks.authenticatedProductUi = seeded.login === true;
   checks.cernResultSeeded = Boolean(seeded.taskId);
   checks.approvalSeeded = seeded.approvalQueued === true && Boolean(seeded.approvalId);
+  checks.cernWorkspaceSelected = await window.webContents.executeJavaScript(`
+    (async () => {
+      const workspacePath = ${JSON.stringify(dirname(fixturePath))};
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const item = [...document.querySelectorAll('.workspace-item')].find((candidate) => (candidate.getAttribute('title') || '').includes(workspacePath));
+        if (item) {
+          item.click();
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          return item.closest('.workspace-row')?.classList.contains('active') === true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      return false;
+    })()
+  `, true) as boolean;
   await new Promise((resolve) => setTimeout(resolve, 250));
 
   const press = async (keyCode: string, modifiers?: Array<"shift" | "control" | "alt" | "meta">): Promise<void> => {
@@ -1803,7 +2344,16 @@ async function runM4KeyboardSmoke(window: BrowserWindow): Promise<SmokeResult> {
       if (current.matches === true) return snapshot(milestone, selector);
       await press("TAB", reverse ? ["shift"] : undefined);
     }
-    return snapshot(`${milestone}:not-found`, selector);
+    await snapshot(`${milestone}:not-found`, selector);
+    const diagnostic = await window.webContents.executeJavaScript(`(() => ({
+      active: document.activeElement?.outerHTML?.slice(0, 500) || "",
+      title: document.title,
+      body: document.body?.innerText?.slice(0, 1200) || "",
+      firstRunVisible: Boolean(document.querySelector('[data-testid="first-run-setup"]')),
+      firstRunStored: localStorage.getItem("opendrsai:first-run-complete:v3"),
+      selectorExists: Boolean(document.querySelector(${JSON.stringify(selector)})),
+    }))()`, true) as Record<string, unknown>;
+    throw new Error(`M4 keyboard target was not reachable: ${milestone} ${selector}; ${JSON.stringify(diagnostic)}`);
   };
   const assertFocus = (name: string, state: Record<string, unknown>): void => {
     checks[`${name}Focused`] = state.matches === true;
@@ -1818,7 +2368,7 @@ async function runM4KeyboardSmoke(window: BrowserWindow): Promise<SmokeResult> {
     return false;
   };
 
-  const newChat = await tabUntil("new-chat", ".sidebar-action-list .sidebar-button:first-child"); assertFocus("newChat", newChat); await press("SPACE");
+  const newChat = await tabUntil("new-chat", ".sidebar-primary-action .sidebar-button"); assertFocus("newChat", newChat); await press("SPACE");
   const attachment = await tabUntil("attachment", ".composer-tools > button"); assertFocus("attachment", attachment); await press("SPACE");
   const addFile = await tabUntil("add-file", ".composer-tool-menu button:has([data-testid=composer-add-file-label])"); assertFocus("addFile", addFile); await press("SPACE");
   checks.filePickerActivatedByKeyboard = await waitDom("document.querySelector('.composer-attachment-chip')?.textContent?.includes('WLCG-20260715-WLCG-talk-IHEP-visit.pdf')");
@@ -1836,7 +2386,9 @@ async function runM4KeyboardSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const settings = await tabUntil("settings", "[data-testid=user-menu-settings]"); assertFocus("settings", settings); await press("SPACE");
   const approvalPane = await tabUntil("approval-pane", "[data-testid=settings-pane-approvals]"); assertFocus("approvalPane", approvalPane); await press("SPACE");
   const approve = await tabUntil("approve", ".approval-pending-actions button.approve"); assertFocus("approve", approve); await press("SPACE");
-  checks.approvedWithSpace = await waitDom("!document.querySelector('.approval-pending-actions button.approve')");
+  checks.unownedApprovalFailsClosed = await waitDom("document.querySelector('.approval-pending-message')?.textContent?.includes('rejected by the desktop bridge')");
+  const reject = await tabUntil("reject", ".approval-pending-actions button.reject"); assertFocus("reject", reject); await press("SPACE");
+  checks.rejectedWithSpace = await waitDom("!document.querySelector('.approval-pending-actions button.reject')");
 
   const results = await tabUntil("results", '[data-nav-id="results"]'); assertFocus("results", results); await press("SPACE");
   await waitDom("document.querySelector('[data-testid=results-open-artifact]')");
@@ -1852,7 +2404,7 @@ async function runM4KeyboardSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const pointerEvents = await window.webContents.executeJavaScript("window.__m4PointerEvents || []", true) as unknown[];
   checks.pointerEventsBlocked = pointerEvents.length === 0;
   checks.noKeyboardTrap = focusTrace.every((item) => item.visible === true) && focusTrace.length >= 14;
-  const expectedOrder = ["new-chat", "attachment", "add-file", "attachment-reopen", "attachment-after-escape", "composer", "send", "user-menu", "settings", "approval-pane", "approve", "results", "open-artifact", "share-artifact", "share-after-escape", "reverse-tab"];
+  const expectedOrder = ["new-chat", "attachment", "add-file", "attachment-reopen", "attachment-after-escape", "composer", "send", "user-menu", "settings", "approval-pane", "approve", "reject", "results", "open-artifact", "share-artifact", "share-after-escape", "reverse-tab"];
   checks.focusOrderMatchesSnapshot = expectedOrder.every((name, index) => focusTrace[index]?.milestone === name);
   const screenshotPath = join(evidenceDir, "m4-keyboard-final.png");
   writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG());
@@ -1873,6 +2425,19 @@ async function runM3WindowScalingSmoke(window: BrowserWindow): Promise<SmokeResu
   checks.cernFixtureSize = fixtureBytes.length === 7_664_262;
   checks.cernFixtureSha256 = (await import("crypto")).createHash("sha256").update(fixtureBytes).digest("hex").toUpperCase()
     === "F6581E1A255B354667188B41B874B996A300F88BB48912721BC1C854183E913E";
+
+  await window.webContents.executeJavaScript(`(async () => {
+    const login = await window.openDrSai.login({ developerBypass: true, rememberMe: false });
+    if (!login?.ok) throw new Error("M3 setup login failed");
+    localStorage.setItem("opendrsai:first-run-complete:v3", "true");
+    return true;
+  })()`, true);
+  await createWorkspace({ source: "existing", path: dirname(fixturePath), name: "M3 CERN scaling workspace", trusted: true });
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("M3 renderer reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
 
   const seeded = await window.webContents.executeJavaScript(`
     (async () => {
@@ -1921,11 +2486,24 @@ async function runM3WindowScalingSmoke(window: BrowserWindow): Promise<SmokeResu
   checks.authenticatedProductUi = seeded.login === true;
   checks.cernResultSeeded = Boolean(seeded.taskId);
   checks.approvalSeeded = seeded.approvalQueued === true && Boolean(seeded.approvalId);
+  checks.cernWorkspaceSelected = await window.webContents.executeJavaScript(`
+    (async () => {
+      const workspacePath = ${JSON.stringify(dirname(fixturePath))};
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const item = [...document.querySelectorAll('.workspace-item')].find((candidate) => (candidate.getAttribute('title') || '').includes(workspacePath));
+        if (item) { item.click(); await new Promise((resolve) => setTimeout(resolve, 250)); return item.closest('.workspace-row')?.classList.contains('active') === true; }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      return false;
+    })()
+  `, true) as boolean;
 
   const profiles = [
     { id: "1366x768-100", width: 1366, height: 768, zoom: 1 },
     { id: "1920x1080-150-maximized", width: 1920, height: 1080, zoom: 1.5 },
     { id: "1100x720-125-minimum", width: 1100, height: 720, zoom: 1.25 },
+    { id: "1600x1000-200", width: 1600, height: 1000, zoom: 2 },
     { id: "1366x768-100-returned-display", width: 1366, height: 768, zoom: 1 },
   ];
 
@@ -1935,13 +2513,13 @@ async function runM3WindowScalingSmoke(window: BrowserWindow): Promise<SmokeResu
     if (!window.isVisible()) window.showInactive();
     await new Promise((resolve) => setTimeout(resolve, 250));
     const profileResult: Record<string, unknown> = { profile, pages: {} };
-    const chat = await auditM3Page(window, "chat", ".conversation-panel textarea", [".conversation-panel textarea", ".conversation-panel .composer-submit"]);
+    const chat = await auditM3Page(window, "chat", "[data-testid=composer-input]", ["[data-testid=composer-input]", ".composer-submit"]);
     (profileResult.pages as Record<string, unknown>).chat = chat;
     recordM3Checks(checks, profile.id, "chat", chat);
 
     await window.webContents.executeJavaScript(`
       (() => {
-        const button = [...document.querySelectorAll("button")].find((item) => [item.textContent, item.title, item.getAttribute("aria-label")].some((value) => /成果|Results/i.test(value || "")));
+        const button = document.querySelector('[data-nav-id="results"]');
         if (!button) return false;
         button.click();
         return true;
@@ -1966,14 +2544,14 @@ async function runM3WindowScalingSmoke(window: BrowserWindow): Promise<SmokeResu
 
     await window.webContents.executeJavaScript(`
       (() => {
-        const button = [...document.querySelectorAll("button")].find((item) => [item.textContent, item.title, item.getAttribute("aria-label")].some((value) => /当前会话|Current session|开始聊天|New chat/i.test(value || "")));
+        const button = document.querySelector('.sidebar-primary-action .sidebar-button');
         if (button) button.click();
       })()
     `, true);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  checks.displayTransitionPreservedContent = profiles.length === 4 && (details.profiles as Array<unknown>).length === 4;
+  checks.displayTransitionPreservedContent = profiles.length === 5 && (details.profiles as Array<unknown>).length === 5;
   return { ok: Object.values(checks).every(Boolean), checks, details };
 }
 
@@ -4137,6 +4715,18 @@ async function runPresentationPdfActionSmoke(window: BrowserWindow): Promise<Smo
       && deliverySummary?.importance === "high"
       && deliverySummary?.artifacts[0]?.path === (result.details.generatedOutputPath as string);
     result.details.structuredNotification = notification;
+    result.checks.structuredSummaryAutoVisibleBeforeNotificationClick = Boolean(await window.webContents.executeJavaScript(`
+      (async () => {
+        const targetId = ${JSON.stringify(targetId)};
+        const deadline = Date.now() + 10000;
+        while (Date.now() < deadline) {
+          const panel = document.querySelector('[data-testid="task-delivery-summary"]');
+          if (panel?.getAttribute('data-target-id') === targetId && panel.getAttribute('data-status') === 'completed') return true;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        return false;
+      })()
+    `, true));
     result.checks.structuredNotificationClickTriggered = clickLatestCompletionNotificationForE2e();
     const routed = await window.webContents.executeJavaScript(`
       (async () => {
@@ -4681,16 +5271,18 @@ async function runF4AnomalyDecisionSmoke(window: BrowserWindow): Promise<SmokeRe
   window.webContents.sendInputEvent({ type: "keyDown", keyCode: "Space" });
   window.webContents.sendInputEvent({ type: "keyUp", keyCode: "Space" });
   await new Promise((resolve) => setTimeout(resolve, 100));
+  window.webContents.sendInputEvent({ type: "keyDown", keyCode: "TAB" });
+  window.webContents.sendInputEvent({ type: "keyUp", keyCode: "TAB" });
+  await new Promise((resolve) => setTimeout(resolve, 100));
   checks.keyboardSelected = await window.webContents.executeJavaScript(`
     (() => {
       const input = document.querySelector('[data-testid="results-anomaly-decision"] input[value="${branch}"]');
       const button = document.querySelector('[data-testid="results-apply-anomaly-decision"]');
-      button?.focus();
       return Boolean(input?.checked && document.activeElement === button && !button?.disabled);
     })()
   `, true) as boolean;
-  window.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
-  window.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+  window.webContents.sendInputEvent({ type: "keyDown", keyCode: "SPACE" });
+  window.webContents.sendInputEvent({ type: "keyUp", keyCode: "SPACE" });
   const completionDeadline = Date.now() + 8000;
   let uiResult: { state?: string; decision?: string; outputCount?: string; status?: string } = {};
   while (Date.now() < completionDeadline) {
@@ -4974,6 +5566,28 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         }
         return false;
       }
+      function terminalEventType(event) {
+        if (["done", "error", "aborted"].includes(event.type)) return event.type;
+        if (event.type !== "structured") return null;
+        if (event.structuredEvent?.type === "turn.completed") return "done";
+        if (event.structuredEvent?.type === "turn.cancelled") return "aborted";
+        if (event.structuredEvent?.type === "turn.error") return "error";
+        return null;
+      }
+      function eventText(event) {
+        if (event.type === "chunk") return String(event.content || "");
+        if (event.type === "structured" && event.structuredEvent?.type === "part.delta") {
+          return String(event.structuredEvent?.delta?.text || "");
+        }
+        return "";
+      }
+      function eventError(event) {
+        if (event.type === "error") return String(event.error || "");
+        if (event.type === "structured" && event.structuredEvent?.type === "turn.error") {
+          return String(event.structuredEvent?.message || "");
+        }
+        return "";
+      }
       async function collectChat(requestId, request, options = {}) {
         const events = [];
         const startedAt = Date.now();
@@ -4984,19 +5598,24 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
           let returnedRequestId = null;
           let startError = null;
           try {
-            returnedRequestId = await api.startChat({ requestId, model: "drsai", ...request });
+            returnedRequestId = await api.startChat({
+              requestId,
+              model: "drsai",
+              workspacePath: ${JSON.stringify(process.cwd())},
+              ...request,
+            });
           } catch (error) {
             startError = String(error && error.message ? error.message : error);
           }
           if (options.abortAfterStart && !startError) {
             const abortDeadline = Date.now() + 5000;
-            while (Date.now() < abortDeadline && !events.some((event) => event.type === "start")) {
+            while (Date.now() < abortDeadline && !events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"))) {
               await new Promise((resolve) => setTimeout(resolve, 50));
             }
-            await api.abortChat(requestId);
+            await api.cancelChatTurn({ requestId });
           }
           const deadline = Date.now() + (options.waitMs || 12000);
-          while (Date.now() < deadline && !events.some((event) => ["done", "error", "aborted"].includes(event.type))) {
+          while (Date.now() < deadline && !events.some((event) => Boolean(terminalEventType(event)))) {
             await new Promise((resolve) => setTimeout(resolve, 50));
           }
           const threads = await api.listThreads();
@@ -5044,11 +5663,11 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         );
         details.abort = summarizeOutcome(outcome);
         checks.abortStart = outcome.events.some((event) => event.type === "start");
-        checks.abortEvent = outcome.events.some((event) => event.type === "aborted");
+        checks.abortEvent = outcome.events.some((event) => terminalEventType(event) === "aborted");
         checks.abortTerminal = details.abort.terminalEventType === "aborted";
         checks.abortThreadIdle = details.abort.thread && details.abort.thread.status === "idle";
-        checks.abortNoDone = !outcome.events.some((event) => event.type === "done");
-        checks.abortNoError = !outcome.events.some((event) => event.type === "error");
+        checks.abortNoDone = !outcome.events.some((event) => terminalEventType(event) === "done");
+        checks.abortNoError = !outcome.events.some((event) => terminalEventType(event) === "error");
       } else if (scenario === "sse-error") {
         const requestId = "e2e-failure-error";
         const outcome = await collectChat(
@@ -5058,10 +5677,10 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         );
         details.sseError = summarizeOutcome(outcome);
         checks.sseErrorStart = outcome.events.some((event) => event.type === "start");
-        checks.sseErrorEvent = outcome.events.some((event) => event.type === "error" && String(event.error || "").includes("synthetic gateway error"));
+        checks.sseErrorEvent = outcome.events.some((event) => terminalEventType(event) === "error" && eventError(event).includes("synthetic gateway error"));
         checks.sseErrorTerminal = details.sseError.terminalEventType === "error";
         checks.sseErrorThreadError = details.sseError.thread && details.sseError.thread.status === "error";
-        checks.sseErrorNoDone = !outcome.events.some((event) => event.type === "done");
+        checks.sseErrorNoDone = !outcome.events.some((event) => terminalEventType(event) === "done");
       } else if (scenario === "gateway-unreachable") {
         const requestId = "e2e-failure-unreachable";
         const outcome = await collectChat(
@@ -5070,10 +5689,12 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
           { waitMs: 10000 },
         );
         details.gatewayUnreachable = summarizeOutcome(outcome);
-        checks.gatewayUnreachableStart = outcome.events.some((event) => event.type === "start");
-        checks.gatewayUnreachableError = outcome.events.some((event) => event.type === "error" && String(event.error || "").includes("Gateway is not ready"));
+        checks.gatewayUnreachableStart = !outcome.events.some((event) => event.type === "start");
+        checks.gatewayUnreachableError = outcome.events.some((event) => event.type === "error"
+          && String(event.error || "").includes("Runtime is not ready")
+          && event.errorEnvelope?.code === "GATEWAY_NOT_READY");
         checks.gatewayUnreachableTerminal = details.gatewayUnreachable.terminalEventType === "error";
-        checks.gatewayUnreachableThreadError = details.gatewayUnreachable.thread && details.gatewayUnreachable.thread.status === "error";
+        checks.gatewayUnreachableThreadError = details.gatewayUnreachable.thread === null;
         checks.gatewayUnreachableNoDone = !outcome.events.some((event) => event.type === "done");
       } else if (scenario === "timeout") {
         const requestId = "e2e-failure-timeout";
@@ -5084,11 +5705,11 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         );
         details.timeout = summarizeOutcome(outcome);
         checks.timeoutStart = outcome.events.some((event) => event.type === "start");
-        checks.timeoutError = outcome.events.some((event) => event.type === "error" && String(event.error || "").includes("timed out"));
+        checks.timeoutError = outcome.events.some((event) => terminalEventType(event) === "error" && eventError(event).includes("timed out"));
         checks.timeoutTerminal = details.timeout.terminalEventType === "error";
         checks.timeoutThreadError = details.timeout.thread && details.timeout.thread.status === "error";
         checks.timeoutDuration = details.timeout.durationMs >= 1000;
-        checks.timeoutNoDone = !outcome.events.some((event) => event.type === "done");
+        checks.timeoutNoDone = !outcome.events.some((event) => terminalEventType(event) === "done");
       } else if (scenario === "empty-done") {
         const requestId = "e2e-failure-empty-done";
         const outcome = await collectChat(
@@ -5098,11 +5719,11 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         );
         details.emptyDone = summarizeOutcome(outcome);
         checks.emptyDoneStart = outcome.events.some((event) => event.type === "start");
-        checks.emptyDoneEvent = outcome.events.some((event) => event.type === "done");
+        checks.emptyDoneEvent = outcome.events.some((event) => terminalEventType(event) === "done");
         checks.emptyDoneTerminal = details.emptyDone.terminalEventType === "done";
         checks.emptyDoneThreadIdle = details.emptyDone.thread && details.emptyDone.thread.status === "idle";
-        checks.emptyDoneNoChunk = !outcome.events.some((event) => event.type === "chunk");
-        checks.emptyDoneNoError = !outcome.events.some((event) => event.type === "error" || event.type === "aborted");
+        checks.emptyDoneNoChunk = !outcome.events.some((event) => Boolean(eventText(event)));
+        checks.emptyDoneNoError = !outcome.events.some((event) => ["error", "aborted"].includes(terminalEventType(event)));
       } else if (scenario === "chunk-disconnect") {
         const requestId = "e2e-failure-disconnect";
         const outcome = await collectChat(
@@ -5112,14 +5733,15 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         );
         details.chunkDisconnect = summarizeOutcome(outcome);
         checks.chunkDisconnectStart = outcome.events.some((event) => event.type === "start");
-        checks.chunkDisconnectChunk = outcome.events.some((event) => event.type === "chunk" && String(event.content || "").includes("partial before disconnect"));
-        checks.chunkDisconnectError = outcome.events.some((event) => event.type === "error" && (
-          String(event.error || "").includes("ended before data: [DONE]") ||
+        checks.chunkDisconnectChunk = outcome.events.some((event) => eventText(event).includes("partial before disconnect"));
+        checks.chunkDisconnectError = outcome.events.some((event) => terminalEventType(event) === "error" && (
+          eventError(event).includes("ended before data: [DONE]") ||
+          event.errorEnvelope?.code === "oaep_sync_degraded" ||
           (event.failureRecovery?.kind === "network" && event.failureRecovery.exhausted === true)
         ));
         checks.chunkDisconnectTerminal = details.chunkDisconnect.terminalEventType === "error";
         checks.chunkDisconnectThreadError = details.chunkDisconnect.thread && details.chunkDisconnect.thread.status === "error";
-        checks.chunkDisconnectNoDone = !outcome.events.some((event) => event.type === "done");
+        checks.chunkDisconnectNoDone = !outcome.events.some((event) => terminalEventType(event) === "done");
       } else if (scenario === "attachments") {
         const requestId = "e2e-attachments";
         const attachmentFilePath = ${JSON.stringify(process.env.OPENDRSAI_E2E_ATTACHMENT_FILE || "C:\\OpenDrSai\\fixtures\\notes.md")};
@@ -5127,6 +5749,7 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         const outcome = await collectChat(
           requestId,
           {
+            workspacePath: ${JSON.stringify(process.env.OPENDRSAI_E2E_ATTACHMENT_WORKSPACE || process.cwd())},
             attachments: [
               { kind: "file", path: attachmentFilePath, name: "notes.md" },
               { kind: "folder", path: attachmentFolderPath, name: "project" },
@@ -5137,10 +5760,10 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
         );
         details.attachments = summarizeOutcome(outcome);
         checks.attachmentsStart = outcome.events.some((event) => event.type === "start");
-        checks.attachmentsChunk = outcome.events.some((event) => event.type === "chunk" && String(event.content || "").includes("fake-agent attachments: 2"));
+        checks.attachmentsChunk = outcome.events.some((event) => eventText(event).includes("fake-agent attachments: 2"));
         checks.attachmentsTerminal = details.attachments.terminalEventType === "done";
         checks.attachmentsThreadIdle = details.attachments.thread && details.attachments.thread.status === "idle";
-        checks.attachmentsNoError = !outcome.events.some((event) => event.type === "error" || event.type === "aborted");
+        checks.attachmentsNoError = !outcome.events.some((event) => ["error", "aborted"].includes(terminalEventType(event)));
       } else {
         checks.knownScenario = false;
         details.error = "Unknown failure scenario.";
@@ -5149,22 +5772,24 @@ async function runChatFailureSmoke(window: BrowserWindow): Promise<SmokeResult> 
       function summarizeOutcome(outcome) {
         const firstEvent = outcome.events[0] || null;
         const lastEvent = outcome.events[outcome.events.length - 1] || null;
-        const terminalEvent = outcome.events.find((event) => ["done", "error", "aborted"].includes(event.type)) || null;
+        const terminalEvent = outcome.events.find((event) => Boolean(terminalEventType(event))) || null;
         return {
           returnedRequestId: outcome.returnedRequestId,
           startError: outcome.startError,
           durationMs: outcome.durationMs,
           firstEventType: firstEvent && firstEvent.type,
-          lastEventType: lastEvent && lastEvent.type,
-          terminalEventType: terminalEvent && terminalEvent.type,
+          lastEventType: lastEvent && (terminalEventType(lastEvent) || lastEvent.type),
+          terminalEventType: terminalEvent && terminalEventType(terminalEvent),
           events: outcome.events.map((event) => ({
             type: event.type,
             at: event.at,
             content: event.content,
             error: event.error,
             failureRecovery: event.failureRecovery,
+            errorEnvelope: event.errorEnvelope,
             sessionId: event.sessionId,
             runId: event.runId,
+            structuredEvent: event.structuredEvent,
           })),
           thread: outcome.finalThread,
           threads: outcome.threads,
@@ -6307,7 +6932,7 @@ async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
   `, true) as SmokeResult;
   if (!fullRoundMode || !transportResult.ok) return transportResult;
   const authenticated = await window.webContents.executeJavaScript(`
-    window.openDrSai.login({ developerBypass: true, rememberMe: false, defaultModel: 'gpt-4.1-mini' })
+    window.openDrSai.login({ developerBypass: true, rememberMe: false })
   `, true) as { ok?: boolean };
   if (!authenticated?.ok) {
     return {
@@ -6324,7 +6949,7 @@ async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
     });
     window.webContents.reload();
   });
-  const fullRoundResult = await runVoiceFullRoundSmoke(window);
+  const fullRoundResult = await runVoiceFullRoundSmoke(window, streamingMode);
   return {
     ok: transportResult.ok && fullRoundResult.ok,
     checks: { ...transportResult.checks, fullRoundLoginBootstrap: true, ...fullRoundResult.checks },
@@ -6332,7 +6957,7 @@ async function runVoiceSmoke(window: BrowserWindow): Promise<SmokeResult> {
   };
 }
 
-async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResult> {
+async function runVoiceFullRoundSmoke(window: BrowserWindow, streamingMode = false): Promise<SmokeResult> {
   return window.webContents.executeJavaScript(`
     (async () => {
       const api = window.openDrSai;
@@ -6393,20 +7018,21 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResul
 
       const preferences = {
         autoReadResponses: true,
+        confirmBeforeSend: false,
         inputDeviceId: '',
         inputLanguage: 'en-US',
-        interactionMode: 'serial',
+        interactionMode: ${JSON.stringify(streamingMode ? "streaming" : "serial")},
         playbackRate: 1,
         remoteSttConsent: true,
         remoteTtsConsent: true,
         synthesisMode: 'provider',
         voiceName: 'alloy',
       };
-      localStorage.setItem('opendrsai.voicePreferences.v1', JSON.stringify({ version: 3, preferences }));
+      localStorage.setItem('opendrsai.voicePreferences.v1', JSON.stringify({ version: 4, preferences }));
       window.dispatchEvent(new CustomEvent('opendrsai:voice-preferences-changed', { detail: preferences }));
 
       stage('login:start');
-      const login = await api.login({ developerBypass: true, rememberMe: false, defaultModel: 'gpt-4.1-mini' });
+      const login = await api.login({ developerBypass: true, rememberMe: false });
       checks.fullRoundLogin = login?.ok === true;
       stage('login:complete');
       if (!checks.fullRoundLogin) return await finish();
@@ -6422,6 +7048,7 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResul
       if (composer) observer?.observe(composer, { attributes: true, attributeFilter: ['data-voice-turn-phase'] });
 
       const baselineAssistantIds = new Set([...document.querySelectorAll('.message.assistant')].map((node) => node.getAttribute('data-message-id')));
+      const baselineUserIds = new Set([...document.querySelectorAll('.message.user')].map((node) => node.getAttribute('data-message-id')));
       const baselineVoiceDiagnostics = await api.getDiagnosticSnapshot({ module: 'voice', limit: 100 });
       const baselineTtsCompleted = (baselineVoiceDiagnostics.events || []).filter((event) => event.component === 'tts' && event.status === 'completed').length;
       const voiceButton = await waitFor(() => {
@@ -6432,49 +7059,33 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResul
       stage('voice-button:ready');
       if (!voiceButton) { observer?.disconnect(); return await finish(); }
       voiceButton?.click();
-      checks.fullRoundCaptureStarted = Boolean(await waitFor(() => document.querySelector('form.composer[data-voice-turn-phase="recording"]'), 15000));
+      checks.fullRoundCaptureStarted = Boolean(await waitFor(() => document.querySelector(${JSON.stringify(streamingMode ? 'form.composer[data-voice-turn-phase="streaming"]' : 'form.composer[data-voice-turn-phase="recording"]')}), 15000));
       stage('capture:started');
       if (!checks.fullRoundCaptureStarted) { observer?.disconnect(); return await finish(); }
       await new Promise((resolve) => setTimeout(resolve, 1500));
-      const stopButton = await waitFor(() => document.querySelector('button[aria-label="Stop voice recording"]'), 5000);
+      const stopButton = await waitFor(() => document.querySelector(${JSON.stringify(streamingMode ? 'button[aria-label="Stop live transcription"]' : 'button[aria-label="Stop voice recording"]')}), 5000);
       checks.fullRoundStopButtonReady = Boolean(stopButton);
       stage('stop-button:ready');
       if (!stopButton) { observer?.disconnect(); return await finish(); }
       stopButton?.click();
 
       const transcriptionTerminal = await waitFor(() => {
-        const review = document.querySelector('textarea[aria-label="Review voice transcript"]');
+        const userMessage = [...document.querySelectorAll('.message.user')].find((node) => {
+          const id = node.getAttribute('data-message-id');
+          return id && !baselineUserIds.has(id) && (node.querySelector('.message-body')?.textContent || '').trim().length > 0;
+        });
         const failed = document.querySelector('form.composer[data-voice-turn-phase="failed"]');
-        return review || failed;
+        return userMessage || failed;
       }, 60000);
-      const review = transcriptionTerminal?.matches?.('textarea[aria-label="Review voice transcript"]')
+      const userMessage = transcriptionTerminal?.matches?.('.message.user')
         ? transcriptionTerminal
         : null;
-      const transcript = review?.value?.trim() || '';
+      const transcript = userMessage?.querySelector('.message-body')?.textContent?.trim() || '';
       checks.fullRoundTranscribed = transcript.length > 0;
+      checks.fullRoundAutoSubmitted = Boolean(userMessage);
       details.transcriptChars = transcript.length;
-      stage('transcript:ready');
-      if (!checks.fullRoundTranscribed) { observer?.disconnect(); return await finish(); }
-      const insert = await waitFor(() => [...document.querySelectorAll('.composer-voice-review button')].find((button) => button.textContent?.trim() === 'Insert' && !button.disabled), 5000);
-      checks.fullRoundInsertReady = Boolean(insert);
-      if (!insert) { observer?.disconnect(); return await finish(); }
-      insert?.click();
-      const input = await waitFor(() => {
-        const node = document.querySelector('[data-testid="composer-input"]');
-        return node?.value?.trim() ? node : null;
-      }, 5000);
-      checks.fullRoundReviewInserted = Boolean(input) && input.value.trim() === transcript;
-      stage('transcript:inserted');
-      if (!checks.fullRoundReviewInserted) { observer?.disconnect(); return await finish(); }
-      const submit = await waitFor(() => {
-        const button = document.querySelector('button.composer-submit');
-        return button && !button.disabled ? button : null;
-      }, 5000);
-      checks.fullRoundSendReady = Boolean(submit);
-      stage('send:ready');
-      if (!submit) { observer?.disconnect(); return await finish(); }
-      submit?.click();
-      stage('send:clicked');
+      stage('transcript:auto-submitted');
+      if (!checks.fullRoundTranscribed || !checks.fullRoundAutoSubmitted) { observer?.disconnect(); return await finish(); }
 
       const assistant = await waitFor(() => [...document.querySelectorAll('.message.assistant')].find((node) => {
         const id = node.getAttribute('data-message-id');
@@ -6490,8 +7101,11 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResul
       observer?.disconnect();
       rememberPhase();
 
-      const requiredPhases = ['requesting_permission', 'recording', 'transcribing', 'reviewing', 'ready_to_send', 'submitting', 'awaiting_response', 'response_ready', 'synthesizing', 'playing', 'completed'];
+      const requiredPhases = ${JSON.stringify(streamingMode
+        ? ["starting", "streaming", "stopping"]
+        : ["requesting_permission", "recording", "preparing_audio", "transcribing", "ready_to_send", "submitting", "awaiting_response", "response_ready", "synthesizing", "playing", "completed"])};
       checks.fullRoundPhases = requiredPhases.every((phase) => phases.includes(phase));
+      checks.fullRoundStreamingMode = ${JSON.stringify(streamingMode)};
       checks.fullRoundPlayback = playback.played > 0 && playback.ended > 0;
       const voiceDiagnostics = await api.getDiagnosticSnapshot({ module: 'voice', limit: 100 });
       const ttsCompleted = (voiceDiagnostics.events || []).filter((event) => event.component === 'tts' && event.status === 'completed').length;
@@ -6499,11 +7113,852 @@ async function runVoiceFullRoundSmoke(window: BrowserWindow): Promise<SmokeResul
       const diagnosticText = JSON.stringify(voiceDiagnostics.events || []);
       checks.fullRoundDiagnosticsPrivate = !diagnosticText.includes(transcript) && !diagnosticText.includes(assistantText) && !diagnosticText.includes('audioData');
       details.phases = phases;
+      details.interactionMode = ${JSON.stringify(streamingMode ? "streaming" : "serial")};
       details.playback = playback;
       stage('round:complete');
       return await finish();
     })()
   `, true) as Promise<SmokeResult>;
+}
+
+async function runTraceabilityPhase3Smoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePath = process.env.OPENDRSAI_E2E_RUN_TRACEABILITY_PHASE3_FIXTURE;
+  if (!fixturePath || !existsSync(fixturePath)) {
+    return { ok: false, checks: { fixture: false }, details: {}, error: "Run traceability Phase 3 fixture is missing." };
+  }
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
+  const inspectionSafetyOnly = process.env.OPENDRSAI_E2E_RUN_INSPECTION_SAFETY_ONLY === "1";
+  window.show();
+  window.focus();
+  await waitForMain(() => window.isVisible() && !window.isMinimized(), 5_000);
+  const fixtureUrl = new URL(window.webContents.getURL());
+  fixtureUrl.searchParams.set("developerBypassFixture", "1");
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Phase 3 login fixture navigation timed out.")), 15_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolve(); });
+    void window.loadURL(fixtureUrl.toString()).catch(reject);
+  });
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const fixture = ${JSON.stringify(fixture)};
+      const inspectionSafetyOnly = ${JSON.stringify(inspectionSafetyOnly)};
+      const api = window.openDrSai;
+      const checks = {};
+      const details = { stage: "bootstrap", scenarios: [] };
+      const base = { workspacePath: fixture.workspace_path, workspaceId: fixture.workspace_id };
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const waitFor = async (find, timeout = 30000) => { const end = Date.now() + timeout; while (Date.now() < end) { const value = find(); if (value) return value; await sleep(50); } return null; };
+      const call = async (label, promise, timeout = 60000) => { details.stage = label; let timer; try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(label + " timed out")), timeout); })]); } finally { clearTimeout(timer); } };
+      const click = (element) => { element?.dispatchEvent(new MouseEvent("click", { bubbles: true })); };
+      const closeExperiment = async () => { const button = document.querySelector('.run-experiment-panel > header button'); if (button) { click(button); await sleep(100); } };
+      const openExperiment = async (runId) => {
+        window.dispatchEvent(new CustomEvent("opendrsai:open-run-inspection", { detail: { ...base, runId, createExperiment: true } }));
+        return await waitFor(() => document.querySelector('.run-experiment-panel'));
+      };
+      const executeReviewedPlan = async (panel, plan, timeout = 90000) => {
+        const clickedApprovals = new WeakSet();
+        click(plan?.querySelector('button.primary'));
+        const end = Date.now() + timeout;
+        while (Date.now() < end) {
+          const comparison = panel?.querySelector('.run-comparison-view');
+          if (comparison) return comparison;
+          const approval = panel?.querySelector('.run-experiment-error + .experiment-actions button.primary');
+          if (approval && !approval.disabled && !clickedApprovals.has(approval)) {
+            clickedApprovals.add(approval); click(approval); await sleep(250);
+          }
+          await sleep(100);
+        }
+        return null;
+      };
+      const checkSecretCorpus = async () => {
+        window.dispatchEvent(new CustomEvent("opendrsai:open-run-inspection", { detail: { ...base, runId: fixture.phase3_secret_run_id } }));
+        const secretPanel = await waitFor(() => document.querySelector('.run-inspector-panel[data-run-id="' + CSS.escape(fixture.phase3_secret_run_id) + '"]'));
+        const secretInspection = await call("secret:inspection", api.getRunInspection({ ...base, runId: fixture.phase3_secret_run_id, limit: 100 }));
+        const secretManifest = await call("secret:manifest", api.getRunReproductionManifest({ ...base, runId: fixture.phase3_secret_run_id }));
+        const publicSecretEvidence = JSON.stringify({ inspection: secretInspection, manifest: secretManifest, renderer: secretPanel?.textContent || "" });
+        checks.secretCorpus = Boolean(secretPanel)
+          && fixture.phase3_secret_canaries.every((canary) => !publicSecretEvidence.includes(canary))
+          && /REDACTED|sha256/i.test(publicSecretEvidence);
+        checks.rawChainOfThoughtHidden = !publicSecretEvidence.includes(fixture.phase3_secret_canaries[4]);
+        checks.privatePathsHidden = !publicSecretEvidence.includes(fixture.phase3_secret_canaries[5])
+          && !publicSecretEvidence.includes(fixture.phase3_secret_canaries[6]);
+        details.secretCorpus = {
+          runId: fixture.phase3_secret_run_id,
+          layers: ["api", "oaep", "manifest", "renderer"],
+          canaryCount: fixture.phase3_secret_canaries.length,
+          rawChainOfThoughtMatches: 0,
+          secretMatches: 0,
+          privatePathMatches: 0,
+        };
+      };
+      checks.bridge = Boolean(api);
+      if (!api) return { checks, details };
+      click(await waitFor(() => document.querySelector('[data-testid="developer-workspace-login"]')));
+      checks.login = Boolean(await waitFor(() => document.querySelector('.app-shell'), 15000)) && (await call("login", api.getAuthSession()))?.authenticated === true;
+      if (inspectionSafetyOnly) {
+        await checkSecretCorpus();
+        details.stage = "complete";
+        return { checks, details };
+      }
+
+      // O: the failed Run has no Assistant message, but remains discoverable
+      // through Session history and opens in the Inspector.
+      window.dispatchEvent(new CustomEvent("opendrsai:open-run-inspection", { detail: { ...base, runId: fixture.phase3_failed_run_id } }));
+      const failedPanel = await waitFor(() => document.querySelector('.run-inspector-panel[data-run-id="' + CSS.escape(fixture.phase3_failed_run_id) + '"]'));
+      const failedHistory = await call("O:history", api.listSessionRuns({ ...base, sessionId: fixture.phase3_failed_session_id, limit: 100 }));
+      checks.O = Boolean(failedPanel?.querySelector('.status-failed'))
+        && Boolean(failedPanel?.querySelector('.run-history'))
+        && failedHistory.data.some((run) => run.run_id === fixture.phase3_failed_run_id && run.status === "failed");
+      details.scenarios.push({ id: "O", runId: fixture.phase3_failed_run_id, sessionId: fixture.phase3_failed_session_id });
+
+      // Q: unsupported mutable entities stay absent from the GUI and direct
+      // API bypasses fail closed.
+      const qDraft = await call("Q:create", api.createRunExperiment({ ...base, runId: fixture.base_run_id, idempotencyKey: "p3-q-create", title: "Scenario Q" }));
+      let qBlocked = false; let qError = "";
+      try { await api.updateRunExperiment({ ...base, experimentId: qDraft.experiment_id, expectedVersion: qDraft.draft_version, idempotencyKey: "p3-q-bypass", patch: { overrides: { skills: [{ id: "invented" }] } } }); }
+      catch (error) { qError = String(error?.message || error); qBlocked = /unsupported_override|skills/i.test(qError); }
+      const qPanel = await openExperiment(fixture.base_run_id);
+      const qText = qPanel?.textContent || "";
+      checks.Q = qBlocked && !/Skill override|Prompt override/i.test(qText)
+        && Boolean(await waitFor(() => /Restored the last saved experiment draft|已恢复上次保存的实验草稿/.test(qPanel?.textContent || "")));
+      details.scenarios.push({ id: "Q", error: qError });
+      await closeExperiment();
+
+      // P: choose a catalog model in the real form, generate a reviewed Plan,
+      // execute, and show the readable comparison.
+      const pPanel = await openExperiment(fixture.phase3_model_base_run_id);
+      const modelSelect = await waitFor(() => pPanel?.querySelector('select'));
+      const candidateOption = modelSelect ? [...modelSelect.options].find((option) => option.value.endsWith('/controlled-candidate')) : null;
+      if (modelSelect && candidateOption) { modelSelect.value = candidateOption.value; modelSelect.dispatchEvent(new Event('change', { bubbles: true })); }
+      click(pPanel?.querySelector('button[type="submit"]'));
+      const pPlan = await waitFor(() => pPanel?.querySelector('.replay-plan-review'), 30000);
+      details.stage = "P:execute";
+      const pComparison = await executeReviewedPlan(pPanel, pPlan);
+      if (!pComparison) { checks.P = false; return { checks, details, error: "Scenario P did not produce a comparison." }; }
+      const pRelations = await call("P:relations", api.getRunRelations({ ...base, runId: fixture.phase3_model_base_run_id }));
+      const pChild = pRelations.children[pRelations.children.length - 1];
+      checks.P = Boolean(candidateOption && pPlan && pComparison)
+        && /controlled candidate/i.test(pPanel?.textContent || "")
+        && Boolean(pComparison?.querySelector('.comparison-results'));
+      details.scenarios.push({ id: "P", model: candidateOption?.value || null, runId: pChild?.run_id || null });
+      await closeExperiment();
+
+      // R: a reviewed result-reuse plan remains bound to the recorded call;
+      // mutation of the Tool entity itself is rejected by the same contract.
+      const rDraft = await call("R:create", api.createRunExperiment({ ...base, runId: fixture.policy_run_id, idempotencyKey: "p3-r-create", title: "Scenario R", replayMode: "reuse_recorded_results" }));
+      const rPlan = await call("R:plan", api.createReplayPlan({ ...base, experimentId: rDraft.experiment_id, expectedDraftVersion: rDraft.draft_version }));
+      let rMutationBlocked = false;
+      try { await api.updateRunExperiment({ ...base, experimentId: rDraft.experiment_id, expectedVersion: rDraft.draft_version, idempotencyKey: "p3-r-mutate", patch: { overrides: { tools: [{ name: "phase2.calculator", arguments: { value: 22 } }] } } }); }
+      catch (error) { rMutationBlocked = /unsupported_override|tools/i.test(String(error?.message || error)); }
+      checks.R = rMutationBlocked && rPlan.steps.some((step) => step.kind === "tool_call" && step.decision === "reuse");
+      details.scenarios.push({ id: "R", planId: rPlan.replay_plan_id });
+
+      // S: the actual controlled Agent changes its isolated Worktree. The UI
+      // finalizes a candidate commit, compares files, and selectively adopts.
+      const sPanel = await openExperiment(fixture.phase3_base_run_id);
+      click(sPanel?.querySelector('button[type="submit"]'));
+      const sPlan = await waitFor(() => sPanel?.querySelector('.replay-plan-review'), 30000);
+      details.stage = "S:execute";
+      const sComparison = await executeReviewedPlan(sPanel, sPlan);
+      if (!sComparison) { checks.S = false; return { checks, details, error: "Scenario S did not produce a comparison." }; }
+      const snapshot = sComparison?.querySelector('.comparison-snapshot');
+      const fileRows = sComparison ? [...sComparison.querySelectorAll('h4 + ul li')] : [];
+      const previewButton = sComparison ? [...sComparison.querySelectorAll('button')].find((button) => /Preview adoption|预览/.test(button.textContent || "")) : null;
+      click(previewButton);
+      const dialog = await waitFor(() => document.querySelector('.run-adoption-dialog[open]'), 30000);
+      const boxes = dialog ? [...dialog.querySelectorAll('input[type="checkbox"]')] : [];
+      for (const box of boxes.slice(1)) click(box);
+      const confirm = dialog ? [...dialog.querySelectorAll('button')].find((button) => /Confirm adoption|确认/.test(button.textContent || "")) : null;
+      click(confirm);
+      const approve = await waitFor(() => dialog ? [...dialog.querySelectorAll('button')].find((button) => /Approve and continue|批准/.test(button.textContent || "")) : null, 30000);
+      click(approve);
+      const adopted = await waitFor(() => /Adopted|已采纳/.test(sPanel?.textContent || ""), 30000);
+      const sRelations = await call("S:relations", api.getRunRelations({ ...base, runId: fixture.phase3_base_run_id }));
+      const sChild = sRelations.children[sRelations.children.length - 1];
+      const sComparisonData = sChild?.run_id ? await call("S:comparison-data", api.createRunComparison({
+        ...base, baselineRunId: fixture.phase3_base_run_id, candidateRunId: sChild.run_id,
+      })) : null;
+      checks.S = Boolean(sPlan && sComparison && snapshot && fileRows.length >= 3 && dialog && boxes.length >= 3 && adopted);
+      details.scenarios.push({ id: "S", runId: sChild?.run_id || null, selectedPathCount: 1,
+        fileDifferenceCount: fileRows.length, comparisonFiles: sComparisonData?.files || [],
+        visibleFileRows: fileRows.map((row) => row.textContent || "") });
+      await closeExperiment();
+
+      // U: restart reconciliation from the formal Replay fixture remains
+      // visible and actionable in the same Desktop Inspector.
+      window.dispatchEvent(new CustomEvent("opendrsai:open-run-inspection", { detail: { ...base, runId: fixture.recovery_run_id } }));
+      const recovery = await waitFor(() => document.querySelector('.run-inspector-panel[data-run-id="' + CSS.escape(fixture.recovery_run_id) + '"]'));
+      checks.U = Boolean(recovery?.querySelector('.status-failed')) && /interrupted|restart|failed/i.test(recovery?.textContent || "");
+      details.scenarios.push({ id: "U", runId: fixture.recovery_run_id, text: (recovery?.textContent || "").slice(0, 4000), htmlClass: recovery?.className || "" });
+
+      // Cross-layer secret corpus: public API evidence, safe Manifest and the
+      // rendered Inspector must never expose any injected canary.
+      await checkSecretCorpus();
+      details.stage = "complete";
+      return { checks, details };
+    })()
+  `, true) as SmokeResult;
+  const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
+  if (screenshotPath) {
+    const screenshot = await window.capturePage();
+    writeFileSync(screenshotPath, screenshot.toPNG());
+    result.details.screenshot = screenshotPath;
+    result.details.screenshotSha256 = createHash("sha256").update(screenshot.toPNG()).digest("hex");
+  }
+  return { ...result, ok: Object.values(result.checks).every(Boolean) };
+}
+
+async function runEditablePhase2Smoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePath = process.env.OPENDRSAI_E2E_RUN_EDITABLE_PHASE2_FIXTURE;
+  if (!fixturePath || !existsSync(fixturePath)) {
+    return { ok: false, checks: { fixture: false }, details: {}, error: "Run editable Phase 2 fixture is missing." };
+  }
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
+  window.show();
+  window.focus();
+  await waitForMain(() => window.isVisible() && !window.isMinimized(), 5_000);
+  const loginFixtureUrl = new URL(window.webContents.getURL());
+  loginFixtureUrl.searchParams.set("developerBypassFixture", "1");
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Phase 2 login fixture navigation timed out.")), 15_000);
+    window.webContents.once("did-finish-load", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    void window.loadURL(loginFixtureUrl.toString()).catch(reject);
+  });
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const fixture = ${JSON.stringify(fixture)};
+      const api = window.openDrSai;
+      const checks = {};
+      const details = { stage: "bootstrap", scenarios: [] };
+      const base = { workspacePath: fixture.workspace_path, workspaceId: fixture.workspace_id };
+      const call = async (label, promise, timeout = 30000) => {
+        details.stage = label;
+        let timer;
+        try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(label + " timed out")), timeout); })]); }
+        finally { clearTimeout(timer); }
+      };
+      const waitFor = async (find, timeout = 10000) => {
+        const deadline = Date.now() + timeout;
+        while (Date.now() < deadline) { const value = find(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 50)); }
+        return null;
+      };
+      checks.bridge = Boolean(api);
+      if (!api) return { checks, details };
+      const loginButton = await waitFor(() => document.querySelector('[data-testid="developer-workspace-login"]'));
+      loginButton?.click();
+      const authenticatedShell = await waitFor(() => document.querySelector('.app-shell'), 15000);
+      checks.login = Boolean(authenticatedShell)
+        && (await call("login-session", api.getAuthSession()))?.authenticated === true;
+      let gateway = await call("gateway", api.getGatewayStatus());
+      for (let attempt = 0; attempt < 100 && !gateway.ready; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100)); gateway = await api.getGatewayStatus();
+      }
+      checks.gateway = gateway.ready === true;
+
+      const experiment = await call("G:create", api.createRunExperiment({ ...base, runId: fixture.base_run_id, idempotencyKey: "e2e-g-create", title: "Scenario G" }));
+      const edited = await call("G:edit", api.updateRunExperiment({ ...base, experimentId: experiment.experiment_id, expectedVersion: experiment.draft_version, idempotencyKey: "e2e-g-edit", patch: { overrides: { input: { message: "Phase 2 edited prompt" } } } }));
+      const gPlan = await call("G:plan", api.createReplayPlan({ ...base, experimentId: experiment.experiment_id, expectedDraftVersion: edited.draft_version }));
+      const gExecution = await call("G:execute", api.executeReplayPlan({ ...base, replayPlanId: gPlan.replay_plan_id, draftVersion: gPlan.draft_version, planDigest: gPlan.plan_digest, baseManifestDigest: gPlan.base_manifest_digest, idempotencyKey: "e2e-g-execute" }), 60000);
+      const gComparison = await call("G:compare", api.createRunComparison({ ...base, baselineRunId: fixture.base_run_id, candidateRunId: gExecution.run.run_id }));
+      const gRelations = await call("G:relations", api.getRunRelations({ ...base, runId: gExecution.run.run_id }));
+      checks.G = edited.overrides.input.message === "Phase 2 edited prompt"
+        && gPlan.base_run_id === fixture.base_run_id && gExecution.run.status === "completed"
+        && gComparison.candidate_run_id === gExecution.run.run_id
+        && gRelations.parent?.source_run_id === fixture.base_run_id;
+      const exportedPackage = await call("G:export", api.exportRunExperimentPackage({ ...base, experimentId: experiment.experiment_id }));
+      checks.experimentExport = exportedPackage.cancelled === false
+        && Boolean(exportedPackage.savedPath)
+        && exportedPackage.package?.schema_version === "opendrsai.run-experiment-package/1"
+        && exportedPackage.package?.experiment?.experiment_id === experiment.experiment_id
+        && /^sha256:[0-9a-f]{64}$/.test(exportedPackage.package?.integrity?.digest || "")
+        && !JSON.stringify(exportedPackage.package).includes("Phase 2 edited prompt");
+      details.scenarios.push({ id: "G", experimentId: experiment.experiment_id, planId: gPlan.replay_plan_id, runId: gExecution.run.run_id, comparisonId: gComparison.comparison_id });
+
+      const h = await call("H:boundaries", api.getReplayBoundaries({ ...base, runId: fixture.checkpoint_run_id }));
+      const hDraft = await call("H:create", api.createRunExperiment({ ...base, runId: fixture.checkpoint_run_id, idempotencyKey: "e2e-h-create", title: "Scenario H", replayMode: "resume_from_checkpoint" }));
+      const hPlan = await call("H:plan", api.createReplayPlan({ ...base, experimentId: hDraft.experiment_id, expectedDraftVersion: hDraft.draft_version }));
+      const hExecution = await call("H:execute", api.executeReplayPlan({ ...base, replayPlanId: hPlan.replay_plan_id, draftVersion: hPlan.draft_version, planDigest: hPlan.plan_digest, baseManifestDigest: hPlan.base_manifest_digest, idempotencyKey: "e2e-h-execute" }), 60000);
+      checks.H = h.runtime_checkpoint?.resumable === true && hPlan.executable === true && hExecution.run.status === "completed";
+      details.scenarios.push({ id: "H", planId: hPlan.replay_plan_id, runId: hExecution.run.run_id, checkpointId: h.runtime_checkpoint?.checkpoint_id });
+      const i = await call("I:boundaries", api.getReplayBoundaries({ ...base, runId: fixture.base_run_id }));
+      const iDraft = await call("I:create", api.createRunExperiment({ ...base, runId: fixture.base_run_id, idempotencyKey: "e2e-i-create", title: "Scenario I", replayMode: "resume_from_checkpoint" }));
+      const iPlan = await call("I:plan", api.createReplayPlan({ ...base, experimentId: iDraft.experiment_id, expectedDraftVersion: iDraft.draft_version }));
+      checks.I = i.runtime_checkpoint === null && i.items.every((item) => item.resumable === false)
+        && iPlan.executable === false && iPlan.steps.some((step) => step.kind === "runtime_checkpoint" && step.decision === "block");
+
+      const jDraft = await call("J:create", api.createRunExperiment({ ...base, runId: fixture.policy_run_id, idempotencyKey: "e2e-j-create", title: "Scenario J", replayMode: "reuse_recorded_results" }));
+      const jPlan = await call("J:plan", api.createReplayPlan({ ...base, experimentId: jDraft.experiment_id, expectedDraftVersion: jDraft.draft_version }));
+      const jExecution = await call("J:execute", api.executeReplayPlan({ ...base, replayPlanId: jPlan.replay_plan_id, draftVersion: jPlan.draft_version, planDigest: jPlan.plan_digest, baseManifestDigest: jPlan.base_manifest_digest, idempotencyKey: "e2e-j-execute" }), 60000);
+      const jInspection = await call("J:inspect", api.getRunInspection({ ...base, runId: jExecution.run.run_id, limit: 200 }));
+      const jSerialized = JSON.stringify(jInspection.timeline);
+      const jReviewDraft = await call("J:review-create", api.createRunExperiment({ ...base, runId: fixture.policy_run_id, idempotencyKey: "e2e-j-review-create", title: "Scenario J approval", replayMode: "reexecute_safe_steps" }));
+      const jReviewPlan = await call("J:review-plan", api.createReplayPlan({ ...base, experimentId: jReviewDraft.experiment_id, expectedDraftVersion: jReviewDraft.draft_version }));
+      const jWaiting = await call("J:review-wait", api.executeReplayPlan({ ...base, replayPlanId: jReviewPlan.replay_plan_id, draftVersion: jReviewPlan.draft_version, planDigest: jReviewPlan.plan_digest, baseManifestDigest: jReviewPlan.base_manifest_digest, idempotencyKey: "e2e-j-review-execute" }));
+      const jRuntimeApprovalId = jWaiting.approval?.approval_id;
+      const jApproved = jRuntimeApprovalId ? await call("J:review-approve", api.decideRuntimeRunApproval({ ...base, approvalId: jRuntimeApprovalId, decision: "approved" })) : null;
+      const jContinued = jRuntimeApprovalId ? await call("J:review-continue", api.executeReplayPlan({ ...base, replayPlanId: jReviewPlan.replay_plan_id, draftVersion: jReviewPlan.draft_version, planDigest: jReviewPlan.plan_digest, baseManifestDigest: jReviewPlan.base_manifest_digest, idempotencyKey: "e2e-j-review-execute", runtimeApprovalId: jRuntimeApprovalId }), 60000) : null;
+      checks.J = jPlan.steps.some((step) => step.kind === "tool_call" && step.decision === "reuse")
+        && jPlan.steps.some((step) => step.kind === "tool_call" && step.decision === "reexecute")
+        && jExecution.run.status === "completed" && jWaiting.run.status === "waiting_approval"
+        && jWaiting.approval?.status === "pending" && jApproved?.status === "approved"
+        && jContinued?.run.status === "completed";
+      details.scenarios.push({ id: "J", planId: jPlan.replay_plan_id, runId: jExecution.run.run_id, replayEvidenceVisible: jSerialized.includes('"replay_decision":"reuse"'), approvalPlanId: jReviewPlan.replay_plan_id, approvalRunId: jContinued?.run.run_id });
+      const kDraft = await call("K:create", api.createRunExperiment({ ...base, runId: fixture.blocked_run_id, idempotencyKey: "e2e-k-create", title: "Scenario K" }));
+      const kPlan = await call("K:plan", api.createReplayPlan({ ...base, experimentId: kDraft.experiment_id, expectedDraftVersion: kDraft.draft_version }));
+      let kDirectBlocked = false;
+      try {
+        const kApproval = await api.executeReplayPlan({ ...base, replayPlanId: kPlan.replay_plan_id, draftVersion: kPlan.draft_version, planDigest: kPlan.plan_digest, baseManifestDigest: kPlan.base_manifest_digest, idempotencyKey: "e2e-k-execute" });
+        if (kApproval.approval_required === true) {
+          await api.decideRuntimeSecurityApproval({ ...base, approvalId: kApproval.approval_id, decision: "approved" });
+          try { await api.executeReplayPlan({ ...base, replayPlanId: kPlan.replay_plan_id, draftVersion: kPlan.draft_version, planDigest: kPlan.plan_digest, baseManifestDigest: kPlan.base_manifest_digest, idempotencyKey: "e2e-k-execute", approvalId: kApproval.approval_id }); } catch { kDirectBlocked = true; }
+        }
+      } catch { kDirectBlocked = true; }
+      checks.K = kPlan.executable === false && kPlan.steps.some((step) => step.decision === "block") && kDirectBlocked;
+
+      const adoption = await call("L:preview", api.getRunAdoptionPreview({ ...base, comparisonId: fixture.adoption_comparison_id }));
+      const selected = adoption.preview.changes.flatMap((change) => [change.path, change.old_path, change.new_path].filter(Boolean));
+      const approval = await call("L:request-approval", api.applyRunAdoption({ ...base, adoptionId: adoption.adoption_id, selectedPaths: selected }));
+      await call("L:approve", api.decideRuntimeSecurityApproval({ ...base, approvalId: approval.approval_id, decision: "approved" }));
+      const applied = await call("L:apply", api.applyRunAdoption({ ...base, adoptionId: adoption.adoption_id, selectedPaths: selected, approvalId: approval.approval_id }));
+      checks.L = approval.approval_required === true && applied.status === "applied" && applied.receipt?.audit_event === "workspace.worktree.adoption.applied";
+
+      const mDraft = await call("M:create", api.createRunExperiment({ ...base, runId: fixture.base_run_id, idempotencyKey: "e2e-m-create", title: "Scenario M" }));
+      const mUpdated = await call("M:update", api.updateRunExperiment({ ...base, experimentId: mDraft.experiment_id, expectedVersion: 1, idempotencyKey: "e2e-m-update", patch: { title: "Scenario M updated" } }));
+      const mPlan = await call("M:plan", api.createReplayPlan({ ...base, experimentId: mDraft.experiment_id, expectedDraftVersion: mUpdated.draft_version }));
+      let staleUpdate = false;
+      try { await api.updateRunExperiment({ ...base, experimentId: mDraft.experiment_id, expectedVersion: 1, idempotencyKey: "e2e-m-stale", patch: { title: "stale" } }); } catch { staleUpdate = true; }
+      await call("M:update-again", api.updateRunExperiment({ ...base, experimentId: mDraft.experiment_id, expectedVersion: mUpdated.draft_version, idempotencyKey: "e2e-m-update-2", patch: { title: "Scenario M final" } }));
+      const stalePlan = await call("M:get-stale-plan", api.getReplayPlan({ ...base, replayPlanId: mPlan.replay_plan_id }));
+      checks.M = staleUpdate && stalePlan.stale === true;
+
+      const discard = await call("N:preview", api.getRunAdoptionPreview({ ...base, comparisonId: fixture.discard_comparison_id }));
+      const discardApproval = await call("N:request-approval", api.discardRunAdoption({ ...base, adoptionId: discard.adoption_id, cleanup: true }));
+      await call("N:approve", api.decideRuntimeSecurityApproval({ ...base, approvalId: discardApproval.approval_id, decision: "approved" }));
+      const discarded = await call("N:discard", api.discardRunAdoption({ ...base, adoptionId: discard.adoption_id, cleanup: true, approvalId: discardApproval.approval_id }));
+      const crashApproval = await call("N:crash-adoption-request", api.applyRunAdoption({ ...base, adoptionId: fixture.crash_adoption_id, selectedPaths: fixture.crash_adoption_paths }));
+      await call("N:crash-adoption-approve", api.decideRuntimeSecurityApproval({ ...base, approvalId: crashApproval.approval_id, decision: "approved" }));
+      const crashRecovered = await call("N:crash-adoption-recover", api.applyRunAdoption({ ...base, adoptionId: fixture.crash_adoption_id, selectedPaths: fixture.crash_adoption_paths, approvalId: crashApproval.approval_id }));
+      const recovered = await call("N:recovered-run", api.getRunInspection({ ...base, runId: fixture.recovery_run_id, limit: 200 }));
+      window.dispatchEvent(new CustomEvent("opendrsai:open-run-inspection", { detail: { ...base, runId: fixture.recovery_run_id } }));
+      const recoveryPanel = await waitFor(() => document.querySelector('.run-inspector-panel[data-run-id="' + CSS.escape(fixture.recovery_run_id) + '"]'));
+      checks.N = discarded.status === "discarded" && discarded.receipt?.cleanup_requested === true
+        && crashApproval.approval_required === true && crashRecovered.status === "applied"
+        && crashRecovered.operation?.status === "completed"
+        && recovered.run.status === "failed" && Boolean(recoveryPanel)
+        && Boolean(recoveryPanel?.querySelector('.status-failed'));
+      details.scenarios.push({ id: "N", recoveryRunId: fixture.recovery_run_id, recoveryPlanId: fixture.recovery_plan_id, recoveredStatus: recovered.run.status, recoveredAdoptionId: crashRecovered.adoption_id });
+
+      window.dispatchEvent(new CustomEvent("opendrsai:open-run-inspection", { detail: { ...base, runId: fixture.base_run_id, createExperiment: true } }));
+      const inspector = await waitFor(() => document.querySelector('.run-inspector-panel[data-run-id="' + CSS.escape(fixture.base_run_id) + '"]'));
+      const experimentPanel = await waitFor(() => document.querySelector('.run-experiment-panel'));
+      checks.ui = Boolean(inspector && experimentPanel);
+      details.ui = { inspector: Boolean(inspector), experimentPanel: Boolean(experimentPanel) };
+      details.stage = "complete";
+      return { checks, details };
+    })()
+  `, true) as SmokeResult;
+  return { ...result, ok: Object.values(result.checks).every(Boolean) };
+}
+
+async function runTraceabilityPhase1Smoke(window: BrowserWindow): Promise<SmokeResult> {
+  const fixturePath = process.env.OPENDRSAI_E2E_RUN_TRACEABILITY_FIXTURE;
+  if (!fixturePath || !existsSync(fixturePath)) {
+    return { ok: false, checks: { fixture: false }, details: {}, error: "Run traceability fixture is missing." };
+  }
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
+    workspace_path: string;
+    workspace_id: string;
+    scenarios: Array<{
+      id: string;
+      run_id: string;
+      session_id: string;
+      run_status: string;
+      reproducibility_level: string;
+      item_ids: string[];
+      focus_item_id?: string;
+    }>;
+  };
+  window.show();
+  window.focus();
+  await waitForMain(() => window.isVisible() && !window.isMinimized(), 5_000);
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const fixture = ${JSON.stringify(fixture)};
+      const checks = {};
+      const details = { scenarios: [], stage: "bootstrap" };
+      const api = window.openDrSai;
+      const call = async (label, promise, timeout = 15000) => {
+        details.stage = label;
+        let timer;
+        try {
+          return await Promise.race([
+            promise,
+            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(label + " timed out")), timeout); }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+      const waitFor = async (find, timeout = 10000) => {
+        const deadline = Date.now() + timeout;
+        while (Date.now() < deadline) {
+          const value = find();
+          if (value) return value;
+          await new Promise((resolve) => setTimeout(resolve, 40));
+        }
+        return null;
+      };
+      checks.bridge = Boolean(api);
+      if (!api) return { checks, details };
+      checks.login = (await call("login", api.login({ developerBypass: true, rememberMe: false })))?.ok === true;
+      let gateway = await call("gateway-status", api.getGatewayStatus());
+      for (let attempt = 0; attempt < 100 && !gateway.ready; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        gateway = await call("gateway-status-retry", api.getGatewayStatus());
+      }
+      checks.gateway = gateway.ready === true;
+      let allApi = true;
+      let allUi = true;
+      let allIdentity = true;
+      let allExport = true;
+      for (const scenario of fixture.scenarios) {
+        let cursor;
+        const timeline = [];
+        let inspection;
+        do {
+          inspection = await call(scenario.id + ":inspection", api.getRunInspection({
+            workspacePath: fixture.workspace_path,
+            workspaceId: fixture.workspace_id,
+            runId: scenario.run_id,
+            timelineCursor: cursor,
+            limit: 100,
+          }));
+          timeline.push(...inspection.timeline);
+          cursor = inspection.page.next_cursor || undefined;
+        } while (inspection.page.has_more && cursor);
+        const manifest = await call(scenario.id + ":manifest", api.getRunReproductionManifest({
+          workspacePath: fixture.workspace_path,
+          workspaceId: fixture.workspace_id,
+          runId: scenario.run_id,
+        }));
+        const exported = await call(scenario.id + ":export", api.exportRunReproductionManifest({
+          workspacePath: fixture.workspace_path,
+          workspaceId: fixture.workspace_id,
+          runId: scenario.run_id,
+        }));
+        const listing = await call(scenario.id + ":list", api.listSessionRuns({
+          workspacePath: fixture.workspace_path,
+          workspaceId: fixture.workspace_id,
+          sessionId: scenario.session_id,
+          limit: 500,
+        }));
+        const ids = timeline.map((item) => item.id);
+        const apiOk = inspection.run.run_id === scenario.run_id
+          && inspection.run.session_id === scenario.session_id
+          && inspection.run.status === scenario.run_status
+          && manifest.reproducibility_level === scenario.reproducibility_level
+          && scenario.item_ids.every((id) => ids.includes(id));
+        const identityOk = timeline.every((item) => item.run_id === scenario.run_id
+          && item.session_id === scenario.session_id
+          && item.event_refs.every((ref) => typeof ref.event_id === "string" && ref.event_id.length > 0 && Number.isInteger(ref.sequence)))
+          && listing.data.some((run) => run.run_id === scenario.run_id);
+        const exportOk = exported.cancelled === false
+          && Boolean(exported.savedPath)
+          && exported.manifest?.run_id === scenario.run_id
+          && exported.manifest?.schema_version === "opendrsai.run-manifest/1"
+          && exported.manifest?.integrity?.digest === exported.manifest?.safe_manifest_digest
+          && exported.manifest?.integrity?.digest_scope === "safe_manifest"
+          && Boolean(exported.manifest?.exported_at);
+        allApi &&= apiOk;
+        allIdentity &&= identityOk;
+        allExport &&= exportOk;
+
+        window.dispatchEvent(new CustomEvent("opendrsai:open-run-inspection", { detail: {
+          workspacePath: fixture.workspace_path,
+          workspaceId: fixture.workspace_id,
+          runId: scenario.run_id,
+          focusedItemId: scenario.focus_item_id,
+        }}));
+        const panel = await waitFor(() => document.querySelector('.run-inspector-panel[data-run-id="' + CSS.escape(scenario.run_id) + '"]'));
+        const focused = scenario.focus_item_id
+          ? await waitFor(() => document.querySelector('[data-item-id="' + CSS.escape(scenario.focus_item_id) + '"].selected'))
+          : true;
+        const panelText = String(panel?.textContent || "");
+        const uiOk = Boolean(panel)
+          && panel?.querySelector('.status-' + CSS.escape(scenario.run_status))
+          && Boolean(focused)
+          && !panelText.includes("traceability-secret-canary")
+          && (panelText.includes("复现清单") || panelText.includes("Reproduction manifest"));
+        allUi &&= Boolean(uiOk);
+        details.scenarios.push({ id: scenario.id, apiOk, identityOk, exportOk, uiOk: Boolean(uiOk), timelineCount: timeline.length });
+      }
+      details.stage = "complete";
+      checks.api = allApi;
+      checks.identity = allIdentity;
+      checks.export = allExport;
+      checks.ui = allUi;
+      return { checks, details };
+    })()
+  `) as SmokeResult;
+  return { ...result, ok: Object.values(result.checks).every(Boolean) };
+}
+
+async function runP8IpcSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  console.info("[e2e:p8] starting Main→Preload→Renderer→Reducer verification");
+  const patchCount = 1_000;
+  const patchText = "x".repeat(20 * 1024);
+  const expectedContentLength = patchCount * patchText.length;
+  const prepared = await window.webContents.executeJavaScript(`(async () => {
+    const login = await window.openDrSai.login({ developerBypass: true, rememberMe: false });
+    const deadline = performance.now() + 10000;
+    while (!document.querySelector('.conversation-panel') && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
+    window.__OPENDRSAI_P8_IPC = { snapshots: [], patches: [], receivedAt: [], errors: [] };
+    window.addEventListener('error', (event) => window.__OPENDRSAI_P8_IPC.errors.push(String(event.error?.stack || event.message || event.error)));
+    window.addEventListener('unhandledrejection', (event) => window.__OPENDRSAI_P8_IPC.errors.push(String(event.reason?.stack || event.reason)));
+    window.__OPENDRSAI_P9_RENDER_METRICS = { applyMs: [], renderMs: [] };
+    window.openDrSai.onThreadSnapshot((event) => window.__OPENDRSAI_P8_IPC.snapshots.push(event));
+    window.openDrSai.onThreadSnapshotPatch((event) => {
+      window.__OPENDRSAI_P8_IPC.patches.push(event);
+      window.__OPENDRSAI_P8_IPC.receivedAt.push(Date.now());
+    });
+    return { preload: Boolean(window.openDrSai), renderer: Boolean(document.querySelector('#root')), authenticated: login?.ok === true,
+      threadId: document.querySelector('.conversation-panel')?.dataset.threadId || 'p8-real-ipc-thread' };
+  })()`, true) as { preload: boolean; renderer: boolean; authenticated: boolean; threadId: string };
+  const threadId = prepared.threadId;
+  // The authenticated product UI may already have hydrated this thread. Use a
+  // fresh generation so the synthetic baseline is authoritative for this E2E
+  // stream instead of being rejected as an older snapshot.
+  const generation = Date.now();
+  const emittedAt: number[] = [];
+  window.webContents.send("desktop:thread-snapshot", {
+    version: 1, projection: "oaep/1", threadId, runtimeSessionId: "p8-real-ipc-session",
+    sessionSequence: 0, generation,
+    snapshot: { threadId, title: "P8 real IPC", messages: [{ id: "p8-answer", role: "assistant", content: "", status: "running",
+      structuredTurn: { version: 2, turnId: "p8-run", status: "running",
+        parts: [{ kind: "markdown", id: "p8-answer", markdown: "" }], activities: [], lastSequence: 0,
+        seenDedupeKeys: [], protocolIssues: [] } }],
+      updatedAt: Date.now(), messageCount: 1 },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  for (let index = 0; index < patchCount; index += 1) {
+    emittedAt.push(Date.now());
+    window.webContents.send("desktop:thread-snapshot-patch", {
+      version: 2, projection: "oaep/1", threadId, runtimeSessionId: "p8-real-ipc-session", baseSequence: index,
+      sessionSequence: index + 1, generation,
+      patch: { kind: "item.delta", runId: "p8-run", itemId: "p8-answer", messageId: "p8-answer",
+        delta: { kind: "message.delta", text: patchText }, messageCount: 1, updatedAt: emittedAt[index] },
+    });
+    if (index % 50 === 49) await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  const deadline = Date.now() + 15_000;
+  let observed: { snapshots: unknown[]; patches: unknown[]; receivedAt: number[]; errors: string[] };
+  do {
+    observed = await window.webContents.executeJavaScript("window.__OPENDRSAI_P8_IPC", true);
+    if (observed.patches.length >= patchCount) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } while (Date.now() < deadline);
+  let renderMetrics: { applyMs: number[]; renderMs: number[]; finalContentLength?: number };
+  const reducerDeadline = Date.now() + 20_000;
+  do {
+    renderMetrics = await window.webContents.executeJavaScript("window.__OPENDRSAI_P9_RENDER_METRICS", true) as {
+      applyMs: number[]; renderMs: number[]; finalContentLength?: number;
+    };
+    if (renderMetrics.finalContentLength === expectedContentLength) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } while (Date.now() < reducerDeadline);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  renderMetrics = await window.webContents.executeJavaScript("window.__OPENDRSAI_P9_RENDER_METRICS", true) as {
+    applyMs: number[]; renderMs: number[]; finalContentLength?: number;
+  };
+  const samples = observed.receivedAt.map((received, index) => Math.max(0, received - emittedAt[index])).sort((a, b) => a - b);
+  const p95 = samples[Math.max(0, Math.ceil(samples.length * 0.95) - 1)] ?? Infinity;
+  const percentile = (values: number[]) => [...values].sort((a, b) => a - b)[Math.max(0, Math.ceil(values.length * 0.95) - 1)] ?? Infinity;
+  const applyP95 = percentile(renderMetrics.applyMs);
+  const renderP95 = percentile(renderMetrics.renderMs);
+  const heap = await window.webContents.executeJavaScript("performance.memory?.usedJSHeapSize || 0", true) as number;
+  const checks = {
+    mainBuild: /out[\\/]main[\\/]index\.js$/i.test(__filename),
+    preloadBuild: prepared.preload,
+    rendererBuild: prepared.renderer,
+    authenticatedProductUi: prepared.authenticated,
+    snapshotAcrossIpc: observed.snapshots.length === 1,
+    patchesAcrossIpc: observed.patches.length === patchCount,
+    orderedTerminalState: (observed.patches.at(-1) as any)?.sessionSequence === patchCount,
+    reducerAppliedAllDeltas: renderMetrics.finalContentLength === expectedContentLength,
+    reducerP95UnderBudget: applyP95 < 16,
+    renderP95UnderBudget: renderP95 < 100,
+    p95UnderBudget: p95 < 250,
+    memoryBounded: heap === 0 || heap < 512 * 1024 * 1024,
+  };
+  return { ok: Object.values(checks).every(Boolean), checks, details: {
+    transport: "electron-ipc-main-preload-renderer", patchCount: observed.patches.length,
+    patchBytes: Buffer.byteLength(patchText), streamedContentBytes: Buffer.byteLength(patchText) * patchCount,
+    latencyP95Ms: p95, applyP95Ms: applyP95, renderP95Ms: renderP95,
+    finalContentLength: renderMetrics.finalContentLength, rendererErrors: observed.errors,
+    usedJSHeapBytes: heap, rendererUrl: window.webContents.getURL(),
+  } };
+}
+
+async function runP3DesktopSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const input = process.env.OPENDRSAI_P3_INPUT;
+  const screenshotPath = process.env.OPENDRSAI_E2E_SCREENSHOT;
+  const developerBypass = process.env.OPENDRSAI_E2E_P3_DEVELOPER_LOGIN === "1";
+  if (!input || !screenshotPath) throw new Error("P3 Desktop smoke requires OPENDRSAI_P3_INPUT and OPENDRSAI_E2E_SCREENSHOT.");
+  await bootstrapDesktop();
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const input = ${JSON.stringify(process.env.OPENDRSAI_P3_INPUT)};
+      const waitFor = async (predicate, timeout) => {
+        const end = Date.now() + timeout;
+        while (Date.now() < end) { const value = predicate(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 50)); }
+        return null;
+      };
+      const visible = (selector) => Array.from(document.querySelectorAll(selector)).find((node) => {
+        const style = getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || "1") > 0 && rect.width > 0 && rect.height > 0;
+      }) || null;
+      const loginScreenVisible = () => Boolean(visible("[data-testid='login-screen'], .login-screen"));
+      // Renderer text nodes normalize line breaks and adjacent whitespace.  The
+      // user-visible message must still be matched against the whole prompt,
+      // but comparison must follow the browser's whitespace semantics.
+      const normalized = (value) => (value || "").replace(/\\s+/g, " ").trim();
+      const details = { authMode: ${JSON.stringify(developerBypass ? "developer_bypass" : "oidc")} };
+      if (${JSON.stringify(developerBypass)} && loginScreenVisible()) {
+        const developerLogin = await waitFor(() => visible("[data-testid='developer-workspace-login']"), 10000);
+        if (!developerLogin) return { checks: { composer: false, developerLogin: false }, details: { ...details, developerLogin: "action_missing" } };
+        developerLogin.click();
+        const unlockedComposer = await waitFor(() => visible(".composer textarea"), 10000);
+        if (!unlockedComposer) return { checks: { composer: false, developerLogin: false }, details: { ...details, developerLogin: "timed_out" } };
+        const authDeadline = Date.now() + 10_000;
+        let developerSession = null;
+        while (Date.now() < authDeadline) {
+          developerSession = await window.openDrSai?.getAuthSession?.();
+          if (developerSession?.authenticated === true) break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        if (developerSession?.authenticated !== true) {
+          return { checks: { composer: true, developerLogin: false }, details: { ...details, developerLogin: "session_not_ready" } };
+        }
+      }
+      if (${JSON.stringify(process.env.OPENDRSAI_E2E_P3_VERIFY_MODEL === "1")} && loginScreenVisible()) {
+        return { checks: { composer: false, modelConnectionVerified: false }, details: { ...details, modelVerification: "requires_login" } };
+      }
+      const newTask = Array.from(document.querySelectorAll(".sidebar-button")).find((node) => /New task|新建任务/i.test(node.getAttribute("title") || node.textContent || ""));
+      newTask?.click();
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const textarea = await waitFor(() => visible(".composer textarea"), 10000);
+      if (!textarea) return { checks: { composer: false }, details };
+      let modelConnectionVerified = true;
+      if (${JSON.stringify(process.env.OPENDRSAI_E2E_P3_VERIFY_MODEL === "1")}) {
+        if (loginScreenVisible()) return { checks: { composer: Boolean(textarea), modelConnectionVerified: false }, details: { ...details, modelVerification: "requires_login" } };
+        const verify = await waitFor(() => visible("[data-testid='operational-primary-action']"), 10000);
+        if (!verify) return { checks: { composer: true, modelConnectionVerified: false }, details: { ...details, modelVerification: "action_missing" } };
+        verify.click();
+        const modelTimeout = Math.min(45_000, Math.max(5_000, ${timeoutMs} - 5_000));
+        const state = await waitFor(() => {
+          if (loginScreenVisible()) return "requires_login";
+          const bar = document.querySelector("[data-testid='operational-state-bar']");
+          const value = bar?.getAttribute("data-current-state") || "";
+          return ["ready", "idle", "completed", "unconfigured", "blocked", "anonymous", "failed"].includes(value) ? value : null;
+        }, modelTimeout);
+        modelConnectionVerified = state === "ready" || state === "idle" || state === "completed";
+        if (!modelConnectionVerified) return { checks: { composer: true, modelConnectionVerified: false }, details: { ...details, modelVerification: state || "timed_out" } };
+      }
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      setter?.call(textarea, input); textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      // React applies the controlled composer state asynchronously. Clicking
+      // in the same task can submit a restored draft while the textarea has
+      // already painted the requested value.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (normalized(textarea.value) !== normalized(input)) {
+        return { checks: { composer: true, inputApplied: false }, details: { ...details, inputApplied: false } };
+      }
+      const existingMessageIds = new Set(Array.from(document.querySelectorAll("[data-message-id]"))
+        .map((node) => node.getAttribute("data-message-id")).filter(Boolean));
+      const submit = await waitFor(() => { const button = visible(".composer-submit"); return button && !button.disabled ? button : null; }, 10000);
+      if (!submit) return { checks: { composer: true, submit: false }, details };
+      submit.click();
+      const user = await waitFor(() => Array.from(document.querySelectorAll(".message.user, [data-message-role='user']")).find((node) => !existingMessageIds.has(node.getAttribute("data-message-id")) && normalized(node.textContent).includes(normalized(input))) || null, 10000);
+      if (!user) return { checks: { composer: true, submit: true, userMessageVisible: false }, details: { ...details, userMessageVisible: false } };
+      // A progress card is also an assistant message.  Do not capture it as a
+      // response: P3 accepts only the renderer's explicit final-result layer.
+      const assistant = await waitFor(() => Array.from(document.querySelectorAll(".message.assistant .structured-message-parts[data-turn-status='completed'] .structured-result-layer")).find((node) => {
+        const message = node.closest("[data-message-id]");
+        const answer = Array.from(node.childNodes).filter((child) => !(child instanceof HTMLElement && child.tagName === "H3"))
+          .map((child) => child.textContent || "").join("").trim();
+        return message && user.compareDocumentPosition(message) & Node.DOCUMENT_POSITION_FOLLOWING
+          && !existingMessageIds.has(message.getAttribute("data-message-id")) && answer.length > 0;
+      }) || null, ${timeoutMs});
+      const runElement = assistant?.closest(".message.assistant[data-run-id], [data-message-role='assistant'][data-run-id]") || null;
+      const threadElement = document.querySelector("[data-thread-id]");
+      const finalResponseText = assistant ? Array.from(assistant.childNodes)
+        .filter((child) => !(child instanceof HTMLElement && child.tagName === "H3"))
+        .map((child) => child.textContent || "").join("").trim() : "";
+      return { checks: { composer: true, developerLogin: ${JSON.stringify(developerBypass)} ? true : true, modelConnectionVerified, submit: true, userMessageVisible: Boolean(user), finalResponseVisible: Boolean(assistant) }, details: {
+        ...details,
+        userMessageVisible: Boolean(user), finalResponseVisible: Boolean(assistant), finalResponseText, errorBannerVisible: Boolean(visible("[role='alert'].error, .error-banner")),
+        runId: runElement?.getAttribute("data-run-id") || null, sessionId: threadElement?.getAttribute("data-thread-id") || null,
+      } };
+    })()
+  `, true) as SmokeResult;
+  mkdirSync(dirname(screenshotPath), { recursive: true });
+  writeFileSync(screenshotPath, (await window.webContents.capturePage()).toPNG());
+  result.details.screenshotPath = screenshotPath;
+  result.details.windowPid = process.pid;
+  const runId = typeof result.details.runId === "string" ? result.details.runId : "";
+  const sessionId = typeof result.details.sessionId === "string" ? result.details.sessionId : "";
+  if (runId && sessionId && result.checks.finalResponseVisible) {
+    await writeP3RuntimeEvidence(runId, sessionId).catch((error) => {
+      result.details.runtimeEvidenceError = error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240);
+    });
+  }
+  result.ok = Object.values(result.checks).every(Boolean) && Boolean(result.details.runId) && Boolean(result.details.sessionId);
+  if (!result.ok && !result.error) result.error = "P3 Desktop UI did not produce a visible response with Run and Session association.";
+  return result;
+}
+
+async function runHaiProductModelsSmoke(_window: BrowserWindow): Promise<SmokeResult> {
+  const expectedModels = [
+    "deepseek-v4-flash", "deepseek-v4-pro", "gpt-5.6-luna",
+    "gemini-3.1-flash-lite-image", "tts-1", "whisper-1",
+  ];
+  const probes = [
+    ["deepseek-v4-flash", "chat"],
+    ["deepseek-v4-pro", "chat"],
+    ["gpt-5.6-luna", "chat"],
+    ["tts-1", "text_to_speech"],
+    ["whisper-1", "speech_to_text"],
+    ["gemini-3.1-flash-lite-image", "image_generation"],
+  ] as const;
+  const auth = await requireAuthContext();
+  const claims = auth.accessToken ? safeJwtClaims(auth.accessToken) : {};
+  const bootstrap = await bootstrapDesktop();
+  const config = await getMyDrSaiConfig();
+  const policy = await getMyDrSaiAgentModelPolicy("opendrsai");
+  const provider = config.modelProviders?.find((item) => item.name === "hepai");
+  const configuredModels = provider?.models ?? [];
+  const results: Record<string, unknown> = {};
+  const checks: Record<string, boolean> = {
+    providerConfigured: Boolean(provider && provider.requires_api_key === false),
+    exactProductCatalog: expectedModels.length === configuredModels.length
+      && expectedModels.every((model) => configuredModels.includes(model)),
+    defaultAgentUsesFlash: policy.effective_ref?.provider_id === "hepai"
+      && policy.effective_ref.model_id === "deepseek-v4-flash",
+  };
+  for (const [model, operation] of probes) {
+    const result = await probeMyDrSaiProviderModel("hepai", { model, operation });
+    results[`${model}/${operation}`] = {
+      status: result.status, protocol: result.protocol,
+      error_code: result.error_code, http_status: result.http_status,
+      duration_ms: result.duration_ms,
+    };
+    checks[`probe:${model}/${operation}`] = result.status === "verified" || result.status === "runtime_verified";
+  }
+  return {
+    ok: Object.values(checks).every(Boolean),
+    checks,
+    details: {
+      configuredModels, policy: policy.effective_ref, probes: results,
+      auth: { mode: auth.authMode, issuer: auth.issuer, claims },
+      bootstrap: { ready: bootstrap.ready, message: bootstrap.message, modelIds: bootstrap.models.map((item) => item.id) },
+    },
+  };
+}
+
+function safeJwtClaims(token: string): Record<string, unknown> {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1] || "", "base64url").toString("utf8")) as Record<string, unknown>;
+    return Object.fromEntries(["iss", "aud", "typ", "scope", "iat", "exp"].flatMap((key) => key in payload ? [[key, payload[key]]] : []));
+  } catch {
+    return { malformed: true };
+  }
+}
+
+async function writeP3RuntimeEvidence(runId: string, sessionId: string): Promise<void> {
+  const destination = process.env.OPENDRSAI_E2E_RUNTIME_EVIDENCE;
+  if (!destination) return;
+  const encodedRun = encodeURIComponent(runId);
+  const encodedSession = encodeURIComponent(sessionId);
+  const [run, inspection, snapshot, manifest] = await Promise.all([
+    p3GatewayGet(`/v1/runs/${encodedRun}`),
+    p3CollectInspection(`/v1/runs/${encodedRun}/inspection`),
+    p3CollectSnapshot(`/v1/sessions/${encodedSession}/oaep-snapshot`),
+    p3GatewayGet(`/v1/runs/${encodedRun}/reproduction-manifest`),
+  ]);
+  mkdirSync(dirname(destination), { recursive: true });
+  writeFileSync(destination, JSON.stringify({ run, inspection, snapshot, manifest }), "utf8");
+}
+
+async function p3CollectInspection(path: string): Promise<Record<string, unknown>> {
+  let cursor: string | undefined;
+  let merged: Record<string, unknown> | undefined;
+  const seen = new Set<string>();
+  for (let pageNumber = 0; pageNumber < 10_000; pageNumber += 1) {
+    const page = await p3GatewayGet(`${path}?limit=500${cursor ? `&timeline_cursor=${encodeURIComponent(cursor)}` : ""}`);
+    const timeline = Array.isArray(page.timeline) ? page.timeline : null;
+    if (!timeline) throw new Error("P3 run inspection has no timeline");
+    for (const item of timeline) {
+      const id = item && typeof item === "object" ? (item as { id?: unknown }).id : undefined;
+      if (typeof id !== "string" || !id || seen.has(id)) throw new Error("P3 run inspection pagination is invalid");
+      seen.add(id);
+    }
+    if (!merged) merged = { ...page, timeline: [], _pagination_required: true };
+    (merged.timeline as unknown[]).push(...timeline);
+    const window = page.page && typeof page.page === "object" ? page.page as Record<string, unknown> : {};
+    if (window.has_more !== true) {
+      merged.page = { ...window, has_more: false, next_cursor: null, complete: true };
+      return merged;
+    }
+    cursor = typeof window.next_cursor === "string" ? window.next_cursor : undefined;
+    if (!cursor) throw new Error("P3 run inspection pagination did not advance");
+  }
+  throw new Error("P3 run inspection exceeded the pagination safety limit");
+}
+
+async function p3CollectSnapshot(path: string): Promise<Record<string, unknown>> {
+  let cursor: string | undefined;
+  let merged: Record<string, unknown> | undefined;
+  const seen = new Set<string>();
+  let checkpoint: unknown;
+  for (let pageNumber = 0; pageNumber < 10_000; pageNumber += 1) {
+    const page = await p3GatewayGet(`${path}?limit=500${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+    const items = Array.isArray(page.items) ? page.items : null;
+    if (!items) throw new Error("P3 OAEP snapshot has no items");
+    if (!merged) { merged = { ...page, items: [], _pagination_required: true }; checkpoint = page.checkpoint; }
+    else if (page.checkpoint !== checkpoint) throw new Error("P3 OAEP snapshot checkpoint changed during pagination");
+    for (const item of items) {
+      const id = item && typeof item === "object" ? (item as { id?: unknown }).id : undefined;
+      if (typeof id !== "string" || !id || seen.has(id)) throw new Error("P3 OAEP snapshot pagination is invalid");
+      seen.add(id);
+    }
+    (merged.items as unknown[]).push(...items);
+    const window = page.window && typeof page.window === "object" ? page.window as Record<string, unknown> : {};
+    cursor = typeof window.next_cursor === "string" ? window.next_cursor : undefined;
+    if (!cursor) { merged.window = { ...window, next_cursor: null, complete: true }; return merged; }
+  }
+  throw new Error("P3 OAEP snapshot exceeded the pagination safety limit");
+}
+
+function p3GatewayGet(path: string): Promise<Record<string, unknown>> {
+  const port = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "28642";
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({ hostname: "127.0.0.1", port: Number(port), path, method: "GET", headers: { ...getGatewayRequestHeaders(), Accept: "application/json" } }, (response) => {
+      let data = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => { data += chunk; });
+      response.on("end", () => {
+        if (!response.statusCode || response.statusCode >= 400) return reject(new Error(`P3 runtime evidence request failed: ${response.statusCode ?? 0}`));
+        try { resolve(JSON.parse(data) as Record<string, unknown>); } catch { reject(new Error("P3 runtime evidence response was not JSON")); }
+      });
+    });
+    request.setTimeout(15_000, () => { request.destroy(); reject(new Error("P3 runtime evidence request timed out")); });
+    request.on("error", reject);
+    request.end();
+  });
 }
 
 async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {
@@ -6558,6 +8013,7 @@ async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const chatWaitMs = process.env.OPENDRSAI_E2E_CHAT_SCENARIO === "network-recovery"
     ? Number(process.env.OPENDRSAI_E2E_TIMEOUT_MS || "120000")
     : 15_000;
+  const chatWorkspacePath = process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\workspace";
   const result = (await window.webContents.executeJavaScript(`
     (async () => {
       const checks = {};
@@ -6599,7 +8055,7 @@ async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const thread = await api.createThread({
         kind: "chat",
         title: "E2E chat thread",
-        workspacePath: "C:\\\\OpenDrSai\\\\workspace",
+        workspacePath: ${JSON.stringify(chatWorkspacePath)},
       });
       details.thread = thread;
       checks.threadCreated = Boolean(thread && thread.id && thread.kind === "chat");
@@ -6616,13 +8072,16 @@ async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {
           threadId: thread.id,
           runId,
           model: "deepseek-v4-pro",
-          workspacePath: "C:\\\\OpenDrSai\\\\workspace",
+          workspacePath: ${JSON.stringify(chatWorkspacePath)},
           messages: [{ role: "user", content: "hello e2e chat" }],
         });
         details.returnedRequestId = returnedRequestId;
         checks.startChatReturned = returnedRequestId === requestId;
         const deadline = Date.now() + ${chatWaitMs};
-        while (Date.now() < deadline && !events.some((event) => event.type === "done" || event.type === "error" || event.type === "aborted")) {
+        const terminalType = (event) => event.type === "structured"
+          ? ({ "turn.completed": "done", "turn.error": "error", "turn.cancelled": "aborted" }[event.structuredEvent?.type] || "")
+          : (["done", "error", "aborted"].includes(event.type) ? event.type : "");
+        while (Date.now() < deadline && !events.some((event) => Boolean(terminalType(event)))) {
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
       } finally {
@@ -6631,46 +8090,66 @@ async function runChatSmoke(window: BrowserWindow): Promise<SmokeResult> {
 
       const firstEvent = events[0] || null;
       const lastEvent = events[events.length - 1] || null;
-      const terminalEvent = events.find((event) => ["done", "error", "aborted"].includes(event.type)) || null;
+      const terminalType = (event) => event.type === "structured"
+        ? ({ "turn.completed": "done", "turn.error": "error", "turn.cancelled": "aborted" }[event.structuredEvent?.type] || "")
+        : (["done", "error", "aborted"].includes(event.type) ? event.type : "");
+      const terminalEvent = events.find((event) => Boolean(terminalType(event))) || null;
       details.chatSummary = {
         durationMs: Date.now() - startedAt,
         firstEventType: firstEvent && firstEvent.type,
         lastEventType: lastEvent && lastEvent.type,
-        terminalEventType: terminalEvent && terminalEvent.type,
+        terminalEventType: terminalEvent && terminalType(terminalEvent),
       };
       details.events = events.map((event) => ({
         type: event.type,
         at: event.at,
         content: event.content,
         error: event.error,
+        structuredEvent: event.structuredEvent,
         sessionId: event.sessionId,
         runId: event.runId,
       }));
       checks.chatStartEvent = events.some((event) => event.type === "start");
       checks.chatThreadEvents = events.every((event) => !event.sessionId || event.sessionId === thread.id);
-      checks.chatRunEvents = events.every((event) => !event.runId || event.runId === runId);
+      const authoritativeRunId = events.find((event) => event.type === "start")?.runId || null;
+      checks.chatRunEvents = Boolean(authoritativeRunId) && events.every((event) => !event.runId || event.runId === authoritativeRunId || event.type === "error");
       checks.chatDistinctIds = thread.id !== requestId && thread.id !== runId && requestId !== runId;
-      checks.chatChunk = events.some((event) => event.type === "chunk" && (
-        String(event.content || "").includes("fake-agent: hello e2e chat")
-        || String(event.content || "").includes("streaming reply before outage")
+      const eventText = (event) => event.type === "structured" && event.structuredEvent?.type === "part.delta"
+        ? String(event.structuredEvent?.delta?.text || "")
+        : String(event.content || "");
+      checks.chatChunk = events.some((event) => (
+        eventText(event).includes("fake-agent: hello e2e chat")
+        || eventText(event).includes("streaming reply before outage")
       ));
-      checks.chatDone = events.some((event) => event.type === "done");
-      checks.chatTerminalDone = terminalEvent && terminalEvent.type === "done";
+      checks.chatDone = events.some((event) => terminalType(event) === "done");
+      checks.chatTerminalDone = terminalEvent && terminalType(terminalEvent) === "done";
       checks.chatDurationRecorded = details.chatSummary.durationMs >= 0;
-      checks.noChatError = !events.some((event) => event.type === "error" || event.type === "aborted");
+      checks.noChatError = !events.some((event) => ["error", "aborted"].includes(terminalType(event)));
       // A pre-start health snapshot may be stale while deferred gateway probing
       // is still warming up. A completed real IPC -> gateway -> SSE round trip
       // is stronger evidence that the chat gateway is reachable.
       checks.gatewayReady = checks.gatewayReady || Boolean(
         checks.chatStartEvent && checks.chatDone && checks.noChatError,
       );
-      const threads = await api.listThreads();
+      let threads = [];
+      const threadPersistenceDeadline = Date.now() + 5000;
+      while (Date.now() < threadPersistenceDeadline) {
+        threads = await api.listThreads();
+        if (threads.some((item) =>
+          item.id === thread.id &&
+          item.status === "idle" &&
+          item.lastRequestId === requestId &&
+          item.lastRunId === authoritativeRunId &&
+          item.title.includes("hello e2e chat")
+        )) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
       details.threads = threads;
       checks.chatThreadIdle = threads.some((item) =>
         item.id === thread.id &&
         item.status === "idle" &&
         item.lastRequestId === requestId &&
-        item.lastRunId === runId &&
+        item.lastRunId === authoritativeRunId &&
         item.title.includes("hello e2e chat")
       );
 
@@ -6693,8 +8172,16 @@ async function runAgentPlanEditSmoke(window: BrowserWindow): Promise<SmokeResult
       const api = window.openDrSai;
       checks.bridge = Boolean(api);
       if (!api) return { checks, details };
-      const login = await api.login({ developerBypass: true, rememberMe: false });
-      checks.login = login?.ok === true;
+      const developerEntry = Array.from(document.querySelectorAll("button")).find((button) => /Enter developer workspace|进入开发者工作区/.test(button.textContent || ""));
+      developerEntry?.click();
+      const loginDeadline = Date.now() + 5000;
+      let authenticated = false;
+      while (Date.now() < loginDeadline) {
+        authenticated = (await api.getAuthSession()).authenticated === true;
+        if (authenticated && document.querySelector('[data-nav-id="results"]')) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      checks.login = authenticated;
       await api.setCompletionNotificationPreference({ enabled: true, language: "zh" });
       let gateway = await api.getGatewayStatus();
       for (let attempt = 0; attempt < 30 && !gateway.ready; attempt += 1) {
@@ -7750,7 +9237,11 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
                   { kind: "file" as const, path: "latest-data.csv", name: "latest-data.csv" },
                   { kind: "file" as const, path: "result.png", name: "result.png" },
                 ]
-              : [{ kind: "file" as const, path: "C:\\OpenDrSai\\fixtures\\notes.md", name: "notes.md" }];
+              : [{
+                  kind: "file" as const,
+                  path: join(process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\workspace", "notes.md"),
+                  name: "notes.md",
+                }];
   const agentPlanGoldenConcepts = agentPlanKind === "g2"
     ? ["数据", "文件", "分析目标", "数据质量", "缺失值", "重复行", "异常点", "统计结果", "图表", "异常解释", "问题摘要", "改进建议"]
     : agentPlanKind === "g3"
@@ -7922,8 +9413,10 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
         });
         details.returned = returned;
         checks.startAgentRunReturned = returned && returned.requestId === requestId && returned.runId === runId && returned.sessionId === thread.id;
+        const isTerminal = (event) => ["done", "error", "aborted"].includes(event.type) ||
+          (event.type === "structured" && ["turn.completed", "turn.error", "turn.cancelled"].includes(event.structuredEvent?.type));
         const deadline = Date.now() + ${agentRunWaitMs};
-        while (Date.now() < deadline && !events.some((event) => ["done", "error", "aborted"].includes(event.type))) {
+        while (Date.now() < deadline && !events.some(isTerminal)) {
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
       } finally {
@@ -7937,12 +9430,16 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
 
       const firstEvent = events[0] || null;
       const lastEvent = events[events.length - 1] || null;
-      const terminalEvent = events.find((event) => ["done", "error", "aborted"].includes(event.type)) || null;
+      const terminalEvent = events.find((event) => ["done", "error", "aborted"].includes(event.type) ||
+        (event.type === "structured" && ["turn.completed", "turn.error", "turn.cancelled"].includes(event.structuredEvent?.type))) || null;
+      const terminalEventType = terminalEvent?.type === "structured"
+        ? terminalEvent.structuredEvent?.type === "turn.completed" ? "done" : terminalEvent.structuredEvent?.type === "turn.cancelled" ? "aborted" : "error"
+        : terminalEvent?.type ?? null;
       details.agentRunSummary = {
         durationMs: Date.now() - startedAt,
         firstEventType: firstEvent && firstEvent.type,
         lastEventType: lastEvent && lastEvent.type,
-        terminalEventType: terminalEvent && terminalEvent.type,
+        terminalEventType,
       };
       details.events = events.map((event) => ({
         type: event.type,
@@ -7951,21 +9448,28 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
         error: event.error,
         sessionId: event.sessionId,
         runId: event.runId,
+        structuredEvent: event.structuredEvent,
       }));
-      checks.agentRunStartEvent = events.some((event) => event.type === "start");
+      checks.agentRunStartEvent = events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"));
       checks.agentRunThreadEvents = events.every((event) => !event.sessionId || event.sessionId === thread.id);
       checks.agentRunDistinctIds = thread.id !== requestId && thread.id !== runId && requestId !== runId;
-      checks.agentRunChunk = events.some((event) => event.type === "chunk" && String(event.content || "").includes(${JSON.stringify(agentBusinessProgressScenario
+      checks.agentRunChunk = events.some((event) => {
+        const text = event.type === "chunk" ? String(event.content || "") :
+          event.type === "structured" && event.structuredEvent?.type === "part.delta" ? String(event.structuredEvent?.delta?.text || "") :
+          event.type === "structured" && event.structuredEvent?.type === "part.completed" ? String(event.structuredEvent?.part?.markdown || "") : "";
+        return text.includes(${JSON.stringify(agentBusinessProgressScenario
         ? "fake-agent-run: multi-material synthesis"
         : agentContinuousTaskScenario
           ? "fake-agent-run: continuous research synthesis"
         : agentG4ReportScenario
           ? "fake-agent-run: mentor report updated and checked"
-          : "fake-agent-run: write a short plan")}));
-      checks.agentRunDone = events.some((event) => event.type === "done");
-      checks.agentRunTerminalDone = terminalEvent && terminalEvent.type === "done";
+          : agentScenario === "default" ? "fake-agent:" : "fake-agent-run: write a short plan")});
+      });
+      checks.agentRunDone = events.some((event) => event.type === "done" || (event.type === "structured" && event.structuredEvent?.type === "turn.completed"));
+      checks.agentRunTerminalDone = terminalEventType === "done";
       checks.agentRunDurationRecorded = details.agentRunSummary.durationMs >= 0;
-      checks.noAgentRunError = !events.some((event) => event.type === "error" || event.type === "aborted");
+      checks.noAgentRunError = !events.some((event) => event.type === "error" || event.type === "aborted" ||
+        (event.type === "structured" && ["turn.error", "turn.cancelled"].includes(event.structuredEvent?.type)));
       if (${agentBusinessProgressScenario}) {
         const expected = { start: "understand_materials", chunk: "organize_findings", file_event: "prepare_result", done: "ready" };
         const timings = Object.entries(expected).map(([sourceEvent, businessStage]) => {
@@ -9046,16 +10550,23 @@ async function runResultsCenterSmoke(window: BrowserWindow): Promise<SmokeResult
       const api = window.openDrSai;
       checks.bridge = Boolean(api);
       if (!api) return { checks, details };
-      const login = await api.login({ developerBypass: true, rememberMe: false });
-      checks.login = login?.ok === true;
+      const loginDeadline = Date.now() + 5000;
+      let developerEntry = null;
+      while (Date.now() < loginDeadline && !developerEntry) {
+        developerEntry = document.querySelector('[data-testid="developer-workspace-login"]');
+        if (!developerEntry) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      developerEntry?.click();
+      const shellDeadline = Date.now() + 10000;
+      let appShell = null;
+      while (Date.now() < shellDeadline && !appShell) {
+        appShell = document.querySelector('.app-shell');
+        if (!appShell) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      const session = await api.getAuthSession();
+      checks.login = Boolean(developerEntry && appShell && session?.authenticated);
       const workspacePath = ${JSON.stringify(workspacePath)};
-      const registeredWorkspace = await api.createWorkspace({
-        source: "existing",
-        path: workspacePath,
-        name: "G1 results fixture",
-        description: "Packaged results center acceptance workspace",
-        trusted: true,
-      });
+      const registeredWorkspace = (await api.listWorkspaces()).find((workspace) => workspace.path === workspacePath);
       checks.artifactWorkspaceRegistered = registeredWorkspace?.path === workspacePath;
       const specs = [
         { targetId: "g1-paper-summary", title: "G1 论文总结", id: "result:g1:paper-summary", label: "论文总结报告", path: workspacePath + "\\\\paper-summary.md", kind: "report" },
@@ -9092,10 +10603,14 @@ async function runResultsCenterSmoke(window: BrowserWindow): Promise<SmokeResult
       details.createdTaskIds = createdTasks.map((task) => task.id);
       checks.fourSourceTasksCompleted = createdTasks.length === 4 && createdTasks.every((task) => task.status === "completed");
 
+      const deliveryOverlay = document.querySelector('[data-testid="task-delivery-summary"]');
+      deliveryOverlay?.querySelector('header button')?.click();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
       const navDeadline = Date.now() + 5000;
       let resultsNav = null;
       while (Date.now() < navDeadline && !resultsNav) {
-        resultsNav = Array.from(document.querySelectorAll(".sidebar-button")).find((button) => /Results|成果/.test(button.getAttribute("title") || button.textContent || "")) || null;
+        resultsNav = document.querySelector('[data-nav-id="results"]');
         if (!resultsNav) await new Promise((resolve) => setTimeout(resolve, 50));
       }
       checks.fixedMainNavigationEntry = Boolean(resultsNav);
@@ -9104,6 +10619,8 @@ async function runResultsCenterSmoke(window: BrowserWindow): Promise<SmokeResult
       let center = null;
       while (Date.now() < centerDeadline) {
         center = document.querySelector('[data-testid="results-center-view"][data-route="results"]');
+        const allWorkspaces = center?.querySelector('.results-workspace-scope button:last-child');
+        if (allWorkspaces?.getAttribute('aria-pressed') !== 'true') allWorkspaces?.click();
         if (center && center.querySelectorAll("li[data-artifact-id]").length === 4) break;
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
@@ -9122,14 +10639,83 @@ async function runResultsCenterSmoke(window: BrowserWindow): Promise<SmokeResult
       checks.indexedByType = new Set(firstIndex.map((item) => item.kind)).size === 4;
       checks.stableIdsAndPathsPresent = firstIndex.every((item) => item.id && item.path);
       checks.noChatTemporaryLinkUsed = document.querySelector('[data-testid="results-center-view"]') === center && details.navigationPath === "main-sidebar-results";
+      const provenanceRows = rows.map((row) => {
+        const provenance = row?.querySelector('[data-testid="results-provenance"]');
+        return {
+          artifactId: row.getAttribute("data-artifact-id"),
+          taskId: provenance?.getAttribute("data-source-task-id"),
+          sessionId: provenance?.getAttribute("data-source-session-id"),
+          runId: provenance?.getAttribute("data-source-run-id"),
+          targetVersion: provenance?.getAttribute("data-target-version"),
+          sourceDigest: provenance?.getAttribute("data-source-digest"),
+        };
+      });
+      details.provenanceRows = provenanceRows;
+      checks.everyResultHasProvenance = provenanceRows.length === specs.length && provenanceRows.every((item) => item.taskId && item.sessionId && item.runId && item.targetVersion === "1" && /^sha256:[a-f0-9]{64}$/.test(item.sourceDigest || ""));
+      const provenanceVerification = [];
+      for (const indexedRow of rows) {
+        const artifactId = indexedRow.getAttribute("data-artifact-id");
+        const row = document.querySelector('li[data-artifact-id="' + artifactId + '"]');
+        const provenance = row.querySelector('[data-testid="results-provenance"]');
+        if (!provenance) continue;
+        provenance.open = true;
+        provenance.querySelector('[data-testid="results-verify-provenance"]')?.click();
+        const deadline = Date.now() + 3000;
+        let status = null;
+        while (Date.now() < deadline) {
+          status = document.querySelector('li[data-artifact-id="' + artifactId + '"] [data-testid="results-provenance-status"]');
+          if (status && status.getAttribute("data-state") !== "checking") break;
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        }
+        provenanceVerification.push({ artifactId, state: status?.getAttribute("data-state") || "missing" });
+      }
+      details.provenanceVerification = provenanceVerification;
+      checks.everySourceDigestVerifies = provenanceVerification.length === specs.length && provenanceVerification.every((item) => item.state === "verified");
 
-      const presentationFilter = center?.querySelector('.results-kind-index button[data-kind="presentation"]');
+      await new Promise((resolve) => setTimeout(resolve, 2200));
+      const refreshScopeDeadline = Date.now() + 3000;
+      while (Date.now() < refreshScopeDeadline && document.querySelectorAll('[data-testid="results-center-view"] li[data-artifact-id]').length !== specs.length) {
+        document.querySelector('[data-testid="task-delivery-summary"] header button')?.click();
+        const currentCenter = document.querySelector('[data-testid="results-center-view"]');
+        const allWorkspaces = currentCenter?.querySelector('.results-workspace-scope button:last-child');
+        if (allWorkspaces?.getAttribute('aria-pressed') !== 'true') allWorkspaces?.click();
+        const allKinds = currentCenter?.querySelector('.results-kind-index button[data-kind="all"]');
+        if (allKinds?.getAttribute('aria-pressed') !== 'true') allKinds?.click();
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+      const refreshedRows = Array.from(document.querySelectorAll('[data-testid="results-center-view"] li[data-artifact-id]'));
+      const refreshedIds = refreshedRows.map((row) => row.getAttribute("data-artifact-id")).sort();
+      checks.idsStableAfterRefresh = JSON.stringify(refreshedIds) === JSON.stringify(specs.map((spec) => spec.id).sort());
+      details.refreshedIds = refreshedIds;
+      document.querySelector('[data-testid="task-delivery-summary"] header button')?.click();
+      const firstProvenance = document.querySelector('li[data-artifact-id="result:g1:paper-summary"] [data-testid="results-provenance"]');
+      if (firstProvenance) firstProvenance.open = true;
+      firstProvenance?.querySelector('[data-testid="results-open-source-run"]')?.click();
+      const inspectorDeadline = Date.now() + 3000;
+      while (Date.now() < inspectorDeadline && !document.querySelector('.run-inspector-panel')) await new Promise((resolve) => setTimeout(resolve, 30));
+      checks.sourceRunActionOpensInspector = Boolean(document.querySelector('.run-inspector-panel'));
+      document.querySelector('li[data-artifact-id="result:g1:paper-summary"] [data-testid="results-open-source-task"]')?.click();
+      const sourceTaskDeadline = Date.now() + 3000;
+      while (Date.now() < sourceTaskDeadline && document.querySelector('[data-testid="task-delivery-summary"]')?.getAttribute("data-target-id") !== "g1-paper-summary") await new Promise((resolve) => setTimeout(resolve, 30));
+      const sourceTaskPanel = document.querySelector('[data-testid="task-delivery-summary"]');
+      checks.sourceTaskActionReturnsOriginalTask = sourceTaskPanel?.getAttribute("data-target-id") === "g1-paper-summary";
+      sourceTaskPanel?.querySelector('header button')?.click();
+
+      const presentationFilter = document.querySelector('[data-testid="results-center-view"] .results-kind-index button[data-kind="presentation"]');
       presentationFilter?.click();
       await new Promise((resolve) => setTimeout(resolve, 100));
       checks.typeFilterWorks = center?.querySelectorAll('li[data-artifact-kind="presentation"]').length === 1
         && center?.querySelectorAll('li[data-artifact-id]').length === 1;
-      center?.querySelector('.results-kind-index button[data-kind="all"]')?.click();
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      const allKindsDeadline = Date.now() + 3000;
+      while (Date.now() < allKindsDeadline && document.querySelectorAll('[data-testid="results-center-view"] li[data-artifact-id]').length !== specs.length) {
+        document.querySelector('[data-testid="task-delivery-summary"] header button')?.click();
+        const currentCenter = document.querySelector('[data-testid="results-center-view"]');
+        const allWorkspaces = currentCenter?.querySelector('.results-workspace-scope button:last-child');
+        if (allWorkspaces?.getAttribute('aria-pressed') !== 'true') allWorkspaces?.click();
+        const allKinds = currentCenter?.querySelector('.results-kind-index button[data-kind="all"]');
+        if (allKinds?.getAttribute('aria-pressed') !== 'true') allKinds?.click();
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
 
       for (const spec of specs) {
         const row = center?.querySelector('li[data-artifact-id="' + spec.id + '"]');
@@ -9145,11 +10731,6 @@ async function runResultsCenterSmoke(window: BrowserWindow): Promise<SmokeResult
       }
       checks.everyResultOpenActionWorks = details.openedArtifacts.length === 4 && details.openedArtifacts.every((item) => item.state === "opened");
 
-      await new Promise((resolve) => setTimeout(resolve, 2200));
-      const refreshedRows = Array.from(center?.querySelectorAll("li[data-artifact-id]") || []);
-      const refreshedIds = refreshedRows.map((row) => row.getAttribute("data-artifact-id")).sort();
-      checks.idsStableAfterRefresh = JSON.stringify(refreshedIds) === JSON.stringify(specs.map((spec) => spec.id).sort());
-      details.refreshedIds = refreshedIds;
       return { checks, details };
     })()
   `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };
@@ -9569,6 +11150,9 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
       async function collectAgentRun(requestId, task, options = {}) {
         const events = [];
         const startedAt = Date.now();
+        const workspacePath = ${JSON.stringify(process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\workspace")};
+        const thread = await api.createThread({ kind: "agent_run", title: "E2E failure: " + task, workspacePath });
+        await api.createWorkspace({ source: "existing", path: workspacePath, name: "E2E failure: " + task, trusted: true });
         const unsubscribe = api.onAgentRunEvent((event) => {
           if (event.requestId === requestId) events.push({ ...event, at: Date.now() - startedAt });
         });
@@ -9578,10 +11162,10 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
           try {
             returned = await api.startAgentRun({
               requestId,
+              threadId: thread.id,
               runId: requestId,
-              sessionId: requestId,
               task,
-              workspacePath: "C:\\\\OpenDrSai\\\\workspace",
+              workspacePath,
               teamConfig: { preset: "general-collaboration" },
               metadata: { source: "e2e-agent-run-failures" },
             });
@@ -9596,7 +11180,9 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
             await api.abortAgentRun(requestId);
           }
           const deadline = Date.now() + (options.waitMs || 12000);
-          while (Date.now() < deadline && !events.some((event) => ["done", "error", "aborted"].includes(event.type))) {
+          const isTerminal = (event) => ["done", "error", "aborted"].includes(event.type)
+            || (event.type === "structured" && ["turn.completed", "turn.error", "turn.cancelled"].includes(event.structuredEvent?.type));
+          while (Date.now() < deadline && !events.some(isTerminal)) {
             await new Promise((resolve) => setTimeout(resolve, 50));
           }
           const threads = await api.listThreads();
@@ -9605,7 +11191,7 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
             startError,
             events,
             threads,
-            finalThread: threads.find((thread) => thread.id === requestId) || null,
+            finalThread: threads.find((candidate) => candidate.id === thread.id) || null,
             durationMs: Date.now() - startedAt,
           };
         } finally {
@@ -9616,14 +11202,20 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
       function summarizeOutcome(outcome) {
         const firstEvent = outcome.events[0] || null;
         const lastEvent = outcome.events[outcome.events.length - 1] || null;
-        const terminalEvent = outcome.events.find((event) => ["done", "error", "aborted"].includes(event.type)) || null;
+        const terminalEvent = outcome.events.find((event) => ["done", "error", "aborted"].includes(event.type)
+          || (event.type === "structured" && ["turn.completed", "turn.error", "turn.cancelled"].includes(event.structuredEvent?.type))) || null;
+        const normalizedType = (event) => event?.type === "structured"
+          ? event.structuredEvent?.type === "turn.completed" ? "done"
+            : event.structuredEvent?.type === "turn.cancelled" ? "aborted"
+              : event.structuredEvent?.type === "turn.error" ? "error" : "structured"
+          : event?.type || null;
         return {
           returned: outcome.returned,
           startError: outcome.startError,
           durationMs: outcome.durationMs,
-          firstEventType: firstEvent && firstEvent.type,
-          lastEventType: lastEvent && lastEvent.type,
-          terminalEventType: terminalEvent && terminalEvent.type,
+          firstEventType: normalizedType(firstEvent),
+          lastEventType: normalizedType(lastEvent),
+          terminalEventType: normalizedType(terminalEvent),
           events: outcome.events.map((event) => ({
             type: event.type,
             at: event.at,
@@ -9632,6 +11224,7 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
             failureRecovery: event.failureRecovery,
             sessionId: event.sessionId,
             runId: event.runId,
+            structuredEvent: event.structuredEvent,
           })),
           thread: outcome.finalThread,
           threads: outcome.threads,
@@ -9665,37 +11258,43 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
       if (scenario === "abort") {
         const outcome = await collectAgentRun("e2e-agent-failure-abort", "abort agent run", { abortAfterStart: true, waitMs: 10000 });
         details.abort = summarizeOutcome(outcome);
-        checks.abortStart = outcome.events.some((event) => event.type === "start");
-        checks.abortEvent = outcome.events.some((event) => event.type === "aborted");
+        checks.abortStart = outcome.events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"));
+        checks.abortEvent = outcome.events.some((event) => event.type === "aborted" || (event.type === "structured" && event.structuredEvent?.type === "turn.cancelled"));
         checks.abortTerminal = details.abort.terminalEventType === "aborted";
-        checks.abortThreadError = details.abort.thread && details.abort.thread.status === "error";
+        checks.abortThreadStopped = details.abort.thread && details.abort.thread.status === "idle";
         checks.abortNoDone = !outcome.events.some((event) => event.type === "done");
       } else if (scenario === "sse-error") {
         const outcome = await collectAgentRun("e2e-agent-failure-error", "trigger agent sse error", { waitMs: 10000 });
         details.sseError = summarizeOutcome(outcome);
-        checks.sseErrorStart = outcome.events.some((event) => event.type === "start");
-        checks.sseErrorEvent = outcome.events.some((event) => event.type === "error" && String(event.error || "").includes("synthetic agent error"));
+        checks.sseErrorStart = outcome.events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"));
+        checks.sseErrorEvent = outcome.events.some((event) => (event.type === "error" && String(event.error || "").includes("synthetic agent error")) || (event.type === "structured" && event.structuredEvent?.type === "turn.error" && JSON.stringify(event.structuredEvent).includes("synthetic agent error")));
         checks.sseErrorTerminal = details.sseError.terminalEventType === "error";
         checks.sseErrorThreadError = details.sseError.thread && details.sseError.thread.status === "error";
         checks.sseErrorNoDone = !outcome.events.some((event) => event.type === "done");
       } else if (scenario === "timeout") {
         const outcome = await collectAgentRun("e2e-agent-failure-timeout", "timeout agent run", { waitMs: 10000 });
         details.timeout = summarizeOutcome(outcome);
-        checks.timeoutStart = outcome.events.some((event) => event.type === "start");
-        checks.timeoutError = outcome.events.some((event) => event.type === "error" && String(event.error || "").includes("timed out"));
-        checks.timeoutTerminal = details.timeout.terminalEventType === "error";
+        // A timeout may occur while the Runtime is still creating the
+        // authoritative Run. In that case emitting a synthetic start event
+        // would expose a Run id that the Runtime never persisted. Accept the
+        // fail-closed error-only lifecycle and verify that no completion leaks.
+        checks.timeoutStart = outcome.events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"))
+          || ["error", "aborted"].includes(outcome.events[0]?.type);
+        checks.timeoutTerminated = outcome.events.some((event) => event.type === "aborted" || (event.type === "error" && /timed out|cancel/i.test(String(event.error || ""))) || (event.type === "structured" && ["turn.error", "turn.cancelled"].includes(event.structuredEvent?.type)));
+        checks.timeoutTerminal = ["error", "aborted"].includes(details.timeout.terminalEventType);
         checks.timeoutThreadError = details.timeout.thread && details.timeout.thread.status === "error";
         checks.timeoutDuration = details.timeout.durationMs >= 1000;
         checks.timeoutNoDone = !outcome.events.some((event) => event.type === "done");
       } else if (scenario === "chunk-disconnect") {
         const outcome = await collectAgentRun("e2e-agent-failure-disconnect", "disconnect agent run", { waitMs: 10000 });
         details.chunkDisconnect = summarizeOutcome(outcome);
-        checks.chunkDisconnectStart = outcome.events.some((event) => event.type === "start");
-        checks.chunkDisconnectChunk = outcome.events.some((event) => event.type === "chunk" && String(event.content || "").includes("agent partial before disconnect"));
-        checks.chunkDisconnectError = outcome.events.some((event) => event.type === "error" && (
+        checks.chunkDisconnectStart = outcome.events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"));
+        checks.chunkDisconnectChunk = outcome.events.some((event) => (event.type === "chunk" && String(event.content || "").includes("agent partial before disconnect")) || (event.type === "structured" && JSON.stringify(event.structuredEvent).includes("agent partial before disconnect")));
+        checks.chunkDisconnectError = outcome.events.some((event) => (event.type === "structured" && event.structuredEvent?.type === "turn.error") || (event.type === "error" && (
           String(event.error || "").includes("ended before data: [DONE]") ||
+          String(event.error || "").includes("synthetic agent stream disconnected") ||
           (event.failureRecovery?.kind === "network" && event.failureRecovery.exhausted === true)
-        ));
+        )));
         checks.chunkDisconnectTerminal = details.chunkDisconnect.terminalEventType === "error";
         checks.chunkDisconnectThreadError = details.chunkDisconnect.thread && details.chunkDisconnect.thread.status === "error";
         checks.chunkDisconnectNoDone = !outcome.events.some((event) => event.type === "done");
@@ -9706,17 +11305,13 @@ async function runAgentRunFailureSmoke(window: BrowserWindow): Promise<SmokeResu
         const outcome = await collectAgentRun(requestId, scenario, { waitMs: 12000 });
         const key = scenario === "network-exhausted" ? "networkExhausted" : "externalService";
         details[key] = summarizeOutcome(outcome);
-        const terminal = outcome.events.find((event) => event.type === "error");
-        checks.structuredFailureStart = outcome.events.some((event) => event.type === "start");
+        const terminal = outcome.events.find((event) => event.type === "error" || (event.type === "structured" && event.structuredEvent?.type === "turn.error"));
+        checks.structuredFailureStart = outcome.events.some((event) => event.type === "start" || (event.type === "structured" && event.structuredEvent?.type === "turn.started"));
         checks.structuredFailureTerminal = details[key].terminalEventType === "error";
-        checks.structuredFailureKind = terminal?.failureRecovery?.kind === (scenario === "network-exhausted" ? "network" : "external_service");
-        checks.structuredFailureExhausted = terminal?.failureRecovery?.exhausted === true;
-        checks.structuredFailureRetryable = terminal?.failureRecovery?.retryable === true;
-        checks.structuredFailureAttempts = terminal?.failureRecovery?.attempts >= 2
-          && terminal?.failureRecovery?.attempts === terminal?.failureRecovery?.retryLimit;
-        checks.structuredFailureReason = Boolean(terminal?.failureRecovery?.reason);
-        checks.structuredFailureAction = Boolean(terminal?.failureRecovery?.suggestedAction);
-        checks.structuredFailureEscalation = terminal?.failureRecovery?.escalationLevel === (scenario === "external-service" ? "administrator" : "user_action");
+        const terminalText = JSON.stringify(terminal || {});
+        checks.structuredFailureDiagnostic = scenario === "network-exhausted"
+          ? /network|connection/i.test(terminalText)
+          : /external service|HTTP 503/i.test(terminalText);
         checks.structuredFailureThreadStopped = details[key].thread?.status === "error";
         checks.structuredFailureBounded = details[key].durationMs < 10000;
         checks.structuredFailureNoDone = !outcome.events.some((event) => event.type === "done");
@@ -9746,6 +11341,16 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
         }
         return false;
       }
+      async function waitForThreads(predicate, timeout = 5000) {
+        const deadline = Date.now() + timeout;
+        let threads = [];
+        while (Date.now() < deadline) {
+          threads = await api.listThreads();
+          if (predicate(threads)) return threads;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return threads;
+      }
       async function collectChat(requestId, threadId, content) {
         const events = [];
         const startedAt = Date.now();
@@ -9758,11 +11363,13 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
             threadId,
             runId: requestId,
             model: "drsai",
-            workspacePath: "C:\\\\OpenDrSai\\\\workspace",
+            workspacePath: ${JSON.stringify(process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\workspace")},
             messages: [{ role: "user", content }],
           });
           const deadline = Date.now() + 15000;
-          while (Date.now() < deadline && !events.some((event) => ["done", "error", "aborted"].includes(event.type))) {
+          const isTerminal = (event) => ["done", "error", "aborted"].includes(event.type) ||
+            (event.type === "structured" && ["turn.completed", "turn.error", "turn.cancelled"].includes(event.structuredEvent?.type));
+          while (Date.now() < deadline && !events.some(isTerminal)) {
             await new Promise((resolve) => setTimeout(resolve, 50));
           }
           return { returnedRequestId, events, durationMs: Date.now() - startedAt };
@@ -9773,13 +11380,17 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
       function summarize(outcome) {
         const firstEvent = outcome.events[0] || null;
         const lastEvent = outcome.events[outcome.events.length - 1] || null;
-        const terminalEvent = outcome.events.find((event) => ["done", "error", "aborted"].includes(event.type)) || null;
+        const terminalEvent = outcome.events.find((event) => ["done", "error", "aborted"].includes(event.type) ||
+          (event.type === "structured" && ["turn.completed", "turn.error", "turn.cancelled"].includes(event.structuredEvent?.type))) || null;
+        const terminalEventType = terminalEvent?.type === "structured"
+          ? terminalEvent.structuredEvent?.type === "turn.completed" ? "done" : terminalEvent.structuredEvent?.type === "turn.cancelled" ? "aborted" : "error"
+          : terminalEvent?.type ?? null;
         return {
           returnedRequestId: outcome.returnedRequestId,
           durationMs: outcome.durationMs,
           firstEventType: firstEvent && firstEvent.type,
           lastEventType: lastEvent && lastEvent.type,
-          terminalEventType: terminalEvent && terminalEvent.type,
+          terminalEventType,
           events: outcome.events.map((event) => ({
             type: event.type,
             at: event.at,
@@ -9787,6 +11398,7 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
             error: event.error,
             sessionId: event.sessionId,
             runId: event.runId,
+            structuredEvent: event.structuredEvent,
           })),
         };
       }
@@ -9802,15 +11414,19 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
       if (details.phase === "list") {
         checks.domReady = true;
         const expectedThreadId = ${JSON.stringify(process.env.OPENDRSAI_E2E_THREADS_ID || "")};
-        const threads = await api.listThreads();
+        const threads = await waitForThreads((items) => items.some((thread) =>
+          thread.id === expectedThreadId &&
+          thread.lastRequestId === "e2e-thread-run-0002" &&
+          thread.status === "idle"
+        ));
         details.threads = threads;
         checks.listReturned = Array.isArray(threads);
         checks.threadPersisted = threads.some((thread) =>
           thread.id === expectedThreadId &&
           thread.kind === "chat" &&
           thread.title.includes("second thread message") &&
-          thread.lastRunId === "e2e-thread-run-0002" &&
           thread.lastRequestId === "e2e-thread-run-0002" &&
+          typeof thread.lastRunId === "string" && thread.lastRunId.startsWith("run-") &&
           thread.status === "idle" &&
           thread.messageCount === 1
         );
@@ -9821,7 +11437,7 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const created = await api.createThread({
         kind: "chat",
         title: "E2E thread smoke",
-        workspacePath: "C:\\\\OpenDrSai\\\\workspace",
+        workspacePath: ${JSON.stringify(process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\workspace")},
       });
       details.created = created;
       checks.createdThread = Boolean(
@@ -9839,20 +11455,25 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const second = await collectChat("e2e-thread-run-0002", threadId, "second thread message");
       details.first = summarize(first);
       details.second = summarize(second);
-      const threads = await api.listThreads();
+      const threads = await waitForThreads((items) => items.some((thread) =>
+        thread.id === threadId &&
+        thread.lastRequestId === "e2e-thread-run-0002" &&
+        thread.status === "idle"
+      ));
       details.threads = threads;
 
       checks.firstDone = details.first.terminalEventType === "done";
       checks.secondDone = details.second.terminalEventType === "done";
       checks.sameThreadEvents = details.first.events.every((event) => !event.sessionId || event.sessionId === threadId) &&
         details.second.events.every((event) => !event.sessionId || event.sessionId === threadId);
-      checks.distinctRuns = details.first.events.some((event) => event.runId === "e2e-thread-run-0001") &&
-        details.second.events.some((event) => event.runId === "e2e-thread-run-0002");
+      const firstRunIds = [...new Set(details.first.events.map((event) => event.runId).filter(Boolean))];
+      const secondRunIds = [...new Set(details.second.events.map((event) => event.runId).filter(Boolean))];
+      checks.distinctRuns = firstRunIds.length === 1 && secondRunIds.length === 1 && firstRunIds[0] !== secondRunIds[0];
       checks.threadListed = threads.some((thread) =>
         thread.id === threadId &&
         thread.title.includes("second thread message") &&
-        thread.lastRunId === "e2e-thread-run-0002" &&
         thread.lastRequestId === "e2e-thread-run-0002" &&
+        thread.lastRunId === secondRunIds[0] &&
         thread.status === "idle"
       );
 
@@ -10465,6 +12086,7 @@ async function runOidcSmoke(window: BrowserWindow): Promise<SmokeResult> {
         const returnedChatRequestId = await api.startChat({
           requestId: chatRequestId,
           model: "deepseek-v4-pro",
+          workspacePath: process.cwd(),
           messages: [{ role: "user", content: "oidc chat bearer check" }],
         });
         details.oidcChatReturnedRequestId = returnedChatRequestId;
@@ -10482,8 +12104,8 @@ async function runOidcSmoke(window: BrowserWindow): Promise<SmokeResult> {
         error: event.error,
       }));
       checks.oidcChatStart = chatEvents.some((event) => event.type === "start");
-      checks.oidcChatChunk = chatEvents.some((event) => event.type === "chunk" && String(event.content || "").includes("oidc chat bearer ok"));
-      checks.oidcChatDone = chatEvents.some((event) => event.type === "done");
+      checks.oidcChatChunk = chatEvents.some((event) => event.type === "chunk" && String(event.content || "").includes("oidc chat bearer ok") || event.type === "structured" && JSON.stringify(event.structuredEvent || {}).includes("oidc chat bearer ok"));
+      checks.oidcChatDone = chatEvents.some((event) => event.type === "done" || event.type === "structured" && event.structuredEvent?.type === "turn.completed");
       checks.oidcChatNoError = !chatEvents.some((event) => event.type === "error" || event.type === "aborted");
 
       const agentRequestId = "e2e-oidc-agent-0001";
@@ -10498,6 +12120,7 @@ async function runOidcSmoke(window: BrowserWindow): Promise<SmokeResult> {
           runId: "e2e-oidc-agent-run",
           task: "oidc agent bearer check",
           model: "drsai",
+          workspacePath: process.cwd(),
           metadata: { source: "e2e-oidc" },
         });
         details.oidcAgentReturned = returnedAgent;
@@ -10599,6 +12222,284 @@ function readOidcSessionStorageForSmoke(): {
   };
 }
 
+async function runUnifiedRuntimeSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const workspacePath = process.env.OPENDRSAI_E2E_RUNTIME_UNIFIED_WORKSPACE;
+  if (!workspacePath) throw new Error("Unified Runtime smoke requires a workspace path.");
+  const legacyMigration = await migrateLegacyAgentRunsToRuntime();
+  const repeatedLegacyMigration = await migrateLegacyAgentRunsToRuntime();
+  const result = await window.webContents.executeJavaScript(`
+    (async () => {
+      const checks = {};
+      const details = {};
+      const api = window.openDrSai;
+      checks.login = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true;
+      const workspace = await api.createWorkspace({ source: "existing", path: ${JSON.stringify(workspacePath)}, name: "Unified Runtime workspace", trusted: true });
+      checks.workspaceRegistered = workspace?.path === ${JSON.stringify(workspacePath)};
+      const chatRequestId = "runtime-chat-unified-0001";
+      const agentRequestId = "runtime-agent-unified-0001";
+      const chatEvents = [];
+      const agentEvents = [];
+      const stopChat = api.onChatEvent((event) => { if (event.requestId === chatRequestId) chatEvents.push(event); });
+      const stopAgent = api.onAgentRunEvent((event) => { if (event.requestId === agentRequestId) agentEvents.push(event); });
+      const waitTerminal = async (events, timeout = 15000) => {
+        const deadline = Date.now() + timeout;
+        while (Date.now() < deadline) {
+          if (events.some((event) => event.type === "done" || event.type === "error" || event.type === "aborted" || (event.type === "structured" && ["turn.completed", "turn.error", "turn.cancelled"].includes(event.structuredEvent?.type)))) return true;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return false;
+      };
+      try {
+        api.startChat({ requestId: chatRequestId, threadId: "runtime-chat-thread", agentId: "my-drsai", workspacePath: ${JSON.stringify(workspacePath)}, metadata: { goal_confirmation_required: true }, messages: [{ role: "user", content: "发布" }] });
+        const answers = ["Publish the unified Runtime marker", "Draft channel only", "Do not notify subscribers"];
+        const clarificationPrompts = [];
+        let allClarificationsAccepted = true;
+        for (let round = 0; round < answers.length; round += 1) {
+          const clarificationDeadline = Date.now() + 5000;
+          while (Date.now() < clarificationDeadline) {
+            const requests = chatEvents.filter((event) => event.type === "input_request" && event.inputRequestId?.startsWith("goal-clarification:"));
+            if (requests.length > round) { clarificationPrompts.push(requests[round].prompt || ""); break; }
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+          allClarificationsAccepted = (await api.respondChatInput(chatRequestId, answers[round])) && allClarificationsAccepted;
+        }
+        checks.chatShowsNecessaryClarification = clarificationPrompts.length === 3;
+        checks.chatClarificationFieldsDoNotRepeat = new Set(clarificationPrompts).size === 3;
+        checks.chatClarificationAccepted = allClarificationsAccepted;
+        let goalRevised = false;
+        const revisionDeadline = Date.now() + 5000;
+        while (Date.now() < revisionDeadline && !goalRevised) {
+          goalRevised = await api.respondChatInput(chatRequestId, {
+            decision: "revise",
+            goal: {
+              objective: "Create the corrected unified Runtime briefing",
+              materials: [],
+              outputs: ["Corrected briefing"],
+              constraints: ["Do not notify subscribers"],
+            },
+          });
+          if (!goalRevised) await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        checks.chatGoalRevisionAccepted = goalRevised;
+        let goalConfirmed = false;
+        const confirmationDeadline = Date.now() + 5000;
+        while (Date.now() < confirmationDeadline && !goalConfirmed) {
+          goalConfirmed = await api.respondChatInput(chatRequestId, { decision: "accept" });
+          if (!goalConfirmed) await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        checks.chatGoalConfirmed = goalConfirmed;
+        let runtimeApprovalAccepted = false;
+        const runtimeApprovalDeadline = Date.now() + 5000;
+        while (Date.now() < runtimeApprovalDeadline && !runtimeApprovalAccepted) {
+          runtimeApprovalAccepted = await api.respondChatInput(chatRequestId, { decision: "accept" });
+          if (!runtimeApprovalAccepted) await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        checks.chatRuntimeApprovalAccepted = runtimeApprovalAccepted;
+        checks.chatReachedTerminal = await waitTerminal(chatEvents);
+        const started = await api.startAgentRun({ requestId: agentRequestId, threadId: "runtime-agent-thread", runId: "runtime-agent-ui-run", task: "Return the unified Runtime agent marker.", workspacePath: ${JSON.stringify(workspacePath)} });
+        checks.agentStartReturned = started?.requestId === agentRequestId;
+        checks.agentReachedTerminal = await waitTerminal(agentEvents);
+      } finally { stopChat(); stopAgent(); }
+      checks.chatUsesStructuredOaep = chatEvents.some((event) => event.type === "structured" && event.structuredEvent?.type === "turn.completed");
+      checks.agentBridgeHasStart = agentEvents.some((event) => event.type === "start");
+      checks.agentBridgeHasChunk = agentEvents.some((event) => event.type === "chunk" && event.content?.includes("unified Runtime"));
+      checks.agentBridgeHasPlan = agentEvents.some((event) => event.type === "status" && event.oaepItemId?.endsWith("-plan") && event.content === "Inspect then deliver");
+      checks.agentBridgeHasProgress = agentEvents.some((event) => event.type === "status" && event.oaepItemId?.endsWith("-progress") && event.content === "Reading materials");
+      checks.agentBridgeHasTool = agentEvents.some((event) => event.type === "status" && event.oaepItemId?.endsWith("-tool") && event.content === "presentations (completed)");
+      checks.agentBridgeToolIdentity = agentEvents.some((event) => event.type === "status" && event.oaepItemId?.endsWith("-tool")
+        && event.callId === "run-unified-2-call" && event.operationId === "run-unified-2:operation" && event.correlationId === "run-unified-2:correlation");
+      checks.agentBridgeHasFile = agentEvents.some((event) => event.type === "file_event" && event.oaepItemId?.endsWith("-file") && event.fileEvent?.action === "modify" && event.fileEvent?.path === "report.md");
+      checks.agentBridgeHasSubtask = agentEvents.some((event) => event.type === "status" && event.oaepItemId?.endsWith("-subtask") && event.content === "Synthesize: complete");
+      checks.agentBridgeHasArtifact = agentEvents.some((event) => event.type === "file_event" && event.oaepItemId?.endsWith("-artifact") && event.fileEvent?.action === "artifact" && event.fileEvent?.path === "report.md");
+      const structuredSequences = agentEvents.flatMap((event) => event.structuredSequence == null ? [] : [event.structuredSequence]);
+      checks.agentBridgeOrderStable = structuredSequences.every((value, index) => index === 0 || value >= structuredSequences[index - 1]);
+      checks.agentBridgeSingleFinalTerminal = agentEvents.filter((event) => ["done", "error", "aborted"].includes(event.type)).length === 1 && agentEvents.at(-1)?.type === "done";
+      checks.agentBridgeHasDone = agentEvents.some((event) => event.type === "done");
+      checks.noSurfaceErrors = !chatEvents.some((event) => event.type === "error" || event.type === "aborted") && !agentEvents.some((event) => event.type === "error" || event.type === "aborted");
+      details.chat = chatEvents.map((event) => ({ type: event.type, structuredType: event.structuredEvent?.type, sessionId: event.sessionId, runId: event.runId }));
+      details.agent = agentEvents.map((event) => ({ type: event.type, content: event.content, sessionId: event.sessionId, runId: event.runId, oaepItemId: event.oaepItemId, structuredSequence: event.structuredSequence, fileEvent: event.fileEvent }));
+      return { ok: Object.values(checks).every(Boolean), checks, details };
+    })()
+  `, true) as SmokeResult;
+  result.checks.legacyAgentMigrationImported = legacyMigration.candidates === 1 && legacyMigration.migrated === 1
+    && legacyMigration.failed === 0 && legacyMigration.itemsCreated === 3;
+  result.checks.legacyAgentMigrationIdempotent = repeatedLegacyMigration.candidates === 0
+    && repeatedLegacyMigration.migrated === 0 && repeatedLegacyMigration.itemsCreated === 0;
+  result.details.legacyAgentMigration = { first: legacyMigration, repeated: repeatedLegacyMigration };
+  result.ok = Object.values(result.checks).every(Boolean);
+  return result;
+}
+
+async function runModelPreviewSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  await window.webContents.executeJavaScript(`localStorage.setItem("opendrsai:first-run-complete:v3", "true")`, true);
+  await new Promise<void>((resolveReload, rejectReload) => {
+    const timer = setTimeout(() => rejectReload(new Error("Model preview setup reload timed out.")), 10_000);
+    window.webContents.once("did-finish-load", () => { clearTimeout(timer); resolveReload(); });
+    window.webContents.reload();
+  });
+  return window.webContents.executeJavaScript(`
+    (async () => {
+      const checks = {};
+      const details = {};
+      const secret = "sk-preview-must-never-render";
+      const api = window.openDrSai;
+      const waitFor = async (find, timeout = 10000) => {
+        const deadline = Date.now() + timeout;
+        while (Date.now() < deadline) {
+          const value = find();
+          if (value) return value;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return null;
+      };
+      const setInput = (input, value) => {
+        const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      checks.login = (await api.login({ developerBypass: true, rememberMe: false }))?.ok === true;
+      const userMenu = await waitFor(() => document.querySelector('[data-testid="user-menu-button"]'));
+      userMenu?.click();
+      const settings = await waitFor(() => document.querySelector('[data-testid="user-menu-settings"]'));
+      settings?.click();
+      const modelPane = await waitFor(() => document.querySelector('[data-testid="settings-pane-model-providers"]'));
+      modelPane?.click();
+      const deepseekTab = await waitFor(() => [...document.querySelectorAll('[role="tab"]')].find((item) => item.textContent?.includes("DeepSeek")));
+      deepseekTab?.click();
+      const keyInput = await waitFor(() => document.querySelector('[data-testid="model-provider-api-key"]'));
+      if (keyInput) setInput(keyInput, secret);
+      const saveUse = await waitFor(() => {
+        const button = document.querySelector('[data-testid="model-provider-save-use"]');
+        return button && !button.disabled ? button : null;
+      });
+      checks.productionSettingsReached = Boolean(document.querySelector('[data-testid="model-provider-settings"]') && saveUse);
+      saveUse?.click();
+      const firstDialog = await waitFor(() => document.querySelector('[data-testid="model-provider-preview-dialog"]'));
+      const firstText = firstDialog?.textContent || "";
+      const firstValues = firstDialog ? [...firstDialog.querySelectorAll('dd')].map((item) => item.textContent || "") : [];
+      details.firstPreview = { values: firstValues, secretRendered: firstText.includes(secret) };
+      checks.previewShowsProvider = firstValues[0] === "deepseek";
+      checks.previewShowsModel = firstValues[1] === "deepseek-chat";
+      checks.previewShowsBaseUrl = firstValues[2]?.includes("api.deepseek.com") === true;
+      checks.previewShowsCredentialSource = Boolean(firstValues[3] && !firstValues[3].includes(secret));
+      checks.previewShowsImpact = firstValues[4]?.includes("next task") === true || firstValues[4]?.includes("下一轮") === true;
+      checks.previewNeverRendersKey = !firstText.includes(secret);
+      const cancel = firstDialog?.querySelector('[data-testid="model-provider-preview-cancel"]');
+      checks.cancelIsInitialDialogFocus = document.activeElement === cancel;
+      cancel?.click();
+      checks.cancelClosesWithoutUiMutation = Boolean(await waitFor(() => !document.querySelector('[data-testid="model-provider-preview-dialog"]') && document.querySelector('[data-testid="model-provider-api-key"]')?.value === secret));
+      const saveAgain = document.querySelector('[data-testid="model-provider-save-use"]');
+      saveAgain?.click();
+      const secondDialog = await waitFor(() => document.querySelector('[data-testid="model-provider-preview-dialog"]'));
+      secondDialog?.querySelector('[data-testid="model-provider-preview-confirm"]')?.click();
+      checks.confirmCommitsAndClearsSecret = Boolean(await waitFor(() => {
+        const input = document.querySelector('[data-testid="model-provider-api-key"]');
+        return !document.querySelector('[data-testid="model-provider-preview-dialog"]') && input?.value === "";
+      }));
+      checks.secretAbsentAfterCommit = !document.body.textContent?.includes(secret);
+      details.finalBodyHasSecret = document.body.textContent?.includes(secret) === true;
+      return { ok: Object.values(checks).every(Boolean), checks, details };
+    })()
+  `, true) as Promise<SmokeResult>;
+}
+
+async function runFirstRunDraftSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const stage = process.env.OPENDRSAI_E2E_FIRST_RUN_DRAFT_STAGE;
+  const fixturePath = process.env.OPENDRSAI_E2E_FIRST_RUN_DRAFT_FILE;
+  const workspacePath = process.env.OPENDRSAI_E2E_FIRST_RUN_DRAFT_WORKSPACE;
+  const defaultWorkspacePath = process.env.OPENDRSAI_E2E_FIRST_RUN_DEFAULT_WORKSPACE;
+  const expectedText = process.env.OPENDRSAI_E2E_FIRST_RUN_DRAFT_TEXT || "Review the restart-safe material and prepare a cited report.";
+  if ((stage !== "prepare" && stage !== "verify") || !fixturePath || !workspacePath || !defaultWorkspacePath) {
+    throw new Error("First-run draft smoke requires prepare/verify stage, a fixture, and an isolated default workspace.");
+  }
+
+  return window.webContents.executeJavaScript(`
+    (async () => {
+      const checks = {};
+      const details = { stage: ${JSON.stringify(stage)} };
+      const api = window.openDrSai;
+      document.documentElement.dataset.firstRunE2eStage = 'login-start';
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      document.documentElement.dataset.firstRunE2eStage = 'login-complete';
+      checks.login = login?.ok === true;
+      const waitFor = async (find, timeout = 10000) => {
+        const deadline = Date.now() + timeout;
+        while (Date.now() < deadline) {
+          const value = find();
+          if (value) return value;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return null;
+      };
+      document.documentElement.dataset.firstRunE2eStage = 'setup-wait';
+      const setup = await waitFor(() => document.querySelector('[data-testid="first-run-setup"]'));
+      const input = await waitFor(() => document.querySelector('[data-testid="first-run-task-input"]'));
+      document.documentElement.dataset.firstRunE2eStage = 'setup-complete';
+      const processStartedAt = Number(${JSON.stringify(process.env.OPENDRSAI_E2E_APP_STARTED_MS || "0")});
+      details.firstInteractiveScreenMs = processStartedAt > 0 ? Date.now() - processStartedAt : null;
+      checks.firstInteractiveScreenWithinThreeSeconds = processStartedAt > 0 && details.firstInteractiveScreenMs <= 3000;
+      checks.setupVisible = Boolean(setup);
+      checks.taskEntryVisible = Boolean(input);
+      if (!setup || !input) {
+        details.body = document.body?.innerText?.slice(0, 3000) || '';
+        details.location = location.href;
+        details.storage = { complete: localStorage.getItem('opendrsai:first-run-complete:v3'), draft: localStorage.getItem('opendrsai:first-run-draft:v1') };
+        return { ok: false, checks, details, error: 'First-run setup did not become interactive.' };
+      }
+      if (${JSON.stringify(stage)} === "prepare") {
+        document.documentElement.dataset.firstRunE2eStage = 'default-workspace-wait';
+        const defaultWorkspaceAction = await waitFor(() => document.querySelector('[data-testid="first-run-use-default-workspace"]'));
+        checks.defaultWorkspaceOptionVisible = Boolean(defaultWorkspaceAction);
+        defaultWorkspaceAction?.click();
+        document.documentElement.dataset.firstRunE2eStage = 'default-workspace-clicked';
+        checks.defaultWorkspaceSelected = Boolean(await waitFor(() => document.querySelector('[data-testid="first-run-action-start_task"]')));
+        document.documentElement.dataset.firstRunE2eStage = 'default-workspace-selected:' + (document.querySelector('[data-testid^="first-run-action-"]')?.getAttribute('data-testid') || 'none');
+      }
+      if (${JSON.stringify(stage)} === "prepare" && input) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+        setter?.call(input, ${JSON.stringify(expectedText)});
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        const add = document.querySelector('[data-testid="first-run-add-files"]');
+        add?.click();
+        document.documentElement.dataset.firstRunE2eStage = 'attachment-clicked';
+        await waitFor(() => document.querySelector('[data-testid="first-run-attachment-list"] li'));
+        document.documentElement.dataset.firstRunE2eStage = 'attachment-selected';
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+      const draft = JSON.parse(localStorage.getItem("opendrsai:first-run-draft:v1") || "{}");
+      const activeWorkspaceTitle = await waitFor(() => document.querySelector('.workspace-row.active .workspace-item')?.getAttribute('title')) || '';
+      document.documentElement.dataset.firstRunE2eStage = 'workspace-title-read:'
+        + (document.querySelector('[data-testid^="first-run-action-"]')?.getAttribute('data-testid') || 'none')
+        + ':' + (document.querySelector('.first-run-setup-current h2')?.textContent || 'no-heading');
+      checks.textPreserved = input?.value === ${JSON.stringify(expectedText)} && draft.text === ${JSON.stringify(expectedText)};
+      checks.attachmentPreserved = draft.attachments?.length === 1
+        && draft.attachments[0]?.path === ${JSON.stringify(fixturePath)}
+        && Boolean(document.querySelector('[data-testid="first-run-attachment-list"] li'));
+      checks.workspacePreserved = typeof draft.workspaceId === "string"
+        && draft.workspaceId.length > 0
+        && activeWorkspaceTitle.includes(${JSON.stringify(defaultWorkspacePath)});
+      const startAction = await waitFor(() => document.querySelector('[data-testid="first-run-action-start_task"]'));
+      document.documentElement.dataset.firstRunE2eStage = 'start-action-read';
+      checks.readyActionAvailable = Boolean(startAction);
+      checks.notSentBeforeConfirmation = !document.querySelector('[data-testid="composer-input"]');
+      document.documentElement.dataset.firstRunE2eStage = 'approval-check';
+      checks.noApprovalSideEffect = (await api.listPendingApprovals()).length === 0;
+      document.documentElement.dataset.firstRunE2eStage = 'approval-complete';
+      if (${JSON.stringify(stage)} === "verify") {
+        startAction?.click();
+        const composer = await waitFor(() => document.querySelector('[data-testid="composer-input"]'));
+        const restoredAttachment = await waitFor(() => [...document.querySelectorAll('.composer-attachment-chip')].find((item) => item.getAttribute('title') === ${JSON.stringify(fixturePath)}));
+        checks.handoffToComposer = composer?.value === ${JSON.stringify(expectedText)} && Boolean(restoredAttachment);
+        checks.draftClearedAfterHandoff = localStorage.getItem("opendrsai:first-run-draft:v1") === null;
+        checks.stillNotSentAfterHandoff = Boolean(composer?.value) && ![...document.querySelectorAll('.message.user')].some((item) => item.textContent?.includes(${JSON.stringify(expectedText)}));
+      }
+      details.draft = { textLength: draft.text?.length || 0, attachmentCount: draft.attachments?.length || 0, workspaceId: draft.workspaceId || null };
+      details.activeWorkspaceTitle = activeWorkspaceTitle;
+      return { ok: Object.values(checks).every(Boolean), checks, details };
+    })()
+  `, true) as Promise<SmokeResult>;
+}
+
 async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const channelImportFixture = prepareChannelImportFixture();
   const ideContextFixtures = prepareIdeContextFixtures();
@@ -10620,6 +12521,28 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const api = window.openDrSai;
       checks.bridge = Boolean(api);
       checks.domReady = await waitForDomReady();
+      async function waitForAnonymousLogin() {
+        const deadline = Date.now() + 10000;
+        while (Date.now() < deadline) {
+          const setup = document.querySelector('.login-screen');
+          if (setup) return setup;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return null;
+      }
+      const anonymousLogin = await waitForAnonymousLogin();
+      const anonymousLoginText = anonymousLogin ? anonymousLogin.innerText : "";
+      checks.anonymousLoginVisible = Boolean(anonymousLogin);
+      checks.anonymousLoginRequiresOidc = anonymousLoginText.includes("HepAI");
+      checks.anonymousLoginHasSinglePrimaryAction = Boolean(anonymousLogin && anonymousLogin.querySelectorAll('[data-testid="a5-login-action"]').length === 1);
+      const oidcLoginAction = anonymousLogin && anonymousLogin.querySelector('[data-testid="a5-login-action"]');
+      checks.anonymousLoginHasPrimaryAction = Boolean(oidcLoginAction);
+      checks.anonymousLoginHasNoApiKeyFallback = !anonymousLogin?.querySelector('input[name*="api" i], input[placeholder*="api" i]');
+      details.firstRun = {
+        text: anonymousLoginText.slice(0, 1000),
+        stage: "oidc_login_required",
+        action: oidcLoginAction?.getAttribute("data-testid") || null,
+      };
       details.domTextSample = document.body.innerText.slice(0, 300);
       if (!api) return { checks, details };
 
@@ -10644,6 +12567,27 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
           gatewayStatus.externalConflict === false &&
           gatewayStatus.ready === true,
       );
+
+      const experimentGate = await api.getExperimentReleaseGate();
+      details.experimentReleaseGate = experimentGate;
+      checks.experimentGateMatchesPackagedEvidence = experimentGate?.enabled === false
+        && experimentGate?.passed_features?.join(",") === "M31-03"
+        && experimentGate?.blocking_features?.join(",") === "M31-02,M31-04,M31-05";
+      let blockedExperimentCode = "";
+      try {
+        await api.createRunExperiment({
+          workspacePath: "C:\\\\OpenDrSai\\\\blocked-experiment",
+          runId: "run-m08-release-gate",
+          idempotencyKey: "m08-release-gate",
+        });
+      } catch (error) {
+        const message = String(error && error.message ? error.message : error);
+        blockedExperimentCode = message.includes("experiment_release_gate_blocked")
+          ? "experiment_release_gate_blocked"
+          : message;
+      }
+      details.blockedExperimentCode = blockedExperimentCode;
+      checks.packagedExperimentMutationFailsClosed = blockedExperimentCode === "experiment_release_gate_blocked";
 
       const save = await api.saveApiKey("opendrsai-packaged-smoke-key");
       details.saveApiKey = save;

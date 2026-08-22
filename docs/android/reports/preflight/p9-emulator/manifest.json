@@ -1,0 +1,50 @@
+{
+  "application": {
+    "application_id": "ai.drsai.remote.debug",
+    "version_name": null
+  },
+  "artifacts": {
+    "app_apk": {
+      "name": "OpenDrSai-Android-v1.5.6.apk",
+      "sha256": "ac079f4345cd652825c056c77f7a40ecd28df7e76408d6d7880284de9ac99724"
+    },
+    "test_apk": {
+      "name": "app-debug-androidTest.apk",
+      "sha256": "9ef850f94f4afd8fcbda2373ce3a699a46e3ebe6adaa6ae3f2e90d0a14a987f3"
+    }
+  },
+  "environment": {
+    "abi": "x86_64",
+    "api": 35,
+    "avd": "OpenDrSai_P9_API35",
+    "device_id_sha256": "d81873432981ee4e8ded10dc5ae99ce71dee8e0978d202c1248919e40a5ef2ca",
+    "kind": "emulator",
+    "manufacturer": "Google",
+    "model": "sdk_gphone64_x86_64",
+    "serial": "emulator-5554"
+  },
+  "evidence_tier": "emulator_preflight",
+  "feature_ids": [],
+  "generated_at": "2026-08-12T06:49:11.436321+00:00",
+  "lifecycle": null,
+  "observations": {},
+  "release_evidence": false,
+  "requested": {
+    "attempts": 3,
+    "case": null,
+    "models": [
+      "deepseek-v4-flash",
+      "deepseek-v4-pro"
+    ]
+  },
+  "runtime": {
+    "abis": {
+      "arm64-v8a": "3.12",
+      "x86_64": "3.12"
+    },
+    "python_version": "3.12"
+  },
+  "schema_version": "opendrsai.p9-emulator-preflight-manifest/1",
+  "smoke_tests": {},
+  "started_at": "2026-08-12T06:48:37.059759+00:00"
+}

@@ -1,0 +1,28 @@
+schema_version: opendrsai.agent-regression-case/1
+id: p3.image.input
+revision: 1
+title: P3 formal image input
+owner: agent-runtime
+tags: [p3, release, smoke, image_input]
+agent: {definition: regression-smoke@1, model_profile: default}
+input:
+  messages:
+    - role: user
+      parts:
+        - {type: text, text: Identify the visible Runtime error.}
+        - type: image
+          path: ../../assets/images/opendrsai-runtime-model-unauthorized.png
+          sha256: b3742a0f7997e8ef07fdba9fee167a4141088b5da779cc08056ae82c333e7919
+          mime_type: image/png
+environment:
+  network: disabled
+  required_capabilities: [image_input]
+  session: {type: new, history: empty}
+expect:
+  run: {status: completed}
+  behavior: {tool_calls: {max: 0}}
+  output:
+    type: text
+    required_literals: [model_unauthorized, deepseek-v4-pro, OpenDrSai Desktop]
+  artifacts: {max: 0}
+execution: {timeout_seconds: 30, attempts: 1, isolation: required}

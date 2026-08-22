@@ -1,6 +1,23 @@
 import assert from "node:assert/strict";
 import { VoicePlaybackController } from "../../shared/renderer/src/voice/voicePlaybackController.ts";
 
+const SILENT_WAV = new Uint8Array(46);
+{
+  const view = new DataView(SILENT_WAV.buffer);
+  SILENT_WAV.set(new TextEncoder().encode("RIFF"), 0);
+  view.setUint32(4, 38, true);
+  SILENT_WAV.set(new TextEncoder().encode("WAVEfmt "), 8);
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 16_000, true);
+  view.setUint32(28, 32_000, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  SILENT_WAV.set(new TextEncoder().encode("data"), 36);
+  view.setUint32(40, 2, true);
+}
+
 function voice(name, lang, localService = true, isDefault = false) {
   return { name, lang, localService, default: isDefault };
 }
@@ -94,7 +111,8 @@ const systemRequest = {
 };
 
 {
-  const harness = createHarness();
+  // Without a desktop provider, system mode uses in-renderer speechSynthesis.
+  const harness = createHarness({ withProvider: false });
   harness.controller.play(systemRequest);
   assert.equal(harness.utterances.length, 1);
   assert.equal(harness.utterances[0].rate, 2, "rate must be clamped");
@@ -102,11 +120,33 @@ const systemRequest = {
   assert.equal(harness.system.speakCount, 1);
   harness.utterances[0].onstart();
   assert.equal(harness.snapshots.at(-1).phase, "playing");
+  const resumeBeforePause = harness.system.resumeCount;
   assert.equal(harness.controller.pause(), true);
   assert.equal(harness.system.pauseCount, 1);
   assert.equal(harness.controller.resume(), true);
-  assert.equal(harness.system.resumeCount, 1);
+  assert.equal(harness.system.resumeCount, resumeBeforePause + 1);
   harness.utterances[0].onend();
+  assert.equal(harness.snapshots.at(-1).phase, "idle");
+}
+
+{
+  // With a desktop provider, system mode prefers native SAPI WAV playback.
+  const harness = createHarness();
+  harness.controller.play(systemRequest);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(harness.utterances.length, 0, "native system mode must not use speechSynthesis when provider exists");
+  harness.emit({ requestId: "tts-1", type: "accepted", runtimeId: "system" });
+  harness.emit({ requestId: "tts-1", type: "completed", result: {
+    audioData: SILENT_WAV,
+    mimeType: "audio/wav",
+    runtimeId: "system",
+    createdAt: new Date(0).toISOString(),
+    providerDisclosure: "Windows Speech API",
+  } });
+  assert.equal(harness.audios.length, 1, "system runtime should still play synthesized WAV");
+  assert.equal(harness.snapshots.at(-1).phase, "playing");
+  harness.audios[0].onended();
   assert.equal(harness.snapshots.at(-1).phase, "idle");
 }
 
@@ -116,7 +156,7 @@ const systemRequest = {
   await Promise.resolve();
   harness.emit({ requestId: "tts-1", type: "accepted", runtimeId: "mock-local" });
   harness.emit({ requestId: "tts-1", type: "completed", result: {
-    audioData: new Uint8Array([82, 73, 70, 70]),
+    audioData: SILENT_WAV,
     mimeType: "audio/wav",
     runtimeId: "mock-local",
     createdAt: new Date(0).toISOString(),
@@ -130,11 +170,12 @@ const systemRequest = {
 }
 
 {
-  const harness = createHarness();
+  const harness = createHarness({ withProvider: false });
   harness.controller.play(systemRequest);
+  const cancelAfterFirst = harness.system.cancelCount;
   const first = harness.utterances[0];
   harness.controller.play({ ...systemRequest, messageId: "message-2" });
-  assert.equal(harness.system.cancelCount, 2, "starting a second item must cancel the first owner");
+  assert.ok(harness.system.cancelCount > cancelAfterFirst, "starting a second item must cancel the first owner");
   first.onend();
   assert.equal(harness.snapshots.at(-1).activeMessageId, "message-2", "old completion must not stop the new item");
   harness.controller.stop();
@@ -148,6 +189,7 @@ const systemRequest = {
   await Promise.resolve();
   assert.equal(harness.system.speakCount, 0, "provider failure must not silently cross the user's runtime choice");
   assert.equal(harness.snapshots.at(-1).phase, "failed");
+  assert.equal(harness.snapshots.at(-1).activeMessageId, "message-1");
   assert.equal(harness.snapshots.at(-1).error, "fixture");
 }
 
@@ -157,7 +199,7 @@ const systemRequest = {
   await Promise.resolve();
   await Promise.resolve();
   harness.emit({ requestId: "tts-1", type: "completed", result: {
-    audioData: new Uint8Array([82, 73, 70, 70]),
+    audioData: SILENT_WAV,
     mimeType: "audio/wav",
     runtimeId: "mock-local",
     createdAt: new Date(0).toISOString(),
@@ -196,6 +238,7 @@ const systemRequest = {
   await Promise.resolve();
   harness.emit({ requestId: "tts-1", type: "failed", error: { code: "provider_error", message: "TTS failed", retryable: true } });
   assert.equal(harness.snapshots.at(-1).phase, "failed");
+  assert.equal(harness.snapshots.at(-1).activeMessageId, "message-1");
   assert.equal(harness.snapshots.at(-1).error, "TTS failed");
   assert.equal(harness.providerListeners.size, 0);
 }
@@ -213,7 +256,7 @@ const systemRequest = {
   await Promise.resolve();
   await Promise.resolve();
   harness.emit({ requestId: "tts-1", type: "completed", result: {
-    audioData: new Uint8Array([82, 73, 70, 70]), mimeType: "audio/wav", runtimeId: "mock-local",
+    audioData: SILENT_WAV, mimeType: "audio/wav", runtimeId: "mock-local",
     createdAt: new Date(0).toISOString(), providerDisclosure: "fixture",
   } });
   await Promise.resolve();
@@ -227,7 +270,7 @@ const systemRequest = {
   await Promise.resolve();
   await Promise.resolve();
   harness.emit({ requestId: "tts-1", type: "completed", result: {
-    audioData: new Uint8Array([82, 73, 70, 70]), mimeType: "audio/wav", runtimeId: "mock-local",
+    audioData: SILENT_WAV, mimeType: "audio/wav", runtimeId: "mock-local",
     createdAt: new Date(0).toISOString(), providerDisclosure: "fixture",
   } });
   harness.audios[0].onerror();

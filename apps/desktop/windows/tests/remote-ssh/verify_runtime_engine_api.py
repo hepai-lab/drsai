@@ -1,10 +1,18 @@
 import os
+import json
 import shutil
 from pathlib import Path
 
 os.environ["DRSAI_HOME"] = "/tmp/opendrsai-runtime-engine"
 os.environ["OPENDRSAI_GATEWAY_INSTANCE_TOKEN"] = "temporary-engine-token"
 shutil.rmtree(os.environ["DRSAI_HOME"], ignore_errors=True)
+definition_path = Path(os.environ["DRSAI_HOME"]) / "assets" / "agents" / "agent" / "v1.json"
+definition_path.parent.mkdir(parents=True, exist_ok=True)
+definition_path.write_text(json.dumps({
+    "id": "agent", "version": "v1", "backend": "opendrsai",
+    "instructions": "runtime engine acceptance", "permissions": [],
+    "controlled_plan": {"content": "engine fixture"},
+}), encoding="utf-8")
 
 from fastapi.testclient import TestClient
 from drsai.backend import gateway

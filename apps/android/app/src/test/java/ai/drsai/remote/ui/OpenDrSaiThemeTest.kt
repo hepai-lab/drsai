@@ -4,9 +4,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class OpenDrSaiThemeTest {
+    @Test
+    fun chatRightSidebarRequiresBothWideLayoutAndLandscape() {
+        assertTrue(shouldShowChatRightSidebar(wide = true, isLandscape = true))
+        assertFalse(shouldShowChatRightSidebar(wide = true, isLandscape = false))
+        assertFalse(shouldShowChatRightSidebar(wide = false, isLandscape = true))
+    }
+
     @Test
     fun lightThemeTracksDesktopSemanticTokens() {
         with(OpenDrSaiLightColorScheme) {

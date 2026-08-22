@@ -309,6 +309,13 @@ class TeamManager:
 
             if self.team is not None:
                 await self._switch_remote_model_if_requested(settings_config or {})
+                # Close the old team so its runtime is properly stopped before
+                # we create a new one.  This prevents "Runtime is already started"
+                # when a second start_stream call arrives while the first is
+                # still running (concurrent background tasks for the same run).
+                logger.info("Closing reused team before creating a fresh one")
+                await self.team.close()
+                self.team = None
 
             if self.team is None:
                 # TODO: if we start allowing load from config, we'll need to write the novnc and playwright ports back to the team config..
@@ -323,13 +330,6 @@ class TeamManager:
                     files=files,
                 )
 
-                # Initialize known files by name for tracking
-                initial_files = get_modified_files(
-                    start_time, time.time(), source_dir=str(paths.internal_run_dir)
-                )
-                known_files = {file["name"] for file in initial_files}
-
-               
                 if self.mode in ["magentic-one"]:
                     # 前端启动noVNC，在drsai模式下不需要启动noVNC
                     VNC_SERVICE_URL = os.getenv("VNC_SERVICE_URL", "localhost")
@@ -344,99 +344,105 @@ class TeamManager:
                         },
                     )
 
-                async for message in self.team.run_stream(  # type: ignore
+            # Initialize known files for tracking (always, whether team is new or reused)
+            initial_files = get_modified_files(
+                start_time, time.time(), source_dir=str(paths.internal_run_dir)
+            )
+            known_files = {file["name"] for file in initial_files}
+
+            async for message in self.team.run_stream(  # type: ignore
                     task=task, cancellation_token=cancellation_token
                 ):
-                    if cancellation_token and cancellation_token.is_cancelled():
-                        break
+                if cancellation_token and cancellation_token.is_cancelled():
+                    break
 
-                    # Get all current files with full metadata
-                    modified_files = get_modified_files(
-                        start_time, time.time(), source_dir=str(paths.internal_run_dir)
-                    )
-                    current_file_names = {file["name"] for file in modified_files}
+                # Get all current files with full metadata
+                modified_files = get_modified_files(
+                    start_time, time.time(), source_dir=str(paths.internal_run_dir)
+                )
+                current_file_names = {file["name"] for file in modified_files}
 
-                    # Find new files
-                    new_file_names = current_file_names - known_files
-                    known_files = current_file_names  # Update for next iteration
+                # Find new files
+                new_file_names = current_file_names - known_files
+                known_files = current_file_names  # Update for next iteration
 
-                    # Get the full data for new files
+                # Get the full data for new files
+                new_files = [
+                    file
+                    for file in modified_files
+                    if file["name"] in new_file_names
+                ]
+
+                if new_files:
+                    # filter files that start with "tmp_code"
                     new_files = [
                         file
-                        for file in modified_files
-                        if file["name"] in new_file_names
+                        for file in new_files
+                        if not file["name"].startswith("tmp_code")
                     ]
-
-                    if new_files:
-                        # filter files that start with "tmp_code"
-                        new_files = [
-                            file
-                            for file in new_files
-                            if not file["name"].startswith("tmp_code")
-                        ]
-                        if len(new_files) > 0:
-                            file_message = TextMessage(
-                                source="system",
-                                content="File Generated",
-                                metadata={
-                                    "internal": "no",
-                                    "type": "file",
-                                    "files": json.dumps(new_files),
-                                },
-                            )
-                            global_new_files.extend(new_files)
-                            yield file_message
-
-                    if isinstance(message, TaskResult):
-                        yield TeamResult(
-                            task_result=message,
-                            usage="",
-                            duration=time.time() - start_time,
-                            files=modified_files,  # Full file data preserved
+                    if len(new_files) > 0:
+                        file_message = TextMessage(
+                            source="system",
+                            content="File Generated",
+                            metadata={
+                                "internal": "no",
+                                "type": "file",
+                                "files": json.dumps(new_files),
+                            },
                         )
-                    elif (
-                        isinstance(message, TextMessage)
-                        and self.mode not in ["magentic-one"]
-                    ):
-                        # For ModelClientStreamChunk output, we need to add internal: yes to the message
-                        internal = message.metadata.get("internal", "unknown")
-                        if internal == "yes":
-                            yield message
-                        else:
-                            if message.source not in ["user_proxy", "user"] and internal == "unknown":
-                                message.metadata.update({"internal": "yes", "is_save": "yes"})
-                            yield message
-                    else:
-                        yield message
-                        
-                    # Add generated files to final output
-                    if (
-                        isinstance(message, TextMessage)
-                        and message.metadata.get("type", "") == "final_answer"
-                    ):
-                        if len(global_new_files) > 0:
-                            # only keep unique file names, if there is a file with the same name, keep the latest one
-                            global_new_files = list(
-                                {
-                                    file["name"]: file for file in global_new_files
-                                }.values()
-                            )
-                            file_message = TextMessage(
-                                source="system",
-                                content="File Generated",
-                                metadata={
-                                    "internal": "no",
-                                    "type": "file",
-                                    "files": json.dumps(global_new_files),
-                                },
-                            )
-                            yield file_message
-                            global_new_files = []
+                        global_new_files.extend(new_files)
+                        yield file_message
 
-                    # Check for any LLM events
-                    while not llm_event_logger.events.empty():
-                        event = await llm_event_logger.events.get()
-                        yield event
+                if isinstance(message, TaskResult):
+                    yield TeamResult(
+                        task_result=message,
+                        usage="",
+                        duration=time.time() - start_time,
+                        files=modified_files,  # Full file data preserved
+                    )
+                elif (
+                    isinstance(message, TextMessage)
+                    and self.mode not in ["magentic-one"]
+                ):
+                    # For ModelClientStreamChunk output, we need to add internal: yes to the message
+                    internal = message.metadata.get("internal", "unknown")
+                    if internal == "yes":
+                        yield message
+                    else:
+                        if message.source not in ["user_proxy", "user"] and internal == "unknown":
+                            message.metadata.update({"internal": "yes", "is_save": "yes"})
+                        yield message
+                else:
+                    yield message
+                    
+                # Add generated files to final output
+                if (
+                    isinstance(message, TextMessage)
+                    and message.metadata.get("type", "") == "final_answer"
+                ):
+                    if len(global_new_files) > 0:
+                        # only keep unique file names, if there is a file with the same name, keep the latest one
+                        global_new_files = list(
+                            {
+                                file["name"]: file for file in global_new_files
+                            }.values()
+                        )
+                        file_message = TextMessage(
+                            source="system",
+                            content="File Generated",
+                            metadata={
+                                "internal": "no",
+                                "type": "file",
+                                "files": json.dumps(global_new_files),
+                            },
+                        )
+                        yield file_message
+                        global_new_files = []
+
+                # Check for any LLM events
+                while not llm_event_logger.events.empty():
+                    event = await llm_event_logger.events.get()
+                    yield event
         finally:
             # Cleanup - remove our handler
             if llm_event_logger in logger.handlers:

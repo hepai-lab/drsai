@@ -1,0 +1,48 @@
+{
+  "schema": "opendrsai.codex-adapter-v6.release-evidence.v1",
+  "version": "V6",
+  "oaep_version": "1.0",
+  "completed_at": "2026-08-04",
+  "features": {
+    "accepted": 80,
+    "total": 80
+  },
+  "tests": {
+    "python": {
+      "passed": 1021,
+      "skipped": 4,
+      "subtests_passed": 81
+    },
+    "codex_python_targeted": 30,
+    "typescript_typecheck": true,
+    "oaep_item_types": 10,
+    "oaep_delta_kinds": 7,
+    "visual_screenshots": 20,
+    "long_conversation_runs": 500,
+    "long_conversation_messages": 1000,
+    "bundled_backend_install": true,
+    "full_release_gate": true
+  },
+  "live": {
+    "platform": "windows-host-codex",
+    "thread_id": "019fc8d2-f88f-7840-8c21-8fab38e422ff",
+    "turn_count": 3,
+    "turn_ids_unique": true,
+    "context_retained": true,
+    "first_delta_count": 4,
+    "second_delta_count": 5,
+    "recovery_delta_count": 4,
+    "approval_count": 1,
+    "cancellation_verified": true,
+    "archive_roundtrip": true,
+    "gateway_restart_recovered": true,
+    "statuses": [
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+      "cancelled"
+    ]
+  },
+  "local_detail": ".artifacts/v6-live-exact-20260804/recover.json"
+}

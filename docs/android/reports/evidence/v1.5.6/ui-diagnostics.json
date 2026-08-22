@@ -1,0 +1,18 @@
+{
+  "apk": {
+    "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\debug\\OpenDrSai-Android-v1.5.6.apk",
+    "sha256": "6787c01c6f8122bc37608594b10f558cc2cd0c00cefc73aa9cbb88b2fadd5ce6"
+  },
+  "banned_production_label_findings": [],
+  "features": {
+    "M06-F01": true,
+    "M06-F02": true,
+    "M06-F03": true,
+    "M06-F04": true,
+    "M06-F05": true,
+    "M06-F06": true
+  },
+  "generated_at": "2026-08-04T17:30:38.399419+00:00",
+  "passed": true,
+  "schema_version": 1
+}

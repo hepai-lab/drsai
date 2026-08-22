@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "feature_id": "M06-F03",
+  "generated_at": "2026-08-05T14:15:08.575645+00:00",
+  "passed": true,
+  "gates": {
+    "text_image_pdf_and_large_preview_policy": true,
+    "artifact_size_digest_and_scope_are_verified": true,
+    "large_remote_artifacts_are_chunked_and_digest_checked": true,
+    "process_recovery_rebuilds_from_durable_metadata": true,
+    "preview_and_share_are_user_visible": true,
+    "sharing_uses_scoped_read_only_file_provider": true,
+    "artifact_descriptors_never_export_storage_paths": true,
+    "jvm_artifact_suites_green": true,
+    "api35_file_provider_recovery_suite_green": true
+  },
+  "jvm_suites": {
+    "LocalArtifactPolicyTest": {
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "name": "ai.drsai.remote.LocalArtifactPolicyTest",
+      "sha256": "c2139af8b95d13870ee06097275703df0ae03f8f7cf303e9ee134b9e48d5f279"
+    },
+    "ArtifactDownloaderTest": {
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "name": "ai.drsai.remote.ArtifactDownloaderTest",
+      "sha256": "baa1b7830f8e567b84decc94d1fd4950d59d416ed347400c15bd07220642745f"
+    },
+    "AndroidPythonHostAdaptersTest": {
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "name": "ai.drsai.remote.AndroidPythonHostAdaptersTest",
+      "sha256": "8016e5d45bc65c9eeaf10e6d69ce408b8b99811826c6a4e19b74dc76bfaae2c9"
+    }
+  },
+  "connected_suite": {
+    "tests": 2,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.LocalArtifactAccessInstrumentedTest",
+    "sha256": "a9fbd57288edfc6933073578b9a53d579f339f780fe8387977426d4ee8ee38f4"
+  },
+  "connected_report": "apps/android/app/build/outputs/androidTest-results/connected/debug/TEST-ai.drsai.remote.LocalArtifactAccessInstrumentedTest.xml",
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/data/LocalArtifactAccess.kt": "98d25d49be2d3c2651aa9554610a61c6f30e85758cb552ac61def54266b7defc",
+    "apps/android/app/src/main/java/ai/drsai/remote/remote/data/ArtifactDownload.kt": "0c15cb2a0006a066b932d6571b3e63d0e21262a3877abb9a1fbb143308f05376",
+    "apps/android/app/src/main/res/xml/file_paths.xml": "9327d3567aad952eb95f7d1d4d88c1993be729efcf0d6ec4e7c0a5e98ac5ba2e",
+    "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt": "5e78c7262c9456967e5f440ecfa593499ffb0e8b2ba90f1292bd6e8716d91baa",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "apps/android/app/src/test/java/ai/drsai/remote/LocalArtifactPolicyTest.kt": "30145740b1d70c215d35a0c66fe2acb3135eaf025bac792d3d62e4506a165267",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/LocalArtifactAccessInstrumentedTest.kt": "d30e3f58c6d7a327ff470fe27852d43af3de234eb703d201782f1e5354a14dd2"
+  }
+}

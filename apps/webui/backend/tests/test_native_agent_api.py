@@ -58,6 +58,11 @@ from drsai_ui.ui_backend.backend.web.routes.native import NativeAgentChatRequest
 from drsai_ui.ui_backend.backend.web.routes import native as native_routes
 
 
+@pytest.fixture(autouse=True)
+def isolated_drsai_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("DRSAI_HOME", str(tmp_path / ".drsai"))
+
+
 def _upload(name: str, content: bytes, mime: str) -> UploadFile:
     return UploadFile(filename=name, file=io.BytesIO(content), headers=Headers({"content-type": mime}))
 
@@ -116,6 +121,16 @@ def test_native_identity_rejects_missing_and_untrusted_tokens_without_network():
     assert untrusted.value.detail["code"] == "unsupported_issuer"
 
 
+def test_native_oidc_issuer_follows_active_platform(monkeypatch):
+    monkeypatch.delenv("OPENDRSAI_NATIVE_OIDC_ISSUERS", raising=False)
+    monkeypatch.setattr(
+        native_auth,
+        "get_active_platform",
+        lambda: SimpleNamespace(oidc_issuer="https://ai-dev.ihep.ac.cn/api"),
+    )
+    assert native_auth._allowed_issuers() == {"https://ai-dev.ihep.ac.cn/api"}
+
+
 def test_native_identity_verifies_rs256_audience_and_derives_subject(monkeypatch):
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     public_numbers = private_key.public_key().public_numbers()
@@ -137,6 +152,11 @@ def test_native_identity_verifies_rs256_audience_and_derives_subject(monkeypatch
         return {"keys": [jwk]}
 
     monkeypatch.setattr(native_auth, "_get_jwks", fake_jwks)
+    monkeypatch.setattr(
+        native_auth,
+        "get_active_platform",
+        lambda: SimpleNamespace(oidc_issuer="https://ai-dev.ihep.ac.cn/api"),
+    )
     private_pem = private_key.private_bytes(
         serialization.Encoding.PEM,
         serialization.PrivateFormat.PKCS8,

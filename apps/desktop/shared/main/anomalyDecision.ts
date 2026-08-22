@@ -37,10 +37,10 @@ export async function applyAnomalyDecision(request: DesktopAnomalyDecisionApplyR
   }
   const decidedAt = new Date().toISOString();
   const resultSummary = request.decision === "keep"
-    ? `已保留全部 ${dataRows.length} 行，其中异常 ${anomalyRows.length} 行。`
+    ? `已按“保留异常”生成结果：保留全部 ${dataRows.length} 行，其中异常 ${anomalyRows.length} 行。`
     : request.decision === "exclude"
-      ? `已排除异常：输出 ${normalRows.length} 行；原始数据未改动。`
-      : `已生成保留版 ${dataRows.length} 行和排除版 ${normalRows.length} 行；原始数据未改动。`;
+      ? `已按“排除异常”生成结果：输出 ${normalRows.length} 行；原始数据未改动。`
+      : `已按“两种都做”生成结果：保留版 ${dataRows.length} 行，排除版 ${normalRows.length} 行；原始数据未改动。`;
   const receiptPath = join(outputDirectory, `${base}-异常处理决定.json`);
   const result: DesktopAnomalyDecisionApplyResult = { sourcePath: preview.path, anomalyColumn: request.anomalyColumn.trim(), totalRows: dataRows.length, anomalyRows: anomalyRows.length, normalRows: normalRows.length, decision: request.decision, decidedAt, resultSummary, sourceSha256, receiptPath, outputs };
   await writeAtomically(receiptPath, `${JSON.stringify(result, null, 2)}\n`);

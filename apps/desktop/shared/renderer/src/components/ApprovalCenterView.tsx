@@ -9,6 +9,7 @@ import {
 } from "@shared/executionPolicy";
 import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
+import { userFacingBusinessText, userFacingFailureMessage } from "../userFacingLanguage";
 import type {
   BrowserTaskPendingApproval,
   DesktopCommitApprovalChecklist,
@@ -108,7 +109,7 @@ export function ApprovalCenterView({
         if (!cancelled) setPendingApprovals(approvals);
       } catch (error) {
         if (!cancelled) {
-          setApprovalMessage(error instanceof Error ? error.message : String(error));
+          setApprovalMessage(userFacingFailureMessage(error, language, "approval"));
         }
       }
     }
@@ -181,7 +182,7 @@ export function ApprovalCenterView({
         }
       } catch (error) {
         if (!cancelled) {
-          setApprovalMessage(error instanceof Error ? error.message : String(error));
+          setApprovalMessage(userFacingFailureMessage(error, language, "connection"));
         }
       }
     }
@@ -252,7 +253,7 @@ export function ApprovalCenterView({
             : (zh ? "已拒绝，操作不会执行。" : "Rejected. The operation will not run."),
       );
     } catch (error) {
-      setApprovalMessage(error instanceof Error ? error.message : String(error));
+      setApprovalMessage(userFacingFailureMessage(error, language, "approval"));
     }
   }
 
@@ -274,7 +275,7 @@ export function ApprovalCenterView({
         setMcpSessionAudits(sessionAudits);
       }
     } catch (error) {
-      setApprovalMessage(error instanceof Error ? error.message : String(error));
+      setApprovalMessage(userFacingFailureMessage(error, language, "connection"));
     }
   }
 
@@ -297,7 +298,7 @@ export function ApprovalCenterView({
         setMcpReusableSessions(reusableSessions);
       }
     } catch (error) {
-      setApprovalMessage(error instanceof Error ? error.message : String(error));
+      setApprovalMessage(userFacingFailureMessage(error, language, "connection"));
     }
   }
 
@@ -318,7 +319,7 @@ export function ApprovalCenterView({
       onAttachMcpContext?.(result);
       setApprovalMessage(`Attached ${result.items.length} reviewed MCP tool result to chat.`);
     } catch (error) {
-      setApprovalMessage(error instanceof Error ? error.message : String(error));
+      setApprovalMessage(userFacingFailureMessage(error, language, "operation"));
     } finally {
       setAttachingMcpAuditId(null);
     }
@@ -706,30 +707,32 @@ function approvalActionLabel(action: ExecutionActionKind): string {
 }
 
 function approvalBusinessAction(approval: DesktopPendingApproval, zh: boolean): string {
-  const explicit = approval.businessAction?.trim();
+  const fallback = zh
+    ? approvalActionLabel(approval.actionKind)
+    : ACTION_CATALOG.find((item) => item.action === approval.actionKind)?.label ?? "Review requested operation";
+  const explicit = userFacingBusinessText(approval.businessAction, "");
   if (explicit) return explicit;
-  const existingTitle = approval.title.trim();
-  if (existingTitle) return existingTitle;
-  if (zh) return approvalActionLabel(approval.actionKind);
-  return ACTION_CATALOG.find((item) => item.action === approval.actionKind)?.label ?? "Review requested operation";
+  return userFacingBusinessText(approval.title, fallback);
 }
 
 function approvalBusinessObject(approval: DesktopPendingApproval, zh: boolean): string {
-  return approval.businessObject?.trim()
-    || approval.target?.trim()
-    || approval.title.trim()
-    || (zh ? "本次操作涉及的内容" : "Content involved in this operation");
+  const fallback = zh ? "本次操作涉及的内容" : "Content involved in this operation";
+  return userFacingBusinessText(
+    approval.businessObject,
+    userFacingBusinessText(approval.target, userFacingBusinessText(approval.title, fallback)),
+  );
 }
 
 function approvalBusinessScope(approval: DesktopPendingApproval, zh: boolean): string {
-  return approval.scope?.trim()
-    || (zh ? "仅限当前工作区的这一次操作" : "This operation in the current workspace only");
+  return userFacingBusinessText(
+    approval.scope,
+    zh ? "仅限当前工作区的这一次操作" : "This operation in the current workspace only",
+  );
 }
 
 function approvalBusinessImpact(approval: DesktopPendingApproval, zh: boolean): string {
-  return approval.impact?.trim()
-    || approval.detail.trim()
-    || (zh ? "执行后可能改变当前任务或材料。" : "This may change the current task or its materials.");
+  const fallback = zh ? "执行后可能改变当前任务或材料。" : "This may change the current task or its materials.";
+  return userFacingBusinessText(approval.impact, userFacingBusinessText(approval.detail, fallback));
 }
 
 function approvalRiskPresentation(

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -15,13 +16,28 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from drsai.backend.runtime.agent import RuntimeExecutionError
-from drsai.backend.codex_adapter.app_server_process import CodexAppServerProcess, CodexRestartPolicy
-from drsai.backend.codex_adapter.binary_provider import CodexArtifactStore, CodexBinaryProvider
+from drsai.backend.codex_adapter.app_server_process import (
+    CodexAppServerProcess,
+    CodexRestartPolicy,
+    _WINDOWS_BACKGROUND_PROCESS_FLAGS,
+)
+from drsai.backend.codex_adapter.binary_provider import (
+    CodexArtifactStore,
+    CodexBinaryProvider,
+    _WINDOWS_NO_WINDOW,
+)
 
 
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows background process flags")
+def test_codex_background_processes_never_allocate_a_console() -> None:
+    assert _WINDOWS_BACKGROUND_PROCESS_FLAGS & subprocess.CREATE_NEW_PROCESS_GROUP
+    assert _WINDOWS_BACKGROUND_PROCESS_FLAGS & subprocess.CREATE_NO_WINDOW
+    assert _WINDOWS_NO_WINDOW & subprocess.CREATE_NO_WINDOW
 
 
 def _development_provider(tmp_path: Path, executable: Path | None = None) -> CodexBinaryProvider:

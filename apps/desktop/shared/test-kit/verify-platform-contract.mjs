@@ -44,7 +44,13 @@ assert.doesNotThrow(() => assertDesktopPlatformDescriptor(WINDOWS_PLATFORM_DESCR
 assert.equal(WINDOWS_PLATFORM_DESCRIPTOR.id, "windows");
 assert.equal(WINDOWS_PLATFORM_DESCRIPTOR.defaultTerminalShell, "powershell");
 assert.equal(WINDOWS_PLATFORM_DESCRIPTOR.capabilities.terminal, true);
-assert.ok(Object.values(WINDOWS_PLATFORM_DESCRIPTOR.capabilities.features).every((value) => value === true));
+for (const [feature, value] of Object.entries(WINDOWS_PLATFORM_DESCRIPTOR.capabilities.features)) {
+  if (feature === "duplexVoice") {
+    assert.equal(value, false, "Duplex voice must remain disabled unless its release feature flag is enabled.");
+  } else {
+    assert.equal(value, true, `Windows must expose implemented ${feature}`);
+  }
+}
 assert.doesNotThrow(() => assertDesktopPlatformDescriptor(MACOS_PLATFORM_DESCRIPTOR));
 assert.equal(MACOS_PLATFORM_DESCRIPTOR.capabilities.features.chat, true);
 assert.equal(MACOS_PLATFORM_DESCRIPTOR.capabilities.features.terminal, true);
@@ -61,6 +67,21 @@ const windowsPaths = createDesktopPathService({
 assert.match(windowsPaths.layout.pythonExecutable.replaceAll("\\", "/"), /venv\/Scripts\/python\.exe$/);
 assert.match(windowsPaths.layout.commandExecutable.replaceAll("\\", "/"), /venv\/Scripts\/drsai\.cmd$/);
 assert.ok(windowsPaths.enhancedPath().includes("C:/Windows/System32"));
+
+const developerWindowsPaths = createDesktopPathService({
+  platform: "windows",
+  userHome: "C:/Users/tester",
+  environment: {
+    DRSAI_REPO: "C:/src/drsai",
+    OPENDRSAI_RUNTIME_ROOT: "C:/Users/tester/.drsai/drsai-agent",
+  },
+});
+assert.equal(developerWindowsPaths.layout.repository.replaceAll("\\", "/"), "C:/src/drsai");
+assert.equal(
+  developerWindowsPaths.layout.pythonExecutable.replaceAll("\\", "/"),
+  "C:/Users/tester/.drsai/drsai-agent/venv/Scripts/python.exe",
+  "developer source and managed Runtime root must remain independent",
+);
 
 const macosPaths = createDesktopPathService({
   platform: "macos",

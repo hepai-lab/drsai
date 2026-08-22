@@ -247,11 +247,12 @@ class GfsUserClient:
         text: str,
         *,
         encoding: str = "utf-8",
+        content_type: str | None = None,
     ) -> str:
         return self.write_bytes(
             path,
             text.encode(encoding),
-            content_type=f"text/plain; charset={encoding}",
+            content_type=content_type or f"text/plain; charset={encoding}",
         )
 
     def upload_file(self, local_path: str, remote_path: str) -> None:
@@ -295,11 +296,20 @@ class GfsUserClient:
     # ------------------------------------------------------------------ #
     # 预签名 URL
     # ------------------------------------------------------------------ #
-    def presign_get(self, path: str, ttl_sec: int = 3600) -> str:
+    def presign_get(
+        self,
+        path: str,
+        ttl_sec: int = 3600,
+        *,
+        response_content_type: str | None = None,
+    ) -> str:
         key = _normalize_key(path)
+        params: dict[str, str] = {"Bucket": self.bucket, "Key": key}
+        if response_content_type:
+            params["ResponseContentType"] = response_content_type
         return self._s3.generate_presigned_url(
             "get_object",
-            Params={"Bucket": self.bucket, "Key": key},
+            Params=params,
             ExpiresIn=int(ttl_sec),
         )
 

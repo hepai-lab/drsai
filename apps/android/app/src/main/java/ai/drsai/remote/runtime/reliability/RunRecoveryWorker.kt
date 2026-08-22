@@ -28,16 +28,35 @@ import ai.drsai.remote.data.MIGRATION_3_4
 import ai.drsai.remote.data.MIGRATION_4_5
 import ai.drsai.remote.data.MIGRATION_5_6
 import ai.drsai.remote.data.MIGRATION_6_7
+import ai.drsai.remote.data.MIGRATION_7_8
+import ai.drsai.remote.data.MIGRATION_8_9
+import ai.drsai.remote.data.MIGRATION_9_10
+import ai.drsai.remote.data.MIGRATION_10_11
+import ai.drsai.remote.data.MIGRATION_11_12
+import ai.drsai.remote.data.MIGRATION_12_13
+import ai.drsai.remote.runtime.python.PythonRunRecovery
+import ai.drsai.remote.runtime.python.RoomPythonCheckpointStore
+import ai.drsai.remote.runtime.python.OaepBoundPythonCheckpointStore
+import ai.drsai.remote.remote.data.OaepJsonCodec
+import ai.drsai.remote.runtime.device.EXTRA_SESSION_ID
+import ai.drsai.remote.runtime.device.EXTRA_INTERACTION_ID
+import ai.drsai.remote.runtime.device.oaepRunOpenIntent
+import ai.drsai.remote.runtime.device.localRunActionIntent
+import ai.drsai.remote.runtime.device.ACTION_CONTINUE_LOCAL_RUN
+import ai.drsai.remote.runtime.device.ACTION_STOP_LOCAL_RUN
+import ai.drsai.remote.runtime.device.LocalRunNotificationController
 import ai.drsai.remote.workbench.model.WorkbenchId
+import org.json.JSONObject
 
 const val ACTION_OPEN_RECOVERABLE_RUN = "ai.drsai.remote.action.OPEN_RECOVERABLE_RUN"
 private const val KEY_RUN_ID = "run_id"
+private const val KEY_SESSION_ID = "session_id"
 private const val KEY_SUBJECT = "subject"
+private const val KEY_RESUME_ENVELOPE = "resume_envelope"
+private const val KEY_RECOVERY_ERROR = "recovery_error"
 private const val RECOVERY_CHANNEL = "run-recovery"
 
-class RunRecoveryScheduler(
-    private val workManager: WorkManager,
-) {
+class RunRecoveryScheduler(private val workManager: WorkManager) {
     fun schedule(subject: String, runId: WorkbenchId) {
         require(subject.isNotBlank() && runId.value.isNotBlank())
         val request = OneTimeWorkRequestBuilder<RunRecoveryWorker>()
@@ -46,9 +65,7 @@ class RunRecoveryScheduler(
             .addTag("opendrsai-run-recovery")
             .build()
         workManager.enqueueUniqueWork(
-            BackgroundRunKeys.uniqueWorkName(subject, runId),
-            ExistingWorkPolicy.KEEP,
-            request,
+            BackgroundRunKeys.uniqueWorkName(subject, runId), ExistingWorkPolicy.KEEP, request,
         )
     }
 
@@ -60,46 +77,85 @@ class RunRecoveryWorker(context: Context, parameters: WorkerParameters) : Corout
     override suspend fun doWork(): Result {
         val subject = inputData.getString(KEY_SUBJECT).orEmpty()
         val runId = inputData.getString(KEY_RUN_ID).orEmpty()
-        if (subject.isBlank() || runId.isBlank()) return Result.failure()
+        if (subject.isBlank() || runId.isBlank()) return failure("recovery_identity_missing")
         val database = Room.databaseBuilder(applicationContext, ChatDatabase::class.java, "opendrsai.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
-            .build()
-        val run = try {
-            database.workbenchDao().runById(runId)
+            .addMigrations(
+                MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
+                MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
+            ).build()
+        return try {
+            val run = database.workbenchDao().runById(runId)
+                ?: return Result.success()
+            if (run.subject != subject || run.status !in RECOVERABLE_STATUSES) return Result.success()
+            val envelope = runCatching {
+                PythonRunRecovery.resumeEnvelope(
+                    runId, run.sessionId,
+                    OaepBoundPythonCheckpointStore(
+                        database, RoomPythonCheckpointStore(database), subject, "", "android-local", run.sessionId, runId,
+                    ),
+                )
+            }.getOrElse { error -> return failure(error.message ?: "recovery_task_invalid") }
+            val interactionId = database.androidOaepDao().events(subject, "", "android-local", run.sessionId)
+                .asReversed().asSequence()
+                .filter { it.runId == runId }
+                .map { OaepJsonCodec.event(JSONObject(it.eventJson)) }
+                .firstOrNull { it.type == "event.run.waiting" }
+                ?.data?.extra?.get("interaction_item_id") as? String
+            showRecoveryNotification(runId, run.sessionId, interactionId)
+            Result.success(
+                Data.Builder()
+                    .putString(KEY_RUN_ID, runId)
+                    .putString(KEY_SESSION_ID, run.sessionId)
+                    .putString(KEY_RESUME_ENVELOPE, envelope.toJson())
+                    .build(),
+            )
         } finally {
             database.close()
         }
-        if (run == null || run.subject != subject || run.status !in RECOVERABLE_STATUSES) return Result.success()
-        showRecoveryNotification(runId)
-        return Result.success(Data.Builder().putString(KEY_RUN_ID, runId).build())
     }
 
-    private fun showRecoveryNotification(runId: String) {
+    private fun failure(code: String) = Result.failure(Data.Builder().putString(KEY_RECOVERY_ERROR, code).build())
+
+    private fun showRecoveryNotification(runId: String, sessionId: String, interactionId: String?) {
         applicationContext.getSystemService(NotificationManager::class.java)?.createNotificationChannel(
-            NotificationChannel(RECOVERY_CHANNEL, "任务恢复", NotificationManager.IMPORTANCE_DEFAULT),
+            NotificationChannel(
+                RECOVERY_CHANNEL, applicationContext.getString(R.string.run_recovery_channel),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ),
         )
         val open = PendingIntent.getActivity(
-            applicationContext,
-            runId.hashCode(),
-            Intent(applicationContext, MainActivity::class.java)
-                .setAction(ACTION_OPEN_RECOVERABLE_RUN)
-                .putExtra(ai.drsai.remote.runtime.device.EXTRA_RUN_ID, runId)
-                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            applicationContext, runId.hashCode(),
+            oaepRunOpenIntent(
+                applicationContext, runId, sessionId, interactionId, ACTION_OPEN_RECOVERABLE_RUN,
+            ),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(applicationContext, RECOVERY_CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("OpenDrSai 任务可以恢复")
-            .setContentText("点按打开原会话并继续")
+            .setContentTitle(applicationContext.getString(R.string.run_recovery_title))
+            .setContentText(applicationContext.getString(R.string.run_recovery_body))
             .setAutoCancel(true)
             .setContentIntent(open)
+            .addAction(0, applicationContext.getString(R.string.run_recovery_continue), PendingIntent.getActivity(
+                applicationContext,
+                LocalRunNotificationController.stableNotificationId(runId) xor 0x02000000,
+                localRunActionIntent(applicationContext, ACTION_CONTINUE_LOCAL_RUN, runId, sessionId),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            ))
+            .addAction(0, applicationContext.getString(R.string.run_recovery_cancel), PendingIntent.getActivity(
+                applicationContext,
+                LocalRunNotificationController.stableNotificationId(runId),
+                localRunActionIntent(applicationContext, ACTION_STOP_LOCAL_RUN, runId, sessionId),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            ))
             .build()
         val allowed = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(
-            applicationContext,
-            Manifest.permission.POST_NOTIFICATIONS,
+            applicationContext, Manifest.permission.POST_NOTIFICATIONS,
         ) == PackageManager.PERMISSION_GRANTED
-        if (allowed) {
-            runCatching { NotificationManagerCompat.from(applicationContext).notify(runId.hashCode(), notification) }
+        if (allowed) runCatching {
+            NotificationManagerCompat.from(applicationContext).notify(
+                LocalRunNotificationController.stableNotificationId(runId), notification,
+            )
         }
     }
 

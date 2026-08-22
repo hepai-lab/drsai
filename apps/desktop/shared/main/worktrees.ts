@@ -4,7 +4,8 @@ import { mkdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { DesktopForkWorktreeRequest, DesktopForkWorktreeResult, DesktopWorktreeEventBatch, DesktopWorktreeEventRequest, DesktopWorktreeListRequest, DesktopWorktreeMigrationDiagnostic, DesktopWorktreeSummary } from "../api/desktopApi";
 import { DRSAI_HOME } from "./paths";
-import { connectRuntimeClientForWorkspace, LocalRuntimeClient, type RuntimeClient, type RuntimeWorktree } from "./runtimeClient";
+import { requireAuthContext } from "./auth";
+import { connectRuntimeClientForWorkspace, isLocalRuntimeUnavailableError, LocalRuntimeClient, type RuntimeClient, type RuntimeWorktree } from "./runtimeClient";
 import { listThreads, updateThread } from "./threads";
 
 const FORK_ROOT = join(DRSAI_HOME, "desktop", "fork-worktrees");
@@ -24,15 +25,37 @@ export async function listRuntimeWorktrees(request: DesktopWorktreeListRequest):
   if (process.env.OPENDRSAI_LEGACY_DESKTOP_WORKTREE === "1") return listLegacy(request.workspacePath);
   const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
   await migrateLegacyForks(request.workspacePath, resolved.client, resolved.workspaceId);
-  return (await resolved.client.listWorktrees(resolved.workspaceId, request.includeRemoved === true)).map(mapRuntimeWorktree);
+  return (await resolved.client.listWorktrees(
+    resolved.workspaceId,
+    request.includeRemoved === true,
+    await requireAuthContext(),
+  )).map(mapRuntimeWorktree);
 }
 
 export async function listRuntimeWorktreeEvents(request: DesktopWorktreeEventRequest): Promise<DesktopWorktreeEventBatch> {
   validateList(request);
   if (process.env.OPENDRSAI_LEGACY_DESKTOP_WORKTREE === "1") return { events: [], nextSequence: Math.max(0, request.afterSequence ?? 0) };
-  const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
-  const batch = await resolved.client.listWorkspaceEvents(resolved.workspaceId, request.afterSequence ?? 0);
-  return { events: batch.events.filter((event) => event.type.startsWith("worktree.")).map((event) => ({ eventId: event.event_id, workspaceId: event.workspace_id, sequence: event.sequence, type: event.type, data: event.data })), nextSequence: batch.nextSequence };
+  const afterSequence = Math.max(0, request.afterSequence ?? 0);
+  try {
+    const resolved = await connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId);
+    const batch = await resolved.client.listWorkspaceEvents(
+      resolved.workspaceId,
+      afterSequence,
+      await requireAuthContext(),
+    );
+    return { events: batch.events.filter((event) => event.type.startsWith("worktree.")).map((event) => ({ eventId: event.event_id, workspaceId: event.workspace_id, sequence: event.sequence, type: event.type, data: event.data })), nextSequence: batch.nextSequence };
+  } catch (error) {
+    if (!isLocalRuntimeUnavailableError(error)) throw error;
+    return {
+      events: [],
+      nextSequence: afterSequence,
+      degraded: {
+        code: error.code,
+        message: error.message,
+        retryable: error.retryable,
+      },
+    };
+  }
 }
 
 export function getWorktreeMigrationDiagnostics(request: DesktopWorktreeListRequest): DesktopWorktreeMigrationDiagnostic[] { validateList(request); return [...(diagnostics.get(pathKey(request.workspacePath)) ?? [])]; }

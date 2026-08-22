@@ -1,0 +1,145 @@
+schema_version: opendrsai.agent-regression-case/1
+
+id: workspace.readonly.diagnose
+revision: 5
+title: 只读诊断空事件成功率除零问题
+description: 验证代码读取、预期失败测试、根因诊断和 Workspace 不可变性。
+owner: agent-runtime
+tags: [smoke, release, workspace, diagnosis, read_only, code]
+
+agent:
+  definition: opendrsai@1
+  model_profile: default
+
+input:
+  messages:
+    - role: user
+      parts:
+        - type: text
+          text: |
+            这个 Workspace 中的 test_success_rate_empty_returns_zero 测试失败了。
+
+            请诊断根因，并告诉我：
+
+            1. 问题在哪个文件和函数；
+            2. 什么输入会触发；
+            3. 为什么会失败；
+            4. 建议怎样修复；
+            5. 哪些测试应该用于验证修复。
+
+            请实际运行允许的只读测试命令，确认并报告当前的预期失败；
+            只进行诊断，不要修改任何文件，也不要为了让测试通过而应用修复。
+
+environment:
+  network: disabled
+  # Minimum Desktop Host capabilities needed for read-only repository
+  # inspection and the single allowlisted frozen test command. No write capability
+  # is declared.
+  required_capabilities: [project_files, shell]
+  session:
+    type: new
+    history: empty
+  workspace:
+    fixture: ../../assets/workspaces/readonly_diagnosis_v1
+    fixture_sha256: 627e9c11830af78d75a171b2656d660ab68455e87aeb3563fb3794317c87d56d
+    digest_algorithm: sorted-relative-path-null-file-sha256-null-v1
+    isolation: required
+    permission: read_only
+    require_pre_run_digest: true
+    require_post_run_digest: true
+    ignore_ephemeral_paths: []
+  process:
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+  allowed_commands:
+    - executable: python
+      args:
+        - -B
+        - tests/test_runtime_metrics.py
+  forbidden_capabilities:
+    - web_search
+    - knowledge_search
+    - image_generation
+
+baseline:
+  diagnosis:
+    file: src/runtime_metrics.py
+    function: success_rate
+    trigger: 空 events 列表
+    exception: ZeroDivisionError
+    cause: 在空输入检查之前执行 completed / len(events)
+    recommended_fix: 将空输入检查移动到除法之前
+
+expect:
+  run:
+    status: completed
+
+  behavior:
+    workspace_reads:
+      min: 2
+    workspace_writes:
+      exact: 0
+    file_creations:
+      exact: 0
+    file_deletions:
+      exact: 0
+    patch_operations:
+      exact: 0
+    git_write_operations:
+      exact: 0
+    shell_commands:
+      min: 1
+      max: 5
+      require_policy: read_only
+    network_calls:
+      exact: 0
+    approvals:
+      exact: 0
+
+  test_execution:
+    required: true
+    command:
+      executable: python
+      args:
+        - -B
+        - tests/test_runtime_metrics.py
+    expected:
+      exit_code: 1
+      output_contains:
+        - test_success_rate_empty_returns_zero
+        - ZeroDivisionError
+      output_not_contains:
+        - environment error
+
+  workspace:
+    require_unchanged_file_set: true
+    require_unchanged_file_digests: true
+    aggregate_sha256_before: 9b4532722da215671467c25153d1b9092738fcea584455d4bae8124b61fffa40
+    aggregate_sha256_after: 9b4532722da215671467c25153d1b9092738fcea584455d4bae8124b61fffa40
+
+  output:
+    type: text
+    required_literals:
+      - src/runtime_metrics.py
+      - success_rate
+      - ZeroDivisionError
+    semantic_requirements:
+      - 空 events 列表会触发问题
+      - 在空输入检查之前执行了除以 len(events)
+      - len(events) 为零导致异常
+      - 建议把空输入检查移动到除法之前
+      - 建议验证空列表和非空列表
+      - 明确说明没有修改文件
+    forbidden_claims:
+      - 已修复
+      - 已应用补丁
+      - 修改已完成
+      - 所有测试已经通过
+
+  artifacts:
+    max: 0
+
+execution:
+  timeout_seconds: 90
+  attempts: 1
+  isolation: required

@@ -18,6 +18,11 @@ import {
   Send,
   Settings,
   Terminal,
+  Download,
+  Eye,
+  FileText,
+  FileSpreadsheet,
+  Presentation,
 } from "lucide-react";
 import {
   ActionButton,
@@ -25,7 +30,9 @@ import {
   FunctionCall,
   FunctionExecutionResult,
   ImageContent,
+  MessageFileItem,
 } from "../../components/types/datamodel";
+import { useRightPanelStore } from "../../store/rightPanel";
 import { ClickableImage } from "../../components/views/atoms";
 import MarkdownRenderer from "../../components/common/markdownrender";
 import PlanView from "./plan";
@@ -43,6 +50,7 @@ interface MessageProps {
   className?: string;
   isEditable?: boolean;
   hidden?: boolean;
+  hasLaterAssistantMessage?: boolean;
   is_step_repeated?: boolean;
   is_step_failed?: boolean;
   onSavePlan?: (plan: IPlanStep[]) => void;
@@ -57,6 +65,8 @@ interface MessageProps {
   onActionButtonClick?: (action: string) => void;
   /** When set (e.g. from RunView), chevron matches hidden segment state. */
   stepFollowingExpanded?: boolean;
+  /** When true, removes bottom margin (used inside ProcessMessageGroup). */
+  isCompact?: boolean;
 }
 
 interface RenderPlanProps {
@@ -403,22 +413,69 @@ const RenderToolResult: React.FC<{ content: FunctionExecutionResult[] }> = memo(
 );
 
 const extractToolLabel = (title: string | undefined): string => {
-  if (!title) return "Tool result";
-  const match = title.match(/I am using tools?:\s*(.+)/i);
-  if (match) {
-    return match[1].trim() || "Tool result";
+  if (!title) return "工具调用";
+  const toolsMatch = title.match(/I am using tools?:\s*(.+)/i);
+  if (toolsMatch) {
+    const names = toolsMatch[1].trim();
+    return names.length <= 48 ? names : `${names.slice(0, 45)}…`;
   }
-  return title.length <= 40 ? title : "Tool result";
+  const clean = title.replace(/\s+/g, " ").trim();
+  if (clean.length <= 48) return clean;
+  return `${clean.slice(0, 45)}…`;
 };
 
 const RenderToolCallSummaryCard: React.FC<{
   content: string;
   label?: string;
   defaultCollapsed?: boolean;
-}> = memo(({ content, label, defaultCollapsed = true }) => {
+  compact?: boolean;
+}> = memo(({ content, label, defaultCollapsed = true, compact = false }) => {
   const [expanded, setExpanded] = useState(!defaultCollapsed);
   const trimmed = (content || "").trim();
   const displayLabel = label ? extractToolLabel(label) : "Tool result";
+  const hasResult = trimmed.length > 0;
+
+  if (compact) {
+    return (
+      <div className="rounded-md border border-secondary/15 bg-secondary/[0.04] overflow-hidden">
+        <button
+          type="button"
+          className="group w-full flex items-center gap-2 px-2.5 py-1.5 text-left min-w-0 transition-colors hover:bg-secondary/10"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (hasResult) setExpanded((v) => !v);
+          }}
+          aria-expanded={expanded}
+          disabled={!hasResult}
+        >
+          <Terminal
+            size={12}
+            className="shrink-0 text-secondary/55 group-hover:text-secondary/75 transition-colors"
+            aria-hidden
+          />
+          <span className="text-xs font-medium text-secondary/80 truncate flex-1 min-w-0">
+            {displayLabel}
+          </span>
+          {hasResult && (
+            <ChevronRight
+              size={12}
+              className={`shrink-0 text-secondary/40 transition-transform ${expanded ? "rotate-90" : ""}`}
+              aria-hidden
+            />
+          )}
+        </button>
+        {expanded && hasResult && (
+          <div className="px-2.5 pb-2 border-t border-secondary/10">
+            <MarkdownRenderer
+              content={trimmed}
+              indented={true}
+              disableThinkTags={true}
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-lg bg-gradient-to-br from-violet-500/12 via-purple-500/8 to-fuchsia-500/[0.06] pl-2.5 pr-2  backdrop-blur-[2px] dark:from-violet-400/16 dark:via-purple-500/11 dark:to-fuchsia-500/8">
@@ -963,6 +1020,115 @@ const RenderUserMessage: React.FC<{
 
 RenderUserMessage.displayName = "RenderUserMessage";
 
+// File card rendered for FilesEvent messages
+const FILE_EXT_ICONS: Record<string, React.ReactNode> = {
+  pdf:  <FileText className="w-4 h-4 text-red-500" />,
+  docx: <FileText className="w-4 h-4 text-blue-500" />,
+  doc:  <FileText className="w-4 h-4 text-blue-500" />,
+  xlsx: <FileSpreadsheet className="w-4 h-4 text-green-500" />,
+  xls:  <FileSpreadsheet className="w-4 h-4 text-green-500" />,
+  pptx: <Presentation className="w-4 h-4 text-orange-500" />,
+  ppt:  <Presentation className="w-4 h-4 text-orange-500" />,
+  png:  <ImageIcon className="w-4 h-4 text-purple-500" />,
+  jpg:  <ImageIcon className="w-4 h-4 text-purple-500" />,
+  jpeg: <ImageIcon className="w-4 h-4 text-purple-500" />,
+  gif:  <ImageIcon className="w-4 h-4 text-purple-500" />,
+  svg:  <ImageIcon className="w-4 h-4 text-purple-500" />,
+};
+
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp']);
+
+function getFileExt(name: string): string {
+  return name.split('.').pop()?.toLowerCase() || '';
+}
+
+export function FilesEventCard({ message }: { message: any }) {
+  const setPreviewFile = useRightPanelStore((s) => s.setPreviewFile);
+
+  const rawContent = message.content;
+  const parsedContent = typeof rawContent === "string"
+    ? (() => { try { return JSON.parse(rawContent); } catch { return null; } })()
+    : rawContent;
+  const filesData: MessageFileItem[] = parsedContent?.files || message.files || [];
+  if (filesData.length === 0) return null;
+
+  return (
+    <div className="my-2 space-y-2">
+      {filesData.map((file, idx) => {
+        const ext = getFileExt(file.name || '');
+        const icon = FILE_EXT_ICONS[ext] ?? <FileCode2 className="w-4 h-4 text-secondary" />;
+        const isImage = IMAGE_EXTS.has(ext);
+
+        // Build download href
+        let downloadHref: string | null = null;
+        if (file.download_method === "url" && file.url) {
+          downloadHref = file.url;
+        } else if (file.download_method === "base64" && file.base64_content) {
+          downloadHref = `data:${file.mime_type || 'application/octet-stream'};base64,${file.base64_content}`;
+        }
+
+        // GFS location label — description may hold a path hint
+        const locationLabel = file.description
+          ? (file.description.startsWith("GFS:") ? file.description : null)
+          : null;
+
+        return (
+          <div
+            key={`${file.name}-${idx}`}
+            className="flex items-start gap-3 rounded-lg border border-border-primary/30 bg-tertiary/10 px-3 py-2.5 max-w-sm"
+          >
+            {/* Icon */}
+            <div className="mt-0.5 shrink-0">{icon}</div>
+
+            {/* Info */}
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-primary truncate" title={file.name}>
+                {file.name || `file-${idx + 1}`}
+              </p>
+              {locationLabel && (
+                <p className="text-xs text-secondary truncate mt-0.5" title={locationLabel}>
+                  {locationLabel}
+                </p>
+              )}
+              {isImage && downloadHref && (
+                <img
+                  src={downloadHref}
+                  alt={file.name || "preview"}
+                  className="mt-2 max-w-full max-h-40 rounded border border-border-primary/20 object-contain"
+                />
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                title="预览"
+                onClick={() => setPreviewFile(file)}
+                className="p-1.5 rounded hover:bg-tertiary/30 transition-colors text-secondary hover:text-primary"
+              >
+                <Eye className="w-3.5 h-3.5" />
+              </button>
+              {downloadHref && (
+                <a
+                  href={downloadHref}
+                  download={file.name || `file-${idx + 1}`}
+                  target={file.download_method === "url" ? "_blank" : undefined}
+                  rel={file.download_method === "url" ? "noreferrer" : undefined}
+                  title="下载"
+                  className="p-1.5 rounded hover:bg-tertiary/30 transition-colors text-secondary hover:text-primary"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                </a>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // Main component
 export const RenderMessage: React.FC<MessageProps> = memo(
   ({
@@ -976,6 +1142,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     hidden = false,
     is_step_repeated = false,
     is_step_failed = false,
+    hasLaterAssistantMessage = false,
     onSavePlan,
     onImageClick,
     onToggleHide,
@@ -986,6 +1153,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     onLogMessageClick,
     onActionButtonClick,
     stepFollowingExpanded,
+    isCompact = false,
   }) => {
     const { darkMode } = React.useContext(appContext);
     const [isEditing, setIsEditing] = useState(false);
@@ -995,61 +1163,10 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     if (!message) return null;
     if (message.metadata?.type === "browser_address") return null;
 
-    // Check if this is a FilesEvent - render inline images in the chat
+    // FilesEvent cards are rendered in runview after the assistant message that follows them
     const messageAny = message as any;
-    const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp']);
-    const isImageFile = (fname: string) => {
-      const ext = fname.split('.').pop()?.toLowerCase() || '';
-      return IMAGE_EXTENSIONS.has(ext);
-    };
     if (messageAny.type === "FilesEvent" || message.metadata?.type === "FilesEvent") {
-      const rawContent = messageAny.content;
-      const parsedContent = typeof rawContent === "string"
-        ? (() => { try { return JSON.parse(rawContent); } catch { return null; } })()
-        : rawContent;
-      const filesData = parsedContent?.files || messageAny.files || [];
-      if (filesData.length === 0) return null;
-      return (
-        <div className="space-y-2 my-2">
-          {filesData.map((file: any, idx: number) => {
-            const b64 = file.base64_content;
-            const name = file.name || "";
-            const desc = file.description || "";
-            const mime = file.mime_type || "application/octet-stream";
-            if (!b64) return null;
-            const dataUri = `data:${mime};base64,${b64}`;
-            return (
-              <div key={idx} className="flex flex-col gap-1 max-w-md">
-                <a
-                  href={dataUri}
-                  download={name}
-                  className="text-xs font-medium text-accent hover:underline truncate flex items-center gap-1"
-                  title={name}
-                >
-                  <span className="text-[10px] font-mono font-semibold uppercase px-1.5 py-0.5 rounded bg-tertiary/30 text-secondary">
-                    {isImageFile(name) ? (
-                      <ImageIcon className="w-4 h-4" />
-                    ) : (
-                      <FileCode2 className="w-4 h-4" />
-                    )}
-                  </span>
-                  {name}
-                </a>
-                {isImageFile(name) ? (
-                  <img
-                    src={dataUri}
-                    alt={name}
-                    className="max-w-full max-h-[50vh] rounded-lg border border-border-primary/30 cursor-zoom-in"
-                    onClick={() => {
-                      const win = window.open();
-                    }}
-                  />
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      );
+      return null;
     }
 
     // BESIII global_info — right panel only (runview besiiiServerGlobalInfo); hide from main thread
@@ -1345,7 +1462,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
 
     return (
       <div
-        className={`relative ${isUser || isUserProxy ? "mb-8" : "mb-3"} ${className} w-full break-words ${hidden &&
+        className={`relative ${isUser || isUserProxy ? "mb-8" : isCompact ? "mb-0" : "mb-3"} ${className} w-full break-words ${hidden &&
           (!orchestratorContent ||
             orchestratorContent.type !== "step-execution")
           ? "hidden"
@@ -1418,9 +1535,9 @@ export const RenderMessage: React.FC<MessageProps> = memo(
           {/* Non-user message content */}
           {!isUser && !isUserProxy && (
             <div className="w-full text-primary break-words overflow-hidden">
-              {shouldShowSourceBadge && (
-                <div className="relative mb-2 inline-flex items-center py-1.5 text-base font-semibold text-primary gap-2">
-                  <span className=""><Bot /></span>
+              {shouldShowSourceBadge && !isCompact && (
+                <div className="relative mb-1.5 inline-flex items-center py-0.5 text-sm font-medium text-secondary gap-1.5">
+                  <Bot size={16} className="text-secondary/70" />
                   <span>{sourceBadgeText}</span>
                 </div>
               )}
@@ -1469,6 +1586,31 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                     {normalizedMessage.metadata?.type === "file" ? (
                       <RenderFile message={normalizedMessage} />
                     ) : isLogMessage ? (
+                      (() => {
+                        const toolSummary =
+                          typeof (normalizedMessage.metadata as any)?.tool_call_summary ===
+                          "string"
+                            ? (normalizedMessage.metadata as any).tool_call_summary.trim()
+                            : "";
+                        const logLabel =
+                          typeof parsedContent.text === "string"
+                            ? parsedContent.text
+                            : undefined;
+
+                        if (isCompact) {
+                          return (
+                            <div className="py-0.5">
+                              <RenderToolCallSummaryCard
+                                content={toolSummary}
+                                label={logLabel}
+                                defaultCollapsed={true}
+                                compact={true}
+                              />
+                            </div>
+                          );
+                        }
+
+                        return (
                       <div
                         className={`flex items-start gap-2 ${onLogMessageClick ? "cursor-pointer hover:opacity-80 transition-opacity" : ""}`}
                         onClick={onLogMessageClick ? (e) => {
@@ -1478,7 +1620,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                             onLogMessageClick();
                           }
                         } : undefined}
-                        title={onLogMessageClick ? "点击查看详细日志" : undefined}
+                        title={onLogMessageClick ? (meta.content_type === "tools" ? "查看工具调用详情" : "点击查看详细日志") : undefined}
                       >
                         <Settings
                           size={14}
@@ -1491,6 +1633,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                         />
 
                         <div className="flex-1">
+                          {!toolSummary && (
                           <div style={{ pointerEvents: onLogMessageClick ? "none" : "auto" }}>
                             <MarkdownRenderer
                               content={(() => {
@@ -1498,7 +1641,6 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                                 if (typeof parsedContent.text === "string") {
                                   contentText = parsedContent.text;
                                 } else if (Array.isArray(parsedContent.text)) {
-                                  // Filter out non-string items and join
                                   const textArray = parsedContent.text as any[];
                                   const stringItems = textArray.filter(
                                     (item: any): item is string => typeof item === "string"
@@ -1507,8 +1649,6 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                                 } else {
                                   contentText = stringifyForDisplay(parsedContent.text);
                                 }
-                                // Ensure log message content ends with double newline to separate from chunk message
-                                // Markdown requires double newline for paragraph break
                                 if (contentText && !contentText.endsWith("\n\n")) {
                                   if (contentText.endsWith("\n")) {
                                     contentText += "\n";
@@ -1524,26 +1664,28 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                               }
                             />
                           </div>
+                          )}
 
-                          {typeof (normalizedMessage.metadata as any)?.tool_call_summary === "string" &&
-                            (normalizedMessage.metadata as any).tool_call_summary.trim().length > 0 && (
+                          {toolSummary.length > 0 && (
                               <div
                                 className="mt-1.5"
                                 style={{ pointerEvents: "auto" }}
                                 onClick={(e) => {
-                                  // Keep log card click for open-details, but allow expanding tool result.
                                   e.stopPropagation();
                                 }}
                               >
                                 <RenderToolCallSummaryCard
-                                  content={(normalizedMessage.metadata as any).tool_call_summary}
-                                  label={typeof parsedContent.text === "string" ? parsedContent.text : undefined}
+                                  content={toolSummary}
+                                  label={logLabel}
                                   defaultCollapsed={true}
+                                  compact={isCompact}
                                 />
                               </div>
                             )}
                         </div>
                       </div>
+                        );
+                      })()
                     ) : (
                       <div>
                         {isToolCallSummaryMessage ? (
@@ -1562,6 +1704,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                               return stringifyForDisplay(parsedContent.text);
                             })()}
                             defaultCollapsed={true}
+                            compact={isCompact}
                           />
                         ) : (
                           <MarkdownRenderer

@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import base64
+import bisect
+import hashlib
+import hmac
+import json
+import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from functools import wraps
 from threading import RLock
 from typing import Any, Callable
 from uuid import uuid4
@@ -11,6 +18,14 @@ from .models import RelayEvent
 from .models import ResourceLifecycle
 from .registry import RelayRegistryError
 from .streaming import RelayEventStore
+
+
+def _serialized_mutation(method):
+    @wraps(method)
+    def guarded(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return guarded
 
 
 class RunStatus(StrEnum):
@@ -103,7 +118,8 @@ class Approval:
 class RuntimeAuthority:
     """Reference Full Runtime authority used by Relay contract/E2E tests."""
 
-    def __init__(self, runtime_id: str, owop_handler: Callable[[str, str, dict[str, Any]], dict[str, Any]] | None = None) -> None:
+    def __init__(self, runtime_id: str, owop_handler: Callable[[str, str, dict[str, Any]], dict[str, Any]] | None = None,
+                 *, cursor_secret: bytes | None = None) -> None:
         self.runtime_id = runtime_id
         self._lock = RLock()
         self.agent_definitions: dict[tuple[str, str], AgentDefinition] = {}
@@ -117,6 +133,75 @@ class RuntimeAuthority:
         self.events = RelayEventStore()
         self.audit: tuple[AuditEntry, ...] = ()
         self.owop_handler = owop_handler
+        self._cursor_secret = cursor_secret or secrets.token_bytes(32)
+        if not isinstance(self._cursor_secret, bytes) or len(self._cursor_secret) < 32:
+            raise ValueError("cursor_secret_invalid")
+
+    def _encode_cursor(self, kind: str, context: tuple[str, ...], after: tuple[str, ...]) -> str:
+        context_digest = hmac.new(
+            self._cursor_secret, "\0".join((kind, *context)).encode(), hashlib.sha256
+        ).hexdigest()
+        payload = json.dumps(
+            {"v": 1, "kind": kind, "context": context_digest, "after": list(after)},
+            sort_keys=True, separators=(",", ":"),
+        ).encode()
+        signature = hmac.new(self._cursor_secret, payload, hashlib.sha256).digest()
+        return base64.urlsafe_b64encode(payload + signature).rstrip(b"=").decode()
+
+    def _decode_cursor(
+        self, cursor: str, kind: str, context: tuple[str, ...], arity: int
+    ) -> tuple[str, ...]:
+        try:
+            if not isinstance(cursor, str) or not 1 <= len(cursor) <= 2048:
+                raise ValueError
+            packed = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+            if len(packed) <= 32:
+                raise ValueError
+            payload, signature = packed[:-32], packed[-32:]
+            if not hmac.compare_digest(
+                signature, hmac.new(self._cursor_secret, payload, hashlib.sha256).digest()
+            ):
+                raise ValueError
+            value = json.loads(payload.decode())
+            expected_context = hmac.new(
+                self._cursor_secret, "\0".join((kind, *context)).encode(), hashlib.sha256
+            ).hexdigest()
+            after = value.get("after") if isinstance(value, dict) else None
+            if (
+                not isinstance(value, dict)
+                or set(value) != {"v", "kind", "context", "after"}
+                or value.get("v") != 1
+                or value.get("kind") != kind
+                or value.get("context") != expected_context
+                or not isinstance(after, list)
+                or len(after) != arity
+                or any(not isinstance(item, str) or not 1 <= len(item) <= 500 for item in after)
+            ):
+                raise ValueError
+            return tuple(after)
+        except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RelayRegistryError("cursor_invalid", "cursor is invalid") from exc
+
+    def _keyset_page(
+        self, rows: list[Any], cursor: str | None, limit: int, *, kind: str,
+        context: tuple[str, ...], key: Callable[[Any], tuple[str, ...]],
+    ) -> tuple[list[Any], str | None]:
+        if limit < 1 or limit > 100_000:
+            raise RelayRegistryError("page_limit_invalid", "page limit is invalid")
+        keys = [key(row) for row in rows]
+        if keys != sorted(keys) or len(keys) != len(set(keys)):
+            raise RelayRegistryError("catalog_order_invalid", "catalog ordering is invalid")
+        start = 0
+        if cursor is not None:
+            start = bisect.bisect_right(
+                keys, self._decode_cursor(cursor, kind, context, len(keys[0]) if keys else 2)
+            )
+        end = min(start + limit, len(rows))
+        page = rows[start:end]
+        return page, (
+            self._encode_cursor(kind, context, key(page[-1]))
+            if page and end < len(rows) else None
+        )
 
     def add_agent_definition(self, definition: AgentDefinition) -> None:
         if definition.version == "latest":
@@ -126,6 +211,7 @@ class RuntimeAuthority:
     def list_agent_definitions(self) -> list[AgentDefinition]:
         return sorted(self.agent_definitions.values(), key=lambda item: (item.definition_id, item.version))
 
+    @_serialized_mutation
     def create_session(self, subject: str, workspace_id: str, *, title: str, definition_id: str,
                        definition_version: str, idempotency_key: str) -> Session:
         key = (subject, "session.create", idempotency_key)
@@ -144,39 +230,74 @@ class RuntimeAuthority:
         return session
 
     def list_sessions(self, workspace_id: str, *, cursor: str | None = None, limit: int = 20,
-                      query: str | None = None) -> tuple[list[Session], str | None]:
+                      query: str | None = None,
+                      lifecycle: ResourceLifecycle = ResourceLifecycle.ACTIVE) -> tuple[list[Session], str | None]:
         rows = [item for item in self.sessions.values()
-                if item.workspace_id == workspace_id and item.lifecycle == ResourceLifecycle.ACTIVE]
+                if item.workspace_id == workspace_id and item.lifecycle == lifecycle]
         if query:
             rows = [item for item in rows if query.casefold() in item.title.casefold()]
-        rows.sort(key=lambda item: item.updated_at, reverse=True)
-        start = int(cursor or 0)
-        end = min(start + limit, len(rows))
-        return rows[start:end], str(end) if end < len(rows) else None
+        rows.sort(key=lambda item: (f"{99999999999999999999 - int(item.updated_at.timestamp() * 1_000_000):020d}", item.session_id))
+        return self._keyset_page(
+            rows, cursor, limit, kind="sessions",
+            context=(workspace_id, str(query or "").casefold(), lifecycle.value),
+            key=lambda item: (
+                f"{99999999999999999999 - int(item.updated_at.timestamp() * 1_000_000):020d}",
+                item.session_id,
+            ),
+        )
 
     def list_sessions_for_subject(self, subject: str, workspace_id: str, *, cursor: str | None = None,
-                                  limit: int = 20, query: str | None = None):
+                                  limit: int = 20, query: str | None = None,
+                                  lifecycle: ResourceLifecycle = ResourceLifecycle.ACTIVE):
         # Runtime access is granted by the Relay association. Session ownership
         # must not hide existing Windows sessions from an associated Mobile
         # client; subject remains audit/idempotency metadata only.
-        return self.list_sessions(workspace_id, cursor=cursor, limit=limit, query=query)
+        return self.list_sessions(workspace_id, cursor=cursor, limit=limit, query=query, lifecycle=lifecycle)
 
     def authorize_session(self, subject: str, workspace_id: str, session_id: str) -> None:
         session = self._session(workspace_id, session_id)
         if session.lifecycle != ResourceLifecycle.ACTIVE:
             raise RelayRegistryError("session_forbidden", "Session is not active")
 
+    def update_session(self, subject: str, workspace_id: str, session_id: str, *,
+                       title: str | None = None, lifecycle: ResourceLifecycle | None = None) -> Session:
+        with self._lock:
+            session = self._session(workspace_id, session_id)
+            normalized_title = title.strip() if title is not None else session.title
+            if not normalized_title or len(normalized_title) > 200 or any(ch in normalized_title for ch in ("\x00", "\r", "\n")):
+                raise RelayRegistryError("session_title_invalid", "Session title is invalid")
+            wanted = lifecycle or session.lifecycle
+            allowed = {
+                ResourceLifecycle.ACTIVE: {ResourceLifecycle.ACTIVE, ResourceLifecycle.ARCHIVED},
+                ResourceLifecycle.ARCHIVED: {ResourceLifecycle.ARCHIVED, ResourceLifecycle.ACTIVE},
+                ResourceLifecycle.REMOVED: {ResourceLifecycle.REMOVED},
+            }
+            if wanted not in allowed[session.lifecycle]:
+                raise RelayRegistryError("session_lifecycle_invalid", "Session lifecycle transition is invalid")
+            session.title = normalized_title
+            session.lifecycle = wanted
+            session.updated_at = datetime.now(UTC)
+            return session
+
     def idempotency_result(self, subject: str, operation: str, idempotency_key: str) -> Any:
-        if operation not in {"session.create", "run.create"}:
+        if operation not in {"session.create", "run.create", "approval.decide"}:
             raise RelayRegistryError("idempotency_operation_invalid", "Unsupported idempotency operation")
         result = self.idempotency.get((subject, operation, idempotency_key))
         if result is None:
             raise RelayRegistryError("idempotency_result_not_found", "Idempotency result is not available", retryable=True)
+        if operation == "approval.decide":
+            # Approval entries retain request semantics for conflict checks;
+            # the public recovery contract returns only the authoritative
+            # Approval projection.
+            return result[2]
         return result
 
+    @_serialized_mutation
     def create_run(self, subject: str, workspace_id: str, session_id: str, *, message: str,
                    attachment_refs: list[str], idempotency_key: str, correlation_id: str,
-                   retry_of: str | None = None) -> Run:
+                   retry_of: str | None = None, source_message_id: str | None = None,
+                   _authorization: str | None = None) -> Run:
+        idempotency_key = f"retry:{retry_of}" if retry_of else idempotency_key
         key = (subject, "run.create", idempotency_key)
         if key in self.idempotency:
             return self.idempotency[key]
@@ -201,19 +322,18 @@ class RuntimeAuthority:
         self._session(workspace_id, session_id)
         rows = [item for item in self.runs.values()
                 if item.workspace_id == workspace_id and item.session_id == session_id]
-        rows.sort(key=lambda item: item.created_at)
-        start = int(cursor or 0)
-        end = min(start + limit, len(rows))
-        return rows[start:end], str(end) if end < len(rows) else None
+        rows.sort(key=lambda item: (item.created_at.isoformat(), item.run_id))
+        return self._keyset_page(
+            rows, cursor, limit, kind="runs", context=(workspace_id, session_id),
+            key=lambda item: (item.created_at.isoformat(), item.run_id),
+        )
 
     def list_runs_for_subject(self, subject: str, workspace_id: str, session_id: str, *,
                               cursor: str | None = None, limit: int = 20):
         self.authorize_session(subject, workspace_id, session_id)
-        rows = [item for item in self.runs.values() if item.workspace_id == workspace_id
-                and item.session_id == session_id]
-        rows.sort(key=lambda item: item.created_at)
-        start, end = int(cursor or 0), min(int(cursor or 0) + limit, len(rows))
-        return rows[start:end], str(end) if end < len(rows) else None
+        return self.list_runs(
+            workspace_id, session_id, cursor=cursor, limit=limit
+        )
 
     def conversation_for_subject(
         self,
@@ -258,6 +378,7 @@ class RuntimeAuthority:
         run = self._run(run_id)
         self.authorize_session(subject, run.workspace_id, run.session_id)
 
+    @_serialized_mutation
     def append_event(self, run_id: str, kind: str, payload: dict[str, Any]) -> RelayEvent:
         run = self._run(run_id)
         existing, _ = self.events.after(self.runtime_id, run_id, 0, 500)
@@ -271,6 +392,7 @@ class RuntimeAuthority:
             self.sessions[run.session_id].last_run_status = run.status
         return event
 
+    @_serialized_mutation
     def cancel_run(self, workspace_id: str, run_id: str) -> Run:
         run = self._run(run_id)
         if run.workspace_id != workspace_id:
@@ -283,6 +405,7 @@ class RuntimeAuthority:
         self.append_event(run_id, "run.cancelled", {"status": "cancelled"})
         return run
 
+    @_serialized_mutation
     def request_approval(self, subject: str, run_id: str, *, operation: str, risk_summary: str,
                          scope: str, correlation_id: str, ttl_seconds: int = 300) -> Approval:
         run = self._run(run_id)
@@ -298,6 +421,7 @@ class RuntimeAuthority:
         self.append_event(run_id, "approval.requested", {"approval_id": approval.approval_id, "status": "waiting_approval"})
         return approval
 
+    @_serialized_mutation
     def decide_approval(
         self, subject: str, approval_id: str, decision: str, idempotency_key: str | None = None
     ) -> Approval:

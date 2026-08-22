@@ -328,7 +328,7 @@ def get_operator_funcs(
                     lines = text.splitlines()
                     if minilimit:
                         lines = lines[minilimit:maxlimit]
-                    return "\n".join(lines)[:5000]
+                    return "\n".join(lines)
         except asyncio.TimeoutError:
             return f"Error: Read operation timed out after {timeout}s"
         except Exception as e:
@@ -1151,6 +1151,13 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
         kwargs = dict(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # Connect stdin to /dev/null (NUL on Windows) so that any child
+            # process which tries to read from stdin immediately receives EOF
+            # instead of blocking forever.  This is critical when the parent
+            # process has no interactive console (CREATE_NO_WINDOW / GUI app):
+            # without it, ``python -c`` can enter REPL mode on a quoting error
+            # and hang indefinitely waiting for input that never arrives.
+            stdin=asyncio.subprocess.DEVNULL,
         )
         try:
             if _ps_cwd[0].exists():

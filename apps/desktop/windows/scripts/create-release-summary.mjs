@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const releaseDir = join(root, "release");
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const buildLabel = String(process.env.OPENDRSAI_BUILD_LABEL || "").trim();
 const runtimeArchiveName = `OpenDrSai-Windows-v${packageJson.version}-x64.zip`;
 const artifacts = [
   join("bootstrapper", "OpenDrSai-Windows-Installer-x64.msi"),
@@ -20,9 +21,16 @@ const distribution = describeDistribution(describedArtifacts, packageJson.versio
 const summary = {
   product: "OpenDrSai Windows",
   version: packageJson.version,
+  ...(buildLabel ? { buildLabel } : {}),
   generatedAt: new Date().toISOString(),
   releaseDir,
   distribution,
+  promotionRequirements: {
+    draftFirst: true,
+    sandboxOidcEvidenceAsset: `windows-sandbox-oidc-evidence-v${packageJson.version}.zip`,
+    requiredModes: ["online", "candidate", "upgrade", "networkcandidate"],
+    verifier: "npm run verify:sandbox-oidc-evidence",
+  },
   artifacts: describedArtifacts,
 };
 
@@ -70,9 +78,10 @@ function describeDistribution(describedArtifacts, version) {
   const unsigned = signedArtifacts.filter(
     (artifact) => artifact.signatureStatus !== "Valid",
   );
-  const preview = version.includes("-");
+  const releaseChannel = String(process.env.OPENDRSAI_UPDATE_CHANNEL || "stable").toLowerCase();
+  const preview = version.includes("-") || releaseChannel !== "stable";
   return {
-    releaseTier: preview ? "preview" : "stable",
+    releaseTier: preview ? releaseChannel : "stable",
     publicDistributionReady: unsigned.length === 0 || preview,
     requiresSignedInstallers: !preview,
     unsignedArtifacts: unsigned.map((artifact) => ({

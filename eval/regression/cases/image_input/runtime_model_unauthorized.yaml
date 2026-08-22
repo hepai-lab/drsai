@@ -1,0 +1,127 @@
+schema_version: opendrsai.agent-regression-case/1
+
+id: image.input.ui_error
+revision: 2
+title: 根据 Desktop 截图诊断 Agent Runtime 授权失败
+description: 验证图片输入链路、UI 诊断理解、事实与推断分离以及不确定性表达。
+owner: agent-runtime
+tags: [smoke, release, image_input, multimodal, runtime, diagnosis]
+
+agent:
+  definition: opendrsai@1
+  model_profile: default
+
+input:
+  messages:
+    - role: user
+      parts:
+        - type: text
+          text: |
+            请分析这张 OpenDrSai Desktop 截图：
+
+            1. 当前运行发生了什么？
+            2. 截图中显示的错误类型、错误消息、Backend 和模型是什么？
+            3. 根据截图，最可能应该优先检查什么，身份恢复后应怎么做？
+            4. 哪些信息因为被截断或脱敏而无法确定？
+
+            请区分截图中明确可见的事实、合理诊断和无法确认的信息。
+        - type: image
+          path: ../../assets/images/opendrsai-runtime-model-unauthorized.png
+          sha256: b3742a0f7997e8ef07fdba9fee167a4141088b5da779cc08056ae82c333e7919
+          mime_type: image/png
+
+environment:
+  network: disabled
+  session:
+    type: new
+    history: empty
+  attachment_mapping:
+    expose_as: attachment-01.png
+    hide_source_path: true
+  required_capabilities: [image_input]
+  forbidden_capabilities:
+    - web_search
+    - knowledge_search
+    - image_generation
+
+baseline:
+  image:
+    width: 1598
+    height: 1021
+    sha256: b3742a0f7997e8ef07fdba9fee167a4141088b5da779cc08056ae82c333e7919
+  visible_facts:
+    application: OpenDrSai Desktop
+    runtime_status: 运行失败或已停止
+    diagnostic_panel: 运行诊断的 Agent 页面
+    error_type: model_unauthorized
+    error_message: A valid HepAI identity is required.
+    backend: my-drsai
+    model: deepseek-v4-pro
+    connection: 已断开
+    runtime_operation: runtime-engine · chat.run
+    repeated_event_count: 2
+
+expect:
+  run:
+    status: completed
+
+  input_evidence:
+    attachments:
+      exact: 1
+      required:
+        type: image
+        mime_type: image/png
+        sha256: b3742a0f7997e8ef07fdba9fee167a4141088b5da779cc08056ae82c333e7919
+        width: 1598
+        height: 1021
+    require_manifest_reference: true
+    require_oaep_user_message_part: true
+    forbid_ocr_text_injection: true
+
+  behavior:
+    tool_calls:
+      max: 0
+    skill_activations:
+      max: 0
+    knowledge_queries:
+      max: 0
+    approvals:
+      max: 0
+    external_writes:
+      max: 0
+
+  output:
+    type: text
+    required_literals:
+      - model_unauthorized
+      - my-drsai
+      - deepseek-v4-pro
+    semantic_requirements:
+      - 当前 Agent Runtime 运行失败或已停止
+      - 错误消息要求有效的 HepAI identity
+      - Agent Runtime 在执行 chat.run 时因为身份或模型授权问题失败
+      - 优先检查或重新建立 HepAI 身份
+      - 确认当前身份有权使用所选模型
+      - 身份恢复后重新运行
+      - 明确指出截图中存在脱敏内容
+      - 明确指出部分 Run ID、源码位置或诊断文字被截断
+      - 无法仅凭截图判断身份无效的具体原因
+    forbidden_claims:
+      - API Key 填写错误
+      - API Key 已过期
+      - HepAI Token 已过期
+      - 账户余额不足
+      - HepAI 服务已经宕机
+      - 网络连接失败
+      - deepseek-v4-pro 不存在
+      - Backend 配置错误
+      - Desktop 已经崩溃
+      - 完整 Run ID 是
+
+  artifacts:
+    max: 0
+
+execution:
+  timeout_seconds: 90
+  attempts: 1
+  isolation: required

@@ -10,7 +10,7 @@ const requirements = [
     validate: (report) => {
       const serialTurn = report.results?.find((item) => item.name === "serial-turn");
       const requiredPhases = [
-        "requesting_permission", "recording", "transcribing", "reviewing", "ready_to_send",
+        "requesting_permission", "recording", "preparing_audio", "transcribing", "ready_to_send",
         "submitting", "awaiting_response", "response_ready", "completed",
       ];
       return report.ok === true
@@ -35,22 +35,24 @@ const requirements = [
       && report.details?.maxBoundaryBytes === 10 * 1024 * 1024,
   },
   {
-    name: "Live serial voice round (capture, ASR, LLM, TTS, playback)",
+    name: "Live streaming voice round (capture, ASR, LLM, TTS, playback)",
     path: join(root, "release", "voice-provider-live-evidence", "report.json"),
     validate: (report) => {
       const requiredChecks = [
         "sttCompleted", "ttsCompleted", "fullRoundLoginBootstrap", "fullRoundCaptureStarted",
-        "fullRoundTranscribed", "fullRoundReviewInserted", "fullRoundSendReady", "fullRoundLlmReplied",
+        "fullRoundTranscribed", "fullRoundAutoSubmitted", "fullRoundLlmReplied",
         "fullRoundProviderTts", "fullRoundPlayback", "fullRoundCompleted", "fullRoundPhases",
         "fullRoundDiagnosticsPrivate",
+        "fullRoundStreamingMode",
       ];
-      const requiredPhases = [
-        "requesting_permission", "recording", "preparing_audio", "transcribing", "reviewing",
-        "ready_to_send", "submitting", "awaiting_response", "response_ready", "synthesizing",
-        "playing", "completed",
-      ];
+      const requiredPhases = ["starting", "streaming", "stopping"];
       return report.ok === true
         && report.liveMode === true
+        && report.details?.streaming?.mode === "streaming"
+        && report.details?.streaming?.capabilities?.streamingStt === true
+        && report.details?.streaming?.capabilities?.streamingTts === true
+        && ["partial", "final", "completed"].every((type) => report.details?.streaming?.terminalTypes?.includes(type))
+        && report.details?.fullRound?.interactionMode === "streaming"
         && report.noNewVoiceTempFiles === true
         && report.noVoiceContentInLogs === true
         && requiredChecks.every((check) => report.checks?.[check] === true)

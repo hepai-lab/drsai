@@ -2,10 +2,12 @@ import type {
   StructuredActivityEvent,
   StructuredConversationEvent,
 } from "@shared/structuredConversation";
-import type { DiagnosticEvent, DiagnosticEventInput, DiagnosticStackFrame, DiagnosticStatus } from "@shared/diagnostics";
+import type { DiagnosticDomain, DiagnosticEvent, DiagnosticEventInput, DiagnosticStackFrame, DiagnosticStatus } from "@shared/diagnostics";
+import type { DesktopRuntimeLogEvent } from "@shared/desktopApi";
+import { sanitizeSensitiveValue } from "../../api/sensitiveData";
 
 export type DebugLogLevel = "log" | "info" | "warn" | "error";
-export type DebugLogSource = "console" | "window" | "promise" | "chat" | "activity" | "protocol" | "diagnostic";
+export type DebugLogSource = "console" | "window" | "promise" | "chat" | "activity" | "protocol" | "diagnostic" | "runtime";
 
 export interface DebugLogEntry {
   id: number;
@@ -18,6 +20,10 @@ export interface DebugLogEntry {
   activityId?: string;
   activityKind?: StructuredActivityEvent["kind"];
   activityStatus?: StructuredActivityEvent["status"];
+  activity?: StructuredActivityEvent;
+  runtime?: DesktopRuntimeLogEvent;
+  diagnosticDomain?: DiagnosticDomain;
+  coalescedCount?: number;
   durationMs?: number;
   raw?: string;
   diagnosticId?: string;
@@ -38,6 +44,7 @@ let entries: DebugLogEntry[] = [];
 let nextId = 1;
 let installed = false;
 let lastResizeObserverWarningAt = 0;
+let runtimeNotifyTimer: ReturnType<typeof setTimeout> | undefined;
 
 export function isBenignResizeObserverError(message: string): boolean {
   return /ResizeObserver loop (?:limit exceeded|completed with undelivered notifications)/i.test(message);
@@ -65,7 +72,7 @@ export function appendDebugLog(
 
 export function appendStructuredActivityLog(activity: StructuredActivityEvent): void {
   const existing = entries.find((entry) => entry.source === "activity" && entry.activityId === activity.id);
-  const next: DebugLogEntry = {
+  const next: DebugLogEntry = sanitizeSensitiveValue({
     id: existing?.id ?? nextId++,
     level: activity.status === "error" ? "error" : activity.kind === "retry" ? "warn" : "info",
     message: activity.title,
@@ -75,26 +82,14 @@ export function appendStructuredActivityLog(activity: StructuredActivityEvent): 
     activityId: activity.id,
     activityKind: activity.kind,
     activityStatus: activity.status,
+    activity,
     ...(activity.kind === "tool" && activity.durationMs !== undefined ? { durationMs: activity.durationMs } : {}),
     raw: serializeBounded(activity),
-  };
+  });
   entries = existing
     ? entries.map((entry) => entry.id === existing.id ? next : entry)
     : [...entries, next].slice(-MAX_ENTRIES);
   notify();
-  void recordDiagnosticSafe({
-    traceId: activity.turnId,
-    spanId: activity.id,
-    module: "runtime",
-    component: "structured-conversation",
-    operation: `activity.${activity.kind}`,
-    message: activity.title,
-    status: mapActivityStatus(activity.status),
-    level: activity.status === "error" ? "error" : activity.kind === "retry" ? "warn" : "info",
-    turnId: activity.turnId,
-    ...(activity.kind === "tool" && activity.durationMs !== undefined ? { durationMs: activity.durationMs } : {}),
-    attributes: { kind: activity.kind },
-  });
 }
 
 export function appendStructuredProtocolLog(event: StructuredConversationEvent): void {
@@ -107,19 +102,6 @@ export function appendStructuredProtocolLog(event: StructuredConversationEvent):
     ...(event.type === "part.delta" ? { partId: event.partId } : {}),
     ...(event.type === "part.started" || event.type === "part.completed" ? { partId: event.part.id } : {}),
     raw: serializeBounded(event),
-  });
-  void recordDiagnosticSafe({
-    traceId: event.turnId,
-    module: "runtime",
-    component: "structured-conversation",
-    operation: event.type,
-    message: summarizeProtocolEvent(event),
-    status: event.type === "turn.error" ? "failed"
-      : event.type === "turn.completed" ? "completed"
-      : event.type === "turn.cancelled" ? "cancelled"
-      : "running",
-    level: event.type === "turn.error" ? "error" : "info",
-    turnId: event.turnId,
   });
 }
 
@@ -176,6 +158,7 @@ export function installDebugLogCapture(): void {
   const api = window.openDrSai;
   if (api) {
     api.onDiagnosticEvent(appendDiagnosticEvent);
+    api.onRuntimeLogEvent(appendRuntimeLogEvent);
     void api.getDiagnosticSnapshot({ limit: MAX_ENTRIES }).then((snapshot) => {
       for (const event of snapshot.events) appendDiagnosticEvent(event, false);
       notify();
@@ -189,7 +172,41 @@ export function installDebugLogCapture(): void {
   append({ level: "info", message: "Debug output capture started", source: "console", timestamp: Date.now() });
 }
 
+export function appendRuntimeLogEvent(event: DesktopRuntimeLogEvent): void {
+  const safeEvent = sanitizeSensitiveValue(event);
+  const next: Omit<DebugLogEntry, "id"> = {
+    level: safeEvent.level === "debug" ? "log" : safeEvent.level,
+    message: safeEvent.message,
+    timestamp: parseTimestamp(safeEvent.timestamp),
+    source: "runtime",
+    turnId: safeEvent.runId,
+    module: "runtime",
+    component: safeEvent.protocol,
+    operation: safeEvent.operation,
+    diagnosticStatus: safeEvent.status,
+    runtime: safeEvent,
+    raw: serializeBounded(safeEvent),
+  };
+  // Direct Chat OAEP events carry their canonical event_id. Keep every one of
+  // those immutable journal records; only coalesce high-frequency diagnostic
+  // delta summaries that do not contain the authoritative event envelope.
+  if (isRuntimeDelta(safeEvent) && typeof safeEvent.details?.event_id !== "string") {
+    const previous = entries.at(-1);
+    if (previous?.runtime && runtimeCoalesceKey(previous.runtime) === runtimeCoalesceKey(safeEvent)
+      && next.timestamp - previous.timestamp <= 250) {
+      entries = [...entries.slice(0, -1), { ...next, id: previous.id, coalescedCount: (previous.coalescedCount ?? 1) + 1 }];
+    } else {
+      entries = [...entries, { ...next, id: nextId++, coalescedCount: 1 }].slice(-MAX_ENTRIES);
+    }
+    scheduleRuntimeNotify();
+    return;
+  }
+  append(next);
+}
+
 function appendDiagnosticEvent(event: DiagnosticEvent, shouldNotify = true): void {
+  event = sanitizeSensitiveValue(event);
+  if (event.domain === "protocol") return;
   if (entries.some((entry) => entry.diagnosticId === event.id)) return;
   const entry: DebugLogEntry = {
     id: nextId++,
@@ -204,6 +221,7 @@ function appendDiagnosticEvent(event: DiagnosticEvent, shouldNotify = true): voi
     module: event.module,
     component: event.component,
     operation: event.operation,
+    diagnosticDomain: event.domain,
     diagnosticStatus: event.status,
     turnId: event.turnId,
     durationMs: event.durationMs,
@@ -212,6 +230,22 @@ function appendDiagnosticEvent(event: DiagnosticEvent, shouldNotify = true): voi
   };
   entries = [...entries, entry].slice(-MAX_ENTRIES);
   if (shouldNotify) notify();
+}
+
+function isRuntimeDelta(event: DesktopRuntimeLogEvent): boolean {
+  return /delta/i.test(event.eventType ?? "") || /delta/i.test(event.operation);
+}
+
+function runtimeCoalesceKey(event: DesktopRuntimeLogEvent): string {
+  return [event.protocol, event.runId, event.itemId, event.eventType, event.operation].join(":");
+}
+
+function scheduleRuntimeNotify(): void {
+  if (runtimeNotifyTimer !== undefined) return;
+  runtimeNotifyTimer = setTimeout(() => {
+    runtimeNotifyTimer = undefined;
+    notify();
+  }, 100);
 }
 
 async function recordDiagnosticSafe(input: DiagnosticEventInput): Promise<void> {
@@ -225,7 +259,7 @@ function mapActivityStatus(status: StructuredActivityEvent["status"]): Diagnosti
 }
 
 function append(entry: Omit<DebugLogEntry, "id">): void {
-  entries = [...entries, { ...entry, id: nextId++ }].slice(-MAX_ENTRIES);
+  entries = [...entries, { ...sanitizeSensitiveValue(entry), id: nextId++ }].slice(-MAX_ENTRIES);
   notify();
 }
 

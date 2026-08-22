@@ -44,7 +44,7 @@ assert(api.includes("startVoiceTranscription("), "desktop API omits async voice 
 assert(api.includes("cancelVoiceTranscription("), "desktop API omits voice cancellation");
 assert(api.includes("onVoiceTranscriptionEvent("), "desktop API omits voice events");
 assert(api.includes("DesktopVoiceErrorCode"), "desktop API omits normalized errors");
-assert(api.includes('DesktopVoiceInteractionMode = "serial" | "streaming"'), "shared API omits dual voice modes");
+assert(api.includes('DesktopVoiceInteractionMode = "serial" | "streaming" | "duplex"'), "shared API omits serial, streaming, and duplex voice modes");
 assert(api.includes("DesktopStreamingVoiceCapabilities"), "shared API omits streaming runtime capabilities");
 assert(api.includes("DesktopStreamingVoiceAudioChunk"), "shared API omits streaming PCM chunks");
 assert(api.includes("DesktopStreamingVoiceAudioAck"), "shared API omits streaming audio acknowledgements");
@@ -80,7 +80,9 @@ assert(voice.includes('adapterId: "voice-input"'), "voice handoff does not route
 assert(chatWorkspace.includes("useVoiceTranscription"), "composer does not use the transcription controller hook");
 assert(voiceTranscriptionHook.includes("desktopApi.startVoiceTranscription"), "transcription hook does not start typed async voice task");
 assert(voiceTranscriptionHook.includes("desktopApi.cancelVoiceTranscription"), "transcription hook does not cancel voice task");
-assert(chatWorkspace.includes("VoiceReviewBar"), "composer omits transcript review UI");
+assert(chatWorkspace.includes("VoiceReviewBar"), "streaming voice omits transcript review UI");
+assert(chatWorkspace.includes("ThreadActivityBubble"), "serial transcription does not reuse the conversation runtime indicator");
+assert(chatWorkspace.includes('dispatchVoiceTurn({ type: "transcript_inserted", requestId });'), "confirmed serial transcription does not return to an ordinary composer draft");
 assert(!chatWorkspace.includes("blobToBase64"), "composer still serializes audio as base64");
 assert(voiceLevelMeter.includes("createMediaStreamSource(stream)"), "voice level meter omits live microphone analysis");
 assert(voiceLevelMeter.includes("getFloatTimeDomainData(samples)"), "voice level meter waveform is not driven by audio samples");
@@ -92,8 +94,9 @@ assert(app.includes('data-testid="voice-interaction-mode"'), "voice settings omi
 assert(voiceMode.includes('DEFAULT_VOICE_MODE: DesktopVoiceInteractionMode = "serial"'), "serial is not the explicit default voice mode");
 assert(voiceMode.includes("canSwitchVoiceMode"), "voice mode switching omits active-turn protection");
 assert(voiceMode.includes("getVoiceModeAvailability"), "voice mode switching omits runtime capability gating");
-assert(voicePreferences.includes("VOICE_PREFERENCES_SCHEMA_VERSION = 3"), "voice preferences schema was not advanced for dual modes");
+assert(voicePreferences.includes("VOICE_PREFERENCES_SCHEMA_VERSION = 5"), "voice preferences schema was not advanced for transcript confirmation by default");
 assert(voicePreferences.includes('interactionMode: "serial"'), "voice preferences do not default to serial");
+assert(voicePreferences.includes("confirmBeforeSend: true"), "serial voice does not default to transcript confirmation");
 
 assert(mock.includes("startVoiceTranscription: async"), "mock desktop API omits fixture voice task");
 assert(mock.includes("writeVoiceTranscriptHandoff: async"), "mock desktop API omits voice handoff");

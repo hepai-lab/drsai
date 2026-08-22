@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "opendrsai.model-capability-probe-request/1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "agent_id", "role", "operation"],
+  "properties": {
+    "schema_version": {"const": "opendrsai.model-capability-probe-request/1"},
+    "agent_id": {"type": "string", "minLength": 1, "maxLength": 240},
+    "role": {
+      "enum": ["primary_model", "image_understanding_model", "image_generation_model", "text_to_speech_model", "speech_to_text_model"]
+    },
+    "operation": {
+      "enum": ["chat", "tool_calling", "reasoning", "image_generation", "image_edit", "text_to_speech", "speech_to_text"]
+    },
+    "protocol": {
+      "enum": ["auto", "openai_responses", "openai_chat_completions", "gemini_generate_content", "openai_images_generation", "openai_images_edits", "openai_audio_speech", "openai_audio_transcriptions"],
+      "default": "auto"
+    },
+    "runtime_verification": {"type": "boolean", "default": false},
+    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 180, "default": 60}
+  }
+}

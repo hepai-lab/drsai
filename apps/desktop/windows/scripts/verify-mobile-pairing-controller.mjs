@@ -4,6 +4,9 @@ import { MobilePairingController } from "../../shared/main/mobilePairingControll
 let creates = 0;
 let reads = 0;
 let revokes = 0;
+let pauses = 0;
+let resumes = 0;
+let shrinks = 0;
 const expiry = () => new Date(Date.now() + 120_000).toISOString();
 const client = {
   async getMobilePairingReadiness() {
@@ -26,22 +29,52 @@ const client = {
     return [{
       association_id: "assoc_00000000000000000000000000000000",
       subject_summary: "sub_000000000000",
+      device_summary: "dev_000000000000",
+      device_name: "Samsung SM-X936C",
       status: "active",
+      access_state: "online",
       created_at: new Date().toISOString(),
+      last_seen_at: new Date().toISOString(),
       revoked_at: null,
+      device_type: "android",
+      workspace_scope: "all",
+      permissions: ["read", "send", "approve", "files"],
     }];
   },
   async revokeMobileAssociation(associationId) {
     return {
       association_id: associationId,
       subject_summary: "sub_000000000000",
+      device_summary: "dev_000000000000",
+      device_name: "Samsung SM-X936C",
       status: "revoked",
+      access_state: "revoked",
       created_at: new Date().toISOString(),
+      last_seen_at: new Date().toISOString(),
       revoked_at: new Date().toISOString(),
+      device_type: "android",
+      workspace_scope: "all",
+      permissions: ["read", "send", "approve", "files"],
     };
   },
   async revokeMobileRuntimeEnrollment() {
     return { runtime_id: "runtime_test", status: "revoked", revoked_at: new Date().toISOString() };
+  },
+  async shrinkMobileAssociation(associationId, permissions) {
+    shrinks += 1;
+    return {
+      ...(await this.listMobileAssociations())[0],
+      association_id: associationId,
+      permissions,
+    };
+  },
+  async pauseMobileRemoteAccess() {
+    pauses += 1;
+    return { runtime_id: "runtime_test", status: "paused" };
+  },
+  async resumeMobileRemoteAccess() {
+    resumes += 1;
+    return { runtime_id: "runtime_test", status: "active" };
   },
 };
 
@@ -50,6 +83,18 @@ assert.equal((await controller.readiness()).state, "ready");
 const association = (await controller.associations()).at(0);
 assert.equal(association.subject_summary, "sub_000000000000");
 assert.equal((await controller.revokeAssociation(association.association_id)).status, "revoked");
+assert.deepEqual(
+  (await controller.shrinkAssociation(association.association_id, ["read", "read"])).permissions,
+  ["read"],
+  "permission shrink must normalize duplicates before invoking the Runtime",
+);
+assert.equal(shrinks, 1);
+await assert.rejects(() => controller.shrinkAssociation(association.association_id, []), /permissions are invalid/i);
+await assert.rejects(() => controller.shrinkAssociation(association.association_id, ["admin"]), /permissions are invalid/i);
+assert.equal((await controller.pauseAccess()).status, "paused");
+assert.equal((await controller.associations()).length, 1, "pause must preserve associations");
+assert.equal((await controller.resumeAccess()).status, "active");
+assert.deepEqual({ pauses, resumes }, { pauses: 1, resumes: 1 });
 const [first, duplicate] = await Promise.all([controller.create(), controller.create()]);
 assert.equal(creates, 1, "concurrent creation must be coalesced");
 assert.equal(first.grant_id, duplicate.grant_id);
@@ -81,7 +126,10 @@ const recoveredController = new MobilePairingController(
     return client;
   },
 );
-assert.equal((await recoveredController.readiness()).state, "ready", "missing Runtime route must be retried after recovery");
+await assert.rejects(() => recoveredController.readiness(), /Not Found/,
+  "passive readiness must not repair or enroll the Runtime");
+assert.equal(recoveryCalls, 0, "passive readiness must not trigger recovery");
+assert.equal((await recoveredController.enable()).state, "ready", "explicit enable must retry after Runtime recovery");
 assert.equal(recoveryCalls, 1, "one failed operation must trigger exactly one recovery");
 await recoveredController.close();
 
@@ -100,8 +148,11 @@ const registrationController = new MobilePairingController(
     return client;
   },
 );
-assert.equal((await registrationController.readiness()).state, "ready",
-  "an unregistered Runtime must be retried after OIDC enrollment");
+assert.equal((await registrationController.readiness()).state, "not_registered",
+  "passive readiness must preserve the disabled enrollment state");
+assert.equal(registrationRecoveries, 0);
+assert.equal((await registrationController.enable()).state, "ready",
+  "explicit enable must retry after OIDC enrollment");
 assert.equal(registrationRecoveries, 1);
 await registrationController.close();
 
@@ -121,4 +172,30 @@ await assert.rejects(lateCreate, /closed/);
 await closing;
 assert.equal(lateRevokes, 1, "a grant returned after window close must be revoked immediately");
 
-console.log("Mobile pairing controller verification passed, including create/close race cleanup.");
+let scopeCreates = 0;
+let scopeRevokes = 0;
+const observedScopes = [];
+const scopeClient = {
+  ...client,
+  async createMobilePairingGrant(scope) {
+    observedScopes.push(scope);
+    scopeCreates += 1;
+    return { grant_id: `ag_scope${String(scopeCreates).padStart(24, "0")}`, expires_at: expiry(), status: "pending", payload: "opendrsai://associate?v=1" };
+  },
+  async revokeMobilePairingGrant(grantId) {
+    scopeRevokes += 1;
+    return { grant_id: grantId, expires_at: expiry(), status: "revoked" };
+  },
+};
+const scopeController = new MobilePairingController(async () => scopeClient);
+await scopeController.create();
+await scopeController.create({ workspace_scope: "selected", workspace_ids: ["workspace-b", "workspace-a", "workspace-a"] });
+assert.deepEqual(observedScopes, [
+  { workspace_scope: "all", workspace_ids: [] },
+  { workspace_scope: "selected", workspace_ids: ["workspace-a", "workspace-b"] },
+]);
+assert.equal(scopeRevokes, 1, "changing Workspace scope must revoke the previous pending grant");
+assert.throws(() => scopeController.create({ workspace_scope: "selected", workspace_ids: [] }), /scope is invalid/i);
+await scopeController.close();
+
+console.log("Mobile pairing controller verification passed, including scope binding, permission shrink, and create/close race cleanup.");

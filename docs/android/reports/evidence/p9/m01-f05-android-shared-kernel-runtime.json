@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "feature_id": "M01-F05",
+  "generated_at": "2026-08-05T14:55:58.730555+00:00",
+  "passed": true,
+  "gates": {
+    "android_runtime_uses_shared_kernel_factory_directly": true,
+    "runtime_identity_exports_same_kernel_and_prompt_contract": true,
+    "runtime_identity_is_reported_by_real_isolated_process": true,
+    "health_handshake_verifies_remote_identity": true,
+    "process_death_and_checkpoint_recovery_keep_identity": true,
+    "api35_emulator_and_sm_x936c_runtime_suite_is_green": true,
+    "production_behavior_fixture_confirms_shared_kernel_prompt_and_tool_digest": true,
+    "runtime_service_is_non_exported_and_process_scoped": true
+  },
+  "source_sha256": {
+    "docs/android/reports/evidence/p9/m10-f03-runtime-identity-diagnostics.json": "f4d08b84790c0cebe7a276e6661e02fefbaf2a4c046b5e34ca295e8fc337ad49",
+    "docs/android/reports/evidence/p9/m12-f02-production-behavior-parity.json": "b9ae2490a7ea3a2eb4039be5b6c74b3fd2c031ec080ef15c65c716c0b7497798",
+    "apps/android/app/src/main/python/runtime_probe.py": "ea9232d7e17d190a2d59195217320b99ba6032682d7fbba26904634ab21a2088",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/PythonRuntimeServiceTest.kt": "69702c03976cd4c6cba1412b032a6120a237c1c1a76da5bf034f8e86f78afb28",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRuntimeService.kt": "dfccff58aaf5214cfe3b09e162bf75ddbacd62cebbef84173a191b2980652817"
+  }
+}

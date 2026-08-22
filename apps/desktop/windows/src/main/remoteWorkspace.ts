@@ -940,13 +940,14 @@ export async function getRemoteWorkspaceStatus(id: string): Promise<RemoteWorksp
   return { ...workspace.remote, connected: false, gatewayReady: false, connectionState: "disconnected" };
 }
 
-export function getRemoteGatewayAccess(workspacePathOrId?: string, workspaceId?: string): { baseUrl: string; token: string; workspaceId: string } | null {
+export function getRemoteGatewayAccess(workspacePathOrId?: string, workspaceId?: string): { baseUrl: string; token: string; workspaceId: string; authGeneration: string } | null {
   const authoritativeId = workspaceId || (workspacePathOrId && connections.has(workspacePathOrId) ? workspacePathOrId : undefined);
   if (authoritativeId) {
     const connection = connections.get(authoritativeId);
     const host = connection ? hostConnections.get(connection.alias) : undefined;
     return connection && host?.state === "ready"
-      ? { baseUrl: `http://127.0.0.1:${host.localPort}`, token: host.token, workspaceId: authoritativeId }
+      ? { baseUrl: `http://127.0.0.1:${host.localPort}`, token: host.token, workspaceId: authoritativeId,
+          authGeneration: `${host.alias}:${host.createdAt}:${host.reconnectCount}:${host.instanceTracker.generation}` }
       : null;
   }
   if (!workspacePathOrId) return null;
@@ -955,7 +956,8 @@ export function getRemoteGatewayAccess(workspacePathOrId?: string, workspaceId?:
   const [matchedId, connection] = matches[0];
   const host = hostConnections.get(connection.alias);
   return host?.state === "ready"
-    ? { baseUrl: `http://127.0.0.1:${host.localPort}`, token: host.token, workspaceId: matchedId }
+    ? { baseUrl: `http://127.0.0.1:${host.localPort}`, token: host.token, workspaceId: matchedId,
+        authGeneration: `${host.alias}:${host.createdAt}:${host.reconnectCount}:${host.instanceTracker.generation}` }
     : null;
 }
 

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "opendrsai.model-capability-profile/1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "agent_id", "provider_id", "models", "gate"],
+  "properties": {
+    "schema_version": {"const": "opendrsai.model-capability-profile/1"},
+    "id": {"type": "string", "minLength": 1},
+    "agent_id": {"type": "string", "minLength": 1},
+    "provider_id": {"type": "string", "minLength": 1},
+    "models": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["role", "model_id", "required_operations", "routes"],
+        "properties": {
+          "role": {"enum": ["primary_model", "image_understanding_model", "image_generation_model", "text_to_speech_model", "speech_to_text_model"]},
+          "model_id": {"type": "string", "minLength": 1},
+          "required_operations": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+          "runtime_required_operations": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+          "required_input_modalities": {"type": "array", "uniqueItems": true, "items": {"enum": ["text", "image", "audio"]}},
+          "required_output_modalities": {"type": "array", "uniqueItems": true, "items": {"enum": ["text", "image", "audio"]}},
+          "routes": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}}}
+        }
+      }
+    },
+    "gate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["require_real_provider", "require_runtime_verification", "reject_statuses", "max_snapshot_age_hours"],
+      "properties": {
+        "require_real_provider": {"type": "boolean"},
+        "require_runtime_verification": {"type": "boolean"},
+        "reject_statuses": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "max_snapshot_age_hours": {"type": "number", "exclusiveMinimum": 0}
+      }
+    }
+  }
+}

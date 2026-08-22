@@ -145,6 +145,14 @@ def extract_citation_payloads(metadata: Any, state: TurnState) -> list[dict[str,
     if not isinstance(metadata, dict):
         return []
     candidates: list[Any] = []
+    encoded = metadata.get("citations_json")
+    if isinstance(encoded, str):
+        try:
+            decoded = json.loads(encoded)
+        except json.JSONDecodeError:
+            decoded = None
+        if isinstance(decoded, list):
+            candidates.extend(decoded)
     for key in ("citations", "annotations", "sources"):
         value = metadata.get(key)
         if isinstance(value, list):
@@ -177,6 +185,9 @@ def extract_citation_payloads(metadata: Any, state: TurnState) -> list[dict[str,
             **({"locator": str(locator)} if locator is not None else {}),
             **({"excerpt": str(value["excerpt"])} if value.get("excerpt") else {}),
             **({"artifact_id": str(value["artifact_id"])} if value.get("artifact_id") else {}),
+            **({key: value[key] for key in (
+                "relation", "knowledge_base_id", "revision", "document_path", "corpus_complete",
+            ) if value.get(key) is not None}),
         })
     return payloads
 
@@ -240,7 +251,7 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         for index, file_info in enumerate(files):
             name = getattr(file_info, "name", None) or f"artifact-{index + 1}"
             out.append(("artifact.created", {
-                "artifact_id": f"file:{name}:{index}",
+                "artifact_id": getattr(file_info, "artifact_id", None) or f"file:{name}:{index}",
                 "artifact_type": _artifact_type(name, getattr(file_info, "mime_type", None)),
                 "name": name,
                 "title": title,
@@ -248,6 +259,10 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
                 "url": getattr(file_info, "url", None),
                 "mime": getattr(file_info, "mime_type", None),
                 "size": getattr(file_info, "size", None),
+                "sha256": getattr(file_info, "sha256", None),
+                "previewable": getattr(file_info, "previewable", None),
+                "downloadable": getattr(file_info, "downloadable", None),
+                "source_call_id": getattr(file_info, "source_call_id", None),
                 "source": getattr(message, "source", "") or "agent",
             }))
         return out
@@ -386,8 +401,15 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
                 "name": name,
                 "args": args,
                 "result": result_str,
+                "is_error": bool(getattr(r, "is_error", False)),
                 "duration_ms": duration_ms,
             }
+            try:
+                decoded_result = json.loads(result_str)
+            except json.JSONDecodeError:
+                decoded_result = None
+            if isinstance(decoded_result, dict) and isinstance(decoded_result.get("_inspection"), dict):
+                payload["inspection"] = dict(decoded_result["_inspection"])
             if is_sub:
                 payload["source"] = msg_source
                 payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"

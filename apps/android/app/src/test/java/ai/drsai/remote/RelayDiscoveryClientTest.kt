@@ -4,13 +4,20 @@ import ai.drsai.remote.remote.data.HttpRelayDiscoveryService
 import ai.drsai.remote.remote.data.parseAccessGrantCode
 import ai.drsai.remote.remote.data.RelayHttpException
 import ai.drsai.remote.remote.data.associationErrorMessage
+import ai.drsai.remote.remote.data.compatibleWindowsRuntimeVersion
+import ai.drsai.remote.remote.data.runtimeConnectionState
 import ai.drsai.remote.remote.model.RemoteConnectionState
 import ai.drsai.remote.remote.model.RuntimeId
+import ai.drsai.remote.remote.security.RelayAssociationDevice
+import ai.drsai.remote.remote.security.RelayDeviceProof
+import ai.drsai.remote.remote.security.RelayDeviceKeyRotation
+import ai.drsai.remote.remote.security.RelayDeviceSigner
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -33,7 +40,7 @@ class RelayDiscoveryClientTest {
         val service = HttpRelayDiscoveryService(server.url("/api/runtime-relay").toString(), { "oidc-token" })
         val page = service.listRuntimes(cursor = "0", query = "Office")
         assertEquals("rt-a", page.items.single().reference.runtimeId.value)
-        assertEquals(RemoteConnectionState.DEGRADED, page.items.single().state)
+        assertEquals(RemoteConnectionState.INCOMPATIBLE, page.items.single().state)
         assertEquals(2, page.items.single().connectionGeneration)
         assertEquals("20", page.nextCursor)
         server.takeRequest().apply {
@@ -49,6 +56,126 @@ class RelayDiscoveryClientTest {
         val empty = service.listWorkspaces(RuntimeId("rt-a"))
         assertTrue(empty.items.isEmpty())
         assertNull(empty.nextCursor)
+    }
+
+    @Test fun `unassociated runtime discovery retries bearer only after explicit invalid device proof`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401).setBody(
+            """{"code":"invalid_device_proof","correlation_id":"safe-correlation"}"""
+        ))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"items":[],"next_cursor":null}"""
+        ))
+        val service = HttpRelayDiscoveryService(
+            server.url("/").toString(),
+            { "token" },
+            deviceProof = RelayDeviceProof(
+                CapturingSigner(),
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-0123456789abcdef" },
+            ),
+        )
+
+        assertTrue(service.listRuntimes().items.isEmpty())
+
+        server.takeRequest().apply {
+            assertEquals("android.test-device", getHeader("X-Relay-Device-Id"))
+            assertEquals("Bearer token", getHeader("Authorization"))
+        }
+        server.takeRequest().apply {
+            assertNull(getHeader("X-Relay-Device-Id"))
+            assertNull(getHeader("X-Relay-Device-Signature"))
+            assertEquals("Bearer token", getHeader("Authorization"))
+        }
+    }
+
+    @Test fun `runtime discovery does not downgrade non device authentication failures`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401).setBody(
+            """{"code":"invalid_token"}"""
+        ))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"items":[],"next_cursor":null}"""
+        ))
+        var refreshes = 0
+        val service = HttpRelayDiscoveryService(
+            server.url("/").toString(),
+            { "expired" },
+            refreshAfter = {
+                refreshes += 1
+                "fresh"
+            },
+            deviceProof = RelayDeviceProof(
+                CapturingSigner(),
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-0123456789abcdef" },
+            ),
+        )
+
+        assertTrue(service.listRuntimes().items.isEmpty())
+        assertEquals(1, refreshes)
+        listOf("Bearer expired", "Bearer fresh").forEach { expected ->
+            server.takeRequest().apply {
+                assertEquals(expected, getHeader("Authorization"))
+                assertEquals("android.test-device", getHeader("X-Relay-Device-Id"))
+            }
+        }
+    }
+
+    @Test fun `catalog DTO ignores absolute paths process data and credentials`() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """
+                {"items":[{"runtime":{"runtime_id":"rt-a","instance_id":"boot","version":"1.5.3",
+                "protocol_version":"2.0.0","status":"online","connection_generation":1,
+                "last_seen_at":"2026-07-28T00:00:00Z","pid":4242,"internal_port":18642,
+                "credential":"runtime-secret"},"display_name":"Office",
+                "windows_path":"C:\\Users\\private"}],"next_cursor":null}
+                """.trimIndent(),
+            )
+        )
+        server.enqueue(
+            MockResponse().setBody(
+                """
+                {"items":[{"runtime_id":"rt-a","workspace_id":"ws","display_name":"Project",
+                "lifecycle":"active","revision":1,"updated_at":"2026-07-28T00:00:00Z",
+                "absolute_path":"C:\\Users\\private\\project","ssh_key":"secret"}],
+                "next_cursor":null}
+                """.trimIndent(),
+            )
+        )
+        val service = HttpRelayDiscoveryService(server.url("/").toString(), { "token" })
+
+        val runtime = service.listRuntimes().items.single()
+        val workspace = service.listWorkspaces(RuntimeId("rt-a")).items.single()
+        val projection = "$runtime $workspace"
+
+        assertEquals("2026-07-28T00:00:00Z", runtime.lastSeenAt)
+        assertEquals("Project", workspace.displayName)
+        assertEquals(false, projection.contains("C:\\Users"))
+        assertEquals(false, projection.contains("runtime-secret"))
+        assertEquals(false, projection.contains("18642"))
+        assertEquals(false, projection.contains("4242"))
+        assertEquals(
+            setOf(
+                "reference", "instanceId", "version", "protocolVersion",
+                "connectionGeneration", "state", "capabilities", "lastSeenAt",
+            ),
+            runtime::class.java.declaredFields.map { it.name }.filterNot {
+                it.startsWith("$")
+            }.toSet(),
+        )
+    }
+
+    @Test fun `runtime compatibility follows the version declared by the connected windows owner`() {
+        assertTrue(compatibleWindowsRuntimeVersion("1.5.3"))
+        assertTrue(compatibleWindowsRuntimeVersion("1.5.4"))
+        assertTrue(compatibleWindowsRuntimeVersion("2.0.0"))
+        assertEquals(false, compatibleWindowsRuntimeVersion("1.4.7"))
+        assertEquals(false, compatibleWindowsRuntimeVersion("1.5.3-rc1"))
+        assertEquals(false, compatibleWindowsRuntimeVersion("unknown"))
+    }
+
+    @Test fun `paused runtime remains recognizable and is not treated as incompatible`() {
+        assertEquals(RemoteConnectionState.PAUSED, runtimeConnectionState("paused", "1.5.3"))
     }
 
     @Test fun `workspace page sends bounded limit and opaque cursor`() = runTest {
@@ -103,6 +230,68 @@ class RelayDiscoveryClientTest {
         """.trimIndent()))
         HttpRelayDiscoveryService(server.url("/").toString(), { "token" })
             .listWorkspaces(RuntimeId("rt-a"))
+    }
+
+    @Test fun `manual workspace sync posts once and returns one atomic active revision`() = runTest {
+        server.enqueue(MockResponse().setBody("""
+            {"runtime_id":"rt-a","catalog_revision":"9","synced_at":"2026-07-28T04:00:00Z",
+             "items":[
+               {"runtime_id":"rt-a","workspace_id":"active","display_name":"Project",
+                "lifecycle":"active","revision":4,"updated_at":"2026-07-28T03:59:59Z",
+                "absolute_path":"C:\\private","credential":"secret"},
+               {"runtime_id":"rt-a","workspace_id":"archived","display_name":"Old",
+                "lifecycle":"archived","revision":5,"updated_at":"2026-07-28T03:59:58Z"}
+             ]}
+        """.trimIndent()))
+        val service = HttpRelayDiscoveryService(
+            server.url("/").toString(),
+            { "token" },
+            deviceProof = RelayDeviceProof(
+                CapturingSigner(),
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-0123456789abcdef" },
+            ),
+        )
+
+        val result = service.syncWorkspaces(RuntimeId("rt-a"))
+
+        assertEquals("9", result.catalogRevision)
+        assertEquals("2026-07-28T04:00:00Z", result.syncedAt)
+        assertEquals(listOf("active"), result.items.map { it.workspaceId.value })
+        assertEquals(false, result.toString().contains("C:\\private"))
+        assertEquals(false, result.toString().contains("secret"))
+        server.takeRequest().apply {
+            assertEquals("POST", method)
+            assertEquals("/v1/runtimes/rt-a/workspaces/sync", path)
+            assertEquals("{}", body.readUtf8())
+            assertEquals("Bearer token", getHeader("Authorization"))
+            assertEquals("android.test-device", getHeader("X-Relay-Device-Id"))
+        }
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun `manual workspace sync keeps structured offline and timeout failures`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(503)
+            .setBody("""{"code":"host_offline","correlation_id":"offline-safe"}"""))
+        val service = HttpRelayDiscoveryService(server.url("/").toString(), { "token" })
+
+        val failure = runCatching {
+            service.syncWorkspaces(RuntimeId("rt-a"))
+        }.exceptionOrNull() as RelayHttpException
+
+        assertEquals(503, failure.status)
+        assertEquals("host_offline", failure.errorCode)
+        assertEquals("offline-safe", failure.correlationId)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `manual workspace sync rejects cross runtime projection`() = runTest {
+        server.enqueue(MockResponse().setBody("""
+            {"runtime_id":"rt-b","catalog_revision":"1","synced_at":"2026-07-28T04:00:00Z","items":[]}
+        """.trimIndent()))
+        HttpRelayDiscoveryService(server.url("/").toString(), { "token" })
+            .syncWorkspaces(RuntimeId("rt-a"))
     }
 
     @Test fun `401 refreshes and replays exactly once`() = runTest {
@@ -193,6 +382,68 @@ class RelayDiscoveryClientTest {
         }
     }
 
+    @Test fun `foreground heartbeat uses signed association proof and strict false body`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """
+            {"association_id":"association-one","runtime_id":"runtime-one","status":"active",
+            "access_state":"accessing","last_seen_at":"2026-07-28T01:02:03Z"}
+            """.trimIndent()
+        ))
+        val service = HttpRelayDiscoveryService(
+            server.url("/").toString(),
+            { "token" },
+            deviceProof = RelayDeviceProof(
+                CapturingSigner(),
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-0123456789abcdef" },
+            ),
+        )
+
+        service.recordPresence(RuntimeId("runtime-one"), accessing = false)
+
+        server.takeRequest().apply {
+            assertEquals("POST", method)
+            assertEquals("/v1/associations/runtime-one/presence", path)
+            assertEquals("Bearer token", getHeader("Authorization"))
+            assertEquals("android.test-device", getHeader("X-Relay-Device-Id"))
+            assertEquals("1785100000", getHeader("X-Relay-Device-Timestamp"))
+            assertEquals("nonce-0123456789abcdef", getHeader("X-Relay-Device-Nonce"))
+            assertEquals(86, getHeader("X-Relay-Device-Signature")?.length)
+            assertEquals(false, JSONObject(body.readUtf8()).getBoolean("accessing"))
+        }
+    }
+
+    @Test fun `device presence refreshes oidc once and signs both attempts`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+        var refreshes = 0
+        val service = HttpRelayDiscoveryService(
+            server.url("/").toString(),
+            { "expired-token" },
+            refreshAfter = {
+                refreshes += 1
+                "refreshed-token"
+            },
+            deviceProof = RelayDeviceProof(
+                CapturingSigner(),
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-0123456789abcdef" },
+            ),
+        )
+
+        service.recordPresence(RuntimeId("runtime-one"), accessing = false)
+
+        assertEquals(1, refreshes)
+        listOf("Bearer expired-token", "Bearer refreshed-token").forEach { expectedBearer ->
+            server.takeRequest().apply {
+                assertEquals(expectedBearer, getHeader("Authorization"))
+                assertEquals("android.test-device", getHeader("X-Relay-Device-Id"))
+                assertEquals(86, getHeader("X-Relay-Device-Signature")?.length)
+                assertEquals(false, JSONObject(body.readUtf8()).getBoolean("accessing"))
+            }
+        }
+    }
+
     @Test fun `association revoke refreshes oidc once and preserves structured failure`() = runTest {
         server.enqueue(MockResponse().setResponseCode(401))
         server.enqueue(MockResponse().setResponseCode(403).setBody(
@@ -276,5 +527,92 @@ class RelayDiscoveryClientTest {
         assertEquals(RemoteConnectionState.ONLINE, runtime.state)
         assertEquals(7L, runtime.connectionGeneration)
         assertEquals(setOf("workspace.list", "session.list"), runtime.capabilities)
+    }
+
+    @Test fun `device key rotation commits only after Relay success and keeps stable device id`() = runTest {
+        val signer = RotatingSigner()
+        val service = HttpRelayDiscoveryService(
+            server.url("/").toString(), { "token" },
+            deviceProof = RelayDeviceProof(
+                signer,
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-rotation-0123456789" },
+            ),
+        )
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"association_id":"a","runtime_id":"rt","subject_summary":"sub_x","device_summary":"dev_x","device_name":"Android","status":"active","access_state":"online","created_at":"2026-01-01T00:00:00Z"}"""
+        ))
+        service.rotateDeviceKey(RuntimeId("rt"))
+        assertEquals(1, signer.generation)
+        assertEquals("android.stable-device", signer.associationDevice.deviceId)
+        server.takeRequest().apply {
+            assertEquals("/v1/associations/rt/device-key/rotate", requestUrl?.encodedPath)
+            assertEquals("android.stable-device", getHeader("X-Relay-Device-Id"))
+            assertEquals("B".repeat(43), JSONObject(body.readUtf8()).getString("new_device_public_key"))
+        }
+
+        val failedSigner = RotatingSigner()
+        val failed = HttpRelayDiscoveryService(
+            server.url("/").toString(), { "token" },
+            deviceProof = RelayDeviceProof(
+                failedSigner,
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-rotation-9876543210" },
+            ),
+        )
+        server.enqueue(MockResponse().setResponseCode(500).setBody("{}"))
+        kotlin.runCatching { failed.rotateDeviceKey(RuntimeId("rt")) }
+            .onSuccess { error("failed rotation committed") }
+        assertEquals(0, failedSigner.generation)
+        assertEquals("A".repeat(43), failedSigner.associationDevice.devicePublicKey)
+        server.takeRequest()
+
+        val recoveringSigner = RotatingSigner()
+        val recovering = HttpRelayDiscoveryService(
+            server.url("/").toString(), { "token" },
+            deviceProof = RelayDeviceProof(
+                recoveringSigner,
+                epochSeconds = { 1_785_100_000L },
+                nonce = { "nonce-recovery-0123456789" },
+            ),
+        )
+        server.enqueue(MockResponse().setResponseCode(401).setBody("{}"))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"association_id":"a","runtime_id":"rt","subject_summary":"sub_x","device_summary":"dev_x","device_name":"Android","status":"active","access_state":"online","created_at":"2026-01-01T00:00:00Z"}"""
+        ))
+        recovering.rotateDeviceKey(RuntimeId("rt"))
+        assertEquals(1, recoveringSigner.generation)
+        val oldProof = server.takeRequest().getHeader("X-Relay-Device-Signature")
+        val pendingProof = server.takeRequest().getHeader("X-Relay-Device-Signature")
+        assertNotEquals(oldProof, pendingProof)
+    }
+
+    private class CapturingSigner : RelayDeviceSigner {
+        override val associationDevice = RelayAssociationDevice(
+            deviceId = "android.test-device",
+            deviceName = "Android test device",
+            devicePublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        )
+
+        override fun sign(message: ByteArray): ByteArray = ByteArray(64) { it.toByte() }
+    }
+
+    private class RotatingSigner : RelayDeviceSigner {
+        var generation = 0
+        override val associationDevice: RelayAssociationDevice
+            get() = RelayAssociationDevice(
+                deviceId = "android.stable-device",
+                deviceName = "Android test device",
+                devicePublicKey = if (generation == 0) "A".repeat(43) else "B".repeat(43),
+            )
+
+        override fun sign(message: ByteArray): ByteArray = ByteArray(64) { generation.toByte() }
+
+        override fun beginKeyRotation(): RelayDeviceKeyRotation =
+            RelayDeviceKeyRotation(
+                "B".repeat(43),
+                signAction = { ByteArray(64) { 1 } },
+                commitAction = { generation = 1 },
+            )
     }
 }

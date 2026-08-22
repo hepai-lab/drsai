@@ -1,0 +1,110 @@
+schema_version: opendrsai.agent-regression-case/1
+
+id: knowledge.grounded
+revision: 2
+title: 根据固定 OpenDrSai Runtime 知识库回答
+description: 验证知识检索、依据约束和可交互知识引用。
+owner: agent-runtime
+tags: [smoke, release, knowledge, citation]
+
+agent:
+  definition: opendrsai@1
+  model_profile: default
+
+input:
+  messages:
+    - role: user
+      parts:
+        - type: text
+          text: |
+            根据提供的 OpenDrSai Runtime 知识库回答：
+
+            1. Session 和 Run 分别表示什么？
+            2. 一个 Session 能否包含多个 Run？
+            3. 重放是否可以覆盖原始 Run？
+
+            请仅根据知识库回答，并提供引用。
+
+environment:
+  network: disabled
+  session:
+    type: new
+    history: empty
+  required_capabilities: [knowledge_search]
+  knowledge_bases:
+    - id: regression.opendrsai-runtime
+      revision: 1
+      corpus_complete: true
+      documents:
+        - path: ../../assets/knowledge_bases/opendrsai_runtime_overview_v1.md
+          sha256: 133ef96937ed236cc0d5d62e18b9f475674400835f14c380baa89ca6ff1620f3
+
+baseline:
+  facts:
+    - Session 表示一段持续的用户会话
+    - Run 表示一次具体的智能体执行
+    - 一个 Session 可以包含多个 Run
+    - 重放或实验必须创建新的 Run
+    - 重放不能覆盖原始 Run
+
+expect:
+  run:
+    status: completed
+
+  behavior:
+    required_capabilities: [knowledge_search]
+    knowledge_queries:
+      min: 1
+      max: 3
+    retrieved_documents:
+      required:
+        - knowledge_base_id: regression.opendrsai-runtime
+          knowledge_base_revision: 1
+          document_path: opendrsai_runtime_overview_v1.md
+          sha256: 133ef96937ed236cc0d5d62e18b9f475674400835f14c380baa89ca6ff1620f3
+    web_search_calls:
+      max: 0
+    unrelated_tool_calls:
+      max: 0
+    skill_activations:
+      max: 0
+    approvals:
+      max: 0
+    external_writes:
+      max: 0
+
+  output:
+    type: text
+    semantic_requirements:
+      - Session 表示持续的用户会话
+      - Run 表示一次具体的智能体执行
+      - 一个 Session 可以包含多个 Run
+      - 回答明确说明重放或实验必须创建新的 Run
+      - 重放不能覆盖原始 Run
+    forbidden_claims:
+      - 一个 Session 只能包含一个 Run
+      - 重放会修改原始 Run
+      - 重放会覆盖原始 Run
+
+  citations:
+    min: 1
+    presentation: interactive
+    required_sources:
+      - knowledge_base_id: regression.opendrsai-runtime
+        revision: 1
+        document_path: opendrsai_runtime_overview_v1.md
+    require_claim_support: true
+    oaep:
+      require_citation_parts: true
+      require_stable_citation_id: true
+      require_markdown_relation: true
+      require_openable_target: true
+      require_bidirectional_navigation: true
+
+  artifacts:
+    max: 0
+
+execution:
+  timeout_seconds: 60
+  attempts: 1
+  isolation: required

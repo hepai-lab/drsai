@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
-import { Check, Copy, RefreshCw, Smartphone, Trash2, X } from "lucide-react";
+import { Check, RefreshCw, Smartphone, X } from "lucide-react";
 import type {
-  DesktopMobileAssociation,
   DesktopMobilePairingGrant,
   DesktopMobilePairingReadiness,
+  WorkspaceProject,
 } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
-import { copyTextSafely } from "../clipboard";
+import { mobilePairingWizardState, type MobilePairingWizardStep } from "./mobilePairingWizard";
+import { mobilePairingGrantLifecycle } from "./mobilePairingGrantLifecycle";
 
 type Language = "zh" | "en";
 
@@ -46,23 +47,37 @@ export function mobilePairingErrorText(reason: unknown, language: Language): str
 export function MobilePairingDialog({
   language,
   onClose,
+  onConnected,
 }: {
   language: Language;
   onClose: () => void;
+  onConnected?: () => void;
 }): React.JSX.Element {
   const zh = language === "zh";
   const dialogRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const activeGrantRef = useRef<DesktopMobilePairingGrant | null>(null);
   const mountedRef = useRef(true);
+  const connectedNotifiedRef = useRef(false);
+  const onCloseRef = useRef(onClose);
+  const onConnectedRef = useRef(onConnected);
   const [readiness, setReadiness] = useState<DesktopMobilePairingReadiness | null>(null);
   const [grant, setGrant] = useState<DesktopMobilePairingGrant | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [associations, setAssociations] = useState<DesktopMobileAssociation[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceProject[]>([]);
+  const [scopeMode, setScopeMode] = useState<"all" | "selected">("all");
+  const [selectedWorkspaceIds, setSelectedWorkspaceIds] = useState<Set<string>>(new Set());
+  const scopeRef = useRef({ workspace_scope: "all" as "all" | "selected", workspace_ids: [] as string[] });
+  scopeRef.current = {
+    workspace_scope: scopeMode,
+    workspace_ids: scopeMode === "all" ? [] : [...selectedWorkspaceIds].sort(),
+  };
+
+  onCloseRef.current = onClose;
+  onConnectedRef.current = onConnected;
 
   const revokeActive = useCallback(async (): Promise<void> => {
     const active = activeGrantRef.current;
@@ -75,24 +90,32 @@ export function MobilePairingDialog({
     }
   }, []);
 
-  const createGrant = useCallback(async (): Promise<void> => {
+  const loadReadiness = useCallback(async (): Promise<void> => {
     setBusy(true);
     setError(null);
-    setCopied(false);
-    setQrDataUrl(null);
     try {
       const currentReadiness = await desktopApi.getMobilePairingReadiness();
       if (!mountedRef.current) return;
       setReadiness(currentReadiness);
-      if (currentReadiness.state !== "ready") {
+      setGrant(null);
+    } catch (reason) {
+      if (mountedRef.current) setError(mobilePairingErrorText(reason, language));
+    } finally {
+      if (mountedRef.current) setBusy(false);
+    }
+  }, [language]);
+
+  const createGrant = useCallback(async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    setQrDataUrl(null);
+    try {
+      const selection = scopeRef.current;
+      if (selection.workspace_scope === "selected" && selection.workspace_ids.length === 0) {
         setGrant(null);
-        setAssociations([]);
         return;
       }
-      const linked = await desktopApi.listMobileAssociations().catch(() => []);
-      if (!mountedRef.current) return;
-      setAssociations(linked.filter((item) => item.status === "active"));
-      const created = await desktopApi.createMobilePairingGrant();
+      const created = await desktopApi.createMobilePairingGrant(selection);
       if (!mountedRef.current) return;
       activeGrantRef.current = created;
       setGrant(created);
@@ -112,11 +135,21 @@ export function MobilePairingDialog({
   }, [language, zh]);
 
   useEffect(() => {
+    void desktopApi.listWorkspaces()
+      .then((items) => {
+        if (mountedRef.current) setWorkspaces(items);
+      })
+      .catch(() => {
+        if (mountedRef.current) setWorkspaces([]);
+      });
+  }, []);
+
+  useEffect(() => {
     mountedRef.current = true;
     closeButtonRef.current?.focus();
-    void createGrant();
+    void loadReadiness();
     const keydown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") onCloseRef.current();
       if (event.key !== "Tab") return;
       const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), [href], input:not(:disabled), [tabindex]:not([tabindex='-1'])") ?? [])];
       if (focusable.length === 0) return;
@@ -131,7 +164,7 @@ export function MobilePairingDialog({
       window.removeEventListener("keydown", keydown);
       void revokeActive();
     };
-  }, [createGrant, onClose, revokeActive]);
+  }, [loadReadiness, revokeActive]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -147,9 +180,14 @@ export function MobilePairingDialog({
       void desktopApi.getMobilePairingGrant(grant.grant_id)
         .then((next) => {
           if (!mountedRef.current) return;
+          if (activeGrantRef.current?.grant_id !== grant.grant_id) return;
           activeGrantRef.current = next.status === "pending" ? next : null;
           setGrant(next);
           if (next.status !== "pending") setQrDataUrl(null);
+          if (next.status === "consumed" && !connectedNotifiedRef.current) {
+            connectedNotifiedRef.current = true;
+            onConnectedRef.current?.();
+          }
         })
         .catch((reason) => {
           if (mountedRef.current) setError(mobilePairingErrorText(reason, language));
@@ -159,8 +197,9 @@ export function MobilePairingDialog({
     return () => window.clearInterval(poll);
   }, [grant?.grant_id, grant?.status, language]);
 
-  const secondsLeft = grant ? Math.max(0, Math.ceil((Date.parse(grant.expires_at) - now) / 1_000)) : 0;
-  const expired = grant?.status === "expired" || (grant?.status === "pending" && secondsLeft === 0);
+  const lifecycle = grant ? mobilePairingGrantLifecycle(grant.status, grant.expires_at, now) : null;
+  const secondsLeft = lifecycle?.secondsLeft ?? 0;
+  const expired = lifecycle?.status === "expired";
 
   useEffect(() => {
     if (!expired || grant?.status !== "pending") return;
@@ -168,53 +207,24 @@ export function MobilePairingDialog({
     setQrDataUrl(null);
     setGrant({ ...grant, status: "expired" });
   }, [expired, grant]);
-  const code = useMemo(() => {
-    if (!grant?.payload) return "";
-    try { return new URL(grant.payload).searchParams.get("code") ?? ""; } catch { return ""; }
-  }, [grant?.payload]);
-
   async function refresh(): Promise<void> {
     await revokeActive();
     setGrant(null);
     await createGrant();
   }
 
-  async function revokeAssociation(associationId: string): Promise<void> {
-    setBusy(true);
-    setError(null);
-    try {
-      await desktopApi.revokeMobileAssociation(associationId);
-      if (mountedRef.current) {
-        setAssociations((items) => items.filter((item) => item.association_id !== associationId));
-      }
-    } catch (reason) {
-      if (mountedRef.current) setError(mobilePairingErrorText(reason, language));
-    } finally {
-      if (mountedRef.current) setBusy(false);
-    }
-  }
-
-  async function revokeEnrollment(): Promise<void> {
-    const confirmed = window.confirm(zh
-      ? "这会断开所有 Android 设备并撤销此电脑的 Runtime 注册。确定继续吗？"
-      : "This disconnects every Android device and revokes this computer's Runtime enrollment. Continue?");
-    if (!confirmed) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await desktopApi.revokeMobileRuntimeEnrollment();
-      if (!mountedRef.current) return;
-      activeGrantRef.current = null;
-      setGrant(null);
-      setQrDataUrl(null);
-      setAssociations([]);
-      setReadiness({ state: "not_registered", action: "register_runtime" });
-    } catch (reason) {
-      if (mountedRef.current) setError(mobilePairingErrorText(reason, language));
-    } finally {
-      if (mountedRef.current) setBusy(false);
-    }
-  }
+  const wizard = mobilePairingWizardState({
+    readiness: readiness?.state ?? null,
+    grantStatus: grant?.status ?? null,
+    scopeValid: scopeMode === "all" || selectedWorkspaceIds.size > 0,
+    busy,
+    error: error !== null,
+  });
+  const stepOrder: MobilePairingWizardStep[] = ["allow", "scope", "scan", "complete"];
+  const stepLabels = zh
+    ? { allow: "允许连接", scope: "选择范围", scan: "扫码连接", complete: "完成" }
+    : { allow: "Allow", scope: "Choose access", scan: "Scan", complete: "Done" };
+  const activeStep = stepOrder.indexOf(wizard.step);
 
   const readinessText: Record<string, string> = zh ? {
     not_registered: "此电脑尚未注册到 HepAI，请先完成 Runtime 注册。",
@@ -235,46 +245,61 @@ export function MobilePairingDialog({
           <button ref={closeButtonRef} type="button" className="mobile-pairing-icon-button" aria-label={zh ? "关闭" : "Close"} onClick={onClose}><X size={18} /></button>
         </header>
 
+        <ol className="mobile-pairing-steps" aria-label={zh ? "连接步骤" : "Connection steps"}>
+          {stepOrder.map((step, index) => <li key={step} aria-current={step === wizard.step ? "step" : undefined}
+            data-state={index < activeStep ? "complete" : index === activeStep ? "current" : "upcoming"}>
+            <span>{index + 1}</span>{stepLabels[step]}
+          </li>)}
+        </ol>
+
         <div className="mobile-pairing-device"><span>{zh ? "计算机" : "Computer"}</span><strong>OpenDrSai Desktop</strong><span>{zh ? "环境" : "Environment"}</span><strong>{readiness?.environment ?? "—"}</strong></div>
 
-        {busy ? <div className="mobile-pairing-state" role="status"><RefreshCw className="spin" size={28} />{zh ? "正在创建安全连接…" : "Creating a secure connection…"}</div> : null}
-        {!busy && readiness && readiness.state !== "ready" ? <div className="mobile-pairing-state mobile-pairing-warning" role="alert"><p>{readinessText[readiness.state] ?? readiness.action}</p><button type="button" onClick={() => void createGrant()}>{zh ? "重试" : "Retry"}</button></div> : null}
-        {!busy && error ? <div className="mobile-pairing-state mobile-pairing-warning" role="alert"><p>{error}</p><button type="button" onClick={() => void createGrant()}>{zh ? "重试" : "Retry"}</button></div> : null}
-        {!busy && grant?.status === "consumed" ? <div className="mobile-pairing-state mobile-pairing-success" role="status"><Check size={42} /><h3>{zh ? "已连接" : "Connected"}</h3><p>{zh ? "Android 设备现在可以访问此 Runtime。" : "The Android device can now access this Runtime."}</p></div> : null}
-        {!busy && (expired || grant?.status === "revoked") ? <div className="mobile-pairing-state" role="status"><h3>{expired ? (zh ? "二维码已过期" : "QR code expired") : (zh ? "连接已取消" : "Pairing cancelled")}</h3><button type="button" onClick={() => void refresh()}>{zh ? "刷新二维码" : "Refresh QR code"}</button></div> : null}
+        <fieldset className="mobile-pairing-scope" disabled={!wizard.canChangeScope} hidden={wizard.step !== "scope"}>
+          <legend>{zh ? "允许访问的工作区" : "Allowed workspaces"}</legend>
+          <label>
+            <input type="radio" name="mobile-pairing-scope" checked={scopeMode === "all"}
+              onChange={() => setScopeMode("all")} />
+            <span>{zh ? "全部工作区" : "All workspaces"}</span>
+          </label>
+          <label>
+            <input type="radio" name="mobile-pairing-scope" checked={scopeMode === "selected"}
+              onChange={() => setScopeMode("selected")} />
+            <span>{zh ? "仅指定工作区" : "Selected workspaces only"}</span>
+          </label>
+          {scopeMode === "selected" ? <div className="mobile-pairing-workspaces">
+            {workspaces.length === 0 ? <small>{zh ? "当前没有可授权的工作区。" : "There are no workspaces available to authorize."}</small> :
+              workspaces.map((workspace) => <label key={workspace.id}>
+                <input type="checkbox" checked={selectedWorkspaceIds.has(workspace.id)} onChange={(event) => {
+                  setSelectedWorkspaceIds((current) => {
+                    const next = new Set(current);
+                    if (event.target.checked) next.add(workspace.id); else next.delete(workspace.id);
+                    return next;
+                  });
+                }} />
+                <span>{workspace.name}</span>
+              </label>)}
+          </div> : null}
+          <small>{zh ? "授权范围会写入一次性配对授权，Android 无法自行扩大。" : "The one-time grant binds this scope; Android cannot expand it."}</small>
+        </fieldset>
+
+        {busy ? <div className="mobile-pairing-state" role="status" aria-live="polite" aria-atomic="true"><RefreshCw className="spin" size={28} aria-hidden="true" />{zh ? "正在创建安全连接…" : "Creating a secure connection…"}</div> : null}
+        {!busy && readiness && readiness.state !== "ready" ? <div className="mobile-pairing-state mobile-pairing-warning" role="alert"><p>{readinessText[readiness.state] ?? readiness.action}</p></div> : null}
+        {!busy && error ? <div className="mobile-pairing-state mobile-pairing-warning" role="alert"><p>{error}</p></div> : null}
+        {!busy && readiness?.state === "ready" && scopeMode === "selected" && selectedWorkspaceIds.size === 0 ? <div className="mobile-pairing-state" role="status"><p>{zh ? "请选择至少一个工作区后生成二维码。" : "Select at least one workspace to create the QR code."}</p></div> : null}
+        {!busy && grant?.status === "consumed" ? <div className="mobile-pairing-state mobile-pairing-success" role="status" aria-live="polite" aria-atomic="true"><Check size={42} aria-hidden="true" /><h3>{zh ? "已连接" : "Connected"}</h3><p>{zh ? "Android 设备现在可以访问此 Runtime。" : "The Android device can now access this Runtime."}</p></div> : null}
+        {!busy && (expired || grant?.status === "revoked") ? <div className="mobile-pairing-state" role="status" aria-live="polite" aria-atomic="true"><h3>{expired ? (zh ? "二维码已过期" : "QR code expired") : (zh ? "连接已取消" : "Pairing cancelled")}</h3></div> : null}
         {!busy && grant?.status === "pending" && !expired ? <>
           <div className="mobile-pairing-qr" aria-label={zh ? "Android 配对二维码" : "Android pairing QR code"}>{qrDataUrl ? <img src={qrDataUrl} alt={zh ? "用于连接此电脑的一次性二维码" : "One-time QR code for connecting this computer"} /> : null}</div>
-          <div className="mobile-pairing-countdown" role="status"><span>{zh ? "剩余时间" : "Time remaining"}</span><strong>{Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, "0")}</strong><progress max={120} value={Math.min(120, secondsLeft)} aria-label={zh ? "二维码剩余有效时间" : "QR validity remaining"} /></div>
-          <div className="mobile-pairing-manual"><span><small>{zh ? "手工配对码" : "Manual pairing code"}</small><code>{code}</code></span><button type="button" aria-label={zh ? "复制手工配对码" : "Copy manual pairing code"} onClick={() => void copyTextSafely(code).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1_500); })}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? (zh ? "已复制" : "Copied") : (zh ? "复制" : "Copy")}</button></div>
+          <div className="mobile-pairing-countdown" role="timer" aria-live="off"><span>{zh ? "剩余时间" : "Time remaining"}</span><strong aria-hidden="true">{Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, "0")}</strong><progress max={120} value={Math.min(120, secondsLeft)} aria-label={zh ? "二维码剩余有效时间" : "QR validity remaining"} aria-valuetext={zh ? `剩余 ${secondsLeft} 秒` : `${secondsLeft} seconds remaining`} /></div>
         </> : null}
-
-        {readiness?.state === "ready" && associations.length > 0 ? (
-          <div className="mobile-pairing-associations" data-testid="mobile-associations">
-            <h3>{zh ? "已连接设备" : "Connected devices"}</h3>
-            {associations.map((association) => (
-              <div key={association.association_id} className="mobile-pairing-association">
-                <span>
-                  <strong>{zh ? "Android 设备" : "Android device"}</strong>
-                  <small>{association.subject_summary}</small>
-                </span>
-                <button
-                  type="button"
-                  disabled={busy}
-                  data-testid="mobile-association-revoke"
-                  onClick={() => void revokeAssociation(association.association_id)}
-                >
-                  <Trash2 size={15} />{zh ? "断开" : "Disconnect"}
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : null}
 
         <p className="mobile-pairing-privacy">{zh ? "二维码仅包含短时、单次使用的授权码，不包含密码、工作区路径或 Runtime 凭据。" : "The QR contains only a short-lived, single-use grant. It contains no password, workspace path, or Runtime credential."}</p>
         <footer>
-          <button type="button" onClick={() => void refresh()} disabled={busy || readiness?.state !== "ready"}>{zh ? "刷新二维码" : "Refresh QR code"}</button>
-          {readiness?.state === "ready" ? <button type="button" className="danger" data-testid="mobile-enrollment-revoke" onClick={() => void revokeEnrollment()} disabled={busy}>{zh ? "撤销此电脑" : "Revoke computer"}</button> : null}
-          <button type="button" className="primary" onClick={onClose}>{grant?.status === "consumed" ? (zh ? "完成" : "Done") : (zh ? "取消" : "Cancel")}</button>
+          <button type="button" onClick={onClose}>{zh ? "取消" : "Cancel"}</button>
+          {wizard.primaryAction === "retry" ? <button type="button" className="primary" data-testid="mobile-pairing-primary" onClick={() => void loadReadiness()}>{zh ? "重试" : "Retry"}</button> : null}
+          {wizard.primaryAction === "create_qr" ? <button type="button" className="primary" data-testid="mobile-pairing-primary" onClick={() => void createGrant()}>{zh ? "继续并生成二维码" : "Continue and create QR"}</button> : null}
+          {wizard.primaryAction === "refresh_qr" ? <button type="button" className="primary" data-testid="mobile-pairing-primary" onClick={() => void refresh()}>{zh ? "刷新二维码" : "Refresh QR code"}</button> : null}
+          {wizard.primaryAction === "done" ? <button type="button" className="primary" data-testid="mobile-pairing-primary" onClick={onClose}>{zh ? "完成" : "Done"}</button> : null}
         </footer>
       </section>
     </div>

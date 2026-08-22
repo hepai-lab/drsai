@@ -17,9 +17,9 @@
 import { useStore } from '@nanostores/react'
 import { Box, Text } from 'ink'
 
-import { useTerminalWidth } from '../hooks/useTerminalWidth.js'
+import { useTerminalWidth } from '../hooks/terminalSizeStore.js'
 import { $isStreaming } from '../app/turnStore.js'
-import { $connectionStatus, $copyMode, $lastUsage, $sessionMeta, $statusLine, $userId } from '../app/uiStore.js'
+import { $connectionStatus, $copyMode, $lastUsage, $sessionMeta, $statusLine, $userId, $remoteHost } from '../app/uiStore.js'
 import { theme } from '../theme.js'
 
 /** Truncate a string to at most `maxChars` characters, appending "…" if truncated. */
@@ -49,10 +49,17 @@ export function StatusBar() {
   // upward and make the composer invisible.
   const statusLineShort = truncate(statusLine, Math.max(120, effectiveCols * 3))
 
+  const remoteHost = useStore($remoteHost)
+
   const connBadge =
-    conn === 'ready' ? <Text color={theme.good}>● connected</Text> :
+    conn === 'ready' ? (
+      remoteHost
+        ? <Text color={theme.good}>● SSH: {remoteHost}</Text>
+        : <Text color={theme.good}>● connected</Text>
+    ) :
     conn === 'connecting' ? <Text color={theme.warn}>○ connecting</Text> :
     conn === 'exited' ? <Text color={theme.error}>✗ exited</Text> :
+    conn === 'remote_lost' ? <Text color={theme.error}>✗ remote lost</Text> :
     <Text color={theme.error}>✗ error</Text>
 
   const modelLabel = meta?.model ?? '?'

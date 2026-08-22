@@ -1,4 +1,32 @@
+import {
+  relayErrorAction,
+  type RelayUserAction,
+} from "./runtimeRelayErrorActions.generated";
+
+export type { RelayUserAction } from "./runtimeRelayErrorActions.generated";
+
 export type RelayRuntimeStatus = "online" | "degraded" | "offline";
+
+export interface RelayActionableError {
+  action: RelayUserAction;
+  title: string;
+  reason: string;
+  actionLabel: string;
+}
+
+const RELAY_ACTION_PRESENTATION: Readonly<Record<RelayUserAction, Omit<RelayActionableError, "action">>> = {
+  retry: { title: "暂时无法连接", reason: "请检查网络后重试。", actionLabel: "重试" },
+  login: { title: "登录已过期", reason: "重新登录后可继续使用。", actionLabel: "重新登录" },
+  "re-pair": { title: "需要重新连接设备", reason: "请生成新的二维码并重新扫码。", actionLabel: "重新扫码" },
+  update: { title: "版本不兼容", reason: "请更新 OpenDrSai 后重试。", actionLabel: "检查更新" },
+  "contact-admin": { title: "暂时无法完成操作", reason: "重试仍失败时，请联系管理员并提供关联编号。", actionLabel: "联系管理员" },
+};
+
+/** Maps wire errors to one safe CTA without exposing raw URL, body, path, token, or exception text. */
+export function relayActionableError(code: string | null | undefined, retryable = false): RelayActionableError {
+  const action = relayErrorAction(code, retryable);
+  return { action, ...RELAY_ACTION_PRESENTATION[action] };
+}
 
 export interface RelayRuntimeDirectoryIdentity {
   runtime_id: string;

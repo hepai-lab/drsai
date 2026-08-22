@@ -1,0 +1,33 @@
+{
+  "checks": {
+    "all_device_assertions": true,
+    "baseline_1_5_4": true,
+    "candidate_1_6_0": true,
+    "rollback_1_5_4": true,
+    "snapshot_digest_persisted": true
+  },
+  "generated_at": "2026-08-03T22:57:59.343409+00:00",
+  "passed": true,
+  "schema_version": 1,
+  "serial": "R5GYB3S8ACH",
+  "snapshot_digest": "2cabdb96ff767273e91aef62c37f51ee5b2ea2849d83efca5e5f8e7bebcff8a8",
+  "steps": [
+    {
+      "method": "seed_v154_oaep_state",
+      "passed": true
+    },
+    {
+      "method": "verify_v160_upgrade_preserves_oaep_and_kill_switch_is_safe",
+      "passed": true
+    },
+    {
+      "method": "verify_v154_rollback_preserves_oaep_state",
+      "passed": true
+    }
+  ],
+  "transition": [
+    "1.5.4",
+    "1.6.0",
+    "1.5.4"
+  ]
+}

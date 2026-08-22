@@ -15,7 +15,7 @@ export const macosVerificationSuites = [
   direct("suite:shell-contract", "../shared/test-kit/verify-macos-contract.mjs", ["positive", "platform-contract"]),
   direct("suite:secure-ipc", "../shared/test-kit/verify-secure-ipc.mts", ["positive", "negative", "authorization", "cancel-timeout", "idempotency"]),
   direct("suite:security-policy", "../shared/test-kit/verify-desktop-security-policy.mts", ["positive", "negative", "authorization"]),
-  direct("suite:secret-redaction", "../shared/test-kit/verify-secret-redaction.mts", ["positive", "negative", "privacy"]),
+  typed("suite:secret-redaction", "../shared/test-kit/verify-secret-redaction.mts", ["positive", "negative", "privacy"]),
   typed("suite:auth-lifecycle", "../shared/test-kit/verify-auth-session-lifecycle.mts", ["positive", "negative", "recovery"]),
   typed("suite:approval-state", "../shared/test-kit/verify-approval-state-machine.mts", ["positive", "negative", "idempotency", "recovery"]),
   typed("suite:thread-lifecycle", "../shared/test-kit/verify-thread-lifecycle.mts", ["positive", "negative", "persistence", "recovery"]),

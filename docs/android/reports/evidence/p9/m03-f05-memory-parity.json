@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "feature_id": "M03-F05",
+  "generated_at": "2026-08-05T14:09:44.345121+00:00",
+  "passed": true,
+  "gates": {
+    "stable_candidate_ids_equal": true,
+    "normalized_selected_set_equal": true,
+    "selection_priority_equal": true,
+    "final_model_context_equal": true,
+    "memory_below_tool_policy": true,
+    "irrelevant_memory_absent": true,
+    "android_content_id_contract_passed": true
+  },
+  "android": {
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "sha256": "a5abd0f26b8aee22ac8f1884253f4a8a5aeb455a6cce752bcae436e3e3cb98d7"
+  },
+  "selection_sha256": "907439a0545c44d4e03cae4ff35869ebc3811731e0dc418e89a0fd959b72a84c",
+  "context_sha256": "d40e0725e6bc7e2cd7b0709a52de651bdfb2296d9a82fead17c46484f5dc1387",
+  "source_sha256": {
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py": "7b1d02d13aea7e5acc6957975a9d55f31b22976480377aa7f3ab3218d0b8f06b",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/desktop_agent_kernel_adapter.py": "26053211f2f2e87b3747d70dbbf3fa24d046ec630f3913beebd5e35b25a9968b",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonSharedCoreChatEngine.kt": "b2c98cc10566a79c4f505392131a6249ed1c3755576098622b754380f314ecfe",
+    "cores/python/packages/drsai/tests/test_memory_cross_runtime_parity.py": "5c5cc3908613f062b14228530f6b1fb1dcbffea86992f40b39a798babae39cc4",
+    "apps/android/app/src/test/java/ai/drsai/remote/MemoryCandidateEnvelopeTest.kt": "0899272c11354d49787c72923782ec32aaa1c4a6c61529d6c5daa23b9095343c"
+  }
+}

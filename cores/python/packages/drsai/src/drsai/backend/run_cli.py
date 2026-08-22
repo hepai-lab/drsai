@@ -20,6 +20,8 @@ To use the legacy REPL, run ``python -m drsai.backend.run_cli_legacy``.
 from __future__ import annotations
 
 import logging
+import asyncio
+import json
 import os
 import shutil
 import subprocess
@@ -31,6 +33,27 @@ import typer
 
 from drsai.configs.constant import VERSION
 from drsai.backend.cli import config as cli_config
+from drsai.config import (
+    ConfigError as ModelProviderConfigError,
+    ConfigUpdateRequest,
+    ProviderDraft,
+    commit_update,
+    cleanup_orphaned_credentials,
+    load_user_config,
+    migrate_legacy_model_config,
+    resolve_model_config,
+    builtin_provider_names,
+    config_revision,
+    diagnose_model_config,
+    discover_provider_models,
+    get_provider_preset,
+    last_known_good_path,
+    restore_last_known_good,
+    preview_update,
+    probe_provider_draft,
+    test_provider_connection,
+)
+from drsai.config.loader import default_config_path
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +63,10 @@ app = typer.Typer(
     help="OpenDrSai — local agent CLI (Ink TUI + Python gateway)",
     no_args_is_help=False,
 )
+config_app = typer.Typer(help="Manage ~/.drsai/config.toml", invoke_without_command=True)
+provider_app = typer.Typer(help="Manage model providers")
+app.add_typer(config_app, name="config")
+app.add_typer(provider_app, name="provider")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -174,8 +201,20 @@ def _which_any(name: str) -> Optional[str]:
 
 
 @app.callback(invoke_without_command=True)
-def cli_default(ctx: typer.Context) -> None:
+def cli_default(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        None,
+        "--version",
+        "-V",
+        help="Print OpenDrSai version and exit.",
+        is_eager=True,
+    ),
+) -> None:
     """Default: launch the new TUI when no subcommand is given."""
+    if version:
+        typer.echo(f"version: {VERSION}")
+        raise typer.Exit()
     if ctx.invoked_subcommand is not None:
         return
     _launch_tui()
@@ -450,8 +489,9 @@ def tui_gateway() -> None:
     gw_main()
 
 
-@app.command("config")
+@config_app.callback()
 def config_cmd(
+    ctx: typer.Context,
     url: Optional[str] = typer.Option(None, "--url", "-u"),
     api_key: Optional[str] = typer.Option(None, "--api-key", "-k"),
     user_id: Optional[str] = typer.Option(None, "--user"),
@@ -465,8 +505,77 @@ def config_cmd(
     plan_mode: Optional[bool] = typer.Option(None, "--plan-mode", "-p"),
     show: bool = typer.Option(False, "--show", "-s", help="Show current config (masked)"),
     json_fmt: bool = typer.Option(False, "--json", help="Show as JSON"),
+    model: Optional[str] = typer.Option(None, "--model", help="Default model ID in config.toml"),
+    model_provider: Optional[str] = typer.Option(None, "--model-provider", help="Default Provider in config.toml"),
+    provider: Optional[str] = typer.Option(None, "--provider", help="Create or update this Provider"),
+    base_url: Optional[str] = typer.Option(None, "--base-url", help="Provider API base URL"),
+    api_key_env: Optional[str] = typer.Option(None, "--api-key-env", help="Provider API-key environment variable"),
+    wire_api: str = typer.Option("openai", "--wire-api", help="openai or anthropic"),
+    no_api_key: bool = typer.Option(False, "--no-api-key", help="Provider does not require an API key"),
+    migrate: bool = typer.Option(False, "--migrate", help="Migrate legacy model configuration to config.toml"),
+    check: bool = typer.Option(False, "--check", help="Validate and resolve config.toml"),
+    path_only: bool = typer.Option(False, "--path", help="Print the config.toml path"),
+    force: bool = typer.Option(False, "--force", help="Explicitly bypass optimistic revision checking"),
 ) -> None:
-    """View or update CLI config (api_key, llm_config_file, etc.)."""
+    """View, validate or update OpenDrSai configuration."""
+    if ctx.invoked_subcommand is not None:
+        return
+    if path_only:
+        typer.echo(str(default_config_path()))
+        return
+    if migrate:
+        try:
+            result = migrate_legacy_model_config()
+        except ModelProviderConfigError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(
+            f"Migrated model={result.model} provider={result.provider}"
+            if result.migrated
+            else f"No migration performed: {result.reason}"
+        )
+        return
+    if provider:
+        if not base_url:
+            raise typer.BadParameter("--base-url is required with --provider")
+        if model is not None or model_provider is not None:
+            raise typer.BadParameter(
+                "Global model selection has been removed; configure the selected Agent model policy instead"
+            )
+        values: dict[str, object] = {
+            "base_url": base_url,
+            "wire_api": wire_api,
+            "requires_api_key": not no_api_key,
+        }
+        try:
+            if api_key_env is not None:
+                values["api_key_env"] = api_key_env
+            request = ConfigUpdateRequest(
+                provider_name=provider,
+                provider_values=values,
+                provider_secret=api_key,
+            )
+            preview = preview_update(request, environ=os.environ)
+            commit_update(request, expected_revision=None if force else preview.base_revision)
+        except ModelProviderConfigError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(f"Provider '{provider}' saved to {default_config_path()}")
+        return
+    if model is not None or model_provider is not None:
+        raise typer.BadParameter(
+            "Global model selection has been removed; configure the selected Agent model policy instead"
+        )
+    if check:
+        try:
+            compact = load_user_config()
+            resolved = resolve_model_config(compact, environ=os.environ, require_credentials=False)
+        except ModelProviderConfigError as exc:
+            typer.echo(typer.style(f"Invalid config: {exc}", fg=typer.colors.RED))
+            raise typer.Exit(1)
+        typer.echo(
+            f"OK: model={resolved.model} provider={resolved.provider.name} "
+            f"wire_api={resolved.provider.wire_api}"
+        )
+        return
     cfg = cli_config.load_config()
     updates = [
         ("url", url), ("api_key", api_key), ("user_id", user_id),
@@ -481,12 +590,325 @@ def config_cmd(
     ]
     if show or not any(v is not None for _, v in updates):
         cli_config.show_config(cfg, as_json=json_fmt)
+        try:
+            compact = load_user_config()
+            resolved = resolve_model_config(compact, environ=os.environ, require_credentials=False)
+            typer.echo("\nconfig.toml model:")
+            typer.echo(json.dumps(resolved.public_dict(), ensure_ascii=False, indent=2))
+        except ModelProviderConfigError as exc:
+            typer.echo(f"\nconfig.toml model: invalid ({exc})")
         return
     for key, val in updates:
         if val is not None:
             cfg[key] = val
     cli_config.save_config(cfg)
     typer.echo(f"Config saved to {cli_config.CLI_CONFIG_PATH}")
+
+
+@config_app.command("path")
+def config_path_cmd() -> None:
+    """Print the active user TOML path."""
+    typer.echo(str(default_config_path()))
+
+
+@config_app.command("show")
+def config_show_cmd() -> None:
+    """Show the resolved model configuration with credentials redacted."""
+    try:
+        resolved = resolve_model_config(load_user_config(), environ=os.environ, require_credentials=False)
+    except ModelProviderConfigError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(resolved.public_dict(), ensure_ascii=False, indent=2))
+
+
+@config_app.command("check")
+def config_check_cmd() -> None:
+    """Validate and resolve the active user TOML."""
+    try:
+        resolved = resolve_model_config(load_user_config(), environ=os.environ, require_credentials=False)
+    except ModelProviderConfigError as exc:
+        typer.echo(typer.style(f"Invalid config: {exc}", fg=typer.colors.RED))
+        raise typer.Exit(1)
+    typer.echo(f"OK: model={resolved.model} provider={resolved.provider.name} wire_api={resolved.provider.wire_api}")
+
+
+@config_app.command("status")
+def config_status_cmd(json_fmt: bool = typer.Option(False, "--json")) -> None:
+    """Show the effective model, revision, path, and recovery availability."""
+    target = default_config_path()
+    try:
+        resolved = resolve_model_config(load_user_config(), environ=os.environ, require_credentials=False)
+    except ModelProviderConfigError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    result = {
+        "path": str(target),
+        "revision": config_revision(target),
+        "last_known_good_available": last_known_good_path(target).is_file(),
+        "effective": resolved.public_dict(),
+    }
+    if json_fmt:
+        typer.echo(json.dumps(result, ensure_ascii=False))
+    else:
+        typer.echo(f"model={resolved.model} provider={resolved.provider.name}")
+        typer.echo(f"path={target}")
+        typer.echo(f"revision={result['revision']}")
+        typer.echo(f"last-known-good={'available' if result['last_known_good_available'] else 'unavailable'}")
+
+
+@config_app.command("doctor")
+def config_doctor_cmd(
+    json_fmt: bool = typer.Option(False, "--json"),
+    online: bool = typer.Option(False, "--online", help="Also test protocol and selected model; may incur cost"),
+) -> None:
+    """Run offline configuration and credential diagnostics."""
+    result = diagnose_model_config(online=online)
+    if json_fmt:
+        typer.echo(json.dumps(result, ensure_ascii=False))
+    else:
+        for check in result["checks"]:
+            typer.echo(f"[{str(check['status']).upper()}] {check['id']}: {check['message']}")
+    if not result["ok"]:
+        raise typer.Exit(1)
+
+
+@config_app.command("restore")
+def config_restore_cmd() -> None:
+    """Restore the last configuration that committed successfully."""
+    try:
+        result = restore_last_known_good(expected_revision=config_revision())
+    except ModelProviderConfigError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Restored model={result.resolved.model} provider={result.resolved.provider.name}")
+
+
+@config_app.command("credential-cleanup")
+def config_credential_cleanup_cmd(
+    apply: bool = typer.Option(False, "--apply", help="Delete confirmed orphaned local credentials"),
+) -> None:
+    """Scan local credential files; deletion requires an explicit --apply."""
+    result = cleanup_orphaned_credentials(dry_run=not apply)
+    typer.echo(json.dumps({key: value for key, value in result.items() if key != "orphan_references"}, ensure_ascii=False))
+
+
+@config_app.command("migrate")
+def config_migrate_cmd() -> None:
+    """Idempotently migrate legacy model settings to config.toml."""
+    result = migrate_legacy_model_config()
+    typer.echo(
+        f"Migrated model={result.model} provider={result.provider}"
+        if result.migrated
+        else f"No migration performed: {result.reason}"
+    )
+
+
+@config_app.command("set-model")
+def config_set_model_cmd(model: str, force: bool = typer.Option(False, "--force")) -> None:
+    """Reject the retired global model selection command."""
+    raise typer.BadParameter(
+        "Global model selection has been removed; configure the selected Agent model policy instead"
+    )
+
+
+@config_app.command("set-provider")
+def config_set_provider_cmd(provider: str, force: bool = typer.Option(False, "--force")) -> None:
+    """Reject the retired global Provider selection command."""
+    raise typer.BadParameter(
+        "Global model selection has been removed; configure the selected Agent model policy instead"
+    )
+
+
+@provider_app.command("list")
+def provider_list_cmd() -> None:
+    """List configured Providers without exposing credentials."""
+    config = load_user_config()
+    rows = []
+    for name in sorted({*builtin_provider_names(), *config.providers}):
+        try:
+            resolved = resolve_model_config(
+                config, environ=os.environ, provider=name, require_credentials=False
+            )
+        except ModelProviderConfigError:
+            continue
+        rows.append(resolved.provider.public_dict())
+    typer.echo(json.dumps(rows, ensure_ascii=False, indent=2))
+
+
+def _save_provider_from_cli(
+    name: str,
+    base_url: str,
+    api_key: Optional[str],
+    api_key_env: Optional[str],
+    wire_api: str,
+    no_api_key: bool,
+    force: bool,
+) -> None:
+    values: dict[str, object] = {
+        "base_url": base_url,
+        "wire_api": wire_api,
+        "requires_api_key": not no_api_key,
+    }
+    try:
+        if api_key_env is not None:
+            values["api_key_env"] = api_key_env
+        revision = config_revision()
+        commit_update(ConfigUpdateRequest(
+            provider_name=name,
+            provider_values=values,
+            provider_secret=api_key,
+        ), expected_revision=None if force else revision)
+    except ModelProviderConfigError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Provider '{name}' saved")
+
+
+@provider_app.command("add")
+@provider_app.command("edit")
+def provider_save_cmd(
+    name: str,
+    base_url: str = typer.Option(..., "--base-url"),
+    api_key: Optional[str] = typer.Option(None, "--api-key", help="Prefer --api-key-env to avoid shell history"),
+    api_key_env: Optional[str] = typer.Option(None, "--api-key-env"),
+    wire_api: str = typer.Option("openai", "--wire-api"),
+    no_api_key: bool = typer.Option(False, "--no-api-key"),
+    force: bool = typer.Option(False, "--force", help="Explicitly bypass optimistic revision checking"),
+) -> None:
+    """Add or edit a Provider."""
+    _save_provider_from_cli(name, base_url, api_key, api_key_env, wire_api, no_api_key, force)
+
+
+@provider_app.command("test")
+def provider_test_cmd(
+    name: str,
+    model: Optional[str] = typer.Option(None, "--model"),
+    mode: str = typer.Option("model", "--mode", help="basic or model"),
+) -> None:
+    """Run a bounded authenticated connectivity probe."""
+    resolved = resolve_model_config(load_user_config(), environ=os.environ, provider=name, model=model)
+    if mode not in {"basic", "model"}:
+        raise typer.BadParameter("--mode must be basic or model")
+    result = asyncio.run(test_provider_connection(resolved, mode=mode))  # type: ignore[arg-type]
+    typer.echo(json.dumps(result, ensure_ascii=False))
+    if not result.get("ok"):
+        raise typer.Exit(1)
+
+
+@provider_app.command("models")
+def provider_models_cmd(
+    name: str,
+    refresh: bool = typer.Option(False, "--refresh"),
+) -> None:
+    """Discover model IDs exposed by a configured Provider."""
+    resolved = resolve_model_config(load_user_config(), environ=os.environ, provider=name)
+    result = asyncio.run(discover_provider_models(resolved, refresh=refresh))
+    typer.echo(json.dumps(result, ensure_ascii=False))
+    if not result.get("ok"):
+        raise typer.Exit(1)
+
+
+@provider_app.command("setup")
+def provider_setup_cmd() -> None:
+    """Interactively test, preview, and save a model service."""
+    preset_ids = ["hepai", "openai", "anthropic", "deepseek", "ollama", "custom-openai", "custom-anthropic"]
+    typer.echo("Model service presets:")
+    for index, preset_id in enumerate(preset_ids, 1):
+        preset_item = get_provider_preset(preset_id)
+        typer.echo(f"  {index}. {preset_item.label if preset_item else preset_id}")
+    choice = typer.prompt("Preset", default="1").strip()
+    try:
+        preset_id = preset_ids[int(choice) - 1] if choice.isdigit() else choice
+    except IndexError as exc:
+        raise typer.BadParameter("Unknown preset") from exc
+    preset = get_provider_preset(preset_id)
+    if preset is None:
+        raise typer.BadParameter("Unknown preset")
+
+    default_name = "custom" if preset.id.startswith("custom-") else preset.id
+    provider = typer.prompt("Provider name", default=default_name).strip()
+    if not provider or not provider.replace("-", "").replace("_", "").isalnum():
+        raise typer.BadParameter("Provider name may contain letters, numbers, '_' and '-'")
+    base_url = preset.base_url
+    if preset.base_url_editable:
+        base_url = typer.prompt("Base URL", default=base_url).strip()
+
+    api_key: str | None = None
+    api_key_env: str | None = None
+    if preset.requires_api_key:
+        source = typer.prompt("Key source (secure/env)", default="secure").strip().lower()
+        if source == "secure":
+            api_key = typer.prompt("API Key", hide_input=True).strip()
+            if not api_key:
+                raise typer.BadParameter("API Key is required")
+        elif source == "env":
+            api_key_env = typer.prompt(
+                "Environment variable", default=preset.api_key_env or "API_KEY"
+            ).strip()
+        else:
+            raise typer.BadParameter("Key source must be secure or env")
+
+    model = typer.prompt(
+        "Model ID", default="deepseek-v4-pro" if preset.id == "hepai" else ""
+    ).strip()
+    if not model:
+        raise typer.BadParameter("Model ID is required")
+    draft = ProviderDraft(
+        name=provider,
+        base_url=base_url,
+        model=model,
+        wire_api=preset.wire_api,  # type: ignore[arg-type]
+        requires_api_key=preset.requires_api_key,
+        api_key=api_key,
+        api_key_env=api_key_env,
+    )
+    if typer.confirm("Test this draft before saving?", default=True):
+        test_result = asyncio.run(probe_provider_draft(draft, mode="basic", environ=os.environ))
+        if test_result.get("ok"):
+            typer.echo("Draft connection test passed (nothing saved yet).")
+        else:
+            guidance = test_result.get("guidance")
+            if isinstance(guidance, dict):
+                typer.echo(f"Draft test failed: {guidance.get('title', test_result.get('error', 'unknown'))}")
+                for action in guidance.get("actions", []):
+                    typer.echo(f"  - {action}")
+            else:
+                typer.echo(f"Draft test failed: {test_result.get('error', 'unknown')}")
+            if not typer.confirm("Save anyway?", default=False):
+                raise typer.Abort()
+
+    values: dict[str, object] = {
+        "base_url": base_url,
+        "wire_api": preset.wire_api,
+        "requires_api_key": preset.requires_api_key,
+    }
+    if api_key_env:
+        values["api_key_env"] = api_key_env
+    request = ConfigUpdateRequest(
+        provider_name=provider,
+        provider_values=values,
+        provider_secret=api_key,
+    )
+    preview = preview_update(request, environ=os.environ)
+    typer.echo(
+        f"Preview: Provider={provider} probe_model={model} base_url={base_url}"
+    )
+    if not typer.confirm("Save this Provider configuration?", default=True):
+        raise typer.Abort()
+    commit_update(request, expected_revision=preview.base_revision)
+    typer.echo(f"Saved Provider={provider}; select models in the Agent model policy")
+
+
+@provider_app.command("remove")
+def provider_remove_cmd(
+    name: str,
+    force: bool = typer.Option(False, "--force"),
+    keep_credential: bool = typer.Option(False, "--keep-credential", help="Remove the Provider but retain its secure credential for manual recovery"),
+) -> None:
+    """Remove a custom Provider."""
+    revision = config_revision()
+    commit_update(ConfigUpdateRequest(
+        delete_provider_name=name,
+        delete_provider_credential=not keep_credential,
+    ), expected_revision=None if force else revision)
+    typer.echo(f"Provider '{name}' removed")
 
 
 @app.command("sessions")
@@ -790,8 +1212,15 @@ def daemon_send(
 
 def run() -> None:
     """Main entry point used by the ``drsai`` console script."""
-    # `drsai` (no args) or `drsai -u http://...` → implicit `chat` subcommand
-    if len(sys.argv) == 1 or (len(sys.argv) >= 2 and sys.argv[1].startswith("-")):
+    # `drsai` (no args) → implicit `chat` subcommand
+    # `drsai --version` / `drsai -V` → handled by callback (don't insert chat)
+    if len(sys.argv) == 1:
+        sys.argv.insert(1, "chat")
+    elif (
+        len(sys.argv) >= 2
+        and sys.argv[1].startswith("-")
+        and sys.argv[1] not in ("--version", "-V")
+    ):
         sys.argv.insert(1, "chat")
     try:
         app()

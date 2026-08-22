@@ -1,0 +1,3051 @@
+{
+  "schema_version": "opendrsai.windows.phase3.release-manifest/1",
+  "captured_at": "2026-08-05T15:32:41.272Z",
+  "product": {
+    "name": "OpenDrSai Windows Desktop",
+    "version": "1.5.5",
+    "architecture": "x64"
+  },
+  "release_ready": false,
+  "blocking_gates": [
+    "fixed_phase3_ledger_39_of_50",
+    "real_hai_discovery_text_vision_generation_editing",
+    "macos_signed_notarized_artifact",
+    "windows_clean_standard_account_matrix_10_of_10",
+    "product_tracker_93_of_93"
+  ],
+  "progress": {
+    "accepted": 39,
+    "total": 50,
+    "percent": 78
+  },
+  "external_gates": {
+    "real_hai_discovery_text_vision_generation_editing": false,
+    "macos_signed_notarized_artifact": false,
+    "windows_clean_standard_account_matrix_10_of_10": false,
+    "product_tracker_93_of_93": false
+  },
+  "plan": {
+    "path": "docs/desktop/opendrsai-windows-full-agent-runtime-phase3-product-completion-plan.md",
+    "bytes": 35612,
+    "sha256": "sha256:df9dc50c5d8fdecba5cbe75c15d28e613df22e0707a2d32fab53eebb667bbc96"
+  },
+  "ledger": {
+    "path": "docs/desktop/evidence/opendrsai-windows-phase3-acceptance-ledger.json",
+    "bytes": 63897,
+    "sha256": "sha256:55ebc37d8ddaf0fae4f9d75532be1ea1623c2452b927f9830a187d0b878b64ee"
+  },
+  "model_evidence": [
+    {
+      "path": "docs/desktop/evidence/opendrsai-windows-phase3-model-convergence-mc01.json",
+      "bytes": 2289,
+      "sha256": "sha256:32087b0ae20c3a13fec2b705f19d1c901ea891a1f1c444c28a04a317fbc91a3d"
+    },
+    {
+      "path": "docs/desktop/evidence/opendrsai-windows-phase3-model-convergence-mc02.json",
+      "bytes": 3231,
+      "sha256": "sha256:be7007e7a01ec10a779c4403ca2eb20df85b424085c46ab5e87b9155c6a6de26"
+    },
+    {
+      "path": "docs/desktop/evidence/opendrsai-windows-phase3-model-convergence-mc03.json",
+      "bytes": 3347,
+      "sha256": "sha256:c63503632fa0a2789ff54da75b668d50d11717d09ea498149137d88c7238a70b"
+    },
+    {
+      "path": "docs/desktop/evidence/opendrsai-windows-phase3-model-convergence-mc04.json",
+      "bytes": 4757,
+      "sha256": "sha256:7da35bec2de2cac29679fdd1e0a31a1bc183b8229fb1c355a3af5dc4d0e3febd"
+    },
+    {
+      "path": "docs/desktop/evidence/opendrsai-windows-phase3-model-convergence-mc05.json",
+      "bytes": 5443,
+      "sha256": "sha256:4d7ba320767fda2655ac692dabcebcfbcafa17fcfdd4a13510727e80abab69b3"
+    },
+    {
+      "path": "docs/desktop/evidence/opendrsai-windows-phase3-model-convergence-mc06.json",
+      "bytes": 5802,
+      "sha256": "sha256:f3a4b342ec4bc51aca31cbeac77cf1c635bc695d2a2c591ac23ba06d88c2d0e7"
+    },
+    {
+      "path": "docs/desktop/evidence/opendrsai-windows-phase3-model-convergence-mc07.json",
+      "bytes": 4604,
+      "sha256": "sha256:9907b5617f55c2186ffe315dba608b28e8bba56b73a543d6fd65b0508bc1b792"
+    },
+    {
+      "path": "docs/desktop/evidence/opendrsai-windows-phase3-model-convergence-mc08.json",
+      "bytes": 6078,
+      "sha256": "sha256:2ed87266b7c6deb89a6fe49ebe34a92bc4f807040833a71d5284ff4cad7ed68b"
+    }
+  ],
+  "build_artifacts": [
+    {
+      "path": "apps/desktop/windows/resources/backend/backend-source.json",
+      "bytes": 352,
+      "sha256": "sha256:3decc0c42941c46f64e03836f277422000b5f37f5b9cc541b4b60f0a8244eff4"
+    },
+    {
+      "path": "apps/desktop/windows/out/main/index.js",
+      "bytes": 4507847,
+      "sha256": "sha256:862582cf448f05a5e1b45862ab3abf095ab0d0032b5de31347c5567f5a1592cc"
+    },
+    {
+      "path": "apps/desktop/windows/out/preload/index.js",
+      "bytes": 46992,
+      "sha256": "sha256:9e841e0e88470c8e7848709db8261bd9c4c5cd48279881be02c27809bccb0b1a"
+    },
+    {
+      "path": "apps/desktop/windows/out/renderer/assets/index-C--r8q88.js",
+      "bytes": 4233337,
+      "sha256": "sha256:1e58598b58f5057d6e7f2c8e9ebbc0f6df4eefde5afc0135f834a9d5ec27d7c9"
+    },
+    {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "bytes": 60892234,
+      "sha256": "sha256:979f7de63978da801af5d6a7a835cca2cd342fbeb8ee332e6036c5b747acd24a"
+    },
+    {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "bytes": 210977792,
+      "sha256": "sha256:ebafa50e32fd37b426427f2a1f7876312d648871446a2c7f0f8f6f92e1cd34b5"
+    }
+  ],
+  "features": [
+    {
+      "id": "M01-F01",
+      "status": "implemented",
+      "profile": "setup",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/api/firstRunSetup.ts",
+          "bytes": 2388,
+          "sha256": "sha256:493b517b83ae748d83c1c25132806594a8e08ef2688f1249483dc63372515fb5"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/FirstRunSetup.tsx",
+          "bytes": 8417,
+          "sha256": "sha256:70bbad093a283ad9bfa53e7dbb9ecbc95b1e10e72e18370ab718b55c18664dd0"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-first-run-setup.mts",
+          "bytes": 7122,
+          "sha256": "sha256:a57f3090a66a510a23a5bc057e0b00e908003f186c19cf3dfd3d638d34b193c2"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round5-first-run.json",
+          "bytes": 2110,
+          "sha256": "sha256:9104a9a4ce77bd5bbfba7f9fe224dbc670f6d732e68f3e29f5a3b73f861e64d6"
+        }
+      ],
+      "acceptance_passed": false,
+      "missing": []
+    },
+    {
+      "id": "M01-F02",
+      "status": "accepted",
+      "profile": "setup",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/renderer/src/components/FirstRunSetup.tsx",
+          "bytes": 8417,
+          "sha256": "sha256:70bbad093a283ad9bfa53e7dbb9ecbc95b1e10e72e18370ab718b55c18664dd0"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-first-run-setup.mts",
+          "bytes": 7122,
+          "sha256": "sha256:a57f3090a66a510a23a5bc057e0b00e908003f186c19cf3dfd3d638d34b193c2"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-first-run-restart.mjs",
+          "bytes": 9866,
+          "sha256": "sha256:907cec7f97a971c79f394104eeda100c69cc8553cb00a03b2623ab76de83f26c"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs",
+          "bytes": 11975,
+          "sha256": "sha256:3d89925ae800c48acf23c1abf30ff750ee766b079befdaf545062fdf500fbcde"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m5-accessibility.mjs",
+          "bytes": 7982,
+          "sha256": "sha256:ab7776cf38bb60b6e2cbe74dfd8df97a41ef79161252524bbf2abc6a0220799b"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round5-first-run.json",
+          "bytes": 2110,
+          "sha256": "sha256:9104a9a4ce77bd5bbfba7f9fe224dbc670f6d732e68f3e29f5a3b73f861e64d6"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round8-packaged-smoke.json",
+          "bytes": 5046,
+          "sha256": "sha256:3d3ddfdbad7d31229f9867716fbaf64cd703a29d8360665e95ff2627adb7cbf8"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round8-packaged-usability.json",
+          "bytes": 3423,
+          "sha256": "sha256:d6861aa2509390f30856096e13699cfff376ec99eaa5d9af780410bcfb8c39a9"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round9-first-run-restart.json",
+          "bytes": 1824,
+          "sha256": "sha256:328122a374c7e2bbc90bafc962b96356e929c6f4c76b169c331de8787c99101e"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M01-F03",
+      "status": "in_progress",
+      "profile": "setup",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/api/firstRunSetup.ts",
+          "bytes": 2388,
+          "sha256": "sha256:493b517b83ae748d83c1c25132806594a8e08ef2688f1249483dc63372515fb5"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-first-run-setup.mts",
+          "bytes": 7122,
+          "sha256": "sha256:a57f3090a66a510a23a5bc057e0b00e908003f186c19cf3dfd3d638d34b193c2"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round5-first-run.json",
+          "bytes": 2110,
+          "sha256": "sha256:9104a9a4ce77bd5bbfba7f9fe224dbc670f6d732e68f3e29f5a3b73f861e64d6"
+        }
+      ],
+      "acceptance_passed": false,
+      "missing": []
+    },
+    {
+      "id": "M01-F04",
+      "status": "in_progress",
+      "profile": "setup",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/auth/AuthProvider.tsx",
+          "bytes": 14064,
+          "sha256": "sha256:930472e292061919f7beb0b14b4a069ce2fa5811409355fdba82b492975cb132"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-first-run-setup.mts",
+          "bytes": 7122,
+          "sha256": "sha256:a57f3090a66a510a23a5bc057e0b00e908003f186c19cf3dfd3d638d34b193c2"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round5-first-run.json",
+          "bytes": 2110,
+          "sha256": "sha256:9104a9a4ce77bd5bbfba7f9fe224dbc670f6d732e68f3e29f5a3b73f861e64d6"
+        }
+      ],
+      "acceptance_passed": false,
+      "missing": []
+    },
+    {
+      "id": "M01-F05",
+      "status": "accepted",
+      "profile": "setup",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/FirstRunSetup.tsx",
+          "bytes": 8417,
+          "sha256": "sha256:70bbad093a283ad9bfa53e7dbb9ecbc95b1e10e72e18370ab718b55c18664dd0"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/styles.css",
+          "bytes": 527754,
+          "sha256": "sha256:992dee92c58504cfbc7d5ecb381aee813a6b740a60123db6be9e9ed8b90b9703"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-first-run-setup.mts",
+          "bytes": 7122,
+          "sha256": "sha256:a57f3090a66a510a23a5bc057e0b00e908003f186c19cf3dfd3d638d34b193c2"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-first-run-restart.mjs",
+          "bytes": 9866,
+          "sha256": "sha256:907cec7f97a971c79f394104eeda100c69cc8553cb00a03b2623ab76de83f26c"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round9-first-run-restart.json",
+          "bytes": 1824,
+          "sha256": "sha256:328122a374c7e2bbc90bafc962b96356e929c6f4c76b169c331de8787c99101e"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M02-F01",
+      "status": "pending",
+      "profile": "model",
+      "implementation": [],
+      "tests": [],
+      "evidence": [],
+      "acceptance_passed": false,
+      "missing": []
+    },
+    {
+      "id": "M02-F02",
+      "status": "accepted",
+      "profile": "model",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/api/desktopApi.ts",
+          "bytes": 164895,
+          "sha256": "sha256:41f631681de3d87b7a9214e6700c61178bff25c6237b5f315723ab9949882927"
+        },
+        {
+          "path": "apps/desktop/shared/main/myDrSaiConfig.ts",
+          "bytes": 29631,
+          "sha256": "sha256:8c3023af6719727ef06877756eb12b57ef0d74a283cac206b309f10ac71351d0"
+        },
+        {
+          "path": "apps/desktop/shared/main/preload.ts",
+          "bytes": 72758,
+          "sha256": "sha256:423003aaa03705711758f82fbbf05f070cf1c9d47c55d46b2ba5d7d65bf0ec19"
+        },
+        {
+          "path": "apps/desktop/windows/src/main/index.ts",
+          "bytes": 291086,
+          "sha256": "sha256:d8c1c53f2ea472599e5fd14c0a3e750cb36eb2a267625f7f6a73a3f02b3cd606"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-model-provider-config.mjs",
+          "bytes": 12264,
+          "sha256": "sha256:384ef0983e9f4f620c0045455469fdadb05cd58d0e9307637c4fbd349a422651"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_model_provider_config_service.py",
+          "bytes": 10389,
+          "sha256": "sha256:a4478e20072d987b6da60d8aa82dadeab5e401c23b1c1edd5c60f8b7dda75250"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_model_provider_gateway.py",
+          "bytes": 40489,
+          "sha256": "sha256:c07999484510da0e3b97d123f581800205dc361d776e95d0ee38c573d91d43e9"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-model-preview-packaged.mjs",
+          "bytes": 8426,
+          "sha256": "sha256:5527b431d71c24d9cd8f93661462c161c01e2f9ad65ea8e34c121b236e386ab0"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round2-setup-model.json",
+          "bytes": 1568,
+          "sha256": "sha256:95a160387b5006d81bddecccdf69bb060d56323aa668b32ca906ca782f54ff59"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round13-model-preview.json",
+          "bytes": 1664,
+          "sha256": "sha256:e1e1bfb5d4afb35594983c9da8b5442e6ee4520b71f38186767c15fa2114f3ef"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M02-F03",
+      "status": "pending",
+      "profile": "model",
+      "implementation": [],
+      "tests": [],
+      "evidence": [],
+      "acceptance_passed": false,
+      "missing": []
+    },
+    {
+      "id": "M02-F04",
+      "status": "implemented",
+      "profile": "model",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/api/desktopApi.ts",
+          "bytes": 164895,
+          "sha256": "sha256:41f631681de3d87b7a9214e6700c61178bff25c6237b5f315723ab9949882927"
+        },
+        {
+          "path": "apps/desktop/shared/main/myDrSaiConfig.ts",
+          "bytes": 29631,
+          "sha256": "sha256:8c3023af6719727ef06877756eb12b57ef0d74a283cac206b309f10ac71351d0"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/config/doctor.py",
+          "bytes": 6923,
+          "sha256": "sha256:d9df397f2c6849e037b20f90c33b3c30ebeff255d4cb10feaa1fe3987f003b1d"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/config/service.py",
+          "bytes": 12454,
+          "sha256": "sha256:c8d6aa6e804cbb2ea5dc506f6aa8fbeb2aa89c5ac8ad56cbb9e1b46bfb245ea9"
+        }
+      ],
+      "tests": [
+        {
+          "path": "cores/python/packages/drsai/tests/test_model_provider_doctor.py",
+          "bytes": 2397,
+          "sha256": "sha256:e754ecf65bf3aefa895a75a2963e7123cefb7db3ae0b1560685959159644daa4"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_model_provider_config_service.py",
+          "bytes": 10389,
+          "sha256": "sha256:a4478e20072d987b6da60d8aa82dadeab5e401c23b1c1edd5c60f8b7dda75250"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-model-provider-config.mjs",
+          "bytes": 12264,
+          "sha256": "sha256:384ef0983e9f4f620c0045455469fdadb05cd58d0e9307637c4fbd349a422651"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round2-setup-model.json",
+          "bytes": 1568,
+          "sha256": "sha256:95a160387b5006d81bddecccdf69bb060d56323aa668b32ca906ca782f54ff59"
+        }
+      ],
+      "acceptance_passed": false,
+      "missing": []
+    },
+    {
+      "id": "M02-F05",
+      "status": "accepted",
+      "profile": "model",
+      "implementation": [
+        {
+          "path": "cores/python/packages/drsai/src/drsai/config/service.py",
+          "bytes": 12454,
+          "sha256": "sha256:c8d6aa6e804cbb2ea5dc506f6aa8fbeb2aa89c5ac8ad56cbb9e1b46bfb245ea9"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/config/model_discovery.py",
+          "bytes": 8365,
+          "sha256": "sha256:45b0a60d4f00ed46a27728ef07b167dce7ec4a66eabbd0189cfb2525c5a6be5b"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+          "bytes": 426824,
+          "sha256": "sha256:59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+          "bytes": 85699,
+          "sha256": "sha256:ab1471946ae81befaee6afdf3480257dcaecd55113164398d4f0fecf83bf52a7"
+        }
+      ],
+      "tests": [
+        {
+          "path": "cores/python/packages/drsai/tests/test_model_provider_config_service.py",
+          "bytes": 10389,
+          "sha256": "sha256:a4478e20072d987b6da60d8aa82dadeab5e401c23b1c1edd5c60f8b7dda75250"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_model_provider_discovery.py",
+          "bytes": 8335,
+          "sha256": "sha256:320bfc1c148f6f57420bb7f0af3b9e59f435e4d7a0ae3f072777f8475a00c3e8"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_model_provider_gateway.py",
+          "bytes": 40489,
+          "sha256": "sha256:c07999484510da0e3b97d123f581800205dc361d776e95d0ee38c573d91d43e9"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_agent_runtime.py",
+          "bytes": 56210,
+          "sha256": "sha256:2bb3d904f94f343eb11b9628239f4dbed1a4fb0dd68a269bc212378a23e28c1f"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-model-commit-activation.mjs",
+          "bytes": 4482,
+          "sha256": "sha256:d3a141b5a3e8d3ac1fa9b706035c5e8abeb21ed3d3da843d1d985510276365ce"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round12-model-commit-activation.json",
+          "bytes": 1817,
+          "sha256": "sha256:c356bc94c29cab870ebab7a7b93250c0ebb5e8e2b83169402105eb7fcf735acd"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M03-F01",
+      "status": "accepted",
+      "profile": "runtime",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/main/chat.ts",
+          "bytes": 107064,
+          "sha256": "sha256:93810897eee90c223f449fe95bdd496b784abdc55697e92750524303f2817fe1"
+        },
+        {
+          "path": "apps/desktop/shared/main/agentRuns.ts",
+          "bytes": 33566,
+          "sha256": "sha256:b9728bfcea662a617a80438fb7174ffcedfca59047f7b59e9a06082440249c13"
+        },
+        {
+          "path": "apps/desktop/shared/main/runtimeClient.ts",
+          "bytes": 77762,
+          "sha256": "sha256:3676d67960a736c55c086654bea674e812f8c4c1c9584a88b20d3f65ffbd3705"
+        },
+        {
+          "path": "apps/desktop/shared/main/oaepSessionStream.ts",
+          "bytes": 26580,
+          "sha256": "sha256:fa5d6ecfcd53d90da99fe78a51ac84993271973f8291c49cf857a737f934eca7"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs",
+          "bytes": 26574,
+          "sha256": "sha256:8b7bce5f356f49b00ef61c75073981ec48291d5aa4efbba3269c47575c68869c"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round14-unified-runtime.json",
+          "bytes": 1092,
+          "sha256": "sha256:a0af1756516c0fa6407ad0d6794a58e72790196fec30e829c94550bf4d557e78"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M03-F02",
+      "status": "accepted",
+      "profile": "runtime",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/main/oaepSessionStream.ts",
+          "bytes": 26580,
+          "sha256": "sha256:fa5d6ecfcd53d90da99fe78a51ac84993271973f8291c49cf857a737f934eca7"
+        },
+        {
+          "path": "apps/desktop/shared/main/oaepPresentationProjector.ts",
+          "bytes": 9316,
+          "sha256": "sha256:b4fd6fe0811bbac3cd84f0bad3b34257d01a0380c18e762090d49c5e43e05387"
+        },
+        {
+          "path": "apps/desktop/shared/main/threadRuntimeProjection.ts",
+          "bytes": 20839,
+          "sha256": "sha256:908f33c2a40310a99b685b7ff4aa2a07db6df1e767558d4caa2a65f0e1bd4985"
+        },
+        {
+          "path": "apps/desktop/shared/main/oaepAgentRunBridge.ts",
+          "bytes": 7677,
+          "sha256": "sha256:dcc7c50cf7c150d1b68911e661b490d51d42d9644c162905228c807feb7dc34d"
+        },
+        {
+          "path": "apps/desktop/shared/main/agentRuns.ts",
+          "bytes": 33566,
+          "sha256": "sha256:b9728bfcea662a617a80438fb7174ffcedfca59047f7b59e9a06082440249c13"
+        },
+        {
+          "path": "apps/desktop/shared/main/agentRunJournal.ts",
+          "bytes": 2691,
+          "sha256": "sha256:b35e31b8e856f8424419d99c1dc8ec8b59938ed4a39a56d268c584d295d8988e"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-oaep-item-parity.mts",
+          "bytes": 10466,
+          "sha256": "sha256:6139f073c4143ee8469fc36b61bf2afa4ea224a392e54460eeabc2b0e5e57b11"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-oaep-session-stream.mts",
+          "bytes": 27670,
+          "sha256": "sha256:5f7fd8a93c70e81ed36b66d7260c1167ae5f768038664809876f86543799c0b3"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-oaep-presentation-projector.mts",
+          "bytes": 11615,
+          "sha256": "sha256:1d084e31f1944198e6eac4b9210dd634633770e1e3abeb19e2ddf20bf5f2e92c"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs",
+          "bytes": 26574,
+          "sha256": "sha256:8b7bce5f356f49b00ef61c75073981ec48291d5aa4efbba3269c47575c68869c"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round15-oaep-item-parity.json",
+          "bytes": 1874,
+          "sha256": "sha256:37477021e2d822efced43f309cfbfa90271fb1f2776191749d81d0be2f9ce952"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M03-F03",
+      "status": "accepted",
+      "profile": "runtime",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/main/chat.ts",
+          "bytes": 107064,
+          "sha256": "sha256:93810897eee90c223f449fe95bdd496b784abdc55697e92750524303f2817fe1"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-attachments.mts",
+          "bytes": 11083,
+          "sha256": "sha256:ffedf01e41a2c0041406105a20b8b18a4b10e478db7daf1b81aed6152778549d"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round2-setup-model.json",
+          "bytes": 1568,
+          "sha256": "sha256:95a160387b5006d81bddecccdf69bb060d56323aa668b32ca906ca782f54ff59"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round10-attachments.json",
+          "bytes": 1164,
+          "sha256": "sha256:4721bf0ea85b5a2ab5abe29f6f5c14b918d07f5ded7a6e7ceb27df6ed6277944"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M03-F04",
+      "status": "accepted",
+      "profile": "runtime",
+      "implementation": [
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+          "bytes": 426824,
+          "sha256": "sha256:59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+          "bytes": 85699,
+          "sha256": "sha256:ab1471946ae81befaee6afdf3480257dcaecd55113164398d4f0fecf83bf52a7"
+        }
+      ],
+      "tests": [
+        {
+          "path": "cores/python/packages/drsai/tests/test_agent_runtime.py",
+          "bytes": 56210,
+          "sha256": "sha256:2bb3d904f94f343eb11b9628239f4dbed1a4fb0dd68a269bc212378a23e28c1f"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_model_provider_config_service.py",
+          "bytes": 10389,
+          "sha256": "sha256:a4478e20072d987b6da60d8aa82dadeab5e401c23b1c1edd5c60f8b7dda75250"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-model-run-snapshot.mjs",
+          "bytes": 4039,
+          "sha256": "sha256:4e5c262819572fdbd3c1a48aa16f5d43ca07276ef73467ad876c54528c94556a"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round4-goal-safety.json",
+          "bytes": 2554,
+          "sha256": "sha256:529a3c8589ca7e5d56ad4bf50d5aeb5765debdce7b8ca8b5b22127fc3f042e62"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round11-model-run-snapshot.json",
+          "bytes": 1650,
+          "sha256": "sha256:f9aad81ff24cc0e44ad462367228b892817c5f26bf35bbfba141beae4a1f5fba"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M03-F05",
+      "status": "accepted",
+      "profile": "migration",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/main/legacyAgentRunMigration.ts",
+          "bytes": 2658,
+          "sha256": "sha256:b6272c9872db05b97ce052ea987ab69f260db5817bf3523707ad005b893f84c7"
+        },
+        {
+          "path": "apps/desktop/shared/main/agentRunJournal.ts",
+          "bytes": 2691,
+          "sha256": "sha256:b35e31b8e856f8424419d99c1dc8ec8b59938ed4a39a56d268c584d295d8988e"
+        },
+        {
+          "path": "apps/desktop/shared/main/runtimeClient.ts",
+          "bytes": 77762,
+          "sha256": "sha256:3676d67960a736c55c086654bea674e812f8c4c1c9584a88b20d3f65ffbd3705"
+        },
+        {
+          "path": "apps/desktop/windows/src/main/index.ts",
+          "bytes": 291086,
+          "sha256": "sha256:d8c1c53f2ea472599e5fd14c0a3e750cb36eb2a267625f7f6a73a3f02b3cd606"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+          "bytes": 185809,
+          "sha256": "sha256:c7f7dfa0a34bf17489a8a37ce1e29daa8c0fa8b5b14b516a5b7983ca3dca608b"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+          "bytes": 426824,
+          "sha256": "sha256:59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835"
+        }
+      ],
+      "tests": [
+        {
+          "path": "cores/python/packages/drsai/tests/test_runtime_engine.py",
+          "bytes": 28758,
+          "sha256": "sha256:11462302ba9fbdbe035e25e98f2f1d337c2440200152d39f1487daf2c1cde10f"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs",
+          "bytes": 26574,
+          "sha256": "sha256:8b7bce5f356f49b00ef61c75073981ec48291d5aa4efbba3269c47575c68869c"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-bundled-backend-source.mjs",
+          "bytes": 3020,
+          "sha256": "sha256:c02dfad08aadc56783a9b6971d559913ca8efb8fee2a51470459bf5e1486ba1d"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-bundled-backend-install.ps1",
+          "bytes": 2174,
+          "sha256": "sha256:feb99af93d0d735e0ddc7075efaefcd08b64558b081c04bf864adc4344676f78"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round16-legacy-agent-migration.json",
+          "bytes": 2594,
+          "sha256": "sha256:c3f306d632da34b398733fe717d491400b8f2a0983a134c7271101309de43677"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M04-F01",
+      "status": "accepted",
+      "profile": "goal",
+      "implementation": [
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/goals.py",
+          "bytes": 8967,
+          "sha256": "sha256:a11748aef8a7642ee10e1528d8a293af64475d5aeecfabad1b9c277af532cbc8"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+          "bytes": 426824,
+          "sha256": "sha256:59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835"
+        },
+        {
+          "path": "apps/desktop/shared/main/runtimeClient.ts",
+          "bytes": 77762,
+          "sha256": "sha256:3676d67960a736c55c086654bea674e812f8c4c1c9584a88b20d3f65ffbd3705"
+        },
+        {
+          "path": "apps/desktop/shared/main/chat.ts",
+          "bytes": 107064,
+          "sha256": "sha256:93810897eee90c223f449fe95bdd496b784abdc55697e92750524303f2817fe1"
+        }
+      ],
+      "tests": [
+        {
+          "path": "cores/python/packages/drsai/tests/test_runtime_goals.py",
+          "bytes": 10309,
+          "sha256": "sha256:75cbe54a5f018ef2cf15779b903e48bb92cfe48d1b365f1cdd5424a7545c8fba"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-goal-flow.mjs",
+          "bytes": 3663,
+          "sha256": "sha256:cf5e132923ca518296d651aaf81185fc502fb8552c32da3b504f22dbc154ee1c"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs",
+          "bytes": 26574,
+          "sha256": "sha256:8b7bce5f356f49b00ef61c75073981ec48291d5aa4efbba3269c47575c68869c"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round17-goal-semantics.json",
+          "bytes": 3120,
+          "sha256": "sha256:ea1512cbe0a5c5386362e0f82d8392c5d489f8a95b6c7dcdefa1acdf2f37350b"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M04-F02",
+      "status": "accepted",
+      "profile": "goal",
+      "implementation": [
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/goals.py",
+          "bytes": 8967,
+          "sha256": "sha256:a11748aef8a7642ee10e1528d8a293af64475d5aeecfabad1b9c277af532cbc8"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+          "bytes": 426824,
+          "sha256": "sha256:59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835"
+        },
+        {
+          "path": "apps/desktop/shared/main/runtimeClient.ts",
+          "bytes": 77762,
+          "sha256": "sha256:3676d67960a736c55c086654bea674e812f8c4c1c9584a88b20d3f65ffbd3705"
+        },
+        {
+          "path": "apps/desktop/shared/main/chat.ts",
+          "bytes": 107064,
+          "sha256": "sha256:93810897eee90c223f449fe95bdd496b784abdc55697e92750524303f2817fe1"
+        }
+      ],
+      "tests": [
+        {
+          "path": "cores/python/packages/drsai/tests/test_runtime_goals.py",
+          "bytes": 10309,
+          "sha256": "sha256:75cbe54a5f018ef2cf15779b903e48bb92cfe48d1b365f1cdd5424a7545c8fba"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-goal-flow.mjs",
+          "bytes": 3663,
+          "sha256": "sha256:cf5e132923ca518296d651aaf81185fc502fb8552c32da3b504f22dbc154ee1c"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs",
+          "bytes": 26574,
+          "sha256": "sha256:8b7bce5f356f49b00ef61c75073981ec48291d5aa4efbba3269c47575c68869c"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round18-goal-clarification.json",
+          "bytes": 3416,
+          "sha256": "sha256:5c3f5d5edf1d30fb48969ede79cd26f50fd0dbcd57f4427c91b2ef4592f90a1b"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M04-F03",
+      "status": "accepted",
+      "profile": "goal",
+      "implementation": [
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+          "bytes": 185809,
+          "sha256": "sha256:c7f7dfa0a34bf17489a8a37ce1e29daa8c0fa8b5b14b516a5b7983ca3dca608b"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+          "bytes": 426824,
+          "sha256": "sha256:59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835"
+        },
+        {
+          "path": "apps/desktop/shared/main/runtimeClient.ts",
+          "bytes": 77762,
+          "sha256": "sha256:3676d67960a736c55c086654bea674e812f8c4c1c9584a88b20d3f65ffbd3705"
+        },
+        {
+          "path": "apps/desktop/shared/main/chat.ts",
+          "bytes": 107064,
+          "sha256": "sha256:93810897eee90c223f449fe95bdd496b784abdc55697e92750524303f2817fe1"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
+          "bytes": 210957,
+          "sha256": "sha256:1f14f8540c4a9f00ba554a894a39fd24d5ade92324cf34940836b2d01afcb5a8"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
+          "bytes": 37167,
+          "sha256": "sha256:3fdb1a2d2858e618c931a11ccf5318d4de04403454df4e005e4de1d7e8ebdb73"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/adapters/useDesktopChatAdapter.ts",
+          "bytes": 118409,
+          "sha256": "sha256:dba73a59e7a3c0cc37be1f1f6afe9e645d169879a6cbe1326eb28ea32d056ef1"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/styles.css",
+          "bytes": 527754,
+          "sha256": "sha256:992dee92c58504cfbc7d5ecb381aee813a6b740a60123db6be9e9ed8b90b9703"
+        }
+      ],
+      "tests": [
+        {
+          "path": "cores/python/packages/drsai/tests/test_runtime_goals.py",
+          "bytes": 10309,
+          "sha256": "sha256:75cbe54a5f018ef2cf15779b903e48bb92cfe48d1b365f1cdd5424a7545c8fba"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-goal-flow.mjs",
+          "bytes": 3663,
+          "sha256": "sha256:cf5e132923ca518296d651aaf81185fc502fb8552c32da3b504f22dbc154ee1c"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-goal-card-ui.mjs",
+          "bytes": 6652,
+          "sha256": "sha256:541eafe39d59a0335c21e186f3c437043dea3245ee55fd53c32474bd3e530166"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs",
+          "bytes": 26574,
+          "sha256": "sha256:8b7bce5f356f49b00ef61c75073981ec48291d5aa4efbba3269c47575c68869c"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round4-goal-safety.json",
+          "bytes": 2554,
+          "sha256": "sha256:529a3c8589ca7e5d56ad4bf50d5aeb5765debdce7b8ca8b5b22127fc3f042e62"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round7-production-goal.json",
+          "bytes": 2970,
+          "sha256": "sha256:d6862b68efebfe42e5def3bc239d91d08af922eead5837b9441d1cbe139c7d7e"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round19-goal-confirmation-ui.json",
+          "bytes": 494,
+          "sha256": "sha256:863188403e3c950aa85ef82808acc62310ee375be91177ded51ca45fc39dc814"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round19-goal-confirmation-packaged.json",
+          "bytes": 3416,
+          "sha256": "sha256:291d4aec44b984898956f199d305a3107fa2dc8399a55c8c4ca0cd4be723c7d8"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M04-F04",
+      "status": "accepted",
+      "profile": "goal",
+      "implementation": [
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+          "bytes": 185809,
+          "sha256": "sha256:c7f7dfa0a34bf17489a8a37ce1e29daa8c0fa8b5b14b516a5b7983ca3dca608b"
+        },
+        {
+          "path": "apps/desktop/shared/main/chat.ts",
+          "bytes": 107064,
+          "sha256": "sha256:93810897eee90c223f449fe95bdd496b784abdc55697e92750524303f2817fe1"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
+          "bytes": 37167,
+          "sha256": "sha256:3fdb1a2d2858e618c931a11ccf5318d4de04403454df4e005e4de1d7e8ebdb73"
+        }
+      ],
+      "tests": [
+        {
+          "path": "cores/python/packages/drsai/tests/test_runtime_goals.py",
+          "bytes": 10309,
+          "sha256": "sha256:75cbe54a5f018ef2cf15779b903e48bb92cfe48d1b365f1cdd5424a7545c8fba"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-goal-flow.mjs",
+          "bytes": 3663,
+          "sha256": "sha256:cf5e132923ca518296d651aaf81185fc502fb8552c32da3b504f22dbc154ee1c"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs",
+          "bytes": 26574,
+          "sha256": "sha256:8b7bce5f356f49b00ef61c75073981ec48291d5aa4efbba3269c47575c68869c"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round4-goal-safety.json",
+          "bytes": 2554,
+          "sha256": "sha256:529a3c8589ca7e5d56ad4bf50d5aeb5765debdce7b8ca8b5b22127fc3f042e62"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round7-production-goal.json",
+          "bytes": 2970,
+          "sha256": "sha256:d6862b68efebfe42e5def3bc239d91d08af922eead5837b9441d1cbe139c7d7e"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round20-goal-revision.json",
+          "bytes": 3780,
+          "sha256": "sha256:9d248735a773c3e4fd8838df5bdc1341a8d4c249df7731a0307ea16b96706de4"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M04-F05",
+      "status": "accepted",
+      "profile": "goal",
+      "implementation": [
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/goals.py",
+          "bytes": 8967,
+          "sha256": "sha256:a11748aef8a7642ee10e1528d8a293af64475d5aeecfabad1b9c277af532cbc8"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+          "bytes": 426824,
+          "sha256": "sha256:59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+          "bytes": 185809,
+          "sha256": "sha256:c7f7dfa0a34bf17489a8a37ce1e29daa8c0fa8b5b14b516a5b7983ca3dca608b"
+        },
+        {
+          "path": "apps/desktop/shared/main/runtimeClient.ts",
+          "bytes": 77762,
+          "sha256": "sha256:3676d67960a736c55c086654bea674e812f8c4c1c9584a88b20d3f65ffbd3705"
+        }
+      ],
+      "tests": [
+        {
+          "path": "cores/python/packages/drsai/tests/test_runtime_goals.py",
+          "bytes": 10309,
+          "sha256": "sha256:75cbe54a5f018ef2cf15779b903e48bb92cfe48d1b365f1cdd5424a7545c8fba"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-goal-flow.mjs",
+          "bytes": 3663,
+          "sha256": "sha256:cf5e132923ca518296d651aaf81185fc502fb8552c32da3b504f22dbc154ee1c"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-goal-card-ui.mjs",
+          "bytes": 6652,
+          "sha256": "sha256:541eafe39d59a0335c21e186f3c437043dea3245ee55fd53c32474bd3e530166"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs",
+          "bytes": 26574,
+          "sha256": "sha256:8b7bce5f356f49b00ef61c75073981ec48291d5aa4efbba3269c47575c68869c"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round4-goal-safety.json",
+          "bytes": 2554,
+          "sha256": "sha256:529a3c8589ca7e5d56ad4bf50d5aeb5765debdce7b8ca8b5b22127fc3f042e62"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round7-production-goal.json",
+          "bytes": 2970,
+          "sha256": "sha256:d6862b68efebfe42e5def3bc239d91d08af922eead5837b9441d1cbe139c7d7e"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round21-goal-defaults-ui.json",
+          "bytes": 525,
+          "sha256": "sha256:d9b8d57b9037191fd7b5fb094df0d73db413bc698327aefb2f9768962ff25cf6"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round21-goal-defaults-packaged.json",
+          "bytes": 4296,
+          "sha256": "sha256:f2406956fd263e3a0a88b347587390a43e77edbcff74915e1bb565df68c86c9b"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M05-F01",
+      "status": "accepted",
+      "profile": "execution",
+      "implementation": [
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+          "bytes": 426824,
+          "sha256": "sha256:59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835"
+        },
+        {
+          "path": "apps/desktop/shared/api/structuredConversation.ts",
+          "bytes": 35159,
+          "sha256": "sha256:ab7771c8520f9e00d852359cd42d5bbf62d49d3c9667d04e2cb6c4263e57bbb6"
+        },
+        {
+          "path": "apps/desktop/shared/api/desktopApi.ts",
+          "bytes": 164895,
+          "sha256": "sha256:41f631681de3d87b7a9214e6700c61178bff25c6237b5f315723ab9949882927"
+        },
+        {
+          "path": "apps/desktop/shared/main/threadRuntimeProjection.ts",
+          "bytes": 20839,
+          "sha256": "sha256:908f33c2a40310a99b685b7ff4aa2a07db6df1e767558d4caa2a65f0e1bd4985"
+        },
+        {
+          "path": "apps/desktop/shared/main/oaepAgentRunBridge.ts",
+          "bytes": 7677,
+          "sha256": "sha256:dcc7c50cf7c150d1b68911e661b490d51d42d9644c162905228c807feb7dc34d"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
+          "bytes": 37167,
+          "sha256": "sha256:3fdb1a2d2858e618c931a11ccf5318d4de04403454df4e005e4de1d7e8ebdb73"
+        }
+      ],
+      "tests": [
+        {
+          "path": "cores/python/packages/drsai/tests/test_gateway_opendrsai_approval.py",
+          "bytes": 19777,
+          "sha256": "sha256:ad1a82e9a275708b27eb8bb620511359f3c972d215b8844058189c1b9799f909"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_agent_runtime.py",
+          "bytes": 56210,
+          "sha256": "sha256:2bb3d904f94f343eb11b9628239f4dbed1a4fb0dd68a269bc212378a23e28c1f"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs",
+          "bytes": 26574,
+          "sha256": "sha256:8b7bce5f356f49b00ef61c75073981ec48291d5aa4efbba3269c47575c68869c"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round3-runtime-approval.json",
+          "bytes": 1780,
+          "sha256": "sha256:798f05978f3ee0eb71e7be85b105f3768fb4aa603025739e1c1b759ad2951108"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round22-tool-skill-identity.json",
+          "bytes": 4702,
+          "sha256": "sha256:6814abc9b0a29e0a97dea3f886fa29f692eb27d65717be1983aebff29d58caa8"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M05-F02",
+      "status": "accepted",
+      "profile": "approval",
+      "implementation": [
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+          "bytes": 426824,
+          "sha256": "sha256:59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+          "bytes": 185809,
+          "sha256": "sha256:c7f7dfa0a34bf17489a8a37ce1e29daa8c0fa8b5b14b516a5b7983ca3dca608b"
+        },
+        {
+          "path": "apps/desktop/shared/main/chat.ts",
+          "bytes": 107064,
+          "sha256": "sha256:93810897eee90c223f449fe95bdd496b784abdc55697e92750524303f2817fe1"
+        }
+      ],
+      "tests": [
+        {
+          "path": "cores/python/packages/drsai/tests/test_gateway_opendrsai_approval.py",
+          "bytes": 19777,
+          "sha256": "sha256:ad1a82e9a275708b27eb8bb620511359f3c972d215b8844058189c1b9799f909"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_runtime_engine.py",
+          "bytes": 28758,
+          "sha256": "sha256:11462302ba9fbdbe035e25e98f2f1d337c2440200152d39f1487daf2c1cde10f"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs",
+          "bytes": 26574,
+          "sha256": "sha256:8b7bce5f356f49b00ef61c75073981ec48291d5aa4efbba3269c47575c68869c"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round3-runtime-approval.json",
+          "bytes": 1780,
+          "sha256": "sha256:798f05978f3ee0eb71e7be85b105f3768fb4aa603025739e1c1b759ad2951108"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round23-runtime-approval.json",
+          "bytes": 5089,
+          "sha256": "sha256:5b6d16ddcd502614a06405effcb56ba80d4ade79cb82750507b2949632f8df62"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M05-F03",
+      "status": "accepted",
+      "profile": "approval",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/api/executionPolicy.ts",
+          "bytes": 6248,
+          "sha256": "sha256:668c2744be95601c839a057c1911ddbcadc06f0049dbe4d377fc73fffde529a8"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+          "bytes": 426824,
+          "sha256": "sha256:59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/lib/opendrsai-approval-runtime-fixture.mjs",
+          "bytes": 2296,
+          "sha256": "sha256:ba5f0bcef7f3844a5d7c7ddc42464958fc42a633bd0a65a044665798ea8cdce9"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-f1-low-risk-approvals.mjs",
+          "bytes": 6685,
+          "sha256": "sha256:2edfc02e84608181c1e4ad1e39cea5fce3be95378f9f953bd6ce7ae85a9ba2bd"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-f2-approvals.mjs",
+          "bytes": 10848,
+          "sha256": "sha256:2a493ee284003063e16bcbd8876a34ceaa5dc6491f4484fc6a8ba79aec477813"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-f3-approvals.mjs",
+          "bytes": 6793,
+          "sha256": "sha256:cd96738d40f7d10e885890c235d52f30f276f3b1bc20754642402616588d2132"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-f1-low-risk-approval-policy.mjs",
+          "bytes": 3622,
+          "sha256": "sha256:caaf5ae67e35852388e6fff90170d0370aa40793588486e840bd37e13fc8a350"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-f1-low-risk-approvals.mjs",
+          "bytes": 6685,
+          "sha256": "sha256:2edfc02e84608181c1e4ad1e39cea5fce3be95378f9f953bd6ce7ae85a9ba2bd"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-f2-approval-security.mjs",
+          "bytes": 3111,
+          "sha256": "sha256:faa242eea8595f3b32452a620a63778b171659372dff80720208a8d576f00979"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-f2-approvals.mjs",
+          "bytes": 10848,
+          "sha256": "sha256:2a493ee284003063e16bcbd8876a34ceaa5dc6491f4484fc6a8ba79aec477813"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-f3-approval-business-info.mjs",
+          "bytes": 2821,
+          "sha256": "sha256:715f87beebc34f8ca7f19cce0928cf4d7848f8844c1245b21b9d02472ea3f8d4"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-f3-approvals.mjs",
+          "bytes": 6793,
+          "sha256": "sha256:cd96738d40f7d10e885890c235d52f30f276f3b1bc20754642402616588d2132"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_gateway_opendrsai_approval.py",
+          "bytes": 19777,
+          "sha256": "sha256:ad1a82e9a275708b27eb8bb620511359f3c972d215b8844058189c1b9799f909"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round24-risk-policy.json",
+          "bytes": 1512,
+          "sha256": "sha256:e23efbbddc766df19678ef1997e6eca70e0aee471cbd9b39b1bd3ffe62799489"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/f1-low-risk-approvals/round24-final/packaged-f1-low-risk-summary.json",
+          "bytes": 1956,
+          "sha256": "sha256:47669a97f43ea66ad9de66a67f67cca945247a53e9970d5e86502063672acaf6"
+        },
+        {
+          "path": "docs/desktop/evidence/round24-f2-packaged-final/summary.json",
+          "bytes": 37846,
+          "sha256": "sha256:3b984ca4a34c72d03eb0c9b205f45116e5b56440e738fbd31bc8c39d5834d2fc"
+        },
+        {
+          "path": "docs/desktop/evidence/round24-f3-packaged-final/summary.json",
+          "bytes": 6698,
+          "sha256": "sha256:fcbdb3508912943e5a56e5610b2e2d0e620f5ca8bc8ea805e4a2ceb1e6d14e3e"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M05-F04",
+      "status": "accepted",
+      "profile": "security",
+      "implementation": [
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/workspace/paths.py",
+          "bytes": 2070,
+          "sha256": "sha256:b55cdf288ff28c19cadbba9071c5d1625480d1ff5908edcca388ca3f1d527396"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/owop/local_workspace.py",
+          "bytes": 27218,
+          "sha256": "sha256:ad6d8bb8f6f91e9e94a2789beac94d544b4dd52b122144be15618966e7ae5fb4"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/owop/process_pty.py",
+          "bytes": 19596,
+          "sha256": "sha256:8f49243a2791c29c37799fd3a09484a8b06a23359f1a2128a4f448eb8a5e3625"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+          "bytes": 85699,
+          "sha256": "sha256:ab1471946ae81befaee6afdf3480257dcaecd55113164398d4f0fecf83bf52a7"
+        },
+        {
+          "path": "apps/desktop/windows/src/main/e2eSmoke.ts",
+          "bytes": 1008393,
+          "sha256": "sha256:79ef6fe7902592abbcb60f067076fc1d9a1ca292034edd09be5b6263ac8e0fe9"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-workspace-guard.py",
+          "bytes": 8395,
+          "sha256": "sha256:e432d46ac1c1dceb9d1235b26686c0dcc371917907a079bfc2d0eeb3f9c834c5"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-workspace-guard.mjs",
+          "bytes": 4042,
+          "sha256": "sha256:994ee11256978d497bda2bd786249e82f049e9d777c7bb7ce352440292e6d51e"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-f6-workspace-guard.mjs",
+          "bytes": 8332,
+          "sha256": "sha256:15c59106dc78875fba621f02d9abdec9655044a26a20d2ec53f07bd3afc3e93c"
+        }
+      ],
+      "tests": [
+        {
+          "path": "cores/python/packages/drsai/tests/test_workspace_paths.py",
+          "bytes": 2695,
+          "sha256": "sha256:990c49ab9498ae444a848032317ff88404f01b1b2e4a689550f5ecdc49f67a7b"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_owop_local_workspace.py",
+          "bytes": 11056,
+          "sha256": "sha256:bbcdac21d1c3b6fd33b0fc777ef4d9d7b490322a2191d71b6df3fc54778fcadf"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_owop_process_pty.py",
+          "bytes": 7714,
+          "sha256": "sha256:bf985910f3a306a09128e8bd426e707eb0fd82f54c8ee47fe5a7427bc580bde8"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_agent_runtime.py",
+          "bytes": 56210,
+          "sha256": "sha256:2bb3d904f94f343eb11b9628239f4dbed1a4fb0dd68a269bc212378a23e28c1f"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-workspace-guard.mjs",
+          "bytes": 4042,
+          "sha256": "sha256:994ee11256978d497bda2bd786249e82f049e9d777c7bb7ce352440292e6d51e"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-f6-workspace-guard.mjs",
+          "bytes": 8332,
+          "sha256": "sha256:15c59106dc78875fba621f02d9abdec9655044a26a20d2ec53f07bd3afc3e93c"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round4-goal-safety.json",
+          "bytes": 2554,
+          "sha256": "sha256:529a3c8589ca7e5d56ad4bf50d5aeb5765debdce7b8ca8b5b22127fc3f042e62"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round25-workspace-guard.json",
+          "bytes": 2217,
+          "sha256": "sha256:b16991b1cabb22032faaeb084b85f594607732a8ea65c54e4541f6b4a98a3ed2"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round25-workspace-guard-probe.json",
+          "bytes": 1332,
+          "sha256": "sha256:d3cb1e3fbfd2102ce6bcdd635892732e7776fd68dc84df408080b99c1aef545b"
+        },
+        {
+          "path": "docs/desktop/evidence/round25-f6-packaged-final/summary.json",
+          "bytes": 11777,
+          "sha256": "sha256:7fe8c14db4338e425b1c64511684209a2e887f556afd27e65f876b4a0b32cece"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M05-F05",
+      "status": "accepted",
+      "profile": "execution",
+      "implementation": [
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+          "bytes": 85699,
+          "sha256": "sha256:ab1471946ae81befaee6afdf3480257dcaecd55113164398d4f0fecf83bf52a7"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+          "bytes": 185809,
+          "sha256": "sha256:c7f7dfa0a34bf17489a8a37ce1e29daa8c0fa8b5b14b516a5b7983ca3dca608b"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+          "bytes": 426824,
+          "sha256": "sha256:59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835"
+        }
+      ],
+      "tests": [
+        {
+          "path": "cores/python/packages/drsai/tests/test_agent_runtime.py",
+          "bytes": 56210,
+          "sha256": "sha256:2bb3d904f94f343eb11b9628239f4dbed1a4fb0dd68a269bc212378a23e28c1f"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_gateway_opendrsai_approval.py",
+          "bytes": 19777,
+          "sha256": "sha256:ad1a82e9a275708b27eb8bb620511359f3c972d215b8844058189c1b9799f909"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_gateway_opendrsai_backend.py",
+          "bytes": 11562,
+          "sha256": "sha256:d5d9e4c752272705cfe538154fd1e0cdc84909e5ed95f3efd2935df1b157e3e3"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-cancellation.py",
+          "bytes": 16699,
+          "sha256": "sha256:941fbc284f8c68c8553db3c1b4c3265e6a9414924cc85031799a2960bb603f6f"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-cancellation.mjs",
+          "bytes": 3809,
+          "sha256": "sha256:715c51e61b457ef5d1f942671b7e97b3a1ed06c1ae4ce72c5901ca49ea0a4b3a"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round4-goal-safety.json",
+          "bytes": 2554,
+          "sha256": "sha256:529a3c8589ca7e5d56ad4bf50d5aeb5765debdce7b8ca8b5b22127fc3f042e62"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round7-production-goal.json",
+          "bytes": 2970,
+          "sha256": "sha256:d6862b68efebfe42e5def3bc239d91d08af922eead5837b9441d1cbe139c7d7e"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round26-cancellation.json",
+          "bytes": 2816,
+          "sha256": "sha256:767bb68c4c7b239872382bee83554c61491f042db751f36295695e66fd4edfcc"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round26-cancellation-probe.json",
+          "bytes": 1495,
+          "sha256": "sha256:0978d4e8f695d9d6ebb7b45c2e43c8ce52dee8fd672e0cba3c7f4bb2e4b7be32"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M06-F01",
+      "status": "accepted",
+      "profile": "decision",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/main/anomalyDecision.ts",
+          "bytes": 6290,
+          "sha256": "sha256:746ac492ecb6aa3bed0bfca4e51338d769c9eb4cdf729742bd66a9029c39c600"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        },
+        {
+          "path": "apps/desktop/windows/src/main/backgroundTasks.ts",
+          "bytes": 86018,
+          "sha256": "sha256:5aa75b826eac0b873f44bff6da023766343c108c8cd3412b717a21d90361f428"
+        },
+        {
+          "path": "apps/desktop/windows/src/main/e2eSmoke.ts",
+          "bytes": 1008393,
+          "sha256": "sha256:79ef6fe7902592abbcb60f067076fc1d9a1ca292034edd09be5b6263ac8e0fe9"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-f4-anomaly-decision.mjs",
+          "bytes": 9723,
+          "sha256": "sha256:ef4b34b05a446cbec3a36911e6e0b68fb6cbc8f30938fcf8ef499ec0c54b4b08"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/shared/test-kit/verify-anomaly-decision.mts",
+          "bytes": 4124,
+          "sha256": "sha256:549c49af33b74b0e0ebf9321b844184c105a19c70afd258eaf756a8e18e5d648"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-f4-anomaly-decision.mjs",
+          "bytes": 3267,
+          "sha256": "sha256:7dffd9bcc531caedb7d51d8e995c513db704a1a916c6f1fb653dee1aefad606a"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-f4-anomaly-decision.mjs",
+          "bytes": 9723,
+          "sha256": "sha256:ef4b34b05a446cbec3a36911e6e0b68fb6cbc8f30938fcf8ef499ec0c54b4b08"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-f4-anomaly-decision-stability.mjs",
+          "bytes": 2309,
+          "sha256": "sha256:d212a9700410ef08d2e206bf97bfff5f58f54a9c8553587f5339795b3c354ef3"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round27-anomaly-decision.json",
+          "bytes": 2800,
+          "sha256": "sha256:8b5bd852a76ba83c9f238e2f36fc6cdd07bd148682e30d67946b72346c7f4e40"
+        },
+        {
+          "path": "docs/desktop/evidence/round27-f4-packaged-final8/summary.json",
+          "bytes": 14276,
+          "sha256": "sha256:df4daf8042dd65c61b6da8a5de1d490d63dded7a57de41559e45438f564b0d7e"
+        },
+        {
+          "path": "docs/desktop/evidence/round27-f4-stability-final/summary.json",
+          "bytes": 9101,
+          "sha256": "sha256:6d90038168c95f66bf01e2ec4d318bf1c5e743990bc38616f84077de355c454c"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M06-F02",
+      "status": "accepted",
+      "profile": "security",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/api/sensitiveData.ts",
+          "bytes": 3767,
+          "sha256": "sha256:ea7ca3a70ee45c1438a18dd52412e436f4b9539e18479c8aaea5181253e8e614"
+        },
+        {
+          "path": "apps/desktop/shared/main/shareSensitivity.ts",
+          "bytes": 4035,
+          "sha256": "sha256:0043ad6902b7033e0a00c905e87046fe6969c53a9446c195cd9ca1ec42fcbd14"
+        },
+        {
+          "path": "apps/desktop/shared/main/secretRedaction.ts",
+          "bytes": 1291,
+          "sha256": "sha256:75f96f7213b8cb12d237e784bcc3be92f5a934993deb2f73d779274a95c9ebf1"
+        },
+        {
+          "path": "apps/desktop/shared/main/diagnostics.ts",
+          "bytes": 33927,
+          "sha256": "sha256:4e4e2c287ad28fb2c18e05526a7d98b6d9fe19322af66f778e4559921a34e7ea"
+        },
+        {
+          "path": "apps/desktop/shared/main/gateway.ts",
+          "bytes": 28153,
+          "sha256": "sha256:7664e8c613540a49e2cc4e43c61c865f6d819926b18d3577f2d6a7a0ffc2a543"
+        },
+        {
+          "path": "apps/desktop/shared/main/completionNotifications.ts",
+          "bytes": 7606,
+          "sha256": "sha256:983237009f209fb6d89d7e66bfd08d509393ca874a0765b3b72c233319a18084"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/debugLogStore.ts",
+          "bytes": 11079,
+          "sha256": "sha256:605dff0c5e424ff1314f56aca55611ef1dce405666483dcf82c2cc8f37ff990e"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/userPreferenceIntent.ts",
+          "bytes": 9318,
+          "sha256": "sha256:6aa51fd27e5f4750209a1d150d364c9eb37df7df53f3352c8783b49de427e0a8"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/localDataExport.ts",
+          "bytes": 421,
+          "sha256": "sha256:9760f13a4765038fd9782460f89930abda86881605b24336f0c697908695a0e4"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/adapters/useDesktopChatAdapter.ts",
+          "bytes": 118409,
+          "sha256": "sha256:dba73a59e7a3c0cc37be1f1f6afe9e645d169879a6cbe1326eb28ea32d056ef1"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-f5-sensitive-data-pipeline.mjs",
+          "bytes": 2887,
+          "sha256": "sha256:01d87ed018ab0f29cc72e991590ea30123e33007aea27a22861b56623a55beaf"
+        },
+        {
+          "path": "apps/desktop/shared/test-kit/verify-f5-sensitive-data-pipeline.mts",
+          "bytes": 1694,
+          "sha256": "sha256:a2a317b14e79a1d18450b580bd6cd553bd331617b6e4369befa24efb1abe487f"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-l3-sensitive-share-review.mjs",
+          "bytes": 4481,
+          "sha256": "sha256:30e672c395e17300577d335ede0f043a82242d381bfce3d2de08e2951eb915b1"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-c8-chinese-privacy.mjs",
+          "bytes": 9456,
+          "sha256": "sha256:06e054a0bf17c022faa51dfdd5ffbdddcf580108e9516a3a953f0ba85b2d922a"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-c8-chinese-privacy-stability.mjs",
+          "bytes": 2698,
+          "sha256": "sha256:55f87b65191bf0c6b6487642f33846483975651fe3c4f8be28c796b08c4bd9f1"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round28-sensitive-data-pipeline.json",
+          "bytes": 4219,
+          "sha256": "sha256:3da7d2295a72923547c25b07a0c1a7d025ae1b1a3a7b2492019355a0c5e7f1a3"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/c8-chinese-privacy/round28-f5-single5/packaged-c8-chinese-privacy-summary.json",
+          "bytes": 682,
+          "sha256": "sha256:af833b0396f57f29352a307a29b3d98aee3a726ac576914b8ddf1ef506eb73dc"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/c8-chinese-privacy/stability-summary.json",
+          "bytes": 4600,
+          "sha256": "sha256:ecb878d5913639efbdd32c846e3abca0f91ab6f4bd57b84cc6154fcd2bb531a1"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/l3-sensitive-share-review/packaged-l3-sensitive-share-review-result.json",
+          "bytes": 2657,
+          "sha256": "sha256:12089da8aec562755d9c7ec7ae7e3cca9d6b5bf72a2475cd57c4c1bbd880deb3"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M06-F03",
+      "status": "accepted",
+      "profile": "security",
+      "implementation": [
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+          "bytes": 185809,
+          "sha256": "sha256:c7f7dfa0a34bf17489a8a37ce1e29daa8c0fa8b5b14b516a5b7983ca3dca608b"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+          "bytes": 85699,
+          "sha256": "sha256:ab1471946ae81befaee6afdf3480257dcaecd55113164398d4f0fecf83bf52a7"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+          "bytes": 426824,
+          "sha256": "sha256:59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835"
+        },
+        {
+          "path": "apps/desktop/shared/main/runtimeClient.ts",
+          "bytes": 77762,
+          "sha256": "sha256:3676d67960a736c55c086654bea674e812f8c4c1c9584a88b20d3f65ffbd3705"
+        }
+      ],
+      "tests": [
+        {
+          "path": "cores/python/packages/drsai/tests/test_agent_runtime.py",
+          "bytes": 56210,
+          "sha256": "sha256:2bb3d904f94f343eb11b9628239f4dbed1a4fb0dd68a269bc212378a23e28c1f"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_gateway_opendrsai_approval.py",
+          "bytes": 19777,
+          "sha256": "sha256:ad1a82e9a275708b27eb8bb620511359f3c972d215b8844058189c1b9799f909"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_gateway_opendrsai_backend.py",
+          "bytes": 11562,
+          "sha256": "sha256:d5d9e4c752272705cfe538154fd1e0cdc84909e5ed95f3efd2935df1b157e3e3"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_gateway_session_events.py",
+          "bytes": 20136,
+          "sha256": "sha256:d2b87c5ba71a1bf36bcf9481c58d353f561eb42f129214e2b1d4873a02b25d5d"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m06-side-effect-ledger.mjs",
+          "bytes": 1604,
+          "sha256": "sha256:127e62225007fdb27dd1d4359040aa72d973cdbf993d96dadbcf92bc6a58436f"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-m06-side-effect-ledger.mjs",
+          "bytes": 2876,
+          "sha256": "sha256:5e9235df3387fe02cb55d3816ded8f8927e7c545f50ca48e7fde8092c97ddabe"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m06-side-effect-ledger-stability.mjs",
+          "bytes": 2746,
+          "sha256": "sha256:386af2ff1d0fc38cbac4fe6907eaa5c2b88f3ead5c66510f4747c0bce0645d7f"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round29-side-effect-ledger.json",
+          "bytes": 4245,
+          "sha256": "sha256:1d27e6b769504f1d17b6c8b407d28a89fb4106dccc26559277e58cc439ad07dd"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m06-side-effect-ledger/packaged-m06-side-effect-ledger-result.json",
+          "bytes": 1461,
+          "sha256": "sha256:a9447c746e7e7f7c198928c6e19ca6fa023a4d035891ece29486c055a5db4c58"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m06-side-effect-ledger/stability-summary.json",
+          "bytes": 4327,
+          "sha256": "sha256:1b6eac4036c17bbef0a1f7c77f411e71dca02f010e2387ea5d57473676f62973"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M06-F04",
+      "status": "accepted",
+      "profile": "usability",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/renderer/src/userFacingLanguage.ts",
+          "bytes": 1994,
+          "sha256": "sha256:2e8a08be43d3adb95278900f2ca706ec57835ce9d4da822a4f72193da3e2461b"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/userFacingErrors.ts",
+          "bytes": 6451,
+          "sha256": "sha256:74ccf853629e45d1fd6bf4bd2f96ed9824a21e82ce6d232bd300d66cd2d2da72"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/ApprovalCenterView.tsx",
+          "bytes": 39964,
+          "sha256": "sha256:2c6e73e56dd34199fe87233eba00385a40be4c4687b318b6e035769255bcafa0"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
+          "bytes": 37167,
+          "sha256": "sha256:3fdb1a2d2858e618c931a11ccf5318d4de04403454df4e005e4de1d7e8ebdb73"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/RunInspectorPanel.tsx",
+          "bytes": 27343,
+          "sha256": "sha256:71110b3e886b964a16bbbe97b3f501e54621d962cb986891c4bc094589268b08"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
+          "bytes": 210957,
+          "sha256": "sha256:1f14f8540c4a9f00ba554a894a39fd24d5ade92324cf34940836b2d01afcb5a8"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/WorkspaceShell.tsx",
+          "bytes": 170495,
+          "sha256": "sha256:75bb479f62cd46eadc03d9c4413f8ae960f3b8d01203db726825d14d4f933913"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/AgentSquareView.tsx",
+          "bytes": 46638,
+          "sha256": "sha256:2e5844af5d6edf305768a3e873ffe1dc0dd9bbbb6c31546bca75276115c5b69f"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/PreviewBrowserPanel.tsx",
+          "bytes": 44599,
+          "sha256": "sha256:a3b3ce234cea0587cd9ac3869304485ae5ef4a76274bdeae4094d0243ddeef79"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-m06-user-facing-language.mjs",
+          "bytes": 3733,
+          "sha256": "sha256:9466c440c43ebda451d497dc77fb0af7216cc4de761a8484c263bddfd2e49a31"
+        },
+        {
+          "path": "apps/desktop/shared/test-kit/verify-m06-user-facing-language.mts",
+          "bytes": 1560,
+          "sha256": "sha256:fe5cca78991fd8f6661d5179b4283d5244533cb0f706592880e75947b130ceae"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-f3-approval-business-info.mjs",
+          "bytes": 2821,
+          "sha256": "sha256:715f87beebc34f8ca7f19cce0928cf4d7848f8844c1245b21b9d02472ea3f8d4"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-f3-approvals.mjs",
+          "bytes": 6793,
+          "sha256": "sha256:cd96738d40f7d10e885890c235d52f30f276f3b1bc20754642402616588d2132"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round30-user-facing-language.json",
+          "bytes": 3265,
+          "sha256": "sha256:966d6652e6981eb4233e6723b722bb75049e9a7e47a9ecb49195e647d221c7be"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m06-user-facing-language/packaged-final/summary.json",
+          "bytes": 6944,
+          "sha256": "sha256:5527986ce0c6434ecd70eab3001de2e3df03e0b451033c54abad33b157f16751"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m06-user-facing-language/packaged-final/approval-accessibility-tree.json",
+          "bytes": 496023,
+          "sha256": "sha256:dc09c937bb3a26ec6b8a751adee6fb0fb915b777bfdb1b4de480e0812150ab28"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m06-user-facing-language/packaged-final/approval-business-cards.png",
+          "bytes": 172796,
+          "sha256": "sha256:6b1166658887ff308c30bf927060594b758162c91d4747244324ab10ea0fb064"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M06-F05",
+      "status": "accepted",
+      "profile": "usability",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/renderer/src/components/AppDecisionDialog.tsx",
+          "bytes": 5945,
+          "sha256": "sha256:d8255668f250d19cf51b1a4d009cf9a79c05875ffb55b36d87f8b6d28fab28ab"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/DebugPanel.tsx",
+          "bytes": 67005,
+          "sha256": "sha256:87025fd76dc8459f0573550941e39b1fff6c138fa6b330131816cc29f487f63f"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/files/FilesContextPanel.tsx",
+          "bytes": 58828,
+          "sha256": "sha256:b03a4351fadb3c3ed10606cefe4a153db16df9348512aa2dd51e5ba12c658d9a"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/files/PatchReviewPanel.tsx",
+          "bytes": 8907,
+          "sha256": "sha256:f0d4c013ed726e6962a89547e9f29aa3166e56fe0ed54e5c0ba17dbbb83e9b8b"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/PreviewBrowserPanel.tsx",
+          "bytes": 44599,
+          "sha256": "sha256:a3b3ce234cea0587cd9ac3869304485ae5ef4a76274bdeae4094d0243ddeef79"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/SkillsManager.tsx",
+          "bytes": 21823,
+          "sha256": "sha256:685401fa4e9ba29ed315b0cfd81ab19a86cff64c4d243b333e37c555b5ecf14e"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/GfsView.tsx",
+          "bytes": 43890,
+          "sha256": "sha256:1b3f10236997ed130372586ac5a8848fcc5d6ae1e6ee2e75088def55737c468d"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/WorkspaceShell.tsx",
+          "bytes": 170495,
+          "sha256": "sha256:75bb479f62cd46eadc03d9c4413f8ae960f3b8d01203db726825d14d4f933913"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-m06-app-dialog-contract.mjs",
+          "bytes": 2925,
+          "sha256": "sha256:d5e0f09cdd53c990ada241df0d78a01596acf027032e24b69c8333b7c8aa61b1"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m06-app-dialog.mjs",
+          "bytes": 5467,
+          "sha256": "sha256:de573a6e436917ff12ea2360d6abda9994f0b195d36496a13048fa6881d6f303"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m06-app-dialog-stability.mjs",
+          "bytes": 2744,
+          "sha256": "sha256:50d31595482374855b945a10794f27993ac23a9c8024a3eb6f79a9046527c860"
+        },
+        {
+          "path": "apps/desktop/windows/src/main/e2eSmoke.ts",
+          "bytes": 1008393,
+          "sha256": "sha256:79ef6fe7902592abbcb60f067076fc1d9a1ca292034edd09be5b6263ac8e0fe9"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round31-app-dialog.json",
+          "bytes": 3492,
+          "sha256": "sha256:a1f4bedf359236b06f3b407cc5dd2cf5afbfeacddfd2ff6c6035fa91a19ece6f"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m06-app-dialog/latest/packaged-m06-app-dialog-result.json",
+          "bytes": 7951,
+          "sha256": "sha256:858d3447037441a86a96721f578662c9f78851ce83f9b0a9894f91ba10979dc7"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m06-app-dialog/latest/m06-app-dialog-accessibility-tree.json",
+          "bytes": 191644,
+          "sha256": "sha256:745d839d4660c1d2ef1b0bfc85df75e72f7b543ae1e17cfc7e1ccf65cdd702b1"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m06-app-dialog/latest/m06-app-dialog.png",
+          "bytes": 157867,
+          "sha256": "sha256:6ad7e67f9700e36b64f7a6de1811225f8cf1c922fcee7410c60336e3c15d4d94"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m06-app-dialog/stability-summary.json",
+          "bytes": 4901,
+          "sha256": "sha256:05e22a7a41126069b1c6c10b3dfb373cf93fcb1a35177578636e3f12381741fe"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M07-F01",
+      "status": "accepted",
+      "profile": "recovery",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/api/operationalState.ts",
+          "bytes": 3179,
+          "sha256": "sha256:eadd93749eaee07a58e6ddc92c13c87d3bf320ae274e03894504572e0164f838"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/OperationalStateBar.tsx",
+          "bytes": 5813,
+          "sha256": "sha256:6eb4486df864a1726da746a8b78444ebbba0c0c9a3289a3520df2801eb259774"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/FirstRunSetup.tsx",
+          "bytes": 8417,
+          "sha256": "sha256:70bbad093a283ad9bfa53e7dbb9ecbc95b1e10e72e18370ab718b55c18664dd0"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-m07-operational-state.mts",
+          "bytes": 5289,
+          "sha256": "sha256:9709d519297108221a1ff0504541d20d171d2864bd8f4719051f9af2e1a76aaf"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m07-operational-state-packaged.mjs",
+          "bytes": 5579,
+          "sha256": "sha256:1d963a632f32396139092edc6b171a3a20a437a79188ffdd7e31af24192f12b4"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m07-operational-state-stability.mjs",
+          "bytes": 2218,
+          "sha256": "sha256:be655a30b189f3542c215f7328f8936ee63e3907f337ac1e13046dc2be7a337f"
+        },
+        {
+          "path": "apps/desktop/windows/src/main/e2eSmoke.ts",
+          "bytes": 1008393,
+          "sha256": "sha256:79ef6fe7902592abbcb60f067076fc1d9a1ca292034edd09be5b6263ac8e0fe9"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round32-operational-state.json",
+          "bytes": 3252,
+          "sha256": "sha256:a9d84753e2c01501375c6e8a5f623ec3bc8d25ed774d05c02927e8e3ef926f45"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/packaged-m07-operational-state-result.json",
+          "bytes": 10941,
+          "sha256": "sha256:7051e19f25bef47318f24ec566f1f71016d0b3e15be7a7b324002719e31ff0f9"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/m07-operational-accessibility-tree.json",
+          "bytes": 215966,
+          "sha256": "sha256:f6cde4d5657160fd576c6ede8907dbd71c31ec7809cb27017a2f1291446bca81"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/m07-operational-identity.png",
+          "bytes": 118409,
+          "sha256": "sha256:43e9e5bb3098f2efb95b311ca761af0ffe7e0015ca9bab4f527eec80d02474f5"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m07-operational-state/stability-summary.json",
+          "bytes": 1455,
+          "sha256": "sha256:057a51b323495b1dd7c2b80b6a7371298d214cad172238b61c47df6c8990af21"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M07-F02",
+      "status": "accepted",
+      "profile": "recovery",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/renderer/src/components/OperationalStateBar.tsx",
+          "bytes": 5813,
+          "sha256": "sha256:6eb4486df864a1726da746a8b78444ebbba0c0c9a3289a3520df2801eb259774"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        },
+        {
+          "path": "apps/desktop/shared/api/operationalState.ts",
+          "bytes": 3179,
+          "sha256": "sha256:eadd93749eaee07a58e6ddc92c13c87d3bf320ae274e03894504572e0164f838"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-m07-recovery-actions.mjs",
+          "bytes": 2056,
+          "sha256": "sha256:73c7a90028dce28a85625e8655bb00b492fd7f3a6eef02071536c91331d7d3dc"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m07-operational-state-packaged.mjs",
+          "bytes": 5579,
+          "sha256": "sha256:1d963a632f32396139092edc6b171a3a20a437a79188ffdd7e31af24192f12b4"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m07-operational-state-stability.mjs",
+          "bytes": 2218,
+          "sha256": "sha256:be655a30b189f3542c215f7328f8936ee63e3907f337ac1e13046dc2be7a337f"
+        },
+        {
+          "path": "apps/desktop/windows/src/main/e2eSmoke.ts",
+          "bytes": 1008393,
+          "sha256": "sha256:79ef6fe7902592abbcb60f067076fc1d9a1ca292034edd09be5b6263ac8e0fe9"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round33-recovery-actions.json",
+          "bytes": 3276,
+          "sha256": "sha256:3246117d0ee7ce52432c00b492956b0f4ac2e3b53cb36886e894be5621958c18"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/packaged-m07-operational-state-result.json",
+          "bytes": 10941,
+          "sha256": "sha256:7051e19f25bef47318f24ec566f1f71016d0b3e15be7a7b324002719e31ff0f9"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/m07-operational-accessibility-tree.json",
+          "bytes": 215966,
+          "sha256": "sha256:f6cde4d5657160fd576c6ede8907dbd71c31ec7809cb27017a2f1291446bca81"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m07-operational-state/stability-summary.json",
+          "bytes": 1455,
+          "sha256": "sha256:057a51b323495b1dd7c2b80b6a7371298d214cad172238b61c47df6c8990af21"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M07-F03",
+      "status": "accepted",
+      "profile": "recovery",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/main/oaepSessionStream.ts",
+          "bytes": 26580,
+          "sha256": "sha256:fa5d6ecfcd53d90da99fe78a51ac84993271973f8291c49cf857a737f934eca7"
+        },
+        {
+          "path": "apps/desktop/shared/main/chat.ts",
+          "bytes": 107064,
+          "sha256": "sha256:93810897eee90c223f449fe95bdd496b784abdc55697e92750524303f2817fe1"
+        },
+        {
+          "path": "apps/desktop/shared/api/desktopApi.ts",
+          "bytes": 164895,
+          "sha256": "sha256:41f631681de3d87b7a9214e6700c61178bff25c6237b5f315723ab9949882927"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-m07-oaep-gap-recovery.mts",
+          "bytes": 6513,
+          "sha256": "sha256:d4e4e6dbe4c29ecc12c502764152feeae170f7bed8f35acfe7dcd66f0007be71"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m07-operational-state-packaged.mjs",
+          "bytes": 5579,
+          "sha256": "sha256:1d963a632f32396139092edc6b171a3a20a437a79188ffdd7e31af24192f12b4"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m07-operational-state-stability.mjs",
+          "bytes": 2218,
+          "sha256": "sha256:be655a30b189f3542c215f7328f8936ee63e3907f337ac1e13046dc2be7a337f"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round34-oaep-gap-recovery.json",
+          "bytes": 3323,
+          "sha256": "sha256:d7565c88c7da4d2a994feb90fad44853962ac633803870581481848e0fd80466"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/packaged-m07-operational-state-result.json",
+          "bytes": 10941,
+          "sha256": "sha256:7051e19f25bef47318f24ec566f1f71016d0b3e15be7a7b324002719e31ff0f9"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m07-operational-state/stability-summary.json",
+          "bytes": 1455,
+          "sha256": "sha256:057a51b323495b1dd7c2b80b6a7371298d214cad172238b61c47df6c8990af21"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M07-F04",
+      "status": "accepted",
+      "profile": "recovery",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/api/runtimeRestartRecovery.ts",
+          "bytes": 1184,
+          "sha256": "sha256:d921b5c731c183af99e5d70c101db851fb8cdc4221e62f51f67aa53af64df4a1"
+        },
+        {
+          "path": "apps/desktop/shared/main/chat.ts",
+          "bytes": 107064,
+          "sha256": "sha256:93810897eee90c223f449fe95bdd496b784abdc55697e92750524303f2817fe1"
+        },
+        {
+          "path": "apps/desktop/shared/main/gateway.ts",
+          "bytes": 28153,
+          "sha256": "sha256:7664e8c613540a49e2cc4e43c61c865f6d819926b18d3577f2d6a7a0ffc2a543"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/userFacingErrors.ts",
+          "bytes": 6451,
+          "sha256": "sha256:74ccf853629e45d1fd6bf4bd2f96ed9824a21e82ce6d232bd300d66cd2d2da72"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/adapters/useDesktopChatAdapter.ts",
+          "bytes": 118409,
+          "sha256": "sha256:dba73a59e7a3c0cc37be1f1f6afe9e645d169879a6cbe1326eb28ea32d056ef1"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-m07-runtime-restart-recovery.mts",
+          "bytes": 3689,
+          "sha256": "sha256:02f9d5da35dcec5d78eca7c0d89eab09712a36a209b538f781d2eda263b96560"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-local-runtime-lifecycle.mjs",
+          "bytes": 11331,
+          "sha256": "sha256:9d84630273f8963186c4f738688e2971ad4bf3ca6956962433bf8408474d15a3"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_run_inspection_scenarios.py",
+          "bytes": 7366,
+          "sha256": "sha256:fdc6ad6b8b991eb95c7b94465228b8a3a2cbf332d830056b36e8dd2e1bba0cfa"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_oaep_runtime_four_path.py",
+          "bytes": 2350,
+          "sha256": "sha256:ae65931980d0f8ec4a756d83eb32c8f80db020da4d8465f1ddb099110eb015d3"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m07-operational-state-packaged.mjs",
+          "bytes": 5579,
+          "sha256": "sha256:1d963a632f32396139092edc6b171a3a20a437a79188ffdd7e31af24192f12b4"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round35-runtime-restart-recovery.json",
+          "bytes": 4044,
+          "sha256": "sha256:5850ae14fa6cfc52e12cc9e4d9c06410c54096f442bb8e6f368023e470685cd2"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/m07-operational-state/latest/packaged-m07-operational-state-result.json",
+          "bytes": 10941,
+          "sha256": "sha256:7051e19f25bef47318f24ec566f1f71016d0b3e15be7a7b324002719e31ff0f9"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M07-F05",
+      "status": "accepted",
+      "profile": "performance",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/main/threads.ts",
+          "bytes": 36937,
+          "sha256": "sha256:2959ccc6192bb6a8f6bf613863f7f617dacd6d86229d8e0f2fd66a5bf88ba9cc"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/threadSnapshotStore.ts",
+          "bytes": 3651,
+          "sha256": "sha256:218b2f0f4281991c4b1214ac5fa509afe99e6e1c4d44e1e9f2d25683e9fdbd4a"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-thread-hydration-performance.mts",
+          "bytes": 5345,
+          "sha256": "sha256:c97f08d9d846d6835bb7ea86383084787cc6bd4e3da22b1c4ee00114b3194ebd"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-long-conversation-performance.mjs",
+          "bytes": 11602,
+          "sha256": "sha256:de52228f23a30e4e3a11d06d69f029464495d3e4a997f589bc719bf577a1c95d"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs",
+          "bytes": 11975,
+          "sha256": "sha256:3d89925ae800c48acf23c1abf30ff750ee766b079befdaf545062fdf500fbcde"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round45-thread-hydration-performance.json",
+          "bytes": 2836,
+          "sha256": "sha256:dfd8c295e55ae6b5b1dae00b8f3dd9728e59a93f6bc878ff0c0eed10165b5c76"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M08-F01",
+      "status": "accepted",
+      "profile": "results",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/renderer/src/completionDeliveryTracker.ts",
+          "bytes": 1507,
+          "sha256": "sha256:149e416966b5ad698997fd482b4662a63629c057fe8f0fc7dfd46b2ef1bc29b7"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-result-first-completion.mts",
+          "bytes": 2780,
+          "sha256": "sha256:a94908d8a1d03dc7a2c25ef1810495b7480bc496f526249a302b8252281d669f"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-result-first-completion-visual.mjs",
+          "bytes": 3236,
+          "sha256": "sha256:1c8ded2bb0b1d4260158a4fa382f1fec1e2f9ac52968bfed1b4a461c64c60540"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-k3-structured-summary.mjs",
+          "bytes": 2645,
+          "sha256": "sha256:3998d49e6b769525edd3748d769611037a5a0ddc91db536021a3e2f9fde4048d"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-g7-completion-summary.mjs",
+          "bytes": 2817,
+          "sha256": "sha256:9f68d2a679f1c7e14857542e43bc88b2f21184ecc8490dfd4a2924826949e107"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-g1-results-center.mjs",
+          "bytes": 4608,
+          "sha256": "sha256:297e4dcdeaf6831fbedf698f6122559129b3aacdbc712553b0823fbe8eed14ea"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs",
+          "bytes": 11975,
+          "sha256": "sha256:3d89925ae800c48acf23c1abf30ff750ee766b079befdaf545062fdf500fbcde"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round46-results-release-gates.json",
+          "bytes": 3977,
+          "sha256": "sha256:c206118f9d76d908dc89d4e7e7cbc11ea07c2a45b69f5b29012e5704b5a52a38"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M08-F02",
+      "status": "accepted",
+      "profile": "results",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/renderer/src/boundedProcessWindow.ts",
+          "bytes": 689,
+          "sha256": "sha256:9b648a8165184cacab6a43a3892800f8c81efbad5dbef3811062efed47019320"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/StructuredMessageParts.tsx",
+          "bytes": 37167,
+          "sha256": "sha256:3fdb1a2d2858e618c931a11ccf5318d4de04403454df4e005e4de1d7e8ebdb73"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/styles.css",
+          "bytes": 527754,
+          "sha256": "sha256:992dee92c58504cfbc7d5ecb381aee813a6b740a60123db6be9e9ed8b90b9703"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-process-virtualization.mts",
+          "bytes": 1281,
+          "sha256": "sha256:e1c18d399a61d7a91ef50a93ab7bf12b855bf10e8812677810ffc4141947a2b8"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-process-virtualization-visual.mjs",
+          "bytes": 6266,
+          "sha256": "sha256:43d751db9803d2a4c5add919ce9098edccd49bc531e5ea0dfc8aa8c135fe8ff8"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-structured-message-renderer.mjs",
+          "bytes": 7903,
+          "sha256": "sha256:9420532e058ac22f5790f675fb84865f29595cfe51a0b6c80aa329c6e38ff01c"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-remote-agent-tool-ui.mjs",
+          "bytes": 5587,
+          "sha256": "sha256:e3410a67999153dbec1a9d2fb9c6ad11e8cab5517ba86331109122c8231874bc"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-structured-visual.mjs",
+          "bytes": 15334,
+          "sha256": "sha256:0dfc943dab7f44c2f910ffb722a2f072530567967429805723ffa9f9a9d3a7c9"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs",
+          "bytes": 11975,
+          "sha256": "sha256:3d89925ae800c48acf23c1abf30ff750ee766b079befdaf545062fdf500fbcde"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round47-process-virtualization.json",
+          "bytes": 3031,
+          "sha256": "sha256:052c95b9a627f36013bbefa3bd925762ed4e95b38584068d923dcaa71dddad17"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M08-F03",
+      "status": "accepted",
+      "profile": "results",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/api/resultProvenance.ts",
+          "bytes": 1917,
+          "sha256": "sha256:d04c341a492b491180412b485ab549c31be3364377bda8f426c70925415d4faf"
+        },
+        {
+          "path": "apps/desktop/shared/main/resultProvenance.ts",
+          "bytes": 2273,
+          "sha256": "sha256:97ecf976052ac4ada868555603772bbf85089567c1481b281657156e4258583b"
+        },
+        {
+          "path": "apps/desktop/shared/api/desktopApi.ts",
+          "bytes": 164895,
+          "sha256": "sha256:41f631681de3d87b7a9214e6700c61178bff25c6237b5f315723ab9949882927"
+        },
+        {
+          "path": "apps/desktop/windows/src/main/backgroundTasks.ts",
+          "bytes": 86018,
+          "sha256": "sha256:5aa75b826eac0b873f44bff6da023766343c108c8cd3412b717a21d90361f428"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/styles.css",
+          "bytes": 527754,
+          "sha256": "sha256:992dee92c58504cfbc7d5ecb381aee813a6b740a60123db6be9e9ed8b90b9703"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-result-provenance.mts",
+          "bytes": 3477,
+          "sha256": "sha256:d7e18d4765fe0990bb9a49db2d08f017ee0048752169659878904bd63809a0ca"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-result-provenance-visual.mjs",
+          "bytes": 6117,
+          "sha256": "sha256:4ab98ccc503ed440b2bc2ba01c9e5999dd3e14f4b2267e87a631476cd6a2adf7"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-g1-results-center.mjs",
+          "bytes": 4608,
+          "sha256": "sha256:297e4dcdeaf6831fbedf698f6122559129b3aacdbc712553b0823fbe8eed14ea"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-e2e-agent-run.mjs",
+          "bytes": 83513,
+          "sha256": "sha256:a5ff1b01bd74f5b1dc22130a275f04117020f8355aa686816678f61b39ee4300"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs",
+          "bytes": 11975,
+          "sha256": "sha256:3d89925ae800c48acf23c1abf30ff750ee766b079befdaf545062fdf500fbcde"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round48-result-provenance.json",
+          "bytes": 1916,
+          "sha256": "sha256:b736517a515540f2d51d78f12ef4cfce5167602c737d60599800735f3c6b9be5"
+        },
+        {
+          "path": "apps/desktop/windows/release/product-evidence/g1-results-center/packaged-g1-results-center-result.json",
+          "bytes": 5186,
+          "sha256": "sha256:ac0ff2104bcdedb2baf45fac437e3a2a8208b38ddeefa9b72a791bc73178e9b3"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M08-F04",
+      "status": "accepted",
+      "profile": "security",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/api/runInspectionSafety.ts",
+          "bytes": 9073,
+          "sha256": "sha256:d47a83202445c46109a015c6062a9b166689957ba5a3684da5386b4504ca8165"
+        },
+        {
+          "path": "apps/desktop/windows/src/main/index.ts",
+          "bytes": 291086,
+          "sha256": "sha256:d8c1c53f2ea472599e5fd14c0a3e750cb36eb2a267625f7f6a73a3f02b3cd606"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/RunInspectorPanel.tsx",
+          "bytes": 27343,
+          "sha256": "sha256:71110b3e886b964a16bbbe97b3f501e54621d962cb986891c4bc094589268b08"
+        },
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/runtime/run_inspection.py",
+          "bytes": 14957,
+          "sha256": "sha256:b191eb9eb95103177f508b18c82934bc06f3ab29d8f3c0ede97d04678576a1f7"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-run-inspection-safety.mts",
+          "bytes": 5096,
+          "sha256": "sha256:b4078acb4b7b7241d68d29a6185b77d4c4bd203ba94f3796f82f3141abfe58dd"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-run-inspection-safety-visual.mjs",
+          "bytes": 4811,
+          "sha256": "sha256:800e7527484c1379fa638dcb49d4f8addf5166bc21451484ab2af40d5c38aece"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-run-inspector-ui.mjs",
+          "bytes": 8832,
+          "sha256": "sha256:d48e61383392b53565cec51885ccf3ac6bba6adf78f42d93556558beab662898"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-run-editable-phase2-windows-e2e.mjs",
+          "bytes": 15710,
+          "sha256": "sha256:3d66f6257004cbbaeec12ffae8eede70a35497874c318e593abeb38b7d163423"
+        },
+        {
+          "path": "cores/python/packages/drsai/tests/test_run_inspection.py",
+          "bytes": 38589,
+          "sha256": "sha256:aef627b89043742bb96ea2d4f95ee8efb7ee759d0a9a5377ba73bb1a417a636d"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs",
+          "bytes": 11975,
+          "sha256": "sha256:3d89925ae800c48acf23c1abf30ff750ee766b079befdaf545062fdf500fbcde"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round49-run-inspection-safety.json",
+          "bytes": 3219,
+          "sha256": "sha256:557967fef7300d10fa1b24da11412094af1863f05bd2ab016ec307cae0077ac4"
+        },
+        {
+          "path": "docs/desktop/evidence/run-inspection-safety-windows-e2e-result.json",
+          "bytes": 3966,
+          "sha256": "sha256:8945b2bf25c0830ae423a7b169fae554521f38eedfe383f8f1a2975a97578826"
+        },
+        {
+          "path": "docs/desktop/evidence/run-inspection-safety-windows-e2e.png",
+          "bytes": 224776,
+          "sha256": "sha256:a733db36d05c5499c460ccf97e7f189f7926c9a6f7ea0433b08a5aad076ddaea"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M08-F05",
+      "status": "accepted",
+      "profile": "release",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/main/experimentReleaseGate.ts",
+          "bytes": 3271,
+          "sha256": "sha256:9f0246af9878e6f1c025ebbd8f3f2bd86e81b0cb389a5f6563cb9c61c5641281"
+        },
+        {
+          "path": "apps/desktop/shared/main/preload.ts",
+          "bytes": 72758,
+          "sha256": "sha256:423003aaa03705711758f82fbbf05f070cf1c9d47c55d46b2ba5d7d65bf0ec19"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        },
+        {
+          "path": "apps/desktop/windows/src/main/index.ts",
+          "bytes": 291086,
+          "sha256": "sha256:d8c1c53f2ea472599e5fd14c0a3e750cb36eb2a267625f7f6a73a3f02b3cd606"
+        },
+        {
+          "path": "apps/desktop/windows/resources/release/experiment-release-gate.json",
+          "bytes": 416,
+          "sha256": "sha256:1fe9e435f6c5e3a53037c6260c5d94b8aa38845691683479445e9d663bcc2515"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/generate-experiment-release-gate.mjs",
+          "bytes": 2077,
+          "sha256": "sha256:9f88ae07e773260ada8615bed126d5d471e6d64935b0934aa5ca01b0ecc0a341"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-experiment-release-gate.mts",
+          "bytes": 4053,
+          "sha256": "sha256:3c4a87fa0584a4d466fe4ba2969a3e9a91a98f843577a697cebf4390ba88b71c"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-experiment-release-gate-visual.mjs",
+          "bytes": 3695,
+          "sha256": "sha256:eaf1d05fceb8d144f0179064fd6955a82fc492e39c12b57147ff5849897ae08b"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs",
+          "bytes": 11975,
+          "sha256": "sha256:3d89925ae800c48acf23c1abf30ff750ee766b079befdaf545062fdf500fbcde"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round46-results-release-gates.json",
+          "bytes": 3977,
+          "sha256": "sha256:c206118f9d76d908dc89d4e7e7cbc11ea07c2a45b69f5b29012e5704b5a52a38"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M09-F01",
+      "status": "accepted",
+      "profile": "architecture",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/renderer/src/containers/SetupContainer.tsx",
+          "bytes": 6013,
+          "sha256": "sha256:df4725e89fe26e95bb165f9f5957263ede05c65dbd996adc4270a233b65f6acb"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/containers/ModelSettingsContainer.tsx",
+          "bytes": 6963,
+          "sha256": "sha256:3c271fc33bf4b1c9677805f813081516802469f2c37e1c26dc67e24d9f5f37ce"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/containers/TaskShellContainer.tsx",
+          "bytes": 395,
+          "sha256": "sha256:9fd5a912778d1d0bc22322e72a31a80fbb195d32503877db33dd2f1a234a87dd"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/containers/ResultsContainer.tsx",
+          "bytes": 672,
+          "sha256": "sha256:e23b91aa69c00390c6e0ded563c4a38860325b2637e750ac4b4e7c891a03f480"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/containers/DiagnosticsContainer.tsx",
+          "bytes": 1596,
+          "sha256": "sha256:4c46c28e33a6517a65a5d882d15f67e284d47043464ee7161327b9e26f7fb559"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/components/ChatWorkspace.tsx",
+          "bytes": 210957,
+          "sha256": "sha256:1f14f8540c4a9f00ba554a894a39fd24d5ade92324cf34940836b2d01afcb5a8"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-frontend-containers.mjs",
+          "bytes": 3812,
+          "sha256": "sha256:53c6a710f209f0d6c5fcef97b2faf7961ced4dd98b3e1ebad679c3ad5ac0d28d"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-frontend-containers-visual.mjs",
+          "bytes": 5871,
+          "sha256": "sha256:32000a36e4784028246060df9eac590348e29b945c84626e71e525da107c020e"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-first-run-setup.mts",
+          "bytes": 7122,
+          "sha256": "sha256:a57f3090a66a510a23a5bc057e0b00e908003f186c19cf3dfd3d638d34b193c2"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-first-run-restart.mjs",
+          "bytes": 9866,
+          "sha256": "sha256:907cec7f97a971c79f394104eeda100c69cc8553cb00a03b2623ab76de83f26c"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m07-operational-state.mts",
+          "bytes": 5289,
+          "sha256": "sha256:9709d519297108221a1ff0504541d20d171d2864bd8f4719051f9af2e1a76aaf"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m07-operational-state-packaged.mjs",
+          "bytes": 5579,
+          "sha256": "sha256:1d963a632f32396139092edc6b171a3a20a437a79188ffdd7e31af24192f12b4"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-g1-results-center.mjs",
+          "bytes": 4608,
+          "sha256": "sha256:297e4dcdeaf6831fbedf698f6122559129b3aacdbc712553b0823fbe8eed14ea"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-model-provider-config.mjs",
+          "bytes": 12264,
+          "sha256": "sha256:384ef0983e9f4f620c0045455469fdadb05cd58d0e9307637c4fbd349a422651"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-model-config-state-recovery.mjs",
+          "bytes": 1763,
+          "sha256": "sha256:d63a38b42ca986fa4535da247ab530123acb5f717a26ab57cb320a04fa765651"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-renderer-visual.mjs",
+          "bytes": 112789,
+          "sha256": "sha256:a3a0e71600d58eeb75f83813d8faef1d4d31ea6eb6606f851f756068c1eb23da"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs",
+          "bytes": 11975,
+          "sha256": "sha256:3d89925ae800c48acf23c1abf30ff750ee766b079befdaf545062fdf500fbcde"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round50-frontend-container-boundaries.json",
+          "bytes": 4491,
+          "sha256": "sha256:4a4ff724f489c3890280e3e5002e7c872f64010e5caaeca7e1e7f3f008bf0a8a"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round50-first-run-restart.json",
+          "bytes": 1907,
+          "sha256": "sha256:d85987a6baec5c8a13c06eaa08b8d036e2c660839e58998684de4e553bf60178"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M09-F02",
+      "status": "accepted",
+      "profile": "architecture",
+      "implementation": [
+        {
+          "path": "apps/desktop/windows/electron.vite.config.ts",
+          "bytes": 920,
+          "sha256": "sha256:21d130ff5783583cfd958ec3ecae757e192cb548d713380152d90ad3ed8640cf"
+        },
+        {
+          "path": "apps/desktop/windows/tsconfig.web.json",
+          "bytes": 534,
+          "sha256": "sha256:8f1ba1177937aeb4ec479e67feaf97eb86731a762dde8b8e727c68b7e6a85fc8"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-single-renderer-root.mjs",
+          "bytes": 1657,
+          "sha256": "sha256:1be24bb83c36012bf361f0d5ba7e48c4250da63c02e3adab4ebe9beae770d001"
+        },
+        {
+          "path": "apps/desktop/windows/package.json",
+          "bytes": 62098,
+          "sha256": "sha256:4aecfb26228c2137e2dd40d23dfa910cce0808be8e26f20de99f8a890ccd0e10"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round44-architecture-release-evidence.json",
+          "bytes": 3054,
+          "sha256": "sha256:a2d6332967a7e4d33f69d12d0686fbc2a94c46c7cb7d87a311bc8924ea1fd001"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M09-F03",
+      "status": "in_progress",
+      "profile": "architecture",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/main/chat.ts",
+          "bytes": 107064,
+          "sha256": "sha256:93810897eee90c223f449fe95bdd496b784abdc55697e92750524303f2817fe1"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-backend-neutral.mjs",
+          "bytes": 1141,
+          "sha256": "sha256:0c98836e1b667e56a2e316214ece4db868d359ba4e26f34fa358696b00676f6a"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-structured-conversation.mjs",
+          "bytes": 6725,
+          "sha256": "sha256:a838712d040a396918cd4686944b0b4fd41284ae6d2235d8d15f56213eba3829"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-chat-output-model.mjs",
+          "bytes": 3474,
+          "sha256": "sha256:9e98fcab07aa5e129722a5cc16959f7c2d79915f3ccc17731634355012095545"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round6-backend-neutral.json",
+          "bytes": 1585,
+          "sha256": "sha256:3c7582be3135153ca7e76055d8d70aa3d05548ddb69a32f8a97dfe5a7a6047b6"
+        }
+      ],
+      "acceptance_passed": false,
+      "missing": []
+    },
+    {
+      "id": "M09-F04",
+      "status": "pending",
+      "profile": "localization",
+      "implementation": [],
+      "tests": [],
+      "evidence": [],
+      "acceptance_passed": false,
+      "missing": []
+    },
+    {
+      "id": "M09-F05",
+      "status": "accepted",
+      "profile": "accessibility",
+      "implementation": [
+        {
+          "path": "apps/desktop/shared/renderer/src/styles.css",
+          "bytes": 527754,
+          "sha256": "sha256:992dee92c58504cfbc7d5ecb381aee813a6b740a60123db6be9e9ed8b90b9703"
+        },
+        {
+          "path": "apps/desktop/windows/src/main/e2eSmoke.ts",
+          "bytes": 1008393,
+          "sha256": "sha256:79ef6fe7902592abbcb60f067076fc1d9a1ca292034edd09be5b6263ac8e0fe9"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-m3-window-scaling.mjs",
+          "bytes": 6942,
+          "sha256": "sha256:a0fb59837e6c1daa09b1d805e63a79a25fc4c1510db166045eedf8681ce04090"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m4-keyboard.mjs",
+          "bytes": 7057,
+          "sha256": "sha256:4808b81fd3a65eb4e637f7d5387fd4fb4e5cb1d9b79231be8708bf5890a08467"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-m5-accessibility.mjs",
+          "bytes": 7982,
+          "sha256": "sha256:ab7776cf38bb60b6e2cbe74dfd8df97a41ef79161252524bbf2abc6a0220799b"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round8-packaged-smoke.json",
+          "bytes": 5046,
+          "sha256": "sha256:3d3ddfdbad7d31229f9867716fbaf64cd703a29d8360665e95ff2627adb7cbf8"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round8-packaged-usability.json",
+          "bytes": 3423,
+          "sha256": "sha256:d6861aa2509390f30856096e13699cfff376ec99eaa5d9af780410bcfb8c39a9"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M10-F01",
+      "status": "pending",
+      "profile": "release",
+      "implementation": [],
+      "tests": [],
+      "evidence": [],
+      "acceptance_passed": false,
+      "missing": []
+    },
+    {
+      "id": "M10-F02",
+      "status": "pending",
+      "profile": "release",
+      "implementation": [],
+      "tests": [],
+      "evidence": [],
+      "acceptance_passed": false,
+      "missing": []
+    },
+    {
+      "id": "M10-F03",
+      "status": "accepted",
+      "profile": "release",
+      "implementation": [
+        {
+          "path": "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+          "bytes": 426824,
+          "sha256": "sha256:59fdbc8242938e1c40e507d39120b30092c8bd7842169353465a70ef397b6835"
+        },
+        {
+          "path": "apps/desktop/shared/main/chat.ts",
+          "bytes": 107064,
+          "sha256": "sha256:93810897eee90c223f449fe95bdd496b784abdc55697e92750524303f2817fe1"
+        },
+        {
+          "path": "apps/desktop/shared/renderer/src/App.tsx",
+          "bytes": 508720,
+          "sha256": "sha256:1c51b533d05f50cf8eefd904466d27d2447bd7d88b78b09868ee919c2a23b421"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-run-traceability-phase1-windows-e2e.mjs",
+          "bytes": 7852,
+          "sha256": "sha256:caa85f5d8629d289efd334ab49c6114303631005c402b3fb3d4ac1e87182205c"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-run-editable-phase2-windows-e2e.mjs",
+          "bytes": 15710,
+          "sha256": "sha256:3d66f6257004cbbaeec12ffae8eede70a35497874c318e593abeb38b7d163423"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-unified-runtime-packaged.mjs",
+          "bytes": 26574,
+          "sha256": "sha256:8b7bce5f356f49b00ef61c75073981ec48291d5aa4efbba3269c47575c68869c"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-packaged-app-smoke.mjs",
+          "bytes": 11975,
+          "sha256": "sha256:3d89925ae800c48acf23c1abf30ff750ee766b079befdaf545062fdf500fbcde"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-model-convergence-mc08.json",
+          "bytes": 6078,
+          "sha256": "sha256:2ed87266b7c6deb89a6fe49ebe34a92bc4f807040833a71d5284ff4cad7ed68b"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round44-architecture-release-evidence.json",
+          "bytes": 3054,
+          "sha256": "sha256:a2d6332967a7e4d33f69d12d0686fbc2a94c46c7cb7d87a311bc8924ea1fd001"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M10-F04",
+      "status": "accepted",
+      "profile": "evidence",
+      "implementation": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-acceptance-ledger.json",
+          "bytes": 63897,
+          "sha256": "sha256:55ebc37d8ddaf0fae4f9d75532be1ea1623c2452b927f9830a187d0b878b64ee"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-phase3-ledger.mjs",
+          "bytes": 3590,
+          "sha256": "sha256:1e22f55f5840107514a78d300d5a77f73667851d0117a5d1086a41750380e29d"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/generate-opendrsai-phase3-release-manifest.mjs",
+          "bytes": 5837,
+          "sha256": "sha256:2a7dbe7fb68e70b8700fd62b0f82e2c05c0c9119d6cc0b212747d57f16bf7226"
+        },
+        {
+          "path": "apps/desktop/windows/package.json",
+          "bytes": 62098,
+          "sha256": "sha256:4aecfb26228c2137e2dd40d23dfa910cce0808be8e26f20de99f8a890ccd0e10"
+        }
+      ],
+      "tests": [
+        {
+          "path": "apps/desktop/windows/scripts/verify-opendrsai-phase3-ledger.mjs",
+          "bytes": 3590,
+          "sha256": "sha256:1e22f55f5840107514a78d300d5a77f73667851d0117a5d1086a41750380e29d"
+        },
+        {
+          "path": "apps/desktop/windows/scripts/generate-opendrsai-phase3-release-manifest.mjs",
+          "bytes": 5837,
+          "sha256": "sha256:2a7dbe7fb68e70b8700fd62b0f82e2c05c0c9119d6cc0b212747d57f16bf7226"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-release-manifest.json",
+          "binding": "self_manifest_revision"
+        },
+        {
+          "path": "docs/desktop/evidence/opendrsai-windows-phase3-round44-architecture-release-evidence.json",
+          "bytes": 3054,
+          "sha256": "sha256:a2d6332967a7e4d33f69d12d0686fbc2a94c46c7cb7d87a311bc8924ea1fd001"
+        }
+      ],
+      "acceptance_passed": true,
+      "missing": []
+    },
+    {
+      "id": "M10-F05",
+      "status": "pending",
+      "profile": "release",
+      "implementation": [],
+      "tests": [],
+      "evidence": [],
+      "acceptance_passed": false,
+      "missing": []
+    }
+  ],
+  "manifest_revision": "sha256:713be2258c3700ee4fd6f806e5dd086380741efb05f0af7b8bf93e56eb06234f"
+}

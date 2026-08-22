@@ -14,9 +14,10 @@ const chat = read("apps/desktop/windows/../shared/main/chat.ts");
 const agentRuns = read("apps/desktop/windows/../shared/main/agentRuns.ts");
 const desktopGateway = read("apps/desktop/windows/../shared/main/gateway.ts");
 const chatAdapter = read("apps/desktop/windows/../shared/renderer/src/adapters/useDesktopChatAdapter.ts");
+const userFacingErrors = read("apps/desktop/shared/renderer/src/userFacingErrors.ts");
+const errorEnvelope = read("apps/desktop/shared/api/errorEnvelope.ts");
 const authProvider = read("apps/desktop/windows/../shared/renderer/src/auth/AuthProvider.tsx");
-const modelDefaults = read("apps/desktop/windows/../shared/main/modelDefaults.ts");
-const myDrSaiConfig = read("apps/desktop/windows/src/main/mydrsaiconfig.ts");
+const myDrSaiConfig = read("apps/desktop/shared/main/myDrSaiConfig.ts");
 const modelFactory = read("cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py");
 const mainProcess = read("apps/desktop/windows/src/main/index.ts");
 const status = read("apps/desktop/windows/src/main/status.ts");
@@ -34,13 +35,15 @@ for (const [name, passed] of [
   ["invalid token clears local session", chat.includes("invalidateAuthSession()") && agentRuns.includes("invalidateAuthSession()")],
   ["invalid token returns renderer to login", chat.includes("desktop:auth-session-invalidated") && authProvider.includes("onAuthSessionInvalidated")],
   ["gateway instance secret", desktopGateway.includes("randomBytes(32)") && desktopGateway.includes("X-OpenDrSai-Gateway-Token")],
-  ["renderer structured auth errors", ["token_expired", "agent_credentials_unavailable", "agent_credentials_invalid", "model_forbidden", "quota_exceeded", "model_not_found", "upstream_unavailable"].every((code) => chatAdapter.includes(code))],
+  ["renderer structured auth errors", chatAdapter.includes("describeUserFacingError") && userFacingErrors.includes("normalizeRuntimeErrorEnvelope") && errorEnvelope.includes('return "auth"') && errorEnvelope.includes('return "model"')],
   ["OIDC install status does not require API key", !status.includes('prerequisites.apiKeyConfigured ? null : "api-key"') && !status.includes('apiKeyConfigured ? null : "HEPAI_API_KEY is not configured."')],
   ["desktop development disables static credential fallback", devLauncher.includes('$env:OPENDRSAI_OIDC_ONLY = "1"') && devLauncher.includes("Env:HEPAI_API_KEY")],
-  ["desktop default model alias", modelDefaults.includes('const DEFAULT_MODEL_ALIAS = "deepseek-v4-pro"') && modelDefaults.includes('"deepseek-ai/deepseek-v4-pro": DEFAULT_MODEL_ALIAS')],
-  ["desktop model picker uses the authenticated available-model catalog", myDrSaiConfig.includes("getGatewayModels(auth.accessToken)") && myDrSaiConfig.includes("mergeAvailableModels") && myDrSaiConfig.includes("availableModelsPromise")],
+  ["desktop model picker uses the authenticated available-model catalog", myDrSaiConfig.includes('"/v1/config/runtime-models", undefined, await oidcGatewayHeaders()') && myDrSaiConfig.includes("runtimeCatalog.models.map")],
+  ["model discovery preserves failure semantics", desktopGateway.includes("GatewayModelDiscoveryResult") && desktopGateway.includes('state: "forbidden"') && desktopGateway.includes('state: "unavailable"')],
+  ["bootstrap retries transient model discovery", mainProcess.includes("bootstrapDesktop") && read("apps/desktop/windows/src/main/bootstrap.ts").includes("discoverModelsWithRecovery") && read("apps/desktop/windows/src/main/bootstrap.ts").includes("[0, 250, 750, 1_500]")],
+  ["OIDC model catalog is proxied by the local Gateway", gateway.includes('f"{auth.model_base_url.rstrip(\'/\')}/models"') && gateway.includes('"model_catalog_timeout"')],
   ["default model resolves to DDF canonical id", modelFactory.includes('DEFAULT_CONFIG_NAME = "deepseek-v4-pro"') && modelFactory.includes('entry.model == resolved_config_name')],
-  ["chat selection reaches gateway", chatAdapter.includes("model: options?.model?.trim() || undefined") && chat.includes("const model = normalizeModelAlias(request.model) || getDefaultModelAlias()")],
+  ["chat selection reaches Runtime execution", chatAdapter.includes("model: options?.model?.trim() || undefined") && chat.includes("modelSelection") && chat.includes("policy.effective_ref") && chat.includes("executeAgentRun(") && gateway.includes("model_override=requested_backend_model if is_codex_run else resolved_model.model")],
   ["unregistered workspace falls back to global model catalog", mainProcess.includes("return getMyDrSaiConfig();")],
   ["empty failed assistant messages are excluded", chatAdapter.includes("!message.error && message.content.trim().length > 0")],
 ]) {
@@ -57,6 +60,12 @@ const candidates = [
 ].filter(Boolean);
 const python = candidates.find((candidate) => candidate.includes("\\") || candidate.includes("/") ? existsSync(candidate) : true);
 if (!python) throw new Error("A project Python environment is required for platform auth tests.");
+const testEnv = { ...process.env };
+for (const name of ["ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "http_proxy", "https_proxy"]) {
+  delete testEnv[name];
+}
+testEnv.NO_PROXY = "127.0.0.1,localhost,::1";
+testEnv.no_proxy = testEnv.NO_PROXY;
 
 const result = spawnSync(
   python,
@@ -64,7 +73,7 @@ const result = spawnSync(
   {
     cwd: repoRoot,
     env: {
-      ...process.env,
+      ...testEnv,
       PYTHONPATH: [pythonSrc, process.env.PYTHONPATH].filter(Boolean).join(delimiter),
     },
     stdio: "inherit",

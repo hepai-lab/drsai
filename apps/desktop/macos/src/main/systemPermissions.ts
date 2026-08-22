@@ -16,6 +16,11 @@ const SETTINGS: Record<DesktopSystemPermissionKind, string> = {
 };
 const execFileAsync = promisify(execFile);
 let automationState: DesktopSystemPermissionState = "unknown";
+let latestPermissionNotificationShown = false;
+
+export function wasLatestPermissionNotificationShownForE2e(): boolean {
+  return latestPermissionNotificationShown;
+}
 
 export function getMacosSystemPermissions(): DesktopSystemPermissionStatus[] {
   return KINDS.map(getMacosSystemPermission);
@@ -35,11 +40,16 @@ export function getMacosSystemPermission(kind: DesktopSystemPermissionKind): Des
 export async function requestMacosSystemPermission(value: unknown): Promise<DesktopSystemPermissionStatus> {
   const kind = assertKind(value);
   const native = invokeNativePermission(nativeHelperExecutablePath(), "permission.request", kind);
-  if (native && typeof native !== "boolean") return native;
+  if (native && typeof native !== "boolean" && !(kind === "automation" && native.state === "unknown")) return native;
   if (kind === "microphone") await systemPreferences.askForMediaAccess("microphone");
   else if (kind === "notifications") {
-    if (Notification.isSupported()) new Notification({ title: "OpenDrSai", body: "Notifications are enabled for task completion.", silent: true }).show();
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    latestPermissionNotificationShown = false;
+    if (Notification.isSupported()) {
+      const notification = new Notification({ title: "OpenDrSai", body: "Notifications are enabled for task completion.", silent: true });
+      const shown = new Promise((resolve) => notification.once("show", () => { latestPermissionNotificationShown = true; resolve(undefined); }));
+      notification.show();
+      await Promise.race([shown, new Promise((resolve) => setTimeout(resolve, 5_000))]);
+    }
   } else if (kind === "automation") {
     try {
       await execFileAsync("/usr/bin/osascript", ["-e", "tell application \"Finder\" to get name of startup disk"], { timeout: 30_000 });
@@ -48,6 +58,10 @@ export async function requestMacosSystemPermission(value: unknown): Promise<Desk
       automationState = "denied";
     }
   } else await openMacosSystemPermissionSettings(kind);
+  // A fresh Helper process cannot reliably query the prior Apple Events result
+  // when TCC or Finder did not answer before its bounded request timeout. Preserve
+  // the explicit request outcome instead of replacing it with a later `unknown`.
+  if (kind === "automation") return status(kind, automationState, automationState === "unknown");
   return getMacosSystemPermission(kind);
 }
 

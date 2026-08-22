@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-04T17:30:37.189343+00:00",
+  "commit": "f6518eeb16e7b63f6473a2dcfcc77114233e0832",
+  "dirty": true,
+  "apk": {
+    "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\debug\\OpenDrSai-Android-v1.5.6.apk",
+    "sha256": "6787c01c6f8122bc37608594b10f558cc2cd0c00cefc73aa9cbb88b2fadd5ce6"
+  },
+  "banned_symbols": [
+    "LocalAgentRuntime",
+    "LocalChatEngine",
+    "SelectableLocalChatEngine",
+    "safePythonFallback",
+    "mayFallbackToKotlin",
+    "KOTLIN_LITE",
+    "kotlin_lite"
+  ],
+  "dex_hits": {
+    "LocalAgentRuntime": 0,
+    "LocalChatEngine": 0,
+    "SelectableLocalChatEngine": 0,
+    "safePythonFallback": 0,
+    "mayFallbackToKotlin": 0,
+    "KOTLIN_LITE": 1,
+    "kotlin_lite": 0
+  },
+  "binding_test_cases": {
+    "ai.drsai.remote.FullRuntimeBindingCoordinatorTest.account switch closes old binding and logout clears identity": "passed",
+    "ai.drsai.remote.FullRuntimeBindingCoordinatorTest.failed bind is explicit unavailable and never changes authority": "passed",
+    "ai.drsai.remote.FullRuntimeBindingCoordinatorTest.binder death automatically rebinds the same account": "passed",
+    "ai.drsai.remote.FullRuntimeBindingCoordinatorTest.concurrent callers share one account binding": "passed"
+  },
+  "checks": {
+    "debug_full_true": true,
+    "debug_lite_false": true,
+    "no_banned_main_source": true,
+    "no_banned_apk_symbols": true,
+    "diagnostic_lite_flag_is_only_apk_occurrence": true,
+    "direct_full_local_engine": true,
+    "remote_engine_remains_explicit": true,
+    "readiness_before_run_mutation": true,
+    "proactive_bind_after_login": true,
+    "logout_releases_account_binding": true,
+    "binding_state_machine_complete": true,
+    "binding_state_durable_diagnostic": true,
+    "binder_death_notifies_coordinator": true,
+    "active_request_prevents_idle_close": true,
+    "policy_has_no_alternate_local_route": true,
+    "binding_unit_matrix_green": true,
+    "side_effect_reconciliation_present": true
+  },
+  "features": {
+    "M02-F01": true,
+    "M02-F02": true,
+    "M02-F03": true,
+    "M02-F04": true,
+    "M02-F05": true,
+    "M02-F06": true,
+    "M03-F01": true,
+    "M03-F02": true,
+    "M03-F03": true,
+    "M03-F04": true,
+    "M03-F05": true,
+    "M03-F06": true
+  },
+  "passed": true
+}

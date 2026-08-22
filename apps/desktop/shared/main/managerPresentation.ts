@@ -255,6 +255,7 @@ export async function generateManagerPresentation(
       options.signal?.removeEventListener("abort", cancelOperation);
       options.setActiveOperationController?.(null);
     }
+    if (!analysis) throw new Error("The presentation PDF could not be parsed by the bundled Runtime.");
   }
   if (options.signal?.aborted) throw new ManagerPresentationCancelledError();
   if (!analysis || analysis.type !== "presentation_pdf") {

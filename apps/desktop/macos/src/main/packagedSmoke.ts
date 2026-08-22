@@ -1,17 +1,35 @@
-import { app, powerMonitor, type BrowserWindow } from "electron";
+import { app, powerMonitor, screen, type BrowserWindow } from "electron";
+import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
+import { connect as connectTcp } from "node:net";
 import { getUpdateHealthConfirmation } from "./updater";
+import { stopGateway } from "./gateway";
 import type { NativeHelperSupervisor } from "./native/nativeHelperSupervisor";
+import { clickLatestCompletionNotificationForE2e } from "../../../shared/main/completionNotifications";
+import { setPackagedNetworkOnlineForE2e } from "./bootstrap/installAppIntegrations";
+import { wasLatestPermissionNotificationShownForE2e } from "./systemPermissions";
+import { requireAuthContext } from "../../../shared/main/auth";
 
-type PackagedScenario = "smoke" | "core" | "product-state" | "approval-replay" | "restart" | "fault" | "crash-ready" | "recovery" | "stability" | "performance-ready" | "managed-process-crash" | "sleep-wake" | "tcc" | "online-update-lab";
+type PackagedScenario = "smoke" | "core" | "product-state" | "auth-cycle" | "approval-replay" | "restart" | "fault" | "crash-ready" | "recovery" | "stability" | "performance-ready" | "managed-process-crash" | "system-events" | "sleep-wake" | "tcc" | "online-update-lab" | "ssh-loopback" | "hepai-provider";
 
 interface PackagedScenarioConfig {
   workspacePath?: string;
   workspaceId?: string;
   threadId?: string;
   approvalId?: string;
+  remotePort?: number;
+  remoteWorkspacePath?: string;
+  gatewayArtifacts?: Array<{ version: string; artifactPath: string; artifactSha256: string; artifactPublisher: string; artifactSignature: string; incompatible?: boolean; cancel?: boolean }>;
+  restartPhase?: "prepare" | "restore";
+  scheduledTaskId?: string;
+  scheduledRunId?: string;
+  activeChatRequestId?: string;
+  activeChatThreadId?: string;
+  activeAgentThreadId?: string;
   durationMs?: number;
   intervalMs?: number;
+  warmupMs?: number;
+  resourceSettleMs?: number;
   targetVersion?: string;
   readyPath?: string;
 }
@@ -30,7 +48,13 @@ export function runPackagedSmokeIfRequested(window: BrowserWindow, nativeHelper:
     try {
       let result = scenario === "sleep-wake"
         ? await runSleepWakeScenario(window, config)
+        : scenario === "system-events"
+          ? await runSystemEventsScenario(window)
+        : scenario === "hepai-provider"
+          ? await runHepaiProviderScenario()
         : await window.webContents.executeJavaScript(buildScenarioScript(scenario, config), true);
+      if (scenario === "tcc") result = { ...(result as object), notificationShown: wasLatestPermissionNotificationShownForE2e() };
+      if (scenario === "ssh-loopback") result = await verifyPackagedSshForward(window, result);
       if (scenario === "managed-process-crash") {
         const gatewayBefore = (result as { gateway?: { pid?: number } }).gateway;
         const helperBefore = { ...nativeHelper.state(), pid: nativeHelper.processId() };
@@ -42,6 +66,19 @@ export function runPackagedSmokeIfRequested(window: BrowserWindow, nativeHelper:
         const gatewayAfter = await window.webContents.executeJavaScript(`(async () => { const api = window.openDrSai; const previousPid = ${gatewayBefore.pid}; let crashObserved = false; for (let attempt = 0; attempt < 100; attempt += 1) { const status = await api.getGatewayStatus(); if (!status.ready || status.pid !== previousPid) { crashObserved = true; break; } await new Promise((resolve) => setTimeout(resolve, 50)); } if (!crashObserved) throw new Error("Gateway crash was not observable"); if (!(await api.startGateway())) throw new Error("Gateway did not restart after SIGKILL"); const status = await api.getGatewayStatus(); if (!status.ready || !status.pid || status.pid === previousPid) throw new Error("Gateway restart did not produce a new healthy PID"); return status; })()`, true);
         result = { ...(result as object), helperBefore, helperAfter, gatewayAfter };
       }
+      if (scenario === "product-state") {
+        // The native protocol deliberately limits Keychain accounts to opaque UUIDs.
+        // Exercise the same identifier shape used by the production credential adapter.
+        const account = randomUUID();
+        const value = `packaged-keychain-${process.pid}`;
+        const put = await nativeHelper.request("keychain.put", undefined, { account, service: "ai.drsai.desktop", value });
+        const get = await nativeHelper.request("keychain.get", undefined, { account, service: "ai.drsai.desktop" });
+        const removed = await nativeHelper.request("keychain.delete", undefined, { account, service: "ai.drsai.desktop" });
+        const removedAgain = await nativeHelper.request("keychain.delete", undefined, { account, service: "ai.drsai.desktop" });
+        if (put.result?.stored !== true || get.result?.value !== value || removed.result?.deleted !== true || removedAgain.result?.deleted !== false) throw new Error("packaged Native Helper Keychain CRUD/idempotent delete failed");
+        if (!clickLatestCompletionNotificationForE2e()) throw new Error("packaged completion notification did not expose a clickable native handle");
+        result = { ...(result as object), nativeKeychainLifecycle: true, notificationClickLifecycle: true };
+      }
       const updateHealth = scenario === "online-update-lab" && (result as { postUpdateHealthy?: boolean }).postUpdateHealthy
         ? getUpdateHealthConfirmation()
         : undefined;
@@ -50,6 +87,7 @@ export function runPackagedSmokeIfRequested(window: BrowserWindow, nativeHelper:
       if (scenario !== "crash-ready" && !(scenario === "online-update-lab" && (result as { updateInstallRequested?: boolean }).updateInstallRequested)) app.quit();
     } catch (error) {
       await writeFile(output, `${JSON.stringify({ ok: false, scenario, error: error instanceof Error ? error.message : String(error) }, null, 2)}\n`, "utf8").catch(() => undefined);
+      await Promise.allSettled([stopGateway(), nativeHelper.stop()]);
       app.exit(1);
     }
   };
@@ -59,8 +97,52 @@ export function runPackagedSmokeIfRequested(window: BrowserWindow, nativeHelper:
 
 function normalizeScenario(value: string | undefined): PackagedScenario {
   const scenario = value?.trim() || "smoke";
-  if (["smoke", "core", "product-state", "approval-replay", "restart", "fault", "crash-ready", "recovery", "stability", "performance-ready", "managed-process-crash", "sleep-wake", "tcc", "online-update-lab"].includes(scenario)) return scenario as PackagedScenario;
+  if (["smoke", "core", "product-state", "auth-cycle", "approval-replay", "restart", "fault", "crash-ready", "recovery", "stability", "performance-ready", "managed-process-crash", "system-events", "sleep-wake", "tcc", "online-update-lab", "ssh-loopback", "hepai-provider"].includes(scenario)) return scenario as PackagedScenario;
   throw new Error(`Unsupported packaged acceptance scenario: ${scenario}`);
+}
+
+async function runHepaiProviderScenario(): Promise<unknown> {
+  const origin = new URL(process.env.OPENDRSAI_HEPAI_ORIGIN || "https://ai-dev.ihep.ac.cn");
+  if (origin.protocol !== "https:" || origin.username || origin.password) throw new Error("HepAI platform origin must be a credential-free HTTPS URL");
+  const auth = await requireAuthContext();
+  if (auth.authMode !== "oidc" || !auth.accessToken) throw new Error("HepAI Provider acceptance requires an OIDC session");
+  const base = new URL("/apiv2/v1/", origin);
+  const timeoutMs = 120_000;
+  const catalog = await fetchWithAcceptanceDeadline(new URL("models", base), { headers: { Authorization: `Bearer ${auth.accessToken}`, Accept: "application/json" }, redirect: "error" }, timeoutMs);
+  const payload = await catalog.json().catch(() => null) as { data?: Array<{ id?: unknown }> } | null;
+  if (!catalog.ok) throw new Error(`HepAI model catalog failed with HTTP ${catalog.status}`);
+  const availableModelIds = Array.isArray(payload?.data) ? payload.data.map((item) => item?.id).filter((id): id is string => typeof id === "string" && id.length > 0) : [];
+  const preferred = ["deepseek-v4-flash", "deepseek-v4-pro", "gpt-5.6-luna"];
+  const selectedModelIds = preferred.filter((id) => availableModelIds.includes(id));
+  if (selectedModelIds.length !== preferred.length) throw new Error(`HepAI catalog is missing configured release models: ${preferred.filter((id) => !selectedModelIds.includes(id)).join(", ")}`);
+  const results: Array<{ modelId: string; passed: boolean; statusCode: number; contentType: string; sawData: boolean; sawDone: boolean; durationMs: number }> = [];
+  for (const modelId of selectedModelIds) results.push(await probeHepaiModel(base, modelId, auth.accessToken, timeoutMs));
+  if (!results.every((item) => item.passed)) throw new Error("one or more HepAI live model probes failed");
+  return { providerId: "hepai", authentication: "oidc-safe-storage", endpoint: { origin: origin.origin, modelApiPath: base.pathname, protocol: "openai-compatible" }, catalogStatus: catalog.status, availableModelCount: availableModelIds.length, selectedModelIds, results, secretMaterialRecorded: false };
+}
+
+async function probeHepaiModel(base: URL, modelId: string, accessToken: string, timeoutMs: number): Promise<{ modelId: string; passed: boolean; statusCode: number; contentType: string; sawData: boolean; sawDone: boolean; durationMs: number }> {
+  const startedAt = Date.now();
+  const response = await fetchWithAcceptanceDeadline(new URL("chat/completions", base), { method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify({ model: modelId, messages: [{ role: "user", content: "Reply with OK." }], stream: true, max_tokens: 16 }), redirect: "error" }, timeoutMs);
+  const contentType = (response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
+  let sawData = false; let sawDone = false;
+  if (response.ok && contentType === "text/event-stream" && response.body) {
+    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffered = ""; const deadline = Date.now() + timeoutMs;
+    try {
+      while (Date.now() < deadline && !sawDone) {
+        const remaining = Math.max(1, deadline - Date.now());
+        const chunk = await Promise.race([reader.read(), new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`HepAI stream timed out for ${modelId}`)), remaining))]);
+        if (chunk.done) break;
+        buffered += decoder.decode(chunk.value, { stream: true }); sawData ||= /data:\s*\{/.test(buffered); sawDone ||= /data:\s*\[DONE\]/.test(buffered); if (buffered.length > 64_000) buffered = buffered.slice(-32_000);
+      }
+    } finally { await reader.cancel().catch(() => undefined); }
+  }
+  return { modelId, passed: response.ok && contentType === "text/event-stream" && sawData && sawDone, statusCode: response.status, contentType, sawData, sawDone, durationMs: Date.now() - startedAt };
+}
+
+async function fetchWithAcceptanceDeadline(url: URL, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try { return await fetch(url, { ...init, signal: controller.signal }); } finally { clearTimeout(timer); }
 }
 
 function parseConfig(raw: string | undefined): PackagedScenarioConfig {
@@ -88,7 +170,7 @@ async function runSleepWakeScenario(window: BrowserWindow, config: PackagedScena
     lifecycleMonitor.on(type, listener);
   }
   try {
-    const gatewayBefore = await window.webContents.executeJavaScript(`(async () => { const api = window.openDrSai; await api.startInstall({}); const install = await api.getInstallStatus(); if (!install.installed) throw new Error("sleep-wake scenario could not install the bundled Runtime"); if (!(await api.startGateway())) throw new Error("sleep-wake scenario could not start Gateway"); const status = await api.getGatewayStatus(); if (!status.ready || !status.pid) throw new Error("sleep-wake Gateway was not healthy before interruption"); return status; })()`, true);
+    const gatewayBefore = await window.webContents.executeJavaScript(`(async () => { const api = window.openDrSai; await api.startInstall({}); const install = await api.getInstallStatus(); if (!install.installed) throw new Error("sleep-wake scenario could not install the bundled Runtime"); await api.startGateway(); for (let attempt = 0; attempt < 60; attempt += 1) { const status = await api.getGatewayStatus(); if (status.ready && status.pid) return status; await new Promise((resolve) => setTimeout(resolve, 1000)); } throw new Error("sleep-wake Gateway was not healthy before interruption"); })()`, true);
     await writeFile(config.readyPath, `${JSON.stringify({ ready: true, scenario: "sleep-wake", appPid: process.pid, gatewayBefore, expectedEvents: eventNames }, null, 2)}\n`, "utf8");
     const timeoutMs = Math.max(60_000, Math.min(config.durationMs ?? 900_000, 1_800_000));
     await waitUntil(() => eventNames.every((type) => observed.some((event) => event.type === type)), timeoutMs, `sleep-wake did not observe all native lifecycle events: ${observed.map((event) => event.type).join(",")}`);
@@ -103,8 +185,73 @@ async function runSleepWakeScenario(window: BrowserWindow, config: PackagedScena
   }
 }
 
+async function runSystemEventsScenario(window: BrowserWindow): Promise<unknown> {
+  const gateway = await window.webContents.executeJavaScript(`(async () => {
+    const api = window.openDrSai;
+    if (!(await api.startGateway())) throw new Error("system-events could not start Gateway");
+    const status = await api.getGatewayStatus();
+    if (!status.ready || !status.pid) throw new Error("system-events Gateway was not healthy before interruption");
+    return status;
+  })()`, true);
+  const observation = window.webContents.executeJavaScript(`(() => {
+    const api = window.openDrSai;
+    return new Promise((resolve, reject) => {
+      const events = [];
+      const timeout = setTimeout(() => { off(); reject(new Error("system-events did not observe display and network recovery")); }, 10000);
+      const off = api.onLifecycleEvent((event) => {
+        events.push(event);
+        if (events.some((item) => item.reason === "display-change") && events.some((item) => item.reason === "network-online")) {
+          clearTimeout(timeout); off(); resolve({ events, displayRecovered: true, networkRecovered: events.some((item) => item.reason === "network-online" && item.recoveredGateway === true) });
+        }
+      });
+    });
+  })()`, true) as Promise<{ events: Array<{ reason: string; recoveredGateway: boolean }>; displayRecovered: boolean; networkRecovered: boolean }>;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  try {
+    (screen as unknown as NodeJS.EventEmitter).emit("display-metrics-changed");
+    setPackagedNetworkOnlineForE2e(false);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    setPackagedNetworkOnlineForE2e(true);
+    const result = await observation;
+    if (!result.displayRecovered || !result.networkRecovered) throw new Error(`system-events recovery was incomplete: ${JSON.stringify(result)}`);
+    return { gateway, ...result };
+  } finally {
+    setPackagedNetworkOnlineForE2e(null);
+  }
+}
+
 function buildScenarioScript(scenario: PackagedScenario, config: PackagedScenarioConfig): string {
   return `(() => { const terminalRoundtrip = ${terminalRoundtrip.toString()}; return (${rendererScenario.toString()})(${JSON.stringify(scenario)}, ${JSON.stringify(config)}); })()`;
+}
+
+async function verifyPackagedSshForward(window: BrowserWindow, raw: unknown): Promise<unknown> {
+  const result = raw as { restartPhase?: "prepare" | "restore"; hostAlias?: string; workspace?: { id?: string }; worktree?: { workspaceId?: string }; portForward?: { portForwardId?: string; localPort?: number } };
+  const id = result.portForward?.portForwardId;
+  const port = result.portForward?.localPort;
+  if (!id || !Number.isInteger(port)) throw new Error("packaged SSH scenario did not return an active Port Forward");
+  const payload = `opendrsai-packaged-ssh-${randomUUID()}`;
+  const echoed = await tcpRoundtrip(port!, payload);
+  if (echoed !== payload) throw new Error("packaged SSH Port Forward corrupted its TCP payload");
+  if (result.restartPhase === "prepare") return { ...result, tcpRoundtrip: true, persistedForRestart: true };
+  if (result.restartPhase === "restore") {
+    const cleanup = await window.webContents.executeJavaScript(`(async () => { const api = window.openDrSai; const removed = await api.removePortForward(${JSON.stringify(id)}); const workspaceDisconnected = await api.disconnectRemoteWorkspace(${JSON.stringify(result.workspace?.id)}); const disconnected = await api.disconnectSshHost(${JSON.stringify(result.hostAlias)}); return { removed, workspaceDisconnected, disconnected }; })()`, true) as { removed?: boolean; workspaceDisconnected?: boolean; disconnected?: { changed?: boolean } };
+    if (!cleanup.removed || !cleanup.workspaceDisconnected || !cleanup.disconnected?.changed) throw new Error("restored packaged SSH resources did not cleanly shut down");
+    return { ...result, tcpRoundtrip: true, restoredAfterRestart: true, cleanup: true };
+  }
+  const cleanup = await window.webContents.executeJavaScript(`(async () => { const api = window.openDrSai; const removed = await api.removePortForward(${JSON.stringify(id)}); const worktreeDisconnected = await api.disconnectRemoteWorkspace(${JSON.stringify(result.worktree?.workspaceId)}); const workspaceDisconnected = await api.disconnectRemoteWorkspace(${JSON.stringify(result.workspace?.id)}); const disconnected = await api.disconnectSshHost(${JSON.stringify(result.hostAlias)}); return { removed, worktreeDisconnected, workspaceDisconnected, disconnected }; })()`, true) as { removed?: boolean; worktreeDisconnected?: boolean; workspaceDisconnected?: boolean; disconnected?: { changed?: boolean } };
+  if (!cleanup.removed || !cleanup.worktreeDisconnected || !cleanup.workspaceDisconnected || !cleanup.disconnected?.changed) throw new Error("packaged SSH resources did not cleanly shut down");
+  return { ...result, tcpRoundtrip: true, cleanup: true };
+}
+
+function tcpRoundtrip(port: number, payload: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = connectTcp({ host: "127.0.0.1", port }); let output = "";
+    const timer = setTimeout(() => { socket.destroy(); reject(new Error("packaged SSH Port Forward roundtrip timed out")); }, 5_000);
+    socket.setEncoding("utf8");
+    socket.once("error", (error) => { clearTimeout(timer); reject(error); });
+    socket.once("connect", () => socket.write(payload));
+    socket.on("data", (chunk) => { output += chunk; if (output.length >= payload.length) { clearTimeout(timer); socket.end(); resolve(output); } });
+  });
 }
 
 async function rendererScenario(scenario: PackagedScenario, config: PackagedScenarioConfig): Promise<unknown> {
@@ -113,6 +260,193 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
   if (descriptor.id !== "macos") throw new Error("packaged scenario did not load the macOS platform adapter");
 
   if (scenario === "performance-ready") return { descriptor, interactive: true };
+
+  if (scenario === "auth-cycle") {
+    await api.logout({ clearLocalData: false });
+    const before = await api.getAuthSession();
+    if (before.authenticated) throw new Error("auth-cycle did not start logged out");
+    const login = await api.login({ developerBypass: true, rememberMe: false });
+    const authenticated = await api.getAuthSession();
+    if (!login.ok || !authenticated.authenticated || authenticated.user?.id !== "packaged-l5-user") throw new Error("auth-cycle login did not establish the isolated identity");
+    const logout = await api.logout({ clearLocalData: false });
+    const after = await api.getAuthSession();
+    if (!logout.ok || after.authenticated) throw new Error("auth-cycle logout did not invalidate the session");
+    return { descriptor, loggedOutBefore: true, loggedIn: true, loggedOutAfter: true, userId: authenticated.user?.id };
+  }
+
+  if (scenario === "ssh-loopback") {
+    const phase = (name: string) => console.info(`[packaged-ssh-loopback] ${name}`);
+    if (!config.remotePort || !config.remoteWorkspacePath) throw new Error("ssh-loopback scenario requires remotePort and remoteWorkspacePath");
+    if (config.restartPhase === "prepare") {
+      const host = (await api.listSshHosts()).find((item) => item.alias === "loopback-opendrsai"); if (!host) throw new Error("restart prepare SSH host is missing");
+      if ((await api.diagnoseSshHost(host.alias)).state !== "reachable") throw new Error("restart prepare could not reuse the approved Host Key");
+      await api.connectSshHost(host.alias);
+      const workspace = await api.connectRemoteWorkspace({ hostAlias: host.alias, path: config.remoteWorkspacePath, name: "Packaged restart Remote Workspace", trusted: true });
+      const authorization = { permissionGranted: true as const, approvalId: "approval:00000000-0000-4000-8000-000000000011", operationId: "packaged-restart-forward", correlationId: "packaged-restart-forward" };
+      const portForward = await api.createPortForward({ hostAlias: host.alias, workspaceId: workspace.id, remotePort: config.remotePort, reconnectPolicy: "automatic", authorization });
+      if (portForward.status !== "active") throw new Error("restart prepare Port Forward was not active");
+      return { descriptor, restartPhase: "prepare", hostAlias: host.alias, workspace, portForward };
+    }
+    if (config.restartPhase === "restore") {
+      let portForward; for (let attempt = 0; attempt < 200; attempt += 1) { portForward = (await api.listPortForwards({ hostAlias: "loopback-opendrsai" }))[0]; if (portForward?.status === "active") break; await new Promise((resolve) => setTimeout(resolve, 50)); }
+      if (!portForward || portForward.status !== "active") throw new Error("Port Forward Registry did not restore after App restart");
+      const workspace = (await api.listWorkspaces()).find((item) => item.id === portForward.workspaceId && item.remote?.hostAlias === "loopback-opendrsai");
+      if (!workspace) throw new Error("restored Port Forward lost its Remote Workspace owner");
+      let workspaceReady = false; for (let attempt = 0; attempt < 200; attempt += 1) { const status = await api.getRemoteWorkspaceStatus(workspace.id); if (status.connected && status.gatewayReady) { workspaceReady = true; break; } await new Promise((resolve) => setTimeout(resolve, 50)); }
+      if (!workspaceReady) throw new Error("Remote Workspace did not reconnect after App restart");
+      return { descriptor, restartPhase: "restore", hostAlias: "loopback-opendrsai", workspace, portForward };
+    }
+    phase("inventory");
+    const hosts = await api.listSshHosts();
+    const host = hosts.find((item) => item.alias === "loopback-opendrsai");
+    if (!host) throw new Error("packaged SSH inventory did not resolve the loopback host");
+    const beforeApproval = await api.diagnoseSshHost(host.alias);
+    if (beforeApproval.state === "reachable") throw new Error("unapproved Host Key unexpectedly allowed packaged SSH access");
+    const keys = await api.inspectSshHostKeys(host.alias);
+    if (!keys.length || !keys.every((key) => key.fingerprint)) throw new Error("packaged Host Key review did not return fingerprints");
+    if (!(await api.approveSshHostKey(host.alias))) throw new Error("packaged Host Key approval failed");
+    phase("host-key-approved");
+    const afterApproval = await api.diagnoseSshHost(host.alias);
+    if (afterApproval.state !== "reachable") throw new Error(`approved packaged SSH host was not reachable: ${afterApproval.state}`);
+    const preflight = await api.preflightRemoteGateway(host.alias);
+    if (!preflight.pythonVersion || !preflight.operatingSystem || !preflight.architecture || !Array.isArray(preflight.issues)) throw new Error("packaged Remote Gateway preflight was incomplete");
+    await api.connectSshHost(host.alias);
+    phase("ssh-connected");
+    const workspace = await Promise.race([
+      api.connectRemoteWorkspace({ hostAlias: host.alias, path: config.remoteWorkspacePath, name: "Packaged Remote Workspace", trusted: true }),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("packaged Remote Workspace connect exceeded 45 seconds")), 45_000)),
+    ]);
+    phase("workspace-connected");
+    const workspaceStatus = await api.getRemoteWorkspaceStatus(workspace.id);
+    if (!workspaceStatus.connected || !workspaceStatus.gatewayReady || !workspaceStatus.runtimeId || !workspaceStatus.instanceId) throw new Error("packaged Remote Workspace handshake was incomplete");
+    const localGatewayBeforeMobile = await api.getGatewayStatus();
+    const mobileReadiness = await api.getMobilePairingReadiness();
+    const localGatewayAfterMobile = await api.getGatewayStatus();
+    if (mobileReadiness.gateway_runtime_id !== workspaceStatus.runtimeId) throw new Error("mobile pairing did not target the selected Remote Workspace Runtime");
+    if (localGatewayBeforeMobile.ready || localGatewayAfterMobile.ready) throw new Error("remote mobile pairing unexpectedly started or used the local Runtime");
+    const files = await api.listWorkspaceFiles({ workspacePath: workspace.path, workspaceId: workspace.id, maxDepth: 2 });
+    if (!files.nodes.some((node) => node.relativePath === "remote.txt")) throw new Error("packaged Remote Workspace file tree omitted remote.txt");
+    const preview = await api.previewWorkspaceFile({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt` });
+    if (preview.content !== "packaged remote workspace\n") throw new Error(`packaged Remote Workspace preview was invalid: ${JSON.stringify(preview)}`);
+    if (!preview.fileHash) throw new Error("packaged Remote Workspace preview omitted its concurrency hash");
+    const externalWrite = await api.writeWorkspaceFile({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt`, content: "packaged external update\n", expectedHash: "", mode: "overwrite" });
+    if (externalWrite.status !== "saved") throw new Error("packaged Remote Workspace external-update fixture failed");
+    const conflict = await api.writeWorkspaceFile({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt`, content: "stale desktop update\n", expectedHash: preview.fileHash });
+    if (conflict.status !== "conflict" || !conflict.currentHash || conflict.currentHash === preview.fileHash) throw new Error(`packaged Remote Workspace did not reject a stale file write: ${JSON.stringify(conflict)}`);
+    const saved = await api.writeWorkspaceFile({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt`, content: "packaged remote workspace updated\n", expectedHash: "", mode: "overwrite" });
+    if (saved.status !== "saved") throw new Error(`packaged Remote Workspace write failed: ${saved.status}`);
+    const git = await api.getWorkspaceGitDiff({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt` });
+    if (!git.diff.includes("packaged remote workspace updated")) throw new Error("packaged Remote Workspace Git diff omitted the remote change");
+    if (!git.diffHash) throw new Error("packaged Remote Workspace Git diff omitted its review hash");
+    const staged = await api.stageWorkspaceFile({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt`, expectedDiffHash: git.diffHash });
+    if (!staged.staged) throw new Error("packaged Remote Workspace Git stage failed");
+    const stagedDiff = await api.getWorkspaceGitDiff({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt`, staged: true });
+    if (!stagedDiff.diff.includes("packaged remote workspace updated")) throw new Error("packaged Remote Workspace staged diff omitted the reviewed change");
+    const commitProposal = await api.requestGitCommitApproval({ workspacePath: workspace.path, message: "Packaged remote approved commit", requestId: "packaged-remote-approved-commit" });
+    if (!commitProposal.queued || !commitProposal.approval || !(await api.decideApproval({ id: commitProposal.approval.id, approved: true }))) throw new Error("packaged Remote Workspace Git commit approval failed");
+    const afterCommit = await api.getWorkspaceGitDiff({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt` });
+    if (afterCommit.diff) throw new Error("packaged Remote Workspace Git commit left an unstaged diff");
+    const revertCandidate = await api.writeWorkspaceFile({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt`, content: "packaged remote revert candidate\n", expectedHash: "", mode: "overwrite" });
+    if (revertCandidate.status !== "saved") throw new Error("packaged Remote Workspace revert candidate write failed");
+    const revertDiff = await api.getWorkspaceGitDiff({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt` });
+    if (!revertDiff.diffHash) throw new Error("packaged Remote Workspace revert review hash is missing");
+    const reverted = await api.revertWorkspaceFile({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt`, expectedDiffHash: revertDiff.diffHash });
+    if (!reverted.reverted) throw new Error("packaged Remote Workspace Git revert failed");
+    const afterRevert = await api.previewWorkspaceFile({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt` });
+    if (afterRevert.content !== "packaged remote workspace updated\n") throw new Error("packaged Remote Workspace Git revert did not restore committed content");
+    const checkpointBaseline = await api.writeWorkspaceFile({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt`, content: "packaged remote checkpoint baseline\n", expectedHash: "", mode: "overwrite" });
+    if (checkpointBaseline.status !== "saved") throw new Error("packaged Remote Workspace checkpoint baseline write failed");
+    const threads = await api.listRemoteThreads(workspace.id);
+    if (!Array.isArray(threads)) throw new Error("packaged Remote Workspace Thread listing failed");
+    const auth = await api.login({ developerBypass: true, rememberMe: false });
+    if (!auth.ok || auth.session?.user?.id !== "packaged-l5-user") throw new Error("packaged Remote Thread fixture did not establish its isolated identity");
+    const remoteChatRequestId = "packaged_chat_recovery_001";
+    const remoteChatThreadId = "packaged-remote-chat-thread-001";
+    const remoteChatEvents: Array<{ type: string; content?: string }> = [];
+    let resolveRemoteChat: ((type: string) => void) | undefined;
+    const remoteChatTerminal = new Promise<string>((resolve) => { resolveRemoteChat = resolve; });
+    const offRemoteChat = api.onChatEvent((event) => {
+      if (event.requestId !== remoteChatRequestId) return;
+      remoteChatEvents.push({ type: event.type, content: event.content });
+      if (event.type === "done" || event.type === "error" || event.type === "aborted") resolveRemoteChat?.(event.type);
+    });
+    const startedRemoteChat = await api.startChat({ requestId: remoteChatRequestId, threadId: remoteChatThreadId, sessionId: remoteChatThreadId, runId: "packaged-remote-chat-run-001", agentId: "my-drsai", workspacePath: workspace.path, workspaceId: workspace.id, metadata: { packaged_recovery_fixture: true }, messages: [{ role: "user", content: "Find packaged remote thread marker." }] });
+    if (startedRemoteChat !== remoteChatRequestId) throw new Error("packaged Remote Thread chat returned the wrong request identity");
+    const remoteChatTerminalType = await Promise.race([remoteChatTerminal, new Promise<string>((_, reject) => setTimeout(() => reject(new Error("packaged Remote Thread chat timed out")), 20_000))]);
+    offRemoteChat();
+    if (remoteChatTerminalType !== "done" || !remoteChatEvents.some((event) => event.type === "chunk" && event.content?.includes("beta"))) throw new Error("packaged Remote Thread stream did not recover to a completed response");
+    const remoteThread = (await api.listThreads()).find((thread) => thread.id === remoteChatThreadId);
+    if (!remoteThread?.runtimeSessionId) throw new Error("packaged Remote Thread did not persist its Runtime Session identity");
+    const remoteSnapshot = await api.getThreadSnapshot(remoteChatThreadId);
+    if (!remoteSnapshot?.messages.some((message) => message.content.includes("beta"))) throw new Error("packaged Remote Thread snapshot omitted the remote response");
+    const remoteSearch = await api.searchThreadMessages({ query: "beta", threadIds: [remoteChatThreadId], limit: 5 });
+    if (!remoteSearch.some((item) => item.threadId === remoteChatThreadId)) throw new Error("packaged Remote Thread search omitted the remote Runtime result");
+    let resolveSnapshotEvent: (() => void) | undefined;
+    const snapshotEvent = new Promise<void>((resolve) => { resolveSnapshotEvent = resolve; });
+    const offSnapshot = api.onThreadSnapshot((event) => { if (event.threadId === remoteChatThreadId && event.snapshot.messages.some((message) => message.content.includes("beta"))) resolveSnapshotEvent?.(); });
+    if (!(await api.subscribeThreadSnapshot(remoteChatThreadId))) throw new Error("packaged Remote Thread live subscription was rejected");
+    await Promise.race([snapshotEvent, new Promise<void>((_, reject) => setTimeout(() => reject(new Error("packaged Remote Thread live snapshot timed out")), 10_000))]);
+    if (!(await api.unsubscribeThreadSnapshot(remoteChatThreadId))) throw new Error("packaged Remote Thread live subscription did not stop");
+    offSnapshot();
+    const checkpoint = await api.createWorkspaceCheckpoint({ workspacePath: workspace.path, workspaceId: workspace.id, label: "Packaged remote checkpoint" });
+    if (!checkpoint.id || checkpoint.changedFileCount < 1) throw new Error("packaged Remote Workspace checkpoint did not capture the changed file");
+    const changedAgain = await api.writeWorkspaceFile({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt`, content: "packaged remote workspace after checkpoint\n", expectedHash: "", mode: "overwrite" });
+    if (changedAgain.status !== "saved") throw new Error("packaged Remote Workspace post-checkpoint write failed");
+    const checkpointPreview = await api.previewWorkspaceCheckpoint({ workspacePath: workspace.path, workspaceId: workspace.id, checkpointId: checkpoint.id });
+    if (checkpointPreview.changedEntryCount < 1) throw new Error("packaged Remote Workspace checkpoint preview omitted the changed file");
+    const queuedRestore = await api.restoreWorkspaceCheckpoint({ workspacePath: workspace.path, workspaceId: workspace.id, checkpointId: checkpoint.id, operationId: "packaged-remote-checkpoint-restore" });
+    if (!queuedRestore.approvalQueued || !queuedRestore.approvalId || !(await api.decideApproval({ id: queuedRestore.approvalId, approved: true }))) throw new Error("packaged Remote Workspace checkpoint restore approval failed");
+    const restoredPreview = await api.previewWorkspaceFile({ workspacePath: workspace.path, workspaceId: workspace.id, path: `${workspace.path}/remote.txt` });
+    if (restoredPreview.content !== "packaged remote checkpoint baseline\n") throw new Error("packaged Remote Workspace checkpoint did not restore content");
+    const worktree = await api.prepareForkWorktree({ workspacePath: workspace.path, intent: "packaged remote worktree" });
+    if (worktree.location !== "remote" || worktree.transport !== "ssh" || !worktree.workspaceId || !worktree.worktreePath) throw new Error("packaged remote Worktree did not inherit the SSH Runtime");
+    const worktreeFiles = await api.listWorkspaceFiles({ workspacePath: worktree.worktreePath, workspaceId: worktree.workspaceId, maxDepth: 2 });
+    if (!worktreeFiles.nodes.some((node) => node.relativePath === "remote.txt")) throw new Error("packaged remote Worktree files were unavailable through the parent Runtime");
+    const authorization = { permissionGranted: true as const, approvalId: "approval:00000000-0000-4000-8000-000000000008", operationId: "packaged-ssh-forward", correlationId: "packaged-ssh-forward" };
+    const created = await api.createPortForward({ hostAlias: host.alias, workspaceId: workspace.id, remotePort: config.remotePort, reconnectPolicy: "automatic", authorization });
+    if (created.status !== "active") throw new Error(`packaged Port Forward was not active: ${created.status}`);
+    const paused = await api.pausePortForward(created.portForwardId);
+    if (paused.status !== "paused") throw new Error("packaged Port Forward did not pause");
+    const resumed = await api.resumePortForward(created.portForwardId);
+    if (resumed.status !== "active") throw new Error("packaged Port Forward did not resume");
+    const artifactResults: Array<{ version: string; outcome: string }> = [];
+    const installArtifact = async (artifact: NonNullable<PackagedScenarioConfig["gatewayArtifacts"]>[number], action: "install" | "upgrade") => {
+      const proposal = await api.requestRemoteGatewayInstallApproval({ hostAlias: host.alias, action, version: artifact.version, artifactPath: artifact.artifactPath, artifactSha256: artifact.artifactSha256, artifactPublisher: artifact.artifactPublisher, artifactSignature: artifact.artifactSignature });
+      if (!proposal.queued || !proposal.approval) throw new Error(`Remote Gateway ${action} did not stop at Approval Center`);
+      if (artifact.cancel) {
+        const events: Array<{ state: string; phase: string }> = []; const unsubscribe = api.onRemoteGatewayOperation((event) => events.push(event));
+        const decision = api.decideApproval({ id: proposal.approval.id, approved: true });
+        for (let attempt = 0; attempt < 100 && !events.some((event) => event.state === "running"); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+        if (!(await api.cancelRemoteGatewayOperation(host.alias))) throw new Error("active Remote Gateway transaction could not be cancelled");
+        let rejected = false; try { await decision; } catch { rejected = true; } finally { unsubscribe(); }
+        if (!rejected || !events.some((event) => event.state === "cancelled")) throw new Error("cancelled Remote Gateway transaction did not fail closed");
+        artifactResults.push({ version: artifact.version, outcome: "cancelled" }); return;
+      }
+      let rejected = false; try { await api.decideApproval({ id: proposal.approval.id, approved: true }); } catch { rejected = true; }
+      if (artifact.incompatible) { if (!rejected) throw new Error("incompatible Remote Gateway artifact was accepted"); artifactResults.push({ version: artifact.version, outcome: "rejected" }); return; }
+      if (rejected) throw new Error(`Remote Gateway ${action} failed`);
+      artifactResults.push({ version: artifact.version, outcome: "installed" });
+    };
+    const artifacts = config.gatewayArtifacts ?? [];
+    if (artifacts.length) {
+      await installArtifact(artifacts[0], "install");
+      await installArtifact(artifacts[1], "upgrade");
+      const upgraded = await api.preflightRemoteGateway(host.alias);
+      if (upgraded.currentRelease !== artifacts[1].version || upgraded.previousRelease !== artifacts[0].version) throw new Error("Remote Gateway upgrade did not preserve the previous release");
+      await installArtifact(artifacts[2], "upgrade");
+      const afterFailure = await api.preflightRemoteGateway(host.alias);
+      if (afterFailure.currentRelease !== artifacts[1].version) throw new Error("failed Remote Gateway upgrade damaged current release");
+      await installArtifact(artifacts[3], "upgrade");
+      const afterCancel = await api.preflightRemoteGateway(host.alias);
+      if (afterCancel.currentRelease !== artifacts[1].version) throw new Error("cancelled Remote Gateway upgrade damaged current release");
+      const rollback = await api.requestRemoteGatewayInstallApproval({ hostAlias: host.alias, action: "rollback" });
+      if (!rollback.queued || !rollback.approval || !(await api.decideApproval({ id: rollback.approval.id, approved: true }))) throw new Error("Remote Gateway rollback approval failed");
+      const rolledBack = await api.preflightRemoteGateway(host.alias);
+      if (rolledBack.currentRelease !== artifacts[0].version || rolledBack.previousRelease !== artifacts[1].version) throw new Error("Remote Gateway rollback state is invalid");
+    }
+    phase("journey-complete");
+    return { descriptor, hostAlias: host.alias, beforeApproval, afterApproval, preflight, workspace, worktree, workspaceStatus, mobileReadiness, mobileSameRuntime: true, fileTree: true, filePreview: true, fileConflict: true, fileWrite: true, gitDiff: true, gitStageRevertCommitApproval: true, threadList: true, remoteThreadStreamSnapshotSearch: true, checkpointLifecycle: true, remoteWorktreeLifecycle: true, gatewayInstallMatrix: artifacts.length === 4, artifactResults, hostKeyCount: keys.length, portForward: resumed };
+  }
 
   if (scenario === "managed-process-crash") {
     if (!(await api.startGateway())) throw new Error("managed crash scenario could not start Gateway");
@@ -151,14 +485,28 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     const [threads, preferences] = await Promise.all([api.listThreads(), api.listUserPreferences()]);
     if (!threads.some((item) => item.id === config.threadId)) throw new Error("persisted thread was lost across process restart");
     if (!preferences.some((item) => item.category === "output_language" && item.value === "zh")) throw new Error("persisted preference was lost across process restart");
+    if (scenario === "restart" && config.scheduledTaskId) {
+      if (!config.workspacePath || !(await api.listScheduledTasks({ workspacePath: config.workspacePath })).some((item) => item.id === config.scheduledTaskId && item.status === "paused")) throw new Error("paused scheduled task was lost across process restart");
+      if (!config.scheduledRunId || !(await api.listWorkflowRuns(config.workspacePath)).some((item) => item.id === config.scheduledRunId)) throw new Error("scheduled Workflow run was lost across process restart");
+    }
+    let activeRunsRecovered = false;
+    if (scenario === "recovery" && config.activeChatRequestId && config.activeChatThreadId && config.activeAgentThreadId) {
+      const recoveredChat = await api.recoverChatRun({ requestId: config.activeChatRequestId, sessionId: config.activeChatThreadId });
+      const recoveredChatContent = recoveredChat.filter((item) => item.type === "oaep" && item.oaepEvent?.type === "event.item.delta").map((item) => (item.oaepEvent?.data?.delta as { text?: string } | undefined)?.text ?? "").join("");
+      const recoveredAgent = await api.recoverAgentRun(config.activeAgentThreadId);
+      if (recoveredChatContent !== "preserved before crash" || !recoveredChat.some((item) => item.type === "error") || recoveredChat.some((item) => item.type === "done") || !recoveredAgent.some((item) => item.type === "start") || !recoveredAgent.some((item) => item.type === "error" && /interrupted/i.test(item.error ?? "")) || recoveredAgent.some((item) => item.type === "done")) throw new Error("active Chat/Agent runs were not recovered into explicit reviewable terminal states after forced App crash");
+      activeRunsRecovered = true;
+    }
     if (scenario === "recovery" && config.approvalId) {
       const pending = await api.listPendingApprovals();
       if (!pending.some((item) => item.id === config.approvalId && item.source === "git")) throw new Error("pending git approval was lost across forced restart");
       if (!(await api.decideApproval({ id: config.approvalId, approved: false, reason: "reject" }))) throw new Error("recovered git approval could not be rejected");
       if ((await api.listPendingApprovals()).some((item) => item.id === config.approvalId)) throw new Error("rejected recovered approval remained pending");
-      return { descriptor, threadId: config.threadId, threadRecovered: true, preferenceRecovered: true, approvalRecoveredRejected: true };
+      return { descriptor, threadId: config.threadId, threadRecovered: true, preferenceRecovered: true, approvalRecoveredRejected: true, activeRunsRecovered };
     }
-    return { descriptor, threadId: config.threadId, threadRecovered: true, preferenceRecovered: true };
+    const resourceSettleMs = config.resourceSettleMs;
+    if (scenario === "restart" && resourceSettleMs) await new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(resourceSettleMs, 5_000))));
+    return { descriptor, threadId: config.threadId, threadRecovered: true, preferenceRecovered: true, scheduledTaskRecovered: Boolean(config.scheduledTaskId) };
   }
 
   if (scenario === "approval-replay") {
@@ -189,9 +537,38 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     if (!(await api.deleteThread(lifecycleThread.id)) || await api.deleteThread(lifecycleThread.id) || await api.getThreadSnapshot(lifecycleThread.id) !== null) throw new Error("thread delete was not idempotent or left its snapshot behind");
 
     const agents = await api.listAgents();
-    if (!agents.some((item) => item.id === "my-drsai" && item.source === "local")) throw new Error("local Agent was missing from the packaged catalog");
-    if (!(await api.setDefaultAgent("my-drsai")).saved || !(await api.recordAgentUsage("my-drsai")).saved) throw new Error("local Agent default or usage preference did not persist");
+    const localAgent = agents.find((item) => item.source === "local" && item.id !== "my-codex");
+    if (!localAgent) throw new Error(`local Agent was missing from the packaged catalog: ${JSON.stringify(agents.map((item) => ({ id: item.id, source: item.source, available: item.available, error: item.error })))}`);
+    const localAgentId = localAgent.id;
+    if (!(await api.setDefaultAgent(localAgentId)).saved || !(await api.recordAgentUsage(localAgentId)).saved) throw new Error("local Agent default or usage preference did not persist");
     if ((await api.setDefaultAgent("packaged-missing-agent")).saved) throw new Error("unknown Agent was accepted as the default");
+    const packagedProviderId = "packaged-fixture";
+    const packagedModelId = "packaged-model";
+    await api.saveMyDrSaiModelProvider(packagedProviderId, {
+      base_url: "http://127.0.0.1:9/v1",
+      wire_api: "openai",
+      requires_api_key: false,
+      models: {
+        [packagedModelId]: {
+          input_modalities: ["text"], output_modalities: ["text"], api_protocol: "openai",
+          enabled: true, capabilities: ["chat", "tool_calling", "reasoning"],
+        },
+      },
+    });
+    const currentModelPolicy = await api.getMyDrSaiAgentModelPolicy(localAgentId);
+    const packagedModelPolicy = await api.updateMyDrSaiAgentModelPolicy(localAgentId, {
+      agent_id: localAgentId,
+      primary_model: { mode: "explicit", ref: { provider_id: packagedProviderId, model_id: packagedModelId } },
+      image_understanding_model: null,
+      image_generation_model: null,
+      text_to_speech_model: null,
+      speech_to_text_model: null,
+      reasoning_effort: null,
+      expected_revision: currentModelPolicy.revision,
+    });
+    if (!packagedModelPolicy.valid || packagedModelPolicy.effective_ref?.provider_id !== packagedProviderId || packagedModelPolicy.effective_ref.model_id !== packagedModelId) {
+      throw new Error(`packaged Agent primary model policy did not converge: ${JSON.stringify(packagedModelPolicy)}`);
+    }
 
     const chatRequestId = "packaged_chat_abort_001";
     const chatThreadId = "packaged-chat-thread-001";
@@ -203,43 +580,66 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
       chatEvents.push({ type: event.type, seq: event.seq });
       if (event.type === "done" || event.type === "error" || event.type === "aborted") resolveChatTerminal?.(event.type);
     });
-    const startedChatId = await api.startChat({ requestId: chatRequestId, threadId: chatThreadId, sessionId: chatThreadId, runId: "packaged-chat-run-001", agentId: "my-drsai", workspacePath: workspace.path, messages: [{ role: "user", content: "Hold this packaged Chat until explicit cancellation." }] });
-    if (startedChatId !== chatRequestId || !(await api.abortChat(chatRequestId))) throw new Error("packaged Chat did not start and accept explicit cancellation");
+    const startedChatId = await api.startChat({ requestId: chatRequestId, threadId: chatThreadId, sessionId: chatThreadId, runId: "packaged-chat-run-001", agentId: localAgentId, workspacePath: workspace.path, messages: [{ role: "user", content: "Hold this packaged Chat until explicit cancellation." }] });
+    const cancelled = await api.cancelChatTurn({ requestId: chatRequestId, sessionId: chatThreadId });
+    if (startedChatId !== chatRequestId || !cancelled.accepted) throw new Error("packaged Chat did not start and accept explicit cancellation");
     const chatTerminalType = await Promise.race([chatTerminal, new Promise<string>((_, reject) => setTimeout(() => reject(new Error("packaged Chat cancellation timed out")), 10_000))]);
     offChat();
-    if (chatTerminalType !== "aborted" || !chatEvents.some((item) => item.type === "start") || chatEvents.some((item) => item.type === "done") || chatEvents.some((item, index) => index > 0 && Number(item.seq) <= Number(chatEvents[index - 1]?.seq))) throw new Error("packaged Chat event stream did not terminate once in monotonic aborted state");
+    const chatTerminalEvents = chatEvents.filter((item) => item.type === "done" || item.type === "error" || item.type === "aborted");
+    if (chatTerminalType !== "aborted" || chatTerminalEvents.length !== 1 || chatTerminalEvents[0]?.type !== "aborted" || chatEvents.some((item, index) => index > 0 && Number(item.seq) <= Number(chatEvents[index - 1]?.seq))) {
+      throw new Error(`packaged Chat event stream did not terminate once in monotonic aborted state: ${JSON.stringify(chatEvents)}`);
+    }
     let recoveredChat: Awaited<ReturnType<typeof api.recoverChatRun>> = [];
     for (let attempt = 0; attempt < 50; attempt += 1) {
       recoveredChat = await api.recoverChatRun({ requestId: chatRequestId, sessionId: chatThreadId });
       if (recoveredChat.some((item) => item.type === "aborted")) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    if (!recoveredChat.some((item) => item.type === "start") || !recoveredChat.some((item) => item.type === "aborted") || new Set(recoveredChat.map((item) => item.seq)).size !== recoveredChat.length || await api.respondChatInput(chatRequestId, "late input")) throw new Error("cancelled Chat did not recover an ordered deduplicated journal or rejected late input");
+    const acceptedLateChatInput = await api.respondChatInput(chatRequestId, "late input");
+    const recoveredChatTerminals = recoveredChat.filter((item) => item.type === "done" || item.type === "error" || item.type === "aborted");
+    if (recoveredChatTerminals.length !== 1 || recoveredChatTerminals[0]?.type !== "aborted" || new Set(recoveredChat.map((item) => item.seq)).size !== recoveredChat.length || acceptedLateChatInput) {
+      throw new Error(`cancelled Chat did not recover an ordered deduplicated journal or rejected late input: ${JSON.stringify({ events: recoveredChat.map((item) => ({ type: item.type, seq: item.seq, runId: item.runId })), acceptedLateChatInput })}`);
+    }
 
     const recoveryChatRequestId = "packaged_chat_recovery_001";
     const recoveryChatThreadId = "packaged-chat-recovery-thread-001";
-    const recoveryChatEvents: Array<{ type: string; content?: string; connection?: string; seq?: number }> = [];
+    const recoveryChatEvents: Array<{ type: string; content?: string; error?: string; connection?: string; seq?: number; oaepType?: string; oaepSequence?: number }> = [];
     let resolveRecoveryChatTerminal: ((type: string) => void) | undefined;
     const recoveryChatTerminal = new Promise<string>((resolve) => { resolveRecoveryChatTerminal = resolve; });
     const offRecoveryChat = api.onChatEvent((event) => {
       if (event.requestId !== recoveryChatRequestId) return;
-      recoveryChatEvents.push({ type: event.type, content: event.content, connection: event.connection?.status, seq: event.seq });
+      const oaepDelta = event.oaepEvent?.data?.delta as { text?: string } | undefined;
+      recoveryChatEvents.push({ type: event.type, content: event.content ?? oaepDelta?.text, error: event.error, connection: event.connection?.status, seq: event.seq, oaepType: event.oaepEvent?.type, oaepSequence: event.oaepEvent?.sequence });
       if (event.type === "done" || event.type === "error" || event.type === "aborted") resolveRecoveryChatTerminal?.(event.type);
+      if (event.type === "structured" && event.structuredEvent?.type === "turn.completed") resolveRecoveryChatTerminal?.("done");
+      if (event.type === "structured" && event.structuredEvent?.type === "turn.error") resolveRecoveryChatTerminal?.("error");
+      if (event.type === "structured" && event.structuredEvent?.type === "turn.cancelled") resolveRecoveryChatTerminal?.("aborted");
     });
-    const startedRecoveryChat = await api.startChat({ requestId: recoveryChatRequestId, threadId: recoveryChatThreadId, sessionId: recoveryChatThreadId, runId: "packaged-chat-recovery-run-001", agentId: "my-drsai", workspacePath: workspace.path, metadata: { packaged_recovery_fixture: true }, messages: [{ role: "user", content: "Exercise the packaged incomplete SSE recovery fixture." }] });
+    const startedRecoveryChat = await api.startChat({ requestId: recoveryChatRequestId, threadId: recoveryChatThreadId, sessionId: recoveryChatThreadId, runId: "packaged-chat-recovery-run-001", agentId: localAgentId, workspacePath: workspace.path, metadata: { packaged_recovery_fixture: true }, messages: [{ role: "user", content: "Exercise the packaged incomplete SSE recovery fixture." }] });
     if (startedRecoveryChat !== recoveryChatRequestId) throw new Error("packaged recovery Chat returned the wrong request identity");
     const recoveryChatTerminalType = await Promise.race([recoveryChatTerminal, new Promise<string>((_, reject) => setTimeout(() => reject(new Error("packaged Chat reconnect timed out")), 15_000))]);
     offRecoveryChat();
-    const liveRecoveryContent = recoveryChatEvents.filter((item) => item.type === "chunk").map((item) => item.content ?? "").join("");
-    if (recoveryChatTerminalType !== "done" || !recoveryChatEvents.some((item) => item.type === "connection" && item.connection === "retrying") || !recoveryChatEvents.some((item) => item.type === "connection" && item.connection === "restored") || liveRecoveryContent !== "alpha beta" || (liveRecoveryContent.match(/alpha/g) ?? []).length !== 1 || recoveryChatEvents.some((item, index) => index > 0 && Number(item.seq) <= Number(recoveryChatEvents[index - 1]?.seq))) throw new Error("packaged Chat did not reconnect with a monotonic duplicate-free resumed stream");
+    const liveRecoveryContent = recoveryChatEvents.filter((item) => item.type === "oaep" && item.oaepType === "event.item.delta").map((item) => item.content ?? "").join("");
+    if (recoveryChatTerminalType !== "done" || !recoveryChatEvents.some((item) => item.type === "connection" && item.connection === "retrying") || !recoveryChatEvents.some((item) => item.type === "connection" && item.connection === "restored") || liveRecoveryContent !== "alpha beta" || (liveRecoveryContent.match(/alpha/g) ?? []).length !== 1 || recoveryChatEvents.some((item, index) => index > 0 && Number(item.seq) <= Number(recoveryChatEvents[index - 1]?.seq))) throw new Error(`packaged Chat did not reconnect with a monotonic duplicate-free resumed stream: ${JSON.stringify({ terminal: recoveryChatTerminalType, content: liveRecoveryContent, events: recoveryChatEvents })}`);
+    const liveOaepEvents = recoveryChatEvents.filter((item) => item.type === "oaep");
+    if (!liveOaepEvents.some((item) => item.oaepType === "event.item.delta")
+      || !liveOaepEvents.some((item) => item.oaepType === "event.run.completed")
+      || liveOaepEvents.some((item, index) => index > 0 && Number(item.oaepSequence) <= Number(liveOaepEvents[index - 1]?.oaepSequence))) {
+      throw new Error(`packaged Chat did not expose the authoritative monotonic OAEP reply stream: ${JSON.stringify(liveOaepEvents)}`);
+    }
     let recoveredNetworkChat: Awaited<ReturnType<typeof api.recoverChatRun>> = [];
     for (let attempt = 0; attempt < 50; attempt += 1) {
       recoveredNetworkChat = await api.recoverChatRun({ requestId: recoveryChatRequestId, sessionId: recoveryChatThreadId });
-      if (recoveredNetworkChat.some((item) => item.type === "done")) break;
+      if (recoveredNetworkChat.some((item) => item.type === "done" || (item.type === "structured" && item.structuredEvent?.type === "turn.completed"))) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    const recoveredNetworkContent = recoveredNetworkChat.filter((item) => item.type === "chunk").map((item) => item.content ?? "").join("");
-    if (!recoveredNetworkChat.some((item) => item.type === "connection" && item.connection?.status === "retrying") || !recoveredNetworkChat.some((item) => item.type === "connection" && item.connection?.status === "restored") || !recoveredNetworkChat.some((item) => item.type === "done") || recoveredNetworkContent !== "alpha beta" || (recoveredNetworkContent.match(/alpha/g) ?? []).length !== 1 || new Set(recoveredNetworkChat.map((item) => item.seq)).size !== recoveredNetworkChat.length) throw new Error("recovered Chat journal lost reconnect state or reintroduced replayed content");
+    const recoveredNetworkContent = recoveredNetworkChat.filter((item) => item.type === "oaep" && item.oaepEvent?.type === "event.item.delta").map((item) => (item.oaepEvent?.data?.delta as { text?: string } | undefined)?.text ?? "").join("");
+    const recoveredNetworkCompleted = recoveredNetworkChat.some((item) => item.type === "done" || (item.type === "structured" && item.structuredEvent?.type === "turn.completed"));
+    if (!recoveredNetworkChat.some((item) => item.type === "connection" && item.connection?.status === "retrying") || !recoveredNetworkChat.some((item) => item.type === "connection" && item.connection?.status === "restored") || !recoveredNetworkCompleted || recoveredNetworkContent !== "alpha beta" || (recoveredNetworkContent.match(/alpha/g) ?? []).length !== 1 || new Set(recoveredNetworkChat.map((item) => item.seq)).size !== recoveredNetworkChat.length) throw new Error(`recovered Chat journal lost reconnect state or reintroduced replayed content: ${JSON.stringify({ content: recoveredNetworkContent, events: recoveredNetworkChat.map((item) => ({ type: item.type, seq: item.seq, content: item.content, connection: item.connection?.status })) })}`);
+    const historicalOaep = await api.getThreadSnapshotEnvelope(recoveryChatThreadId, "packaged-oaep-history", { forceFresh: true });
+    if (!historicalOaep || historicalOaep.projection !== "oaep/1" || !JSON.stringify(historicalOaep.snapshot).includes("alpha beta")) {
+      throw new Error(`packaged OAEP history did not reproduce the completed live answer: ${JSON.stringify(historicalOaep)}`);
+    }
 
     const agentRequestId = "packaged_agent_abort_001";
     const agentThreadId = "packaged-agent-thread-001";
@@ -255,14 +655,16 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     if (startedAgent.requestId !== agentRequestId || startedAgent.runId !== "packaged-agent-run-001" || !(await api.abortAgentRun(agentRequestId))) throw new Error("packaged Agent did not start and accept explicit cancellation");
     const agentTerminalType = await Promise.race([agentTerminal, new Promise<string>((_, reject) => setTimeout(() => reject(new Error("packaged Agent cancellation timed out")), 10_000))]);
     offAgent();
-    if (agentTerminalType !== "aborted" || !agentEvents.some((item) => item.type === "start") || agentEvents.some((item) => item.type === "done")) throw new Error("packaged Agent stream did not terminate once in aborted state");
+    const agentTerminalEvents = agentEvents.filter((item) => item.type === "done" || item.type === "error" || item.type === "aborted");
+    if (agentTerminalType !== "aborted" || agentTerminalEvents.length !== 1 || agentTerminalEvents[0]?.type !== "aborted") throw new Error(`packaged Agent stream did not terminate once in aborted state: ${JSON.stringify(agentEvents)}`);
     let recoveredAgent: Awaited<ReturnType<typeof api.recoverAgentRun>> = [];
     for (let attempt = 0; attempt < 50; attempt += 1) {
       recoveredAgent = await api.recoverAgentRun(agentThreadId);
       if (recoveredAgent.some((item) => item.type === "aborted")) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    if (!recoveredAgent.some((item) => item.type === "start") || !recoveredAgent.some((item) => item.type === "aborted") || await api.abortAgentRun(agentRequestId)) throw new Error("cancelled Agent did not recover its journal or allowed duplicate cancellation");
+    const recoveredAgentTerminals = recoveredAgent.filter((item) => item.type === "done" || item.type === "error" || item.type === "aborted");
+    if (recoveredAgentTerminals.length !== 1 || recoveredAgentTerminals[0]?.type !== "aborted" || await api.abortAgentRun(agentRequestId)) throw new Error("cancelled Agent did not recover its journal or allowed duplicate cancellation");
 
     const gitProposal = await api.requestGitCommitApproval({ workspacePath: workspace.path, message: "Packaged L5 approved commit", body: "Verify durable packaged Approval Center execution.", requestId: "packaged-l5-git-approval" });
     if (!gitProposal.queued || !gitProposal.approval || gitProposal.alreadyExecuted) throw new Error("git commit did not stop at Approval Center");
@@ -438,18 +840,59 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     if (reusableRecipe.cachePolicy !== "force_fresh_input_read" || reusableRecipe.inputs.length !== reusableTask.inputs.length || reusableRecipe.inputs.some((item) => !/^[a-f0-9]{64}$/.test(item.sha256)) || reusableRecipe.adjustments.checkItems.length !== 1) throw new Error("reusable task recipe did not enforce fresh hashed inputs and normalized adjustments");
     if (!(await api.listReusableTasks()).some((item) => item.id === reusableTask.id && item.runCount === 1 && item.savedAdjustments.outputLanguage === "en")) throw new Error("reusable task run metadata did not persist");
 
-    const scheduledTask = await api.createScheduledTask({ kind: "scheduled", title: "Packaged L5 due task", cadence: "hourly", target: "Review packaged workflow state", workspacePath: workspace.path, nextRunAt: "2020-01-01T00:00:00.000Z", approvalRequired: false, verification: "Missing Workflow bindings must fail safely.", message: "Packaged scheduled task fixture." });
+    const scheduledTask = await api.createScheduledTask({ kind: "scheduled", title: "Packaged L5 due task", cadence: "hourly", target: "Review packaged workflow state", workspacePath: workspace.path, workflowTemplateId: digestTemplate.id, nextRunAt: "2020-01-01T00:00:00.000Z", approvalRequired: false, verification: "The bound Workflow must start once and survive restart.", message: "Packaged scheduled task fixture." });
     if (!(await api.listScheduledTasks({ workspacePath: workspace.path })).some((item) => item.id === scheduledTask.id)) throw new Error("scheduled task did not persist through packaged IPC");
     const dueResult = await api.runDueScheduledTasks({ workspacePath: workspace.path, now: "2020-01-01T01:00:00.000Z" });
-    if (!dueResult.items.some((item) => item.taskId === scheduledTask.id && item.status === "skipped" && item.reason === "missing_workflow_template")) throw new Error("unbound due task did not fail safely");
+    const scheduledRun = dueResult.runs.find((item) => dueResult.items.some((result) => result.taskId === scheduledTask.id && result.status === "started" && result.workflowRunId === item.id));
+    if (dueResult.triggered !== 1 || !scheduledRun) throw new Error("bound due task did not start exactly one Workflow run");
+    const duplicateDueResult = await api.runDueScheduledTasks({ workspacePath: workspace.path, now: "2020-01-01T01:00:00.000Z" });
+    if (duplicateDueResult.items.some((item) => item.taskId === scheduledTask.id) || (await api.listWorkflowRuns(workspace.path)).filter((item) => item.id === scheduledRun.id).length !== 1) throw new Error("scheduled task repeated the same due occurrence");
     const pausedScheduledTask = await api.updateScheduledTask({ taskId: scheduledTask.id, status: "paused", message: "Paused after packaged due check." });
     if (pausedScheduledTask.status !== "paused") throw new Error("scheduled task pause did not persist");
-    const deletedScheduledTask = await api.deleteScheduledTask({ taskId: scheduledTask.id });
-    if (!deletedScheduledTask.removed || (await api.listScheduledTasks({ workspacePath: workspace.path })).some((item) => item.id === scheduledTask.id)) throw new Error("scheduled task delete did not persist");
+
+    const presentationSourcePath = `${workspace.path}/presentation-source.pdf`;
+    const presentationEvents: Array<{ requestId: string; phase: string }> = [];
+    const offPresentation = api.onManagerPresentationProgress((event) => { presentationEvents.push({ requestId: event.requestId, phase: event.phase }); });
+    const waitForPresentationPhase = async (requestId: string, phases: string[], timeoutMs = 30_000): Promise<string> => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const found = presentationEvents.findLast((event) => event.requestId === requestId && phases.includes(event.phase));
+        if (found) return found.phase;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error(`presentation ${requestId} did not reach ${phases.join("/")}`);
+    };
+    try {
+      const cancelRequestId = "packaged-l5-presentation-cancel";
+      const cancelledGeneration = api.generateManagerPresentation({ requestId: cancelRequestId, workspacePath: workspace.path, sourcePath: presentationSourcePath, audience: "non_expert_managers" });
+      await waitForPresentationPhase(cancelRequestId, ["analyzing"]);
+      if (!(await api.pauseManagerPresentation({ requestId: cancelRequestId })).accepted) throw new Error("packaged presentation pause was not accepted");
+      await waitForPresentationPhase(cancelRequestId, ["paused"]);
+      const pausedRecovery = await api.getManagerPresentationRecovery({ workspacePath: workspace.path, sourcePath: presentationSourcePath });
+      if (pausedRecovery?.requestId !== cancelRequestId || pausedRecovery.phase !== "paused") throw new Error("packaged presentation pause was not recoverable");
+      if (!(await api.resumeManagerPresentation({ requestId: cancelRequestId })).accepted) throw new Error("packaged presentation resume was not accepted");
+      await waitForPresentationPhase(cancelRequestId, ["resuming", "analyzing"]);
+      if (!(await api.cancelManagerPresentation({ requestId: cancelRequestId })).accepted) throw new Error("packaged presentation cancel was not accepted");
+      let cancellationRejected = false;
+      try { await cancelledGeneration; } catch { cancellationRejected = true; }
+      if (!cancellationRejected || await waitForPresentationPhase(cancelRequestId, ["cancelled"]) !== "cancelled") throw new Error("packaged presentation cancellation did not cleanly reject and publish cancellation");
+
+      const retryRequestId = "packaged-l5-presentation-failure";
+      let failed = false;
+      try { await api.generateManagerPresentation({ requestId: retryRequestId, workspacePath: workspace.path, sourcePath: presentationSourcePath, audience: "non_expert_managers", requirements: ["Preserve source evidence."] }); } catch { failed = true; }
+      if (!failed || await waitForPresentationPhase(retryRequestId, ["failed"]) !== "failed") throw new Error("packaged presentation failure did not publish its retryable terminal state");
+      const retriedPresentation = await api.generateManagerPresentation({ requestId: retryRequestId, workspacePath: workspace.path, sourcePath: presentationSourcePath, audience: "non_expert_managers", requirements: ["Preserve source evidence."] });
+      if (!retriedPresentation || !retriedPresentation.quality.ok || retriedPresentation.slideCount < 6 || retriedPresentation.sourcePageCoverage !== 1 || retriedPresentation.speakerNotesCoverage !== 1) throw new Error("packaged presentation retry did not produce a verified editable deck");
+    } finally { offPresentation(); }
 
     await api.recordDiagnostic({ module: "packaged-l5", component: "product-state", operation: "roundtrip", message: "Packaged diagnostic roundtrip", status: "completed", level: "info", kind: "operation" });
     if (!(await api.getDiagnosticSnapshot({ module: "packaged-l5", limit: 20 })).events.some((item) => item.operation === "roundtrip")) throw new Error("diagnostic event did not round-trip through packaged storage");
+    const diagnosticSource = await api.getDiagnosticSourceContext({ source: { file: handoffSourcePath, line: 1, column: 1, language: "typescript" }, workspaceId: workspace.id, contextLines: 2 });
+    if (!diagnosticSource.available || !diagnosticSource.canOpen || diagnosticSource.location.file !== handoffSourcePath || !diagnosticSource.content?.includes("packagedHandoff")) throw new Error("diagnostic source navigation did not resolve the packaged Workspace source");
+    const diagnosticPackage = await api.previewDiagnosticPackage();
+    if (!diagnosticPackage.encrypted || diagnosticPackage.eventCount < 1 || !/^[a-f0-9]{64}$/.test(diagnosticPackage.integritySha256)) throw new Error("production diagnostic package preview was not encrypted or integrity-bound");
 
+    await api.setCompletionNotificationPreference({ enabled: true, language: "zh" });
     const backgroundRequest = { kind: "chat_run" as const, source: "chat" as const, title: "Packaged L5 background lifecycle", workspacePath: workspace.path, targetId: "packaged-l5-background", status: "queued" as const, message: "Queued by the packaged L5 journey.", idempotencyKey: "packaged-l5-background-v1", maxAttempts: 2 };
     const background = await api.enqueueBackgroundTask(backgroundRequest);
     const duplicateBackground = await api.enqueueBackgroundTask(backgroundRequest);
@@ -461,7 +904,30 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     const retriedBackground = await api.retryBackgroundTask({ taskId: background.id, reason: "Packaged L5 retry check" });
     if (retriedBackground.status !== "queued" || retriedBackground.retryOfTaskId !== background.id || retriedBackground.attempt !== 2) throw new Error("background task retry did not create the bounded next attempt");
     if (!(await api.listBackgroundTasks({ workspacePath: workspace.path })).some((item) => item.id === retriedBackground.id)) throw new Error("retried background task was not visible through packaged IPC");
-    await api.cancelBackgroundTask({ taskId: retriedBackground.id, reason: "Packaged L5 cleanup" });
+    await api.updateBackgroundTask({ taskId: retriedBackground.id, status: "running", progress: 75, currentStep: "packaged-retry", message: "Retry is running through packaged IPC." });
+    const completedBackground = await api.updateBackgroundTask({ taskId: retriedBackground.id, status: "completed", progress: 100, currentStep: "completed", message: "Packaged retry completed." });
+    if (completedBackground.status !== "completed" || completedBackground.progress !== 100) throw new Error("retried background task did not complete through packaged IPC");
+
+    const shareInspection = await api.inspectShare({ sourceTaskId: completedReusableSource.id, scope: "result_only", artifactId: "packaged-reusable-output" });
+    if (shareInspection.requiresResolution || shareInspection.scannedArtifactCount !== 1) throw new Error("packaged result share inspection did not produce a clean single-artifact review");
+    const share = await api.createShare({ sourceTaskId: completedReusableSource.id, scope: "result_only", artifactId: "packaged-reusable-output", recipientAccount: "packaged-recipient@example.test", permission: "view" });
+    const shareArtifact = share.objects.find((item) => item.objectType === "artifact");
+    if (!shareArtifact || share.version !== 1 || share.permission !== "view" || !(await api.listOutgoingShares()).some((item) => item.id === share.id)) throw new Error("packaged result share did not persist its first immutable version");
+    let ownerOpenRejected = false; let ownerDownloadRejected = false;
+    try { await api.openSharedObject({ shareId: share.id, objectType: "artifact", objectId: shareArtifact.objectId }); } catch { ownerOpenRejected = true; }
+    try { await api.downloadSharedArtifact({ shareId: share.id, objectId: shareArtifact.objectId }); } catch { ownerDownloadRejected = true; }
+    if (!ownerOpenRejected || !ownerDownloadRejected) throw new Error("packaged share owner bypassed recipient-only object access");
+    const shareSourcePreview = await api.previewWorkspaceFile({ workspacePath: workspace.path, path: `${workspace.path}/reusable-output.md` });
+    if (!shareSourcePreview.fileHash || (await api.writeWorkspaceFile({ workspacePath: workspace.path, path: `${workspace.path}/reusable-output.md`, content: "# Packaged reusable result v2\n", expectedHash: shareSourcePreview.fileHash })).status !== "saved") throw new Error("packaged share source could not advance to a second version");
+    const versionInspection = await api.inspectShareVersion({ shareId: share.id });
+    if (!versionInspection.hasChanges || versionInspection.nextVersion !== 2 || versionInspection.sourceFingerprints.length !== 1) throw new Error("packaged share did not detect its changed source artifact");
+    const publishedVersion = await api.publishShareVersion({ shareId: share.id, expectedVersion: 1, sourceFingerprints: versionInspection.sourceFingerprints });
+    if (publishedVersion.currentVersion !== 2 || publishedVersion.manifest.objects.some((item) => item.version !== 2)) throw new Error("packaged share did not atomically publish version two");
+    const revokedShare = await api.revokeShare({ shareId: share.id, confirmation: "REVOKE" });
+    if (revokedShare.status !== "revoked" || revokedShare.objectsInvalidated !== 1) throw new Error("packaged share revocation did not invalidate its artifact");
+    let revokedOpenRejected = false;
+    try { await api.openSharedObject({ shareId: share.id, objectType: "artifact", objectId: shareArtifact.objectId }); } catch { revokedOpenRejected = true; }
+    if (!revokedOpenRejected) throw new Error("revoked packaged share remained readable");
 
     const initialPolicy = await api.getInteractiveDebugPolicy();
     if (initialPolicy.enabled) await api.updateInteractiveDebugPolicy({ enabled: false, acknowledgedRisk: true });
@@ -470,12 +936,56 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     const target = (await api.listInteractiveDebugTargets()).find((item) => item.id === "electron-renderer");
     if (!target?.available) throw new Error("packaged renderer debug target did not become available");
     const debugSession = await api.startInteractiveDebugSession({ targetId: target.id, workspaceId: workspace.id });
+    const breakpointSession = await api.setInteractiveDebugBreakpoint({ sessionId: debugSession.id, source: { file: handoffSourcePath, line: 1, column: 1, language: "typescript" }, condition: "true" });
+    if (!breakpointSession.breakpoints.some((item) => item.source.file === handoffSourcePath && item.source.line === 1)) throw new Error("packaged CDP session did not retain its Workspace breakpoint");
     const disconnected = await api.controlInteractiveDebugSession({ sessionId: debugSession.id, action: "disconnect" });
     if (disconnected.state !== "disconnected") throw new Error("packaged debug session did not detach");
+    const pythonTarget = (await api.listInteractiveDebugTargets()).find((item) => item.id === "python-local");
+    if (!pythonTarget?.available) throw new Error(`packaged Python DAP target was unavailable: ${pythonTarget?.reason ?? "missing"}`);
+    const pythonProgram = `${workspace.path}/debug-target.py`;
+    const pythonSession = await api.startInteractiveDebugSession({ targetId: pythonTarget.id, workspaceId: workspace.id, program: pythonProgram, cwd: workspace.path, stopOnEntry: true });
+    const waitForPythonPause = async (line?: number): Promise<Awaited<ReturnType<typeof api.listInteractiveDebugSessions>>[number]> => {
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        const current = (await api.listInteractiveDebugSessions()).find((item) => item.id === pythonSession.id);
+        if (current?.state === "paused" && (!line || current.stackFrames.some((frame) => frame.source?.file === pythonProgram && frame.source.line === line))) return current;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error(`packaged Python DAP session did not pause${line ? ` at line ${line}` : " on entry"}`);
+    };
+    const entryPause = await waitForPythonPause();
+    const pythonBreakpoint = await api.setInteractiveDebugBreakpoint({ sessionId: pythonSession.id, source: { file: pythonProgram, line: 4, column: 1, language: "python" } });
+    if (!pythonBreakpoint.breakpoints.some((item) => item.source.file === pythonProgram && item.source.line === 4 && item.verified)) throw new Error("packaged Python DAP breakpoint was not verified");
+    await api.controlInteractiveDebugSession({ sessionId: pythonSession.id, action: "continue", threadId: entryPause.activeThreadId });
+    const breakpointPause = await waitForPythonPause(4);
+    const frame = breakpointPause.stackFrames.find((item) => item.source?.file === pythonProgram && item.source.line === 4);
+    if (!frame) throw new Error("packaged Python DAP breakpoint did not expose its stack frame");
+    const scopes = await api.getInteractiveDebugScopes(pythonSession.id, frame.id);
+    const localScope = scopes.find((item) => /local/i.test(item.name)) ?? scopes[0];
+    if (!localScope) throw new Error("packaged Python DAP did not expose scopes");
+    const variables = await api.getInteractiveDebugVariables(pythonSession.id, localScope.variablesReference);
+    if (!variables.some((item) => item.name === "value" && item.value === "41") || !variables.some((item) => item.name === "secret_token" && item.value === "[REDACTED]")) throw new Error("packaged Python DAP variables were incomplete or leaked a secret");
+    const evaluated = await api.evaluateInteractiveDebugExpression({ sessionId: pythonSession.id, frameId: frame.id, expression: "value + 1" });
+    if (!evaluated.safe || evaluated.result !== "42") throw new Error("packaged Python DAP read-only evaluation failed");
+    const terminatedPython = await api.controlInteractiveDebugSession({ sessionId: pythonSession.id, action: "terminate", threadId: breakpointPause.activeThreadId });
+    if (terminatedPython.state !== "disconnected") throw new Error("packaged Python DAP session did not terminate cleanly");
+    const errorProgram = `${workspace.path}/debug-error.py`;
+    const failedPythonSession = await api.startInteractiveDebugSession({ targetId: pythonTarget.id, workspaceId: workspace.id, program: errorProgram, cwd: workspace.path });
+    const failedDeadline = Date.now() + 15_000;
+    let observedFailedPython: Awaited<ReturnType<typeof api.listInteractiveDebugSessions>>[number] | undefined;
+    while (Date.now() < failedDeadline) {
+      observedFailedPython = (await api.listInteractiveDebugSessions()).find((item) => item.id === failedPythonSession.id);
+      if (observedFailedPython?.state === "stopped") break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (observedFailedPython?.state !== "stopped" || !/terminated|exited/i.test(observedFailedPython.message)) throw new Error("packaged Python DAP did not surface abnormal debuggee exit");
+    if ((await api.controlInteractiveDebugSession({ sessionId: failedPythonSession.id, action: "disconnect" })).state !== "disconnected") throw new Error("packaged failed Python DAP adapter did not detach");
     const disabledPolicy = await api.updateInteractiveDebugPolicy({ enabled: false, acknowledgedRisk: true });
     if (disabledPolicy.enabled || (await api.listInteractiveDebugTargets()).some((item) => item.available && item.id !== "electron-main")) throw new Error("interactive debugging did not fail closed after disable");
+    if (!(await api.stopGateway())) throw new Error("packaged product journey could not stop its managed Gateway");
+    if ((await api.getGatewayStatus()).ready) throw new Error("packaged product journey Gateway remained healthy after explicit stop");
 
-    return { descriptor, workspaceId: workspace.id, gitApprovalId: gitProposal.approval.id, threadLifecycle: true, chatAbortRecoveryLifecycle: true, chatNetworkRecoveryLifecycle: true, agentCatalogAbortRecoveryLifecycle: true, gitApprovalExecution: true, workspaceGitReviewLifecycle: true, checkpointLifecycle: true, worktreeQueueLifecycle: true, desktopHandoffLifecycle: true, customCommandCrud: true, projectMemoryCrud: true, projectSkillApprovalInstall: true, workflowLifecycle: true, reusableAndScheduledLifecycle: true, diagnosticsRoundtrip: true, backgroundTaskLifecycle: true, interactiveDebuggerRoundtrip: true };
+    return { descriptor, workspaceId: workspace.id, scheduledTaskId: scheduledTask.id, scheduledRunId: scheduledRun.id, gitApprovalId: gitProposal.approval.id, threadLifecycle: true, chatAbortRecoveryLifecycle: true, chatNetworkRecoveryLifecycle: true, chatSlowNetworkRecoveryLifecycle: true, agentCatalogAbortRecoveryLifecycle: true, gitApprovalExecution: true, workspaceGitReviewLifecycle: true, checkpointLifecycle: true, worktreeQueueLifecycle: true, desktopHandoffLifecycle: true, customCommandCrud: true, projectMemoryCrud: true, projectSkillApprovalInstall: true, workflowLifecycle: true, reusableAndScheduledLifecycle: true, managerPresentationLifecycle: true, diagnosticsRoundtrip: true, diagnosticSourceAndPackage: true, backgroundTaskLifecycle: true, resultShareVersionLifecycle: true, interactiveDebuggerRoundtrip: true, pythonDebuggerRoundtrip: true };
   }
 
   if (scenario === "crash-ready") {
@@ -483,7 +993,27 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     if (!config.workspacePath) throw new Error("crash-ready scenario requires workspacePath");
     const proposal = await api.requestGitCommitApproval({ workspacePath: config.workspacePath, message: "Rejected after packaged crash", body: "This commit must never execute.", requestId: "packaged-l5-crash-approval" });
     if (!proposal.queued || !proposal.approval || proposal.alreadyExecuted) throw new Error("crash-ready git approval did not remain pending");
-    return { descriptor, readyForForcedCrash: true, approvalId: proposal.approval.id };
+    const activeChatRequestId = "packaged_chat_crash_001";
+    const activeChatThreadId = "packaged-chat-crash-thread-001";
+    let resolveCrashChatReady: (() => void) | undefined;
+    const crashChatReady = new Promise<void>((resolve) => { resolveCrashChatReady = resolve; });
+    const offCrashChat = api.onChatEvent((event) => {
+      const delta = event.oaepEvent?.data?.delta as { text?: string } | undefined;
+      if (event.requestId === activeChatRequestId && event.type === "oaep" && delta?.text === "preserved before crash") resolveCrashChatReady?.();
+    });
+    if (await api.startChat({ requestId: activeChatRequestId, threadId: activeChatThreadId, sessionId: activeChatThreadId, runId: "packaged-chat-crash-display-run", agentId: "my-drsai", workspacePath: config.workspacePath, metadata: { packaged_crash_fixture: true }, messages: [{ role: "user", content: "Remain active until the packaged App process is forcibly terminated." }] }) !== activeChatRequestId) throw new Error("crash-ready Chat did not start");
+    await Promise.race([crashChatReady, new Promise<void>((_, reject) => setTimeout(() => reject(new Error("crash-ready Chat did not emit active Runtime output before forced exit")), 5_000))]);
+    offCrashChat();
+    const activeAgentRequestId = "packaged_agent_crash_001";
+    const activeAgentThreadId = "packaged-agent-crash-thread-001";
+    await api.startAgentRun({ requestId: activeAgentRequestId, threadId: activeAgentThreadId, sessionId: activeAgentThreadId, runId: "packaged-agent-crash-run-001", task: "Remain active until the packaged App process is forcibly terminated.", executionDepth: "quick", workspacePath: config.workspacePath, metadata: { packaged_crash_fixture: true } });
+    let agentJournalReady = false;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if ((await api.recoverAgentRun(activeAgentThreadId)).some((item) => item.type === "start")) { agentJournalReady = true; break; }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (!agentJournalReady) throw new Error("crash-ready Agent did not persist its active start event before forced exit");
+    return { descriptor, readyForForcedCrash: true, approvalId: proposal.approval.id, managedChildrenActive: true, activeChatRequestId, activeChatThreadId, activeAgentThreadId };
   }
 
   if (scenario === "fault") {
@@ -523,6 +1053,11 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
 
   const durationMs = Math.max(1_000, Math.min(7_300_000, Number(config.durationMs) || 7_200_000));
   const intervalMs = Math.max(250, Math.min(60_000, Number(config.intervalMs) || 30_000));
+  const warmupMs = Math.max(0, Math.min(120_000, Number(config.warmupMs) || 0));
+  if (!(await api.startGateway())) throw new Error("stability scenario could not start Gateway before its idle window");
+  const gateway = await api.getGatewayStatus();
+  if (!gateway.ready || !gateway.pid) throw new Error("stability scenario Gateway was not healthy before its idle window");
+  if (warmupMs) await new Promise((resolve) => setTimeout(resolve, warmupMs));
   const startedAt = Date.now();
   let heartbeats = 0;
   while (Date.now() - startedAt < durationMs) {
@@ -531,7 +1066,7 @@ async function rendererScenario(scenario: PackagedScenario, config: PackagedScen
     heartbeats += 1;
     await new Promise((resolve) => setTimeout(resolve, Math.min(intervalMs, durationMs - (Date.now() - startedAt))));
   }
-  return { descriptor, durationMs: Date.now() - startedAt, heartbeats };
+  return { descriptor, durationMs: Date.now() - startedAt, warmupMs, gatewayReadyBeforeIdle: true, heartbeats };
 }
 
 async function terminalRoundtrip(api: Window["openDrSai"]): Promise<{ terminal: { id: string; pid: number }; terminalOutput: string }> {

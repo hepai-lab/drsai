@@ -1,4 +1,5 @@
 export interface MacosShutdownDependencies {
+  closeRenderer(): void | Promise<void>;
   stopScheduledTaskWorker(): void;
   killTerminalSessions(): void;
   cleanupVoiceFiles(): void;
@@ -23,6 +24,8 @@ export interface MacosShutdownStep { name: string; run(): void | Promise<void>; 
 
 export function createMacosShutdownPlan(dependencies: MacosShutdownDependencies): MacosShutdownStep[] {
   return [
+    // Stop renderer-originated IPC before any service it depends on is torn down.
+    { name: "renderer", run: dependencies.closeRenderer },
     { name: "scheduled-task-worker", run: dependencies.stopScheduledTaskWorker },
     { name: "terminal-sessions", run: dependencies.killTerminalSessions },
     { name: "voice-files", run: dependencies.cleanupVoiceFiles },
@@ -40,6 +43,7 @@ export function createMacosShutdownPlan(dependencies: MacosShutdownDependencies)
     { name: "mobile-pairing", run: dependencies.closeMobilePairingControllers },
     { name: "agent-journal", run: dependencies.shutdownAgentJournal },
     { name: "chat-journal", run: dependencies.shutdownChatJournal },
+    // The Gateway remains available while every dependent resource drains.
     { name: "gateway", run: dependencies.stopGateway },
   ];
 }

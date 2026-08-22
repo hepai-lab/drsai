@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "feature_id": "M10-F01",
+  "generated_at": "2026-08-05T14:15:51.122028+00:00",
+  "passed": true,
+  "gates": {
+    "web_tool_has_oaep_tool_call": true,
+    "citation_has_message_and_notice": true,
+    "mcp_preserves_server_identity": true,
+    "skill_has_redacted_oaep_snapshot": true,
+    "skill_instructions_never_enter_diagnostic": true,
+    "handoff_offer_and_decision_are_oaep": true,
+    "handoff_ui_is_commit_after_oaep": true,
+    "subagent_has_oaep_subtask": true,
+    "unknown_extension_is_visible": true,
+    "focused_jvm_suites_green": true,
+    "shared_kernel_suite_green": true
+  },
+  "jvm_suites": {
+    "tests": 27,
+    "failures_and_errors": 0,
+    "reports": [
+      {
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "name": "ai.drsai.remote.P9OaepCapabilityMappingTest",
+        "sha256": "c64d9666f085a7d15c62c10ef93f13fe8cf4bb050967d91d7ea0545214f87298"
+      },
+      {
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "name": "ai.drsai.remote.DesktopHandoffOaepTest",
+        "sha256": "9e9ecf405c3680703bf1b7c2b7d54d83defb536dfc438fdd0df04d807112ed30"
+      },
+      {
+        "tests": 20,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "name": "ai.drsai.remote.PythonRuntimeEventMapperTest",
+        "sha256": "d91f87f535ea37f4705ebdd015a732656286d940bd89b2f41148bb376bbce317"
+      }
+    ]
+  },
+  "python_suite": {
+    "returncode": 0,
+    "summary": ".......................................                                  [100%]\n39 passed in 4.12s\n"
+  },
+  "source_sha256": {
+    "cores/python/packages/drsai/src/drsai/backend/runtime/mobile_core/engine.py": "be28389f4db95c1646897b0ea907274beb31aae9b29a49e1d650cc7300aa7db5",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/python/PythonRuntimeEventMapper.kt": "bcb730b9f05285290225f8f95969432c31a97517ff0ba3f154a95a257a5c7f93",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/coordinator/DesktopHandoffOaep.kt": "331569ddf50ec0f8aede07829cb118300455df2873a0f48a56933245ff7d5a17",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "apps/android/app/src/test/java/ai/drsai/remote/P9OaepCapabilityMappingTest.kt": "0cf8cce61779741398960500c9348d80567963fd41b76d83f52facd134ee20e9",
+    "apps/android/app/src/test/java/ai/drsai/remote/DesktopHandoffOaepTest.kt": "c7418332265e145c82d850d62549e328ba62a500c2f36b3ff461a5da46eae574",
+    "apps/android/app/src/test/java/ai/drsai/remote/DesktopHandoffContractTest.kt": "a6dff1903d04e369355ed5fe5e386a017d188bd965b91e6d9f0d33bce325ab9b",
+    "apps/android/app/src/test/java/ai/drsai/remote/PythonRuntimeEventMapperTest.kt": "5c3822ae42302be6a581ace5d23f0511ffb2df8750da313bb6be48a9095de830",
+    "cores/python/packages/drsai/tests/test_mobile_agent_core.py": "e28a759781773bed242010c218e01ef8e2040f0a56459dfa3f9a6de5f35a0b68"
+  }
+}

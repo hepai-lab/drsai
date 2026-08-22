@@ -1,5 +1,6 @@
 package ai.drsai.remote.remote.model
 
+import ai.drsai.remote.remote.generated.*
 import java.security.MessageDigest
 
 enum class RemoteEventKind {
@@ -12,7 +13,114 @@ data class RemoteTranscriptMessage(
     val role: String,
     val text: String,
     val progress: String? = null,
+    val kind: String = "message",
+    val title: String? = null,
+    val detail: String? = null,
+    val runId: String? = null,
+    val phase: String? = null,
+    val resources: List<RemoteTranscriptResource> = emptyList(),
 )
+
+data class RemoteTranscriptResource(
+    val id: String,
+    val label: String,
+    val kind: String,
+    val mimeType: String,
+    val size: Long?,
+    val digest: String?,
+)
+
+fun projectOaepMessages(snapshot: OaepSnapshot): List<RemoteTranscriptMessage> {
+    val runOrder = snapshot.runs.sortedWith(
+        compareBy<OaepRun> { it.sequence ?: Long.MAX_VALUE }.thenBy { it.createdAt }.thenBy { it.id },
+    ).mapIndexed { index, run -> run.id to index }.toMap()
+    return projectOaepMessages(snapshot.items.sortedWith(
+        compareBy<OaepItem> { runOrder[it.runId] ?: Int.MAX_VALUE }
+            .thenBy { it.sequence }.thenBy { it.createdAt }.thenBy { it.id },
+    ), preserveOrder = true)
+}
+
+fun projectOaepMessages(items: List<OaepItem>): List<RemoteTranscriptMessage> =
+    projectOaepMessages(items, preserveOrder = false)
+
+private fun projectOaepMessages(items: List<OaepItem>, preserveOrder: Boolean): List<RemoteTranscriptMessage> =
+    (if (preserveOrder) items else items.sortedWith(compareBy<OaepItem> { it.runId }.thenBy { it.sequence })).map { item ->
+        when (val content = item.content) {
+            is OaepMessageContent -> RemoteTranscriptMessage(
+                item.id, content.role, sanitizeRemoteTranscriptText(content.text), item.status,
+                kind = "message", runId = item.runId, phase = content.phase,
+                resources = content.resourceRefs.map { ref ->
+                    val part = content.parts.firstOrNull { part ->
+                        ((part["resource_ref"] as? Map<*, *>)?.get("resource_id") as? String) == ref.resourceId
+                    }
+                    RemoteTranscriptResource(
+                        ref.resourceId, ref.label ?: (part?.get("name") as? String) ?: ref.resourceId,
+                        (part?.get("type") as? String) ?: ref.resourceType,
+                        (part?.get("mime_type") as? String) ?: "application/octet-stream",
+                        (part?.get("size") as? Number)?.toLong(), ref.digest,
+                    )
+                },
+            )
+            is OaepReasoningContent -> RemoteTranscriptMessage(
+                item.id, "reasoning",
+                sanitizeRemoteTranscriptText(content.segments.joinToString("\n") { it["text"].orEmpty() }),
+                item.status, kind = "reasoning", title = "Reasoning", runId = item.runId,
+            )
+            is OaepPlanContent -> RemoteTranscriptMessage(
+                item.id, "plan", sanitizeRemoteTranscriptText(content.text), item.status,
+                kind = "plan", title = "Plan", runId = item.runId,
+            )
+            is OaepCommandExecutionContent -> RemoteTranscriptMessage(
+                item.id, "command", sanitizeRemoteTranscriptText(content.output.ifBlank { content.stdoutTail.orEmpty() }),
+                item.status, kind = "command_execution", title = "Command",
+                detail = sanitizeRemoteTranscriptText(content.displayCommand), runId = item.runId,
+            )
+            is OaepToolCallContent -> RemoteTranscriptMessage(
+                item.id, "tool", safeToolResult(content.result, item.status), item.status,
+                kind = "tool_call", title = content.toolName.ifBlank { "Tool" },
+                detail = content.toolKind, runId = item.runId,
+            )
+            is OaepFileChangeContent -> RemoteTranscriptMessage(
+                item.id, "file", sanitizeRemoteTranscriptText(content.summary), item.status,
+                kind = "file_change", title = "File change", runId = item.runId,
+            )
+            is OaepArtifactContent -> RemoteTranscriptMessage(
+                item.id, "artifact", sanitizeRemoteTranscriptText(content.summary), item.status,
+                kind = "artifact", title = content.name.ifBlank { "Artifact" },
+                detail = content.mimeType, runId = item.runId,
+            )
+            is OaepInteractionContent -> RemoteTranscriptMessage(
+                item.id, "interaction", sanitizeRemoteTranscriptText(content.prompt), item.status,
+                kind = "interaction", title = content.interactionType.ifBlank { "Interaction" },
+                detail = content.operation, runId = item.runId,
+            )
+            is OaepSubtaskContent -> RemoteTranscriptMessage(
+                item.id, "subtask", sanitizeRemoteTranscriptText(content.summary), item.status,
+                kind = "subtask", title = content.title.ifBlank { "Subtask" },
+                detail = content.agentName, runId = item.runId,
+            )
+            is OaepNoticeContent -> RemoteTranscriptMessage(
+                item.id, "system", sanitizeRemoteTranscriptText(content.message), item.status,
+                kind = "notice", title = content.code.ifBlank { content.level }, runId = item.runId,
+            )
+        }
+    }.filter { it.text.isNotBlank() || it.progress != null }
+
+private fun safeToolResult(result: Any?, status: String): String = when (result) {
+    null -> status
+    is String -> sanitizeRemoteTranscriptText(result)
+    is Number, is Boolean -> result.toString()
+    is Map<*, *> -> sanitizeRemoteTranscriptText(
+        (result["summary"] ?: result["message"] ?: result["status"] ?: status).toString(),
+    )
+    else -> status
+}
+
+fun sanitizeRemoteTranscriptText(value: String): String =
+    value
+        .replace(Regex("(?i)(token|secret|password|api[_-]?key)=\\S+"), "$1=[REDACTED]")
+        .replace(Regex("\\b[A-Za-z]:[\\\\/][^\\s`'\"<>]+"), "[path]")
+        .take(20_000)
 
 fun projectConversationMessages(items: List<RemoteConversationItem>): List<RemoteTranscriptMessage> {
     val ordered = items.distinctBy { it.eventId }.sortedBy { it.sequence }

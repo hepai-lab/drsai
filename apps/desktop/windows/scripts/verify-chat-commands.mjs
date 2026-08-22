@@ -19,12 +19,10 @@ const commands = read("../shared/renderer/src/chatCommands.ts");
 const chatWorkspace = read("../shared/renderer/src/components/ChatWorkspace.tsx");
 const chatAdapter = read("../shared/renderer/src/adapters/useDesktopChatAdapter.ts");
 const app = read("../shared/renderer/src/App.tsx");
-const skillSquareView = read("../shared/renderer/src/components/SkillSquareView.tsx");
 const preload = read("../shared/main/preload.ts");
 const mainIndex = read("src/main/index.ts");
 const mockDesktopApi = read("../shared/renderer/src/mockDesktopApi.ts");
 const terminalTestResults = read("../shared/renderer/src/terminalTestResults.ts");
-const css = read("../shared/renderer/src/styles.css");
 const packageJson = read("package.json");
 
 const expectedCommands = [
@@ -135,7 +133,9 @@ assert(commands.includes('type: "set-input"'), "custom command aliases do not ex
 assert(commands.includes("{{args}}"), "custom command aliases do not support args placeholders");
 
 assert(chatAdapter.includes("parseChatCommand(text)"), "adapter does not parse slash commands before chat");
-assert(chatAdapter.indexOf("parseChatCommand(text)") < chatAdapter.indexOf("if (!canChat) return false"), "slash commands must work before gateway readiness gating");
+const commandParseIndex = chatAdapter.indexOf("const command = parseChatCommand(text)");
+const gatewayReadinessIndex = chatAdapter.indexOf("if (!canChat) {", commandParseIndex);
+assert(commandParseIndex >= 0 && gatewayReadinessIndex > commandParseIndex, "slash commands must work before gateway readiness gating");
 assert(chatAdapter.includes("publishLocalAssistantResult"), "adapter does not publish local command results");
 assert(chatAdapter.includes("applyChatCommandAction(result.action)"), "adapter does not apply command selector actions");
 assert(chatAdapter.includes("onSelectModel?.(action.model)"), "adapter does not update selected model from /model");
@@ -246,16 +246,15 @@ assert(app.includes("availableAgents: availableChatAgents"), "App does not pass 
 assert(app.includes("availableModels: availableChatModels"), "App does not pass model catalog to slash commands");
 assert(app.includes("onSelectAgent: handleChatAgentSelect"), "App does not wire /agent to selector");
 assert(app.includes("onSelectModel: handleChatModelSelect"), "App does not wire /model to selector");
-assert(app.includes("skillSquareCommandTarget"), "App does not store /skills focused targets");
-assert(app.includes("setSkillSquareCommandTarget(target ?? null)"), "App does not persist /skills focused targets");
-assert(app.includes("initialFocus={skillSquareCommandTarget ?? undefined}"), "App does not pass /skills focus into Skills Square");
+assert(app.includes("onOpenSkillsSquare: () => undefined"), "App must keep /skills navigation disabled while Skills Square is hidden");
+assert(!app.includes("initialFocus={skillSquareCommandTarget ?? undefined}"), "App must not route /skills focus into the hidden Skills Square");
 assert(app.includes("onForkThreadCreated: handleForkThreadCreated"), "App does not wire /fork thread creation");
 assert(app.includes("function handleForkThreadCreated(thread: DesktopThread)"), "App does not define a fork thread handler");
 assert(app.includes("setActiveThreadId(thread.id)"), "App does not select created fork threads");
 assert(app.includes("activeThreadWorkspacePath"), "App does not derive workspace path from the active thread");
 assert(app.includes("effectiveWorkspacePath"), "App does not compute an effective workspace path");
 assert(app.includes("workspacePath: effectiveWorkspacePath"), "App does not persist active-thread workspace paths");
-assert(app.includes('kind: threads.find((item) => item.id === snapshot.threadId)?.kind ?? "chat"'), "App does not preserve fork agent-run thread kind");
+assert(app.includes('kind: existingThread?.kind ?? "chat"'), "App does not preserve fork agent-run thread kind");
 assert(app.includes("cwd={effectiveWorkspacePath}"), "Terminal panel does not follow fork worktree paths");
 assert(app.includes("workspacePath={effectiveWorkspacePath}"), "Workspace-bound views do not follow fork worktree paths");
 assert(app.includes("currentRuntimeMode={chat.currentRuntimeMode}"), "App does not pass runtime mode state to composer");
@@ -273,13 +272,6 @@ assert(terminalTestResults.includes("recordRecentTerminalTestResult"), "terminal
 assert(terminalTestResults.includes("No terminal test run captured for this workspace"), "missing empty recent-test-result fallback");
 assert(terminalTestResults.includes("npm\\s+run\\s+(test|verify|typecheck|build)"), "terminal verifier does not recognize npm verification commands");
 assert(read("../shared/renderer/src/components/TerminalPanel.tsx").includes("recordRecentTerminalTestResult(workspaceKey, run)"), "terminal panel does not persist recent test results");
-assert(skillSquareView.includes("initialFocus"), "Skills Square cannot receive /skills focused targets");
-assert(skillSquareView.includes("filteredWorkflowTemplates"), "Skills Square does not filter workflow templates from command focus");
-assert(skillSquareView.includes("matchesWorkflowTemplate"), "Skills Square cannot match focused workflow templates");
-assert(skillSquareView.includes("matchesSkill"), "Skills Square cannot match focused skills");
-assert(skillSquareView.includes("skill-square-command-focus"), "Skills Square does not render focused command context");
-assert(css.includes(".skill-square-command-focus"), "focused /skills command CSS is missing");
-assert(css.includes(".workflow-template-card.focused"), "focused workflow template styling is missing");
 assert(css.includes(".skill-card.focused"), "focused skill card styling is missing");
 
 assert(packageJson.includes('"verify:chat-commands"'), "package script is not registered");

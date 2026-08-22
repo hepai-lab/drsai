@@ -10,7 +10,7 @@ import type { GatewayEvent } from '../gatewayTypes.js'
 
 import { $approval, $clarify, $secret, $sudo } from './overlayStore.js'
 import type { TurnController } from './turnController.js'
-import { $connectionError, $connectionStatus, $lastUsage, $memoryPreview, $sessionMeta, $skin, $statusLine, $userId } from './uiStore.js'
+import { $connectionError, $connectionStatus, $lastUsage, $memoryPreview, $remoteHost, $sessionMeta, $skin, $statusLine, $userId } from './uiStore.js'
 import {
   applyToolComplete,
   MAX_TOOL_RESULT_CHARS,
@@ -77,7 +77,28 @@ export function createGatewayEventHandler(
     if (textBuf) {
       const t = textBuf
       textBuf = ''
-      updateCurrent(c => ({ ...c, text: c.text + t }))
+      updateCurrent(c => {
+        // Maintain ordered contentParts: if the last part is a text
+        // segment, append a chunk (O(1) amortised) instead of
+        // concatenating strings (O(n) per flush → O(n²) total over a
+        // long answer). The full text is lazily joined by getPartText()
+        // only when a visible part needs rendering.
+        const parts = [...c.contentParts]
+        const last = parts[parts.length - 1]
+        if (last && last.kind === 'text') {
+          parts[parts.length - 1] = {
+            ...last,
+            chunks: [...last.chunks, t],
+            text: '',  // invalidate lazy-join cache
+          }
+        } else {
+          parts.push({ kind: 'text', id: `text-${c.startedAt}-${parts.length}`, chunks: [t], text: '' })
+        }
+        // Don't update c.text during streaming — it would copy the
+        // entire accumulated text each flush. Text is materialised at
+        // finalize() by joining all contentParts' chunks.
+        return { ...c, contentParts: parts }
+      })
     }
     if (reasoningBuf) {
       const r = reasoningBuf
@@ -111,6 +132,15 @@ export function createGatewayEventHandler(
         const payload = ev.payload as { preview?: string } | undefined
         $connectionStatus.set('error')
         $connectionError.set(payload?.preview || 'protocol error')
+        return
+      }
+      case 'remote.lost': {
+        // Remote SSH connection dropped — update status but don't exit.
+        // The App-level handler will transition to the remote_lost screen.
+        $connectionStatus.set('remote_lost')
+        $remoteHost.set('')
+        const payload = ev.payload as { reason?: string } | undefined
+        $connectionError.set(payload?.reason || 'Remote connection lost')
         return
       }
       case 'session.info': {
@@ -169,15 +199,33 @@ export function createGatewayEventHandler(
           }
         }
         
-        updateCurrent(t => ({
-          ...t,
-          usage: (p?.usage as AssistantTurn['usage']) ?? t.usage,
-          status:
-            p?.status === 'interrupted' || p?.status === 'error'
-              ? (p.status as AssistantTurn['status'])
-              : 'complete',
-          reasoning: p?.reasoning ? t.reasoning + (t.reasoning ? '\n' : '') + p.reasoning : t.reasoning,
-        }))
+        // Materialise the full text from contentParts chunks so that
+        // transcript / legacy rendering / truncation have the joined
+        // string. During streaming we only pushed to chunks[] (O(1)),
+        // avoiding O(n²) concatenation. Now that streaming is done we
+        // join once — O(n) total, not O(n²).
+        updateCurrent(t => {
+          let fullText = t.text
+          if (t.contentParts.length > 0 && !fullText) {
+            fullText = t.contentParts
+              .filter((part): part is import('./types.js').TextContentPart => part.kind === 'text')
+              .map(part => {
+                if (!part.text) part.text = part.chunks.join('')
+                return part.text
+              })
+              .join('')
+          }
+          return {
+            ...t,
+            text: fullText,
+            usage: (p?.usage as AssistantTurn['usage']) ?? t.usage,
+            status:
+              p?.status === 'interrupted' || p?.status === 'error'
+                ? (p.status as AssistantTurn['status'])
+                : 'complete',
+            reasoning: p?.reasoning ? t.reasoning + (t.reasoning ? '\n' : '') + p.reasoning : t.reasoning,
+          }
+        })
         // End of turn — move $current into transcript and clear streaming state.
         controller?.finalize()
         return
@@ -193,8 +241,17 @@ export function createGatewayEventHandler(
 
       // ── Tools ────────────────────────────────────────────────
       case 'tool.start': {
+        // Flush any pending text buffer first so the text that arrived
+        // BEFORE this tool call is committed as a separate text segment
+        // in contentParts — otherwise it would be appended after the
+        // tool part (breaking the interleaving order).
+        flushBuffers()
         const tool = toolFromStart(ev.payload as never)
-        updateCurrent(t => ({ ...t, tools: [...t.tools, tool] }))
+        updateCurrent(t => ({
+          ...t,
+          tools: [...t.tools, tool],
+          contentParts: [...t.contentParts, { kind: 'tool', id: `cp-${tool.id}`, toolId: tool.id }],
+        }))
         return
       }
       case 'tool.complete': {
@@ -282,7 +339,8 @@ export function createGatewayEventHandler(
               ),
             }))
           } else {
-            // 新工具调用
+            // 新工具调用 — flush pending text first to preserve order
+            flushBuffers()
             const subTool = toolFromStart({
               tool_id: toolId,
               name: `sub:${p.name}`,
@@ -292,6 +350,7 @@ export function createGatewayEventHandler(
             updateCurrent(c => ({
               ...c,
               tools: [...c.tools, subTool],
+              contentParts: [...c.contentParts, { kind: 'tool', id: `cp-${subTool.id}`, toolId: subTool.id }],
             }))
           }
         }
@@ -360,7 +419,18 @@ export function createGatewayEventHandler(
         const msg = (ev.payload as { message?: string } | undefined)?.message || 'unknown error'
         const cur = $current.get()
         if (cur) {
-          setCurrent({ ...cur, status: 'error', errorMessage: msg })
+          // Materialise full text from chunks (same as message.complete).
+          let fullText = cur.text
+          if (cur.contentParts.length > 0 && !fullText) {
+            fullText = cur.contentParts
+              .filter((part): part is import('./types.js').TextContentPart => part.kind === 'text')
+              .map(part => {
+                if (!part.text) part.text = part.chunks.join('')
+                return part.text
+              })
+              .join('')
+          }
+          setCurrent({ ...cur, text: fullText, status: 'error', errorMessage: msg })
           // End of turn (errored) — finalize too.
           controller?.finalize()
         } else {

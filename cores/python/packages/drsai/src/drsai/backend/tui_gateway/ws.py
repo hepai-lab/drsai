@@ -42,19 +42,32 @@ _ws_thread: Optional[threading.Thread] = None
 
 
 class WebSocketTransport(Transport):
-    """Transport that reads/writes JSON-RPC frames over a WebSocket."""
+    """Transport that reads/writes JSON-RPC frames over a WebSocket.
 
-    def __init__(self, ws: WebSocket):
+    ``write`` is a *synchronous* method (required by the ``Transport`` protocol)
+    but the underlying ``WebSocket.send_text`` is async.  We store a reference
+    to the event loop and use ``run_coroutine_threadsafe`` so that ``write``
+    works from **any** thread — including the RPC thread-pool workers that
+    ``server.dispatch`` schedules via ``run_in_executor``.
+    """
+
+    def __init__(self, ws: WebSocket, loop: Optional[asyncio.AbstractEventLoop] = None):
         self.ws = ws
         self._closed = False
+        self._loop = loop or asyncio.get_event_loop()
 
     def write(self, obj: dict) -> bool:
         if self._closed:
             return False
         try:
             line = json.dumps(obj, ensure_ascii=False, default=str) + "\n"
-            # FastAPI WebSocket.send_text is *async*, so we must use asyncio
-            asyncio.create_task(self.ws.send_text(line))
+            # send_text is async; schedule it on the event loop that owns the
+            # WebSocket.  run_coroutine_threadsafe works from any thread,
+            # including ThreadPoolExecutor workers.
+            if self._loop.is_closed():
+                self._closed = True
+                return False
+            asyncio.run_coroutine_threadsafe(self.ws.send_text(line), self._loop)
             return True
         except Exception as exc:
             logger.warning("WebSocketTransport.write failed: %s", exc)
@@ -83,13 +96,21 @@ def _create_app() -> FastAPI:
         await websocket.accept()
         logger.info("WebSocket client connected: %s", websocket.client)
 
-        transport = WebSocketTransport(websocket)
-        bind_transport(transport)
+        loop = asyncio.get_event_loop()
+        transport = WebSocketTransport(websocket, loop)
+        token = bind_transport(transport)
 
         try:
-            # Emit gateway.ready so the client knows the connection is live
+            # Emit gateway.ready with full skin + setup so the client UI
+            # gets the correct theme and first-run status — same payload
+            # as the stdio mode in entry.py:main().
             from . import server
-            server._emit("gateway.ready", None, {"skin": {}})
+            from .entry import setup_status
+            skin = server.resolve_skin()
+            server._emit("gateway.ready", None, {
+                "skin": skin,
+                "setup": setup_status(),
+            })
 
             # Read JSON-RPC frames from the client
             while True:
@@ -98,10 +119,19 @@ def _create_app() -> FastAPI:
                 try:
                     req = json.loads(data)
                     from . import server
-                    # Dispatch inline (FastAPI is already async, so we're on an
-                    # asyncio thread). We wrap the sync dispatch in run_in_executor.
-                    loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, server.dispatch, req)
+                    # Pass the WebSocket transport so that dispatch binds it
+                    # (instead of the default stdio transport).  This ensures
+                    # RPC responses and events are sent back over the WS.
+                    resp = await loop.run_in_executor(
+                        None, server.dispatch, req, transport,
+                    )
+                    # For short (inline) handlers, dispatch returns the
+                    # response dict.  Write it over the WebSocket ourselves
+                    # because dispatch only binds the transport for the
+                    # duration of the call — the inline return path does
+                    # not auto-write.
+                    if resp is not None:
+                        transport.write(resp)
                 except json.JSONDecodeError:
                     logger.warning("Invalid JSON from WebSocket: %s", data[:100])
                 except Exception:
@@ -109,7 +139,7 @@ def _create_app() -> FastAPI:
         except WebSocketDisconnect:
             logger.info("WebSocket client disconnected")
         finally:
-            reset_transport()
+            reset_transport(token)
             transport.close()
 
     return app

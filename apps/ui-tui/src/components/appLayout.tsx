@@ -10,7 +10,7 @@
  *   └────────────────────────────────┘
  *
  * Banner note:
- *   The "⚡ DrSai" banner is now pre-printed via process.stdout.write in
+ *   The "⚡ OpenDrSai" banner is now pre-printed via process.stdout.write in
  *   entry.tsx BEFORE Ink starts rendering.  This keeps it outside Ink's
  *   dynamic frame so it is never re-rendered.  Previously it lived inside
  *   the dynamic frame, which caused duplicate banner lines during the
@@ -41,11 +41,11 @@ export function AppLayout({ gw, controller, sessionId, switchSession }: Props) {
   return (
     <Box flexDirection="column" paddingX={1}>
       {/*
-        Banner ("⚡ DrSai") is now pre-printed in entry.tsx BEFORE Ink
+        Banner ("⚡ OpenDrSai") is now pre-printed in entry.tsx BEFORE Ink
         starts rendering.  This keeps it outside Ink's dynamic frame so
         it is NOT re-rendered on every spinner tick / streaming flush.
         Previously it lived here as:
-          <Box><Text color={theme.primary} bold>⚡ DrSai</Text></Box>
+          <Box><Text color={theme.primary} bold>⚡ OpenDrSai</Text></Box>
         which caused duplicate banner lines during the "thinking" phase
         on terminals where Ink's eraseLines() doesn't fully clear frames.
       */}

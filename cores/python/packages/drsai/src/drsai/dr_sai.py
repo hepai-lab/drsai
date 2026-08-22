@@ -427,6 +427,8 @@ class DrSai:
             start_time = time.time()
             start_mono = time.monotonic()
             inactivity_timeout_s, total_timeout_s = _get_stream_timeouts()
+            trace_id = kwargs.get("trace_id") or uuid.uuid4().hex[:8]
+
             # 处理用户的kwargs参数，保存UserInput到数据库
             user_input: UserInput = await self.handle_input_info(**kwargs)
             user_id = user_input.user_id
@@ -646,7 +648,7 @@ class DrSai:
             )
             if response.status and response.data:
                 thread: Thread = response.data[0]
-                thread.user_input = user_input.model_dump(mode="json"),
+                thread.user_input = user_input.model_dump(mode="json")
                 thread.status = RunStatus.ACTIVE
                 # thread.messages.append(task[-1]) # 已经存在的Thread只添加最后一条消息
             else:

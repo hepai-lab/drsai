@@ -87,3 +87,8 @@ for (const entry of report.channels) {
 if (process.argv.includes("--json")) console.log(JSON.stringify(report, null, 2));
 console.log(`Desktop IPC inventory passed: preload=${preload.length}, windows=${windows.length}, macOS=${macos.length}.`);
 console.log(`macOS coverage=${(report.macosCoverage * 100).toFixed(2)}%, missing=${report.missingOnMacos.length}. Use --json for the complete report.`);
+
+if (process.argv.includes("--require-parity")) {
+  assert.deepEqual(report.missingOnWindows, [], `Windows IPC parity is incomplete: ${report.missingOnWindows.join(", ")}`);
+  assert.deepEqual(report.missingOnMacos, [], `macOS IPC parity is incomplete: ${report.missingOnMacos.join(", ")}`);
+}

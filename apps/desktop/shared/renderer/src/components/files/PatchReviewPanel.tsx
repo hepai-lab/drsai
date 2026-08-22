@@ -3,6 +3,8 @@ import { useMemo, useState } from "react";
 import type { WorkspaceGitDiffResult } from "@shared/desktopApi";
 import type { AppLanguage } from "../../navigation";
 import { desktopApi } from "../../desktopApi";
+import { requestAppDecision } from "../AppDecisionDialog";
+import { userFacingFailureMessage } from "../../userFacingLanguage";
 
 type HunkDecision = "pending" | "busy" | "approved" | "rejected" | "error";
 
@@ -25,11 +27,7 @@ export function PatchReviewPanel({
 
   async function approveFile(): Promise<void> {
     if (!diff?.path || !diff.diffHash || diff.staged) return;
-    const confirmed = window.confirm(
-      zh
-        ? "确认批准该文件当前未暂存修改并加入暂存区？如果文件 diff 已变化，本操作会被拒绝。"
-        : "Approve current unstaged changes for this file by staging them? If the diff changed, this action will be refused.",
-    );
+    const confirmed = await requestAppDecision({ id: "stage-current-file", title: zh ? "批准并暂存文件修改？" : "Approve and stage file changes?", description: diff.path, impact: zh ? "当前未暂存修改会加入暂存区；如果内容已变化，操作会安全拒绝。" : "Current unstaged changes will be staged. The action safely stops if content changed.", confirmLabel: zh ? "批准并暂存" : "Approve and stage" });
     if (!confirmed) return;
     setFileActionState("busy");
     setFileActionMessage(null);
@@ -44,17 +42,13 @@ export function PatchReviewPanel({
       if (result.staged) onReverted();
     } catch (caught) {
       setFileActionState("error");
-      setFileActionMessage(caught instanceof Error ? caught.message : String(caught));
+      setFileActionMessage(userFacingFailureMessage(caught, language, "operation"));
     }
   }
 
   async function revertFile(): Promise<void> {
     if (!diff?.path || !diff.diffHash || diff.staged) return;
-    const confirmed = window.confirm(
-      zh
-        ? "确认撤销该文件当前未暂存修改？如果文件 diff 已变化，本操作会被拒绝。"
-        : "Revert current unstaged changes for this file? If the diff changed, this action will be refused.",
-    );
+    const confirmed = await requestAppDecision({ id: "revert-current-file", tone: "danger", title: zh ? "撤销文件修改？" : "Revert file changes?", description: diff.path, impact: zh ? "当前未暂存修改会被移除；如果内容已变化，操作会安全拒绝。" : "Current unstaged changes will be removed. The action safely stops if content changed.", confirmLabel: zh ? "撤销修改" : "Revert changes" });
     if (!confirmed) return;
     setFileActionState("busy");
     setFileActionMessage(null);
@@ -69,7 +63,7 @@ export function PatchReviewPanel({
       if (result.reverted) onReverted();
     } catch (caught) {
       setFileActionState("error");
-      setFileActionMessage(caught instanceof Error ? caught.message : String(caught));
+      setFileActionMessage(userFacingFailureMessage(caught, language, "operation"));
     }
   }
 
@@ -78,15 +72,7 @@ export function PatchReviewPanel({
     action: "approve" | "reject",
   ): Promise<void> {
     if (!diff?.path || !diff.diffHash || diff.staged) return;
-    const confirmed = window.confirm(
-      action === "approve"
-        ? zh
-          ? "确认批准并暂存这个 hunk？如果文件 diff 已变化，本操作会被拒绝。"
-          : "Approve and stage this hunk? If the diff changed, this action will be refused."
-        : zh
-          ? "确认拒绝并从工作区撤销这个 hunk？如果文件 diff 已变化，本操作会被拒绝。"
-          : "Reject and revert this hunk from the worktree? If the diff changed, this action will be refused.",
-    );
+    const confirmed = await requestAppDecision({ id: `review-file-section-${action}`, tone: action === "reject" ? "danger" : "normal", title: action === "approve" ? (zh ? "批准这段修改？" : "Approve this section?") : (zh ? "撤销这段修改？" : "Revert this section?"), description: diff.path, impact: action === "approve" ? (zh ? "这段修改会加入暂存区；内容变化时会安全拒绝。" : "This section will be staged; changed content is safely rejected.") : (zh ? "这段未暂存修改会从工作区移除；内容变化时会安全拒绝。" : "This unstaged section will be removed; changed content is safely rejected."), confirmLabel: action === "approve" ? (zh ? "批准并暂存" : "Approve and stage") : (zh ? "撤销这段修改" : "Revert section") });
     if (!confirmed) return;
     setDecisions((current) => ({ ...current, [hunk.id]: "busy" }));
     setFileActionState("busy");
@@ -114,7 +100,7 @@ export function PatchReviewPanel({
       if (result.applied) onReverted();
     } catch (caught) {
       setDecisions((current) => ({ ...current, [hunk.id]: "error" }));
-      setFileActionMessage(caught instanceof Error ? caught.message : String(caught));
+      setFileActionMessage(userFacingFailureMessage(caught, language, "operation"));
       setFileActionState("error");
     }
   }

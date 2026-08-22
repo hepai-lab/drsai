@@ -13,6 +13,10 @@ interface ManagerPresentationRun {
 }
 
 const runs = new Map<string, ManagerPresentationRun>();
+const injectedPackagedFailures = new Set<string>();
+const managerPresentationTemplatePath = () => app.isPackaged
+  ? join(process.resourcesPath, "presentation", "manager-deck-template.pptx")
+  : join(app.getAppPath(), "..", "windows", "resources", "presentation", "manager-deck-template.pptx");
 const sanitizeRequirements = (values: string[] | undefined) => !Array.isArray(values) ? [] : values.map((value) => typeof value === "string" ? value.trim().replace(/\s+/g, " ").slice(0, 240) : "").filter((value, index, all) => Boolean(value) && all.indexOf(value) === index).slice(0, 5);
 const publishProgress = (progress: ManagerPresentationProgressEvent) => { for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("desktop:manager-presentation-progress", progress); };
 const resume = (run: ManagerPresentationRun) => { run.paused = false; for (const waiter of run.resumeWaiters) waiter(); run.resumeWaiters.clear(); };
@@ -26,8 +30,11 @@ export function registerMacosPresentationIpc(ipcMain: Pick<IpcMain, "handle">, s
     request.requirements = sanitizeRequirements(request.requirements);
     const run: ManagerPresentationRun = { controller: new AbortController(), ownerId: event.sender.id, request, paused: false, activeOperationController: null, resumeWaiters: new Set(), lastProgress: null, requirements: [...request.requirements] };
     const recovery = getManagerPresentationRecovery({ workspacePath: request.workspacePath, sourcePath: request.sourcePath }); recordManagerPresentationStart(request); runs.set(requestId, run);
+    const packagedAcceptance = Boolean(process.env.OPENDRSAI_MACOS_PACKAGED_SMOKE_FILE?.trim());
+    const injectFailure = packagedAcceptance && requestId === "packaged-l5-presentation-failure" && !injectedPackagedFailures.has(requestId);
+    if (injectFailure) injectedPackagedFailures.add(requestId);
     try {
-      return await generateManagerPresentation(request, (progress) => { run.lastProgress = progress; recordManagerPresentationProgress(request, progress); publishProgress(progress); }, { templatePath: join(app.getAppPath(), "resources", "presentation", "manager-deck-template.pptx"), signal: run.controller.signal, isPaused: () => run.paused, waitUntilResumed: () => run.paused ? new Promise<void>((resolveWait) => run.resumeWaiters.add(resolveWait)) : Promise.resolve(), setActiveOperationController: (controller) => { run.activeOperationController = controller; }, getRequirements: () => [...run.requirements], initialStageArtifacts: recovery?.requestId === requestId ? recovery.stageArtifacts : [] });
+      return await generateManagerPresentation(request, (progress) => { run.lastProgress = progress; recordManagerPresentationProgress(request, progress); publishProgress(progress); }, { templatePath: managerPresentationTemplatePath(), signal: run.controller.signal, phaseDelayMs: packagedAcceptance ? 500 : 0, failAtPhase: injectFailure ? "planning" : undefined, failureMessage: injectFailure ? "Packaged presentation retry fixture" : undefined, isPaused: () => run.paused, waitUntilResumed: () => run.paused ? new Promise<void>((resolveWait) => run.resumeWaiters.add(resolveWait)) : Promise.resolve(), setActiveOperationController: (controller) => { run.activeOperationController = controller; }, getRequirements: () => [...run.requirements], initialStageArtifacts: recovery?.requestId === requestId ? recovery.stageArtifacts : [] });
     } catch (error) {
       if (!(error instanceof ManagerPresentationCancelledError)) { const failed: ManagerPresentationProgressEvent = { requestId, phase: "failed", activeStage: run.lastProgress?.activeStage, progress: 100, message: error instanceof Error ? error.message : String(error) }; recordManagerPresentationProgress(request, failed); publishProgress(failed); }
       throw error;

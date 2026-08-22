@@ -2,15 +2,22 @@ import type {
   DesktopBootstrapBlocker,
   DesktopBootstrapResult,
 } from "../shared/desktopApi";
-import { requireAuthContext } from "./auth";
-import { getGatewayModels, startGateway } from "./gateway";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { refreshAuthContextAfterUnauthorized, requireAuthContext } from "./auth";
+import { replaceFileSafely } from "./atomicFileReplace";
+import { discoverGatewayModels, startGateway, syncAuthIdentityToGateway, type GatewayModelDiscoveryResult } from "./gateway";
+import { DRSAI_HOME } from "./paths";
 import { getInstallStatus } from "./status";
+
+const MODEL_CATALOG_STATUS_FILE = join(DRSAI_HOME, "logs", "model-catalog-status.json");
 
 export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
   const auth = await requireAuthContext();
   if (auth.authMode !== "oidc" || !auth.accessToken) {
     throw new Error("HepAI OIDC sign-in is required before preparing OpenDrSai.");
   }
+  await syncAuthIdentityToGateway(auth.userId);
 
   const install = await getInstallStatus();
   if (!install.installed) {
@@ -54,7 +61,46 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
     );
   }
 
-  const models = await getGatewayModels(auth.accessToken);
+  const discovery = await discoverModelsWithRecovery(auth.accessToken);
+  await writeModelCatalogStatus(discovery).catch(() => undefined);
+  if (discovery.state !== "ready") {
+    if (discovery.state === "forbidden") {
+      return result(
+        false,
+        "This account does not currently have permission to use an OpenDrSai model service.",
+        auth.session.user!,
+        [],
+        {
+          kind: "permission_denied",
+          title: "Account has no available service",
+          message: discovery.message,
+          retryable: false,
+          canRepairRuntime: false,
+          canSignInAgain: true,
+          diagnosticCode: discovery.diagnosticCode,
+        },
+      );
+    }
+    const authFailure = discovery.state === "auth_required" || discovery.state === "auth_expired";
+    return result(
+      false,
+      authFailure
+        ? "The HepAI session is not valid. Sign in again."
+        : "The HepAI model catalog is temporarily unavailable. OpenDrSai will retry.",
+      auth.session.user!,
+      [],
+      {
+        kind: authFailure ? "auth_required" : "service_unavailable",
+        title: authFailure ? "Sign in required" : "Model service is temporarily unavailable",
+        message: discovery.message,
+        retryable: !authFailure,
+        canRepairRuntime: false,
+        canSignInAgain: authFailure,
+        diagnosticCode: discovery.diagnosticCode,
+      },
+    );
+  }
+  const models = discovery.models;
   if (models.length === 0) {
     return result(
       false,
@@ -66,7 +112,7 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
         title: "Account has no available service",
         message:
           "This HepAI account is signed in, but it does not currently have permission to use an OpenDrSai model service.",
-        retryable: true,
+        retryable: false,
         canRepairRuntime: false,
         canSignInAgain: true,
         diagnosticCode: "account-no-model-service",
@@ -74,6 +120,59 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
     );
   }
   return result(true, "OpenDrSai is ready.", auth.session.user!, models);
+}
+
+async function writeModelCatalogStatus(discovery: GatewayModelDiscoveryResult): Promise<void> {
+  const temporary = `${MODEL_CATALOG_STATUS_FILE}.${process.pid}.tmp`;
+  const models = discovery.state === "ready" ? discovery.models : [];
+  const record = {
+    schemaVersion: 1,
+    updatedAt: new Date().toISOString(),
+    authMode: "oidc",
+    state: discovery.state,
+    diagnosticCode: "diagnosticCode" in discovery ? discovery.diagnosticCode : "model_catalog_ready",
+    modelCount: models.length,
+  };
+  try {
+    await mkdir(dirname(MODEL_CATALOG_STATUS_FILE), { recursive: true, mode: 0o700 });
+    await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    await replaceFileSafely(temporary, MODEL_CATALOG_STATUS_FILE);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
+}
+
+async function discoverModelsWithRecovery(accessToken: string): Promise<GatewayModelDiscoveryResult> {
+  let token = accessToken;
+  let refreshed = false;
+  const retryDelays = [0, 250, 750, 1_500];
+  let lastResult: GatewayModelDiscoveryResult | null = null;
+  for (const delayMs of retryDelays) {
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    let discovery = await discoverGatewayModels(token);
+    if (discovery.state === "auth_expired" && !refreshed) {
+      refreshed = true;
+      try {
+        const nextAuth = await refreshAuthContextAfterUnauthorized();
+        if (!nextAuth.accessToken) return discovery;
+        token = nextAuth.accessToken;
+        discovery = await discoverGatewayModels(token);
+      } catch {
+        return {
+          state: "auth_required",
+          diagnosticCode: "model_catalog_session_refresh_failed",
+          message: "The HepAI session could not be refreshed. Sign in again.",
+        };
+      }
+    }
+    if (discovery.state !== "unavailable") return discovery;
+    lastResult = discovery;
+  }
+  return lastResult ?? {
+    state: "unavailable",
+    diagnosticCode: "model_catalog_unavailable",
+    message: "The HepAI model catalog is temporarily unavailable.",
+  };
 }
 
 function result(

@@ -78,13 +78,18 @@ const capabilities = getStreamingVoiceCapabilities();
 assert.equal(capabilities.streamingStt, true);
 assert.equal(capabilities.streamingTts, false);
 assert.equal(capabilities.maxBufferedAudioMs, 2_000);
+assert.equal(capabilities.protocolVersion, 2);
+assert.equal(capabilities.supportsAdaptiveEndpointing, true);
+assert.equal(capabilities.supportsContextualRepair, true);
+assert.equal(capabilities.supportsProviderFailover, false);
 
 const sender = new FakeSender(101);
-const result = startStreamingVoiceTranscription(sender, request);
+const result = await startStreamingVoiceTranscription(sender, request);
 assert.equal(result.turnId, request.turnId);
 assert.equal(sender.events[0].event.type, "accepted");
 assert.equal(sender.events[0].event.sequence, 0);
-assert.throws(() => startStreamingVoiceTranscription(sender, { ...request, turnId: "turn-main-2" }), /already has an active/);
+assert.equal(sender.events[0].event.protocolVersion, 2);
+await assert.rejects(() => startStreamingVoiceTranscription(sender, { ...request, turnId: "turn-main-2" }), /already has an active/);
 
 const wrongOwner = new FakeSender(202);
 const wrongPort = new FakePort();
@@ -109,7 +114,7 @@ assert.equal(stopStreamingVoiceTranscription(sender, result.sessionId), false);
 assert.equal(cancelStreamingVoiceTranscription(sender, result.sessionId), false);
 
 const cancelSender = new FakeSender(303);
-const cancelResult = startStreamingVoiceTranscription(cancelSender, { ...request, turnId: "cancel-turn" });
+const cancelResult = await startStreamingVoiceTranscription(cancelSender, { ...request, turnId: "cancel-turn" });
 const cancelPort = new FakePort();
 assert.equal(attachStreamingVoiceAudioPort(cancelSender, cancelResult.sessionId, cancelPort), true);
 assert.equal(cancelStreamingVoiceTranscription(cancelSender, cancelResult.sessionId), true);
@@ -118,7 +123,7 @@ assert.equal(cancelPort.closed, true);
 assert.equal(cancelStreamingVoiceTranscription(cancelSender, cancelResult.sessionId), false);
 
 const destroySender = new FakeSender(404);
-const destroyResult = startStreamingVoiceTranscription(destroySender, { ...request, turnId: "destroy-turn" });
+const destroyResult = await startStreamingVoiceTranscription(destroySender, { ...request, turnId: "destroy-turn" });
 const destroyPort = new FakePort();
 assert.equal(attachStreamingVoiceAudioPort(destroySender, destroyResult.sessionId, destroyPort), true);
 destroySender.destroyForTest();
@@ -126,7 +131,7 @@ assert.equal(destroyPort.closed, true, "destroying a window must close its audio
 assert.equal(cancelStreamingVoiceTranscription(destroySender, destroyResult.sessionId), false, "destroyed sessions must be removed");
 
 const explicitCleanupSender = new FakeSender(505);
-const cleanupResult = startStreamingVoiceTranscription(explicitCleanupSender, { ...request, turnId: "cleanup-turn" });
+const cleanupResult = await startStreamingVoiceTranscription(explicitCleanupSender, { ...request, turnId: "cleanup-turn" });
 const cleanupPort = new FakePort();
 attachStreamingVoiceAudioPort(explicitCleanupSender, cleanupResult.sessionId, cleanupPort);
 cancelStreamingVoiceSessionsForSender(explicitCleanupSender);
@@ -138,7 +143,7 @@ assert.equal(getStreamingVoiceCapabilities().streamingTts, true, "configured seg
 delete process.env.OPENDRSAI_VOICE_TTS_RUNTIME;
 
 const quotaSender = new FakeSender(606);
-const quotaResult = startStreamingVoiceTranscription(quotaSender, { ...request, turnId: "quota-turn" });
+const quotaResult = await startStreamingVoiceTranscription(quotaSender, { ...request, turnId: "quota-turn" });
 const quotaPort = new FakePort();
 attachStreamingVoiceAudioPort(quotaSender, quotaResult.sessionId, quotaPort);
 for (let sequence = 0; sequence <= 1_200 && !quotaPort.closed; sequence += 1) quotaPort.sendChunk(makeChunk(quotaResult, sequence));
@@ -149,7 +154,7 @@ assert.doesNotMatch(quotaSender.events.at(-1).event.error.message, /https?:|wss?
 
 process.env.OPENDRSAI_VOICE_RUNTIME = "gateway";
 assert.equal(getStreamingVoiceCapabilities().streamingStt, false, "production must not advertise an unimplemented streaming provider");
-assert.throws(
+await assert.rejects(
   () => startStreamingVoiceTranscription(new FakeSender(707), { ...request, turnId: "unavailable-turn" }),
   /unavailable for the configured production runtime/,
 );

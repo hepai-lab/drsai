@@ -2,6 +2,7 @@ import {
   FormEvent,
   ClipboardEvent as ReactClipboardEvent,
   KeyboardEvent as ReactKeyboardEvent,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -18,9 +19,9 @@ import {
   ChevronRight,
   ClipboardList,
   FileCode2,
+  FileText,
   Folder,
   FolderPlus,
-  Gauge,
   Globe2,
   Hammer,
   Info,
@@ -40,6 +41,8 @@ import {
   Telescope,
   Volume2,
   X,
+  // Temporarily unused while composer Skills picker is hidden — keep for later reuse.
+  // Zap,
 } from "lucide-react";
 import drsaiLogo from "../assets/drsai.png";
 import { canHandleMemoryRequestLocally } from "../userPreferenceIntent";
@@ -53,6 +56,8 @@ import type {
   DesktopVoiceInteractionMode,
   DesktopVoiceRuntimeStatus,
   DesktopStreamingVoiceCapabilities,
+  DesktopDuplexVoiceCapabilities,
+  DesktopThreadHistoryState,
   DesktopVoiceTranscriptionResult,
   ChatToolTimelineEvent,
   ChatMessagePart,
@@ -68,12 +73,19 @@ import type {
   WorkspaceFolderSummaryResult,
   WorkspaceInstructionSummary,
   WorkspaceProject,
+  GatewaySkill,
 } from "@shared/desktopApi";
-import type { ChatAttachment } from "@shared/desktopApi";
-import type { ArtifactPart, CitationPart, InteractionPart, StructuredTurnState } from "@shared/structuredConversation";
+import type { ChatAttachment, InteractionOption } from "@shared/desktopApi";
+import type { RunReproducibilityLevel } from "@shared/runInspection";
+import type { ArtifactPart, CitationPart, InteractionPart, StructuredAssistantPart, StructuredTurnState } from "@shared/structuredConversation";
 import type { AppLanguage } from "../navigation";
+import { getAgentEmptyChatPrompts, parseCatalogAgentExamples } from "../agentExamplePrompts";
 import { desktopApi, hasDesktopApi } from "../desktopApi";
 import { copyTextSafely } from "../clipboard";
+import {
+  resolveTurnRailNavigationIndex,
+  type TurnRailNavigationKey,
+} from "../conversationTurnRail";
 import {
   CHAT_COMMAND_NAMES,
   parseForkQueueEntries,
@@ -81,11 +93,14 @@ import {
   type ChatRuntimeMode,
 } from "../chatCommands";
 import { ChatMessageContent } from "./ChatMessageContent";
-import { StructuredMessageParts } from "./StructuredMessageParts";
+import { ThreadActivityBubble } from "./ThreadActivityBubble";
+import { StructuredMessageParts, type InteractionResponse } from "./StructuredMessageParts";
 import { getReasoningChatText, getVisibleChatText } from "../chatOutputModel";
+import { createSmoothFollowOutputController } from "../smoothFollowOutput";
 import { VoiceCaptureBar } from "./voice/VoiceCaptureBar";
 import { VoiceReviewBar } from "./voice/VoiceReviewBar";
-import { StreamingVoiceCaptureBar } from "./voice/StreamingVoiceCaptureBar";
+import { StreamingComposerProjectionEditor } from "./voice/StreamingComposerProjectionEditor";
+import { TranscriptRepairDiff } from "./voice/TranscriptRepairDiff";
 import { StreamingVoiceOutputBar } from "./voice/StreamingVoiceOutputBar";
 import {
   useSystemVoicePlayback,
@@ -99,9 +114,27 @@ import {
 } from "../voice/voiceAudio";
 import { useVoiceCapture } from "../voice/useVoiceCapture";
 import { useStreamingVoiceInput } from "../voice/streaming/useStreamingVoiceInput";
+import { useDuplexVoiceInput } from "../voice/duplex/useDuplexVoiceInput";
+import { canSubmitStreamingVoiceTurn } from "../voice/streaming/streamingVoiceTurnReducer";
 import { useAssistantSpeechSegments } from "../voice/streaming/assistantSpeechStream";
 import { useStreamingVoiceOutput } from "../voice/streaming/useStreamingVoiceOutput";
 import { createStreamingVoiceDiagnostic } from "../voice/streaming/streamingVoiceDiagnostics";
+import {
+  createStreamingComposerProjection,
+  rebaseStreamingComposerUserText,
+  setStreamingComposerComposition,
+  updateStreamingComposerTranscript,
+  type StreamingComposerProjectionState,
+} from "../voice/streaming/streamingComposerProjection";
+import {
+  acceptTranscriptRepair,
+  buildContextualTranscriptRepair,
+  createTranscriptRepairState,
+  proposeTranscriptRepair,
+  rejectTranscriptRepair,
+  undoTranscriptRepair,
+  type TranscriptRepairState,
+} from "../voice/streaming/contextualTranscriptRepair";
 import { useVoiceTranscription } from "../voice/useVoiceTranscription";
 import { getAssistantSpeechText } from "../voice/voiceMessageText";
 import {
@@ -111,9 +144,13 @@ import {
   reduceVoiceTurn,
   type VoiceTurnEvent,
 } from "../voice/voiceTurnReducer";
+import type { UserFacingRecoveryAction } from "../userFacingErrors";
+import { userFacingFailureMessage } from "../userFacingLanguage";
 
 export type UiMessage = ChatMessage & {
   id: string;
+  /** Authoritative Runtime Run id; distinct from the UI/request turn id. */
+  runtimeRunId?: string;
   streaming?: boolean;
   error?: boolean;
   replyFailed?: boolean;
@@ -122,12 +159,22 @@ export type UiMessage = ChatMessage & {
   toolTimeline?: ChatToolTimelineEvent[];
   parts?: ChatMessagePart[];
   structuredTurn?: StructuredTurnState;
+  queuedAt?: number;
   startedAt?: number;
   lastEventAt?: number;
+  firstFeedbackAt?: number;
+  firstDeltaAt?: number;
+  /** Files/folders attached when the user sent this message (shown as chips in the bubble). */
+  attachments?: ChatAttachment[];
+  recoveryActions?: UserFacingRecoveryAction[];
   inputRequest?: {
     requestId: string;
     prompt: string;
-    inputType: "text_input" | "approval";
+    inputType: "text_input" | "approval" | "choice" | "confirmation";
+    options?: InteractionOption[];
+    defaultValue?: string;
+    allowCustom?: boolean;
+    timeoutAt?: string;
   };
 };
 
@@ -138,6 +185,20 @@ async function recordVoiceDiagnostic(input: Omit<DiagnosticEventInput, "module">
   } catch {
     // Diagnostics must never interrupt voice interaction.
   }
+}
+
+function voiceDiagnosticStack(error: unknown): NonNullable<DiagnosticEventInput["stack"]> {
+  const value = error instanceof Error ? error : new Error(String(error));
+  return (value.stack || `${value.name}: ${value.message}`).split(/\r?\n/).slice(0, 50).map((raw) => ({
+    raw,
+    language: "javascript" as const,
+  }));
+}
+
+function voiceCaptureErrorCode(error: unknown): string {
+  if (error instanceof DOMException && error.name) return `capture_${error.name.toLowerCase()}`;
+  if (error instanceof Error && error.name && error.name !== "Error") return `capture_${error.name.toLowerCase()}`;
+  return "capture_error";
 }
 
 type ComposerAttachment = ChatAttachment & {
@@ -161,11 +222,16 @@ interface MaterialTaskSuggestion {
   prompt: string;
 }
 
-export type ThinkingEffort = "low" | "medium" | "high" | "xhigh";
-const THINKING_EFFORTS: ThinkingEffort[] = ["low", "medium", "high", "xhigh"];
+export type ThinkingEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
+const THINKING_EFFORTS: ThinkingEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 const MAX_CLIPBOARD_IMAGE_BYTES = 1_250_000;
 const MAX_CLIPBOARD_IMAGE_COUNT = 4;
 const MAX_CLIPBOARD_PATH_MENTIONS = 6;
+function useEventCallback<Args extends unknown[], Result>(callback: (...args: Args) => Result): (...args: Args) => Result {
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+  return useCallback((...args: Args) => callbackRef.current(...args), []);
+}
 
 export interface ChatForkQueueAgentAssignment {
   queueIndex: number;
@@ -177,17 +243,57 @@ export interface ChatSubmitOptions {
   agentId?: string;
   agentName?: string;
   forkQueueAgentAssignments?: ChatForkQueueAgentAssignment[];
+  goalConfirmationRequired?: boolean;
   model?: string;
   runtimeMode?: ChatRuntimeMode | null;
-  thinkingEffort: ThinkingEffort;
+  skillName?: string | null;
+  thinkingEffort?: ThinkingEffort;
+  onStarted?: (submission: {
+    assistantMessageId: string;
+    requestId: string;
+    userMessageId: string;
+  }) => void;
+}
+
+interface GoalConfirmationDraft {
+  objective: string;
+  materials: string;
+  outputs: string;
+  constraints: string;
+}
+
+function parseGoalConfirmationPrompt(prompt: string): GoalConfirmationDraft {
+  const fields = Object.fromEntries(prompt.split(/\r?\n/).flatMap((line) => {
+    const separator = line.indexOf(":");
+    return separator > 0
+      ? [[line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim()]]
+      : [];
+  }));
+  return {
+    objective: fields.goal || "",
+    materials: fields.materials === "None supplied" ? "" : fields.materials || "",
+    outputs: fields.outputs === "Not specified" ? "" : fields.outputs || "",
+    constraints: fields.constraints === "None supplied" ? "" : fields.constraints || "",
+  };
+}
+
+function splitGoalConfirmationList(value: string): string[] {
+  return value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
 }
 
 interface ChatWorkspaceProps {
   activeRequestId: string | null;
+  cancellingRequestId?: string | null;
   canChat: boolean;
   chatUnavailableReason?: string;
+  composerFocusRequest?: number;
   conversationId: string;
+  conversationTitle?: string;
+  conversationSource?: "opendrsai" | "codex";
   conversationHistoryPending?: boolean;
+  conversationHistory?: DesktopThreadHistoryState;
+  operationalStateControl?: React.ReactNode;
+  continuesExistingTask?: boolean;
   health: DesktopHealth | null;
   input: string;
   language: AppLanguage;
@@ -199,6 +305,7 @@ interface ChatWorkspaceProps {
   selectedAgentId?: string;
   selectedAgentName?: string;
   selectedModelName?: string;
+  selectedModelProviderId?: string;
   agentOptions?: DesktopAgent[];
   modelOptions?: MyDrSaiModelConfig[];
   samplePrompts?: DesktopAgent["examples"];
@@ -210,15 +317,17 @@ interface ChatWorkspaceProps {
   workspaceLocation?: "local" | "remote";
   workspaceOptions?: WorkspaceProject[];
   selectedWorkspaceId?: string;
-  onAbort: () => void;
+  onAbort: () => void | Promise<void>;
   onClearExternalAttachments?: () => void;
   onClearRuntimeMode?: () => void;
   onInputChange: (value: string) => void;
   onSelectAgent?: (agentId: string) => void;
   onSelectWorkspace?: (workspaceId: string) => void;
-  onSelectModel?: (model: string) => void;
+  onSelectModel?: (model: string, providerId?: string) => void;
   onOpenExternal: (url: string) => void;
-  onOpenDebug?: () => void;
+  onOpenDebug?: (runId?: string, view?: "activity" | "app-errors") => void;
+  onOpenRun?: (runId: string, itemId?: string) => void;
+  onCreateRunExperiment?: (runId: string, itemId?: string) => void;
   onOpenPreviewBrowser?: (url?: string) => void;
   onOpenWorkspaceArtifact?: (path: string) => void;
   onPickFiles?: () => Promise<PickDialogResult>;
@@ -230,18 +339,28 @@ interface ChatWorkspaceProps {
   onAttachIdeCurrentFile?: () => void;
   onAttachIdeCurrentSelection?: () => void;
   onRefreshIdeContext?: () => void;
+  onRetryMessage?: (assistantMessageId: string, mode: "same_session" | "new_session") => void | Promise<void>;
+  onRecoveryAction?: (assistantMessageId: string, action: UserFacingRecoveryAction["id"]) => void | Promise<void>;
+  onLoadEarlierHistory?: () => void | Promise<void>;
   onSubmit: (
     attachments?: ChatAttachment[],
     options?: ChatSubmitOptions,
   ) => Promise<boolean>;
 }
 
-export function ChatWorkspace({
+function ChatWorkspaceImpl({
   activeRequestId,
+  cancellingRequestId = null,
   canChat,
   chatUnavailableReason,
+  composerFocusRequest = 0,
   conversationId,
+  conversationTitle,
+  conversationSource = "opendrsai",
   conversationHistoryPending = false,
+  conversationHistory,
+  operationalStateControl,
+  continuesExistingTask = false,
   input,
   language,
   messages,
@@ -252,6 +371,7 @@ export function ChatWorkspace({
   selectedAgentId,
   selectedAgentName,
   selectedModelName,
+  selectedModelProviderId,
   agentOptions = [],
   modelOptions = [],
   samplePrompts,
@@ -272,6 +392,8 @@ export function ChatWorkspace({
   onSelectModel,
   onOpenExternal,
   onOpenDebug,
+  onOpenRun,
+  onCreateRunExperiment,
   onOpenPreviewBrowser,
   onOpenWorkspaceArtifact,
   onPickFiles,
@@ -281,11 +403,47 @@ export function ChatWorkspace({
   onAttachIdeCurrentFile,
   onAttachIdeCurrentSelection,
   onRefreshIdeContext,
+  onRetryMessage,
+  onRecoveryAction,
+  onLoadEarlierHistory,
   onSubmit,
 }: ChatWorkspaceProps): React.JSX.Element {
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [runReproducibility, setRunReproducibility] = useState<Record<string, RunReproducibilityLevel>>({});
+
+  useEffect(() => {
+    if (!workspacePath || typeof desktopApi.getRunReproductionManifest !== "function") return;
+    const runIds = [...new Set(messages
+      .map((message) => message.runtimeRunId)
+      // RuntimeEngine owns the `run-` namespace. Request IDs and platform-run
+      // IDs may also travel through ChatEvent.runId, but they have no Runtime
+      // manifest and must never be sent to a run-scoped Runtime endpoint.
+      .filter((runId): runId is string => Boolean(runId?.startsWith("run-"))))]
+      .slice(-50);
+    if (!runIds.length) return;
+    let active = true;
+    void Promise.all(runIds.map(async (runId) => {
+      try {
+        const manifest = await desktopApi.getRunReproductionManifest({
+          workspacePath,
+          workspaceId: selectedWorkspaceId,
+          runId,
+        });
+        return [runId, manifest.reproducibility_level] as const;
+      } catch {
+        return null;
+      }
+    })).then((entries) => {
+      if (!active) return;
+      setRunReproducibility(Object.fromEntries(
+        entries.filter((entry): entry is readonly [string, RunReproducibilityLevel] => entry !== null),
+      ));
+    });
+    return () => { active = false; };
+  }, [messages, selectedWorkspaceId, workspacePath]);
   const [highlightedTurnId, setHighlightedTurnId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [interactionDraft, setInteractionDraft] = useState("");
   const [materialRoleAnalysis, setMaterialRoleAnalysis] = useState<MaterialRoleAnalysisResult | null>(null);
   const [materialRolePhase, setMaterialRolePhase] = useState<"idle" | "analyzing" | "ready" | "failed">("idle");
   const [materialConsistencyAnalysis, setMaterialConsistencyAnalysis] = useState<MaterialConsistencyAnalysisResult | null>(null);
@@ -295,23 +453,37 @@ export function ChatWorkspace({
   const materialRoleRequestRef = useRef(0);
   const materialConsistencyRequestRef = useRef(0);
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>(defaultThinkingEffort);
+  const [taskInteractionMode, setTaskInteractionMode] = useState<"normal" | "confirm_goal">("normal");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [metaMenuOpen, setMetaMenuOpen] = useState<"agent" | "model" | "thinking" | null>(null);
+  const [metaMenuOpen, setMetaMenuOpen] = useState<"configuration" | "skill" | null>(null);
+  const [configurationSection, setConfigurationSection] = useState<"agent" | "model" | "thinking" | "task" | null>(null);
+  const [configurationSubmenuPosition, setConfigurationSubmenuPosition] = useState({ top: 0, left: 0, maxHeight: 220 });
+  const [installedSkills, setInstalledSkills] = useState<GatewaySkill[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsLoadError, setSkillsLoadError] = useState<string | null>(null);
+  const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
   const [introMenuOpen, setIntroMenuOpen] = useState<"workspace" | "agent" | null>(null);
   const [introSearchQuery, setIntroSearchQuery] = useState("");
   const [forkQueueAgentSelections, setForkQueueAgentSelections] = useState<Record<number, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchDate, setSearchDate] = useState("");
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const [voiceReviewText, setVoiceReviewText] = useState<string | null>(null);
   const [voiceReviewSource, setVoiceReviewSource] = useState<"serial" | "streaming" | null>(null);
   const [streamingVoiceReadyToSend, setStreamingVoiceReadyToSend] = useState(false);
   const [streamingVoiceResponseArmed, setStreamingVoiceResponseArmed] = useState(false);
+  const [streamingComposerProjection, setStreamingComposerProjection] = useState<StreamingComposerProjectionState | null>(null);
+  const [streamingTranscriptRepair, setStreamingTranscriptRepair] = useState<TranscriptRepairState | null>(null);
   const [voiceRuntimeDisclosure, setVoiceRuntimeDisclosure] = useState<string | null>(null);
   const [voiceRuntimeStatus, setVoiceRuntimeStatus] = useState<DesktopVoiceRuntimeStatus | null>(null);
   const [streamingVoiceCapabilities, setStreamingVoiceCapabilities] = useState<DesktopStreamingVoiceCapabilities | null>(null);
+  const [duplexVoiceCapabilities, setDuplexVoiceCapabilities] = useState<DesktopDuplexVoiceCapabilities | null>(null);
+  const [duplexPrivacyDisclosure, setDuplexPrivacyDisclosure] = useState("Realtime voice sends microphone audio to the configured remote Provider.");
+  const [duplexPrivacyConfirmed, setDuplexPrivacyConfirmed] = useState(false);
   const [voiceConsentRequired, setVoiceConsentRequired] = useState(false);
   const [voicePreferences, updateVoicePreferences] = useVoicePreferences();
   const [voiceTurnState, dispatchVoiceTurnBase] = useReducer(reduceVoiceTurn, initialVoiceTurnState);
+  const voiceRecordingProcessTimerRef = useRef<number | null>(null);
   const voiceTurnStateRef = useRef(voiceTurnState);
   voiceTurnStateRef.current = voiceTurnState;
   const dispatchVoiceTurn = useCallback((event: VoiceTurnEvent): void => {
@@ -345,8 +517,11 @@ export function ChatWorkspace({
     serialTts: "speechSynthesis" in window,
     streamingTts: false,
     streamingCapabilities: streamingVoiceCapabilities,
+    duplexCapabilities: duplexVoiceCapabilities,
+    duplexEnabled: Boolean(duplexVoiceCapabilities),
   });
   const streamingVoiceAvailability = getVoiceModeAvailability("streaming", voiceModeCapabilities);
+  const duplexVoiceAvailability = getVoiceModeAvailability("duplex", voiceModeCapabilities);
   const [voiceProgressMessage, setVoiceProgressMessage] = useState("");
   const [voiceRuntimeLabel, setVoiceRuntimeLabel] = useState("Voice STT");
   const voicePlayback = useSystemVoicePlayback();
@@ -365,41 +540,81 @@ export function ChatWorkspace({
     beforeStart: async () => {
       voicePlayback.stop();
       setVoiceConsentRequired(false);
-      if (hasDesktopApi() && typeof desktopApi.getVoiceRuntimeStatus === "function") {
-        const [runtime, streamingCapabilities] = await Promise.all([
-          desktopApi.getVoiceRuntimeStatus(),
-          desktopApi.getStreamingVoiceCapabilities().catch(() => null),
-        ]);
-        setVoiceRuntimeStatus(runtime);
-        setStreamingVoiceCapabilities(streamingCapabilities);
-        setVoiceRuntimeDisclosure(runtime.providerDisclosure);
-        if (runtime.state !== "ready") throw new Error(runtime.message);
-        if (runtime.runtimeId === "gateway-provider" && !voicePreferences.remoteSttConsent) {
-          setVoiceConsentRequired(true);
-          throw new Error(zh
-            ? "使用在线语音识别前，需要允许将录音发送给当前语音服务提供方。"
-            : "Allow sending recordings to the configured speech provider before using online transcription.");
-        }
-      }
     },
     deviceId: voiceDeviceId,
+    onCaptureError: (error, message) => {
+      reportVoiceCaptureFailure(error, message, "capture_initialization");
+    },
     onDeviceUnavailable: () => {
       updateVoicePreferences({ inputDeviceId: "" });
       setVoiceError("The selected microphone is no longer available. The default microphone will be used.");
     },
     onRecorded: ({ blob, durationSeconds }) => {
-      void processVoiceRecording(blob, durationSeconds);
+      if (voiceRecordingProcessTimerRef.current !== null) window.clearTimeout(voiceRecordingProcessTimerRef.current);
+      voiceRecordingProcessTimerRef.current = window.setTimeout(() => {
+        voiceRecordingProcessTimerRef.current = null;
+        void processVoiceRecording(blob, durationSeconds);
+      }, 0);
     },
   });
   const streamingVoiceInput = useStreamingVoiceInput({
     deviceId: voiceDeviceId,
     languageHint: voiceLanguage === "auto" ? undefined : voiceLanguage,
     onReview: (transcript) => {
+      setStreamingComposerProjection(null);
+      const repairBase = createTranscriptRepairState(transcript);
+      const candidate = buildContextualTranscriptRepair({
+        transcript,
+        revision: 1,
+        glossary: [
+          { canonical: "OpenDrSai", aliases: ["open dr sai", "open doctor sai"], source: { type: "user_dictionary", label: "Product name" } },
+          { canonical: "流式语音", aliases: ["留是语音", "流逝语音"], source: { type: "workspace_term", label: "Voice architecture" } },
+        ],
+      });
+      const repair = candidate ? proposeTranscriptRepair(repairBase, candidate) : repairBase;
+      setStreamingTranscriptRepair(candidate ? repair : null);
       setVoiceReviewSource("streaming");
-      setVoiceReviewText(transcript);
+      setVoiceReviewText(repair.acceptedText);
       setVoiceRuntimeDisclosure(voiceRuntimeStatus?.providerDisclosure ?? "Live transcription completed.");
     },
   });
+  const duplexVoiceInput = useDuplexVoiceInput({
+    threadId: conversationId,
+    deviceId: voiceDeviceId,
+    languageHint: voiceLanguage === "auto" ? undefined : voiceLanguage,
+    voice: voicePreferences.voiceName,
+    instructions: "Respond naturally and concisely in a realtime voice conversation.",
+    enableToolCalling: true,
+    toolExecutor: {
+      execute: async ({ name, arguments: args }) => {
+        if (name === "search_thread_messages") {
+          const query = typeof args.query === "string" ? args.query : "";
+          const limit = typeof args.limit === "number" ? Math.max(1, Math.min(20, Math.floor(args.limit))) : 8;
+          return { output: await desktopApi.searchThreadMessages({ query, threadIds: [conversationId], limit }) };
+        }
+        if (name === "get_voice_runtime_status") return { output: await desktopApi.getVoiceRuntimeStatus() };
+        throw new Error(`Realtime tool is not registered: ${name}`);
+      },
+    },
+  });
+  useEffect(() => {
+    if (!streamingTranscriptRepair?.candidate || streamingVoiceInput.turnState.phase !== "review") return;
+    streamingVoiceInput.beginRepair();
+    streamingVoiceInput.completeRepair(!streamingTranscriptRepair.candidate.policy.autoAccept);
+  }, [streamingTranscriptRepair?.candidate?.id, streamingVoiceInput.turnState.phase]);
+  useEffect(() => {
+    setStreamingComposerProjection((current) => current
+      ? updateStreamingComposerTranscript(current, {
+          stableVoiceText: streamingVoiceInput.transcript.committedText,
+          provisionalVoiceText: streamingVoiceInput.transcript.unstableText,
+          revision: streamingVoiceInput.transcript.revision,
+        })
+      : current);
+  }, [
+    streamingVoiceInput.transcript.committedText,
+    streamingVoiceInput.transcript.revision,
+    streamingVoiceInput.transcript.unstableText,
+  ]);
   const streamingDiagnosticKeysRef = useRef(new Set<string>());
   const assistantSpeechSegments = useAssistantSpeechSegments(voicePreferences.interactionMode === "streaming");
   const streamingVoiceOutput = useStreamingVoiceOutput({
@@ -476,12 +691,53 @@ export function ChatWorkspace({
     transcribe: transcribeVoiceBlob,
   } = useVoiceTranscription(setVoiceProgressMessage);
   const [respondedInputRequests, setRespondedInputRequests] = useState<Set<string>>(() => new Set());
-  const [turnRailMarkers, setTurnRailMarkers] = useState<Array<{ id: string; top: number }>>([]);
+  const [configuredCapabilityRequests, setConfiguredCapabilityRequests] = useState<Set<string>>(() => new Set());
   const [activeTurnRailId, setActiveTurnRailId] = useState<string | null>(null);
+  const [awayFromLatest, setAwayFromLatest] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
+  const turnRailNavigationTargetRef = useRef<string | null>(null);
+  const turnRailNavigationTimerRef = useRef<number | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
+
+  useEffect(() => {
+    if (composerFocusRequest <= 0 || conversationHistoryPending) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      textareaRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [composerFocusRequest, conversationHistoryPending]);
+  const composerDropRef = useCallback((form: HTMLFormElement | null) => {
+    composerRef.current = form;
+    if (!form) return;
+    const onDrag = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.dataTransfer?.files.length) return;
+      const getPath = hasDesktopApi()
+        ? (f: File): string => desktopApi.getPathForFile(f)
+        : (f: File): string => `C:\\Users\\Demo\\Downloads\\${f.name}`;
+      const added: ComposerAttachment[] = [];
+      for (const f of Array.from(e.dataTransfer.files)) {
+        const p = getPath(f);
+        if (!p) continue;
+        added.push({ id: crypto.randomUUID(), kind: "file", path: p, name: f.name || p.split(/[\\/]/).pop() || "unknown", importFile: { path: p, name: f.name || p.split(/[\\/]/).pop() || "unknown", extension: (f.name || "").includes(".") ? ((f.name || "").split(".").pop() || "") : "", category: "other", status: "ready" } });
+      }
+      if (!added.length) return;
+      setAttachments((c) => { const ex = new Set(c.map((i) => i.path)); return [...c, ...added.filter((a) => !ex.has(a.path))]; });
+      setToolsOpen(false);
+    };
+    form.addEventListener("dragover", onDrag, true);
+    form.addEventListener("drop", onDrop, true);
+    (form as any).__drsaiDropOff = () => { form.removeEventListener("dragover", onDrag, true); form.removeEventListener("drop", onDrop, true); };
+    return () => { (form as any).__drsaiDropOff?.(); };
+  }, []);
   const attachmentButtonRef = useRef<HTMLButtonElement | null>(null);
+  const toolsMenuRef = useRef<HTMLDivElement | null>(null);
   const introPickerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -496,8 +752,25 @@ export function ChatWorkspace({
         window.requestAnimationFrame(() => attachmentButtonRef.current?.focus());
       }
     };
+    const handlePointerDown = (event: PointerEvent): void => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (toolsOpen && !toolsMenuRef.current?.contains(target)) {
+        setToolsOpen(false);
+      }
+      if (metaMenuOpen) {
+        // Only keep the active meta menu open when clicking its own chip/panel —
+        // not the whole meta bar (voice controls / send would otherwise block dismiss).
+        const inActiveMenu = target.closest(`[data-meta-menu="${metaMenuOpen}"]`);
+        if (!inActiveMenu) setMetaMenuOpen(null);
+      }
+    };
     window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("pointerdown", handlePointerDown);
+    };
   }, [metaMenuOpen, toolsOpen]);
 
   useEffect(() => {
@@ -518,7 +791,10 @@ export function ChatWorkspace({
   }, [introMenuOpen]);
 
   useEffect(() => {
-    const openModelPicker = (): void => setMetaMenuOpen("model");
+    const openModelPicker = (): void => {
+      setConfigurationSection("model");
+      setMetaMenuOpen("configuration");
+    };
     window.addEventListener("drsai:open-model-picker", openModelPicker);
     return () => window.removeEventListener("drsai:open-model-picker", openModelPicker);
   }, []);
@@ -527,47 +803,124 @@ export function ChatWorkspace({
     setThinkingEffort(defaultThinkingEffort);
   }, [defaultThinkingEffort]);
 
+  useEffect(() => {
+    setTaskInteractionMode("normal");
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (!agentOptions.some((agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex")) setTaskInteractionMode("normal");
+  }, [agentOptions, selectedAgentId]);
+
   async function respondToAgentInput(
     request: NonNullable<UiMessage["inputRequest"]>,
     response: string | Record<string, unknown>,
+    transportRequestId = request.requestId,
   ): Promise<void> {
-    const accepted = await desktopApi.respondChatInput(request.requestId, response);
+    const accepted = await desktopApi.respondChatInput(transportRequestId, response);
     if (!accepted) return;
+    if (typeof response === "object" && response.decision === "revise") return;
     setRespondedInputRequests((current) => new Set(current).add(request.requestId));
   }
 
-  function requestTextAgentInput(request: NonNullable<UiMessage["inputRequest"]>): void {
-    const response = window.prompt(request.prompt);
-    if (response?.trim()) void respondToAgentInput(request, response.trim());
+  const respondToStructuredInteraction = useEventCallback((turnId: string, part: InteractionPart, response: InteractionResponse): void => {
+    void desktopApi.respondChatInput(turnId, response).then((accepted) => {
+      if (!accepted) return;
+      if (typeof response === "object" && response.decision === "revise") return;
+      setRespondedInputRequests((current) => new Set(current).add(part.requestId));
+      if (response.capabilityAction === "configured") {
+        setConfiguredCapabilityRequests((current) => new Set(current).add(part.requestId));
+      }
+    });
+  });
+
+  const requestStructuredTextInput = useEventCallback((turnId: string, part: InteractionPart): void => {
+    const response = window.prompt(part.prompt);
+    if (response?.trim()) respondToStructuredInteraction(turnId, part, { response: response.trim() });
+  });
+
+  function respondToActiveInput(response: string | Record<string, unknown>): void {
+    if (!activeInputRequest || !activeInputMessage) return;
+    const transportRequestId = activeInputMessage.structuredTurn?.turnId ?? activeInputRequest.requestId;
+    void respondToAgentInput(activeInputRequest, response, transportRequestId);
   }
 
-  function respondToStructuredInteraction(part: InteractionPart, response: { approved: boolean }): void {
-    void respondToAgentInput({
-      requestId: part.requestId,
-      prompt: part.prompt,
-      inputType: part.interactionType === "approval" ? "approval" : "text_input",
-    }, response);
-  }
-
-  function requestStructuredTextInput(part: InteractionPart): void {
-    requestTextAgentInput({ requestId: part.requestId, prompt: part.prompt, inputType: "text_input" });
+  function submitInteractionDraft(): void {
+    const response = interactionDraft.trim();
+    if (!response) return;
+    respondToActiveInput(response);
+    setInteractionDraft("");
   }
   const shouldFollowOutputRef = useRef(true);
+  const finalScrollSettleTimerRef = useRef<number | null>(null);
+  const [smoothFollowOutput] = useState(() => createSmoothFollowOutputController({
+    scrollToBottom: (behavior) => {
+      const list = messageListRef.current;
+      if (list) list.scrollTo({ top: Math.max(0, list.scrollHeight - list.clientHeight), behavior });
+    },
+    stopScrolling: (scrollTop) => messageListRef.current?.scrollTo({ top: scrollTop, behavior: "auto" }),
+  }));
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const voiceRetryBlobRef = useRef<Blob | null>(null);
   const voiceRetryDurationRef = useRef(0);
   const voiceSelectionRef = useRef<{ start: number; end: number } | null>(null);
-  const voiceCaptureDiagnosticRef = useRef<{ startedAt: number; traceId: string } | null>(null);
+  const voiceCaptureDiagnosticRef = useRef<{ failureRecorded: boolean; startedAt: number; traceId: string } | null>(null);
   const voicePlaybackDiagnosticRef = useRef<{ messageId: string; startedAt: number; traceId: string } | null>(null);
   const voiceResponseBaselineRef = useRef<Set<string>>(new Set());
   const voiceTtsRequestIdRef = useRef<string | null>(null);
+  const voiceAutoSubmitRequestRef = useRef<string | null>(null);
   const autoReadInitializedRef = useRef(false);
   const lastAutoReadMessageIdRef = useRef<string | null>(null);
   const zh = language === "zh";
   const [now, setNow] = useState(Date.now());
+  const activeInputMessage = useMemo(
+    () => [...messages]
+      .reverse()
+      .find((message) => Boolean(message.inputRequest
+        && !respondedInputRequests.has(message.inputRequest.requestId))) ?? null,
+    [messages, respondedInputRequests],
+  );
+  const activeInputRequest = activeInputMessage?.inputRequest ?? null;
+  const activeGoalConfirmation = activeInputRequest?.inputType === "confirmation"
+    && activeInputRequest.requestId.startsWith("goal:")
+    ? activeInputRequest
+    : null;
+  const [goalConfirmationEditing, setGoalConfirmationEditing] = useState(false);
+  const [goalConfirmationDraft, setGoalConfirmationDraft] = useState<GoalConfirmationDraft>(() =>
+    parseGoalConfirmationPrompt(activeGoalConfirmation?.prompt ?? ""));
+
+  useEffect(() => {
+    setInteractionDraft(activeInputRequest?.defaultValue ?? "");
+  }, [activeInputRequest?.requestId, activeInputRequest?.defaultValue]);
+
+  useEffect(() => {
+    setGoalConfirmationEditing(false);
+    setGoalConfirmationDraft(parseGoalConfirmationPrompt(activeGoalConfirmation?.prompt ?? ""));
+  }, [activeGoalConfirmation?.requestId, activeGoalConfirmation?.prompt]);
   const hasStreamingMessage = messages.some((message) => message.streaming);
   const showStop = Boolean(activeRequestId || hasStreamingMessage);
   const emptyChat = messages.every((message) => message.id === "welcome");
+  const conversationMessages = useMemo(
+    () => messages.filter((message) => message.id !== "welcome"),
+    [messages],
+  );
+  const duplexHistoryMessages = useMemo<UiMessage[]>(() => duplexVoiceInput.history.map((message) => ({
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    statusContent: message.interrupted
+      ? (zh ? `已听到：${message.heardContent || "（未完整播放）"}` : `Heard: ${message.heardContent || "(not fully played)"}`)
+      : undefined,
+  })), [duplexVoiceInput.history, zh]);
+  const visibleMessages = useMemo(() => {
+    const existing = new Set(conversationMessages.map((message) => message.id));
+    return [...conversationMessages, ...duplexHistoryMessages.filter((message) => !existing.has(message.id))];
+  }, [conversationMessages, duplexHistoryMessages]);
+  const turnRailMarkers = useMemo(
+    () => visibleMessages
+      .filter((message) => message.role === "user")
+      .map((message) => ({ id: message.id })),
+    [visibleMessages],
+  );
   const canSaveLocalPreference = canHandleMemoryRequestLocally(input);
   const canAnswerMaterialInventoryLocally = Boolean(materialRoleAnalysis?.items.length) && isMaterialInventoryQuestion(input);
   const canAnswerMaterialQuestionLocally = Boolean(materialRoleAnalysis?.items.length) && isNaturalMaterialQuestion(input);
@@ -575,6 +928,9 @@ export function ChatWorkspace({
     ? messages.find((message) => message.id === "welcome")?.content.split("\n\n").slice(1).join("\n\n").trim() || ""
     : "";
   const activeAgentName = selectedAgentName?.trim() || "OpenDrSai";
+  const isLocalOpenDrSaiAgent = agentOptions.some(
+    (agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex",
+  );
   const workspaceLocationLabel =
     workspaceLocation === "remote"
       ? zh
@@ -589,21 +945,55 @@ export function ChatWorkspace({
       : currentRuntimeMode.label
     : "";
   const activeModelName =
-    getModelLabel(modelOptions, selectedModelName) || selectedModelName?.trim() || (zh ? "默认" : "Default");
+    getModelLabel(modelOptions, selectedModelName, selectedModelProviderId) || selectedModelName?.trim() || (zh ? "默认" : "Default");
+  const compactModelName = getCompactComposerModelLabel(activeModelName);
   const activeModelConfig = useMemo(
-    () => findSelectedModelConfig(modelOptions, selectedModelName),
-    [modelOptions, selectedModelName],
+    () => findSelectedModelConfig(modelOptions, selectedModelName, selectedModelProviderId),
+    [modelOptions, selectedModelName, selectedModelProviderId],
   );
-  const thinkingEffortLabel = getThinkingEffortLabel(thinkingEffort, zh);
+  const supportedThinkingEfforts = useMemo<ThinkingEffort[]>(() => {
+    if (!isLocalOpenDrSaiAgent) return THINKING_EFFORTS;
+    if (!activeModelConfig?.operations?.includes("reasoning")) return [];
+    const configured = activeModelConfig.reasoning_efforts ?? [];
+    return THINKING_EFFORTS.filter((effort) => configured.includes(effort));
+  }, [activeModelConfig, isLocalOpenDrSaiAgent]);
+  useEffect(() => {
+    if (supportedThinkingEfforts.length > 0 && !supportedThinkingEfforts.includes(thinkingEffort)) {
+      setThinkingEffort(supportedThinkingEfforts.includes("high") ? "high" : supportedThinkingEfforts[0]);
+    }
+  }, [supportedThinkingEfforts, thinkingEffort]);
+  const showThinkingEffort = supportedThinkingEfforts.length > 0;
+  useEffect(() => {
+    if (!showThinkingEffort && configurationSection === "thinking") {
+      setConfigurationSection(null);
+    }
+  }, [configurationSection, showThinkingEffort]);
+  const thinkingEffortSupported = supportedThinkingEfforts.includes(thinkingEffort);
+  const thinkingEffortLabel = getThinkingEffortLabel(
+    thinkingEffortSupported ? thinkingEffort : supportedThinkingEfforts.includes("high") ? "high" : supportedThinkingEfforts[0] ?? thinkingEffort,
+    zh,
+  );
+  const thinkingEffortMenuLabel = showThinkingEffort
+    ? thinkingEffortLabel
+    : (zh ? "当前模型不支持" : "Not supported by this model");
+  const taskInteractionModeLabel = taskInteractionMode === "confirm_goal"
+    ? (zh ? "目标" : "Goal")
+    : (zh ? "常规" : "Normal");
+  const composerConfigurationSummary = [
+    activeAgentName,
+    compactModelName,
+    ...(showThinkingEffort ? [thinkingEffortLabel] : []),
+    taskInteractionModeLabel,
+  ].join(" · ");
   const hasAgentOptions = agentOptions.length > 0;
   const hasModelOptions = modelOptions.length > 0;
   const parsedSamplePrompts = useMemo(
-    () => parseAgentExamples(samplePrompts, language),
+    () => parseCatalogAgentExamples(samplePrompts, language),
     [samplePrompts, language],
   );
   const emptyChatPrompts = useMemo(
-    () => getEmptyChatPrompts(parsedSamplePrompts, zh),
-    [parsedSamplePrompts, zh],
+    () => getAgentEmptyChatPrompts(parsedSamplePrompts, language),
+    [parsedSamplePrompts, language],
   );
   const activeWorkspaceName = workspaceName?.trim() || getWorkspaceDisplayName(workspacePath, zh);
   const normalizedIntroSearch = introSearchQuery.trim().toLocaleLowerCase();
@@ -676,13 +1066,13 @@ export function ChatWorkspace({
     "MediaRecorder" in window;
   const showVoiceCaptureBar =
     voiceState === "requesting_permission" ||
-    voiceState === "recording" ||
-    voiceState === "processing";
+    voiceState === "recording";
   const showStreamingVoiceCaptureBar = ["starting", "streaming", "stopping", "cancelling"].includes(streamingVoiceInput.phase);
-  const showAnyVoiceCaptureBar = showVoiceCaptureBar || showStreamingVoiceCaptureBar;
-  const displayedVoicePhase = voicePreferences.interactionMode === "streaming"
-    ? streamingVoiceInput.phase
-    : voiceTurnState.phase;
+  const showDuplexVoiceCaptureBar = ["starting", "active", "stopping", "recovering"].includes(duplexVoiceInput.phase);
+  const showAnyVoiceCaptureBar = showVoiceCaptureBar || voiceState === "processing" || showStreamingVoiceCaptureBar || showDuplexVoiceCaptureBar;
+  const displayedVoicePhase = voicePreferences.interactionMode === "duplex"
+    ? duplexVoiceInput.phase
+    : voicePreferences.interactionMode === "streaming" ? streamingVoiceInput.phase : voiceTurnState.phase;
   const latestCompletedAssistantMessage = [...messages]
     .reverse()
     .find((message) => message.role === "assistant" && !message.streaming && !message.error && getAssistantDisplayContent(message));
@@ -694,6 +1084,7 @@ export function ChatWorkspace({
     voicePlayback.stop();
     stopVoiceCapture("discard");
     void streamingVoiceInput.cancel();
+    void duplexVoiceInput.cancel();
     streamingVoiceInput.reset();
     cancelVoiceTranscriptionTask();
     setVoiceReviewText(null);
@@ -701,6 +1092,11 @@ export function ChatWorkspace({
     setVoiceConsentRequired(false);
     voiceRetryBlobRef.current = null;
     voiceRetryDurationRef.current = 0;
+    voiceAutoSubmitRequestRef.current = null;
+    if (voiceRecordingProcessTimerRef.current !== null) {
+      window.clearTimeout(voiceRecordingProcessTimerRef.current);
+      voiceRecordingProcessTimerRef.current = null;
+    }
     autoReadInitializedRef.current = !conversationHistoryPending;
     lastAutoReadMessageIdRef.current = conversationHistoryPending ? null : latestCompletedAssistantMessage?.id ?? null;
     dispatchVoiceTurn({ type: "cancel" });
@@ -714,6 +1110,7 @@ export function ChatWorkspace({
       voicePlayback.stop();
       stopVoiceCapture("discard");
       void streamingVoiceInput.cancel();
+      void duplexVoiceInput.cancel();
       streamingVoiceOutput.stop();
       if (streamingVoiceResponseArmed && (activeRequestId || hasStreamingMessage)) onAbort();
       cancelVoiceTranscriptionTask();
@@ -733,7 +1130,7 @@ export function ChatWorkspace({
   useEffect(() => {
     if (voiceState === "recording" && !voiceCaptureDiagnosticRef.current) {
       const traceId = crypto.randomUUID();
-      voiceCaptureDiagnosticRef.current = { startedAt: Date.now(), traceId };
+      voiceCaptureDiagnosticRef.current = { failureRecorded: false, startedAt: Date.now(), traceId };
       void recordVoiceDiagnostic({
         traceId,
         component: "capture",
@@ -747,16 +1144,21 @@ export function ChatWorkspace({
     const active = voiceCaptureDiagnosticRef.current;
     if (!active || voiceState === "recording" || voiceState === "requesting_permission") return;
     voiceCaptureDiagnosticRef.current = null;
+    if (voiceState === "failed" && active.failureRecorded) return;
     void recordVoiceDiagnostic({
       traceId: active.traceId,
       component: "capture",
       operation: "voice.capture",
-      message: voiceState === "failed" ? "Voice capture failed" : "Voice capture completed",
+      message: voiceState === "failed" ? (voiceError || "Voice capture failed") : "Voice capture completed",
+      domain: "app",
+      kind: voiceState === "failed" ? "error" : "operation",
+      level: voiceState === "failed" ? "error" : "info",
       status: voiceState === "failed" ? "failed" : "completed",
       errorCode: voiceState === "failed" ? "capture_error" : undefined,
       durationMs: Date.now() - active.startedAt,
     });
-  }, [voiceDeviceId, voiceState]);
+    if (voiceState === "failed") onOpenDebug?.(undefined, "app-errors");
+  }, [onOpenDebug, voiceDeviceId, voiceError, voiceState]);
 
   useEffect(() => {
     const activeMessageId = voicePlayback.activeMessageId;
@@ -829,16 +1231,27 @@ export function ChatWorkspace({
       message.role === "assistant"
       && !message.streaming
       && !message.error
+      && (!voiceTurnState.expectedResponseMessageId || message.id === voiceTurnState.expectedResponseMessageId)
       && !voiceResponseBaselineRef.current.has(message.id)
       && Boolean(getAssistantDisplayContent(message)));
     if (response) dispatchVoiceTurn({ type: "response_completed", messageId: response.id });
-  }, [messages, voiceTurnState.phase]);
+  }, [messages, voiceTurnState.expectedResponseMessageId, voiceTurnState.phase]);
+
+  useEffect(() => {
+    if (voiceTurnState.phase !== "ready_to_send") return;
+    if (!voiceTurnState.sttRequestId || voiceAutoSubmitRequestRef.current !== voiceTurnState.sttRequestId) return;
+    const timer = window.setTimeout(() => {
+      voiceAutoSubmitRequestRef.current = null;
+      void submitWithAttachments();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [input, voiceTurnState.phase, voiceTurnState.sttRequestId]);
 
   useEffect(() => {
     const phase = voiceTurnState.phase;
     if (phase === "response_ready" && !voicePreferences.autoReadResponses) {
-      dispatchVoiceTurn({ type: "finish" });
-      return;
+      const timer = window.setTimeout(() => dispatchVoiceTurn({ type: "finish" }), 0);
+      return () => window.clearTimeout(timer);
     }
     const isOwnedPlayback = Boolean(
       voiceTurnState.responseMessageId
@@ -879,6 +1292,7 @@ export function ChatWorkspace({
         },
       });
     }
+    return undefined;
   }, [
     voicePlayback.activeMessageId,
     voicePlayback.error,
@@ -971,8 +1385,23 @@ export function ChatWorkspace({
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
     setSearchQuery("");
+    setSearchDate("");
     setActiveMatchIndex(0);
   }, []);
+
+  function locateConversationDate(value: string): void {
+    setSearchDate(value);
+    if (!value) return;
+    const start = new Date(`${value}T00:00:00`).getTime();
+    const end = start + 24 * 60 * 60 * 1000;
+    const match = conversationMessages.find((message) => {
+      const at = message.startedAt ?? message.lastEventAt ?? 0;
+      return at >= start && at < end;
+    });
+    if (!match) return;
+    window.requestAnimationFrame(() => document.querySelector(`[data-message-id="${match.id}"]`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" }));
+  }
 
   const selectNextMatch = useCallback(() => {
     setActiveMatchIndex((current) =>
@@ -991,16 +1420,22 @@ export function ChatWorkspace({
   useEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
-    textarea.style.height = "52px";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
+    textarea.style.height = "40px";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 116)}px`;
   }, [input]);
 
   useEffect(() => {
     const composer = composerRef.current;
     const messageList = messageListRef.current;
     if (!composer || !messageList || emptyChat) return;
+    const chatPane = messageList.parentElement;
     const updateComposerHeight = (): void => {
-      messageList.style.setProperty("--chat-composer-height", `${composer.offsetHeight}px`);
+      const height = `${composer.offsetHeight}px`;
+      messageList.style.setProperty("--chat-composer-height", height);
+      chatPane?.style.setProperty("--chat-composer-height", height);
+      if (shouldFollowOutputRef.current) {
+        window.requestAnimationFrame(() => scrollMessageListToLatest("auto"));
+      }
     };
     let frame = window.requestAnimationFrame(updateComposerHeight);
     const scheduleComposerHeight = (): void => {
@@ -1013,6 +1448,7 @@ export function ChatWorkspace({
       window.cancelAnimationFrame(frame);
       observer.disconnect();
       messageList.style.removeProperty("--chat-composer-height");
+      chatPane?.style.removeProperty("--chat-composer-height");
     };
   }, [emptyChat]);
 
@@ -1022,8 +1458,9 @@ export function ChatWorkspace({
 
   useEffect(() => {
     if (!activeMatchId) return;
-    const node = document.querySelector(`[data-message-id="${activeMatchId}"]`);
-    node?.scrollIntoView({ block: "center", behavior: "smooth" });
+    const reveal = () => document.querySelector(`[data-message-id="${activeMatchId}"]`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    reveal();
   }, [activeMatchId]);
 
   useEffect(() => {
@@ -1072,61 +1509,82 @@ export function ChatWorkspace({
   }, [onInputChange]);
 
   useEffect(() => {
-    if (!messages.some((message) => message.streaming)) return;
+    if (!hasStreamingMessage) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [messages]);
+  }, [hasStreamingMessage]);
+
+  function getMessageListMaxScrollTop(list: HTMLDivElement): number {
+    return Math.max(0, list.scrollHeight - list.clientHeight);
+  }
+
+  function scrollMessageListToLatest(behavior: ScrollBehavior = "auto"): void {
+    const list = messageListRef.current;
+    if (!list) return;
+    const target = getMessageListMaxScrollTop(list);
+    list.scrollTo({ top: target, behavior });
+  }
+
+  useEffect(() => {
+    if (!messageListRef.current || !shouldFollowOutputRef.current) return;
+    if (!hasStreamingMessage) {
+      scrollMessageListToLatest("smooth");
+      if (finalScrollSettleTimerRef.current !== null) window.clearTimeout(finalScrollSettleTimerRef.current);
+      finalScrollSettleTimerRef.current = window.setTimeout(() => {
+        finalScrollSettleTimerRef.current = null;
+        if (shouldFollowOutputRef.current && smoothFollowOutput.isFollowing()) scrollMessageListToLatest("auto");
+      }, 360);
+      return;
+    }
+    smoothFollowOutput.handleHeightChange(messageListRef.current.scrollHeight);
+  }, [hasStreamingMessage, messages, smoothFollowOutput]);
+
+  useEffect(() => () => smoothFollowOutput.dispose(), [smoothFollowOutput]);
 
   useEffect(() => {
     const list = messageListRef.current;
-    if (!list || !shouldFollowOutputRef.current) return;
-    list.scrollTo({ top: list.scrollHeight, behavior: messages.some((message) => message.streaming) ? "auto" : "smooth" });
-  }, [messages]);
-
-  const updateTurnRail = useCallback((): void => {
-    const list = messageListRef.current;
-    if (!list) return;
-    const nodes = [...list.querySelectorAll<HTMLElement>(".message.user[data-message-id]")];
-    const scrollHeight = Math.max(list.scrollHeight, 1);
-    const viewportCenter = list.scrollTop + list.clientHeight / 2;
-    let nearestId: string | null = null;
-    let nearestDistance = Number.POSITIVE_INFINITY;
-    const markers = nodes.flatMap((node) => {
-      const id = node.dataset.messageId;
-      if (!id) return [];
-      const center = node.offsetTop + node.offsetHeight / 2;
-      const distance = Math.abs(center - viewportCenter);
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        nearestId = id;
-      }
-      return [{ id, top: Math.max(1, Math.min(99, (center / scrollHeight) * 100)) }];
+    const lastMessage = list?.lastElementChild;
+    if (!list || !lastMessage) return undefined;
+    const observer = new ResizeObserver(() => {
+      if (shouldFollowOutputRef.current) smoothFollowOutput.handleHeightChange(list.scrollHeight);
     });
-    setTurnRailMarkers(markers);
-    setActiveTurnRailId(nearestId);
+    observer.observe(lastMessage);
+    smoothFollowOutput.handleHeightChange(list.scrollHeight);
+    return () => observer.disconnect();
+  }, [visibleMessages.at(-1)?.id, smoothFollowOutput]);
+
+  useEffect(() => () => {
+    if (finalScrollSettleTimerRef.current !== null) window.clearTimeout(finalScrollSettleTimerRef.current);
   }, []);
 
   useEffect(() => {
     const list = messageListRef.current;
     if (!list || emptyChat) {
-      setTurnRailMarkers([]);
       setActiveTurnRailId(null);
       return undefined;
     }
-    let frame = window.requestAnimationFrame(updateTurnRail);
-    const scheduleTurnRail = (): void => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(updateTurnRail);
-    };
-    const observer = new ResizeObserver(scheduleTurnRail);
-    observer.observe(list);
-    window.addEventListener("resize", scheduleTurnRail);
+    const visibleTurns = new Map<string, IntersectionObserverEntry>();
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        const id = (entry.target as HTMLElement).dataset.messageId;
+        if (!id) continue;
+        if (entry.isIntersecting) visibleTurns.set(id, entry);
+        else visibleTurns.delete(id);
+      }
+      if (turnRailNavigationTargetRef.current || visibleTurns.size === 0) return;
+      const center = list.getBoundingClientRect().top + list.clientHeight / 2;
+      const nearest = [...visibleTurns.entries()].reduce<{ id: string; distance: number } | null>((best, [id, entry]) => {
+        const entryCenter = entry.boundingClientRect.top + entry.boundingClientRect.height / 2;
+        const distance = Math.abs(entryCenter - center);
+        return !best || distance < best.distance ? { id, distance } : best;
+      }, null);
+      if (nearest) setActiveTurnRailId((current) => current === nearest.id ? current : nearest.id);
+    }, { root: list, threshold: [0, 0.01, 0.5, 1] });
+    list.querySelectorAll<HTMLElement>(".message.user[data-message-id]").forEach((message) => observer.observe(message));
     return () => {
-      window.cancelAnimationFrame(frame);
       observer.disconnect();
-      window.removeEventListener("resize", scheduleTurnRail);
     };
-  }, [emptyChat, messages, updateTurnRail]);
+  }, [emptyChat, visibleMessages]);
 
   function scrollToUserTurn(messageId: string): void {
     const list = messageListRef.current;
@@ -1135,15 +1593,85 @@ export function ChatWorkspace({
     );
     if (!list || !message) return;
     shouldFollowOutputRef.current = false;
+    smoothFollowOutput.pause();
+    turnRailNavigationTargetRef.current = messageId;
+    if (turnRailNavigationTimerRef.current !== null) {
+      window.clearTimeout(turnRailNavigationTimerRef.current);
+    }
     setActiveTurnRailId(messageId);
     list.scrollTo({ top: Math.max(0, message.offsetTop - 18), behavior: "smooth" });
+    turnRailNavigationTimerRef.current = window.setTimeout(() => {
+      turnRailNavigationTargetRef.current = null;
+      turnRailNavigationTimerRef.current = null;
+    }, 600);
+  }
+
+  useEffect(() => () => {
+    if (turnRailNavigationTimerRef.current !== null) {
+      window.clearTimeout(turnRailNavigationTimerRef.current);
+    }
+  }, []);
+
+  function handleTurnRailKeyDown(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    currentIndex: number,
+  ): void {
+    if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+    const nextIndex = resolveTurnRailNavigationIndex(
+      currentIndex,
+      turnRailMarkers.length,
+      event.key as TurnRailNavigationKey,
+    );
+    if (nextIndex === null) return;
+    const nextMarker = turnRailMarkers[nextIndex];
+    if (!nextMarker) return;
+    event.preventDefault();
+    scrollToUserTurn(nextMarker.id);
+    const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("button[data-turn-id]");
+    buttons?.[nextIndex]?.focus();
   }
 
   function handleMessageListScroll(): void {
     const list = messageListRef.current;
     if (!list) return;
-    shouldFollowOutputRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
-    updateTurnRail();
+    smoothFollowOutput.handleScroll(list.scrollTop, getMessageListMaxScrollTop(list));
+    shouldFollowOutputRef.current = smoothFollowOutput.isFollowing();
+    setAwayFromLatest((current) => current === !shouldFollowOutputRef.current ? current : !shouldFollowOutputRef.current);
+  }
+
+  function handleMessageListWheel(event: React.WheelEvent<HTMLDivElement>): void {
+    if (event.deltaY >= 0) return;
+    const list = messageListRef.current;
+    if (!list) return;
+    smoothFollowOutput.handleUserScrollIntent(list.scrollTop);
+    shouldFollowOutputRef.current = false;
+    setAwayFromLatest(true);
+  }
+
+  function pauseMessageListFollowForUserIntent(): void {
+    const list = messageListRef.current;
+    if (!list) return;
+    smoothFollowOutput.handleUserScrollIntent(list.scrollTop);
+    shouldFollowOutputRef.current = false;
+    setAwayFromLatest(true);
+  }
+
+  function handleMessageListPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
+    const list = messageListRef.current;
+    if (!list) return;
+    const nearScrollbar = event.clientX >= list.getBoundingClientRect().right - 18;
+    if (event.pointerType === "touch" || nearScrollbar) pauseMessageListFollowForUserIntent();
+  }
+
+  function handleMessageListKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
+    if (["ArrowUp", "PageUp", "Home"].includes(event.key)) pauseMessageListFollowForUserIntent();
+  }
+
+  function scrollToLatest(): void {
+    shouldFollowOutputRef.current = true;
+    smoothFollowOutput.resume();
+    setAwayFromLatest(false);
+    scrollMessageListToLatest("smooth");
   }
 
   useEffect(() => {
@@ -1169,10 +1697,25 @@ export function ChatWorkspace({
     void desktopApi.getStreamingVoiceCapabilities()
       .then(setStreamingVoiceCapabilities)
       .catch(() => setStreamingVoiceCapabilities(null));
+    void desktopApi.getDuplexVoiceCapabilities()
+      .then(setDuplexVoiceCapabilities)
+      .catch(() => setDuplexVoiceCapabilities(null));
+    void desktopApi.getMyDrSaiAgentModelPolicy().then((policy) => {
+      const ref = policy.effective_realtime_voice_ref ?? policy.realtime_voice_model?.ref;
+      setDuplexPrivacyDisclosure(ref
+        ? `Realtime voice sends microphone audio to remote Provider ${ref.provider_id}, model ${ref.model_id}. Audio is streamed only while the Session is active; stable transcripts are saved to this Thread.`
+        : "Realtime voice requires an explicitly configured remote Provider and model before microphone audio can be sent.");
+    }).catch(() => undefined);
   }, []);
+
+  useEffect(() => { setDuplexPrivacyConfirmed(false); }, [duplexPrivacyDisclosure, conversationId]);
 
   function handleSubmit(event: FormEvent): void {
     event.preventDefault();
+    if (["starting", "active", "recovering", "stopping"].includes(duplexVoiceInput.phase)) {
+      setVoiceError(zh ? "实时语音会话期间暂不发送文字；草稿已保留，请先结束会话。" : "Text sending is paused during a Realtime voice session. Your draft is preserved; end the session first.");
+      return;
+    }
     void submitWithAttachments();
   }
 
@@ -1197,6 +1740,14 @@ export function ChatWorkspace({
   }
 
   async function submitWithAttachments(): Promise<void> {
+    if (["starting", "active", "recovering", "stopping"].includes(duplexVoiceInput.phase)) {
+      setVoiceError(zh ? "实时语音会话期间暂不发送文字；草稿已保留，请先结束会话。" : "Text sending is paused during a Realtime voice session. Your draft is preserved; end the session first.");
+      return;
+    }
+    if (showStreamingVoiceCaptureBar || streamingVoiceInput.turnState.phase === "repairing") {
+      setVoiceError("Finish live transcription and review the stable text before sending.");
+      return;
+    }
     const isVoiceSubmission = voiceTurnState.phase === "ready_to_send";
     const isStreamingVoiceSubmission = streamingVoiceReadyToSend;
     if (isVoiceSubmission) {
@@ -1226,14 +1777,25 @@ export function ChatWorkspace({
           forkQueueAgentSelections,
           agentOptions,
         ),
+        goalConfirmationRequired: isLocalOpenDrSaiAgent && taskInteractionMode === "confirm_goal",
         model: selectedModelName,
         runtimeMode: currentRuntimeMode,
-        thinkingEffort,
+        skillName: selectedSkillName,
+        thinkingEffort: !isLocalOpenDrSaiAgent || thinkingEffortSupported ? thinkingEffort : undefined,
+        onStarted: isVoiceSubmission
+          ? ({ assistantMessageId, requestId, userMessageId }) => dispatchVoiceTurn({
+              type: "submission_linked",
+              requestId,
+              sourceMessageId: userMessageId,
+              responseMessageId: assistantMessageId,
+            })
+          : undefined,
       },
     );
     if (submitted) {
       setAttachments([]);
       onClearExternalAttachments?.();
+      setSelectedSkillName(null);
       if (isVoiceSubmission) dispatchVoiceTurn({ type: "response_started" });
       if (isStreamingVoiceSubmission) {
         streamingVoiceInput.acceptReview();
@@ -1242,16 +1804,28 @@ export function ChatWorkspace({
         setStreamingVoiceResponseArmed(true);
       }
     } else if (isVoiceSubmission) {
+      const message = zh ? "语音消息发送失败，转写文本和附件已保留。" : "The voice message could not be sent. The transcript and attachments were preserved.";
       dispatchVoiceTurn({
         type: "fail",
         error: {
           stage: "submitting",
           code: "chat_error",
-          message: zh ? "语音消息发送失败，请重试。" : "The voice message could not be sent. Try again.",
+          message,
           retryable: true,
         },
       });
+      setVoiceState("failed");
+      setVoiceError(message);
     }
+  }
+
+  function retryVoiceChatSubmission(): void {
+    const requestId = voiceTurnState.sttRequestId;
+    if (voiceTurnState.phase !== "failed" || voiceTurnState.error?.stage !== "submitting" || !requestId) return;
+    voiceAutoSubmitRequestRef.current = requestId;
+    setVoiceState("idle");
+    setVoiceError(null);
+    dispatchVoiceTurn({ type: "retry" });
   }
 
   function clearInput(): void {
@@ -1260,6 +1834,32 @@ export function ChatWorkspace({
   }
 
   async function toggleVoiceRecording(): Promise<void> {
+    void recordVoiceDiagnostic({
+      traceId: voiceCaptureDiagnosticRef.current?.traceId ?? crypto.randomUUID(),
+      component: "composer",
+      operation: "voice.button.click",
+      message: "Voice input button clicked",
+      domain: "app",
+      kind: "log",
+      level: "info",
+      status: "completed",
+      visibility: "detail",
+      attributes: {
+        interactionMode: voicePreferences.interactionMode,
+        serialCaptureState: voiceState,
+        streamingCapturePhase: streamingVoiceInput.phase,
+        duplexCapturePhase: duplexVoiceInput.phase,
+        voiceApiAvailable,
+      },
+    });
+    if (voicePreferences.interactionMode === "duplex") {
+      if (duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering") {
+        await duplexVoiceInput.stop();
+        return;
+      }
+      await startDuplexVoiceRecording(false);
+      return;
+    }
     if (voicePreferences.interactionMode === "streaming") {
       if (streamingVoiceInput.phase === "streaming") {
         await streamingVoiceInput.stop();
@@ -1275,6 +1875,12 @@ export function ChatWorkspace({
     await startVoiceRecording();
   }
 
+  async function startDuplexVoiceRecording(privacyAlreadyConfirmed: boolean): Promise<void> {
+    if (!duplexVoiceAvailability.available) { setVoiceError(duplexVoiceAvailability.reason ?? "Realtime voice is unavailable."); return; }
+    if (!privacyAlreadyConfirmed && !duplexPrivacyConfirmed) { setVoiceError(duplexPrivacyDisclosure); return; }
+    voicePlayback.stop(); streamingVoiceOutput.stop(); setVoiceError(null); await duplexVoiceInput.start();
+  }
+
   async function startStreamingVoiceRecording(): Promise<void> {
     if (!streamingVoiceAvailability.available) {
       setVoiceError(streamingVoiceAvailability.reason ?? "Live transcription is unavailable.");
@@ -1288,13 +1894,35 @@ export function ChatWorkspace({
     voiceSelectionRef.current = textareaRef.current
       ? { start: textareaRef.current.selectionStart, end: textareaRef.current.selectionEnd }
       : { start: input.length, end: input.length };
-    await streamingVoiceInput.start();
+    setStreamingComposerProjection(createStreamingComposerProjection(input, voiceSelectionRef.current));
+    const started = await streamingVoiceInput.start();
+    if (!started) setStreamingComposerProjection(null);
   }
 
   async function startVoiceRecording(): Promise<void> {
+    const traceId = crypto.randomUUID();
+    voiceCaptureDiagnosticRef.current = { failureRecorded: false, startedAt: Date.now(), traceId };
+    void recordVoiceDiagnostic({
+      traceId,
+      component: "capture",
+      operation: "voice.capture",
+      message: "Voice capture requested",
+      domain: "app",
+      kind: "operation",
+      level: "info",
+      status: "started",
+      visibility: "milestone",
+      attributes: {
+        mediaDevicesAvailable: Boolean(navigator.mediaDevices?.getUserMedia),
+        mediaRecorderAvailable: typeof MediaRecorder !== "undefined",
+        selectedDevice: Boolean(voiceDeviceId),
+      },
+    });
     if (!voiceApiAvailable) {
+      const error = new Error("Voice recording is unavailable in this desktop runtime.");
       setVoiceState("failed");
-      setVoiceError("Voice recording is unavailable in this desktop runtime.");
+      setVoiceError(error.message);
+      reportVoiceCaptureFailure(error, error.message, "runtime_api_check");
       return;
     }
     dispatchVoiceTurn({ type: "begin_capture", turnId: createVoiceTurnId() });
@@ -1305,6 +1933,17 @@ export function ChatWorkspace({
     if (started) {
       dispatchVoiceTurn({ type: "permission_granted" });
     } else {
+      const active = voiceCaptureDiagnosticRef.current;
+      if (active && !active.failureRecorded) {
+        const message = voiceError || "Microphone capture could not be started.";
+        setVoiceState("failed");
+        setVoiceError(message);
+        reportVoiceCaptureFailure(
+          new Error(message),
+          message,
+          "capture_start",
+        );
+      }
       dispatchVoiceTurn({
         type: "fail",
         error: {
@@ -1315,6 +1954,38 @@ export function ChatWorkspace({
         },
       });
     }
+  }
+
+  function reportVoiceCaptureFailure(error: unknown, message: string, stage: string): void {
+    const active = voiceCaptureDiagnosticRef.current ?? {
+      failureRecorded: false,
+      startedAt: Date.now(),
+      traceId: crypto.randomUUID(),
+    };
+    active.failureRecorded = true;
+    voiceCaptureDiagnosticRef.current = active;
+    void recordVoiceDiagnostic({
+      traceId: active.traceId,
+      component: "capture",
+      operation: "voice.capture",
+      message,
+      domain: "app",
+      kind: "error",
+      level: "error",
+      status: "failed",
+      visibility: "milestone",
+      errorCode: voiceCaptureErrorCode(error),
+      durationMs: Date.now() - active.startedAt,
+      stack: voiceDiagnosticStack(error),
+      attributes: {
+        stage,
+        errorName: error instanceof Error ? error.name : typeof error,
+        mediaDevicesAvailable: Boolean(navigator.mediaDevices?.getUserMedia),
+        mediaRecorderAvailable: typeof MediaRecorder !== "undefined",
+        selectedDevice: Boolean(voiceDeviceId),
+      },
+    });
+    onOpenDebug?.(undefined, "app-errors");
   }
 
   function stopVoiceRecording(mode: "transcribe" | "discard"): void {
@@ -1329,23 +2000,18 @@ export function ChatWorkspace({
 
   async function processVoiceRecording(blob: Blob, durationSeconds: number): Promise<void> {
     const requestId = `voice-stt-${crypto.randomUUID()}`;
-    dispatchVoiceTurn({ type: "stt_started", requestId });
     setVoiceState("processing");
     setVoiceProgressMessage("Preparing audio...");
     voiceRetryBlobRef.current = blob;
     voiceRetryDurationRef.current = durationSeconds;
+    if (!await prepareSerialVoiceTranscription()) return;
+    dispatchVoiceTurn({ type: "stt_started", requestId });
     try {
       const result = await transcribeVoiceRecordingAsync(
         blob,
         durationSeconds,
       );
-      setVoiceReviewSource("serial");
-      setVoiceReviewText(result.transcript);
-      dispatchVoiceTurn({ type: "stt_completed", requestId });
-      setVoiceRuntimeDisclosure(result.providerDisclosure);
-      setVoiceState("idle");
-      setVoiceError(null);
-      setVoiceElapsedSeconds(0);
+      completeSerialVoiceTranscription(result, requestId);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         dispatchVoiceTurn({ type: "cancel" });
@@ -1353,17 +2019,19 @@ export function ChatWorkspace({
         setVoiceState("idle");
         setVoiceError(null);
       } else {
+        const message = error instanceof Error ? error.message : "Voice transcription failed.";
         dispatchVoiceTurn({
           type: "fail",
           error: {
             stage: "transcribing",
             code: "provider_error",
-            message: error instanceof Error ? error.message : "Voice transcription failed.",
+            message,
             retryable: true,
           },
         });
         setVoiceState("failed");
-        setVoiceError(error instanceof Error ? error.message : "Voice transcription failed.");
+        setVoiceError(message);
+        reportVoiceTranscriptionFailure(error, message, "transcribing", "transcription_error");
       }
     }
   }
@@ -1412,22 +2080,19 @@ export function ChatWorkspace({
     cancelVoiceTranscriptionTask();
   }
 
-  async function retryVoiceTranscription(): Promise<void> {
+  async function retryVoiceTranscription(skipRemoteConsent = false): Promise<void> {
     const blob = voiceRetryBlobRef.current;
     if (!blob) return;
     setVoiceError(null);
     setVoiceProgressMessage("Preparing audio...");
     setVoiceReviewText(null);
     setVoiceState("processing");
+    if (!await prepareSerialVoiceTranscription(skipRemoteConsent)) return;
     const requestId = `voice-stt-${crypto.randomUUID()}`;
     dispatchVoiceTurn({ type: "stt_started", requestId });
     try {
       const result = await transcribeVoiceRecordingAsync(blob, voiceRetryDurationRef.current);
-      setVoiceReviewSource("serial");
-      setVoiceReviewText(result.transcript);
-      dispatchVoiceTurn({ type: "stt_completed", requestId });
-      setVoiceRuntimeDisclosure(result.providerDisclosure);
-      setVoiceState("idle");
+      completeSerialVoiceTranscription(result, requestId);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         dispatchVoiceTurn({ type: "cancel" });
@@ -1435,24 +2100,135 @@ export function ChatWorkspace({
         setVoiceState("idle");
         setVoiceError(null);
       } else {
+        const message = error instanceof Error ? error.message : "Voice transcription failed.";
         dispatchVoiceTurn({
           type: "fail",
           error: {
             stage: "transcribing",
             code: "provider_error",
-            message: error instanceof Error ? error.message : "Voice transcription failed.",
+            message,
             retryable: true,
           },
         });
         setVoiceState("failed");
-        setVoiceError(error instanceof Error ? error.message : "Voice transcription failed.");
+        setVoiceError(message);
+        reportVoiceTranscriptionFailure(error, message, "transcribing", "transcription_error");
       }
     }
+  }
+
+  async function prepareSerialVoiceTranscription(skipRemoteConsent = false): Promise<boolean> {
+    if (!hasDesktopApi() || typeof desktopApi.getVoiceRuntimeStatus !== "function") return true;
+    try {
+      const runtime = await desktopApi.getVoiceRuntimeStatus();
+      setVoiceRuntimeStatus(runtime);
+      setVoiceRuntimeDisclosure(runtime.providerDisclosure);
+      setVoiceRuntimeLabel(runtime.runtimeId === "gateway-provider" ? "Online STT" : "Fixture STT");
+      if (runtime.runtimeId === "gateway-provider" && !skipRemoteConsent && !voicePreferences.remoteSttConsent) {
+        setVoiceConsentRequired(true);
+        failVoiceTranscriptionPreparation(
+          "permission_denied",
+          zh
+            ? "录音已保留。允许在线语音识别后将继续识别，不需要重新录音。"
+            : "The recording is preserved. Allow online transcription to continue without recording again.",
+          true,
+        );
+        return false;
+      }
+      setVoiceConsentRequired(false);
+      return true;
+    } catch (error) {
+      failVoiceTranscriptionPreparation(
+        "runtime_unavailable",
+        error instanceof Error
+          ? error.message
+          : (zh ? "无法检查语音识别服务。" : "Voice transcription readiness could not be checked."),
+        true,
+      );
+      return false;
+    }
+  }
+
+  function failVoiceTranscriptionPreparation(
+    code: "runtime_unavailable" | "permission_denied",
+    message: string,
+    retryable: boolean,
+  ): void {
+    dispatchVoiceTurn({
+      type: "fail",
+      error: { stage: "preparing_audio", code, message, retryable },
+    });
+    setVoiceState("failed");
+    setVoiceError(message);
+    if (code === "runtime_unavailable") {
+      reportVoiceTranscriptionFailure(new Error(message), message, "preparing_audio", code);
+    }
+  }
+
+  function reportVoiceTranscriptionFailure(
+    error: unknown,
+    message: string,
+    stage: "preparing_audio" | "transcribing",
+    errorCode: string,
+  ): void {
+    void recordVoiceDiagnostic({
+      traceId: voiceTurnStateRef.current.turnId ?? crypto.randomUUID(),
+      component: "stt",
+      operation: "voice.transcription",
+      message,
+      domain: "app",
+      kind: "error",
+      level: "error",
+      status: "failed",
+      visibility: "milestone",
+      errorCode,
+      stack: voiceDiagnosticStack(error),
+      attributes: { stage },
+    });
+    onOpenDebug?.(undefined, "app-errors");
+  }
+
+  function completeSerialVoiceTranscription(
+    result: DesktopVoiceTranscriptionResult,
+    requestId: string,
+  ): void {
+    const transcript = result.transcript.trim();
+    setVoiceRuntimeDisclosure(result.providerDisclosure);
+    setVoiceState("idle");
+    setVoiceError(null);
+    setVoiceElapsedSeconds(0);
+    if (voicePreferences.confirmBeforeSend) {
+      const selection = voiceSelectionRef.current ?? { start: input.length, end: input.length };
+      const insertion = insertVoiceTranscript(input, transcript, selection);
+      onInputChange(insertion.value);
+      setVoiceReviewSource(null);
+      setVoiceReviewText(null);
+      voiceRetryBlobRef.current = null;
+      voiceRetryDurationRef.current = 0;
+      dispatchVoiceTurn({ type: "stt_completed", requestId, requiresReview: true });
+      dispatchVoiceTurn({ type: "transcript_inserted", requestId });
+      restoreComposerFocus(insertion.cursor);
+      return;
+    }
+
+    const selection = voiceSelectionRef.current ?? { start: input.length, end: input.length };
+    const insertion = insertVoiceTranscript(input, transcript, selection);
+    onInputChange(insertion.value);
+    setVoiceReviewSource(null);
+    setVoiceReviewText(null);
+    voiceAutoSubmitRequestRef.current = requestId;
+    voiceRetryBlobRef.current = null;
+    voiceRetryDurationRef.current = 0;
+    dispatchVoiceTurn({ type: "stt_completed", requestId });
   }
 
   function acceptVoiceReview(): void {
     const text = voiceReviewText?.trim();
     const streamingReview = voiceReviewSource === "streaming";
+    if (streamingReview && !canSubmitStreamingVoiceTurn(streamingVoiceInput.turnState)) {
+      setVoiceError("Live transcript repair is still running. Review the result before inserting it.");
+      return;
+    }
     let cursor: number | null = null;
     if (text) {
       const selection = voiceSelectionRef.current ?? { start: input.length, end: input.length };
@@ -1480,6 +2256,7 @@ export function ChatWorkspace({
   }
 
   function discardVoiceReview(): void {
+    voiceAutoSubmitRequestRef.current = null;
     if (voiceReviewSource === "serial") {
       dispatchVoiceTurn({ type: "cancel" });
       dispatchVoiceTurn({ type: "cancelled" });
@@ -1487,12 +2264,14 @@ export function ChatWorkspace({
       streamingVoiceInput.reset();
     }
     clearVoiceReview();
+    setStreamingComposerProjection(null);
     restoreComposerFocus(null);
   }
 
   function clearVoiceReview(): void {
     setVoiceReviewText(null);
     setVoiceReviewSource(null);
+    setStreamingTranscriptRepair(null);
     setStreamingVoiceReadyToSend(false);
     setVoiceRuntimeDisclosure(null);
     setVoiceError(null);
@@ -1520,8 +2299,83 @@ export function ChatWorkspace({
     textareaRef.current?.focus();
   }
 
-  function toggleMetaMenu(menu: "agent" | "model" | "thinking"): void {
-    setMetaMenuOpen((current) => (current === menu ? null : menu));
+  function toggleMetaMenu(menu: "configuration" | "skill"): void {
+    setMetaMenuOpen((current) => {
+      const next = current === menu ? null : menu;
+      if (next === "skill") void loadInstalledSkillsForPicker();
+      setConfigurationSection(null);
+      return next;
+    });
+  }
+
+  function revealConfigurationSection(
+    section: "agent" | "model" | "thinking" | "task",
+    anchor: HTMLButtonElement,
+  ): void {
+    const menu = anchor.closest<HTMLElement>(".composer-configuration-menu");
+    const anchorRect = anchor.getBoundingClientRect();
+    const menuRect = menu?.getBoundingClientRect() ?? anchorRect;
+    const viewportPadding = 8;
+    const submenuWidth = Math.min(290, window.innerWidth - viewportPadding * 2);
+    const left = Math.max(
+      viewportPadding,
+      Math.min(menuRect.right - 1, window.innerWidth - submenuWidth - viewportPadding),
+    );
+    let top = Math.max(viewportPadding, anchorRect.top);
+    let maxHeight = Math.min(220, window.innerHeight - top - viewportPadding);
+    if (maxHeight < 96) {
+      top = Math.max(viewportPadding, window.innerHeight - 96 - viewportPadding);
+      maxHeight = Math.max(64, window.innerHeight - top - viewportPadding);
+    }
+    setConfigurationSection(section);
+    setConfigurationSubmenuPosition({ top, left, maxHeight });
+  }
+
+  async function loadInstalledSkillsForPicker(): Promise<void> {
+    if (!hasDesktopApi() || typeof desktopApi.listInstalledSkills !== "function") {
+      setInstalledSkills([]);
+      setSkillsLoadError(zh ? "当前环境不支持读取 Skills。" : "Skills are unavailable in this environment.");
+      return;
+    }
+    setSkillsLoading(true);
+    setSkillsLoadError(null);
+    try {
+      const skills = await desktopApi.listInstalledSkills();
+      setInstalledSkills(Array.isArray(skills) ? skills : []);
+    } catch (error) {
+      setInstalledSkills([]);
+      setSkillsLoadError(userFacingFailureMessage(error, language, "operation"));
+    } finally {
+      setSkillsLoading(false);
+    }
+  }
+
+  function stripSkillPrefixFromInput(value: string, skillName?: string | null): string {
+    const specific = skillName?.trim()
+      ? zh
+        ? new RegExp(`^用\\s+${escapeRegExp(skillName.trim())}\\s*`)
+        : new RegExp(`^Use\\s+${escapeRegExp(skillName.trim())}\\s+skill\\s+to\\s*`, "i")
+      : null;
+    if (specific?.test(value)) return value.replace(specific, "");
+    const generic = zh
+      ? /^(用\s+)[A-Za-z0-9_\-]+(\s+|$)/
+      : /^(Use\s+)[A-Za-z0-9_\-]+(\s+skill\s+to\s+)/i;
+    return generic.test(value) ? value.replace(generic, "") : value;
+  }
+
+  function applySkillToComposer(skillName: string): void {
+    const cleaned = stripSkillPrefixFromInput(input, selectedSkillName).replace(/^\s+/, "");
+    if (cleaned !== input) onInputChange(cleaned);
+    setSelectedSkillName(skillName);
+    setMetaMenuOpen(null);
+    textareaRef.current?.focus();
+  }
+
+  function clearSelectedSkill(): void {
+    const cleaned = stripSkillPrefixFromInput(input, selectedSkillName);
+    if (cleaned !== input) onInputChange(cleaned);
+    setSelectedSkillName(null);
+    textareaRef.current?.focus();
   }
 
   function selectAgent(agentId: string): void {
@@ -1542,8 +2396,8 @@ export function ChatWorkspace({
     textareaRef.current?.focus();
   }
 
-  function selectModel(model: string): void {
-    onSelectModel?.(model);
+  function selectModel(model: string, providerId?: string): void {
+    onSelectModel?.(model, providerId);
     setMetaMenuOpen(null);
     textareaRef.current?.focus();
   }
@@ -1551,6 +2405,13 @@ export function ChatWorkspace({
   function selectThinkingEffort(effort: ThinkingEffort): void {
     setThinkingEffort(effort);
     setMetaMenuOpen(null);
+    textareaRef.current?.focus();
+  }
+
+  function selectTaskInteractionMode(mode: "normal" | "confirm_goal"): void {
+    setTaskInteractionMode(mode);
+    setMetaMenuOpen(null);
+    setConfigurationSection(null);
     textareaRef.current?.focus();
   }
 
@@ -1644,7 +2505,7 @@ export function ChatWorkspace({
           },
         } : item));
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = userFacingFailureMessage(error, language, "operation");
         setAttachments((current) => current.map((item) => item.id === id ? {
           ...item,
           blockedReason: message,
@@ -1696,21 +2557,25 @@ export function ChatWorkspace({
         ? (zh ? `无法打开 ${source.name}：${error}` : `Could not open ${source.name}: ${error}`)
         : (zh ? `已打开 ${source.name} · ${source.locator}` : `Opened ${source.name} · ${source.locator}`));
     } catch (error) {
-      setMaterialConsistencySourceStatus(error instanceof Error ? error.message : String(error));
+      setMaterialConsistencySourceStatus(userFacingFailureMessage(error, language, "operation"));
     }
   }
 
-  function openPreviewBrowser(url?: string): void {
+  const openPreviewBrowser = useEventCallback((url?: string): void => {
     onOpenPreviewBrowser?.(url);
     setToolsOpen(false);
-  }
+  });
 
-  function handleMarkdownLink(href: string | undefined): void {
+  const handleMarkdownLink = useEventCallback((href: string | undefined): void => {
     if (!href) return;
     let protocol: string;
     try {
       protocol = new URL(href).protocol;
     } catch {
+      return;
+    }
+    if (protocol === 'opendrsai:' && href.startsWith('opendrsai://regression/evaluations/')) {
+      void desktopApi.openRegressionReference(href);
       return;
     }
     if (!['http:', 'https:', 'mailto:'].includes(protocol)) return;
@@ -1719,23 +2584,23 @@ export function ChatWorkspace({
       return;
     }
     onOpenExternal(href);
-  }
+  });
 
-  function openStructuredArtifact(part: ArtifactPart): void {
+  const openStructuredArtifact = useEventCallback((part: ArtifactPart): void => {
     if (part.url && isSafeWebUrl(part.url)) {
       openPreviewBrowser(part.url);
       return;
     }
     if (part.path) onOpenWorkspaceArtifact?.(part.path);
-  }
+  });
 
-  function openStructuredCitation(part: CitationPart): void {
+  const openStructuredCitation = useEventCallback((part: CitationPart): void => {
     if (part.url && isSafeWebUrl(part.url)) {
       openPreviewBrowser(part.url);
       return;
     }
     if (part.path) onOpenWorkspaceArtifact?.(part.path);
-  }
+  });
 
   return (
     <div className="chat-workspace">
@@ -1784,6 +2649,14 @@ export function ChatWorkspace({
             placeholder={zh ? "搜索当前会话..." : "Search current chat..."}
             aria-label={zh ? "搜索当前会话" : "Search current chat"}
           />
+          <input
+            type="date"
+            className="chat-search-date"
+            value={searchDate}
+            onChange={(event) => locateConversationDate(event.target.value)}
+            aria-label={zh ? "按日期定位" : "Go to date"}
+            title={zh ? "按日期定位" : "Go to date"}
+          />
           <span className="chat-search-count">
             {searchQuery.trim()
               ? searchMatches.length > 0
@@ -1825,42 +2698,123 @@ export function ChatWorkspace({
           </section>
         </div>
       )}
+      {emptyChat && operationalStateControl ? (
+        <header className="conversation-titlebar conversation-titlebar-operational-only" data-testid="conversation-titlebar">
+          <div className="conversation-titlebar-main" />
+          <div className="conversation-titlebar-actions">{operationalStateControl}</div>
+        </header>
+      ) : null}
       {!emptyChat && (
-      <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
-        {messages.filter((message) => message.id !== "welcome").map((message) => {
+      <header className="conversation-titlebar" data-testid="conversation-titlebar">
+        <div className="conversation-titlebar-main">
+          <strong title={conversationTitle || conversationId}>{conversationTitle || conversationId.slice(0, 12)}</strong>
+          {conversationHistory?.source === "codex" || continuesExistingTask ? <span className="conversation-backend-badge">Codex</span> : null}
+          <small className={`conversation-sync-status state-${conversationHistory?.state || (conversationHistoryPending ? "loading" : "ready")}`} data-testid="conversation-sync-status">{conversationHistoryPending
+          ? (zh ? "正在同步" : "Syncing")
+          : conversationHistory?.state === "partial"
+            ? (zh ? "部分同步" : "Partially synced")
+            : conversationHistory?.state === "error"
+              ? (zh ? "同步失败" : "Sync failed")
+              : conversationHistory?.source === "codex"
+                ? (zh ? `已同步 · ${conversationHistory.loadedRuns} 轮` : `Synced · ${conversationHistory.loadedRuns} turns`)
+                : (zh ? "已就绪" : "Ready")}</small>
+        </div>
+        <div className="conversation-titlebar-actions">
+          {operationalStateControl}
+          {conversationHistory?.truncated && conversationHistory.nextCursor && onLoadEarlierHistory ? (
+            <button type="button" className="conversation-load-earlier" disabled={conversationHistoryPending} onClick={() => void onLoadEarlierHistory()}>
+              {conversationHistoryPending ? (zh ? "加载中…" : "Loading…") : (zh ? "加载更早内容" : "Load earlier")}
+            </button>
+          ) : null}
+          <details className="conversation-titlebar-details">
+            <summary title={zh ? "会话详情" : "Chat details"} aria-label={zh ? "会话详情" : "Chat details"}>•••</summary>
+            <dl>
+              <div><dt>{zh ? "工作区" : "Workspace"}</dt><dd>{workspaceName || "—"}</dd></div>
+              <div><dt>{zh ? "后端" : "Backend"}</dt><dd>{conversationHistory?.source === "codex" || continuesExistingTask ? "Codex" : selectedAgentName || "OpenDrSai"}</dd></div>
+              <div><dt>{zh ? "会话 ID" : "Session ID"}</dt><dd title={conversationId}>{conversationId}</dd></div>
+              {conversationHistory ? <div><dt>{zh ? "已加载" : "Loaded"}</dt><dd>{conversationHistory.loadedRuns} {zh ? "轮" : "turns"}</dd></div> : null}
+              {continuesExistingTask ? <div><dt>{zh ? "继续方式" : "Continuation"}</dt><dd>{zh ? "在当前 Codex 任务中继续" : "Continue in the current Codex task"}</dd></div> : null}
+            </dl>
+          </details>
+        </div>
+      </header>
+      )}
+      {!emptyChat && awayFromLatest ? <button
+        type="button"
+        className="conversation-jump-latest"
+        data-testid="conversation-jump-latest"
+        onClick={scrollToLatest}
+      >{zh ? "回到最新消息" : "Jump to latest"}</button> : null}
+      {workspaceLocation === "remote" ? <div className="remote-session-migration-notice" role="note" data-testid="remote-session-migration-notice">
+        {zh ? "这是远程工作区。为避免上下文串线，本地会话不会自动绑定到远程 Runtime；请在远程工作区中新建会话，或使用明确的迁移流程。" : "This is a remote workspace. Local sessions are never auto-bound to the remote Runtime; start a remote session or use an explicit migration flow."}
+      </div> : null}
+      {!emptyChat && (
+      <div
+        className="message-list"
+        ref={messageListRef}
+        onScroll={handleMessageListScroll}
+        onWheel={handleMessageListWheel}
+        onPointerDown={handleMessageListPointerDown}
+        onKeyDown={handleMessageListKeyDown}
+      >
+        {visibleMessages.filter((message) => !isEmptyAssistantShell(message)).map((message, messageIndex) => {
           const assistantContent = message.role === "assistant"
             ? getAssistantDisplayContent(message)
             : message.content;
           return (
-          <article
+          <VirtualizedMessage
             key={message.id}
+            message={message}
             className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatches.includes(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""} ${message.structuredTurn?.turnId === highlightedTurnId ? "structured-turn-focus" : ""}`}
-            data-message-id={message.id}
-            data-structured-turn-id={message.structuredTurn?.turnId}
+            pinned={message.streaming === true || visibleMessages.length - messageIndex <= 12}
+            scrollRootRef={messageListRef}
           >
-            <strong className="message-author">{message.role === "user" ? "You" : "OpenDrSai"}</strong>
+            {message.role === "user" || !message.structuredTurn ? <strong className="message-author">{message.role === "user" ? "You" : "OpenDrSai"}</strong> : null}
             <div className="message-body">
+              {message.role === "user" && message.attachments?.length ? (
+                <div className="message-attachment-badges" aria-label={zh ? "附件" : "Attachments"}>
+                  {message.attachments.map((attachment, index) => (
+                    <span
+                      className="message-attachment-badge"
+                      key={`${message.id}-attachment-${index}-${attachment.path || attachment.name}`}
+                      title={attachment.path || attachment.name}
+                    >
+                      {renderMessageAttachmentIcon(attachment.kind)}
+                      <span>{attachment.name}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               {message.role === "assistant" && message.replyFailed ? (
-                <button type="button" className="chat-reply-failed" onClick={onOpenDebug}>
-                  <Bug size={14} aria-hidden />
-                  <span>{zh ? "回复未完成 · 查看调试" : "Reply incomplete · View debug"}</span>
-                </button>
+                <div className="chat-reply-failed">
+                  <button type="button" onClick={() => onOpenDebug?.(message.runtimeRunId)}><Bug size={14} aria-hidden /><span>{zh ? "回复未完成 · 查看调试" : "Reply incomplete · View debug"}</span></button>
+                  {onRetryMessage ? <span className="chat-retry-actions">
+                    <button type="button" onClick={() => void onRetryMessage(message.id, "same_session")}>{zh ? "在当前会话重试" : "Retry in this session"}</button>
+                    <button type="button" onClick={() => void onRetryMessage(message.id, "new_session")}>{zh ? "分支到新会话" : "Branch to a new session"}</button>
+                  </span> : null}
+                </div>
               ) : message.content && message.role === "user" ? (
                 <p>{highlightPlainText(message.content, searchQuery)}</p>
               ) : message.role === "assistant" && message.structuredTurn ? (
-                message.structuredTurn.parts.length ? (
+                message.structuredTurn.parts.length || message.structuredTurn.activities.length ? (
                   <StructuredMessageParts
                     turn={message.structuredTurn}
+                    runId={message.runtimeRunId}
                     language={language}
                     respondedRequestIds={respondedInputRequests}
+                    configuredCapabilityRequestIds={configuredCapabilityRequests}
                     onOpenLink={handleMarkdownLink}
                     onOpenArtifact={openStructuredArtifact}
                     onOpenCitation={openStructuredCitation}
-                    onRespondInteraction={respondToStructuredInteraction}
-                    onRequestTextInteraction={requestStructuredTextInput}
-                    onOpenDebug={onOpenDebug}
+                    onRespondInteraction={(part, response) => respondToStructuredInteraction(message.structuredTurn!.turnId, part, response)}
+                    onRequestTextInteraction={(part) => requestStructuredTextInput(message.structuredTurn!.turnId, part)}
+                      onOpenDebug={onOpenDebug ? () => onOpenDebug(message.runtimeRunId) : undefined}
+                      onOpenRun={onOpenRun}
+                      onCreateRunExperiment={onCreateRunExperiment}
+                      reproducibilityLevel={message.runtimeRunId ? runReproducibility[message.runtimeRunId] : undefined}
                     now={now}
                     startedAt={message.startedAt}
+                    completedAt={message.lastEventAt}
                   />
                 ) : (
                   <StreamingStatus message={message} now={now} zh={zh} />
@@ -1872,7 +2826,7 @@ export function ChatWorkspace({
                   language={language}
                   onOpenLink={handleMarkdownLink}
                 />
-              ) : (
+              ) : message.role === "user" && message.attachments?.length ? null : (
                 <StreamingStatus message={message} now={now} zh={zh} />
               )}
               {!message.structuredTurn && message.reasoningContent && (
@@ -1891,21 +2845,17 @@ export function ChatWorkspace({
                   </div>
                 </details>
               )}
+              {message.role === "assistant" && message.recoveryActions?.length && onRecoveryAction ? (
+                <div className="chat-recovery-actions" role="group" aria-label={zh ? "恢复操作" : "Recovery actions"}>
+                  {message.recoveryActions.map((action) => <button type="button" key={action.id}
+                    onClick={() => void onRecoveryAction(message.id, action.id)}>{action.label}</button>)}
+                </div>
+              ) : null}
               {!message.structuredTurn && message.inputRequest ? (
-                <section className="chat-agent-input-request" aria-label={zh ? "智能体请求输入" : "Agent input request"}>
-                  <strong>{zh ? "智能体需要你的输入" : "Agent needs your input"}</strong>
-                  <p>{message.inputRequest.prompt}</p>
-                  <div>
-                    {message.inputRequest.inputType === "approval" ? (
-                      <>
-                        <button type="button" disabled={respondedInputRequests.has(message.inputRequest.requestId)} onClick={() => void respondToAgentInput(message.inputRequest!, { approved: false })}>{zh ? "拒绝" : "Reject"}</button>
-                        <button type="button" disabled={respondedInputRequests.has(message.inputRequest.requestId)} onClick={() => void respondToAgentInput(message.inputRequest!, { approved: true })}>{zh ? "批准" : "Approve"}</button>
-                      </>
-                    ) : (
-                      <button type="button" disabled={respondedInputRequests.has(message.inputRequest.requestId)} onClick={() => requestTextAgentInput(message.inputRequest!)}>{zh ? "回复" : "Respond"}</button>
-                    )}
-                    {respondedInputRequests.has(message.inputRequest.requestId) && <span>{zh ? "已发送" : "Sent"}</span>}
-                  </div>
+                <section className="chat-agent-input-request structured-interaction-compact" aria-label={zh ? "智能体请求输入" : "Agent input request"}>
+                  <span>{respondedInputRequests.has(message.inputRequest.requestId)
+                    ? (zh ? "操作已处理" : "Action handled")
+                    : (zh ? "等待你的操作，请在输入栏处理" : "Action required in the composer")}</span>
                 </section>
               ) : null}
               {message.role === "assistant" && !message.streaming && !message.error && assistantContent ? (
@@ -1921,13 +2871,17 @@ export function ChatWorkspace({
                 />
               ) : null}
             </div>
-          </article>
+          </VirtualizedMessage>
           );
         })}
       </div>
       )}
       {!emptyChat && turnRailMarkers.length > 0 ? (
-        <nav className="conversation-turn-rail" aria-label={zh ? "用户输入定位" : "User message navigation"}>
+        <nav
+          className="conversation-turn-rail"
+          aria-label={zh ? "用户输入定位" : "User message navigation"}
+          style={{ gridTemplateRows: `repeat(${turnRailMarkers.length}, minmax(0, 1fr))` }}
+        >
           {turnRailMarkers.map((marker, index) => {
             const message = messages.find((item) => item.id === marker.id);
             const label = message?.content.trim().replace(/\s+/g, " ") || `${zh ? "用户输入" : "User message"} ${index + 1}`;
@@ -1936,16 +2890,27 @@ export function ChatWorkspace({
                 key={marker.id}
                 type="button"
                 className={marker.id === activeTurnRailId ? "active" : ""}
-                style={{ top: `${marker.top}%` }}
+                data-turn-id={marker.id}
                 title={label}
                 aria-label={`${zh ? "定位到用户输入" : "Go to user message"} ${index + 1}: ${label.slice(0, 80)}`}
+                tabIndex={marker.id === activeTurnRailId || (!activeTurnRailId && index === 0) ? 0 : -1}
                 onClick={() => scrollToUserTurn(marker.id)}
+                onKeyDown={(event) => handleTurnRailKeyDown(event, index)}
               />
             );
           })}
         </nav>
       ) : null}
-      {emptyChat && (
+      {emptyChat && conversationHistoryPending && (
+        <div className="empty-chat-history-loading" role="status" aria-live="polite">
+          <span className="chat-loading-indicator" aria-hidden />
+          <strong>{conversationSource === "codex"
+            ? (zh ? "正在加载 Codex 会话…" : "Loading Codex session…")
+            : (zh ? "正在加载 OpenDrSai 会话…" : "Loading OpenDrSai session…")}</strong>
+          <small>{zh ? "首次打开较长会话可能需要几秒钟。" : "A long conversation can take a few seconds the first time it is opened."}</small>
+        </div>
+      )}
+      {emptyChat && !conversationHistoryPending && (
         <div className="empty-chat-intro" role="group" aria-label={zh ? "新建会话" : "New conversation"}>
           <img className="empty-chat-logo" src={drsaiLogo} alt="OpenDrSai" />
           <h1>
@@ -2045,7 +3010,7 @@ export function ChatWorkspace({
           ) : null}
         </div>
       )}
-      {emptyChat && (
+      {emptyChat && !conversationHistoryPending && (
         <section className="sample-prompts" aria-label={zh ? "示例任务" : "Example tasks"}>
           {emptyChatPrompts.map((prompt, index) => {
             const PromptIcon = [Telescope, Hammer, ScanSearch, Bug][index] ?? Telescope;
@@ -2065,7 +3030,7 @@ export function ChatWorkspace({
         </section>
       )}
       <form
-        ref={composerRef}
+        ref={composerDropRef}
         className="composer"
         data-voice-turn-phase={displayedVoicePhase}
         data-streaming-speech-segments={assistantSpeechSegments.segments.length}
@@ -2085,6 +3050,7 @@ export function ChatWorkspace({
                     <div>
                       <strong>{attachment.name}</strong>
                       <span>{attachment.title || attachment.path}</span>
+                      {attachmentContextSummary(attachment) ? <small>{attachmentContextSummary(attachment)}</small> : null}
                     </div>
                     <button
                       type="button"
@@ -2171,7 +3137,10 @@ export function ChatWorkspace({
                   title={attachment.path}
                 >
                   <Icon size={14} />
-                  {name}
+                  <span className="composer-attachment-copy">
+                    <strong>{name}</strong>
+                    {attachmentContextSummary(attachment) ? <small>{attachmentContextSummary(attachment)}</small> : null}
+                  </span>
                   <button
                     type="button"
                     aria-label={zh ? `绉婚櫎 ${name}` : `Remove ${name}`}
@@ -2197,7 +3166,9 @@ export function ChatWorkspace({
               </div>
               {materialRolePhase === "ready" && materialRoleAnalysis ? (
                 <div className="material-role-groups">
-                  {(["previous_report", "latest_data", "result_image", "reference_material"] as const).map((role) => (
+                  {(["previous_report", "latest_data", "result_image", "reference_material"] as const)
+                    .filter((role) => (materialRoleAnalysis.roleCounts[role] || 0) > 0)
+                    .map((role) => (
                     <article
                       key={role}
                       data-material-role={role}
@@ -2394,7 +3365,7 @@ export function ChatWorkspace({
 
           <div className="composer-box">
             <div className="composer-input-row">
-              <div className="composer-tools">
+              <div className="composer-tools" ref={toolsMenuRef}>
                 <button
                   ref={attachmentButtonRef}
                   type="button"
@@ -2452,23 +3423,154 @@ export function ChatWorkspace({
                 )}
               </div>
 
-              {voiceReviewText !== null ? (
-                <VoiceReviewBar
-                  value={voiceReviewText}
-                  disclosure={voiceRuntimeDisclosure}
-                  onChange={setVoiceReviewText}
-                  onAccept={acceptVoiceReview}
-                  onRetry={() => void retryVoiceReview()}
-                  onDiscard={discardVoiceReview}
-                />
-              ) : showStreamingVoiceCaptureBar ? (
-                <StreamingVoiceCaptureBar
-                  committedText={streamingVoiceInput.transcript.committedText}
+              {activeInputRequest ? (
+                <section className="chat-agent-input-request composer-agent-interaction" data-testid="composer-agent-interaction" aria-label={zh ? "智能体请求输入" : "Agent input request"}>
+                  <div className="composer-agent-interaction-copy">
+                    <strong>{activeGoalConfirmation
+                      ? (zh ? "确认任务目标" : "Confirm task goal")
+                      : (zh ? "智能体需要你的输入" : "Agent needs your input")}</strong>
+                    <span>{activeGoalConfirmation
+                      ? goalConfirmationDraft.objective
+                      : activeInputRequest.prompt}</span>
+                  </div>
+                  {activeGoalConfirmation ? (
+                    goalConfirmationEditing ? (
+                      <div className="structured-goal-editor" data-testid="composer-goal-editor">
+                        <label>{zh ? "目标" : "Goal"}<textarea data-testid="composer-goal-objective" value={goalConfirmationDraft.objective} onChange={(event) => setGoalConfirmationDraft((current) => ({ ...current, objective: event.target.value }))} /></label>
+                        <label>{zh ? "材料（每行一项）" : "Materials (one per line)"}<textarea data-testid="composer-goal-materials" value={goalConfirmationDraft.materials} onChange={(event) => setGoalConfirmationDraft((current) => ({ ...current, materials: event.target.value }))} /></label>
+                        <label>{zh ? "输出（每行一项）" : "Outputs (one per line)"}<textarea data-testid="composer-goal-outputs" value={goalConfirmationDraft.outputs} onChange={(event) => setGoalConfirmationDraft((current) => ({ ...current, outputs: event.target.value }))} /></label>
+                        <label>{zh ? "约束（每行一项）" : "Constraints (one per line)"}<textarea data-testid="composer-goal-constraints" value={goalConfirmationDraft.constraints} onChange={(event) => setGoalConfirmationDraft((current) => ({ ...current, constraints: event.target.value }))} /></label>
+                        <div className="composer-agent-interaction-controls">
+                          <button type="button" onClick={() => setGoalConfirmationEditing(false)}>{zh ? "取消修改" : "Cancel edit"}</button>
+                          <button type="button" className="primary" data-testid="composer-goal-save" disabled={!goalConfirmationDraft.objective.trim() || splitGoalConfirmationList(goalConfirmationDraft.outputs).length === 0} onClick={() => {
+                            respondToActiveInput({
+                              decision: "revise",
+                              goal: {
+                                objective: goalConfirmationDraft.objective.trim(),
+                                materials: splitGoalConfirmationList(goalConfirmationDraft.materials),
+                                outputs: splitGoalConfirmationList(goalConfirmationDraft.outputs),
+                                constraints: splitGoalConfirmationList(goalConfirmationDraft.constraints),
+                              },
+                            });
+                            setGoalConfirmationEditing(false);
+                          }}>{zh ? "保存修改" : "Save changes"}</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <details className="composer-goal-details">
+                          <summary>{zh ? "查看材料、输出和约束" : "Review materials, outputs, and constraints"}</summary>
+                          <dl>
+                            <div><dt>{zh ? "材料" : "Materials"}</dt><dd>{goalConfirmationDraft.materials || (zh ? "未提供" : "None supplied")}</dd></div>
+                            <div><dt>{zh ? "输出" : "Outputs"}</dt><dd>{goalConfirmationDraft.outputs || (zh ? "未指定" : "Not specified")}</dd></div>
+                            <div><dt>{zh ? "约束" : "Constraints"}</dt><dd>{goalConfirmationDraft.constraints || (zh ? "无" : "None supplied")}</dd></div>
+                          </dl>
+                        </details>
+                        <div className="composer-agent-interaction-controls">
+                          <button type="button" data-testid="composer-goal-edit" onClick={() => setGoalConfirmationEditing(true)}>{zh ? "修改或补充" : "Edit or add details"}</button>
+                          <button type="button" data-testid="composer-goal-cancel" onClick={() => respondToActiveInput({ decision: "decline" })}>{zh ? "取消任务" : "Cancel task"}</button>
+                          <button type="button" className="primary" data-testid="composer-goal-confirm" onClick={() => respondToActiveInput({ decision: "accept" })}>{zh ? "确认并开始" : "Confirm and start"}</button>
+                        </div>
+                      </>
+                    )
+                  ) : activeInputRequest.inputType === "approval" ? (
+                    <div className="composer-agent-interaction-controls">
+                      <button type="button" onClick={() => respondToActiveInput({ approved: false })}>{zh ? "拒绝" : "Reject"}</button>
+                      <button type="button" className="primary" onClick={() => respondToActiveInput({ approved: true })}>{zh ? "批准" : "Approve"}</button>
+                    </div>
+                  ) : activeInputRequest.inputType === "confirmation" ? (
+                    <div className="composer-agent-interaction-controls">
+                      <button type="button" onClick={() => respondToActiveInput({ decision: "decline" })}>{zh ? "取消" : "Cancel"}</button>
+                      <button type="button" className="primary" onClick={() => respondToActiveInput({ decision: "accept" })}>{zh ? "确认" : "Confirm"}</button>
+                    </div>
+                  ) : activeInputRequest.inputType === "choice" && activeInputRequest.options?.length ? (
+                    <div className="composer-agent-interaction-controls">
+                      {activeInputRequest.options.map((option) => (
+                        <button
+                          type="button"
+                          key={option.id}
+                          onClick={() => respondToActiveInput({ choice: option.value ?? option.id, choice_id: option.id })}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="composer-editor composer-agent-interaction-controls">
+                      <textarea
+                        data-testid="composer-agent-interaction-input"
+                        value={interactionDraft}
+                        onChange={(event) => setInteractionDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if ((event.ctrlKey || event.metaKey) && event.key === "Enter") submitInteractionDraft();
+                        }}
+                        placeholder={zh ? "输入给智能体的回复..." : "Reply to the agent..."}
+                        rows={1}
+                      />
+                      <button type="button" className="composer-submit" disabled={!interactionDraft.trim()} onClick={submitInteractionDraft}>
+                        <Send size={16} />
+                      </button>
+                    </div>
+                  )}
+                </section>
+              ) : voiceReviewText !== null ? (
+                <div className="composer-streaming-review-stack">
+                  <VoiceReviewBar
+                    value={voiceReviewText}
+                    disclosure={voiceRuntimeDisclosure}
+                    onChange={setVoiceReviewText}
+                    onAccept={acceptVoiceReview}
+                    onRetry={() => void retryVoiceReview()}
+                    onDiscard={discardVoiceReview}
+                  />
+                  {streamingTranscriptRepair?.candidate ? (
+                    <TranscriptRepairDiff
+                      candidate={streamingTranscriptRepair.candidate}
+                      accepted={streamingTranscriptRepair.status === "accepted"}
+                      onAccept={() => setStreamingTranscriptRepair((current) => {
+                        if (!current) return current;
+                        const next = acceptTranscriptRepair(current);
+                        setVoiceReviewText(next.acceptedText);
+                        return next;
+                      })}
+                      onReject={() => setStreamingTranscriptRepair((current) => {
+                        if (!current) return current;
+                        const next = rejectTranscriptRepair(current);
+                        setVoiceReviewText(next.acceptedText);
+                        return next;
+                      })}
+                      onUndo={() => setStreamingTranscriptRepair((current) => {
+                        if (!current) return current;
+                        const next = undoTranscriptRepair(current);
+                        setVoiceReviewText(next.acceptedText);
+                        return next;
+                      })}
+                    />
+                  ) : null}
+                </div>
+              ) : showDuplexVoiceCaptureBar ? (
+                <div className="composer-voice-status" data-testid="duplex-voice-status" aria-live="polite">
+                  <span>{zh ? "实时语音" : "Realtime voice"}: {duplexVoiceInput.turn.phase}</span>
+                  {duplexVoiceInput.inputTranscript ? <small>{duplexVoiceInput.inputTranscript}</small> : null}
+                  {duplexVoiceInput.outputTranscript ? <small>{duplexVoiceInput.outputTranscript}</small> : null}
+                  {duplexVoiceInput.flowControl.paused ? <small>{zh ? "音频上行暂缓" : "Audio uplink paused"}</small> : null}
+                  {duplexVoiceInput.usageWarning ? <small>{duplexVoiceInput.usageWarning}</small> : null}
+                  {Object.values(duplexVoiceInput.toolStatuses).slice(-1).map((tool, index) => <small key={`${tool.status}-${index}`}>{tool.detail ?? tool.status}</small>)}
+                  <button type="button" onClick={() => void duplexVoiceInput.stop()}>{zh ? "结束" : "Stop"}</button>
+                </div>
+              ) : showStreamingVoiceCaptureBar && streamingComposerProjection ? (
+                <StreamingComposerProjectionEditor
                   elapsedSeconds={streamingVoiceInput.elapsedSeconds}
                   levels={streamingVoiceInput.levels}
                   phase={streamingVoiceInput.phase}
+                  projection={streamingComposerProjection}
+                  textareaRef={textareaRef}
                   transportMessage={streamingVoiceInput.flowControl.paused ? (zh ? "连接较慢，正在控制音频发送速度…" : "Connection is slow; audio flow is being limited…") : undefined}
-                  unstableText={streamingVoiceInput.transcript.unstableText}
+                  onCompositionChange={(composing) => setStreamingComposerProjection((current) => current ? setStreamingComposerComposition(current, composing) : current)}
+                  onUserTextChange={(value) => {
+                    onInputChange(value);
+                    setStreamingComposerProjection((current) => current ? rebaseStreamingComposerUserText(current, value) : current);
+                  }}
                   onStop={() => void streamingVoiceInput.stop()}
                 />
               ) : showVoiceCaptureBar ? (
@@ -2476,38 +3578,56 @@ export function ChatWorkspace({
                   elapsedSeconds={voiceElapsedSeconds}
                   levels={voiceLevels}
                   state={voiceState}
-                  onStop={voiceState === "processing" ? cancelVoiceTranscription : () => stopVoiceRecording("transcribe")}
+                  onStop={() => stopVoiceRecording("transcribe")}
                 />
               ) : (
-                <textarea
-                  data-testid="composer-input"
-                ref={textareaRef}
-                value={input}
-                onChange={(event) => onInputChange(event.target.value)}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                placeholder={
-                  canChat
-                    ? zh ? "向 OpenDrSai 提问..." : "Ask OpenDrSai..."
-                    : chatUnavailableReason ?? (zh ? "请稍候，当前任务正在处理..." : "Please wait while the current task is running...")
-                }
-                rows={1}
-              />
+                <div className="composer-editor">
+                  {/* Temporarily hide composer Skills picker — keep for later reuse.
+                  {selectedSkillName ? (
+                    <div className="composer-skill-tags" aria-label={zh ? "已选技能" : "Selected skill"}>
+                      <span className="composer-skill-tag" data-testid="composer-skill-tag">
+                        <Zap size={12} aria-hidden="true" />
+                        <span className="composer-skill-tag-label">{selectedSkillName}</span>
+                        <button
+                          type="button"
+                          aria-label={zh ? `移除技能 ${selectedSkillName}` : `Remove skill ${selectedSkillName}`}
+                          title={zh ? "移除技能" : "Remove skill"}
+                          onClick={clearSelectedSkill}
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    </div>
+                  ) : null}
+                  */}
+                  <textarea
+                    data-testid="composer-input"
+                    ref={textareaRef}
+                    value={input}
+                    onChange={(event) => onInputChange(event.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
+                    placeholder={
+                      canChat
+                        ? zh ? "向 OpenDrSai 提问..." : "Ask OpenDrSai..."
+                        : chatUnavailableReason ?? (zh ? "请稍候，当前任务正在处理..." : "Please wait while the current task is running...")
+                    }
+                    rows={1}
+                  />
+                </div>
               )}
 
             </div>
 
-            {voiceError || streamingVoiceInput.error || voiceState === "processing" ? (
+            {voiceError || streamingVoiceInput.error || duplexVoiceInput.error ? (
               <div
-                className={`composer-voice-status ${voiceState === "failed" || streamingVoiceInput.phase === "failed" ? "error" : ""}`}
+                className={`composer-voice-status ${voiceState === "failed" || streamingVoiceInput.phase === "failed" || duplexVoiceInput.phase === "failed" ? "error" : ""}`}
                 aria-live="polite"
               >
                 <span>
-                  {voiceState === "processing" && voiceProgressMessage
-                    ? voiceProgressMessage
-                    : getVoiceStatusLabel(voiceState, voiceElapsedSeconds)}
+                  {getVoiceStatusLabel(voiceState, voiceElapsedSeconds)}
                 </span>
-                {voiceError || streamingVoiceInput.error ? <small>{voiceError ?? streamingVoiceInput.error}</small> : null}
+                {voiceError || streamingVoiceInput.error || duplexVoiceInput.error ? <small>{voiceError ?? streamingVoiceInput.error ?? duplexVoiceInput.error}</small> : null}
                 {voiceConsentRequired ? (
                   <span className="composer-voice-error-actions">
                     <button
@@ -2516,10 +3636,10 @@ export function ChatWorkspace({
                         updateVoicePreferences({ remoteSttConsent: true });
                         setVoiceConsentRequired(false);
                         setVoiceError(null);
-                        setVoiceState("idle");
+                        void retryVoiceTranscription(true);
                       }}
                     >
-                      {zh ? "允许在线识别" : "Allow online transcription"}
+                      {zh ? "允许并识别" : "Allow and transcribe"}
                     </button>
                     <button
                       type="button"
@@ -2527,16 +3647,35 @@ export function ChatWorkspace({
                         setVoiceConsentRequired(false);
                         setVoiceError(null);
                         setVoiceState("idle");
+                        voiceRetryBlobRef.current = null;
+                        voiceRetryDurationRef.current = 0;
+                        dispatchVoiceTurn({ type: "reset" });
                       }}
                     >
                       {zh ? "暂不使用" : "Not now"}
                     </button>
                   </span>
                 ) : null}
-                {voiceError && voiceRetryBlobRef.current ? (
+                {voicePreferences.interactionMode === "duplex" && !duplexPrivacyConfirmed && voiceError === duplexPrivacyDisclosure ? (
+                  <span className="composer-voice-error-actions" aria-label="Realtime voice privacy confirmation">
+                    <button type="button" onClick={() => { setDuplexPrivacyConfirmed(true); void startDuplexVoiceRecording(true); }}>{zh ? "了解并开始实时语音" : "I understand—start Realtime voice"}</button>
+                    <button type="button" onClick={() => setVoiceError(null)}>{zh ? "暂不使用" : "Not now"}</button>
+                  </span>
+                ) : null}
+                {voiceError && voiceRetryBlobRef.current && !voiceConsentRequired ? (
                   <span className="composer-voice-error-actions">
                     <button type="button" onClick={() => void retryVoiceTranscription()}>Retry</button>
                     <button type="button" onClick={discardVoiceReview}>Discard</button>
+                  </span>
+                ) : null}
+                {voiceTurnState.phase === "failed" && voiceTurnState.error?.stage === "submitting" ? (
+                  <span className="composer-voice-error-actions">
+                    <button type="button" onClick={retryVoiceChatSubmission}>{zh ? "重试发送" : "Retry sending"}</button>
+                    <button type="button" onClick={() => {
+                      setVoiceState("idle");
+                      setVoiceError(null);
+                      dispatchVoiceTurn({ type: "reset" });
+                    }}>{zh ? "保留文本" : "Keep transcript"}</button>
                   </span>
                 ) : null}
                 {streamingVoiceInput.phase === "failed" ? (
@@ -2586,104 +3725,114 @@ export function ChatWorkspace({
                   </span>
                 </div>
               )}
-              <div className="composer-meta-item">
+              <div className="composer-meta-item composer-configuration" data-meta-menu="configuration">
                 <button
-                  className="composer-meta-chip composer-meta-button"
+                  className="composer-meta-chip composer-meta-button composer-configuration-trigger"
+                  data-testid="composer-configuration-trigger"
                   type="button"
-                  disabled={!hasAgentOptions}
-                  aria-expanded={metaMenuOpen === "agent"}
-                  onClick={() => toggleMetaMenu("agent")}
+                  aria-expanded={metaMenuOpen === "configuration"}
+                  aria-haspopup="dialog"
+                  onClick={() => toggleMetaMenu("configuration")}
+                  title={zh ? "智能体、模型、推理强度和任务模式" : "Agent, model, reasoning effort, and task mode"}
                 >
                   <Bot size={14} />
-                  {zh ? "智能体" : "Agent"}: {activeAgentName}
+                  <span>{composerConfigurationSummary}</span>
                   <ChevronDown size={13} />
                 </button>
-                {metaMenuOpen === "agent" && (
-                  <div className="composer-meta-menu">
-                    {agentOptions.map((agent) => (
-                      <button
-                        key={agent.id}
-                        type="button"
-                        className={agent.id === selectedAgentId ? "active" : ""}
-                        onClick={() => selectAgent(agent.id)}
-                      >
-                        <span>{agent.name}</span>
-                        <small>{getAgentOptionMeta(agent, zh)}</small>
-                      </button>
-                    ))}
+                {metaMenuOpen === "configuration" ? (
+                  <div className="composer-configuration-menu" role="dialog" aria-label={zh ? "任务设置" : "Task settings"} onMouseLeave={() => setConfigurationSection(null)}>
+                    <div className="composer-configuration-rows">
+                      <button type="button" disabled={!hasAgentOptions} aria-expanded={configurationSection === "agent"} onMouseEnter={(event) => revealConfigurationSection("agent", event.currentTarget)} onFocus={(event) => revealConfigurationSection("agent", event.currentTarget)} onClick={(event) => revealConfigurationSection("agent", event.currentTarget)}><span><strong>{zh ? "智能体" : "Agent"}</strong><small>{activeAgentName}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" aria-expanded={configurationSection === "model"} onMouseEnter={(event) => revealConfigurationSection("model", event.currentTarget)} onFocus={(event) => revealConfigurationSection("model", event.currentTarget)} onClick={(event) => revealConfigurationSection("model", event.currentTarget)}><span><strong>{zh ? "模型" : "Model"}</strong><small>{activeModelName}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" disabled={!showThinkingEffort} aria-expanded={configurationSection === "thinking"} onMouseEnter={(event) => revealConfigurationSection("thinking", event.currentTarget)} onFocus={(event) => revealConfigurationSection("thinking", event.currentTarget)} onClick={(event) => revealConfigurationSection("thinking", event.currentTarget)}><span><strong>{zh ? "推理强度" : "Reasoning effort"}</strong><small>{thinkingEffortMenuLabel}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" data-testid="composer-task-mode" disabled={!isLocalOpenDrSaiAgent || showStop} aria-expanded={configurationSection === "task"} onMouseEnter={(event) => revealConfigurationSection("task", event.currentTarget)} onFocus={(event) => revealConfigurationSection("task", event.currentTarget)} onClick={(event) => revealConfigurationSection("task", event.currentTarget)}><span><strong>{zh ? "任务模式" : "Task mode"}</strong><small>{taskInteractionModeLabel}</small></span><ChevronRight size={14} /></button>
+                    </div>
+                    {configurationSection ? <div className="composer-configuration-submenu" style={configurationSubmenuPosition} role="menu" aria-label={configurationSection === "agent" ? (zh ? "选择智能体" : "Choose agent") : configurationSection === "model" ? (zh ? "选择模型" : "Choose model") : configurationSection === "thinking" ? (zh ? "选择推理强度" : "Choose reasoning effort") : (zh ? "选择任务模式" : "Choose task mode")}>
+                      <div className="composer-configuration-options">
+                        {configurationSection === "agent" ? agentOptions.map((agent) => (
+                          <button key={agent.id} type="button" role="menuitemradio" aria-checked={agent.id === selectedAgentId} className={agent.id === selectedAgentId ? "active" : ""} onClick={() => selectAgent(agent.id)}>
+                            <span><strong>{agent.name}</strong><small>{getAgentOptionMeta(agent, zh)}</small></span>
+                            {agent.id === selectedAgentId ? <Check size={14} aria-hidden /> : null}
+                          </button>
+                        )) : configurationSection === "model" ? (hasModelOptions ? modelOptions.map((model) => (
+                          <button key={`${model.provider_id || "backend"}:${model.alias || model.model}`} type="button" role="menuitemradio" aria-checked={(model.alias || model.model) === selectedModelName && (!selectedModelProviderId || model.provider_id === selectedModelProviderId)} className={(model.alias || model.model) === selectedModelName && (!selectedModelProviderId || model.provider_id === selectedModelProviderId) ? "active" : ""} onClick={() => selectModel(model.alias || model.model || "", model.provider_id)}>
+                            <span><strong>{getModelOptionLabel(model)}</strong><small>{getModelProviderLabel(model, zh)}</small></span>
+                            {(model.alias || model.model) === selectedModelName && (!selectedModelProviderId || model.provider_id === selectedModelProviderId) ? <Check size={14} aria-hidden /> : null}
+                          </button>
+                        )) : <p className="composer-meta-menu-empty">{zh ? "暂无可用模型" : "No models available"}</p>) : configurationSection === "thinking" ? supportedThinkingEfforts.map((effort) => (
+                          <button key={effort} type="button" role="menuitemradio" aria-checked={effort === thinkingEffort} className={effort === thinkingEffort ? "active" : ""} onClick={() => selectThinkingEffort(effort)}>
+                            <span><strong>{getThinkingEffortLabel(effort, zh)}</strong></span>
+                            {effort === thinkingEffort ? <Check size={14} aria-hidden /> : null}
+                          </button>
+                        )) : (["normal", "confirm_goal"] as const).map((mode) => (
+                          <button key={mode} type="button" role="menuitemradio" aria-checked={mode === taskInteractionMode} data-testid={`composer-task-mode-${mode}`} disabled={!isLocalOpenDrSaiAgent || showStop} className={mode === taskInteractionMode ? "active" : ""} onClick={() => selectTaskInteractionMode(mode)}>
+                            <span><strong>{mode === "normal" ? (zh ? "常规" : "Normal") : (zh ? "目标" : "Goal")}</strong><small>{mode === "normal" ? (zh ? "适合日常问答和简单任务，立即开始" : "Best for everyday questions and simple tasks; starts right away") : (zh ? "适合复杂任务，开始前与你核对需求和预期结果" : "Best for complex tasks; reviews your needs and expected result first")}</small></span>
+                            {mode === taskInteractionMode ? <Check size={14} aria-hidden /> : null}
+                          </button>
+                        ))}
+                      </div>
+                    </div> : null}
                   </div>
-                )}
+                ) : null}
               </div>
-              <div className="composer-meta-item">
+              {/* Temporarily hide composer Skills picker — keep for later reuse.
+              <div className="composer-meta-item" data-meta-menu="skill">
                 <button
-                  className="composer-meta-chip composer-meta-button"
+                  className={`composer-meta-chip composer-meta-button${selectedSkillName ? " active" : ""}`}
                   type="button"
-                  aria-expanded={metaMenuOpen === "model"}
-                  onClick={() => toggleMetaMenu("model")}
+                  aria-expanded={metaMenuOpen === "skill"}
+                  onClick={() => toggleMetaMenu("skill")}
+                  title={zh ? "从 Skills 管理中选择技能" : "Pick a skill from Skills manager"}
                 >
-                  <Brain size={14} />
-                  {zh ? "模型：" : "Model: "}
-                  {activeModelName}
+                  <Zap size={14} />
+                  {zh ? "技能" : "Skill"}
                   <ChevronDown size={13} />
                 </button>
-                {metaMenuOpen === "model" && (
-                  <div className="composer-meta-menu wide">
-                    {hasModelOptions ? modelOptions.map((model) => (
-                      <button
-                        key={model.alias || model.model}
-                        type="button"
-                        className={(model.alias || model.model) === selectedModelName ? "active" : ""}
-                        onClick={() => selectModel(model.alias || model.model || "")}
-                      >
-                        <span>{getModelOptionLabel(model)}</span>
-                        <small>{getModelOptionMeta(model)}</small>
-                      </button>
-                    )) : <p className="composer-meta-menu-empty">{zh ? "暂无可用模型" : "No models available"}</p>}
+                {metaMenuOpen === "skill" && (
+                  <div className="composer-meta-menu wide" role="listbox" aria-label={zh ? "已安装技能" : "Installed skills"}>
+                    {skillsLoading ? (
+                      <p className="composer-meta-menu-empty">{zh ? "正在加载 Skills…" : "Loading skills…"}</p>
+                    ) : skillsLoadError ? (
+                      <p className="composer-meta-menu-empty">{skillsLoadError}</p>
+                    ) : installedSkills.length ? (
+                      installedSkills.map((skill) => (
+                        <button
+                          key={skill.path || skill.name}
+                          type="button"
+                          role="option"
+                          className={skill.name === selectedSkillName ? "active" : ""}
+                          onClick={() => applySkillToComposer(skill.name)}
+                        >
+                          <span>{skill.name}</span>
+                          <small>{skill.description || skill.category || (zh ? "用户技能" : "User skill")}</small>
+                        </button>
+                      ))
+                    ) : (
+                      <p className="composer-meta-menu-empty">
+                        {zh
+                          ? "还没有已安装技能。可到左侧 Skills 管理中新建。"
+                          : "No installed skills yet. Create one in Skills manager."}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
-              <div className="composer-meta-item">
-              <button
-                className="composer-meta-chip composer-meta-button"
-                type="button"
-                aria-expanded={metaMenuOpen === "thinking"}
-                onClick={() => toggleMetaMenu("thinking")}
-                title="Switch thinking effort"
-              >
-                <Gauge size={14} />
-                {zh ? "推理：" : "Thinking: "}
-                {thinkingEffortLabel}
-                <ChevronDown size={13} />
-              </button>
-              {metaMenuOpen === "thinking" && (
-                <div className="composer-meta-menu compact">
-                  {THINKING_EFFORTS.map((effort) => (
-                    <button
-                      key={effort}
-                      type="button"
-                      className={effort === thinkingEffort ? "active" : ""}
-                      onClick={() => selectThinkingEffort(effort)}
-                    >
-                      <span>{getThinkingEffortLabel(effort, zh)}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              </div>
+              */}
               <div className="composer-actions composer-actions-meta">
                 <select
                   className="composer-voice-mode"
                   data-testid="composer-voice-mode"
                   value={voicePreferences.interactionMode}
                   onChange={(event) => updateVoicePreferences({ interactionMode: event.target.value as DesktopVoiceInteractionMode })}
-                  disabled={!canSwitchVoiceMode(voiceTurnState.phase) || showStreamingVoiceCaptureBar || streamingVoiceInput.phase === "reviewing" || streamingVoiceReadyToSend || streamingVoiceResponseArmed}
+                  disabled={!canSwitchVoiceMode(voiceTurnState.phase) || showStreamingVoiceCaptureBar || showDuplexVoiceCaptureBar || streamingVoiceInput.phase === "reviewing" || streamingVoiceReadyToSend || streamingVoiceResponseArmed}
                   aria-label={zh ? "语音交互模式" : "Voice interaction mode"}
                   title={streamingVoiceAvailability.reason ?? voiceRuntimeDisclosure ?? voiceRuntimeLabel}
                 >
                   <option value="serial">{zh ? "串行" : "Serial"}</option>
                   <option value="streaming" disabled={!streamingVoiceAvailability.available}>{zh ? "流式" : "Streaming"}</option>
+                  <option value="duplex" disabled={!duplexVoiceAvailability.available}>{zh ? "实时" : "Realtime"}</option>
                 </select>
-                {voiceDevices.length > 1 ? (
+                {(voicePreferences.interactionMode === "duplex" ? duplexVoiceInput.devices : voiceDevices).length > 1 ? (
                   <select
                     className="composer-voice-device"
                     value={voiceDeviceId}
@@ -2693,7 +3842,7 @@ export function ChatWorkspace({
                     title="Microphone device"
                   >
                     <option value="">Default mic</option>
-                    {voiceDevices.map((device, index) => (
+                    {(voicePreferences.interactionMode === "duplex" ? duplexVoiceInput.devices : voiceDevices).map((device, index) => (
                       <option key={device.deviceId} value={device.deviceId}>
                         {device.label || `Microphone ${index + 1}`}
                       </option>
@@ -2725,16 +3874,20 @@ export function ChatWorkspace({
                 ) : null}
                 <button
                   type="button"
-                  className={`composer-icon-button composer-voice-button ${voiceState === "recording" ? "recording" : ""}`}
-                  disabled={showStop || voiceState === "requesting_permission" || voiceState === "processing"}
-                  aria-pressed={voiceState === "recording"}
+                  className={`composer-icon-button composer-voice-button ${voiceState === "recording" || duplexVoiceInput.phase === "active" ? "recording" : ""}`}
+                  disabled={voiceState === "requesting_permission" || voiceState === "processing" || duplexVoiceInput.phase === "starting" || duplexVoiceInput.phase === "stopping"}
+                  aria-pressed={voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active"}
                   aria-label={
-                    voiceState === "recording" || streamingVoiceInput.phase === "streaming"
+                    voiceState === "processing"
+                      ? "Transcribing voice input"
+                      : voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering"
                       ? "Stop voice recording"
                       : "Start voice recording"
                   }
                   title={
-                    voiceState === "recording" || streamingVoiceInput.phase === "streaming"
+                    voiceState === "processing"
+                      ? "Transcribing voice input"
+                      : voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering"
                       ? "Stop voice recording"
                       : "Start voice recording"
                   }
@@ -2742,13 +3895,28 @@ export function ChatWorkspace({
                     void toggleVoiceRecording();
                   }}
                 >
-                  {voiceState === "recording" || streamingVoiceInput.phase === "streaming" ? <MicOff size={16} /> : <Mic size={16} />}
+                  {voiceState === "processing" ? (
+                    <ThreadActivityBubble state={{ kind: "running" }} language={zh ? "zh" : "en"} />
+                  ) : voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering" ? <MicOff size={16} /> : <Mic size={16} />}
                 </button>
                 {showStop ? (
-                  <button className="composer-submit stop" type="button" onClick={onAbort}>
-                    <Square size={16} />
-                    {zh ? "停止" : "Stop"}
-                  </button>
+                  <>
+                    {input.trim() ? <button className="composer-submit" type="submit" title={zh ? "默认排在当前任务之后" : "Queue after the current task"}>
+                      <Send size={16} />{zh ? "排队发送" : "Queue"}
+                    </button> : null}
+                    {input.trim() ? <button className="composer-submit" type="button"
+                      onClick={() => void Promise.resolve(onAbort()).then(() => submitWithAttachments())}
+                      title={zh ? "明确停止当前任务并改为执行这条消息" : "Explicitly stop the active task and run this message"}>
+                      {zh ? "停止并替换" : "Stop & replace"}
+                    </button> : null}
+                    <button className="composer-submit stop" type="button" disabled={cancellingRequestId === activeRequestId} onClick={() => void onAbort()}>
+                      <Square size={16} />
+                      {cancellingRequestId === activeRequestId
+                        ? (zh ? "正在取消…" : "Cancelling…")
+                        : messages.some((message) => message.structuredTurn?.turnId === activeRequestId && message.structuredTurn.status === "pending")
+                        ? (zh ? "取消排队" : "Cancel queued") : (zh ? "停止" : "Stop")}
+                    </button>
+                  </>
                 ) : (
                   <button className="composer-submit" type="submit" disabled={!input.trim() || (!canChat && !materialSuggestionRuntimeReady && !canSaveLocalPreference && !canAnswerMaterialInventoryLocally && !canAnswerMaterialQuestionLocally)}>
                     <Send size={16} />
@@ -2762,6 +3930,133 @@ export function ChatWorkspace({
       </form>
       </div>
     </div>
+  );
+}
+
+function shallowArrayEqual(left: readonly unknown[] | undefined, right: readonly unknown[] | undefined): boolean {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  return left.every((item, index) => Object.is(item, right[index]));
+}
+
+function chatWorkspacePropsEqual(previous: ChatWorkspaceProps, next: ChatWorkspaceProps): boolean {
+  const arrayProps = new Set<keyof ChatWorkspaceProps>([
+    "messages", "agentOptions", "modelOptions", "samplePrompts", "externalAttachments",
+    "workspaceInstructions", "workspaceOptions",
+  ]);
+  return (Object.keys(next) as Array<keyof ChatWorkspaceProps>).every((key) => {
+    const nextValue = next[key];
+    if (typeof nextValue === "function") return true;
+    const previousValue = previous[key];
+    if (arrayProps.has(key)) {
+      return shallowArrayEqual(previousValue as readonly unknown[] | undefined, nextValue as readonly unknown[] | undefined);
+    }
+    return Object.is(previousValue, nextValue);
+  });
+}
+
+export const ChatWorkspace = memo(ChatWorkspaceImpl, chatWorkspacePropsEqual);
+
+const virtualMessageHeightCache = new Map<string, number>();
+const MAX_VIRTUAL_MESSAGE_HEIGHTS = 2_000;
+
+function rememberVirtualMessageHeight(messageId: string, height: number): void {
+  if (!Number.isFinite(height) || height < 1) return;
+  virtualMessageHeightCache.delete(messageId);
+  virtualMessageHeightCache.set(messageId, Math.ceil(height));
+  while (virtualMessageHeightCache.size > MAX_VIRTUAL_MESSAGE_HEIGHTS) {
+    const oldest = virtualMessageHeightCache.keys().next().value;
+    if (typeof oldest !== "string") break;
+    virtualMessageHeightCache.delete(oldest);
+  }
+}
+
+function estimateVirtualMessageHeight(message: UiMessage): number {
+  const estimateText = [message.content ?? "", message.structuredTurn ? getStructuredTurnEstimateText(message.structuredTurn) : ""]
+    .filter(Boolean)
+    .join("\n\n");
+  const textLength = estimateText.length;
+  const newlineCount = estimateText ? (estimateText.match(/\n/g)?.length ?? 0) : 0;
+  if (message.role === "user") {
+    return Math.min(260, Math.max(76, 62 + newlineCount * 18 + Math.ceil(textLength / 90) * 20));
+  }
+  const structuredWeight = message.structuredTurn
+    ? (message.structuredTurn.parts.length * 46) + Math.min(180, message.structuredTurn.activities.length * 10)
+    : 0;
+  return Math.min(3_200, Math.max(220, 150 + newlineCount * 18 + Math.ceil(textLength / 78) * 22 + structuredWeight));
+}
+
+function getStructuredTurnEstimateText(turn: StructuredTurnState): string {
+  return turn.parts.map(getStructuredPartEstimateText).filter(Boolean).join("\n\n");
+}
+
+function getStructuredPartEstimateText(part: StructuredAssistantPart): string {
+  if (part.kind === "markdown") return part.markdown;
+  if (part.kind === "reasoning") return [part.summary, ...part.segments.map((segment) => segment.text)].filter(Boolean).join("\n");
+  if (part.kind === "progress") return part.summary;
+  if (part.kind === "artifact") return [part.name, part.summary].filter(Boolean).join("\n");
+  if (part.kind === "citation") return [part.title, part.excerpt].filter(Boolean).join("\n");
+  if (part.kind === "interaction") return part.prompt;
+  if (part.kind === "subtask") return [part.title, part.summary].filter(Boolean).join("\n");
+  return part.message;
+}
+
+function VirtualizedMessage({
+  message,
+  className,
+  pinned,
+  scrollRootRef,
+  children,
+}: {
+  message: UiMessage;
+  className: string;
+  pinned: boolean;
+  scrollRootRef: React.RefObject<HTMLDivElement | null>;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const elementRef = useRef<HTMLElement | null>(null);
+  const [renderContent, setRenderContent] = useState(pinned);
+
+  useEffect(() => {
+    if (pinned) setRenderContent(true);
+  }, [pinned]);
+
+  useEffect(() => {
+    const element = elementRef.current;
+    const root = scrollRootRef.current;
+    if (!element || !root || pinned) return undefined;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry) return;
+      setRenderContent((current) => entry.isIntersecting ? true : current && false);
+    }, { root, rootMargin: "900px 0px", threshold: 0 });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [message.id, pinned, scrollRootRef]);
+
+  useEffect(() => {
+    const element = elementRef.current;
+    if (!element || !renderContent) return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      const height = entry?.borderBoxSize?.[0]?.blockSize ?? entry?.contentRect.height;
+      if (height) rememberVirtualMessageHeight(message.id, height);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [message.id, renderContent]);
+
+  const placeholderHeight = virtualMessageHeightCache.get(message.id) ?? estimateVirtualMessageHeight(message);
+  return (
+    <article
+      ref={elementRef}
+      className={`${className} ${renderContent ? "virtual-message-rendered" : "virtual-message-placeholder"}`}
+      data-message-id={message.id}
+      data-structured-turn-id={message.structuredTurn?.turnId}
+      data-run-id={message.runtimeRunId ?? message.structuredTurn?.turnId ?? (message.role === "assistant" ? message.id : undefined)}
+      style={renderContent ? undefined : { height: placeholderHeight }}
+      aria-hidden={renderContent ? undefined : true}
+    >
+      {renderContent ? children : null}
+    </article>
   );
 }
 
@@ -2967,26 +4262,49 @@ function StreamingStatus({
   message: UiMessage;
   now: number;
   zh: boolean;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   if (!message.streaming) {
-    return <p>{"No response content."}</p>;
+    // Empty completed shells are filtered elsewhere; never show the literal placeholder.
+    if (message.error) {
+      return <p>{zh ? "回复失败。请查看调试信息。" : "Reply failed. View debug details."}</p>;
+    }
+    return null;
   }
 
-  const startedAt = message.startedAt ?? now;
+  if (!message.startedAt) {
+    const queuedSeconds = Math.max(0, Math.floor((now - (message.queuedAt ?? now)) / 1000));
+    return (
+      <div className="streaming-status">
+        <span className="streaming-dot" aria-hidden />
+        <span>{zh ? "正在排队" : "Queued"}</span>
+        <time>{zh ? `已等待 ${queuedSeconds} 秒` : `Waiting ${queuedSeconds}s`}</time>
+      </div>
+    );
+  }
+
+  const startedAt = message.startedAt;
   const elapsedSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
   const lastEventAt = message.lastEventAt ?? startedAt;
   const idleSeconds = Math.max(0, Math.floor((now - lastEventAt) / 1000));
-  const detail = elapsedSeconds < 3
+  const detail = elapsedSeconds >= 120
+    ? zh ? "任务仍在运行；你可以继续等待、停止，或打开调试信息" : "The task is still running; you can keep waiting, stop it, or open diagnostics"
+    : elapsedSeconds >= 60
+      ? zh ? "模型仍在处理长任务，连接保持正常" : "The model is still processing this long task; the connection remains active"
+      : elapsedSeconds >= 30
+        ? zh ? "这一步比平时更久，正在继续等待模型" : "This step is taking longer than usual; still waiting for the model"
+    : elapsedSeconds < 3
     ? zh ? "正在连接本地运行时..." : "Connecting to the local runtime..."
     : idleSeconds >= 10
       ? zh ? "正在等待模型输出" : "Waiting for model output"
       : zh ? "正在处理" : "Working";
 
   return (
-    <div className="streaming-status" role="status" aria-live="polite">
+    <div className="streaming-status">
       <span className="streaming-dot" aria-hidden />
       <span>{detail}</span>
       <time>{zh ? `已执行 ${elapsedSeconds} 秒` : `Running ${elapsedSeconds}s`}</time>
+      {message.firstFeedbackAt && message.startedAt ? <small>{zh ? "首个状态" : "First status"} {Math.max(0, message.firstFeedbackAt - message.startedAt)}ms</small> : null}
+      {message.firstDeltaAt && message.startedAt ? <small>{zh ? "首个模型片段" : "First model delta"} {Math.max(0, message.firstDeltaAt - message.startedAt)}ms</small> : null}
     </div>
   );
 }
@@ -3011,10 +4329,24 @@ function MessageActions({
   zh: boolean;
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
+  const [localPending, setLocalPending] = useState(false);
   const isActive = playback.activeMessageId === messageId;
   const isPlaying = isActive && playback.phase === "playing";
   const isPaused = isActive && playback.phase === "paused";
-  const isSynthesizing = isActive && playback.phase === "synthesizing";
+  const isSynthesizing = localPending || (isActive && playback.phase === "synthesizing");
+  const playbackError = isActive && playback.phase === "failed" ? playback.error : null;
+
+  useEffect(() => {
+    if (!localPending) return;
+    if (playback.activeMessageId === messageId && playback.phase !== "idle") {
+      setLocalPending(false);
+      return;
+    }
+    if (playback.error && playback.phase === "failed") {
+      setLocalPending(false);
+    }
+  }, [localPending, messageId, playback.activeMessageId, playback.error, playback.phase]);
+
   async function handleCopy(): Promise<void> {
     try {
       if (!await copyTextSafely(content)) return;
@@ -3024,8 +4356,23 @@ function MessageActions({
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
   }
+
+  function handleReadAloud(): void {
+    setLocalPending(true);
+    try {
+      playback.play(messageId, content, zh ? "zh" : "en", {
+        mode: synthesisMode,
+        rate: playbackRate,
+        voiceName,
+      });
+    } catch (error) {
+      setLocalPending(false);
+      console.error("voice playback failed to start", error);
+    }
+  }
+
   return (
-    <div className={`message-actions ${isActive || playback.error ? "active" : ""}`} aria-live="polite">
+    <div className={`message-actions ${isActive || isSynthesizing || playbackError ? "active" : ""}`} aria-live="polite">
       <button type="button" onClick={() => void handleCopy()} title={zh ? "复制回答" : "Copy response"}>
         {copied ? "✓" : <ClipboardList size={13} />}
         <span>{copied ? (zh ? "已复制" : "Copied") : (zh ? "复制" : "Copy")}</span>
@@ -3049,21 +4396,54 @@ function MessageActions({
         <button
           type="button"
           disabled={playbackDisabled || !playback.isAvailable}
-          onClick={() => playback.play(messageId, content, zh ? "zh" : "en", { mode: synthesisMode, rate: playbackRate, voiceName })}
-          title={zh ? "朗读回复" : "Read response aloud"}
+          onClick={handleReadAloud}
+          title={
+            playbackDisabled
+              ? (zh ? "录音进行中，暂不可朗读" : "Unavailable while recording")
+              : !playback.isAvailable
+                ? (zh ? "当前环境不支持朗读" : "Speech playback unavailable")
+                : (zh ? "朗读回复" : "Read response aloud")
+          }
         >
           <Volume2 size={13} />
           <span>{zh ? "朗读" : "Read"}</span>
         </button>
       )}
-      {isActive ? (
-        <button type="button" onClick={playback.stop} title={zh ? "停止朗读" : "Stop reading"}>
+      {isActive || isSynthesizing ? (
+        <button
+          type="button"
+          onClick={() => {
+            setLocalPending(false);
+            playback.stop();
+          }}
+          title={zh ? "停止朗读" : "Stop reading"}
+        >
           <Square size={12} />
           <span>{zh ? "停止" : "Stop"}</span>
         </button>
       ) : null}
-      {playback.error && !playback.activeMessageId ? (
-        <span className="message-action-error" role="status">{playback.error}</span>
+      {playbackError ? (
+        <>
+          <span className="message-action-error" role="status">{playbackError}</span>
+          <button type="button" onClick={handleReadAloud} title={zh ? "重试朗读" : "Retry reading"}>
+            <RefreshCw size={13} />
+            <span>{zh ? "重试" : "Retry"}</span>
+          </button>
+          {synthesisMode === "provider" ? (
+            <button
+              type="button"
+              onClick={() => playback.play(messageId, content, zh ? "zh" : "en", {
+                mode: "system",
+                rate: playbackRate,
+                voiceName,
+              })}
+              title={zh ? "改用 Windows 本地朗读" : "Use Windows system speech"}
+            >
+              <Volume2 size={13} />
+              <span>{zh ? "Windows 朗读" : "Windows speech"}</span>
+            </button>
+          ) : null}
+        </>
       ) : null}
     </div>
   );
@@ -3141,6 +4521,24 @@ function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function renderMessageAttachmentIcon(kind: ChatAttachment["kind"]): React.JSX.Element {
+  const Icon =
+    kind === "folder"
+      ? FolderPlus
+      : kind === "terminal"
+        ? Terminal
+        : kind === "selection"
+          ? ClipboardList
+          : kind === "browser"
+            ? Globe2
+            : FileText;
+  return <Icon size={14} aria-hidden="true" />;
 }
 
 function mergeUniqueAttachments(attachments: ChatAttachment[]): ChatAttachment[] {
@@ -3628,10 +5026,12 @@ function getContextKindLabel(kind: ChatAttachment["kind"]): string {
 function getModelLabel(
   models: MyDrSaiModelConfig[],
   selectedModelName?: string,
+  selectedModelProviderId?: string,
 ): string {
   if (!selectedModelName) return "";
   const model = models.find(
-    (item) => item.alias === selectedModelName || item.model === selectedModelName,
+    (item) => (item.alias === selectedModelName || item.model === selectedModelName)
+      && (!selectedModelProviderId || item.provider_id === selectedModelProviderId),
   );
   return model ? getModelOptionLabel(model) : "";
 }
@@ -3639,11 +5039,13 @@ function getModelLabel(
 function findSelectedModelConfig(
   models: MyDrSaiModelConfig[],
   selectedModelName?: string,
+  selectedModelProviderId?: string,
 ): MyDrSaiModelConfig | undefined {
   if (!selectedModelName) return undefined;
   const normalized = selectedModelName.trim().toLowerCase();
   return models.find((model) =>
-    [model.alias, model.model, model.display_name]
+    (!selectedModelProviderId || model.provider_id === selectedModelProviderId)
+    && [model.alias, model.model, model.display_name]
       .filter((item): item is string => Boolean(item))
       .some((item) => item.trim().toLowerCase() === normalized),
   );
@@ -3663,10 +5065,23 @@ function getModelOptionLabel(model: MyDrSaiModelConfig): string {
   return model.display_name || model.alias || model.model || "Model";
 }
 
-function getModelOptionMeta(model: MyDrSaiModelConfig): string {
-  return [model.client_type, model.model]
-    .filter((item): item is string => Boolean(item))
-    .join(" / ");
+function getCompactComposerModelLabel(label: string): string {
+  const compact = label
+    .replace(/^deepseek(?:[-_/\s]+ai)?[-_/\s]*/i, "")
+    .replace(/^deepseek\s*/i, "")
+    .replace(/[-_]+/g, " ")
+    .trim();
+  return compact
+    .replace(/\bv(\d+(?:\.\d+)?)\s*pro\b/i, "V$1 Pro")
+    .replace(/\bv(\d+(?:\.\d+)?)\b/i, "V$1")
+    || label;
+}
+
+function getModelProviderLabel(model: MyDrSaiModelConfig, zh: boolean): string {
+  const provider = model.provider_id || model.client_type;
+  return provider
+    ? (zh ? `提供方：${provider}` : `Provider: ${provider}`)
+    : (zh ? "提供方：未知" : "Provider: Unknown");
 }
 
 function getAgentOptionMeta(agent: DesktopAgent, zh: boolean): string {
@@ -3683,17 +5098,21 @@ function getAgentOptionMeta(agent: DesktopAgent, zh: boolean): string {
 function getThinkingEffortLabel(effort: ThinkingEffort, zh: boolean): string {
   if (zh) {
     return {
-      low: "Low",
-      medium: "Medium",
-      high: "High",
-      xhigh: "XHigh",
+      none: "不思考",
+      low: "低",
+      medium: "中",
+      high: "高",
+      xhigh: "极高",
+      max: "最大",
     }[effort];
   }
   return {
+    none: "Off",
     low: "Low",
     medium: "Medium",
     high: "High",
     xhigh: "Ultra",
+    max: "Max",
   }[effort];
 }
 
@@ -3721,56 +5140,19 @@ function getSlashCommandDescription(command: ChatCommandName): string {
   }[command];
 }
 
+function isEmptyAssistantShell(message: UiMessage): boolean {
+  if (message.role !== "assistant") return false;
+  if (message.streaming || message.error || message.replyFailed) return false;
+  if (message.structuredTurn?.parts?.length) return false;
+  const body = [message.content, message.reasoningContent, message.statusContent]
+    .map((value) => value?.trim() ?? "")
+    .filter(Boolean)
+    .join("");
+  return !body;
+}
+
 function getAssistantDisplayContent(message: UiMessage): string {
   return getAssistantSpeechText(message, getVisibleChatText);
-}
-
-function parseAgentExamples(
-  raw: DesktopAgent["examples"] | undefined,
-  language: AppLanguage,
-): string[] {
-  if (!raw) return [];
-  if (typeof raw === "string") {
-    const parsed = parseJsonIfObject(raw);
-    if (isLocalizedExample(parsed)) {
-      const localized = pickLocalizedExample(parsed, language);
-      return localized ? [localized] : [];
-    }
-    const trimmed = raw.trim();
-    return trimmed ? [trimmed] : [];
-  }
-  if (!Array.isArray(raw)) return [];
-  const hasLocalized = raw.some((item) => isLocalizedExample(item));
-  return raw
-    .map((item) => {
-      if (typeof item === "string") {
-        const parsed = parseJsonIfObject(item);
-        if (hasLocalized && isLocalizedExample(parsed)) {
-          return pickLocalizedExample(parsed, language);
-        }
-        return item.trim();
-      }
-      if (isLocalizedExample(item)) return pickLocalizedExample(item, language);
-      return "";
-    })
-    .filter((item) => item.length > 0);
-}
-
-function getEmptyChatPrompts(agentPrompts: string[], zh: boolean): string[] {
-  const fallbacks = zh
-    ? [
-        "探索并理解当前工作区",
-        "构建新功能、应用或工具",
-        "审查现有内容并提出改进建议",
-        "定位并修复问题或失败",
-      ]
-    : [
-        "Explore and understand this workspace",
-        "Build a new feature, app, or tool",
-        "Review the current work and suggest improvements",
-        "Find and fix a problem or failure",
-      ];
-  return [...new Set([...agentPrompts, ...fallbacks])].slice(0, 4);
 }
 
 function getWorkspaceDisplayName(workspacePath: string | undefined, zh: boolean): string {
@@ -3779,32 +5161,10 @@ function getWorkspaceDisplayName(workspacePath: string | undefined, zh: boolean)
   return name || (zh ? "当前" : "current workspace");
 }
 
-function parseJsonIfObject(value: string): unknown {
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return value;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return value;
-  }
-}
-
-function isLocalizedExample(value: unknown): value is { en?: string; zh?: string } {
-  return (
-    Boolean(value) &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    (typeof (value as { en?: unknown }).en === "string" ||
-      typeof (value as { zh?: unknown }).zh === "string")
-  );
-}
-
-function pickLocalizedExample(
-  item: { en?: string; zh?: string },
-  language: AppLanguage,
-): string {
-  const text = language === "zh" ? item.zh ?? item.en : item.en ?? item.zh;
-  return text?.trim() ?? "";
+function attachmentContextSummary(attachment: ChatAttachment): string {
+  const text = attachment.visibleText?.replace(/\s+/g, " ").trim() ?? "";
+  if (!text) return attachment.url?.slice(0, 160) ?? "";
+  return text.length > 160 ? `${text.slice(0, 157)}...` : text;
 }
 
 function isPreviewBrowserUrl(href: string): boolean {

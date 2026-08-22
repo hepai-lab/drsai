@@ -18,7 +18,8 @@ from .....agent_factory.agent_mode_cofigs import (
     get_user_agents,
     get_agents_mode,
     )
-from .....drsai_adapter.sso.jwt import ACCESS_TOKEN_EXPIRE_MINUTES, create_jwt_token
+from datetime import timedelta
+from .....drsai_adapter.sso.jwt import create_jwt_token
 
 router = APIRouter()
 
@@ -155,10 +156,15 @@ async def local_login(user_id: str, password: str, db=Depends(get_db)) -> Dict:
     用户登录
     '''
     try:
+        # 统一错误提示，防止用户枚举
+        AUTH_FAILED_DETAIL = "用户名或密码错误"
+
         # 查找用户
         response = db.get(Userinfo, filters={"user_id": user_id})
         if not response.status or not response.data:
-            raise HTTPException(status_code=404, detail="User not found")
+            # 用户不存在时也做一次哈希，防止时间差攻击
+            hash_password(password)
+            raise HTTPException(status_code=401, detail=AUTH_FAILED_DETAIL)
 
         user = response.data[0]
 
@@ -167,10 +173,10 @@ async def local_login(user_id: str, password: str, db=Depends(get_db)) -> Dict:
         password = str(password)
         hashed_password = hash_password(password)
         if user.password != hashed_password:
-            raise HTTPException(status_code=401, detail="Invalid password")
+            raise HTTPException(status_code=401, detail=AUTH_FAILED_DETAIL)
 
         record_auth_source(db, user_id, "local")
-        
+
         response = db.get(AgentModeSettings, filters={"user_id": user_id})
         if not response.status or not response.data:
             # 将默认的配置存储进入对应的数据库
@@ -178,9 +184,18 @@ async def local_login(user_id: str, password: str, db=Depends(get_db)) -> Dict:
             db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
             db.upsert(UserAgents(user_id=user_id, agents=agents_list))
 
+        # Auto-provision GFS on login (silent failures — login succeeds either way).
+        try:
+            from .gfs_utils import ensure_gfs_provisioned
+            await ensure_gfs_provisioned(db, user_id)
+        except Exception as e:
+            import logging as _logging
+            _logging.getLogger(__name__).error(f"GFS auto-provision dispatch failed for {user_id}: {e}")
+
+        # 本地登录开发用 —— token 十年有效，不做 refresh
         access_token = create_jwt_token(
             data={"sub": user_id},
-            expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+            expires_delta=timedelta(days=3650),
         )
             
         return {

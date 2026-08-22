@@ -14,6 +14,8 @@ function readHai(relativePath) {
 }
 
 const auth = read("../shared/main/auth.ts");
+const desktopRuntimeMode = read("../shared/main/desktopRuntimeMode.ts");
+const platformConfig = read("../shared/main/platformConfig.ts");
 const platformCredentials = read("src/main/platformCredentials.ts");
 const chat = read("../shared/main/chat.ts");
 const agentRuns = read("../shared/main/agentRuns.ts");
@@ -46,6 +48,34 @@ const haiTest = existsSync(haiTestPath) ? readHai("backend/webui/test/apps/webui
 
 const checks = [
   [
+    "obsolete desktop-auth ticket bridge is removed from production and tests",
+    !auth.includes("/api/desktop-auth/start") &&
+      !auth.includes("/api/desktop-auth/wechat/start") &&
+      !auth.includes("/api/desktop-auth/poll/") &&
+      !auth.includes("/api/desktop-auth/cancel/") &&
+      !auth.includes("startDesktopSsoLogin") &&
+      !auth.includes("startWechatDesktopLogin") &&
+      !auth.includes("pollDesktopSsoLogin") &&
+      !auth.includes("cancelDesktopSsoLogin"),
+  ],
+  [
+    "main process implements RFC 8628 device authorization with safe fallback",
+    auth.includes("device_authorization_endpoint") &&
+      auth.includes("urn:ietf:params:oauth:grant-type:device_code") &&
+      auth.includes('error.code === "authorization_pending"') &&
+      auth.includes('error.code === "slow_down"') &&
+      auth.includes("intervalMs += 5000") &&
+      auth.includes('error.code === "access_denied"') &&
+      auth.includes('error.code === "expired_token"') &&
+      auth.includes("pendingOidcDeviceLogin.abort()") &&
+      auth.includes("createOidcSession(token, rememberMe)") &&
+      login.includes('data-testid="oidc-device-code"') &&
+      login.includes("Copy code") &&
+      e2eOidc.includes("device_authorization_endpoint") &&
+      e2eOidc.includes("devicePending") &&
+      e2eOidc.includes("deviceToken"),
+  ],
+  [
     "shared/preload/main expose browser OIDC IPC",
     api.includes('authMode: "password" | "api_key" | "sso" | "oidc" | "offline" | null') &&
       api.includes('"hai"') &&
@@ -59,10 +89,11 @@ const checks = [
   [
     "main process implements Authorization Code + PKCE over loopback",
     auth.includes("getOidcMetadata") &&
-      auth.includes("IS_DESKTOP_DEV") &&
-      auth.includes('"https://ai-dev.ihep.ac.cn"') &&
-      auth.includes('"https://ai.ihep.ac.cn"') &&
-      auth.includes('`${DEFAULT_OIDC_ORIGIN}/api`') &&
+      auth.includes("getActivePlatformConfig") &&
+      auth.includes("ACTIVE_PLATFORM.oidcIssuer") &&
+      auth.includes("isDesktopDevelopment") &&
+      desktopRuntimeMode.includes('process.env.OPENDRSAI_DESKTOP_DEV === "1"') &&
+      platformConfig.includes('development ? "config-dev.toml" : "config.toml"') &&
       auth.includes('`${OIDC_ISSUER}/.well-known/openid-configuration`') &&
       auth.includes("OPENDRSAI_OIDC_DISCOVERY_URL") &&
       auth.includes("Loading OIDC discovery") &&
@@ -77,7 +108,8 @@ const checks = [
       auth.includes('server.listen(0, "127.0.0.1")') &&
       auth.includes("openExternalUrl(url)") &&
       auth.includes("OPENDRSAI_E2E_OIDC_AUTO_CALLBACK") &&
-      auth.includes("opendrsai://auth-complete") &&
+      auth.includes('"opendrsai-dev://auth-complete"') &&
+      auth.includes('"opendrsai://auth-complete"') &&
       auth.includes('id="open-app"') &&
       auth.includes("window.location.href = openAppLink.href") &&
       auth.includes('window.addEventListener("blur", closePage') &&
@@ -100,7 +132,9 @@ const checks = [
       auth.includes("waitForCode.catch") &&
       auth.includes("isOidcLoginCancelled") &&
       main.includes('"desktop:oidc-login-debug"') &&
-      main.includes("if (result.ok) focusMainWindow()") &&
+      main.includes("if (result.ok) {") &&
+      main.includes("syncAuthIdentityToGateway(userId)") &&
+      main.includes("focusMainWindow();") &&
       preload.includes('"desktop:oidc-login-debug"') &&
       auth.includes('response_type", "code"') &&
       auth.includes("exchangeOidcAuthorizationCode"),
@@ -133,14 +167,11 @@ const checks = [
       auth.includes("accessClaims.exp <= nowSeconds"),
   ],
   [
-    "OIDC public user refreshes profile from subject-bound UserInfo",
-    auth.includes("fetchOidcUserInfo(token.access_token, userId)") &&
-      auth.includes("profile.sub !== expectedSubject") &&
-      auth.includes("safeOidcAvatarUrl(userInfo?.picture || idClaims?.picture)") &&
-      auth.includes('candidate.protocol !== "https:"') &&
-      auth.includes("candidate.origin !== issuer.origin") &&
-      auth.includes("email: userInfo?.email || idClaims?.email || userId") &&
-      auth.includes("name: userInfo?.name || idClaims?.name || idClaims?.email || userId") &&
+    "OIDC public user is built from ID and access token claims",
+    auth.includes("const email = idClaims?.email || userId") &&
+      auth.includes("email,") &&
+      auth.includes("name: idClaims?.name || idClaims?.email || userId") &&
+      auth.includes("avatarUrl: idClaims?.picture || undefined") &&
       auth.includes("roles: Array.isArray(accessClaims?.roles) ? accessClaims.roles : undefined") &&
       auth.includes("groups: Array.isArray(accessClaims?.groups) ? accessClaims.groups : undefined") &&
       api.includes("roles?: string[]") &&
@@ -189,8 +220,7 @@ const checks = [
       auth.includes("accessToken: refreshed.accessToken") &&
       chat.includes("requireAuthContext") &&
       chat.includes("Authorization: `Bearer ${authContext.accessToken}`") &&
-      chat.includes('"X-OpenDrSai-Auth-Mode": authContext.authMode') &&
-      chat.includes("auth_mode: authContext.authMode") &&
+      chat.includes("getPlatformAgentChatUrl") &&
       agentRuns.includes("requireAuthContext") &&
       agentRuns.includes("Authorization: `Bearer ${authContext.accessToken}`") &&
       agentRuns.includes('"X-OpenDrSai-Auth-Mode": authContext.authMode') &&
@@ -203,7 +233,7 @@ const checks = [
     bootstrap.includes("requireAuthContext") &&
       bootstrap.includes('auth.authMode !== "oidc"') &&
       bootstrap.includes("startGateway()") &&
-      bootstrap.includes("getGatewayModels(auth.accessToken)") &&
+      bootstrap.includes("discoverModelsWithRecovery(auth.accessToken)") &&
       bootstrap.includes('tools: ["files", "shell", "git"]') &&
       gateway.includes('Authorization: `Bearer ${accessToken}`') &&
       gateway.includes('"X-OpenDrSai-Auth-Mode": "oidc"') &&
@@ -218,10 +248,13 @@ const checks = [
       !login.includes("if (!import.meta.env.DEV) return") &&
       login.includes("{debugOpen &&") &&
       login.includes('event.key !== "F12"') &&
+      login.includes('data-testid="login-error-message"') &&
+      login.includes("登录失败，按F12调试。") &&
+      provider.includes("loginFailed") &&
       login.includes("onOidcLoginDebug") &&
       login.includes("auth.startOidcLogin({ rememberMe })") &&
       login.includes("auth.cancelOidcLogin()") &&
-      login.includes("Sign in with HepAI") &&
+      login.includes("Continue with HepAI") &&
       !login.includes("Use API key instead") &&
       !login.includes("DEFAULT_MODEL_OPTIONS") &&
       !login.includes('type="email"') &&
@@ -239,7 +272,7 @@ const checks = [
   [
     "production IPC rejects API key configuration",
     mainProcess.includes('secureHandle("desktop:save-api-key"') &&
-      mainProcess.includes("if (!is.dev)") &&
+      mainProcess.includes('if (process.env.OPENDRSAI_DESKTOP_DEV !== "1")') &&
       mainProcess.includes("receives service authorization through HepAI OIDC") &&
       e2eSmoke.includes("productionApiKeyRejected") &&
       e2eSmoke.includes("apiKeyStatusUnchanged"),

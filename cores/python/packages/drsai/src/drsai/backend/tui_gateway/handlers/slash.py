@@ -8,6 +8,7 @@ invoked via slash.exec RPC.
 from __future__ import annotations
 
 import logging
+import asyncio
 import os
 import threading
 import time
@@ -26,6 +27,20 @@ from drsai.backend.cli.config import (
     set_workdir_session,
 )
 from drsai.backend.run_drsai_agent_factory import load_llm_mode_config
+from drsai.config import (
+    ConfigError as ModelProviderConfigError,
+    ConfigUpdateRequest,
+    ProviderDraft,
+    commit_update,
+    config_revision,
+    load_user_config,
+    resolve_model_config,
+    builtin_provider_names,
+    discover_provider_models,
+    list_provider_presets,
+    probe_provider_draft,
+    test_provider_connection,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -204,16 +219,21 @@ def cmd_model(ctx: SlashContext) -> dict:
     if lower == "info":
         return {"output": "Usage: /model info <alias>"}
 
-    # Validate model alias
-    llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
-    llm_mode_config = load_llm_mode_config(llm_config_path)
-    if args not in llm_mode_config:
-        available = ", ".join(sorted(llm_mode_config.keys()))
-        return {"output": f"Unknown model alias: {args}\nAvailable aliases: {available}"}
+    # Compact TOML Providers accept any model ID. Legacy mode continues to
+    # validate aliases against llm_mode_config.yaml.
+    compact = load_user_config()
+    compact_active = bool(compact.model or compact.model_provider or compact.providers)
+    if not compact_active:
+        llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+        llm_mode_config = load_llm_mode_config(llm_config_path)
+        if args not in llm_mode_config:
+            available = ", ".join(sorted(llm_mode_config.keys()))
+            return {"output": f"Unknown model alias: {args}\nAvailable aliases: {available}"}
 
     # Switch model (session-local)
     try:
-        ctx.session.switch_model(args)
+        if not ctx.session.switch_model(args):
+            return {"output": f"Warning: model switch to {args} failed; the previous model is still active"}
         ctx.refresh_info()
         return {"output": f"Model switched to {args} (session-local)"}
     except Exception as e:
@@ -231,16 +251,23 @@ def cmd_model_global(ctx: SlashContext) -> dict:
         global_default = cfg.get("defult_config_name") or "<default>"
         return {"output": f"Global default model: {global_default}"}
 
-    # Validate
-    llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
-    llm_mode_config = load_llm_mode_config(llm_config_path)
-    if args not in llm_mode_config:
-        available = ", ".join(sorted(llm_mode_config.keys()))
-        return {"output": f"Unknown model alias: {args}\nAvailable: {available}"}
+    compact = load_user_config()
+    compact_active = bool(compact.model or compact.model_provider or compact.providers)
+    if not compact_active:
+        llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+        llm_mode_config = load_llm_mode_config(llm_config_path)
+        if args not in llm_mode_config:
+            available = ", ".join(sorted(llm_mode_config.keys()))
+            return {"output": f"Unknown model alias: {args}\nAvailable: {available}"}
 
     # Switch session + save global
     try:
-        ctx.session.switch_model(args)
+        if not ctx.session.switch_model(args):
+            return {"output": f"Warning: model switch to {args} failed; global configuration was not changed"}
+        # TUI bypasses the retired global model-selection guard by always
+        # saving the global default through the YAML config path
+        # (defult_config_name), never through commit_update's removed
+        # model/model_provider fields.
         cfg["defult_config_name"] = args
         save_global_config(cfg)
         ctx.refresh_info()
@@ -1045,10 +1072,28 @@ def cmd_list(ctx: SlashContext) -> dict:
     """
     show_all = ctx.args.strip() == "--all"
     
+    if show_all:
+        workdir_filter = None
+    elif os.environ.get("DRSAI_TUI_ENABLE_WS"):
+        # In WebSocket mode (SSH tunnel), always show all sessions.
+        # The workdir stored in remote sessions may not match
+        # DRSAI_USER_CWD (different machine, symlinks, different
+        # path resolution, etc.).  Client-side filtering by a
+        # mismatched path would silently hide every session.
+        workdir_filter = None
+    else:
+        # Local mode: filter by workdir so the picker only shows
+        # sessions for the current project directory.
+        user_cwd = os.environ.get("DRSAI_USER_CWD", "").strip()
+        if user_cwd:
+            workdir_filter = str(Path(user_cwd).resolve())
+        else:
+            workdir_filter = str(Path.cwd().resolve())
+    
     return {
         "output": f"Opening session list{'…' if not show_all else ' (all workdirs)…'}",
         "ui_action": "session.list",
-        "workdir_filter": None if show_all else str(Path.cwd().resolve()),
+        "workdir_filter": workdir_filter,
     }
 
 
@@ -1108,12 +1153,14 @@ def cmd_find(ctx: SlashContext) -> dict:
         # Parse --cwd flag
         workdir = None
         query = ctx.args
+        _cwd = os.environ.get("DRSAI_USER_CWD", "").strip()
+        _cwd = str(Path(_cwd).resolve()) if _cwd else str(Path.cwd().resolve())
         if query.startswith("--cwd "):
-            workdir = str(Path.cwd().resolve())
+            workdir = _cwd
             query = query[6:].strip()
         elif " --cwd" in query:
             query = query.replace(" --cwd", "").strip()
-            workdir = str(Path.cwd().resolve())
+            workdir = _cwd
 
         results = store.smart_search(query, limit=10, workdir=workdir)
         if not results:
@@ -1829,6 +1876,7 @@ def _model_options(rid, params: dict) -> dict:
         cfg = load_config()
         llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
         llm_mode_config = load_llm_mode_config(llm_config_path)
+        compact = load_user_config()
 
         models = []
         for alias in sorted(llm_mode_config.keys()):
@@ -1848,15 +1896,253 @@ def _model_options(rid, params: dict) -> dict:
                 "model_name": model_name,
                 "reasoning": reasoning_levels,
                 "vision": getattr(entry, "vision", True),
+                "predefined": True,
             })
+
+        compact_active = bool(compact.model or compact.model_provider or compact.providers)
+        if compact_active:
+            resolved = resolve_model_config(compact, environ=os.environ, require_credentials=False)
+            if not any(item["alias"] == resolved.model for item in models):
+                models.insert(0, {
+                    "alias": resolved.model,
+                    "model_name": resolved.model,
+                    "provider": resolved.provider.name,
+                    "reasoning": list(resolved.capabilities.reasoning.effort_levels),
+                    "vision": resolved.capabilities.vision,
+                    "known_model": resolved.known_model,
+                    "predefined": True,
+                })
 
         return _ok(rid, {
             "models": models,
-            "current": cfg.get("defult_config_name") or "default",
+            "current": compact.model if compact_active else (cfg.get("defult_config_name") or "default"),
         })
     except Exception as exc:
         logger.exception("model.options failed")
         return _err(rid, 5034, f"model.options failed: {exc}")
+
+
+@method("model.config.get")
+def _model_provider_config_get(rid, params: dict) -> dict:
+    """Return model configuration with all secrets removed.
+
+    Merges config.toml provider info (if present) with llm_mode_config.yaml
+    entry data (token_limit, max_tokens, vision, base_url, etc.) so the
+    TUI editor can populate all fields.
+    """
+    try:
+        compact = load_user_config()
+        resolved = resolve_model_config(compact, environ=os.environ, require_credentials=False)
+        providers = []
+        names = set(compact.providers)
+        names.update(builtin_provider_names())
+        names.add(compact.model_provider or "hepai")
+        for name in sorted(names):
+            try:
+                item = resolve_model_config(
+                    compact,
+                    environ=os.environ,
+                    provider=name,
+                    require_credentials=False,
+                )
+            except ModelProviderConfigError:
+                continue
+            providers.append(item.provider.public_dict())
+
+        # ── Merge yaml entry data ──
+        yaml_entry_data: dict = {}
+        try:
+            from drsai.backend.run_drsai_agent_factory import load_llm_mode_config
+            cfg = load_config()
+            llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+            llm_mode_config = load_llm_mode_config(llm_config_path)
+            # Look up by model name or alias
+            entry = llm_mode_config.get(resolved.model)
+            if entry is None:
+                for alias, e in llm_mode_config.items():
+                    if e.model == resolved.model:
+                        entry = e
+                        break
+            if entry is not None:
+                yaml_entry_data = {
+                    "token_limit": entry.token_limit,
+                    "max_tokens": entry.max_tokens,
+                    "vision": entry.vision,
+                    "client_type": entry.client_type,
+                    "yaml_base_url": entry.base_url,
+                    "yaml_api_key_env": entry.api_key_env,
+                    "yaml_requires_api_key": entry.requires_api_key,
+                    "yaml_use_responses_api": entry.use_responses_api,
+                }
+        except Exception:
+            logger.debug("Failed to load yaml entry for model.config.get", exc_info=True)
+
+        return _ok(rid, {
+            **resolved.public_dict(),
+            "providers": providers,
+            "path": compact.source_path,
+            "revision": config_revision(),
+            **yaml_entry_data,
+        })
+    except ModelProviderConfigError as exc:
+        return _err(rid, 4001, str(exc))
+
+
+@method("model.config.save")
+def _model_provider_config_save(rid, params: dict) -> dict:
+    """Save a model entry to llm_mode_config.yaml (single source of truth).
+
+    All connection info (base_url, api_key, api_key_env, requires_api_key) and
+    model metadata (token_limit, max_tokens, vision, client_type) are persisted
+    in the YAML catalog.  config.toml is no longer written.
+    """
+    try:
+        provider = str(params.get("provider") or "").strip()
+        model = str(params.get("model") or "").strip()
+        base_url = str(params.get("base_url") or "").strip()
+        if not provider or not model:
+            return _err(rid, 4002, "provider and model are required")
+
+        # ── Parse params ──
+        wire_api = str(params.get("wire_api") or "openai").strip()
+        api_key = str(params.get("api_key") or "").strip()
+        api_key_env = str(params.get("api_key_env") or "").strip()
+        requires_api_key = bool(params.get("requires_api_key", True))
+        token_limit = int(params.get("token_limit") or 200000)
+        max_tokens = int(params.get("max_tokens") or 0)
+        vision = bool(params.get("vision", False))
+        use_responses_raw = params.get("use_responses_api")
+        use_responses_api = None if use_responses_raw is None else bool(use_responses_raw)
+
+        # ── Write to llm_mode_config.yaml ──
+        from drsai.backend.run_drsai_agent_factory import (
+            load_llm_mode_config,
+            save_llm_mode_config,
+            ModelEntry,
+            ReasoningConfig,
+        )
+        cfg = load_config()
+        llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+        llm_mode_config = load_llm_mode_config(llm_config_path)
+
+        # Preserve reasoning config from existing entry if present
+        existing = llm_mode_config.get(model)
+        reasoning = existing.reasoning if existing is not None else ReasoningConfig()
+
+        llm_mode_config[model] = ModelEntry(
+            model=model,
+            token_limit=token_limit,
+            max_tokens=max_tokens,
+            client_type=wire_api,
+            reasoning=reasoning,
+            vision=vision,
+            base_url=base_url,
+            api_key=api_key,
+            api_key_env=api_key_env,
+            requires_api_key=requires_api_key,
+            use_responses_api=use_responses_api,
+        )
+        default_alias = cfg.get("defult_config_name") or model
+        save_llm_mode_config(llm_mode_config, default_alias)
+
+        # ── Runtime switch ──
+        session_id = str(params.get("session_id") or "").strip()
+        runtime_applied = True
+        if session_id:
+            user_id = session_module._resolve_user_id()
+            session = session_module._ensure_agent_session(session_id, user_id)
+            if session is not None:
+                runtime_applied = session.switch_model(model)
+                _emit("session.info", session_id, session.info())
+        return _ok(rid, {
+            "ok": True,
+            "model": model,
+            "model_provider": provider,
+            "runtime_applied": runtime_applied,
+            **({"warning": "Configuration was saved, but the current session kept its previous model"} if not runtime_applied else {}),
+        })
+    except ModelProviderConfigError as exc:
+        return _err(rid, 4003, str(exc))
+    except Exception as exc:
+        logger.exception("model.config.save failed")
+        return _err(rid, 5001, f"model config save failed: {exc}")
+
+
+@method("model.config.delete")
+def _model_provider_config_delete(rid, params: dict) -> dict:
+    provider = str(params.get("provider") or "").strip()
+    if not provider:
+        return _err(rid, 4002, "provider is required")
+    try:
+        compact = load_user_config()
+        # TUI bypasses the retired global model-selection guard by not
+        # passing model/model_provider.  Only the provider entry is deleted;
+        # if the active provider is removed the session keeps its current
+        # model client until the user explicitly switches.
+        commit_update(ConfigUpdateRequest(
+            delete_provider_name=provider,
+            delete_provider_credential=bool(params.get("delete_credential", True)),
+            model=None,
+            model_provider=None,
+        ), expected_revision=str(params.get("expected_revision") or "").strip() or None)
+        return _ok(rid, {"ok": True, "active": "hepai"})
+    except ModelProviderConfigError as exc:
+        return _err(rid, 4003, str(exc))
+
+
+@method("model.config.test")
+def _model_provider_config_test(rid, params: dict) -> dict:
+    """Test the saved Provider using the same redacted probe as the Gateway."""
+    provider = str(params.get("provider") or "").strip()
+    model = str(params.get("model") or "").strip() or None
+    if not provider:
+        return _err(rid, 4002, "provider is required")
+    try:
+        compact = load_user_config()
+        resolved = resolve_model_config(
+            compact,
+            environ=os.environ,
+            provider=provider,
+            model=model,
+        )
+        return _ok(rid, asyncio.run(test_provider_connection(resolved)))
+    except ModelProviderConfigError as exc:
+        return _err(rid, 4003, str(exc))
+
+
+@method("model.config.test_draft")
+def _model_provider_config_test_draft(rid, params: dict) -> dict:
+    """Test editor values without saving TOML or a credential."""
+    try:
+        draft = ProviderDraft(
+            name=str(params.get("provider") or "").strip(),
+            model=str(params.get("model") or "").strip(),
+            base_url=str(params.get("base_url") or "").strip(),
+            api_key=str(params.get("api_key") or "").strip() or None,
+            api_key_env=str(params.get("api_key_env") or "").strip() or None,
+            wire_api=str(params.get("wire_api") or "openai"),  # type: ignore[arg-type]
+            requires_api_key=bool(params.get("requires_api_key", True)),
+        )
+        result = asyncio.run(probe_provider_draft(draft, mode="basic", environ=os.environ))
+        return _ok(rid, result)
+    except ModelProviderConfigError as exc:
+        return _err(rid, 4003, str(exc))
+
+
+@method("model.config.presets")
+def _model_provider_presets(rid, params: dict) -> dict:
+    return _ok(rid, {"presets": list_provider_presets()})
+
+
+@method("model.config.models")
+def _model_provider_models(rid, params: dict) -> dict:
+    provider = str(params.get("provider") or "").strip()
+    try:
+        resolved = resolve_model_config(load_user_config(), environ=os.environ, provider=provider)
+        result = asyncio.run(discover_provider_models(resolved, refresh=bool(params.get("refresh"))))
+        return _ok(rid, result)
+    except ModelProviderConfigError as exc:
+        return _err(rid, 4003, str(exc))
 
 
 @method("commands.catalog")
@@ -1949,11 +2235,40 @@ def _complete_path(rid, params: dict) -> dict:
 
     Returns:
         {items: [{text, display, meta}, ...]}
+
+    Behaviour:
+        - ``prefix=""``  → list the contents of ``cwd`` itself.
+        - ``prefix="ap"``→ list items in ``cwd`` whose names start with "ap".
+        - ``prefix="src/ap"`` → list items in ``cwd/src`` starting with "ap".
     """
     prefix = params.get("prefix", "")
     cwd = params.get("cwd", str(Path.cwd()))
 
     try:
+        # When prefix is empty, list the contents of cwd itself.
+        # Without this guard, Path(cwd) / "" == Path(cwd), whose .parent is
+        # the PARENT of cwd and whose .name is the last component of cwd —
+        # so the general logic below would list cwd's parent filtered by
+        # cwd's basename instead of listing cwd's own children.
+        if prefix == "":
+            target_dir = Path(cwd)
+            if not target_dir.exists() or not target_dir.is_dir():
+                return _ok(rid, {"items": []})
+            items = []
+            for child in target_dir.iterdir():
+                # Skip hidden files unless the user explicitly typed a dot
+                if child.name.startswith("."):
+                    continue
+                is_dir = child.is_dir()
+                items.append({
+                    "text": child.name,
+                    "display": child.name + ("/" if is_dir else ""),
+                    "meta": "dir" if is_dir else "file",
+                })
+            # Sort: directories first, then files, each alphabetical
+            items.sort(key=lambda c: (c["meta"] != "dir", c["display"].lower()))
+            return _ok(rid, {"items": items[:50]})  # limit 50
+
         p = Path(cwd) / prefix
         parent = p.parent
         if not parent.exists():
@@ -1962,13 +2277,17 @@ def _complete_path(rid, params: dict) -> dict:
         items = []
         for child in parent.iterdir():
             if child.name.startswith(p.name):
+                # Skip hidden files unless the filter itself starts with a dot
+                if child.name.startswith(".") and not p.name.startswith("."):
+                    continue
                 is_dir = child.is_dir()
                 items.append({
                     "text": str(child.relative_to(cwd)),
                     "display": child.name + ("/" if is_dir else ""),
                     "meta": "dir" if is_dir else "file",
                 })
-
+        # Sort: directories first, then files, each alphabetical
+        items.sort(key=lambda c: (c["meta"] != "dir", c["display"].lower()))
         return _ok(rid, {"items": items[:50]})  # limit 50
     except Exception as exc:
         logger.exception("complete.path failed")
@@ -1983,7 +2302,7 @@ def _complete_path(rid, params: dict) -> dict:
 _VALID_CLIENT_TYPES = frozenset({"auto", "openai", "anthropic"})
 _VALID_PARAM_TYPES = frozenset({
     "none", "adaptive", "enabled", "is_r1_model",
-    "reasoning_effort", "minimax_format", "zhipu_format",
+    "reasoning_effort", "deepseek_reasoning_effort", "minimax_format", "zhipu_format",
 })
 
 
@@ -2089,6 +2408,8 @@ def _model_save(rid, params: dict) -> dict:
         return _err(rid, 4007, f"alias '{alias}' not found; pass is_new=true to create")
 
     vision = bool(params.get("vision", True))
+    use_responses_raw = params.get("use_responses_api")
+    use_responses_api = None if use_responses_raw is None else bool(use_responses_raw)
 
     entry = ModelEntry(
         model=model_id,
@@ -2101,6 +2422,7 @@ def _model_save(rid, params: dict) -> dict:
             param_type=param_type,
         ),
         vision=vision,
+        use_responses_api=use_responses_api,
     )
 
     # Drop the old alias on rename.
@@ -2248,6 +2570,7 @@ def _model_get(rid, params: dict) -> dict:
         "token_limit": entry.token_limit,
         "max_tokens": entry.max_tokens,
         "client_type": entry.client_type,
+        "use_responses_api": entry.use_responses_api,
         "reasoning": {
             "supported": entry.reasoning.supported,
             "effort_levels": list(entry.reasoning.effort_levels),

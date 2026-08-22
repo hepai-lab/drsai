@@ -9,7 +9,7 @@ const root = resolve(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-
 const temp = mkdtempSync(join(tmpdir(), "opendrsai-runtime-client-"));
 const bundle = join(temp, "runtimeClient.mjs");
 await build({ entryPoints: [join(root, "../shared/main/runtimeClient.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22", external: ["electron"] });
-const { LocalRuntimeClient, RemoteRuntimeClient, RuntimeProtocolCompatibilityError } = await import(pathToFileURL(bundle).href);
+const { LocalRuntimeClient, RemoteRuntimeClient, RuntimeProtocolCompatibilityError, resolveLocalRuntimeWorkspace } = await import(pathToFileURL(bundle).href);
 
 const localFixture = await startFixture(false);
 const remoteFixture = await startFixture(true);
@@ -18,6 +18,7 @@ try {
   const remote = new RemoteRuntimeClient(remoteFixture.baseUrl, "temporary-runtime-token");
   await verifySameContract(local, "local");
   await verifySameContract(remote, "remote");
+  await verifyWorkspaceIdentityResolution();
 
   remoteFixture.state.protocol = 2;
   await assertRejects(() => remote.getCapabilities(), (error) => error instanceof RuntimeProtocolCompatibilityError, "Incompatible Runtime protocol was accepted");
@@ -40,6 +41,31 @@ try {
   await localFixture.close();
   await remoteFixture.close();
   rmSync(temp, { recursive: true, force: true });
+}
+
+async function verifyWorkspaceIdentityResolution() {
+  const opened = [];
+  const client = {
+    async listWorkspaces() {
+      return [
+        { workspace_id: "workspace-authoritative", path: "/fixture/main", open: true },
+        { workspace_id: "workspace-closed", path: "/fixture/closed", open: false },
+        { workspace_id: "workspace-worktree", path: "/fixture/worktree", open: true },
+      ];
+    },
+    async openWorkspace(path, displayName) {
+      opened.push({ path, displayName });
+      return { workspace_id: `workspace-opened-${opened.length}`, path, open: true };
+    },
+  };
+  const worktree = await resolveLocalRuntimeWorkspace(client, "/fixture/worktree", "workspace-worktree", "Worktree", false);
+  assert(worktree.workspaceId === "workspace-worktree" && opened.length === 0, "validated Runtime Worktree identity was not preserved");
+  const provisional = await resolveLocalRuntimeWorkspace(client, "/fixture/main", "workspace-provisional", "Main", false);
+  assert(provisional.workspaceId === "workspace-opened-1" && opened[0].path === "/fixture/main", "stale provisional Workspace identity was not healed by path");
+  const closed = await resolveLocalRuntimeWorkspace(client, "/fixture/closed", "workspace-closed", "Closed", false);
+  assert(closed.workspaceId === "workspace-opened-2", "closed Runtime Workspace identity was incorrectly reused");
+  const persisted = await resolveLocalRuntimeWorkspace(client, "/fixture/main", "workspace-authoritative", "Main", true);
+  assert(persisted.workspaceId === "workspace-opened-3", "Desktop Workspace identity bypassed authoritative path resolution");
 }
 
 async function verifySameContract(client, location) {
@@ -142,6 +168,11 @@ async function startFixture(requireToken) {
     if (url.pathname === "/v1/threads") {
       if (state.structuredFailure) return json(response, 503, { error: { code: "fixture_failure", message: "Fixture failure", correlation_id: "fixture-correlation", retryable: true } }, { "X-Correlation-ID": "fixture-correlation" });
       return json(response, 200, { object: "list", data: [], total: 0 });
+    }
+    if (url.pathname === "/v1/sessions" && request.method === "GET") {
+      if (state.structuredFailure) return json(response, 503, { error: { code: "fixture_failure", message: "Fixture failure", correlation_id: "fixture-correlation", retryable: true } }, { "X-Correlation-ID": "fixture-correlation" });
+      const workspaceId = url.searchParams.get("workspace_id");
+      return json(response, 200, { object: "list", data: [...state.sessions.values()].filter((session) => !workspaceId || session.workspace_id === workspaceId), has_more: false });
     }
     if (url.pathname === "/v1/sessions" && request.method === "POST") {
       const body = JSON.parse(await bodyText(request)); const value = { session_id: `session-${state.sessions.size + 1}`, workspace_id: body.workspace_id, title: body.title };

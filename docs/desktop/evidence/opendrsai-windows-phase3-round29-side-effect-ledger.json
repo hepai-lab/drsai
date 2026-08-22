@@ -1,0 +1,95 @@
+{
+  "schema_version": "opendrsai.windows.phase3.round-result/1",
+  "round": 29,
+  "captured_at": "2026-08-05T02:48:24.208Z",
+  "feature": "M06-F03",
+  "result": "accepted",
+  "scope": "OpenDrSai Windows App with HAI configuration and OpenDrSai Full Agent Runtime; no Codex dependency",
+  "implementation": {
+    "durable_store": "SQLite runtime_side_effects",
+    "recorded_fields": [
+      "request and request digest",
+      "approval and approval binding",
+      "stable idempotency key",
+      "execution claim",
+      "result digest or failure code",
+      "completion and recovery timestamps"
+    ],
+    "production_paths": [
+      "cores/python/packages/drsai/src/drsai/backend/runtime/engine.py",
+      "cores/python/packages/drsai/src/drsai/backend/runtime/agent.py",
+      "cores/python/packages/drsai/src/drsai/backend/gateway.py",
+      "apps/desktop/shared/main/runtimeClient.ts"
+    ],
+    "recovery_policy": "An approved but not started effect may be recovered once with the same approval and idempotency key; completed, rejected, mismatched, and unknown-outcome effects fail closed."
+  },
+  "focused_tests": {
+    "contract_checks": 14,
+    "python_tests": 71,
+    "python_subtests": 12,
+    "gateway_session_event_tests": 14,
+    "passed": true,
+    "commands": [
+      "npm run verify:m06-side-effect-ledger",
+      ".venv\\Scripts\\python.exe -m pytest cores/python/packages/drsai/tests/test_gateway_opendrsai_approval.py cores/python/packages/drsai/tests/test_gateway_opendrsai_backend.py cores/python/packages/drsai/tests/test_agent_runtime.py -q",
+      ".venv\\Scripts\\python.exe -m pytest cores/python/packages/drsai/tests/test_gateway_session_events.py -q"
+    ]
+  },
+  "packaged_probe": {
+    "bundled_full_runtime_source": true,
+    "passed_checks": 10,
+    "total_checks": 10,
+    "configured_retries": 0,
+    "actual_retries": 0,
+    "crash_point": "after approval commit and before tool write",
+    "effect_count": 1,
+    "duplicate_effects": 0,
+    "unauthorized_effects": 0,
+    "unknown_outcome_replay_blocked": true,
+    "result_sha256": "sha256:a9447c746e7e7f7c198928c6e19ca6fa023a4d035891ece29486c055a5db4c58",
+    "evidence": "apps/desktop/windows/release/product-evidence/m06-side-effect-ledger/packaged-m06-side-effect-ledger-result.json"
+  },
+  "formal_stability": {
+    "completed_rounds": 20,
+    "passed_checks": 200,
+    "total_checks": 200,
+    "configured_retries": 0,
+    "actual_retries": 0,
+    "total_effects": 20,
+    "duplicate_effects": 0,
+    "unauthorized_effects": 0,
+    "summary_sha256": "sha256:1b6eac4036c17bbef0a1f7c77f411e71dca02f010e2387ea5d57473676f62973",
+    "evidence": "apps/desktop/windows/release/product-evidence/m06-side-effect-ledger/stability-summary.json"
+  },
+  "acceptance": {
+    "request_recorded_before_approval": true,
+    "approval_bound_to_operation": true,
+    "idempotency_key_stable_across_restart": true,
+    "crash_before_write_has_no_effect": true,
+    "approved_effect_recovered_exactly_once": true,
+    "result_receipt_durable": true,
+    "duplicate_execution_blocked": true,
+    "mismatched_or_rejected_approval_blocked": true,
+    "unknown_execution_outcome_fails_closed": true,
+    "restart_has_no_lost_or_duplicate_effect": true
+  },
+  "additional_defect_fixed": {
+    "problem": "A tampered OAEP snapshot cursor was rejected by Runtime but escaped the Gateway as a raw ValueError.",
+    "resolution": "The production HTTP adapter now maps invalid cursors to HTTP 400 while retaining HTTP 404 for missing sessions.",
+    "regression": "14/14 gateway session-event tests passed."
+  },
+  "artifacts": {
+    "executable": {
+      "path": "apps/desktop/windows/release/win-unpacked/OpenDrSai.exe",
+      "sha256": "sha256:2e36af26ae6f77c2433938fe3bca752a182134d5c77a75d90cb8364c2d31ba0c"
+    },
+    "app_asar": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar",
+      "sha256": "sha256:cd2dedcbbfc5f4acc716e6d8df85d81d76174f45f4c580a9560bc66afad94cdb"
+    },
+    "packaged_backend_source": {
+      "path": "apps/desktop/windows/release/win-unpacked/resources/app.asar.unpacked/resources/backend/drsai-backend-source.zip",
+      "sha256": "sha256:f25871c34fc1c5fe62e39353c56d934a5e99b6d6773aeb492dc1132555e4db6b"
+    }
+  }
+}

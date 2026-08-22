@@ -23,4 +23,12 @@ class AssociationIntentFilterTest {
         assertTrue(matches("opendrsai://oauth2redirect").isEmpty())
         assertTrue(matches("opendrsai://evil.example/associate").isEmpty())
     }
+
+    @Test fun exportedEntryUsesAnExplicitDeepLinkAllowlist() {
+        assertTrue(ExternalEntryActivity.allowedDeepLink(Uri.parse("opendrsai://associate?v=1")))
+        assertTrue(ExternalEntryActivity.allowedDeepLink(Uri.parse("ai.drsai.remote:/oauth2redirect?code=x")))
+        assertTrue(!ExternalEntryActivity.allowedDeepLink(Uri.parse("opendrsai://evil.example/run")))
+        assertTrue(!ExternalEntryActivity.allowedDeepLink(Uri.parse("ai.drsai.remote://evil/oauth2redirect")))
+        assertTrue(!ExternalEntryActivity.allowedDeepLink(Uri.parse("https://example.com/run")))
+    }
 }

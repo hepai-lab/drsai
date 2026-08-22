@@ -62,6 +62,7 @@ export function parseHistoryMessage(msg: Record<string, unknown>): Turn | null {
       startedAt: asNumber(msg.created_at ?? msg.timestamp, Date.now()),
       tools: [],
       reasoning: '',
+      contentParts: [],
       status: 'complete',
     }
     

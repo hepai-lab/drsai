@@ -14,7 +14,7 @@ import type {
   DesktopThreadForkMetadata,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
-import { LocalRuntimeClient, connectRuntimeClientForWorkspace, type RuntimeClient, type RuntimeWorktree } from "./runtimeClient";
+import { LocalRuntimeClient, connectRuntimeClientForWorkspace, isLocalRuntimeUnavailableError, type RuntimeClient, type RuntimeWorktree } from "./runtimeClient";
 
 const MAX_WORKSPACE_PATH_CHARS = 2048;
 const MAX_INTENT_CHARS = 180;
@@ -142,18 +142,32 @@ function normalizeMigrationPath(value: string): string {
 
 export async function listRuntimeWorktreeEvents(request: DesktopWorktreeEventRequest): Promise<DesktopWorktreeEventBatch> {
   if (!request?.workspacePath?.trim()) throw new Error("Workspace path is required to list Worktree events.");
-  const { client, sourceWorkspaceId } = await runtimeForWorkspace(request.workspacePath, request.workspaceId);
-  const batch = await client.listWorkspaceEvents(sourceWorkspaceId, request.afterSequence ?? 0);
-  return {
-    events: batch.events.filter((event) => event.type.startsWith("worktree.")).map((event) => ({
-      eventId: event.event_id,
-      workspaceId: event.workspace_id,
-      sequence: event.sequence,
-      type: event.type,
-      data: event.data,
-    })),
-    nextSequence: batch.nextSequence,
-  };
+  const afterSequence = Math.max(0, request.afterSequence ?? 0);
+  try {
+    const { client, sourceWorkspaceId } = await runtimeForWorkspace(request.workspacePath, request.workspaceId);
+    const batch = await client.listWorkspaceEvents(sourceWorkspaceId, afterSequence);
+    return {
+      events: batch.events.filter((event) => event.type.startsWith("worktree.")).map((event) => ({
+        eventId: event.event_id,
+        workspaceId: event.workspace_id,
+        sequence: event.sequence,
+        type: event.type,
+        data: event.data,
+      })),
+      nextSequence: batch.nextSequence,
+    };
+  } catch (error) {
+    if (!isLocalRuntimeUnavailableError(error)) throw error;
+    return {
+      events: [],
+      nextSequence: afterSequence,
+      degraded: {
+        code: error.code,
+        message: error.message,
+        retryable: error.retryable,
+      },
+    };
+  }
 }
 
 async function runtimeForWorkspace(workspacePath: string, workspaceId?: string): Promise<{ client: RuntimeClient; sourceWorkspaceId: string }> {

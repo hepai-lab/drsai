@@ -21,6 +21,10 @@ extraResources:
     filter:
       - "*.py"
       - "requirements.txt"
+  - from: ../../../cores/python/packages/drsai/src/drsai/content/pdf/presentation.py
+    to: python/presentation_pdf.py
+  - from: ../windows/resources/presentation/manager-deck-template.pptx
+    to: presentation/manager-deck-template.pptx
   - from: resources/runtime
     to: runtime
     filter:
@@ -43,6 +47,8 @@ electronFuses:
   enableEmbeddedAsarIntegrityValidation: true
   onlyLoadAppFromAsar: true
 mac:
+  icon: ../../android/app/src/main/res/drawable-nodpi/opendrsai_logo.png
+  artifactName: OpenDrSai-macOS-v${version}-${arch}.${ext}
   category: public.app-category.productivity
   target:
     - target: dmg
@@ -53,6 +59,10 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
+  # Electron locale PAK files are resources covered by the enclosing framework
+  # signature. Re-signing them individually fails on current macOS/Xcode.
+  signIgnore:
+    - "/Resources/[^/]+\\.lproj/locale\\.pak$"
   notarize: true
   extendInfo:
     NSMicrophoneUsageDescription: OpenDrSai uses the microphone only when you start voice input.
@@ -64,6 +74,6 @@ protocols:
     schemes:
       - opendrsai
 publish:
-  provider: github
-  owner: hepai-lab
-  repo: drsai
+  provider: generic
+  url: https://download-opendrsai.ihep.ac.cn/channels/stable/macos/arm64/
+  channel: latest

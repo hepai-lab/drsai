@@ -1,0 +1,55 @@
+{
+  "apk": "OpenDrSai-Android-v1.5.4.apk",
+  "checks": {
+    "api_26_30_35_36": true,
+    "arm64": true,
+    "physical_device": true,
+    "x86_64": true,
+    "zero_failures": true
+  },
+  "devices": [
+    {
+      "abi": "x86_64",
+      "api": 26,
+      "duration_seconds": 2.078,
+      "failures": 0,
+      "kind": "emulator",
+      "model": "Android SDK built for x86_64",
+      "serial": "emulator-5554",
+      "tests": 11
+    },
+    {
+      "abi": "x86_64",
+      "api": 30,
+      "duration_seconds": 13.671,
+      "failures": 0,
+      "kind": "emulator",
+      "model": "sdk_gphone_x86_64",
+      "serial": "emulator-5554",
+      "tests": 11
+    },
+    {
+      "abi": "x86_64",
+      "api": 35,
+      "duration_seconds": 23.172,
+      "failures": 0,
+      "kind": "emulator",
+      "model": "sdk_gphone64_x86_64",
+      "serial": "emulator-5554",
+      "tests": 11
+    },
+    {
+      "abi": "arm64-v8a",
+      "api": 36,
+      "duration_seconds": 1.563,
+      "failures": 0,
+      "kind": "physical",
+      "model": "SM-X936C",
+      "serial": "R5GYB3S8ACH",
+      "tests": 11
+    }
+  ],
+  "generated_at": "2026-08-03T22:26:41.746235+00:00",
+  "passed": true,
+  "schema_version": 1
+}

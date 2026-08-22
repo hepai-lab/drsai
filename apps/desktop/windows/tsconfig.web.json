@@ -11,6 +11,8 @@
   "compilerOptions": {
     "composite": true,
     "jsx": "react-jsx",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
     "paths": {
       "@renderer/*": ["../shared/renderer/src/*"],
       "@shared/*": ["../shared/api/*"]

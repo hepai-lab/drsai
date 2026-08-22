@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "feature_id": "M07-F03",
+  "generated_at": "2026-08-05T14:15:23.809253+00:00",
+  "passed": true,
+  "gates": {
+    "built_in_bundle_binds_apk_signer_and_manifest": true,
+    "saf_import_is_content_uri_bounded_and_copied": true,
+    "user_skill_is_declarative_only": true,
+    "import_and_update_require_explicit_enable": true,
+    "upgrade_rollback_disable_and_delete_are_versioned": true,
+    "account_scoped_persistence_and_run_pinning": true,
+    "production_and_ui_manage_user_skills": true,
+    "shared_kernel_accepts_user_declarative_source": true,
+    "python_manifest_suite_green": true,
+    "android_lifecycle_and_catalog_suites_green": true,
+    "api35_saf_persistence_signer_and_kernel_test_green": true
+  },
+  "pytest": {
+    "returncode": 0,
+    "summary": ".......                                                                  [100%]\n7 passed in 3.78s"
+  },
+  "android_lifecycle_suite": {
+    "tests": 4,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.UserDeclarativeSkillRepositoryTest",
+    "sha256": "bcb1fddb9fd43b54fcf4f68ccd9753ac952cf00304ef6a00ba37a086bad82731"
+  },
+  "android_catalog_suite": {
+    "tests": 9,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.SkillCatalogTest",
+    "sha256": "6043704714f184e5128439c363b870819a3f63038d762722fbbaf138b68574b6"
+  },
+  "connected_suite": {
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "name": "ai.drsai.remote.UserDeclarativeSkillInstrumentedTest",
+    "sha256": "407971c01996903832176b04e0ab25d3c95599a7a1500815da322a9991c4c560"
+  },
+  "connected_report": "docs/android/reports/evidence/p9/m07-f03-user-declarative-skill-instrumentation.xml",
+  "source_sha256": {
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/UserDeclarativeSkillStore.kt": "1b67b29f5efc3700da1309fb7aeadf9ddaea71ad8e6dee30fd44c3d31f75a361",
+    "apps/android/app/src/main/java/ai/drsai/remote/runtime/tools/SkillCatalog.kt": "526fa5e68f353119db38024d9232f44da11b996ab26be61e641adc75f64b7676",
+    "apps/android/app/src/main/java/ai/drsai/remote/AppViewModel.kt": "e14c40f04b687a6a42fed696edeef6b8886175b12045c536e18b0f0b288956e3",
+    "apps/android/app/src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt": "5e78c7262c9456967e5f440ecfa593499ffb0e8b2ba90f1292bd6e8716d91baa",
+    "apps/android/app/src/main/java/ai/drsai/remote/data/Models.kt": "129c981b5bb653c61eaadc69b6d1ee18c1070cc1e0eb158a54cfdc1b8045864c",
+    "cores/python/packages/drsai/src/drsai/backend/runtime/agent_kernel.py": "7b1d02d13aea7e5acc6957975a9d55f31b22976480377aa7f3ab3218d0b8f06b",
+    "cores/python/packages/drsai/tests/test_skill_manifest.py": "2b792a929093949d383fb4eba2c2420326cfaa9670c34d183aecafcf0a64b7c3",
+    "apps/android/app/src/test/java/ai/drsai/remote/UserDeclarativeSkillRepositoryTest.kt": "a508942db105c5e1ff606153647585b1ac49c857be3994cac4e444f85105205c",
+    "apps/android/app/src/androidTest/java/ai/drsai/remote/UserDeclarativeSkillInstrumentedTest.kt": "b2b541fd76996bb595891360c054a27c42c5e1a1fc8f37a2eed7826cea263c1b"
+  }
+}

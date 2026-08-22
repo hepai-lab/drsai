@@ -6,6 +6,7 @@ import type {
   AgentTaskDepth,
   ChatAttachment,
   DesktopBackgroundTask,
+  DesktopFailureRecovery,
   DesktopTaskPlanStep,
   DesktopHealth,
   WorkspaceInstructionSummary,
@@ -78,8 +79,7 @@ export function AgentRunWorkspace({
   workspaceTrusted = true,
 }: AgentRunWorkspaceProps): React.JSX.Element {
   const zh = language === "zh";
-  const [liveGatewayReady, setLiveGatewayReady] = useState(Boolean(health?.gatewayReady));
-  const canRun = Boolean((health?.gatewayReady || liveGatewayReady) && workspaceTrusted);
+  const canRun = Boolean(health?.gatewayReady && workspaceTrusted);
   const [task, setTask] = useState("");
   const [executionDepth, setExecutionDepth] = useState<AgentTaskDepth>("standard");
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
@@ -101,28 +101,6 @@ export function AgentRunWorkspace({
   useEffect(() => {
     if (initialTask) setTask(initialTask);
   }, [initialTask]);
-
-  useEffect(() => {
-    let active = true;
-    const refreshGateway = async () => {
-      try {
-        const gateway = await desktopApi.getGatewayStatus();
-        if (active) setLiveGatewayReady(gateway.ready === true);
-      } catch {
-        if (active) setLiveGatewayReady(false);
-      }
-    };
-    void refreshGateway();
-    const timer = window.setInterval(() => void refreshGateway(), 1_000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (health?.gatewayReady) setLiveGatewayReady(true);
-  }, [health?.gatewayReady]);
 
   useEffect(() => {
     return desktopApi.onAgentRunEvent((event) => {
@@ -299,7 +277,7 @@ export function AgentRunWorkspace({
       setActiveRequestId((current) => (current === event.requestId ? null : current));
       setActiveRunId((current) => (current === event.runId ? null : current));
       const failureMessage = event.failureRecovery
-        ? `${event.failureRecovery.message}\n${event.failureRecovery.reason}\n${event.failureRecovery.suggestedAction}`
+        ? formatAgentFailure(event.failureRecovery, zh)
         : event.error || "Agent run failed.";
       replaceAgentLine(event.requestId, failureMessage, "error");
       setBusinessProgress(toAgentBusinessProgress(event, zh));
@@ -582,6 +560,26 @@ export function AgentRunWorkspace({
       </form>
     </div>
   );
+}
+
+function formatAgentFailure(
+  recovery: DesktopFailureRecovery,
+  zh: boolean,
+): string {
+  if (!zh) return `${recovery.message}\n${recovery.suggestedAction}`;
+  const title = recovery.kind === "permission_denied"
+    ? "Codex 需要重新登录。"
+    : recovery.kind === "external_service"
+      ? "Codex 服务暂时不可用。"
+      : recovery.kind === "network"
+        ? "连接已中断。"
+        : "任务没有完成。";
+  const action = recovery.retryable
+    ? "请重试；如果问题仍然存在，请在设置中运行 Codex 检测。"
+    : recovery.escalationLevel === "administrator"
+      ? "请安装兼容版本，或联系管理员处理。"
+      : "请打开诊断信息查看处理建议。";
+  return `${title}\n${action}`;
 }
 
 function toAgentBusinessProgress(event: AgentRunEvent, zh: boolean): AgentBusinessProgress {

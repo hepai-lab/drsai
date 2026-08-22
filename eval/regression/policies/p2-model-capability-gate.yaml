@@ -1,0 +1,9 @@
+schema_version: opendrsai.model-capability-gate-policy/1
+profile: model_capabilities/profiles/hepai-opendrsai-p2.yaml
+requirements:
+  real_provider: true
+  runtime_verified: true
+  max_snapshot_age_hours: 24
+  reject_statuses: [declared, unsupported, unavailable, inconclusive, stale, error]
+  reject_fixture_evidence: true
+  require_all_assertions_passed: true

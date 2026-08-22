@@ -1,0 +1,12 @@
+{
+  "checks": {
+    "legacy_bridge_is_projection_only": true,
+    "no_enableable_legacy_fact_switch": true,
+    "oaep_authority_immutable": true,
+    "ui_reads_oaep_projection": true
+  },
+  "findings": [],
+  "generated_at": "2026-08-03T22:48:30.706954+00:00",
+  "passed": true,
+  "schema_version": 1
+}

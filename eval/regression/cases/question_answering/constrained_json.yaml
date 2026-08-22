@@ -1,0 +1,89 @@
+schema_version: opendrsai.agent-regression-case/1
+
+id: qa.constraints.json
+revision: 1
+title: 严格按照 Schema 输出 JSON
+description: 验证 Agent 的结构化输出和格式约束遵循能力。
+owner: agent-runtime
+tags: [smoke, release, question_answering, structured_output]
+
+agent:
+  definition: opendrsai@1
+  model_profile: default
+
+input:
+  messages:
+    - role: user
+      parts:
+        - type: text
+          text: |
+            请把下面的信息整理为 JSON：
+
+            姓名：张三
+            年龄：28
+            技能：Python、TypeScript
+
+            必须严格符合以下结构：
+            {
+              "name": "string",
+              "age": "integer",
+              "skills": ["string"]
+            }
+
+            只输出 JSON，不要使用 Markdown 代码块，也不要添加任何解释。
+
+environment:
+  network: disabled
+  session:
+    type: new
+    history: empty
+
+expect:
+  run:
+    status: completed
+
+  behavior:
+    tool_calls:
+      max: 0
+    skill_activations:
+      max: 0
+    knowledge_queries:
+      max: 0
+    approvals:
+      max: 0
+
+  output:
+    type: json
+    allow_markdown_fence: false
+    allow_surrounding_text: false
+    schema:
+      type: object
+      additionalProperties: false
+      required: [name, age, skills]
+      properties:
+        name:
+          type: string
+          const: 张三
+        age:
+          type: integer
+          const: 28
+        skills:
+          type: array
+          minItems: 2
+          maxItems: 2
+          uniqueItems: true
+          items:
+            type: string
+          allOf:
+            - contains:
+                const: Python
+            - contains:
+                const: TypeScript
+
+  artifacts:
+    max: 0
+
+execution:
+  timeout_seconds: 30
+  attempts: 1
+  isolation: required

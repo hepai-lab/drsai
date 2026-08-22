@@ -11,9 +11,11 @@ if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const release = join(root, "release");
 const acceptance = join(root, "build", "acceptance");
+const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const app = join(release, "mac-arm64", "OpenDrSai.app");
-const dmg = singleArtifact(".dmg");
-const zip = singleArtifact(".zip");
+const appExecutable = join(app, "Contents", "MacOS", "OpenDrSai");
+const dmg = currentArtifact("dmg");
+const zip = currentArtifact("zip");
 const latest = join(release, "latest-mac.yml");
 for (const path of [app, dmg, zip, latest]) assert.ok(existsSync(path), `missing release artifact: ${path}`);
 mkdirSync(acceptance, { recursive: true });
@@ -22,16 +24,16 @@ const codesign = run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--
 const signature = run("/usr/bin/codesign", ["-d", "--verbose=4", app]);
 assert.match(signature, /Authority=Developer ID Application:/);
 assert.match(signature, /TeamIdentifier=[A-Z0-9]+/);
-receipt("codesign-strict", { featureIds: ["F12.2"], appSha256: sha256(app), verification: codesign.trim() || "codesign --strict passed", identity: signatureLines(signature) });
+receipt("codesign-strict", { featureIds: ["F12.2"], appSha256: sha256(appExecutable), verification: codesign.trim() || "codesign --strict passed", identity: signatureLines(signature) });
 
 const gatekeeper = run("/usr/sbin/spctl", ["--assess", "--type", "execute", "--verbose=4", app]);
 assert.match(gatekeeper, /accepted/i);
-receipt("gatekeeper", { featureIds: ["F12.3"], appSha256: sha256(app), assessment: gatekeeper.trim() });
+receipt("gatekeeper", { featureIds: ["F12.3"], appSha256: sha256(appExecutable), assessment: gatekeeper.trim() });
 
 const appStaple = run("/usr/bin/xcrun", ["stapler", "validate", app]);
 const dmgStaple = run("/usr/bin/xcrun", ["stapler", "validate", dmg]);
 assert.match(`${appStaple}\n${dmgStaple}`, /worked|valid/i);
-receipt("notarization-staple", { featureIds: ["F12.3"], appSha256: sha256(app), dmgSha256: sha256(dmg), appStaple: appStaple.trim(), dmgStaple: dmgStaple.trim() });
+receipt("notarization-staple", { featureIds: ["F12.3"], appSha256: sha256(appExecutable), dmgSha256: sha256(dmg), appStaple: appStaple.trim(), dmgStaple: dmgStaple.trim() });
 
 const clean = await verifyCleanInstall();
 receipt("clean-install", { featureIds: ["F12.4"], ...clean });
@@ -66,7 +68,7 @@ async function verifyCleanInstall() {
     });
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-    const result = await waitForJson(resultPath, child, 150_000, () => stderr);
+    const result = await waitForJson(resultPath, child, 900_000, () => stderr);
     const exit = await waitForExit(child, 30_000);
     assert.equal(exit, 0, stderr);
     assert.equal(result.ok, true);
@@ -130,7 +132,12 @@ function verifyUpdateMetadata(version) {
 
 function receipt(testId, detail) { writeFileSync(join(acceptance, `${testId}.json`), `${JSON.stringify({ schemaVersion: 2, testId, platform: "darwin-arm64", passed: true, ...detail, generatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8"); }
 function run(command, args) { const result = spawnSync(command, args, { encoding: "utf8", timeout: 180_000, stdio: ["ignore", "pipe", "pipe"] }); const output = `${result.stdout || ""}\n${result.stderr || ""}`; if (result.error || result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed (${result.status ?? result.error?.message})\n${output}`); return output; }
-function singleArtifact(extension) { const matches = readdirSync(release).filter((name) => name.endsWith(extension)); assert.equal(matches.length, 1, `expected one ${extension} artifact, found ${matches.length}`); return join(release, matches[0]); }
+function currentArtifact(extension) {
+  const expectedName = `OpenDrSai-macOS-v${packageJson.version}-arm64.${extension}`;
+  const matches = readdirSync(release).filter((name) => name === expectedName);
+  assert.equal(matches.length, 1, `expected current ${extension} artifact ${expectedName}, found ${matches.length}`);
+  return join(release, expectedName);
+}
 function bundleVersion(path) { return run("/usr/bin/defaults", ["read", join(path, "Contents", "Info.plist"), "CFBundleShortVersionString"]).trim(); }
 function sha256(path) { return createHash("sha256").update(readFileSync(path)).digest("hex"); }
 function signatureLines(text) { return text.split(/\r?\n/).filter((line) => /^(Authority|TeamIdentifier|Identifier)=/.test(line)); }

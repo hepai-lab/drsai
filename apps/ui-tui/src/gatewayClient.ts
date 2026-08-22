@@ -74,6 +74,9 @@ export class GatewayClient extends EventEmitter {
   private rejectReady!: (err: Error) => void
   private readyTimer: ReturnType<typeof setTimeout> | null = null
   private logs: string[] = []
+  /** True when the user explicitly switched to WebSocket via SSH remote panel.
+   *  Distinguishes from initial attach mode (DRSAI_TUI_ATTACH_URL env). */
+  private isRemoteSshMode = false
 
   constructor() {
     super()
@@ -182,6 +185,8 @@ export class GatewayClient extends EventEmitter {
     env.PYTHONIOENCODING = 'utf-8'
     env.PYTHONUTF8 = '1'
 
+    // Clear any existing ready timer before setting a new one
+    if (this.readyTimer) clearTimeout(this.readyTimer)
     this.readyTimer = setTimeout(() => {
       if (!this.ready) {
         const msg = `gateway startup timed out after ${STARTUP_TIMEOUT_MS}ms`
@@ -335,6 +340,55 @@ export class GatewayClient extends EventEmitter {
     })
   }
 
+  /**
+   * Send a JSON-RPC request to the LOCAL gateway subprocess via stdin,
+   * bypassing the WebSocket transport.  Used for control RPCs like
+   * `remote.disconnect` and `remote.status` that are handled by the
+   * local gateway (managing the SSH tunnel) even when the client is
+   * in WebSocket mode talking to a remote gateway.
+   *
+   * The response is received through the same `dispatch()` path —
+   * the local subprocess's stdout readline is still draining and will
+   * route RPC responses to the pending map.
+   */
+  requestLocal<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    if (!this.proc?.stdin || this.proc.killed || this.proc.exitCode !== null) {
+      return Promise.reject(new Error('local gateway not running'))
+    }
+
+    const id = `r${++this.reqId}`
+    return new Promise<T>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const pending = this.pending.get(id)
+        if (pending) {
+          this.pending.delete(id)
+          reject(new Error(`RPC ${method} timed out after ${REQUEST_TIMEOUT_MS}ms`))
+        }
+      }, REQUEST_TIMEOUT_MS)
+      timeout.unref?.()
+
+      this.pending.set(id, {
+        id,
+        method,
+        resolve: v => resolve(v as T),
+        reject,
+        timeout,
+      })
+
+      try {
+        const frame = JSON.stringify({ id, jsonrpc: '2.0', method, params }) + '\n'
+        this.proc!.stdin!.write(frame)
+      } catch (e) {
+        const pending = this.pending.get(id)
+        if (pending) {
+          clearTimeout(pending.timeout)
+          this.pending.delete(id)
+        }
+        reject(e instanceof Error ? e : new Error(String(e)))
+      }
+    })
+  }
+
   /** Get recent stderr lines (debugging). */
   getLogs(): string[] {
     return [...this.logs]
@@ -390,6 +444,177 @@ export class GatewayClient extends EventEmitter {
     }
   }
 
+  /**
+   * Switch from stdio mode to WebSocket attach mode at runtime.
+   * Keeps the local subprocess alive (it holds the SSH tunnel) and
+   * connects to a remote gateway via WebSocket through the tunnel.
+   * Used by the SSH remote feature to connect to a remote tui_gateway.
+   */
+  switchToWebSocket(url: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // ── Keep local subprocess alive for SSH tunnel ──────────────
+      // The local gateway subprocess holds the paramiko SSH connection
+      // and port-forwarding tunnel.  If we kill it here, the tunnel dies
+      // and the WebSocket connection to ws://127.0.0.1:{local_port}/attach
+      // will fail immediately ("Remote connection lost").
+      //
+      // Instead, just detach from the subprocess's exit/error events so
+      // that handleExit doesn't fire and interfere with the WebSocket
+      // readyPromise.  The stdout/stderr readline interfaces continue
+      // draining the pipes (preventing buffer deadlock) and dispatching
+      // any events the local gateway might emit (e.g. remote.disconnected).
+      // The subprocess reference is kept in this.proc so that
+      // switchToSubprocess can clean it up later.
+      if (this.mode === 'stdio' && this.proc) {
+        try { this.proc.removeAllListeners() } catch { /* best effort */ }
+      }
+
+      // Close existing WebSocket if any
+      if (this.ws) {
+        try { this.ws.close() } catch { /* best effort */ }
+        this.ws = null
+      }
+
+      // Reset ready state for new connection
+      this.ready = false
+      this.readyPromise = new Promise((res, rej) => {
+        this.resolveReady = res
+        this.rejectReady = rej
+      })
+
+      // Set up timeout
+      if (this.readyTimer) clearTimeout(this.readyTimer)
+      this.readyTimer = setTimeout(() => {
+        if (!this.ready) {
+          const msg = `WebSocket attach timed out after ${STARTUP_TIMEOUT_MS}ms`
+          this.publish({ type: 'gateway.protocol_error', payload: { preview: msg } })
+          this.rejectReady(new Error(msg))
+          reject(new Error(msg))
+        }
+      }, STARTUP_TIMEOUT_MS)
+      this.readyTimer.unref?.()
+
+      // Switch to websocket mode and connect
+      this.mode = 'websocket'
+      this.isRemoteSshMode = true
+      this.pushLog(`[ws-attach] switching to ${url}`)
+
+      this.ws = new WebSocket(url)
+
+      this.ws.on('open', () => {
+        this.pushLog('[ws-attach] connected')
+      })
+
+      this.ws.on('message', data => {
+        const raw = data.toString().trim()
+        if (!raw) return
+        try {
+          this.dispatch(JSON.parse(raw))
+        } catch {
+          const preview = raw.slice(0, 240) || '(empty line)'
+          this.pushLog(`[ws-attach] malformed frame: ${preview}`)
+        }
+      })
+
+      this.ws.on('error', err => {
+        this.pushLog(`[ws-attach] error: ${err.message}`)
+        this.publish({ type: 'gateway.stderr', payload: { line: `[ws] ${err.message}` } })
+        // Don't reject here — the 'close' event will follow and handle cleanup.
+        // Rejecting during 'error' would make the caller think the switch
+        // itself failed, when really it's a mid-session disconnect.
+      })
+
+      this.ws.on('close', () => {
+        this.pushLog('[ws-attach] connection closed')
+        if (this.isRemoteSshMode) {
+          // Remote SSH connection lost — don't exit the TUI.
+          // Emit a dedicated event so the UI can show a reconnect prompt.
+          this.handleRemoteLost('WebSocket connection closed')
+        } else {
+          this.handleExit(0, 'WebSocket closed')
+        }
+      })
+
+      // Resolve when ready
+      this.readyPromise.then(() => resolve()).catch(reject)
+    })
+  }
+
+  /**
+   * Switch back from WebSocket attach mode to stdio subprocess mode.
+   * Used when disconnecting from a remote SSH session.
+   */
+  switchToSubprocess(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // Clear remote SSH mode flag
+      this.isRemoteSshMode = false
+
+      // Close WebSocket if in websocket mode
+      if (this.mode === 'websocket' && this.ws) {
+        try { this.ws.close() } catch { /* best effort */ }
+        this.ws = null
+      }
+
+      // Kill any lingering subprocess from a previous stdio session.
+      // Its exit event could fire later and race with the new subprocess
+      // startup (handleExit would clear readyTimer / reject readyPromise
+      // for the NEW process).  Remove all listeners and null the ref so
+      // the old process's exit is silently ignored.
+      if (this.proc) {
+        // If we were in remote SSH mode, the old subprocess holds the
+        // SSH tunnel + remote gateway.  Send remote.disconnect via stdin
+        // (fire-and-forget) so the local gateway can clean up the remote
+        // process and close the SSH connection gracefully.
+        if (this.mode === 'websocket') {
+          try {
+            const disconnectReq = JSON.stringify({
+              jsonrpc: '2.0',
+              id: `cleanup-${Date.now()}`,
+              method: 'remote.disconnect',
+              params: {},
+            }) + '\n'
+            this.proc.stdin?.write(disconnectReq)
+          } catch { /* best effort */ }
+        }
+        try { this.proc.removeAllListeners() } catch { /* best effort */ }
+        try { this.proc.kill('SIGTERM') } catch { /* best effort */ }
+        this.proc = null
+      }
+
+      // Reset ready state
+      this.ready = false
+      this.readyPromise = new Promise((res, rej) => {
+        this.resolveReady = res
+        this.rejectReady = rej
+      })
+
+      // Set up timeout
+      if (this.readyTimer) clearTimeout(this.readyTimer)
+      this.readyTimer = setTimeout(() => {
+        if (!this.ready) {
+          const msg = `Subprocess startup timed out after ${STARTUP_TIMEOUT_MS}ms`
+          this.publish({ type: 'gateway.protocol_error', payload: { preview: msg } })
+          this.rejectReady(new Error(msg))
+          reject(new Error(msg))
+        }
+      }, STARTUP_TIMEOUT_MS)
+      this.readyTimer.unref?.()
+
+      // Switch to stdio mode and start subprocess
+      this.mode = 'stdio'
+      this.pushLog('[stdio] switching back to local subprocess')
+      this.startSubprocess()
+
+      // Resolve when ready
+      this.readyPromise.then(() => resolve()).catch(reject)
+    })
+  }
+
+  /** Get current connection mode. */
+  getMode(): 'stdio' | 'websocket' {
+    return this.mode
+  }
+
   // ── Internals ─────────────────────────────────────────────────────
 
   private dispatch(frame: unknown): void {
@@ -442,6 +667,33 @@ export class GatewayClient extends EventEmitter {
   private pushLog(line: string): void {
     this.logs.push(line)
     if (this.logs.length > 200) this.logs.splice(0, this.logs.length - 200)
+  }
+
+  /**
+   * Handle unexpected remote SSH disconnection.
+   * Unlike handleExit(), this does NOT kill the TUI — it emits a
+   * ``remote.lost`` event so the UI can show a reconnect prompt.
+   */
+  private handleRemoteLost(reason: string): void {
+    if (this.readyTimer) {
+      clearTimeout(this.readyTimer)
+      this.readyTimer = null
+    }
+    // Reject readyPromise if still pending — otherwise switchToWebSocket hangs
+    if (!this.ready) {
+      this.rejectReady(new Error(`remote connection lost: ${reason}`))
+    }
+    // Reject all pending requests — they're dead anyway
+    for (const [id, pending] of this.pending) {
+      clearTimeout(pending.timeout)
+      pending.reject(new Error(`remote connection lost: ${reason}`))
+      this.pending.delete(id)
+    }
+    this.ws = null
+    this.publish({
+      type: 'remote.lost',
+      payload: { reason, was_remote: true },
+    })
   }
 
   private handleExit(code: number | null, reason?: string): void {

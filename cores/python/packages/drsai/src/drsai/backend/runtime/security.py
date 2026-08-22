@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping
 
+from drsai.backend.runtime.sqlite_connection import ClosingConnection
+
 
 class SecurityError(PermissionError):
     def __init__(self, code: str, message: str):
@@ -59,23 +61,24 @@ class OperationContext:
     operation_id: str = ""
 
     def as_dict(self) -> dict[str, str]:
-        values = {
+        required = {
             "principal_id": self.principal_id,
             "runtime_id": self.runtime_id,
             "workspace_id": self.workspace_id,
+            "correlation_id": self.correlation_id,
+        }
+        if not all(required.values()) or not (self.operation_id or self.tool_id):
+            raise SecurityError("audit_context_incomplete", "Sensitive operation audit context is incomplete.")
+        values = {
+            **required,
             "session_id": self.session_id,
             "run_id": self.run_id,
             "tool_id": self.tool_id,
-            "correlation_id": self.correlation_id,
-        }
-        if not all(values.values()):
-            raise SecurityError("audit_context_incomplete", "Sensitive operation audit context is incomplete.")
-        values.update({
             "host_id": self.host_id,
             "worktree_id": self.worktree_id,
             "terminal_id": self.terminal_id,
             "operation_id": self.operation_id,
-        })
+        }
         return values
 
 
@@ -97,7 +100,7 @@ class WorkspacePermissionStore:
             db.execute("CREATE TABLE IF NOT EXISTS workspace_permissions(workspace_id TEXT NOT NULL, principal_id TEXT NOT NULL, role TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(workspace_id, principal_id))")
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.database, timeout=30)
+        return sqlite3.connect(self.database, timeout=30, factory=ClosingConnection)
 
     def set_role(self, workspace_id: str, principal_id: str, role: str) -> None:
         if role not in ROLE_ACTIONS or not workspace_id or not principal_id:
@@ -127,13 +130,13 @@ class ApprovalRegistry:
             )""")
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.database, timeout=30)
+        conn = sqlite3.connect(self.database, timeout=30, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         return conn
 
     @staticmethod
     def _resource_hash(resource: Mapping[str, Any]) -> str:
-        return hashlib.sha256(json.dumps(redact_sensitive(resource), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        return hashlib.sha256(json.dumps(redact_sensitive(resource, "", "audit"), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     def request(self, principal_id: str, workspace_id: str, action: str, resource: Mapping[str, Any]) -> str:
         approval_id = f"security-approval-{uuid.uuid4()}"
@@ -184,14 +187,14 @@ class AuditLog:
             """)
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.database, timeout=30)
+        conn = sqlite3.connect(self.database, timeout=30, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         return conn
 
     def record(self, event: str, context: OperationContext, detail: Mapping[str, Any] | None = None) -> dict[str, Any]:
         audit_id, created = f"audit-{uuid.uuid4()}", time.time()
         context_value = context.as_dict()
-        detail_value = redact_sensitive(dict(detail or {}))
+        detail_value = redact_sensitive(dict(detail or {}), "", "audit")
         with self._connect() as db:
             db.execute("INSERT INTO runtime_audit VALUES(?,?,?,?,?)", (audit_id, event, json.dumps(context_value, sort_keys=True), json.dumps(detail_value, sort_keys=True), created))
         return {"audit_id": audit_id, "event": event, "context": context_value, "detail": detail_value, "created_at": created}
@@ -237,33 +240,62 @@ class RuntimeSecurity:
 
 _SENSITIVE_KEY = re.compile(
     r"(?:token|password|secret|private.?key|authorization|api.?key|credential|"
-    r"file.?content|message|prompt|command|arguments)",
+    r"file.?content|prompt|command|arguments|cookie)",
     re.I,
 )
 _BEARER = re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+")
 _PRIVATE_KEY = re.compile(r"-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----", re.S)
 _INLINE_CREDENTIAL = re.compile(r"(?i)\b(token|password|secret|api[_-]?key|credential)\s*[:=]\s*[^\s,;]+")
+_COOKIE_HEADER = re.compile(r"(?i)\bCookie\s*:\s*[^\r\n]+")
+# RFC 3986 schemes are short identifiers in practice. Bounding the candidate
+# prevents a long unbroken model delta from making the regex rescan the full
+# suffix at every character (quadratic CPU usage on multi-megabyte answers).
+_URL_USERINFO = re.compile(r"(?i)([a-z][a-z0-9+.-]{0,31}://)[^/@\s]+@")
 
 
-def redact_sensitive(value: Any, key: str = "") -> Any:
+# ``content`` path: values are delivered to end users through OAEP snapshots and
+# event streams. No enclosing layer bounds these (SQLite envelope_json is TEXT,
+# SSE has no chunk cap on this route, gateway has no body cap), so we still
+# defend against pathological megabyte-scale strings but the bound must not
+# clip a normal assistant reply.
+CONTENT_MAX_CHARS = 1_048_576
+CONTENT_MAX_ITEMS = 10_000
+
+# ``audit`` path: values are written to local audit logs, metric dimensions,
+# and resource-hash inputs. Bodies are not expected here, so a tight cap keeps
+# these tables small and any leakage bounded.
+AUDIT_MAX_CHARS = 4096
+AUDIT_MAX_ITEMS = 100
+
+
+def redact_sensitive(value: Any, key: str, context: str) -> Any:
+    if context not in ("content", "audit"):
+        raise ValueError("redact_sensitive context must be 'content' or 'audit'")
+    max_chars = CONTENT_MAX_CHARS if context == "content" else AUDIT_MAX_CHARS
+    max_items = CONTENT_MAX_ITEMS if context == "content" else AUDIT_MAX_ITEMS
     if _SENSITIVE_KEY.search(key):
         return "[REDACTED]"
     if isinstance(value, Mapping):
-        items = list(value.items())[:100]
-        result = {str(child_key): redact_sensitive(child, str(child_key)) for child_key, child in items}
+        items = list(value.items())[:max_items]
+        result = {
+            str(child_key): redact_sensitive(child, str(child_key), context)
+            for child_key, child in items
+        }
         if len(value) > len(items):
             result["_truncated_fields"] = len(value) - len(items)
         return result
     if isinstance(value, (list, tuple)):
-        items = list(value)[:100]
-        result = [redact_sensitive(item) for item in items]
+        items = list(value)[:max_items]
+        result = [redact_sensitive(item, "", context) for item in items]
         if len(value) > len(items):
             result.append(f"[TRUNCATED {len(value) - len(items)} ITEMS]")
         return result
     if isinstance(value, str):
         redacted = _PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", _BEARER.sub("Bearer [REDACTED]", value))
         redacted = _INLINE_CREDENTIAL.sub(lambda match: f"{match.group(1)}=[REDACTED]", redacted)
-        return redacted if len(redacted) <= 4096 else f"{redacted[:4096]}[TRUNCATED {len(redacted) - 4096} CHARS]"
+        redacted = _COOKIE_HEADER.sub("Cookie: [REDACTED]", redacted)
+        redacted = _URL_USERINFO.sub(r"\1[REDACTED]@", redacted)
+        return redacted if len(redacted) <= max_chars else f"{redacted[:max_chars]}[TRUNCATED {len(redacted) - max_chars} CHARS]"
     return value
 
 

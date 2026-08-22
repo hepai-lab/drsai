@@ -4,15 +4,315 @@
   "title": "OpenDrSai Runtime Relay Protocol",
   "version": "2.0.0",
   "protocol_version": "owop/1",
-  "x-relay-bindings": ["https", "wss"],
+  "x-oaep-schema-sha256": "1b28430fb888b7160247c5518f8d6075b2118b4a43151234a5f7e29f0d7ace09",
+  "x-relay-latency-observability": {
+    "schema_version": "p6-relay-latency/1",
+    "stages": [
+      "runtime_receive",
+      "runtime_commit",
+      "relay_fanout",
+      "android_receive",
+      "android_render"
+    ],
+    "correlation_key": "sha256(runtime_id\u0000workspace_id\u0000session_id\u0000event_id)",
+    "retention_days": 30,
+    "sample_limit": 100000,
+    "minimum_complete_correlations": 20,
+    "minimum_worker_count": 2,
+    "multi_worker_ready_requires": ["complete_correlations", "worker_count"],
+    "failure_modes": ["missing_stage", "single_worker", "duplicate_conflict", "out_of_order"],
+    "worker_identity": "internal_sha256_only",
+    "public_worker_dimension": "worker_count",
+    "persistent_layers": ["redis", "postgresql"],
+    "authorization_precedes_body_and_storage": true,
+    "content_free": true
+  },
+  "x-user-slo": {
+    "schema_version": "p6-user-slo/1",
+    "minimum_complete_samples": 20,
+    "journeys": {
+      "first_screen": {
+        "stages": ["cache_load", "authority_refresh", "first_render"],
+        "threshold_ms": 2000
+      },
+      "event_to_render": {
+        "stages": ["runtime_receive", "runtime_commit", "relay_fanout", "android_receive", "android_render"],
+        "threshold_ms": 1000
+      },
+      "operation_confirmation": {
+        "stages": ["request_dispatch", "runtime_commit", "confirmation_render"],
+        "threshold_ms": 2000
+      },
+      "reconnect": {
+        "stages": ["disconnect_detect", "transport_restore", "replay_catchup"],
+        "threshold_ms": 30000
+      }
+    },
+    "readiness": "each_journey_complete_samples_gte_20",
+    "bottleneck": "highest_stage_p95_ms",
+    "scope_hash": "sha256",
+    "identity_dimensions": [],
+    "authorization_precedes_body_and_storage": true,
+    "content_free": true
+  },
+  "x-relay-bindings": [
+    "https",
+    "wss"
+  ],
+  "x-relay-error-actions": {
+    "retry": [
+      "backend_unavailable",
+      "backpressure_overflow",
+      "catalog_sync_timeout",
+      "cursor_expired",
+      "cursor_invalid",
+      "event_cursor_invalid",
+      "event_sequence_gap",
+      "gateway_timeout",
+      "grant_unavailable",
+      "host_offline",
+      "idempotency_pending",
+      "idempotency_result_not_found",
+      "invalid_cursor",
+      "latency_store_unavailable",
+      "oaep_sequence_gap",
+      "owop_unavailable",
+      "push_provider_unavailable",
+      "push_registration_conflict",
+      "push_registration_stale",
+      "relay_bus_unavailable",
+      "relay_restart_in_progress",
+      "runtime_generation_stale",
+      "runtime_offline",
+      "runtime_owner_unavailable",
+      "runtime_paused",
+      "runtime_timeout",
+      "runtime_unavailable",
+      "stale_runtime_generation",
+      "timeout",
+      "workspace_catalog_sync_invalid"
+    ],
+    "login": [
+      "auth_required",
+      "invalid_token",
+      "oidc_auth_invalid",
+      "token_expired"
+    ],
+    "re-pair": [
+      "access_grant_consumed",
+      "access_grant_expired",
+      "access_grant_invalid",
+      "access_grant_not_found",
+      "access_grant_revoked",
+      "association_not_found",
+      "association_required",
+      "association_revoked",
+      "device_identity_conflict",
+      "device_key_conflict",
+      "device_proof_expired",
+      "device_proof_invalid",
+      "device_proof_replay",
+      "device_proof_required",
+      "device_public_key_invalid",
+      "grant_forbidden",
+      "grant_not_found",
+      "insufficient_scope",
+      "invalid_device_proof",
+      "ticket_expired",
+      "ticket_invalid",
+      "ticket_revoked",
+      "ticket_scope_mismatch"
+    ],
+    "update": [
+      "capability_unknown",
+      "client_update_required",
+      "owop_version_incompatible",
+      "protocol_incompatible",
+      "runtime_update_required",
+      "unsupported_protocol"
+    ],
+    "contact-admin": [
+      "access_denied",
+      "agent_definition_not_found",
+      "agent_version_invalid",
+      "approval_decision_invalid",
+      "approval_decision_ledger_invalid",
+      "approval_not_found",
+      "association_permissions_invalid",
+      "attachment_reference_invalid",
+      "authorization_expansion_forbidden",
+      "catalog_order_invalid",
+      "device_name_invalid",
+      "event_id_conflict",
+      "file_forbidden",
+      "heartbeat_replay",
+      "idempotency_conflict",
+      "idempotency_key_invalid",
+      "idempotency_key_required",
+      "idempotency_operation_invalid",
+      "invalid_device_key",
+      "invalid_display_name",
+      "invalid_idempotency_key",
+      "invalid_latency_observation",
+      "invalid_limit",
+      "invalid_registration_code",
+      "key_rotation_invalid",
+      "key_rotation_replay",
+      "latency_event_not_found",
+      "latency_observation_expired",
+      "latency_observation_invalid",
+      "latency_stage_forbidden",
+      "oaep_event_invalid",
+      "oaep_event_page_invalid",
+      "oaep_frame_identity_mismatch",
+      "oaep_frame_invalid",
+      "oaep_identity_mismatch",
+      "oaep_sequence_collision",
+      "oaep_snapshot_invalid",
+      "owop_operation_forbidden",
+      "page_limit_invalid",
+      "permission_denied",
+      "permission_forbidden",
+      "public_key_invalid",
+      "push_registration_not_found",
+      "raw_range_invalid",
+      "registration_code_invalid",
+      "run_input_empty",
+      "run_not_found",
+      "run_scope_mismatch",
+      "runtime_auth_invalid",
+      "runtime_display_name_invalid",
+      "runtime_forbidden",
+      "runtime_id_conflict",
+      "runtime_identity_mismatch",
+      "runtime_invalid_catalog",
+      "runtime_invalid_oaep",
+      "runtime_invalid_response",
+      "runtime_not_found",
+      "runtime_permission_denied",
+      "runtime_request_failed",
+      "session_forbidden",
+      "session_lifecycle_invalid",
+      "session_not_found",
+      "session_title_invalid",
+      "session_update_empty",
+      "signature_invalid",
+      "workspace_forbidden",
+      "workspace_not_found",
+      "workspace_scope_invalid",
+      "workspace_scope_mismatch"
+    ]
+  },
   "x-relay-capabilities": [
-    "runtime.identity", "runtime.capabilities", "runtime.rename", "workspace.list",
-    "session.list", "session.read", "session.create", "conversation.read",
-    "run.list", "run.create", "run.read", "run.cancel",
-    "event.resume", "event.stream", "event.cursor_expired",
-    "approval.list", "approval.decide",
-    "association.revoke", "association.list", "enrollment.revoke",
-    "file.raw.read"
+    "runtime.identity",
+    "runtime.capabilities",
+    "runtime.rename",
+    "enrollment.pause",
+    "enrollment.resume",
+    "workspace.list",
+    "workspace.sync",
+    "session.list",
+    "session.read",
+    "session.manage",
+    "session.create",
+    "session.catalog.events.stream",
+    "conversation.read",
+    "oaep.v1",
+    "oaep.session.snapshot",
+    "oaep.session.events",
+    "oaep.session.events.stream",
+    "run.list",
+    "run.create",
+    "run.read",
+    "run.cancel",
+    "event.resume",
+    "event.stream",
+    "event.cursor_expired",
+    "approval.list",
+    "approval.decide",
+    "association.revoke",
+    "association.list",
+    "association.device-bound",
+    "association.device-key.rotate",
+    "association.authorization.shrink",
+    "notification.push.registration",
+    "telemetry.conversation-latency",
+    "enrollment.revoke",
+    "file.raw.read",
+    "mcp.stdio"
+  ],
+  "x-relay-capability-profiles": {
+    "device-association/1": [
+      "association.device-bound",
+      "association.device-key.rotate",
+      "association.authorization.shrink",
+      "association.list",
+      "association.revoke"
+    ],
+    "push-notifications/1": [
+      "association.device-bound",
+      "notification.push.registration"
+    ],
+    "session-events/1": [
+      "conversation.snapshot",
+      "session.event.resume",
+      "session.event.stream",
+      "session.event.cursor_expired"
+    ],
+    "oaep/1": [
+      "oaep.v1",
+      "oaep.session.snapshot",
+      "oaep.session.events",
+      "oaep.session.events.stream",
+      "event.cursor_expired"
+    ],
+    "oaep.session-stream/1": [
+      "oaep.v1",
+      "oaep.session.snapshot",
+      "oaep.session.events",
+      "oaep.session.events.stream",
+      "event.cursor_expired"
+    ]
+  },
+  "x-relay-minimum-versions": {
+    "device-association/1": {
+      "android": "1.5.3",
+      "relay": "2.0.0",
+      "runtime": "1.5.3"
+    },
+    "session-events/1": {
+      "runtime": "1.5.3",
+      "android": "1.5.3",
+      "desktop": "1.5.3"
+    },
+    "oaep/1": {
+      "runtime": "1.6.0",
+      "android": "1.5.6",
+      "desktop": "1.6.0"
+    },
+    "oaep.session-stream/1": {
+      "runtime": "1.6.0",
+      "android": "1.5.6",
+      "desktop": "1.6.0"
+    },
+    "push-notifications/1": {
+      "android": "1.5.6",
+      "relay": "2.0.0"
+    }
+  },
+  "x-session-event-kinds": [
+    "session.updated",
+    "run.created",
+    "run.state.changed",
+    "conversation.item.created",
+    "conversation.item.delta",
+    "conversation.item.upsert",
+    "tool.state.changed",
+    "approval.created",
+    "approval.decided",
+    "artifact.created",
+    "session.archived",
+    "session.removed"
   ],
   "x-relay-endpoints": {
     "access_grant_create": "POST /v1/runtimes/{runtime_id}/access-grants",
@@ -20,112 +320,1054 @@
     "access_grant_revoke": "DELETE /v1/runtimes/{runtime_id}/access-grants/{grant_id}",
     "association_create": "POST /v1/associations",
     "association_revoke": "DELETE /v1/associations/{runtime_id}",
+    "association_device_key_rotate": "POST /v1/associations/{runtime_id}/device-key/rotate",
+    "association_push_registration_upsert": "PUT /v1/associations/{runtime_id}/push-registration",
+    "association_push_registration_revoke": "DELETE /v1/associations/{runtime_id}/push-registration",
     "runtime_association_list": "GET /v1/runtimes/{runtime_id}/associations",
     "runtime_association_revoke": "DELETE /v1/runtimes/{runtime_id}/associations/{association_id}",
+    "runtime_association_authorization_shrink": "PATCH /v1/runtimes/{runtime_id}/associations/{association_id}",
     "runtime_enrollment_revoke": "DELETE /v1/runtimes/{runtime_id}/enrollment",
+    "runtime_enrollment_pause": "POST /v1/runtimes/{runtime_id}/enrollment/pause",
+    "runtime_enrollment_resume": "POST /v1/runtimes/{runtime_id}/enrollment/resume",
     "runtime_connect": "WS /v1/runtime-connect",
     "runtime_list": "GET /v1/runtimes",
     "runtime_identity": "GET /v1/runtimes/{runtime_id}/runtime",
     "runtime_rename": "PATCH /v1/runtimes/{runtime_id}",
     "runtime_capabilities": "GET /v1/runtimes/{runtime_id}/capabilities",
+    "conversation_latency_record": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/{event_id}/latency-observation",
+    "conversation_latency_read": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/{event_id}/latency-observation",
+    "conversation_latency_metrics": "GET /v1/metrics/relay-latency",
+    "user_slo_first_screen_record": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/first-screen/{sample_id}",
+    "user_slo_operation_confirmation_record": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/operation-confirmation/{sample_id}",
+    "user_slo_reconnect_record": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/slo/reconnect/{sample_id}",
+    "user_slo_metrics": "GET /v1/metrics/user-slo",
     "workspace_list": "GET /v1/runtimes/{runtime_id}/workspaces",
+    "workspace_sync": "POST /v1/runtimes/{runtime_id}/workspaces/sync",
     "session_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
     "session_read": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}",
+    "session_update": "PATCH /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}",
     "session_create": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions",
-    "conversation_read": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation",
+    "conversation_read": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/conversation-snapshot",
+    "oaep_snapshot": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-snapshot",
+    "oaep_event_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events",
+    "oaep_event_stream": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/oaep-events/stream",
+    "session_catalog_event_stream": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/session-catalog-events/stream",
+    "session_event_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events",
+    "session_event_stream": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/events/stream",
     "run_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/runs",
     "run_create": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/sessions/{session_id}/runs",
     "run_read": "GET /v1/runtimes/{runtime_id}/runs/{run_id}",
-    "run_cancel": "POST /v1/runtimes/{runtime_id}/runs/{run_id}/cancel",
+    "run_cancel": "POST /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/runs/{run_id}/cancel",
     "event_list": "GET /v1/runtimes/{runtime_id}/runs/{run_id}/events",
     "event_stream": "GET /v1/runtimes/{runtime_id}/runs/{run_id}/events/stream",
     "approval_list": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/approvals",
     "approval_decision": "POST /v1/runtimes/{runtime_id}/approvals/{approval_id}/decision",
+    "approval_decision_recovery": "GET /v1/runtimes/{runtime_id}/idempotency/approval.decide/{idempotency_key}",
     "file_raw": "GET /v1/runtimes/{runtime_id}/workspaces/{workspace_id}/files/raw"
+  },
+  "x-relay-generated-dtos": {
+    "GeneratedSessionCreateRequest": "session_create_request",
+    "GeneratedSessionUpdateRequest": "session_update_request",
+    "GeneratedRunCreateRequest": "run_create_request",
+    "GeneratedApprovalDecisionRequest": "approval_decision_request",
+    "GeneratedLatencyObservationRequest": "latency_observation_request",
+    "GeneratedFirstScreenObservationRequest": "first_screen_observation_request",
+    "GeneratedOperationConfirmationObservationRequest": "operation_confirmation_observation_request",
+    "GeneratedReconnectObservationRequest": "reconnect_observation_request",
+    "GeneratedSessionProjection": "session",
+    "GeneratedRunProjection": "run",
+    "GeneratedApprovalProjection": "approval",
+    "GeneratedApprovalDecisionProjection": "approval_decision_projection",
+    "GeneratedLatencyObservationResponse": "latency_observation_response",
+    "GeneratedUserSloObservationResponse": "user_slo_observation_response",
+    "GeneratedSessionCreateRecoveryResponse": "session_create_recovery_response",
+    "GeneratedRunCreateRecoveryResponse": "run_create_recovery_response",
+    "GeneratedApprovalDecisionRecoveryResponse": "approval_decision_recovery_response"
   },
   "$defs": {
     "resource_lifecycle": {
       "type": "string",
-      "enum": ["active", "archived", "removed"]
+      "enum": [
+        "active",
+        "archived",
+        "removed"
+      ]
     },
     "workspace": {
       "type": "object",
       "required": [
-        "runtime_id", "workspace_id", "display_name", "lifecycle",
-        "revision", "updated_at"
+        "runtime_id",
+        "workspace_id",
+        "display_name",
+        "lifecycle",
+        "revision",
+        "updated_at"
       ],
       "properties": {
-        "runtime_id": {"type": "string", "minLength": 1},
-        "workspace_id": {"type": "string", "minLength": 1},
-        "display_name": {"type": "string", "minLength": 1},
-        "lifecycle": {"$ref": "#/$defs/resource_lifecycle"},
-        "revision": {"type": "integer", "minimum": 1},
-        "updated_at": {"type": "string", "format": "date-time"}
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/resource_lifecycle"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
       "additionalProperties": false
     },
     "session": {
       "type": "object",
       "required": [
-        "runtime_id", "workspace_id", "session_id", "title",
-        "lifecycle", "updated_at"
+        "runtime_id",
+        "workspace_id",
+        "session_id",
+        "title",
+        "lifecycle",
+        "updated_at"
       ],
       "properties": {
-        "runtime_id": {"type": "string", "minLength": 1},
-        "workspace_id": {"type": "string", "minLength": 1},
-        "session_id": {"type": "string", "minLength": 1},
-        "title": {"type": "string"},
-        "lifecycle": {"$ref": "#/$defs/resource_lifecycle"},
-        "updated_at": {"type": "string", "format": "date-time"},
-        "agent_definition_id": {"type": ["string", "null"]},
-        "agent_definition_version": {"type": ["string", "null"]},
-        "backend_id": {"type": ["string", "null"]},
-        "last_run_status": {"type": ["string", "null"]}
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/resource_lifecycle"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "agent_definition_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "agent_definition_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "backend_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_run_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       },
       "additionalProperties": false
     },
     "conversation_item": {
       "type": "object",
-      "required": ["item_id", "sequence", "kind", "timestamp", "payload"],
+      "required": [
+        "item_id",
+        "sequence",
+        "kind",
+        "timestamp",
+        "payload"
+      ],
       "properties": {
-        "item_id": {"type": "string", "minLength": 1},
-        "sequence": {"type": "integer", "minimum": 1},
-        "kind": {"type": "string", "minLength": 1},
-        "timestamp": {"type": "string", "format": "date-time"},
-        "payload": {"type": "object"}
+        "item_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "session_conversation_item": {
+      "type": "object",
+      "required": [
+        "item_id",
+        "session_id",
+        "run_id",
+        "kind",
+        "role",
+        "revision",
+        "session_sequence",
+        "source_client",
+        "source_message_id",
+        "created_at",
+        "updated_at",
+        "payload"
+      ],
+      "properties": {
+        "item_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "message",
+            "reasoning",
+            "tool",
+            "file_change",
+            "approval",
+            "artifact",
+            "error"
+          ]
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant",
+            "system",
+            "tool",
+            null
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "session_sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_client": {
+          "enum": [
+            "windows",
+            "android",
+            "runtime"
+          ]
+        },
+        "source_message_id": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "conversation_snapshot": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "snapshot_sequence",
+        "items",
+        "next_cursor"
+      ],
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/session_conversation_item"
+          }
+        },
+        "next_cursor": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
       },
       "additionalProperties": false
     },
     "control_request": {
       "type": "object",
-      "required": ["request_id", "correlation_id"],
+      "required": [
+        "request_id",
+        "correlation_id"
+      ],
       "properties": {
-        "request_id": {"type": "string", "format": "uuid"},
-        "correlation_id": {"type": "string", "minLength": 1},
-        "idempotency_key": {"type": "string", "minLength": 8}
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 8
+        }
+      },
+      "additionalProperties": false
+    },
+    "session_create_request": {
+      "type": "object",
+      "required": [
+        "request_id",
+        "correlation_id",
+        "idempotency_key",
+        "title",
+        "agent_definition_id",
+        "agent_definition_version"
+      ],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 8
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "agent_definition_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent_definition_version": {
+          "type": "string",
+          "minLength": 1,
+          "not": {
+            "const": "latest"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "session_update_request": {
+      "type": "object",
+      "required": [
+        "request_id",
+        "correlation_id"
+      ],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/resource_lifecycle"
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "title"
+          ]
+        },
+        {
+          "required": [
+            "lifecycle"
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "run_create_request": {
+      "type": "object",
+      "required": [
+        "request_id",
+        "correlation_id",
+        "idempotency_key",
+        "message"
+      ],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 8
+        },
+        "message": {
+          "type": "string"
+        },
+        "source_message_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "attachment_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "maxItems": 100,
+          "default": []
+        },
+        "retry_of": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "approval_decision_request": {
+      "type": "object",
+      "required": [
+        "request_id",
+        "correlation_id",
+        "decision"
+      ],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "idempotency_key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 8
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "approve",
+            "deny",
+            "cancel"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "latency_observation_request": {
+      "type": "object",
+      "required": [
+        "client_receive_at_ms",
+        "render_at_ms"
+      ],
+      "properties": {
+        "client_receive_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "render_at_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "first_screen_observation_request": {
+      "type": "object",
+      "required": [
+        "cache_load_at_ms",
+        "authority_refresh_at_ms",
+        "first_render_at_ms"
+      ],
+      "properties": {
+        "cache_load_at_ms": { "type": "integer", "minimum": 0 },
+        "authority_refresh_at_ms": { "type": "integer", "minimum": 0 },
+        "first_render_at_ms": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "operation_confirmation_observation_request": {
+      "type": "object",
+      "required": [
+        "request_dispatch_at_ms",
+        "runtime_commit_at_ms",
+        "confirmation_render_at_ms"
+      ],
+      "properties": {
+        "request_dispatch_at_ms": { "type": "integer", "minimum": 0 },
+        "runtime_commit_at_ms": { "type": "integer", "minimum": 0 },
+        "confirmation_render_at_ms": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "reconnect_observation_request": {
+      "type": "object",
+      "required": [
+        "disconnect_detect_at_ms",
+        "transport_restore_at_ms",
+        "replay_catchup_at_ms"
+      ],
+      "properties": {
+        "disconnect_detect_at_ms": { "type": "integer", "minimum": 0 },
+        "transport_restore_at_ms": { "type": "integer", "minimum": 0 },
+        "replay_catchup_at_ms": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "run": {
+      "type": "object",
+      "required": [
+        "runtime_id",
+        "workspace_id",
+        "session_id",
+        "run_id",
+        "backend_id",
+        "status",
+        "correlation_id",
+        "created_at",
+        "message",
+        "attachment_refs"
+      ],
+      "properties": {
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "backend_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "running",
+            "waiting_approval",
+            "completed",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "retry_of": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "attachment_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "approval": {
+      "type": "object",
+      "required": [
+        "runtime_id",
+        "workspace_id",
+        "session_id",
+        "run_id",
+        "approval_id",
+        "agent_definition_id",
+        "backend_id",
+        "operation",
+        "risk_summary",
+        "scope",
+        "expires_at",
+        "correlation_id",
+        "status"
+      ],
+      "properties": {
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "approval_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent_definition_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "backend_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "risk_summary": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "denied",
+            "cancelled",
+            "expired"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "approval_decision_projection": {
+      "type": "object",
+      "required": [
+        "runtime_id",
+        "approval_id",
+        "status"
+      ],
+      "properties": {
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "approval_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "approved",
+            "denied",
+            "cancelled",
+            "expired"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "latency_observation_response": {
+      "type": "object",
+      "required": [
+        "ready",
+        "stages_present",
+        "latencies_ms"
+      ],
+      "properties": {
+        "ready": {
+          "type": "boolean"
+        },
+        "stages_present": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "latencies_ms": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "user_slo_observation_response": {
+      "type": "object",
+      "required": [
+        "ready",
+        "stages_present",
+        "latencies_ms"
+      ],
+      "properties": {
+        "ready": { "type": "boolean" },
+        "stages_present": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "latencies_ms": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": { "type": "integer", "minimum": 0 }
+            },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "session_create_recovery_response": {
+      "type": "object",
+      "required": [
+        "status",
+        "operation",
+        "resource"
+      ],
+      "properties": {
+        "status": {
+          "const": "succeeded"
+        },
+        "operation": {
+          "const": "session.create"
+        },
+        "resource": {
+          "$ref": "#/$defs/session"
+        }
+      },
+      "additionalProperties": false
+    },
+    "run_create_recovery_response": {
+      "type": "object",
+      "required": [
+        "status",
+        "operation",
+        "resource"
+      ],
+      "properties": {
+        "status": {
+          "const": "succeeded"
+        },
+        "operation": {
+          "const": "run.create"
+        },
+        "resource": {
+          "$ref": "#/$defs/run"
+        }
+      },
+      "additionalProperties": false
+    },
+    "approval_decision_recovery_response": {
+      "type": "object",
+      "required": [
+        "status",
+        "operation",
+        "resource"
+      ],
+      "properties": {
+        "status": {
+          "const": "succeeded"
+        },
+        "operation": {
+          "const": "approval.decide"
+        },
+        "resource": {
+          "$ref": "#/$defs/approval_decision_projection"
+        }
       },
       "additionalProperties": false
     },
     "error": {
       "type": "object",
-      "required": ["code", "message", "correlation_id", "retryable", "details", "source"],
+      "required": [
+        "code",
+        "message",
+        "correlation_id",
+        "retryable",
+        "details",
+        "source"
+      ],
       "properties": {
-        "code": {"type": "string"}, "message": {"type": "string"},
-        "correlation_id": {"type": "string"}, "retryable": {"type": "boolean"},
-        "details": {"type": "object"},
-        "source": {"enum": ["relay", "runtime"]}
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "details": {
+          "type": "object"
+        },
+        "source": {
+          "enum": [
+            "relay",
+            "runtime"
+          ]
+        }
       },
       "additionalProperties": false
     },
     "event": {
       "type": "object",
-      "required": ["event_id", "sequence", "runtime_id", "workspace_id", "session_id", "run_id", "timestamp", "kind", "payload"],
+      "required": [
+        "event_id",
+        "sequence",
+        "runtime_id",
+        "workspace_id",
+        "session_id",
+        "run_id",
+        "timestamp",
+        "kind",
+        "payload"
+      ],
       "properties": {
-        "event_id": {"type": "string"}, "sequence": {"type": "integer", "minimum": 1},
-        "runtime_id": {"type": "string"}, "workspace_id": {"type": "string"},
-        "session_id": {"type": "string"}, "run_id": {"type": "string"},
-        "timestamp": {"type": "string", "format": "date-time"},
-        "kind": {"type": "string"}, "payload": {"type": "object"}
+        "event_id": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "runtime_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "session_event": {
+      "type": "object",
+      "required": [
+        "event_id",
+        "runtime_id",
+        "workspace_id",
+        "session_id",
+        "run_id",
+        "session_sequence",
+        "kind",
+        "timestamp",
+        "payload"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session_sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "item_id": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_revision": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": [
+            "session.updated",
+            "run.created",
+            "run.state.changed",
+            "conversation.item.created",
+            "conversation.item.delta",
+            "conversation.item.upsert",
+            "tool.state.changed",
+            "approval.created",
+            "approval.decided",
+            "artifact.created",
+            "session.archived",
+            "session.removed"
+          ]
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "payload": {
+          "type": "object"
+        }
       },
       "additionalProperties": false
     },
@@ -134,17 +1376,203 @@
       "pattern": "^sub_[0-9a-f]{12}$",
       "description": "Irreversible subject summary. Raw OIDC subject is never returned."
     },
+    "device_id": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "description": "Stable opaque Android installation identity."
+    },
+    "device_summary": {
+      "type": "string",
+      "pattern": "^dev_[0-9a-f]{12}$",
+      "description": "Irreversible device summary returned to the Runtime."
+    },
+    "device_public_key": {
+      "type": "string",
+      "minLength": 43,
+      "maxLength": 43,
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "description": "Raw 32-byte Ed25519 public key encoded as unpadded Base64URL."
+    },
+    "push_registration_request": {
+      "type": "object",
+      "required": [
+        "provider",
+        "token",
+        "generation"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32,
+          "pattern": "^[a-z][a-z0-9_-]+$"
+        },
+        "token": {
+          "type": "string",
+          "minLength": 32,
+          "maxLength": 4096,
+          "pattern": ".*\\S.*",
+          "writeOnly": true,
+          "description": "Provider token accepted only over device-bound HTTPS and stored as a one-way digest."
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "push_registration_result": {
+      "type": "object",
+      "required": [
+        "runtime_id",
+        "device_summary",
+        "provider",
+        "generation",
+        "status",
+        "updated_at"
+      ],
+      "properties": {
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "device_summary": {
+          "$ref": "#/$defs/device_summary"
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32,
+          "pattern": "^[a-z][a-z0-9_-]+$"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "enum": [
+            "active",
+            "revoked"
+          ]
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "device_association_request": {
+      "type": "object",
+      "required": [
+        "request_id",
+        "correlation_id",
+        "code",
+        "device_id",
+        "device_name",
+        "device_public_key"
+      ],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 8
+        },
+        "code": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 256
+        },
+        "device_id": {
+          "$ref": "#/$defs/device_id"
+        },
+        "device_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": ".*\\S.*"
+        },
+        "device_public_key": {
+          "$ref": "#/$defs/device_public_key"
+        }
+      },
+      "additionalProperties": false
+    },
+    "device_proof": {
+      "type": "object",
+      "required": [
+        "device_id",
+        "timestamp",
+        "nonce",
+        "signature"
+      ],
+      "properties": {
+        "device_id": {
+          "$ref": "#/$defs/device_id"
+        },
+        "timestamp": {
+          "type": "integer",
+          "description": "Unix seconds within plus or minus 300 seconds."
+        },
+        "nonce": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 86,
+          "maxLength": 86,
+          "pattern": "^[A-Za-z0-9_-]{86}$",
+          "description": "Raw 64-byte Ed25519 signature encoded as unpadded Base64URL."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Mapped to X-Relay-Device-* headers. The signature binds method, full API path, canonical query, raw body hash, timestamp, nonce and access-token hash."
+    },
     "access_grant_status": {
       "type": "object",
-      "required": ["grant_id", "status", "expires_at", "subject_summary"],
+      "required": [
+        "grant_id",
+        "status",
+        "expires_at",
+        "subject_summary"
+      ],
       "properties": {
-        "grant_id": {"type": "string", "minLength": 1},
-        "status": {"enum": ["pending", "consumed", "expired", "revoked"]},
-        "expires_at": {"type": "string", "format": "date-time"},
+        "grant_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "consumed",
+            "expired",
+            "revoked"
+          ]
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
         "subject_summary": {
           "oneOf": [
-            {"$ref": "#/$defs/subject_summary"},
-            {"type": "null"}
+            {
+              "$ref": "#/$defs/subject_summary"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
@@ -153,40 +1581,168 @@
     "association": {
       "type": "object",
       "required": [
-        "association_id", "runtime_id", "subject_summary", "status",
-        "created_at", "revoked_at"
+        "association_id",
+        "runtime_id",
+        "subject_summary",
+        "device_summary",
+        "device_name",
+        "status",
+        "created_at",
+        "revoked_at"
       ],
       "properties": {
-        "association_id": {"type": "string", "minLength": 1},
-        "runtime_id": {"type": "string", "minLength": 1},
-        "subject_summary": {"$ref": "#/$defs/subject_summary"},
-        "status": {"enum": ["active", "revoked"]},
-        "created_at": {"type": "string", "format": "date-time"},
-        "updated_at": {"type": ["string", "null"], "format": "date-time"},
-        "revoked_at": {"type": ["string", "null"], "format": "date-time"}
+        "association_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subject_summary": {
+          "$ref": "#/$defs/subject_summary"
+        },
+        "device_summary": {
+          "$ref": "#/$defs/device_summary"
+        },
+        "device_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "status": {
+          "enum": [
+            "active",
+            "revoked"
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "revoked_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        }
       },
       "additionalProperties": false
     },
     "cursor_expired_error": {
       "allOf": [
-        {"$ref": "#/$defs/error"},
+        {
+          "$ref": "#/$defs/error"
+        },
         {
           "properties": {
-            "code": {"const": "cursor_expired"},
-            "retryable": {"const": false},
+            "code": {
+              "const": "cursor_expired"
+            },
+            "retryable": {
+              "const": false
+            },
             "details": {
               "type": "object",
               "required": [
-                "reason", "requested_sequence", "earliest_sequence",
-                "latest_sequence", "runtime_id", "run_id"
+                "reason",
+                "requested_sequence",
+                "earliest_sequence",
+                "latest_sequence",
+                "runtime_id",
+                "run_id"
               ],
               "properties": {
-                "reason": {"const": "history_truncated"},
-                "requested_sequence": {"type": "integer", "minimum": 0},
-                "earliest_sequence": {"type": "integer", "minimum": 1},
-                "latest_sequence": {"type": "integer", "minimum": 1},
-                "runtime_id": {"type": "string", "minLength": 1},
-                "run_id": {"type": "string", "minLength": 1}
+                "reason": {
+                  "const": "history_truncated"
+                },
+                "requested_sequence": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "earliest_sequence": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "latest_sequence": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "runtime_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "run_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "session_cursor_expired_error": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/error"
+        },
+        {
+          "properties": {
+            "code": {
+              "const": "cursor_expired"
+            },
+            "retryable": {
+              "const": false
+            },
+            "details": {
+              "type": "object",
+              "required": [
+                "reason",
+                "requested_sequence",
+                "earliest_sequence",
+                "latest_sequence",
+                "runtime_id",
+                "workspace_id",
+                "session_id"
+              ],
+              "properties": {
+                "reason": {
+                  "const": "history_truncated"
+                },
+                "requested_sequence": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "earliest_sequence": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "latest_sequence": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "runtime_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "workspace_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "session_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
               },
               "additionalProperties": false
             }
@@ -196,61 +1752,239 @@
     },
     "runtime_http_request_frame": {
       "type": "object",
-      "required": ["type", "request_id", "correlation_id", "method", "path", "body"],
+      "required": [
+        "type",
+        "request_id",
+        "correlation_id",
+        "method",
+        "path",
+        "body"
+      ],
       "properties": {
-        "type": {"const": "request"},
-        "request_id": {"type": "string", "format": "uuid"},
-        "correlation_id": {"type": "string", "minLength": 1},
-        "method": {"enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]},
-        "path": {"type": "string", "pattern": "^/v1/"},
-        "body": {"type": ["object", "null"]}
+        "type": {
+          "const": "request"
+        },
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "POST",
+            "PATCH",
+            "PUT",
+            "DELETE"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/v1/"
+        },
+        "body": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
       },
       "additionalProperties": false
     },
     "runtime_http_response_frame": {
       "type": "object",
-      "required": ["type", "request_id", "status"],
+      "required": [
+        "type",
+        "request_id",
+        "status"
+      ],
       "properties": {
-        "type": {"const": "response"},
-        "request_id": {"type": "string", "format": "uuid"},
-        "status": {"type": "integer", "minimum": 100, "maximum": 599},
+        "type": {
+          "const": "response"
+        },
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        },
         "body": {},
-        "error": {"$ref": "#/$defs/error"}
+        "error": {
+          "$ref": "#/$defs/error"
+        }
       },
       "allOf": [
         {
-          "if": {"properties": {"status": {"minimum": 400}}},
-          "then": {"required": ["error"], "not": {"required": ["body"]}},
-          "else": {"required": ["body"], "not": {"required": ["error"]}}
+          "if": {
+            "properties": {
+              "status": {
+                "minimum": 400
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "error"
+            ],
+            "not": {
+              "required": [
+                "body"
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "body"
+            ],
+            "not": {
+              "required": [
+                "error"
+              ]
+            }
+          }
         }
       ],
       "additionalProperties": false
     },
     "runtime_heartbeat_frame": {
       "type": "object",
-      "required": ["type", "timestamp"],
+      "required": [
+        "type",
+        "timestamp"
+      ],
       "properties": {
-        "type": {"const": "heartbeat"},
-        "timestamp": {"type": "number"}
+        "type": {
+          "const": "heartbeat"
+        },
+        "timestamp": {
+          "type": "number"
+        }
       },
       "additionalProperties": true
     },
     "runtime_heartbeat_ack_frame": {
       "type": "object",
-      "required": ["type", "timestamp"],
+      "required": [
+        "type",
+        "timestamp"
+      ],
       "properties": {
-        "type": {"const": "heartbeat_ack"},
-        "timestamp": {"type": "number"}
+        "type": {
+          "const": "heartbeat_ack"
+        },
+        "timestamp": {
+          "type": "number"
+        }
       },
       "additionalProperties": false
     },
     "runtime_event_frame": {
       "type": "object",
-      "required": ["type", "run_id", "event"],
+      "required": [
+        "type",
+        "run_id",
+        "event"
+      ],
       "properties": {
-        "type": {"const": "event"},
-        "run_id": {"type": "string", "minLength": 1},
-        "event": {"$ref": "#/$defs/event"}
+        "type": {
+          "const": "event"
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event": {
+          "$ref": "#/$defs/event"
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtime_session_event_frame": {
+      "type": "object",
+      "required": [
+        "type",
+        "scope",
+        "session_id",
+        "session_sequence",
+        "event"
+      ],
+      "properties": {
+        "type": {
+          "const": "event"
+        },
+        "scope": {
+          "const": "session"
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "event": {
+          "$ref": "#/$defs/session_event"
+        }
+      },
+      "additionalProperties": false
+    },
+    "oaep_event": {
+      "$ref": "https://opendrsai.local/cores/protocol/oaep/1.0/oaep.schema.json#/$defs/event"
+    },
+    "oaep_snapshot": {
+      "$ref": "https://opendrsai.local/cores/protocol/oaep/1.0/oaep.schema.json#/$defs/snapshot"
+    },
+    "oaep_event_page": {
+      "$ref": "https://opendrsai.local/cores/protocol/oaep/1.0/oaep.schema.json#/$defs/eventPage"
+    },
+    "runtime_oaep_event_frame": {
+      "type": "object",
+      "required": [
+        "type",
+        "protocol",
+        "scope",
+        "runtime_id",
+        "workspace_id",
+        "session_id",
+        "sequence",
+        "event"
+      ],
+      "properties": {
+        "type": {
+          "const": "event"
+        },
+        "protocol": {
+          "const": "oaep/1"
+        },
+        "scope": {
+          "const": "session"
+        },
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "event": {
+          "$ref": "#/$defs/oaep_event"
+        }
       },
       "additionalProperties": false
     }

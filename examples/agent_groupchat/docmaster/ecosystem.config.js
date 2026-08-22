@@ -1,21 +1,26 @@
 module.exports = {
   apps: [{
-    name: 'docmaster',
-    script: '/aifs/user/home/haiuser01/drsai_code/examples/agent_groupchat/docmaster/run_docmaster.py',
-    interpreter: 'python3',
-    cwd: '/aifs/user/home/haiuser01/drsai_code/examples/agent_groupchat/docmaster',
+    name: 'run_docmaster',
+    script: './run_docmaster.sh',
+    interpreter: 'bash',
+    cwd: __dirname,
     env: {
-      PYTHONPATH: '/aifs/user/home/haiuser01/drsai_code'
+      // Remote OIDC requests must use a request-scoped delegated credential;
+      // never fall back to a static/frontend model key.
+      OPENDRSAI_OIDC_ONLY: '1',
+      // This host has two interfaces. The 10.42 address is container-internal;
+      // ai-dev must use the externally reachable net1 address.
+      WORKER_IP: '10.5.8.136',
     },
     instances: 1,
     autorestart: true,
+
+    // The agent writes runtime state below this tree. Watching the project causes
+    // PM2 to restart the worker mid-request and briefly invalidates registration.
     watch: false,
+
     max_memory_restart: '1G',
-    error_file: '/aifs/user/home/haiuser01/drsai_code/examples/agent_groupchat/docmaster/logs/err.log',
-    out_file: '/aifs/user/home/haiuser01/drsai_code/examples/agent_groupchat/docmaster/logs/out.log',
-    log_file: '/aifs/user/home/haiuser01/drsai_code/examples/agent_groupchat/docmaster/logs/combined.log',
-    time: true,
     kill_timeout: 5000,
-    restart_delay: 4000,
-  }]
+    restart_delay: 1000,
+  }],
 };

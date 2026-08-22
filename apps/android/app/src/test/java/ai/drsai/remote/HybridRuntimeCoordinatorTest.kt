@@ -18,6 +18,10 @@ class HybridRuntimeCoordinatorTest {
         assertEquals(setOf(RuntimeCapability.CHAT), decoded.values)
         assertEquals(4, decoded.limits.maxToolCalls)
         assertEquals(decoded, RuntimeCapabilityCodec.decode(RuntimeCapabilityCodec.encode(decoded)))
+        assertEquals(
+            setOf(RuntimeCapability.CHAT, RuntimeCapability.MCP_STDIO, RuntimeCapability.APPROVALS),
+            RuntimeCapabilityCodec.decode("""["run.create","mcp.stdio","approval.decide","future"]""").values,
+        )
     }
 
     @Test fun deterministicRequirementsAndRouteCanBeExplicitlyOverridden() {
@@ -28,6 +32,31 @@ class HybridRuntimeCoordinatorTest {
         assertEquals(RuntimeRouteDecision.REMOTE, HybridRuntimeCoordinator.recommend(requirements, local, remote).decision)
         assertEquals(RuntimeRouteDecision.UNSUPPORTED,
             HybridRuntimeCoordinator.recommend(requirements, local, remote, RuntimeAuthority.LOCAL_DEVICE).decision)
+    }
+
+    @Test fun desktopExclusivePowerShellGitPtyAndCodexRequestsProduceHonestHandoffDecisions() {
+        val required = DesktopHandoffPlanner.requiredCapabilities(
+            "请在交互式终端运行 PowerShell，再用 git 提交并调用 Codex CLI",
+        )
+        assertEquals(
+            setOf(RuntimeCapability.SHELL, RuntimeCapability.PTY, RuntimeCapability.GIT, RuntimeCapability.CODEX),
+            required,
+        )
+        val unavailable = DesktopHandoffPlanner.plan("运行 PowerShell", emptyList())
+        assertEquals(DesktopHandoffState.UNAVAILABLE, unavailable.state)
+        assertTrue(unavailable.message.contains("尚未执行任何命令"))
+
+        val incapable = descriptor(RuntimeAuthority.REMOTE_RUNTIME, RuntimeCapability.CHAT, RuntimeCapability.GIT)
+        assertEquals(DesktopHandoffState.UNAVAILABLE, DesktopHandoffPlanner.plan("运行 PowerShell", listOf(incapable)).state)
+        val capable = descriptor(
+            RuntimeAuthority.REMOTE_RUNTIME, RuntimeCapability.CHAT, RuntimeCapability.SHELL,
+            RuntimeCapability.PTY, RuntimeCapability.GIT, RuntimeCapability.CODEX,
+        )
+        val offered = DesktopHandoffPlanner.plan("运行 PowerShell", listOf(capable))
+        assertEquals(DesktopHandoffState.OFFER, offered.state)
+        assertEquals(capable.binding.runtimeId, offered.target?.binding?.runtimeId)
+        assertTrue(offered.message.contains("Android 尚未执行任何命令"))
+        assertEquals(DesktopHandoffState.NOT_REQUIRED, DesktopHandoffPlanner.plan("解释 Kotlin 协程", listOf(capable)).state)
     }
 
     @Test fun handoffRequiresConfirmationRedactsSecretsAndHasStableDigest() {
@@ -67,6 +96,7 @@ class HybridRuntimeCoordinatorTest {
             UnifiedRuntimeEvent("5", "approval.decided", "approval"),
             UnifiedRuntimeEvent("6", "tool.result", "call"),
             UnifiedRuntimeEvent("7", "artifact.created", "artifact"),
+            UnifiedRuntimeEvent("7b", "handoff.requested", "handoff-1", "Desktop Runtime"),
             UnifiedRuntimeEvent("8", "run.completed"),
         )
         val projected = (events + events).fold(UnifiedRunProjection(), UnifiedEventReducer::reduce)
@@ -74,6 +104,7 @@ class HybridRuntimeCoordinatorTest {
         assertEquals(UnifiedToolState.SUCCEEDED, projected.tools["call"])
         assertTrue(projected.pendingApprovals.isEmpty())
         assertEquals(setOf("artifact"), projected.artifacts)
+        assertEquals(mapOf("handoff-1" to "Desktop Runtime"), projected.handoffs)
         assertEquals("run.completed", projected.terminal)
     }
 }

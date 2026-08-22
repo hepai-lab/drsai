@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendrsai.example/schemas/android-runtime/stage7-evidence.schema.json",
+  "title": "OpenDrSai Android Stage 7 evidence envelope",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "identity"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["acceptance_run_id", "git_commit", "git_dirty", "build_id", "variant", "version_code", "version_name", "apk_sha256"],
+      "properties": {
+        "acceptance_run_id": { "type": "string", "minLength": 1 },
+        "git_commit": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+        "git_dirty": { "type": "boolean" },
+        "build_id": { "type": "string", "minLength": 1 },
+        "variant": { "type": "string", "minLength": 1 },
+        "version_code": { "type": "integer", "minimum": 1 },
+        "version_name": { "type": "string", "minLength": 1 },
+        "apk_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runner", "acceptance_run_id", "package_version_code", "package_version_name", "apk_sha256", "started_at", "completed_at", "device_ids_sha256"],
+      "properties": {
+        "runner": { "type": "string", "minLength": 1 },
+        "acceptance_run_id": { "type": "string", "minLength": 1 },
+        "package_version_code": { "type": "integer", "minimum": 1 },
+        "package_version_name": { "type": "string", "minLength": 1 },
+        "apk_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": "string", "format": "date-time" },
+        "device_ids_sha256": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    }
+  }
+}
