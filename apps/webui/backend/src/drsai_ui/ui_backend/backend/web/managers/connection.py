@@ -45,7 +45,7 @@ from ...datamodel import (
 from ...teammanager import TeamManager
 from ...utils.utils import compress_state, decompress_state
 from ..model_resolve import settings_config_from_input_response
-from autogen_agentchat.messages import ThoughtEvent
+from autogen_agentchat.messages import ThoughtEvent, UserInputRequestedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -153,18 +153,10 @@ class WebSocketManager:
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                             },
                         )
-                        await self._send_message(
+                        await self._send_input_request(
                             run_id,
-                            {
-                                "type": "input_request",
-                                "input_type": pending.get("input_type") or "text_input",
-                                "prompt": pending.get("prompt") or "",
-                                "data": {
-                                    "source": "system",
-                                    "content": pending.get("prompt") or "",
-                                },
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            },
+                            prompt=pending.get("prompt") or "",
+                            input_type=pending.get("input_type") or "text_input",
                         )
             except Exception as e:
                 logger.warning(f"Failed to replay input_request for run {run_id}: {e}")
@@ -356,6 +348,9 @@ class WebSocketManager:
                     )
                     break
 
+                if isinstance(message, UserInputRequestedEvent):
+                    continue
+
                 if isinstance(message, CheckpointEvent):
                     run = await self._get_run(run_id)
                     if run:
@@ -497,15 +492,6 @@ class WebSocketManager:
                                 formatted_flush = self._format_message(flush_msg)
                                 if formatted_flush:
                                     await self._send_message(run_id, formatted_flush)
-                                    logger.info(
-                                        f"[CHUNK_FLUSH_SEND] run={run_id} source={source} "
-                                        f"chars={len(text)} before={type(message).__name__}"
-                                    )
-                            else:
-                                logger.info(
-                                    f"[CHUNK_FLUSH_SAVE] run={run_id} source={source} "
-                                    f"chars={len(text)} before=ThoughtEvent keep_buffer"
-                                )
                         if clear_buf:
                             buf[source] = ""
 
@@ -790,23 +776,12 @@ class WebSocketManager:
                 # can be delivered to the user (they will naturally respond).
                 # resume_run is a no-op if not paused.
                 if self._is_paused(run_id):
-                    logger.info(
-                        f"Run {run_id} paused but needs input, auto-resuming"
-                    )
                     await self.resume_run(run_id)
 
-                logger.info(
-                    f"Sending input request for run {run_id}: ({input_type}) {prompt}"
-                )
-                await self._send_message(
+                await self._send_input_request(
                     run_id,
-                    {
-                        "type": "input_request",
-                        "input_type": input_type,
-                        "prompt": prompt,
-                        "data": {"source": "system", "content": prompt},
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    },
+                    prompt=prompt,
+                    input_type=input_type,
                 )
                 # Transition to AWAITING_INPUT
                 await self._update_run_status(run_id, RunStatus.AWAITING_INPUT)
@@ -931,9 +906,6 @@ class WebSocketManager:
                                 metadata={"internal": "yes", "is_save": "yes"},
                             )
                             await self._save_message(run_id, flush_msg)
-                            logger.warning(
-                                f"[CHUNK_FLUSH_STOP] Saved {len(text)} chars from {source} for run {run_id}"
-                            )
                         except Exception as e:
                             pass
 
@@ -1029,9 +1001,6 @@ class WebSocketManager:
                             metadata={"internal": "yes", "is_save": "yes"},
                         )
                         await self._save_message(run_id, flush_msg)
-                        logger.warning(
-                            f"[CHUNK_FLUSH_DISCONNECT] Saved {len(text)} chars from {source} for run {run_id}"
-                        )
                     except Exception as e:
                         pass
 
@@ -1049,6 +1018,23 @@ class WebSocketManager:
         self._run_states.pop(run_id, None)
         self._state_locks.pop(run_id, None)
         self._team_op_locks.pop(run_id, None)
+
+    async def _send_input_request(
+        self,
+        run_id: int,
+        *,
+        prompt: str,
+        input_type: str,
+    ) -> None:
+        """Emit input_request to the frontend."""
+        payload = {
+            "type": "input_request",
+            "input_type": input_type,
+            "prompt": prompt,
+            "data": {"source": "system", "content": prompt},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await self._send_message(run_id, payload)
 
     async def _send_message(self, run_id: int, message: Dict[str, Any]) -> None:
         """Send a message through the WebSocket with connection state checking
@@ -1483,9 +1469,6 @@ class WebSocketManager:
                             metadata={"internal": "yes", "is_save": "yes"},
                         )
                         await self._save_message(run_id, flush_msg)
-                        logger.info(
-                            f"[CHUNK_FLUSH_PAUSE] Saved {len(text)} chars from {source} for run {run_id}"
-                        )
                     except Exception:
                         pass
 

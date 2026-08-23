@@ -44,6 +44,119 @@ def _bump_daily_use(row: UserAgentUsage, now: datetime) -> None:
         row.today_use_day = day_key
         row.today_use_count = 1
 
+
+def _agent_entry_display_name(entry: dict) -> str:
+    """Resolve display name from a stored agent dict (top-level or config.name)."""
+    if not entry:
+        return ""
+    n = entry.get("name")
+    if n is not None and str(n).strip():
+        return str(n).strip()
+    cfg = entry.get("config") or {}
+    n2 = cfg.get("name")
+    return str(n2).strip() if n2 is not None else ""
+
+
+def _remote_agent_url(entry: dict) -> str:
+    """Resolve remote agent base URL from top-level or config fields."""
+    cfg = entry.get("config") if isinstance(entry.get("config"), dict) else {}
+    for key in ("url", "base_url"):
+        for source in (entry, cfg):
+            value = source.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+    return ""
+
+
+def _validate_saved_agent_config(saved_agent_config: dict) -> str:
+    """Validate save payload; return normalized mode or raise HTTP 400."""
+    mode_lc = str(saved_agent_config.get("mode") or "").lower()
+    if mode_lc not in ("remote", "custom"):
+        raise HTTPException(
+            status_code=400,
+            detail="请指定智能体类型（mode 须为 remote 或 custom）。",
+        )
+    if mode_lc == "remote":
+        if not _agent_entry_display_name(saved_agent_config):
+            raise HTTPException(
+                status_code=400,
+                detail="请填写智能体名称后再保存远程连接。",
+            )
+        if not _remote_agent_url(saved_agent_config):
+            raise HTTPException(
+                status_code=400,
+                detail="请填写远程智能体 URL 后再保存。",
+            )
+    else:
+        if not _agent_entry_display_name(saved_agent_config):
+            raise HTTPException(
+                status_code=400,
+                detail="请填写智能体名称后再保存自定义智能体。",
+            )
+        cfg = saved_agent_config.get("config")
+        if not isinstance(cfg, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="自定义智能体缺少有效 config。",
+            )
+        if not isinstance(cfg.get("model_client"), dict):
+            raise HTTPException(
+                status_code=400,
+                detail="自定义智能体缺少 model_client 配置。",
+            )
+    return mode_lc
+
+
+def _same_agent_id(a: str, b: str) -> bool:
+    return str(a or "").strip() == str(b or "").strip()
+
+
+def _iter_agents_user_remote_rows(db: DatabaseManager, user_id: str) -> list[dict]:
+    """All agent dicts from every userremoteagents row (some DBs have multiple rows per user)."""
+    out: list[dict] = []
+    remote_resp = db.get(UserRemoteAgents, filters={"user_id": user_id})
+    if not (remote_resp.status and remote_resp.data):
+        return out
+    for row in remote_resp.data:
+        agents = getattr(row, "agents", None) or (row.get("agents") if isinstance(row, dict) else None) or []
+        out.extend(agents)
+    return out
+
+
+def _add_display_name_keys(
+    agents: list,
+    exclude_agent_id: str,
+    keys: set[str],
+) -> None:
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        aid = str(agent.get("id") or "")
+        if exclude_agent_id and _same_agent_id(aid, exclude_agent_id):
+            continue
+        name = _agent_entry_display_name(agent)
+        if name:
+            keys.add(name.casefold())
+
+
+def _existing_saved_agent_display_name_keys(
+    db: DatabaseManager,
+    user_id: str,
+    exclude_agent_id: str,
+) -> set[str]:
+    """Display names used by defaults, DDF cache, and saved remote/custom agents (for save-time uniqueness)."""
+    keys: set[str] = set()
+    _add_display_name_keys(get_default_agent_mode_config(user_id), exclude_agent_id, keys)
+
+    ddf_resp = db.get(UserDDFAgents, filters={"user_id": user_id})
+    if ddf_resp.status and ddf_resp.data:
+        for ddf_row in ddf_resp.data:
+            _add_display_name_keys(ddf_row.agents or [], exclude_agent_id, keys)
+
+    _add_display_name_keys(_iter_agents_user_remote_rows(db, user_id), exclude_agent_id, keys)
+
+    return keys
+
 # @router.get("/ddf_agents")
 # async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
 
@@ -123,28 +236,25 @@ async def save_remote_agent(
             saved_agent_config.update({"id": str(uuid.uuid4())})
         agent_id = str(saved_agent_config.get("id") or "")
 
-        mode_lc = str(saved_agent_config.get("mode") or "").lower()
-        if mode_lc in ("remote", "custom"):
-            proposed = _agent_entry_display_name(saved_agent_config)
-            if mode_lc == "remote" and not proposed:
-                raise HTTPException(
-                    status_code=400,
-                    detail="请填写智能体名称后再保存远程连接。",
-                )
-            if proposed:
-                taken = _existing_saved_agent_display_name_keys(db, request.user_id, agent_id)
-                if proposed.casefold() in taken:
-                    raise HTTPException(
-                        status_code=409,
-                        detail="该名称与已有智能体重名，请更换名称后再保存。",
-                    )
-                if mode_lc == "remote":
-                    saved_agent_config["name"] = proposed
-                    cfg = saved_agent_config.get("config")
-                    if not isinstance(cfg, dict):
-                        cfg = {}
-                        saved_agent_config["config"] = cfg
-                    cfg["name"] = proposed
+        mode_lc = _validate_saved_agent_config(saved_agent_config)
+        proposed = _agent_entry_display_name(saved_agent_config)
+        taken = _existing_saved_agent_display_name_keys(db, request.user_id, agent_id)
+        if proposed.casefold() in taken:
+            raise HTTPException(
+                status_code=409,
+                detail="该名称与已有智能体重名，请更换名称后再保存。",
+            )
+        saved_agent_config["name"] = proposed
+        cfg = saved_agent_config.get("config")
+        if not isinstance(cfg, dict):
+            cfg = {}
+            saved_agent_config["config"] = cfg
+        cfg["name"] = proposed
+        if mode_lc == "remote":
+            remote_url = _remote_agent_url(saved_agent_config)
+            cfg["url"] = remote_url
+            if not saved_agent_config.get("url"):
+                saved_agent_config["url"] = remote_url
 
         # 获取用户现有的远程智能体配置
         response = db.get(UserRemoteAgents, filters={"user_id": request.user_id})
@@ -231,6 +341,7 @@ async def get_user_agents_route(user_id: str, authorization: str = Header(...), 
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+    
 @router.get("/user_agents/{agent_id}")
 async def get_user_agent_by_id(user_id: str, agent_id: str, db=Depends(get_db)) -> Dict:
     try:

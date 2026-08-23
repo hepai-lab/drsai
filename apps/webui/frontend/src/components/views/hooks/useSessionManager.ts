@@ -5,6 +5,7 @@ import { sessionAPI, agentAPI } from '../api';
 import { useConfigStore } from '../../../hooks/store';
 import { useModeConfigStore } from '../../../store/modeConfig';
 import { useSessionStorage } from './useSessionStorage';
+import { LOCATION_CHANGE_EVENT } from '../../../hooks/useRouter';
 
 interface UseSessionManagerProps {
   userEmail: string | undefined;
@@ -486,7 +487,11 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
     };
 
     window.addEventListener("popstate", handleLocationChange);
-    return () => window.removeEventListener("popstate", handleLocationChange);
+    window.addEventListener(LOCATION_CHANGE_EVENT, handleLocationChange);
+    return () => {
+      window.removeEventListener("popstate", handleLocationChange);
+      window.removeEventListener(LOCATION_CHANGE_EVENT, handleLocationChange);
+    };
   }, [session, setSession]);
 
   return {

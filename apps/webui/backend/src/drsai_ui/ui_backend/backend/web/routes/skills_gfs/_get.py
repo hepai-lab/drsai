@@ -33,11 +33,17 @@ async def get_skill(
 
 async def _get_public(slug: str, request: Request) -> dict:
     from ....datamodel.db import SkillMeta
+    from ..deer_flow import is_higraf_skill_slug
+
     user_id: str | None = None
     try:
         user_id = await _resolve_user_from_apikey(request)
     except HTTPException:
         pass
+
+    if is_higraf_skill_slug(slug):
+        # Higraf skills may exist in SkillMeta for list speed, but body lives on Higraf.
+        return await _get_higraf_public(slug)
 
     db_mgr = await _get_db()
     resp = db_mgr.get(SkillMeta, filters={"slug": slug})
@@ -91,6 +97,8 @@ async def _get_public(slug: str, request: Request) -> dict:
     zip_path = _gfs_zip_path("public", slug)
     text, zip_tmp = _read_skill_md_from_zip(zip_path, cfg)
     if not text:
+        if is_higraf_skill_slug(slug):
+            return await _get_higraf_public(slug)
         raise HTTPException(status_code=404, detail="Skill not found")
     parsed = _parse_skill_md(text)
     if not parsed:
@@ -163,6 +171,58 @@ async def _get_public(slug: str, request: Request) -> dict:
     }
 
 
+async def _get_higraf_public(slug: str) -> dict:
+    import io
+    import zipfile
+
+    from ..deer_flow import download_higraf_skill_bytes, fetch_higraf_skill_detail
+
+    detail = await fetch_higraf_skill_detail(slug)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    body = (detail.get("content") or "").strip()
+    compatibility = None
+    restricted = False
+    if not body:
+        zip_bytes, restricted = await download_higraf_skill_bytes(slug)
+        if zip_bytes:
+            try:
+                with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                    md_bytes = _read_file_from_zip(zf, "SKILL.md")
+                if md_bytes:
+                    parsed = _parse_skill_md(md_bytes.decode("utf-8"))
+                    if parsed:
+                        body = parsed.get("body", "")
+                        compatibility = parsed.get("compatibility")
+            except zipfile.BadZipFile:
+                from ._constants import logger
+                logger.warning("get_skill: invalid Higraf zip for %s", slug)
+
+    return {
+        "status": True,
+        "data": {
+            "slug": slug,
+            "name": detail.get("name") or detail.get("skillName", slug),
+            "description": detail.get("description", ""),
+            "compatibility": compatibility,
+            "icon": detail.get("emoji", "package"),
+            "version": detail.get("version") or detail.get("currentVersion", "1.0.0"),
+            "body": body,
+            "changelog": "",
+            "owner": detail.get("authorName", ""),
+            "profile": "",
+            "category": detail.get("categoryL2", ""),
+            "created_at": detail.get("createdAt", ""),
+            "updated_at": detail.get("updatedAt", ""),
+            "downloads": detail.get("callCount", 0),
+            "source": "higraf",
+            "can_edit": False,
+            "restricted": restricted,
+        },
+    }
+
+
 async def _get_user(request: Request, slug: str, user_id: str) -> dict:
     """Get a single user skill detail, including body (SKILL.md content)."""
     import zipfile
@@ -206,6 +266,19 @@ async def _get_user(request: Request, slug: str, user_id: str) -> dict:
             result["body"] = body
         if getattr(row, "unlisted", False):
             result["unlisted"] = True
+        if result.get("source") == "imported":
+            from ._gfs import (
+                _apply_imported_catalog_fields,
+                _catalog_fields_for_slug,
+                _higraf_catalog_by_slug,
+                _skillmeta_by_slugs,
+            )
+            pub_map = _skillmeta_by_slugs(db_mgr, {slug})
+            _apply_imported_catalog_fields(
+                result,
+                user_id,
+                _catalog_fields_for_slug(slug, pub_map.get(slug), _higraf_catalog_by_slug().get(slug)),
+            )
         return {"status": True, "data": result}
 
     # GFS fallback

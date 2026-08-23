@@ -31,6 +31,7 @@ from fastapi.responses import FileResponse
 from ...datamodel.db import SkillMeta, UserSkillMeta
 from ..config import settings
 from .gfs_utils import gfs_get, gfs_ls, gfs_put, gfs_read_text, gfs_rm
+from .deer_flow import fetch_higraf_skills
 
 router = APIRouter()
 
@@ -485,81 +486,113 @@ async def _list_public(request: Request) -> dict:
     resp = db_mgr.get(SkillMeta, order="asc")
     if resp.status and resp.data:
         items = [_with_can_edit(_public_skillmeta_to_dict(row)) for row in resp.data]
-        return {"status": True, "data": items}
+    else:
+        # GFS fallback
+        cfg = _require_gfs()
+        prefix = _gfs_prefix("public")
+        entries = gfs_ls(prefix, cfg) or []
+        items = []
 
-    # GFS fallback
-    cfg = _require_gfs()
-    prefix = _gfs_prefix("public")
-    entries = gfs_ls(prefix, cfg) or []
-    items = []
+        for entry in entries:
+            if entry.get("is_dir"):
+                continue
+            ename = entry.get("name", "")
+            if not ename.lower().endswith(".zip"):
+                continue
+            slug = ename[:-4]
+            if not _SLUG_RE.match(slug):
+                continue
 
-    for entry in entries:
-        if entry.get("is_dir"):
-            continue
-        ename = entry.get("name", "")
-        if not ename.lower().endswith(".zip"):
-            continue
-        slug = ename[:-4]
-        if not _SLUG_RE.match(slug):
-            continue
+            zip_path = f"{prefix}/{slug}.zip"
+            text, zip_tmp = _read_skill_md_from_zip(zip_path, cfg)
+            parsed = _parse_skill_md(text) if text else None
 
-        zip_path = f"{prefix}/{slug}.zip"
-        text, zip_tmp = _read_skill_md_from_zip(zip_path, cfg)
-        parsed = _parse_skill_md(text) if text else None
+            final_name = parsed["name"] if parsed else slug
+            final_description = parsed.get("description", "") if parsed else ""
+            final_icon = parsed.get("icon", "package") if parsed else "package"
+            final_version = parsed.get("version", "0.0.0") if parsed else "0.0.0"
+            final_owner = ""
+            final_changelog = ""
 
-        final_name = parsed["name"] if parsed else slug
-        final_description = parsed.get("description", "") if parsed else ""
-        final_icon = parsed.get("icon", "package") if parsed else "package"
-        final_version = parsed.get("version", "0.0.0") if parsed else "0.0.0"
-        final_owner = ""
-        final_changelog = ""
-
-        # Check for profile image in GFS
-        final_profile = ""
-        for _ext in _PROFILE_EXT_WHITELIST:
-            _profile_remote = f"{prefix}/{slug}/profile{_ext}"
-            _profile_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=_ext)
-            _profile_tmp.close()
-            if gfs_get(_profile_remote, _profile_tmp.name, cfg, timeout=10):
-                final_profile = f"/api/skills/{slug}/profile"
+            # Check for profile image in GFS
+            final_profile = ""
+            for _ext in _PROFILE_EXT_WHITELIST:
+                _profile_remote = f"{prefix}/{slug}/profile{_ext}"
+                _profile_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=_ext)
+                _profile_tmp.close()
+                if gfs_get(_profile_remote, _profile_tmp.name, cfg, timeout=10):
+                    final_profile = f"/api/skills/{slug}/profile"
+                    try:
+                        os.unlink(_profile_tmp.name)
+                    except OSError:
+                        pass
+                    break
                 try:
                     os.unlink(_profile_tmp.name)
                 except OSError:
                     pass
-                break
+
+            if zip_tmp:
+                _ensure_cache_zip("public", slug, zip_tmp)
+                try:
+                    os.unlink(zip_tmp)
+                except OSError:
+                    pass
+
             try:
-                os.unlink(_profile_tmp.name)
-            except OSError:
-                pass
+                db_mgr.upsert(SkillMeta(
+                    slug=slug, name=final_name, description=final_description,
+                    icon=final_icon, version=final_version,
+                    compatibility=parsed.get("compatibility") if parsed else None,
+                    owner=final_owner, downloads=0,
+                    profile=final_profile or None, changelog=final_changelog,
+                ))
+            except Exception:
+                logger.warning("list_skills: DB backfill failed for %s", slug, exc_info=True)
 
-        if zip_tmp:
-            _ensure_cache_zip("public", slug, zip_tmp)
-            try:
-                os.unlink(zip_tmp)
-            except OSError:
-                pass
-
-        try:
-            db_mgr.upsert(SkillMeta(
-                slug=slug, name=final_name, description=final_description,
-                icon=final_icon, version=final_version,
-                compatibility=parsed.get("compatibility") if parsed else None,
-                owner=final_owner, downloads=0,
-                profile=final_profile or None, changelog=final_changelog,
-            ))
-        except Exception:
-            logger.warning("list_skills: DB backfill failed for %s", slug, exc_info=True)
-
-        items.append(_with_can_edit({
-            "slug": slug, "name": final_name, "description": final_description,
-            "compatibility": parsed.get("compatibility") if parsed else None,
-            "icon": final_icon, "version": final_version, "owner": final_owner,
-            "updated_at": "", "downloads": 0,
-            "profile": final_profile, "changelog": final_changelog,
-            "category": "",
-        }))
+            items.append(_with_can_edit({
+                "slug": slug, "name": final_name, "description": final_description,
+                "compatibility": parsed.get("compatibility") if parsed else None,
+                "icon": final_icon, "version": final_version, "owner": final_owner,
+                "updated_at": "", "downloads": 0,
+                "profile": final_profile, "changelog": final_changelog,
+                "category": "",
+            }))
 
     items.sort(key=lambda x: x.get("name", ""))
+
+    # ── 合并 Higraf 技能广场数据 ──
+    try:
+        higraf_items = await fetch_higraf_skills("public")
+        logger.info("_list_public: fetch_higraf_skills returned %d items", len(higraf_items))
+        seen_slugs = {item["slug"] for item in items if item.get("slug")}
+        merged = 0
+        for h in higraf_items:
+            slug = h.get("skillId") or h.get("id", "")
+            if not slug or slug in seen_slugs:
+                continue
+            seen_slugs.add(slug)
+            merged += 1
+            items.append({
+                "slug": slug,
+                "name": h.get("name") or h.get("skillName", slug),
+                "description": h.get("description", ""),
+                "compatibility": None,
+                "icon": h.get("emoji", "package"),
+                "version": h.get("version") or h.get("currentVersion", "1.0.0"),
+                "owner": h.get("authorName", ""),
+                "updated_at": h.get("updatedAt", ""),
+                "downloads": h.get("callCount", 0),
+                "profile": "",
+                "changelog": "",
+                "category": h.get("categoryL2", ""),
+                "can_edit": False,
+            })
+    except Exception:
+        logger.warning("_list_public: failed to merge Higraf skills", exc_info=True)
+    else:
+        logger.info("_list_public: merged %d Higraf skills (total before=%d, after=%d)", merged, len(items) - merged, len(items))
+
     return {"status": True, "data": items}
 
 
