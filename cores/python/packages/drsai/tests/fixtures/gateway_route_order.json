@@ -415,13 +415,6 @@
     "name": "runtime_security_audit"
   },
   {
-    "path": "/v1/runtime/operation-metrics",
-    "methods": [
-      "GET"
-    ],
-    "name": "runtime_operation_metrics"
-  },
-  {
     "path": "/v1/workspaces",
     "methods": [
       "GET"
@@ -651,13 +644,6 @@
       "POST"
     ],
     "name": "runtime_experiment_candidate_snapshot"
-  },
-  {
-    "path": "/v1/runtime/experiment-cleanup",
-    "methods": [
-      "POST"
-    ],
-    "name": "runtime_experiment_cleanup"
   },
   {
     "path": "/v1/runs/{run_id}/relations",
@@ -1249,41 +1235,6 @@
     "name": "uninstall_skill"
   },
   {
-    "path": "/v1/config/agents-md",
-    "methods": [
-      "GET"
-    ],
-    "name": "get_agents_md"
-  },
-  {
-    "path": "/v1/config/agents-md",
-    "methods": [
-      "PUT"
-    ],
-    "name": "put_agents_md"
-  },
-  {
-    "path": "/v1/config/agents-md/reset",
-    "methods": [
-      "POST"
-    ],
-    "name": "reset_agents_md"
-  },
-  {
-    "path": "/v1/config/user-md",
-    "methods": [
-      "GET"
-    ],
-    "name": "get_user_md"
-  },
-  {
-    "path": "/v1/config/user-md",
-    "methods": [
-      "PUT"
-    ],
-    "name": "put_user_md"
-  },
-  {
     "path": "/v1/config/perceptors",
     "methods": [
       "GET"
@@ -1578,13 +1529,6 @@
     "name": "put_current_agent_config"
   },
   {
-    "path": "/v1/config/agents/{agent_id}/runtime-policy",
-    "methods": [
-      "GET"
-    ],
-    "name": "get_agent_runtime_policy"
-  },
-  {
     "path": "/v1/config/agents/{agent_id}/tools",
     "methods": [
       "GET"
@@ -1737,118 +1681,6 @@
       "POST"
     ],
     "name": "test_model_provider_draft"
-  },
-  {
-    "path": "/v1/cronjobs",
-    "methods": [
-      "GET"
-    ],
-    "name": "list_cron_jobs"
-  },
-  {
-    "path": "/v1/cronjobs",
-    "methods": [
-      "POST"
-    ],
-    "name": "create_cron_job"
-  },
-  {
-    "path": "/v1/cronjobs/{job_id}",
-    "methods": [
-      "DELETE"
-    ],
-    "name": "delete_cron_job"
-  },
-  {
-    "path": "/v1/cronjobs/{job_id}/pause",
-    "methods": [
-      "POST"
-    ],
-    "name": "pause_cron_job"
-  },
-  {
-    "path": "/v1/cronjobs/{job_id}/resume",
-    "methods": [
-      "POST"
-    ],
-    "name": "resume_cron_job"
-  },
-  {
-    "path": "/v1/cronjobs/{job_id}/trigger",
-    "methods": [
-      "POST"
-    ],
-    "name": "trigger_cron_job"
-  },
-  {
-    "path": "/v1/kanban/boards",
-    "methods": [
-      "GET"
-    ],
-    "name": "kanban_list_boards"
-  },
-  {
-    "path": "/v1/kanban/board",
-    "methods": [
-      "GET"
-    ],
-    "name": "kanban_current_board"
-  },
-  {
-    "path": "/v1/kanban/boards",
-    "methods": [
-      "POST"
-    ],
-    "name": "kanban_create_board"
-  },
-  {
-    "path": "/v1/kanban/boards/{slug}",
-    "methods": [
-      "DELETE"
-    ],
-    "name": "kanban_remove_board"
-  },
-  {
-    "path": "/v1/kanban/boards/{slug}/switch",
-    "methods": [
-      "POST"
-    ],
-    "name": "kanban_switch_board"
-  },
-  {
-    "path": "/v1/kanban/tasks",
-    "methods": [
-      "GET"
-    ],
-    "name": "kanban_list_tasks"
-  },
-  {
-    "path": "/v1/kanban/tasks/{task_id}",
-    "methods": [
-      "GET"
-    ],
-    "name": "kanban_get_task"
-  },
-  {
-    "path": "/v1/kanban/tasks",
-    "methods": [
-      "POST"
-    ],
-    "name": "kanban_create_task"
-  },
-  {
-    "path": "/v1/kanban/tasks/{task_id}",
-    "methods": [
-      "PATCH"
-    ],
-    "name": "kanban_update_task"
-  },
-  {
-    "path": "/v1/kanban/tasks/{task_id}/comments",
-    "methods": [
-      "POST"
-    ],
-    "name": "kanban_comment_task"
   },
   {
     "path": "/v1/logs",
