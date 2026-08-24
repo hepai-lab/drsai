@@ -24,6 +24,10 @@ def test_runtime_identity_binds_gateway_process_to_loaded_source(monkeypatch) ->
             location = backend_root / "run_drsai_agent_factory.py"
         elif logical.endswith("/config/model_registry.py"):
             location = backend_root.parent / "config" / "model_registry.py"
+        elif "/backend/gateway/" in logical:
+            # Modules carved out of the monolith. Nested (``routes/logs.py``),
+            # so the suffix is kept whole rather than reduced to a basename.
+            location = backend_root / "gateway" / logical.split("/backend/gateway/", 1)[1]
         elif "/backend/runtime/" in logical:
             location = backend_root / "runtime" / logical.rsplit("/", 1)[-1]
         else:

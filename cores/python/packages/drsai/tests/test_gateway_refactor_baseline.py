@@ -1,8 +1,8 @@
 """Regression baselines guarding the ``gateway_legacy.py`` modular split.
 
 These three snapshots are the safety net for the route-extraction refactor
-described in ``docs/desktop/gateway-modularization-plan.zh-CN.md``. They exist
-to catch the failure modes that the split can introduce *silently* -- ones that
+described in ``apps/desktop/docs/v2/gateway-modularization-plan.zh-CN.md``. They
+exist to catch the failure modes that the split can introduce *silently* -- ones that
 neither the type checker nor the existing suite would surface:
 
 1. :func:`test_openapi_paths_unchanged` -- a dropped, renamed, or reshaped
@@ -17,12 +17,12 @@ neither the type checker nor the existing suite would surface:
    before ``/v1/threads/{thread_id}``; if the split reorders them, ``search`` is
    swallowed as a ``thread_id`` and the endpoint 404s without raising anything.
 
-3. :func:`test_evidence_digest_covers_gateway_package` -- the runtime evidence
-   digest. ``_RUNTIME_EVIDENCE_SOURCE_DIGEST`` fingerprints the gateway sources
-   at import time and is published through ``GET /v1/runtime`` so a Gateway
-   running stale code cannot claim a fresh digest. Every module the split moves
-   out of ``gateway_legacy.py`` must join that list, or the digest quietly stops
-   covering code that is actually serving routes.
+3. The two evidence-digest tests. ``_RUNTIME_EVIDENCE_SOURCE_DIGEST``
+   fingerprints the gateway sources at import time and is published through
+   ``GET /v1/runtime`` so a Gateway running stale code cannot claim a fresh
+   digest. Every module the split moves out of ``gateway_legacy.py`` has to stay
+   both *listed* and *hashed*, or the digest quietly starts vouching for code it
+   never read.
 
 The two fixture files are baselines: a diff against them is the signal that a
 supposedly behaviour-preserving move changed the wire contract. Regenerate them
@@ -32,11 +32,10 @@ green. See ``regenerate_gateway_baselines.py`` next to this file.
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 from typing import Any
-
-import pytest
 
 from drsai.backend import gateway
 
@@ -82,18 +81,26 @@ def openapi_paths() -> dict[str, Any]:
     return gateway.app.openapi()["paths"]
 
 
-def gateway_package_modules() -> set[str]:
-    """Every ``.py`` file under ``backend/gateway/`` that the split has created.
+def route_serving_modules() -> set[Path]:
+    """Resolve every module that actually backs a route on the live app.
 
-    ``__init__`` is excluded: it is pure scaffolding that re-executes the legacy
-    source, and it defines no route or agent behaviour of its own.
+    Derived from the route table rather than from a directory listing. A
+    directory scan would mirror how ``_RUNTIME_EVIDENCE_SOURCE_FILES`` is now
+    built and the assertion would be vacuous; asking the endpoints where they
+    came from instead catches an extraction that lands somewhere the digest
+    never looks.
     """
-    package_root = Path(gateway.__file__).resolve().parent
-    return {
-        path.name
-        for path in package_root.rglob("*.py")
-        if path.name != "__init__.py" and "__pycache__" not in path.parts
-    }
+    modules: set[Path] = set()
+    for route in gateway.app.routes:
+        nested = getattr(route, "original_router", None)
+        candidates = getattr(nested, "routes", ()) if nested is not None else (route,)
+        for candidate in candidates:
+            endpoint = getattr(candidate, "endpoint", None)
+            module = inspect.getmodule(endpoint) if endpoint is not None else None
+            source = getattr(module, "__file__", None)
+            if source:
+                modules.add(Path(source).resolve())
+    return modules
 
 
 def test_openapi_paths_unchanged() -> None:
@@ -152,20 +159,56 @@ def test_literal_paths_precede_their_parameterised_siblings() -> None:
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known gap recorded at P0: the six route modules already extracted into "
-        "backend/gateway/routes/ serve live routes but are absent from "
-        "_RUNTIME_EVIDENCE_SOURCE_FILES, so the digest no longer fingerprints "
-        "all serving code. Fixed in P1 -- remove this marker with that change."
-    ),
-)
-def test_evidence_digest_covers_gateway_package() -> None:
-    """Every module carrying code out of the monolith must stay fingerprinted."""
+def test_evidence_digest_covers_every_extracted_route_module() -> None:
+    """Every module the split carves out must stay inside the fingerprint.
+
+    Scope note: the digest covers the gateway implementation, not every module
+    that happens to serve a route. ``gateway_wechat`` and ``feedback_service``
+    mount their own routers and have always sat outside it; that predates this
+    refactor and is not what this test polices. What it polices is code leaving
+    ``gateway_legacy.py``, which must remain fingerprinted wherever it lands.
+    """
+    package_root = Path(gateway.__file__).resolve().parent
     covered = {Path(logical).name for logical in gateway._RUNTIME_EVIDENCE_SOURCE_FILES}
-    uncovered = sorted(gateway_package_modules() - covered)
+
+    extracted = {
+        module
+        for module in route_serving_modules()
+        if package_root in module.parents or module.parent == package_root
+    }
+    assert extracted, "Expected the gateway package to serve routes; found none."
+
+    uncovered = sorted(module.name for module in extracted if module.name not in covered)
     assert not uncovered, (
-        "These gateway package modules serve code but are not covered by "
-        f"_RUNTIME_EVIDENCE_SOURCE_DIGEST: {uncovered}"
+        "These modules serve routes carved out of gateway_legacy.py but are not "
+        f"covered by _RUNTIME_EVIDENCE_SOURCE_DIGEST: {uncovered}"
+    )
+
+
+def test_evidence_digest_actually_hashes_the_extracted_modules(monkeypatch) -> None:
+    """Listing a file is not the same as hashing it.
+
+    Guards the other half of the contract: that the extracted modules reach the
+    hash, not merely the tuple. Dropping them from the list must move the digest
+    -- if it does not, the digest is vouching for code it never read.
+    """
+    assert gateway._runtime_evidence_source_digest() == gateway._RUNTIME_EVIDENCE_SOURCE_DIGEST, (
+        "Recomputing the digest no longer reproduces the value captured at import "
+        "time; some listed source cannot be resolved or read."
+    )
+
+    without_package = tuple(
+        logical
+        for logical in gateway._RUNTIME_EVIDENCE_SOURCE_FILES
+        if "/backend/gateway/" not in logical
+    )
+    assert len(without_package) < len(gateway._RUNTIME_EVIDENCE_SOURCE_FILES), (
+        "No gateway package modules are listed at all, so this test would prove "
+        "nothing. _gateway_package_source_files() is likely returning empty."
+    )
+
+    monkeypatch.setattr(gateway, "_RUNTIME_EVIDENCE_SOURCE_FILES", without_package)
+    assert gateway._runtime_evidence_source_digest() != gateway._RUNTIME_EVIDENCE_SOURCE_DIGEST, (
+        "Dropping every extracted module left the digest unchanged: the modules "
+        "are listed but their bytes never reach the hash."
     )

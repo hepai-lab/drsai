@@ -4565,6 +4565,44 @@ async def health():
     }
 
 
+_LOGICAL_SOURCE_PREFIX = "cores/python/packages/drsai/src/drsai"
+
+
+def _backend_root() -> Path:
+    """Locate ``backend/`` in both the single-file and package layouts.
+
+    The legacy monolith now lives at ``backend/gateway_legacy.py`` but is
+    executed into the ``backend/gateway`` package namespace during the
+    modular-split scaffolding, so ``__file__`` resolves to
+    ``backend/gateway/__init__.py``: one parent in the original layout, two in
+    the new one.
+    """
+    here = Path(__file__).resolve()
+    return here.parent if here.name == "gateway_legacy.py" else here.parent.parent
+
+
+def _gateway_package_source_files() -> tuple[str, ...]:
+    """Logical paths for every module the modular split has carved out.
+
+    Scanned rather than hard-coded. Each extraction phase adds route modules
+    under ``backend/gateway/``, and a static list would silently stop covering
+    code that is actually serving routes the first time someone forgets to
+    extend it -- leaving the digest able to vouch for a Gateway whose live
+    routes it never fingerprinted.
+    """
+    package_root = _backend_root() / "gateway"
+    if not package_root.is_dir():
+        return ()
+    return tuple(
+        sorted(
+            f"{_LOGICAL_SOURCE_PREFIX}/backend/gateway/"
+            f"{path.relative_to(package_root).as_posix()}"
+            for path in package_root.rglob("*.py")
+            if "__pycache__" not in path.parts
+        )
+    )
+
+
 _RUNTIME_EVIDENCE_SOURCE_FILES = (
     # The legacy monolithic gateway now lives at backend/gateway_legacy.py
     # (renamed during the modular-split scaffolding). The digest entry tracks
@@ -4584,7 +4622,7 @@ _RUNTIME_EVIDENCE_SOURCE_FILES = (
     "cores/python/packages/drsai/src/drsai/backend/runtime/grounded.py",
     "cores/python/packages/drsai/src/drsai/backend/runtime/desktop_autogen_ports.py",
     "cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/drsai_assistant.py",
-)
+) + _gateway_package_source_files()
 
 
 def _runtime_evidence_source_digest() -> str:
@@ -4594,17 +4632,13 @@ def _runtime_evidence_source_digest() -> str:
     Gateway that is still running old code therefore cannot claim the digest
     of newer files written to disk.
     """
-    # The legacy monolith now lives at ``backend/gateway_legacy.py`` but is
-    # executed into the ``backend/gateway`` package namespace during the
-    # modular-split scaffolding, so ``__file__`` resolves to
-    # ``backend/gateway/__init__.py``. Walk up to ``backend/`` in both layouts:
-    # the original single file (one parent) and the new package (two parents).
-    _here = Path(__file__).resolve()
-    backend_root = _here.parent if _here.name == "gateway_legacy.py" else _here.parent.parent
+    backend_root = _backend_root()
     locations = {}
     for logical in _RUNTIME_EVIDENCE_SOURCE_FILES:
         if logical.endswith("/backend/gateway_legacy.py"):
             location = backend_root / "gateway_legacy.py"
+        elif "/backend/gateway/" in logical:
+            location = backend_root / "gateway" / logical.split("/backend/gateway/", 1)[1]
         elif logical.endswith("/backend/run_drsai_agent_factory.py"):
             location = backend_root / "run_drsai_agent_factory.py"
         elif logical.endswith("/config/model_registry.py"):
