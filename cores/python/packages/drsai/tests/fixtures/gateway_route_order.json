@@ -1,0 +1,1979 @@
+[
+  {
+    "path": "/openapi.json",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "openapi"
+  },
+  {
+    "path": "/docs",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "swagger_ui_html"
+  },
+  {
+    "path": "/docs/oauth2-redirect",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "swagger_ui_redirect"
+  },
+  {
+    "path": "/redoc",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "redoc_html"
+  },
+  {
+    "path": "/v1/channels/wechat/status",
+    "methods": [
+      "GET"
+    ],
+    "name": "status"
+  },
+  {
+    "path": "/v1/channels/wechat/login",
+    "methods": [
+      "POST"
+    ],
+    "name": "start_login"
+  },
+  {
+    "path": "/v1/channels/wechat/login/{operation_id}/poll",
+    "methods": [
+      "POST"
+    ],
+    "name": "poll_login"
+  },
+  {
+    "path": "/v1/channels/wechat/login/{operation_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "cancel_login"
+  },
+  {
+    "path": "/v1/channels/wechat/start",
+    "methods": [
+      "POST"
+    ],
+    "name": "start"
+  },
+  {
+    "path": "/v1/channels/wechat/stop",
+    "methods": [
+      "POST"
+    ],
+    "name": "stop"
+  },
+  {
+    "path": "/v1/channels/wechat/credentials",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "logout"
+  },
+  {
+    "path": "/v1/channels/wechat/sessions",
+    "methods": [
+      "GET"
+    ],
+    "name": "sessions"
+  },
+  {
+    "path": "/v1/channels/wechat/sessions/{session_id}/reply-capability",
+    "methods": [
+      "GET"
+    ],
+    "name": "reply_capability"
+  },
+  {
+    "path": "/v1/channels/wechat/sessions/{session_id}/outbound-messages",
+    "methods": [
+      "POST"
+    ],
+    "name": "send_outbound"
+  },
+  {
+    "path": "/v1/feedback",
+    "methods": [
+      "POST"
+    ],
+    "name": "submit"
+  },
+  {
+    "path": "/v1/feedback/{feedback_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_feedback"
+  },
+  {
+    "path": "/v1/feedback",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_feedback"
+  },
+  {
+    "path": "/v1/feedback/{feedback_id}/status",
+    "methods": [
+      "POST"
+    ],
+    "name": "update_status"
+  },
+  {
+    "path": "/v1/feedback/{feedback_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "delete_feedback"
+  },
+  {
+    "path": "/v1/feedback/{feedback_id}/attachments/{kind}",
+    "methods": [
+      "GET"
+    ],
+    "name": "read_attachment"
+  },
+  {
+    "path": "/v1/feedback/{feedback_id}/contact",
+    "methods": [
+      "GET"
+    ],
+    "name": "reveal_contact"
+  },
+  {
+    "path": "/v1/feedback/internal/audit",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_audit"
+  },
+  {
+    "path": "/v1/feedback/internal/worker/status",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_worker_status"
+  },
+  {
+    "path": "/health",
+    "methods": [
+      "GET"
+    ],
+    "name": "health"
+  },
+  {
+    "path": "/v1/runtime",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_identity"
+  },
+  {
+    "path": "/v1/runtime/shutdown",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_shutdown"
+  },
+  {
+    "path": "/v1/capabilities",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_capabilities"
+  },
+  {
+    "path": "/v1/agent-definitions",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_agent_definitions"
+  },
+  {
+    "path": "/v1/mobile-pairing/register",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_mobile_pairing_register"
+  },
+  {
+    "path": "/v1/mobile-pairing/status",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_mobile_pairing_status"
+  },
+  {
+    "path": "/v1/mobile-pairing/diagnostics/workspace-lifecycles",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_mobile_pairing_workspace_lifecycles"
+  },
+  {
+    "path": "/v1/mobile-pairing/diagnostics",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_mobile_pairing_diagnostics"
+  },
+  {
+    "path": "/v1/mobile-pairing/grants",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_mobile_pairing_create"
+  },
+  {
+    "path": "/v1/mobile-pairing/grants/{grant_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_mobile_pairing_read"
+  },
+  {
+    "path": "/v1/mobile-pairing/grants/{grant_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "runtime_mobile_pairing_revoke"
+  },
+  {
+    "path": "/v1/mobile-pairing/associations",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_mobile_pairing_associations"
+  },
+  {
+    "path": "/v1/mobile-pairing/associations/{association_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "runtime_mobile_pairing_revoke_association"
+  },
+  {
+    "path": "/v1/mobile-pairing/enrollment",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "runtime_mobile_pairing_revoke_enrollment"
+  },
+  {
+    "path": "/v1/mobile-pairing/associations/{association_id}",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "runtime_mobile_pairing_shrink_association"
+  },
+  {
+    "path": "/v1/mobile-pairing/enrollment/pause",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_mobile_pairing_pause_enrollment"
+  },
+  {
+    "path": "/v1/mobile-pairing/enrollment/resume",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_mobile_pairing_resume_enrollment"
+  },
+  {
+    "path": "/v1/mobile-pairing/fault-injections/connection-owner-restart",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_mobile_pairing_inject_connection_owner_restart"
+  },
+  {
+    "path": "/v1/agent-backends/{backend_id}/account",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_backend_account_status"
+  },
+  {
+    "path": "/v1/agent-backends/{backend_id}/account/login",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_backend_account_login"
+  },
+  {
+    "path": "/v1/agent-backends/{backend_id}/account/login/cancel",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_backend_account_login_cancel"
+  },
+  {
+    "path": "/v1/agent-backends/{backend_id}/account/logout",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_backend_account_logout"
+  },
+  {
+    "path": "/v1/agent-backends/{backend_id}/models",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_backend_models"
+  },
+  {
+    "path": "/v1/agent-backends/{backend_id}/restart",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_backend_restart"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/agent-backends/{backend_id}/sessions/sync",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_backend_session_sync"
+  },
+  {
+    "path": "/v1/sessions/{session_id}/agent-backend/history/sync",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_backend_session_history_sync"
+  },
+  {
+    "path": "/v1/sessions/{session_id}/agent-backend/binding",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_backend_session_binding_status"
+  },
+  {
+    "path": "/v1/pty",
+    "methods": [],
+    "name": "remote_pty_socket"
+  },
+  {
+    "path": "/v1/remote/handshake",
+    "methods": [
+      "POST"
+    ],
+    "name": "remote_handshake"
+  },
+  {
+    "path": "/v1/workspaces",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_workspace_open"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/display-name",
+    "methods": [
+      "PUT"
+    ],
+    "name": "runtime_workspace_display_name_update"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/permissions",
+    "methods": [
+      "PUT"
+    ],
+    "name": "runtime_workspace_permission_set"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/permissions/me",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_workspace_permission_me"
+  },
+  {
+    "path": "/v1/security/approvals/{approval_id}/decision",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_security_approval_decide"
+  },
+  {
+    "path": "/v1/security/audit",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_security_audit"
+  },
+  {
+    "path": "/v1/runtime/operation-metrics",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_operation_metrics"
+  },
+  {
+    "path": "/v1/workspaces",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_workspace_list"
+  },
+  {
+    "path": "/v1/sessions",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_session_create"
+  },
+  {
+    "path": "/v1/sessions",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_session_list"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/session-catalog-events/stream",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_workspace_session_catalog_event_stream"
+  },
+  {
+    "path": "/v1/sessions/{session_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_session_get"
+  },
+  {
+    "path": "/v1/sessions/{session_id}/conversation",
+    "methods": [
+      "GET"
+    ],
+    "name": "conversation"
+  },
+  {
+    "path": "/v1/sessions/{session_id}/conversation-snapshot",
+    "methods": [
+      "GET"
+    ],
+    "name": "conversation_snapshot"
+  },
+  {
+    "path": "/v1/sessions/{session_id}/events",
+    "methods": [
+      "GET"
+    ],
+    "name": "event_list"
+  },
+  {
+    "path": "/v1/sessions/{session_id}/events/stream",
+    "methods": [
+      "GET"
+    ],
+    "name": "event_stream"
+  },
+  {
+    "path": "/v1/sessions/{session_id}/oaep-snapshot",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_session_oaep_snapshot"
+  },
+  {
+    "path": "/v1/migrations/legacy-desktop-agent-runs",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_legacy_desktop_agent_run_import"
+  },
+  {
+    "path": "/v1/sessions/{session_id}/oaep-events",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_session_oaep_event_list"
+  },
+  {
+    "path": "/v1/sessions/{session_id}/oaep-events/stream",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_session_oaep_event_stream"
+  },
+  {
+    "path": "/v1/sessions/{session_id}",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "runtime_session_update"
+  },
+  {
+    "path": "/v1/sessions/{session_id}/runs",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_run_create"
+  },
+  {
+    "path": "/v1/sessions/{session_id}/runs/by-idempotency/{idempotency_key}",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_idempotency_result"
+  },
+  {
+    "path": "/v1/sessions/{session_id}/runs",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_list"
+  },
+  {
+    "path": "/v1/runs/{run_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_get"
+  },
+  {
+    "path": "/v1/runs/{run_id}/goal",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_goal_get"
+  },
+  {
+    "path": "/v1/runs/{run_id}/goal",
+    "methods": [
+      "PUT"
+    ],
+    "name": "runtime_run_goal_revise"
+  },
+  {
+    "path": "/v1/runs/{run_id}/goal/propose",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_run_goal_propose"
+  },
+  {
+    "path": "/v1/runs/{run_id}/goal/confirm",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_run_goal_confirm"
+  },
+  {
+    "path": "/v1/runs/{run_id}/inspection",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_inspection"
+  },
+  {
+    "path": "/v1/runs/{run_id}/items/{item_id}/locator",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_item_locator"
+  },
+  {
+    "path": "/v1/runs/{run_id}/reproduction-manifest",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_manifest"
+  },
+  {
+    "path": "/v1/runs/{run_id}/reproduction-manifest/export",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_manifest_export"
+  },
+  {
+    "path": "/v1/runs/{run_id}/experiments",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_experiment_create"
+  },
+  {
+    "path": "/v1/experiments/{experiment_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_experiment_get"
+  },
+  {
+    "path": "/v1/experiments/{experiment_id}/export",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_experiment_export"
+  },
+  {
+    "path": "/v1/experiments/{experiment_id}",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "runtime_experiment_update"
+  },
+  {
+    "path": "/v1/experiments/{experiment_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "runtime_experiment_delete"
+  },
+  {
+    "path": "/v1/experiments/{experiment_id}/pin",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_experiment_pin"
+  },
+  {
+    "path": "/v1/experiments/{experiment_id}/candidate-snapshot",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_experiment_candidate_snapshot"
+  },
+  {
+    "path": "/v1/runtime/experiment-cleanup",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_experiment_cleanup"
+  },
+  {
+    "path": "/v1/runs/{run_id}/relations",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_relations"
+  },
+  {
+    "path": "/v1/runs/{run_id}/experiment-capabilities",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_experiment_capabilities"
+  },
+  {
+    "path": "/v1/runs/{run_id}/replay-boundaries",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_replay_boundaries"
+  },
+  {
+    "path": "/v1/experiments/{experiment_id}/plan",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_replay_plan_create"
+  },
+  {
+    "path": "/v1/replay-plans/{replay_plan_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_replay_plan_get"
+  },
+  {
+    "path": "/v1/replay-plans/{replay_plan_id}/execute",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_replay_plan_execute"
+  },
+  {
+    "path": "/v1/run-comparisons",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_run_comparison_create"
+  },
+  {
+    "path": "/v1/run-comparisons/{comparison_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_comparison_get"
+  },
+  {
+    "path": "/v1/run-comparisons/{comparison_id}/evaluations",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_comparison_evaluations_list"
+  },
+  {
+    "path": "/v1/run-comparisons/{comparison_id}/evaluations",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_run_comparison_evaluation_create"
+  },
+  {
+    "path": "/v1/run-comparisons/{comparison_id}/adoption-preview",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_comparison_adoption_preview"
+  },
+  {
+    "path": "/v1/adoptions/{adoption_id}/apply",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_adoption_apply"
+  },
+  {
+    "path": "/v1/adoptions/{adoption_id}/discard",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_adoption_discard"
+  },
+  {
+    "path": "/v1/runs/{run_id}/transition",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_run_transition"
+  },
+  {
+    "path": "/v1/runs/{run_id}/execute",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_run_execute"
+  },
+  {
+    "path": "/v1/runs/{run_id}/cancel",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_run_cancel"
+  },
+  {
+    "path": "/v1/runs/{run_id}/events",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_event_append"
+  },
+  {
+    "path": "/v1/runs/{run_id}/events",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_event_list"
+  },
+  {
+    "path": "/v1/runs/{run_id}/side-effects",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_side_effect_list"
+  },
+  {
+    "path": "/v1/runs/{run_id}/diagnostics",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_run_diagnostics"
+  },
+  {
+    "path": "/v1/runs/{run_id}/approvals",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_approval_request"
+  },
+  {
+    "path": "/v1/approvals/{approval_id}/decision",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_approval_decision"
+  },
+  {
+    "path": "/v1/approvals/{approval_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_approval_read"
+  },
+  {
+    "path": "/v1/approvals",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_approval_list"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/approvals",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_workspace_approval_list"
+  },
+  {
+    "path": "/v1/runs/{run_id}/approvals/{approval_id}/decision",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_backend_approval_decision"
+  },
+  {
+    "path": "/v1/runs/{run_id}/checkpoint",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_checkpoint_save"
+  },
+  {
+    "path": "/v1/runs/{run_id}/checkpoint",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_checkpoint_latest"
+  },
+  {
+    "path": "/v1/workspaces/open",
+    "methods": [
+      "POST"
+    ],
+    "name": "remote_workspace_open"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "remote_workspace_info"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "runtime_workspace_close"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/remove",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_workspace_remove"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/context",
+    "methods": [
+      "GET"
+    ],
+    "name": "remote_workspace_context"
+  },
+  {
+    "path": "/v1/owop",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_owop_execute"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/worktrees",
+    "methods": [
+      "POST"
+    ],
+    "name": "remote_workspace_worktree_create"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/worktrees/adopt",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_worktree_adopt"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/worktrees",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_worktree_list"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/events",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_workspace_events"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/worktrees/prune",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_worktree_prune"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/worktrees/{worktree_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_worktree_describe"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/worktrees/{worktree_id}/merge",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_worktree_merge"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/worktrees/{worktree_id}/archive",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_worktree_archive"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/worktrees/{worktree_id}/adoption-preview",
+    "methods": [
+      "GET"
+    ],
+    "name": "runtime_worktree_adoption_preview"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/worktrees/{worktree_id}/adoption-apply",
+    "methods": [
+      "POST"
+    ],
+    "name": "runtime_worktree_adoption_apply"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/worktrees/{worktree_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "runtime_worktree_remove"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/directories",
+    "methods": [
+      "GET"
+    ],
+    "name": "remote_workspace_directories"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/files",
+    "methods": [
+      "GET"
+    ],
+    "name": "remote_workspace_files"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/file",
+    "methods": [
+      "GET"
+    ],
+    "name": "remote_workspace_file"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/file/stream",
+    "methods": [
+      "GET"
+    ],
+    "name": "remote_workspace_file_stream"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/file",
+    "methods": [
+      "PUT"
+    ],
+    "name": "remote_workspace_file_write"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/watch",
+    "methods": [],
+    "name": "remote_workspace_watch"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/folder-summary",
+    "methods": [
+      "GET"
+    ],
+    "name": "remote_workspace_folder_summary"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/git/file-at-ref",
+    "methods": [
+      "GET"
+    ],
+    "name": "remote_workspace_git_file_at_ref"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/git/status",
+    "methods": [
+      "GET"
+    ],
+    "name": "remote_workspace_git_status"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/git/diff",
+    "methods": [
+      "GET"
+    ],
+    "name": "remote_workspace_git_diff"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/checkpoints",
+    "methods": [
+      "GET"
+    ],
+    "name": "remote_workspace_checkpoints"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/checkpoints",
+    "methods": [
+      "POST"
+    ],
+    "name": "remote_workspace_checkpoint_create"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/checkpoints/preview",
+    "methods": [
+      "POST"
+    ],
+    "name": "remote_workspace_checkpoint_preview"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/checkpoints/restore",
+    "methods": [
+      "POST"
+    ],
+    "name": "remote_workspace_checkpoint_restore"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/checkpoints/accept",
+    "methods": [
+      "POST"
+    ],
+    "name": "remote_workspace_checkpoint_accept"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/git/stage",
+    "methods": [
+      "POST"
+    ],
+    "name": "remote_workspace_git_stage"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/git/unstage",
+    "methods": [
+      "POST"
+    ],
+    "name": "remote_workspace_git_unstage"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/git/commit",
+    "methods": [
+      "POST"
+    ],
+    "name": "remote_workspace_git_commit"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/git/push",
+    "methods": [
+      "POST"
+    ],
+    "name": "remote_workspace_git_push"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/git/revert",
+    "methods": [
+      "POST"
+    ],
+    "name": "remote_workspace_git_revert"
+  },
+  {
+    "path": "/v1/workspaces/{workspace_id}/git/{operation}-hunk",
+    "methods": [
+      "POST"
+    ],
+    "name": "remote_workspace_git_hunk"
+  },
+  {
+    "path": "/v1/models",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_models"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/realtime-voice-probe",
+    "methods": [
+      "POST"
+    ],
+    "name": "probe_agent_realtime_voice"
+  },
+  {
+    "path": "/v1/audio/duplex",
+    "methods": [],
+    "name": "audio_duplex_stream"
+  },
+  {
+    "path": "/v1/audio/transcriptions/stream",
+    "methods": [],
+    "name": "audio_transcriptions_stream"
+  },
+  {
+    "path": "/v1/audio/transcriptions",
+    "methods": [
+      "POST"
+    ],
+    "name": "audio_transcriptions"
+  },
+  {
+    "path": "/v1/audio/speech",
+    "methods": [
+      "POST"
+    ],
+    "name": "audio_speech"
+  },
+  {
+    "path": "/v1/config/model-catalog",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_model_catalog"
+  },
+  {
+    "path": "/v1/models/config",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_model_configs"
+  },
+  {
+    "path": "/v1/models/config/{alias}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_model_config"
+  },
+  {
+    "path": "/v1/models/config",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_model_config"
+  },
+  {
+    "path": "/v1/models/config/{alias}",
+    "methods": [
+      "PUT"
+    ],
+    "name": "update_model_config"
+  },
+  {
+    "path": "/v1/models/config/{alias}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "delete_model_config"
+  },
+  {
+    "path": "/v1/models/config/default/{alias}",
+    "methods": [
+      "PUT"
+    ],
+    "name": "set_default_model_config"
+  },
+  {
+    "path": "/v1/chat/completions",
+    "methods": [
+      "POST"
+    ],
+    "name": "chat_completions"
+  },
+  {
+    "path": "/v1/skills",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_skills"
+  },
+  {
+    "path": "/v1/skills/available",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_available_skills"
+  },
+  {
+    "path": "/v1/skills/{skill_path:path}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_skill_content"
+  },
+  {
+    "path": "/v1/skills/install",
+    "methods": [
+      "POST"
+    ],
+    "name": "install_skill"
+  },
+  {
+    "path": "/v1/skills/{skill_name}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "uninstall_skill"
+  },
+  {
+    "path": "/v1/config/agents-md",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_agents_md"
+  },
+  {
+    "path": "/v1/config/agents-md",
+    "methods": [
+      "PUT"
+    ],
+    "name": "put_agents_md"
+  },
+  {
+    "path": "/v1/config/agents-md/reset",
+    "methods": [
+      "POST"
+    ],
+    "name": "reset_agents_md"
+  },
+  {
+    "path": "/v1/config/user-md",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_user_md"
+  },
+  {
+    "path": "/v1/config/user-md",
+    "methods": [
+      "PUT"
+    ],
+    "name": "put_user_md"
+  },
+  {
+    "path": "/v1/config/perceptors",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_perceptors"
+  },
+  {
+    "path": "/v1/config/perceptors/web-search/provider-policy",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_web_search_provider_policy"
+  },
+  {
+    "path": "/v1/config/perceptors/web-search/provider-policy",
+    "methods": [
+      "PUT"
+    ],
+    "name": "update_web_search_provider_policy"
+  },
+  {
+    "path": "/v1/config/perceptors",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_perceptor"
+  },
+  {
+    "path": "/v1/config/perceptors/{perceptor_id}",
+    "methods": [
+      "PUT"
+    ],
+    "name": "update_perceptor"
+  },
+  {
+    "path": "/v1/config/perceptors/{perceptor_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "delete_perceptor"
+  },
+  {
+    "path": "/v1/config/perceptors/{perceptor_id}/test",
+    "methods": [
+      "POST"
+    ],
+    "name": "test_perceptor"
+  },
+  {
+    "path": "/v1/config/tools",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_tools"
+  },
+  {
+    "path": "/v1/config/tools/{tool_id}/capabilities",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_tool_capabilities"
+  },
+  {
+    "path": "/v1/config/tools/{tool_id}/test",
+    "methods": [
+      "POST"
+    ],
+    "name": "test_tool_connection"
+  },
+  {
+    "path": "/v1/config/tools",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_tool"
+  },
+  {
+    "path": "/v1/config/tools/{tool_id}",
+    "methods": [
+      "PUT"
+    ],
+    "name": "update_tool"
+  },
+  {
+    "path": "/v1/config/tools/{tool_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "delete_tool"
+  },
+  {
+    "path": "/v1/config/knowledge-bases",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_knowledge_bases"
+  },
+  {
+    "path": "/v1/config/knowledge-bases",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_knowledge_base"
+  },
+  {
+    "path": "/v1/config/knowledge-bases/{knowledge_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_knowledge_base"
+  },
+  {
+    "path": "/v1/config/knowledge-bases/{knowledge_id}",
+    "methods": [
+      "PUT"
+    ],
+    "name": "update_knowledge_base"
+  },
+  {
+    "path": "/v1/config/knowledge-bases/{knowledge_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "delete_knowledge_base"
+  },
+  {
+    "path": "/v1/config/knowledge-bases/{knowledge_id}/status",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_knowledge_base_status"
+  },
+  {
+    "path": "/v1/config/knowledge-bases/{knowledge_id}/test",
+    "methods": [
+      "POST"
+    ],
+    "name": "test_knowledge_base"
+  },
+  {
+    "path": "/v1/config/knowledge-bases/{knowledge_id}/index",
+    "methods": [
+      "POST"
+    ],
+    "name": "index_knowledge_base"
+  },
+  {
+    "path": "/v1/config/knowledge-bases/{knowledge_id}/search-preview",
+    "methods": [
+      "POST"
+    ],
+    "name": "search_knowledge_base"
+  },
+  {
+    "path": "/v1/memory",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_memory"
+  },
+  {
+    "path": "/v1/memory/entries",
+    "methods": [
+      "POST"
+    ],
+    "name": "add_memory_entry"
+  },
+  {
+    "path": "/v1/memory/entries/{index}",
+    "methods": [
+      "PUT"
+    ],
+    "name": "update_memory_entry"
+  },
+  {
+    "path": "/v1/memory/entries/{index}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "delete_memory_entry"
+  },
+  {
+    "path": "/v1/memory/limits",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_memory_limits"
+  },
+  {
+    "path": "/v1/config/user-name",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_user_name"
+  },
+  {
+    "path": "/v1/config/user-name",
+    "methods": [
+      "PUT"
+    ],
+    "name": "set_user_name"
+  },
+  {
+    "path": "/v1/identity/canonicalize",
+    "methods": [
+      "POST"
+    ],
+    "name": "canonicalize_identity"
+  },
+  {
+    "path": "/v1/config/model",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_active_model_config"
+  },
+  {
+    "path": "/v1/config/model-state",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_model_config_state"
+  },
+  {
+    "path": "/v1/config/model/doctor",
+    "methods": [
+      "POST"
+    ],
+    "name": "doctor_model_config"
+  },
+  {
+    "path": "/v1/config/model/restore",
+    "methods": [
+      "POST"
+    ],
+    "name": "restore_model_config"
+  },
+  {
+    "path": "/v1/config/model",
+    "methods": [
+      "PUT"
+    ],
+    "name": "set_active_model_config"
+  },
+  {
+    "path": "/v1/config/model/preview",
+    "methods": [
+      "POST"
+    ],
+    "name": "preview_active_model_config"
+  },
+  {
+    "path": "/v1/config/model-providers",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_model_provider_configs"
+  },
+  {
+    "path": "/v1/config/model-providers/presets",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_model_provider_presets"
+  },
+  {
+    "path": "/v1/config/runtime-models",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_runtime_model_catalog"
+  },
+  {
+    "path": "/v1/config/agents",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_configured_agents"
+  },
+  {
+    "path": "/v1/config/agents/current",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_current_agent_config"
+  },
+  {
+    "path": "/v1/config/agents/current",
+    "methods": [
+      "PUT"
+    ],
+    "name": "put_current_agent_config"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/runtime-policy",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_agent_runtime_policy"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/tools",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_agent_tool_policy"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/tools/preview",
+    "methods": [
+      "POST"
+    ],
+    "name": "preview_agent_tools"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/tools",
+    "methods": [
+      "PUT"
+    ],
+    "name": "put_agent_tool_policy"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/skills",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_agent_skill_policy"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/skills",
+    "methods": [
+      "PUT"
+    ],
+    "name": "put_agent_skill_policy"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/skills/preview",
+    "methods": [
+      "POST"
+    ],
+    "name": "preview_agent_skills"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/skills/reload",
+    "methods": [
+      "POST"
+    ],
+    "name": "reload_agent_skills"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/knowledge",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_agent_knowledge_policy"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/knowledge",
+    "methods": [
+      "PUT"
+    ],
+    "name": "put_agent_knowledge_policy"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/knowledge/preview",
+    "methods": [
+      "POST"
+    ],
+    "name": "preview_agent_knowledge"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/models",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_agent_model_policy"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/models",
+    "methods": [
+      "PUT"
+    ],
+    "name": "put_agent_model_policy"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/models/migrate",
+    "methods": [
+      "POST"
+    ],
+    "name": "migrate_legacy_agent_model_policy"
+  },
+  {
+    "path": "/v1/config/model-providers/models",
+    "methods": [
+      "POST"
+    ],
+    "name": "discover_model_provider_models"
+  },
+  {
+    "path": "/v1/config/model-providers/{name}",
+    "methods": [
+      "PUT"
+    ],
+    "name": "put_model_provider_config"
+  },
+  {
+    "path": "/v1/config/model-providers/{name}/references",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_model_provider_references"
+  },
+  {
+    "path": "/v1/config/model-providers/{name}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "remove_model_provider_config"
+  },
+  {
+    "path": "/v1/config/model-providers/{name}/test",
+    "methods": [
+      "POST"
+    ],
+    "name": "test_model_provider_config"
+  },
+  {
+    "path": "/v1/config/model-providers/{name}/capability-probes",
+    "methods": [
+      "POST"
+    ],
+    "name": "probe_model_provider_capability"
+  },
+  {
+    "path": "/v1/config/model-providers/{name}/capability-probes/{probe_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_model_provider_capability_probe"
+  },
+  {
+    "path": "/v1/config/agents/{agent_id}/model-capability-status",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_agent_model_capability_status"
+  },
+  {
+    "path": "/v1/config/model-providers/test",
+    "methods": [
+      "POST"
+    ],
+    "name": "test_model_provider_draft"
+  },
+  {
+    "path": "/v1/cronjobs",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_cron_jobs"
+  },
+  {
+    "path": "/v1/cronjobs",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_cron_job"
+  },
+  {
+    "path": "/v1/cronjobs/{job_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "delete_cron_job"
+  },
+  {
+    "path": "/v1/cronjobs/{job_id}/pause",
+    "methods": [
+      "POST"
+    ],
+    "name": "pause_cron_job"
+  },
+  {
+    "path": "/v1/cronjobs/{job_id}/resume",
+    "methods": [
+      "POST"
+    ],
+    "name": "resume_cron_job"
+  },
+  {
+    "path": "/v1/cronjobs/{job_id}/trigger",
+    "methods": [
+      "POST"
+    ],
+    "name": "trigger_cron_job"
+  },
+  {
+    "path": "/v1/kanban/boards",
+    "methods": [
+      "GET"
+    ],
+    "name": "kanban_list_boards"
+  },
+  {
+    "path": "/v1/kanban/board",
+    "methods": [
+      "GET"
+    ],
+    "name": "kanban_current_board"
+  },
+  {
+    "path": "/v1/kanban/boards",
+    "methods": [
+      "POST"
+    ],
+    "name": "kanban_create_board"
+  },
+  {
+    "path": "/v1/kanban/boards/{slug}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "kanban_remove_board"
+  },
+  {
+    "path": "/v1/kanban/boards/{slug}/switch",
+    "methods": [
+      "POST"
+    ],
+    "name": "kanban_switch_board"
+  },
+  {
+    "path": "/v1/kanban/tasks",
+    "methods": [
+      "GET"
+    ],
+    "name": "kanban_list_tasks"
+  },
+  {
+    "path": "/v1/kanban/tasks/{task_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "kanban_get_task"
+  },
+  {
+    "path": "/v1/kanban/tasks",
+    "methods": [
+      "POST"
+    ],
+    "name": "kanban_create_task"
+  },
+  {
+    "path": "/v1/kanban/tasks/{task_id}",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "kanban_update_task"
+  },
+  {
+    "path": "/v1/kanban/tasks/{task_id}/comments",
+    "methods": [
+      "POST"
+    ],
+    "name": "kanban_comment_task"
+  },
+  {
+    "path": "/v1/logs",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_logs"
+  },
+  {
+    "path": "/v1/logs/list",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_log_files"
+  },
+  {
+    "path": "/v1/config/platforms",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_platforms"
+  },
+  {
+    "path": "/v1/config/platforms/{name}",
+    "methods": [
+      "PUT"
+    ],
+    "name": "set_platform"
+  },
+  {
+    "path": "/v1/config/env",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_env"
+  },
+  {
+    "path": "/v1/config/env/{key}",
+    "methods": [
+      "PUT"
+    ],
+    "name": "set_env_value"
+  },
+  {
+    "path": "/v1/config/env/{key}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "delete_env_value"
+  },
+  {
+    "path": "/v1/config/cli",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_cli_config"
+  },
+  {
+    "path": "/v1/config/cli/{key}",
+    "methods": [
+      "PUT"
+    ],
+    "name": "set_cli_config"
+  },
+  {
+    "path": "/v1/hepai/workers",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_hepai_workers"
+  },
+  {
+    "path": "/v1/hepai/workers/{worker_id}/state",
+    "methods": [
+      "PUT"
+    ],
+    "name": "set_hepai_worker_state"
+  },
+  {
+    "path": "/v1/threads",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_threads"
+  },
+  {
+    "path": "/v1/threads/search",
+    "methods": [
+      "GET"
+    ],
+    "name": "search_threads"
+  },
+  {
+    "path": "/v1/threads/{thread_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_thread"
+  },
+  {
+    "path": "/v1/threads/{thread_id}/pause",
+    "methods": [
+      "POST"
+    ],
+    "name": "pause_thread"
+  },
+  {
+    "path": "/v1/threads/{thread_id}/resume",
+    "methods": [
+      "POST"
+    ],
+    "name": "resume_thread"
+  },
+  {
+    "path": "/v1/threads/{thread_id}/stop",
+    "methods": [
+      "POST"
+    ],
+    "name": "stop_thread"
+  },
+  {
+    "path": "/v1/threads/{thread_id}/rename",
+    "methods": [
+      "POST"
+    ],
+    "name": "rename_thread"
+  }
+]
