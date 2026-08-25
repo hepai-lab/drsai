@@ -16,6 +16,8 @@
     "typecheck:windows": "npm run typecheck --workspace opendrsai-windows-desktop",
     "verify:windows": "npm run verify --workspace opendrsai-windows-desktop",
     "verify:macos": "npm run verify --workspace opendrsai-macos-desktop",
-    "verify:architecture": "node shared/test-kit/verify-architecture-boundaries.mjs && node --experimental-strip-types shared/test-kit/verify-platform-contract.mjs"
+    "verify:architecture": "node shared/test-kit/verify-architecture-boundaries.mjs && node --experimental-strip-types shared/test-kit/verify-platform-contract.mjs",
+    "verify:desktop-surface": "node shared/test-kit/run-typescript-test.mjs shared/test-kit/verify-desktop-surface.mts",
+    "dev:workbench": "npm run dev:workbench --workspace opendrsai-windows-desktop"
   }
 }
