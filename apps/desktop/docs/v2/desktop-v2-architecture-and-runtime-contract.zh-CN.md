@@ -1,8 +1,9 @@
 # Desktop V2 重构：架构框架与 Runtime v1 接口契约
 
 - 分支：`feature/desktop-v2`（自 `feature/desktop` 切出）
-- 状态：设计冻结候选，待评审
-- 日期：2026-08-24
+- 状态：范围已确认，M0 进行中
+- 日期：2026-08-25
+- 相关：[gateway 冻结与退役方案](gateway-freeze-and-retirement.zh-CN.md)
 
 ---
 
@@ -12,7 +13,7 @@
 
 | 层 | 规模 |
 |---|---|
-| `cores/python/.../backend/gateway.py` | 14,210 行，**257 个 HTTP 路由** |
+| `backend/gateway.py`（现 `gateway_legacy.py`） | 14,210 行，**257 个 HTTP 路由**<br>删除死路由后为 13,083 行 / 211 条 |
 | `RuntimeClient` 接口（`apps/desktop/shared/main/runtimeClient.ts:439`） | **约 90 个方法** |
 | Electron 主进程 IPC（`apps/desktop/windows/src/main/index.ts`） | **432 个 channel**，7,229 行 |
 | 渲染层门面 `apps/desktop/shared/api/desktopApi.ts` | 6,209 行，452 个方法 |
@@ -50,15 +51,38 @@
 | 3.4 | 语音 | STT + TTS，能力位门控 |
 | 4.1 | 右侧栏文件预览 | |
 
-### 2.2 非目标（本阶段明确不做）
+### 2.2 保留的能力组与端点收敛
 
-- 联网搜索 / Tavily（协议上以 `tool_call` 承载，v1 不接入）
-- run 实验、replay、run 对比、adoption（现有 `/v1/experiments`、`/v1/replay-plans`、`/v1/run-comparisons` 全部不迁移）
-- 移动端配对、Relay 远程接入（`/v1/mobile-pairing/*` 不迁移）
-- worktree / git 操作面板
+除上表的界面功能外，以下 10 项后端能力需在 V2 中继续可用。它们覆盖现有网关 151/211 条路由，收敛为 **41 个端点**：
+
+| # | 能力组 | 现有路由 | V2 端点 | 契约分组 | 收敛掉的内容 |
+|---|---|---|---|---|---|
+| 1 | 鉴权 | 10 | 4 | A | 细粒度授权审计、remote handshake |
+| 2 | 配置持久化 | 19 | 4 | F | agents/tools/env/cli/platforms 各自的 CRUD |
+| 3 | 运行时 | 28 | 6 | B | goal propose/confirm、diagnostics、side-effects |
+| 4 | 模型切换 | 23 | 2 | E | provider CRUD、能力探针、doctor、两套别名系统 |
+| 5 | 工作区 | 38 | 5 | D | git 9 + worktrees 8 + checkpoints 4 + watch/permissions |
+| 6 | session | 20 | 7 | C | legacy conversation 双路径、backend 绑定同步 |
+| 7 | skills | 8 | 3 | G | preview/reload |
+| 8 | 语音输入 | 2 | 1 | I | 实时 WS 双工 |
+| 9 | gfs | **0** | 9 | H | 见下 |
+| 10 | 网络检索 | 4 | **0** | — | 表达为 `tool_call`，不需要端点 |
+| | **合计** | **151** | **41** | | |
+
+**保留能力 ≠ 保留路由。** 差额来自现有网关的分层冗余：两套模型别名系统（`/v1/models/config*` 在代码中已标 `deprecated=True`）、provider 配置的完整管理面、git/worktree/checkpoint 操作面、threads 与 sessions 双套会话路径。
+
+> **gfs 是新工作，不是保留。** `backend/gfs_api.py` 定义了 9 条路由但当前网关从未挂载，live app 的 OpenAPI 中 gfs 为 0 条。实际在用的是 `apps/webui`，走 API key 直连外部服务。V2 接入需从零验证鉴权传递与 personal mode 判定。
+
+### 2.3 非目标（本阶段明确不做）
+
+- run 实验、replay、run 对比、adoption（`/v1/experiments`、`/v1/replay-plans`、`/v1/run-comparisons`）
+- 移动端配对、Relay 远程接入（`/v1/mobile-pairing/*`）
+- worktree / git 操作面板、checkpoint
 - PTY / 终端
-- 知识库、Skills 管理、Kanban、Cronjob、WeChat/Zulip 通道
+- 知识库端点（`/v1/config/knowledge-bases/*`）—— **实现完整保留**在 `backend/runtime/`（分块、sqlite-vec 向量检索、embedding provider 接口），仅暂不暴露端点
+- Kanban、Cronjob、WeChat 通道、feedback、memory
 - model provider 配置、能力探针、模型迁移
+- 实时双工语音（`/v1/audio/transcriptions/stream`、`/v1/audio/duplex`）
 - 多 Agent 定义选择 UI（后端保留 adapter seam，前端 v1 固定单一 Agent）
 
 **非目标不等于永远不做。判定标准是：它能否在不改 Runtime v1 契约的前提下后加。** 见 §9 扩展点。
@@ -74,14 +98,14 @@
 │  Renderer（唯一的业务层）                                  │
 │    features/  auth · sidebar · chat · workspace · preview  │
 │    store/     snapshot + event reducer（单一事实来源）      │
-│    runtime/   RuntimeClient：22 个方法，与 HTTP 端点 1:1    │
+│    runtime/   RuntimeClient：41 个方法，与端点 1:1    │
 └──────────────┬──────────────────────┬─────────────────────┘
                │ HTTP + SSE           │ IPC（≤15 channel）
                │ （业务全部走这里）    │ （仅 native 能力）
                ▼                      ▼
 ┌──────────────────────────┐  ┌──────────────────────────────┐
 │  DrSai Runtime (Python)  │  │  Electron Main               │
-│    22 个 v1 端点         │  │   窗口/托盘、OIDC 交互登录、 │
+│    41 个 v1 端点         │  │   窗口/托盘、OIDC 交互登录、 │
 │    OAEP 事件流           │  │   文件对话框、runtime 进程   │
 │    Agent Kernel          │  │   生命周期、自动更新         │
 │      └ DrSaiAssistant    │  │   （不含任何业务逻辑）       │
@@ -112,7 +136,7 @@
 
 **隔离（新代码不得依赖）：**
 
-- 不 `import` `backend/gateway.py`（会把 257 个路由顺着依赖链拖回来）
+- 不 `import` `backend/gateway_legacy.py`（会把 211 条路由顺着依赖链拖回来）。该模块已冻结，见[退役方案](gateway-freeze-and-retirement.zh-CN.md)
 - 不复用 `apps/desktop/shared/main/*`、`apps/desktop/shared/api/desktopApi.ts`
 - 不复用 `apps/desktop/windows/src/main/index.ts`
 
@@ -153,191 +177,153 @@ Runtime 保证 `GET /v1/workspaces` 至少返回一个默认工作区（`$DRSAI_
 
 ## 5. Runtime v1 接口契约
 
-**共 22 个端点。核心 20 个 + 语音 2 个（能力位门控）。**
+**共 41 个端点。** 分组字母对应 §2.2 表的「契约分组」列。
 
 约定：
 
 - 全部 `Content-Type: application/json`，除上传（multipart）与音频。
-- 认证：`Authorization: Bearer <runtime_token>`（`/v1/runtime`、`/v1/auth/session` 除外）。
+- 认证：`Authorization: Bearer <runtime_token>`（`A1`、`B1` 除外）。
 - 所有失败响应遵循 §7 错误契约。
+- 能力位门控的端点，前端必须依据 `B2` 的返回降级，不得用版本号硬编码判断。
 
-### A. 运行时与身份（4）
+### A. 鉴权（4）— 能力组 1
 
-#### A1 `GET /v1/runtime`
+交互式 OIDC 由 Electron 主进程完成（授权码 + PKCE 或设备码），Runtime 只接收 `id_token`，用 JWKS 验签后取 `sub` 作 `user_id`，签发自己的不透明 token。**HepAI 的 access_token 不进入 Runtime**（沿用现有安全边界）。
 
-无需认证。用于启动握手与版本协商。
+| | 端点 | 说明 |
+|---|---|---|
+| A1 | `POST /v1/auth/session` | 无需认证。`{id_token}` → `{runtime_token, expires_at, user:{user_id, display_name, email, avatar_url}}` |
+| A2 | `GET /v1/auth/me` | 当前身份（手稿 2.4 个人信息） |
+| A3 | `POST /v1/auth/refresh` | 续期，返回新 `runtime_token` |
+| A4 | `POST /v1/auth/logout` | 吊销当前 token |
 
-```json
-{
-  "runtime_id": "rt_xxx",
-  "instance_id": "inst_xxx",
-  "version": "2.0.0",
-  "protocol_version": "drsai-desktop/1",
-  "oaep_version": "1.0",
-  "oaep_profile": "oaep.session-stream/1"
-}
-```
+> `user_id` 从第一条 commit 起就是 Session / Workspace 表的一等主键，见 §4.1 决定 2。
 
-> Desktop 与 Runtime 独立发版，`protocol_version` 不匹配时 UI 必须给出"请更新"而不是白屏。
+### B. 运行时与运行（6）— 能力组 3
 
-#### A2 `GET /v1/capabilities`
+| | 端点 | 说明 |
+|---|---|---|
+| B1 | `GET /v1/runtime` | 无需认证。`{runtime_id, instance_id, version, protocol_version:"drsai-desktop/1", oaep_version:"1.0", oaep_profile}`。版本不匹配时 UI 必须提示更新而非白屏 |
+| B2 | `GET /v1/capabilities` | `{capabilities:[...], item_types:[...]}`，前端降级依据 |
+| B3 | `POST /v1/sessions/{session_id}/runs` | **202** `{run_id, status:"queued"}`，见下 |
+| B4 | `GET /v1/runs/{run_id}` | 运行状态（手稿 3.3） |
+| B5 | `POST /v1/runs/{run_id}/cancel` | → `{run_id, status:"cancelled"}` |
+| B6 | `POST /v1/runs/{run_id}/interactions/{item_id}` | `{response}` → `204`。v1 只保留端点与 `waiting` 状态，不做 UI |
 
-```json
-{
-  "capabilities": ["chat.stream", "workspace.files", "workspace.preview",
-                   "models.select", "audio.stt", "audio.tts"],
-  "item_types": ["message", "reasoning", "tool_call", "artifact", "notice"]
-}
-```
-
-> 前端所有可选功能（尤其 3.4 语音）以此降级，**不得用版本号硬编码判断**。
-
-#### A3 `POST /v1/auth/session`
-
-无需认证。交互式 OIDC 由 Electron 主进程完成（授权码 + PKCE 或设备码），Runtime 只接收 `id_token`。
-
-```jsonc
-// 请求
-{ "id_token": "eyJ..." }
-
-// 响应
-{
-  "runtime_token": "...",
-  "expires_at": "2026-08-24T12:00:00Z",
-  "user": { "user_id": "sub", "display_name": "...", "email": "..." }
-}
-```
-
-> **HepAI 的 access_token 不进入 Runtime**（沿用现有安全边界）。Runtime 用 JWKS 验签，取 `sub` 作 `user_id`，签发自己的不透明 token。
-
-#### A4 `GET /v1/auth/me`
-
-→ `{ "user_id", "display_name", "email", "avatar_url" }`（对应手稿 2.4）
-
-### B. 工作区（2）
-
-#### B1 `GET /v1/workspaces`
-
-→ `{ "items": [ { "workspace_id", "path", "display_name", "created_at" } ] }`（至少含默认工作区）
-
-#### B2 `POST /v1/workspaces`
-
-`{ "path", "display_name?" }` → Workspace
-
-### C. 会话（4）— 手稿 2.1 / 2.2 / 2.5
-
-#### C1 `POST /v1/sessions`
-
-`{ "workspace_id", "title?" }` → `OaepSession`
-
-#### C2 `GET /v1/sessions?workspace_id=&cursor=&limit=`
-
-→ `{ "items": OaepSession[], "next_cursor": string|null }`
-
-> 列表项需带 `updated_at` 与最后一条 run 的 `status`，供侧栏直接渲染会话状态（手稿 3.3），避免 N+1 请求。
-
-#### C3 `PATCH /v1/sessions/{session_id}`
-
-`{ "title?": string, "status?": "active" | "archived" }` → `OaepSession`
-
-#### C4 `DELETE /v1/sessions/{session_id}`
-
-软删除（`status = deleted`）→ `204`
-
-### D. 会话事件流（3）— 手稿 3.1，架构核心
-
-#### D1 `GET /v1/sessions/{session_id}/snapshot?limit=`
-
-→ `OaepSnapshot`：`{ session, runs[], items[], snapshot_sequence, window }`
-进入会话时一次性拉取。
-
-#### D2 `GET /v1/sessions/{session_id}/events?after_sequence=&limit=`
-
-→ `OaepEventPage`：`{ data: OaepEvent[], next_sequence, has_more }`
-断线重连后的补拉。
-
-#### D3 `GET /v1/sessions/{session_id}/events/stream?after_sequence=`
-
-`text/event-stream`，每帧一个 `OaepEvent`。
-
-**重连语义（必须在 v1 实现，后补代价极大）：**
-
-1. 客户端持久化 `last_sequence`。
-2. 重连时带 `after_sequence=last_sequence`。
-3. Runtime 无法覆盖该断点（历史被压缩）时返回 `409 { "code": "history_gap" }`，客户端回落到 D1 全量快照。
-4. 客户端按 `dedupe_key` 去重；`sequence` 在单个 session 内严格单调递增。
-5. SSE 每 15s 发送一个注释心跳 `: ping`，用于探测半开连接。
-
-### E. 运行（3）
-
-#### E1 `POST /v1/sessions/{session_id}/runs`
+**B3 请求体：**
 
 ```jsonc
 {
   "idempotency_key": "uuid",                        // 必填，防重复提交
   "parts": [
     { "type": "text", "text": "..." },
-    { "type": "resource", "resource_id": "..." }    // 来自 F3 上传
+    { "type": "resource", "resource_id": "..." }    // 来自 D5 上传
   ],
-  "model": "model-id"                               // 可选，缺省沿用会话上次模型（手稿 3.2）
+  "model": "model-id"                               // 可选，缺省沿用会话上次模型
 }
 ```
 
-→ **`202 Accepted`** `{ "run_id", "status": "queued" }`
+> **关键设计：立即返回，不在此响应上流式输出。** 所有输出走 C7 会话流。后台运行、多窗口同步、断线重连三件事因此自然成立，无需额外机制。
+>
+> B5 必须进 v1：流式聊天没有停止键不可用，而 run 状态机一旦定死再加 `cancelled` 会波及全部前端状态机。
 
-> **关键设计：立即返回，不在此响应上流式输出。** 所有输出走 D3 会话流。这样后台运行、多窗口同步、断线重连三件事自然成立，无需额外机制。
+### C. Session（7）— 能力组 6
 
-#### E2 `POST /v1/runs/{run_id}/cancel`
+| | 端点 | 说明 |
+|---|---|---|
+| C1 | `POST /v1/sessions` | `{workspace_id, title?}` → `OaepSession` |
+| C2 | `GET /v1/sessions?workspace_id=&cursor=&limit=` | `{items, next_cursor}`（手稿 2.2 历史任务） |
+| C3 | `PATCH /v1/sessions/{session_id}` | `{title?, status?: "active"\|"archived"}` |
+| C4 | `DELETE /v1/sessions/{session_id}` | 软删除（`status = deleted`）→ `204` |
+| C5 | `GET /v1/sessions/{session_id}/snapshot?limit=` | `OaepSnapshot`，进入会话时一次拉取 |
+| C6 | `GET /v1/sessions/{session_id}/events?after_sequence=&limit=` | `OaepEventPage`，断线补拉 |
+| C7 | `GET /v1/sessions/{session_id}/events/stream?after_sequence=` | `text/event-stream`，每帧一个 `OaepEvent` |
 
-→ `{ "run_id", "status": "cancelled" }`
+> C2 的列表项需带 `updated_at` 与最后一条 run 的 `status`，供侧栏直接渲染会话状态（手稿 3.3），避免 N+1 请求。
 
-> 手稿上没有，但**必须进 v1**：流式聊天没有停止键不可用，而 run 状态机一旦定死再加 `cancelled` 会波及全部前端状态机。
+**重连语义（必须在 v1 实现，后补代价极大）：**
 
-#### E3 `POST /v1/runs/{run_id}/interactions/{item_id}`
+1. 客户端持久化 `last_sequence`。
+2. 重连时带 `after_sequence=last_sequence`。
+3. Runtime 无法覆盖该断点（历史被压缩）时返回 `409 {"code":"history_gap"}`，客户端回落到 C5 全量快照。
+4. 客户端按 `dedupe_key` 去重；`sequence` 在单个 session 内严格单调递增。
+5. SSE 每 15s 发送注释心跳 `: ping`，用于探测半开连接。
 
-`{ "response": <任意 JSON> }` → `204`
+### D. 工作区与资源（5）— 能力组 5
 
-> v1 **只保留端点与 run 的 `waiting` 状态，不做 UI**。审批 / 追问是必然会来的能力，run 生命周期里现在留位，成本为零。
+| | 端点 | 说明 |
+|---|---|---|
+| D1 | `GET /v1/workspaces` | `{items:[{workspace_id, path, display_name, created_at}]}`，**至少含一个默认工作区** |
+| D2 | `POST /v1/workspaces` | `{path, display_name?}` |
+| D3 | `GET /v1/workspaces/{id}/files?path=&depth=1` | `{entries:[{path, name, kind, size, mtime, mime_type}]}`（手稿 2.3） |
+| D4 | `GET /v1/workspaces/{id}/file?path=` | 字节流，支持 `Range`，响应带 `Content-Type`/`ETag`/`X-Digest`（手稿 4.1）。越界返回 `403 workspace_escape` |
+| D5 | `POST /v1/workspaces/{id}/uploads` | `multipart/form-data` → `{resource_id, name, mime_type, size, digest}` |
 
-### F. 资源（3）— 手稿 2.3 / 4.1
+> D5 是**输入侧附件**。手稿 4.1 只覆盖了输出预览，用户发文件给 Agent 的路径必须同时定义，否则 B3 的 `parts` 里的 `resource` 无处产生。
+>
+> 默认工作区隐式存在（`$DRSAI_HOME/workspaces/default`），见 §4.1 决定 3。
 
-#### F1 `GET /v1/workspaces/{workspace_id}/files?path=&depth=1`
+### E. 模型（2）— 能力组 4
 
-→ `{ "entries": [ { "path", "name", "kind": "file"|"dir", "size", "mtime", "mime_type" } ] }`
+| | 端点 | 说明 |
+|---|---|---|
+| E1 | `GET /v1/models` | `{items:[{model_id, display_name, provider, available, capabilities:["vision","tools"]}], default}` |
+| E2 | `PUT /v1/config/model` | `{model_id}` → 设为默认，供后续 run 缺省使用 |
 
-#### F2 `GET /v1/workspaces/{workspace_id}/file?path=`
+> 模型选择是 **run 参数**（B3 的 `model` 字段），E2 只负责持久化缺省值。v1 **不迁移** `/v1/config/model-providers/*` 那 14 条管理面，也不迁移已标 `deprecated=True` 的 `/v1/models/config*` 别名系统。
 
-返回文件字节流，支持 `Range` 请求；响应带 `Content-Type`、`ETag`、`X-Digest`。
+### F. 配置持久化（4）— 能力组 2
 
-> 路径必须做 workspace 逃逸校验，越界返回 `403 workspace_escape`。
+现有网关把配置摊成 19 条各自独立的 CRUD（agents / tools / env / cli / platforms）。v1 收敛为**一份配置文档 + 独立的密钥通道**。
 
-#### F3 `POST /v1/workspaces/{workspace_id}/uploads`
+| | 端点 | 说明 |
+|---|---|---|
+| F1 | `GET /v1/config` | 全部可持久化配置：默认模型、平台开关、网络检索开关、工具开关 |
+| F2 | `PATCH /v1/config` | 部分更新，仅提交变更字段 |
+| F3 | `GET /v1/config/secrets` | **只返回已配置的密钥名与是否存在，绝不返回值** |
+| F4 | `PUT /v1/config/secrets/{key}` | 写入密钥；`DELETE` 同路径移除 |
 
-`multipart/form-data` → `{ "resource_id", "name", "mime_type", "size", "digest" }`
+> 密钥与普通配置分开，是因为 F1 会被前端频繁读取并可能进入日志与错误上报；密钥必须只写不读。
 
-> **输入侧附件**。手稿 4.1 只覆盖了输出预览，用户发文件给 Agent 的路径必须同时定义，否则 E1 的 `parts` 里的 `resource` 无处产生。
+### G. Skills（3）— 能力组 7
 
-### G. 模型（1）— 手稿 3.2
+| | 端点 | 说明 |
+|---|---|---|
+| G1 | `GET /v1/skills` | `{installed:[...], available:[...]}` |
+| G2 | `POST /v1/skills/install` | `{name, source?}` |
+| G3 | `DELETE /v1/skills/{skill_name}` | |
 
-#### G1 `GET /v1/models`
+> 不迁移 `preview` 与 `reload`：前者是编辑器辅助，后者应由安装/卸载隐式触发。
 
-→ `{ "items": [ { "model_id", "display_name", "provider", "available": bool, "capabilities": ["vision","tools"] } ], "default": "model-id" }`
+### H. GFS（9）— 能力组 9
 
-> 模型选择是 **run 参数**（E1 的 `model` 字段），不是全局配置。v1 **不迁移** `/v1/config/model-providers/*` 那一整套 CRUD 与探针。
+**这是新接入，不是迁移。** `backend/gfs_api.py` 定义了这 9 条但当前网关从未挂载，live app 的 OpenAPI 中 gfs 为 0 条。实际在用 GFS 的是 `apps/webui`，走 API key 直连外部服务。
 
-### H. 语音（2，`audio.stt` / `audio.tts` 能力位门控）— 手稿 3.4
+| | 端点 |
+|---|---|
+| H1 | `GET /v1/gfs/health` |
+| H2–H9 | `POST /v1/gfs/{list,stat,read,write,upload,download,delete,share-url}` |
 
-#### H1 `POST /v1/audio/transcriptions`
+> **接入前必须先验证两件事**：Desktop 的 OIDC 身份如何映射到 GFS 的鉴权（现有实现走 `GFS_API_KEY` 环境变量），以及 personal mode 的判定条件。这两点没确认之前不要开始写端点。
+>
+> 受 `gfs` 能力位门控：未配置时 B2 不返回该能力，前端隐藏入口。
 
-`multipart`（音频文件）→ `{ "text" }`
+### I. 语音输入（1）— 能力组 8
 
-#### H2 `POST /v1/audio/speech`
+| | 端点 | 说明 |
+|---|---|---|
+| I1 | `POST /v1/audio/transcriptions` | `multipart`（音频）→ `{text}` |
 
-`{ "text", "voice?" }` → 音频字节流
+> 语音是**旁路服务，不进入 run 循环契约**：STT 的产物是填进输入框的文本。这样它可独立开关、独立失败，不影响主链路。受 `audio.stt` 能力位门控。
+>
+> 实时双工（现有 `/v1/audio/transcriptions/stream`、`/v1/audio/duplex`）v1 不做。TTS 也不做——手稿 3.4 只写了「语音」，用户确认为语音**输入**。
 
-> 语音是**旁路服务，不进入 run 循环契约**。STT 的产物是填进输入框的文本，TTS 的输入是已完成的 message item 文本。这样语音可独立开关、独立失败，不影响主链路。实时双工语音（现有 `/v1/audio/transcriptions/stream`）v1 不做。
+### J. 网络检索（0）— 能力组 10
 
----
+**不需要任何端点。** 联网搜索是 Agent 的工具，表现为事件流中的 `tool_call` item；开关落在 F1/F2 的配置文档里。
+
+这是 §3.2 铁律三的样板：新增能力优先表现为新的 item 类型或 tool_call，而不是新端点。
+
 
 ## 6. OAEP v1 子集
 
@@ -419,7 +405,7 @@ apps/desktop-v2/
 │   ├── oidcLogin.ts             # 交互式登录，产出 id_token
 │   └── ipc.ts                   # channel 白名单，唯一注册处
 └── renderer/
-    ├── runtime/client.ts        # 22 个方法，与端点 1:1，无业务逻辑
+    ├── runtime/client.ts        # 41 个方法，与端点 1:1，无业务逻辑
     ├── store/
     │   ├── sessionStore.ts      # snapshot + event reducer
     │   └── reducer.ts           # (state, OaepEvent) => state，纯函数，单测覆盖
@@ -484,7 +470,7 @@ reducer 是纯函数，必须有覆盖以下场景的单测：乱序到达、重
 
 | 阶段 | 交付 | 完成判据 |
 |---|---|---|
-| **M0 协议冻结** | `openapi/desktop-v2-runtime-v1.yaml` + OAEP fixture 集 | 22 个端点定义完成；fixture 可回放出完整一轮对话 |
+| **M0 协议冻结** | `openapi/desktop-v2-runtime-v1.yaml` + OAEP fixture 集 | 41 个端点定义完成；fixture 可回放出完整一轮对话 |
 | **M1 垂直切片** | 登录 → 新建会话 → 发一句话 → 流式 token → 产出一个文件出现在工作区 | 端到端跑通；**接口在此刻才算真正定住** |
 | **M2 会话管理** | 2.1 / 2.2 / 2.5 / 3.3 + 断线重连 | 拔网线 30s 恢复后无消息丢失、无重复 |
 | **M3 工作区与预览** | 2.3 / 4.1 / F3 上传 | artifact → 卡片 → 右侧预览链路通 |
