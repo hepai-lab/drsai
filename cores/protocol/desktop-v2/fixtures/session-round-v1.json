@@ -1,0 +1,663 @@
+{
+  "$comment": "One complete conversation round on the V2 session stream, used as the joint integration baseline between Runtime and Desktop. Every event validates against cores/protocol/oaep/oaep.schema.json, and replaying them in order must reproduce the trailing snapshot exactly. The round deliberately exercises all five item types v1 emits (message, reasoning, tool_call, artifact, notice) plus deltas, so a client that replays this correctly has covered the whole v1 surface. See cores/protocol/desktop-v2/runtime-v1.openapi.yaml groups B and C.",
+  "profile": "oaep.session-stream/1",
+  "version": "1.0",
+  "events": [
+    {
+      "version": "1.0",
+      "event_id": "evt_001",
+      "session_id": "sess_round_001",
+      "sequence": 1,
+      "type": "event.session.created",
+      "timestamp": "2026-08-25T09:00:00.000Z",
+      "dedupe_key": "sess_round_001:session:created",
+      "source": {
+        "backend": "opendrsai",
+        "runtime_id": "rt_fixture",
+        "client": "windows"
+      },
+      "data": {
+        "session": {
+          "id": "sess_round_001",
+          "workspace_id": "ws_default",
+          "title": "Summarise the run log",
+          "status": "active",
+          "backend": "opendrsai",
+          "created_at": "2026-08-25T09:00:00.000Z",
+          "updated_at": "2026-08-25T09:00:00.000Z"
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_002",
+      "session_id": "sess_round_001",
+      "run_id": "run_round_001",
+      "sequence": 2,
+      "type": "event.run.created",
+      "timestamp": "2026-08-25T09:00:01.000Z",
+      "dedupe_key": "run_round_001:run:created",
+      "source": {
+        "backend": "opendrsai",
+        "runtime_id": "rt_fixture",
+        "client": "windows"
+      },
+      "data": {
+        "run": {
+          "id": "run_round_001",
+          "session_id": "sess_round_001",
+          "sequence": 1,
+          "status": "queued",
+          "created_at": "2026-08-25T09:00:01.000Z",
+          "updated_at": "2026-08-25T09:00:01.000Z"
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_003",
+      "session_id": "sess_round_001",
+      "run_id": "run_round_001",
+      "sequence": 3,
+      "type": "event.run.started",
+      "timestamp": "2026-08-25T09:00:01.200Z",
+      "dedupe_key": "run_round_001:run:started",
+      "source": {
+        "backend": "opendrsai",
+        "runtime_id": "rt_fixture"
+      },
+      "data": {}
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_004",
+      "session_id": "sess_round_001",
+      "run_id": "run_round_001",
+      "item_id": "item_user_001",
+      "sequence": 4,
+      "type": "event.item.completed",
+      "timestamp": "2026-08-25T09:00:01.300Z",
+      "dedupe_key": "item_user_001:completed",
+      "source": {
+        "backend": "opendrsai",
+        "client": "windows",
+        "message_id": "msg_local_001"
+      },
+      "data": {
+        "item": {
+          "id": "item_user_001",
+          "session_id": "sess_round_001",
+          "run_id": "run_round_001",
+          "type": "message",
+          "status": "completed",
+          "sequence": 1,
+          "created_at": "2026-08-25T09:00:01.300Z",
+          "updated_at": "2026-08-25T09:00:01.300Z",
+          "source": {
+            "backend": "opendrsai",
+            "client": "windows",
+            "message_id": "msg_local_001"
+          },
+          "content": {
+            "role": "user",
+            "text": "Read run.log and write a short summary next to it."
+          }
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_005",
+      "session_id": "sess_round_001",
+      "run_id": "run_round_001",
+      "item_id": "item_reason_001",
+      "sequence": 5,
+      "type": "event.item.created",
+      "timestamp": "2026-08-25T09:00:02.000Z",
+      "dedupe_key": "item_reason_001:created",
+      "source": {
+        "backend": "opendrsai"
+      },
+      "data": {
+        "item": {
+          "id": "item_reason_001",
+          "session_id": "sess_round_001",
+          "run_id": "run_round_001",
+          "type": "reasoning",
+          "status": "running",
+          "sequence": 2,
+          "created_at": "2026-08-25T09:00:02.000Z",
+          "updated_at": "2026-08-25T09:00:02.000Z",
+          "source": {
+            "backend": "opendrsai"
+          },
+          "content": {
+            "segments": []
+          }
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_006",
+      "session_id": "sess_round_001",
+      "run_id": "run_round_001",
+      "item_id": "item_reason_001",
+      "sequence": 6,
+      "type": "event.item.delta",
+      "timestamp": "2026-08-25T09:00:02.200Z",
+      "dedupe_key": "item_reason_001:delta:1",
+      "source": {
+        "backend": "opendrsai"
+      },
+      "data": {
+        "delta": {
+          "kind": "reasoning.text.append",
+          "segment_id": "seg_1",
+          "text": "The file is small enough to read in one pass.",
+          "reasoning_kind": "summary",
+          "visibility": "user"
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_007",
+      "session_id": "sess_round_001",
+      "run_id": "run_round_001",
+      "item_id": "item_reason_001",
+      "sequence": 7,
+      "type": "event.item.completed",
+      "timestamp": "2026-08-25T09:00:02.400Z",
+      "dedupe_key": "item_reason_001:completed",
+      "source": {
+        "backend": "opendrsai"
+      },
+      "data": {
+        "item": {
+          "id": "item_reason_001",
+          "session_id": "sess_round_001",
+          "run_id": "run_round_001",
+          "type": "reasoning",
+          "status": "completed",
+          "sequence": 2,
+          "created_at": "2026-08-25T09:00:02.000Z",
+          "updated_at": "2026-08-25T09:00:02.400Z",
+          "source": {
+            "backend": "opendrsai"
+          },
+          "content": {
+            "segments": [
+              {
+                "id": "seg_1",
+                "text": "The file is small enough to read in one pass.",
+                "kind": "summary",
+                "visibility": "user",
+                "source": "backend"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_008",
+      "session_id": "sess_round_001",
+      "run_id": "run_round_001",
+      "item_id": "item_tool_001",
+      "sequence": 8,
+      "type": "event.item.completed",
+      "timestamp": "2026-08-25T09:00:03.100Z",
+      "dedupe_key": "item_tool_001:completed",
+      "source": {
+        "backend": "opendrsai"
+      },
+      "data": {
+        "item": {
+          "id": "item_tool_001",
+          "session_id": "sess_round_001",
+          "run_id": "run_round_001",
+          "type": "tool_call",
+          "status": "completed",
+          "sequence": 3,
+          "created_at": "2026-08-25T09:00:02.600Z",
+          "updated_at": "2026-08-25T09:00:03.100Z",
+          "source": {
+            "backend": "opendrsai"
+          },
+          "content": {
+            "tool_kind": "workspace",
+            "tool_name": "read_file",
+            "call_id": "call_001",
+            "arguments": {
+              "path": "run.log"
+            },
+            "result": {
+              "bytes": 2048,
+              "truncated": false
+            },
+            "duration_ms": 42
+          }
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_009",
+      "session_id": "sess_round_001",
+      "run_id": "run_round_001",
+      "item_id": "item_msg_001",
+      "sequence": 9,
+      "type": "event.item.created",
+      "timestamp": "2026-08-25T09:00:03.300Z",
+      "dedupe_key": "item_msg_001:created",
+      "source": {
+        "backend": "opendrsai"
+      },
+      "data": {
+        "item": {
+          "id": "item_msg_001",
+          "session_id": "sess_round_001",
+          "run_id": "run_round_001",
+          "type": "message",
+          "status": "running",
+          "sequence": 4,
+          "created_at": "2026-08-25T09:00:03.300Z",
+          "updated_at": "2026-08-25T09:00:03.300Z",
+          "source": {
+            "backend": "opendrsai"
+          },
+          "content": {
+            "role": "assistant",
+            "text": "",
+            "phase": "final"
+          }
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_010",
+      "session_id": "sess_round_001",
+      "run_id": "run_round_001",
+      "item_id": "item_msg_001",
+      "sequence": 10,
+      "type": "event.item.delta",
+      "timestamp": "2026-08-25T09:00:03.400Z",
+      "dedupe_key": "item_msg_001:delta:1",
+      "source": {
+        "backend": "opendrsai"
+      },
+      "data": {
+        "delta": {
+          "kind": "message.text.append",
+          "text": "The log records "
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_011",
+      "session_id": "sess_round_001",
+      "run_id": "run_round_001",
+      "item_id": "item_msg_001",
+      "sequence": 11,
+      "type": "event.item.delta",
+      "timestamp": "2026-08-25T09:00:03.500Z",
+      "dedupe_key": "item_msg_001:delta:2",
+      "source": {
+        "backend": "opendrsai"
+      },
+      "data": {
+        "delta": {
+          "kind": "message.text.append",
+          "text": "three failed retries."
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_012",
+      "session_id": "sess_round_001",
+      "run_id": "run_round_001",
+      "item_id": "item_msg_001",
+      "sequence": 12,
+      "type": "event.item.completed",
+      "timestamp": "2026-08-25T09:00:03.600Z",
+      "dedupe_key": "item_msg_001:completed",
+      "source": {
+        "backend": "opendrsai"
+      },
+      "data": {
+        "item": {
+          "id": "item_msg_001",
+          "session_id": "sess_round_001",
+          "run_id": "run_round_001",
+          "type": "message",
+          "status": "completed",
+          "sequence": 4,
+          "created_at": "2026-08-25T09:00:03.300Z",
+          "updated_at": "2026-08-25T09:00:03.600Z",
+          "source": {
+            "backend": "opendrsai"
+          },
+          "content": {
+            "role": "assistant",
+            "text": "The log records three failed retries.",
+            "phase": "final"
+          }
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_013",
+      "session_id": "sess_round_001",
+      "run_id": "run_round_001",
+      "item_id": "item_artifact_001",
+      "sequence": 13,
+      "type": "event.item.completed",
+      "timestamp": "2026-08-25T09:00:04.000Z",
+      "dedupe_key": "item_artifact_001:completed",
+      "source": {
+        "backend": "opendrsai"
+      },
+      "data": {
+        "item": {
+          "id": "item_artifact_001",
+          "session_id": "sess_round_001",
+          "run_id": "run_round_001",
+          "type": "artifact",
+          "status": "completed",
+          "sequence": 5,
+          "created_at": "2026-08-25T09:00:04.000Z",
+          "updated_at": "2026-08-25T09:00:04.000Z",
+          "source": {
+            "backend": "opendrsai"
+          },
+          "associations": [
+            {
+              "association_id": "assoc_001",
+              "resource": {
+                "protocol": "owop/1",
+                "authority_id": "rt_fixture",
+                "workspace_id": "ws_default",
+                "resource_type": "file",
+                "resource_id": "run-summary.md",
+                "generation": 1
+              },
+              "relation": "output_artifact",
+              "label_snapshot": "run-summary.md",
+              "presentation": "card"
+            }
+          ],
+          "content": {
+            "artifact_id": "art_001",
+            "artifact_type": "file",
+            "name": "run-summary.md",
+            "summary": "Summary of run.log",
+            "path": "run-summary.md",
+            "mime_type": "text/markdown",
+            "size": 118,
+            "previewable": true,
+            "downloadable": true
+          }
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_014",
+      "session_id": "sess_round_001",
+      "run_id": "run_round_001",
+      "item_id": "item_notice_001",
+      "sequence": 14,
+      "type": "event.item.completed",
+      "timestamp": "2026-08-25T09:00:04.100Z",
+      "dedupe_key": "item_notice_001:completed",
+      "source": {
+        "backend": "opendrsai"
+      },
+      "data": {
+        "item": {
+          "id": "item_notice_001",
+          "session_id": "sess_round_001",
+          "run_id": "run_round_001",
+          "type": "notice",
+          "status": "completed",
+          "sequence": 6,
+          "created_at": "2026-08-25T09:00:04.100Z",
+          "updated_at": "2026-08-25T09:00:04.100Z",
+          "source": {
+            "backend": "opendrsai"
+          },
+          "content": {
+            "level": "info",
+            "code": "artifact_written",
+            "message": "Wrote run-summary.md to the workspace."
+          }
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_015",
+      "session_id": "sess_round_001",
+      "run_id": "run_round_001",
+      "sequence": 15,
+      "type": "event.run.completed",
+      "timestamp": "2026-08-25T09:00:04.200Z",
+      "dedupe_key": "run_round_001:run:completed",
+      "source": {
+        "backend": "opendrsai"
+      },
+      "data": {
+        "run": {
+          "id": "run_round_001",
+          "session_id": "sess_round_001",
+          "sequence": 1,
+          "status": "completed",
+          "created_at": "2026-08-25T09:00:01.000Z",
+          "updated_at": "2026-08-25T09:00:04.200Z",
+          "completed_at": "2026-08-25T09:00:04.200Z"
+        }
+      }
+    },
+    {
+      "version": "1.0",
+      "event_id": "evt_016",
+      "session_id": "sess_round_001",
+      "sequence": 16,
+      "type": "event.session.updated",
+      "timestamp": "2026-08-25T09:00:04.200Z",
+      "dedupe_key": "sess_round_001:session:updated:1",
+      "source": {
+        "backend": "opendrsai",
+        "runtime_id": "rt_fixture"
+      },
+      "data": {
+        "session": {
+          "id": "sess_round_001",
+          "workspace_id": "ws_default",
+          "title": "Summarise the run log",
+          "status": "active",
+          "backend": "opendrsai",
+          "created_at": "2026-08-25T09:00:00.000Z",
+          "updated_at": "2026-08-25T09:00:04.200Z"
+        }
+      }
+    }
+  ],
+  "snapshot": {
+    "version": "1.0",
+    "snapshot_sequence": 16,
+    "session": {
+      "id": "sess_round_001",
+      "workspace_id": "ws_default",
+      "title": "Summarise the run log",
+      "status": "active",
+      "backend": "opendrsai",
+      "created_at": "2026-08-25T09:00:00.000Z",
+      "updated_at": "2026-08-25T09:00:04.200Z"
+    },
+    "runs": [
+      {
+        "id": "run_round_001",
+        "session_id": "sess_round_001",
+        "sequence": 1,
+        "status": "completed",
+        "created_at": "2026-08-25T09:00:01.000Z",
+        "updated_at": "2026-08-25T09:00:04.200Z",
+        "completed_at": "2026-08-25T09:00:04.200Z"
+      }
+    ],
+    "items": [
+      {
+        "id": "item_user_001",
+        "session_id": "sess_round_001",
+        "run_id": "run_round_001",
+        "type": "message",
+        "status": "completed",
+        "sequence": 1,
+        "created_at": "2026-08-25T09:00:01.300Z",
+        "updated_at": "2026-08-25T09:00:01.300Z",
+        "source": {
+          "backend": "opendrsai",
+          "client": "windows",
+          "message_id": "msg_local_001"
+        },
+        "content": {
+          "role": "user",
+          "text": "Read run.log and write a short summary next to it."
+        }
+      },
+      {
+        "id": "item_reason_001",
+        "session_id": "sess_round_001",
+        "run_id": "run_round_001",
+        "type": "reasoning",
+        "status": "completed",
+        "sequence": 2,
+        "created_at": "2026-08-25T09:00:02.000Z",
+        "updated_at": "2026-08-25T09:00:02.400Z",
+        "source": {
+          "backend": "opendrsai"
+        },
+        "content": {
+          "segments": [
+            {
+              "id": "seg_1",
+              "text": "The file is small enough to read in one pass.",
+              "kind": "summary",
+              "visibility": "user",
+              "source": "backend"
+            }
+          ]
+        }
+      },
+      {
+        "id": "item_tool_001",
+        "session_id": "sess_round_001",
+        "run_id": "run_round_001",
+        "type": "tool_call",
+        "status": "completed",
+        "sequence": 3,
+        "created_at": "2026-08-25T09:00:02.600Z",
+        "updated_at": "2026-08-25T09:00:03.100Z",
+        "source": {
+          "backend": "opendrsai"
+        },
+        "content": {
+          "tool_kind": "workspace",
+          "tool_name": "read_file",
+          "call_id": "call_001",
+          "arguments": {
+            "path": "run.log"
+          },
+          "result": {
+            "bytes": 2048,
+            "truncated": false
+          },
+          "duration_ms": 42
+        }
+      },
+      {
+        "id": "item_msg_001",
+        "session_id": "sess_round_001",
+        "run_id": "run_round_001",
+        "type": "message",
+        "status": "completed",
+        "sequence": 4,
+        "created_at": "2026-08-25T09:00:03.300Z",
+        "updated_at": "2026-08-25T09:00:03.600Z",
+        "source": {
+          "backend": "opendrsai"
+        },
+        "content": {
+          "role": "assistant",
+          "text": "The log records three failed retries.",
+          "phase": "final"
+        }
+      },
+      {
+        "id": "item_artifact_001",
+        "session_id": "sess_round_001",
+        "run_id": "run_round_001",
+        "type": "artifact",
+        "status": "completed",
+        "sequence": 5,
+        "created_at": "2026-08-25T09:00:04.000Z",
+        "updated_at": "2026-08-25T09:00:04.000Z",
+        "source": {
+          "backend": "opendrsai"
+        },
+        "associations": [
+          {
+            "association_id": "assoc_001",
+            "resource": {
+              "protocol": "owop/1",
+              "authority_id": "rt_fixture",
+              "workspace_id": "ws_default",
+              "resource_type": "file",
+              "resource_id": "run-summary.md",
+              "generation": 1
+            },
+            "relation": "output_artifact",
+            "label_snapshot": "run-summary.md",
+            "presentation": "card"
+          }
+        ],
+        "content": {
+          "artifact_id": "art_001",
+          "artifact_type": "file",
+          "name": "run-summary.md",
+          "summary": "Summary of run.log",
+          "path": "run-summary.md",
+          "mime_type": "text/markdown",
+          "size": 118,
+          "previewable": true,
+          "downloadable": true
+        }
+      },
+      {
+        "id": "item_notice_001",
+        "session_id": "sess_round_001",
+        "run_id": "run_round_001",
+        "type": "notice",
+        "status": "completed",
+        "sequence": 6,
+        "created_at": "2026-08-25T09:00:04.100Z",
+        "updated_at": "2026-08-25T09:00:04.100Z",
+        "source": {
+          "backend": "opendrsai"
+        },
+        "content": {
+          "level": "info",
+          "code": "artifact_written",
+          "message": "Wrote run-summary.md to the workspace."
+        }
+      }
+    ]
+  }
+}
