@@ -62,11 +62,6 @@ def benchmark() -> dict[str, object]:
         os.environ["OPENDRSAI_GATEWAY_INSTANCE_TOKEN"] = token
         os.environ["OPENDRSAI_RESOURCE_AUDIT_SALT"] = "remote-performance-gate-audit-salt"
 
-        # Configure the process-wide feedback store before importing Gateway;
-        # Gateway creates its store at module import time.
-        from drsai.backend import feedback_service
-        feedback_service.FS_DIR = str(home)
-        feedback_service._default_feedback_store = None
         from drsai.backend import gateway
         _reset_gateway(gateway, home)
 

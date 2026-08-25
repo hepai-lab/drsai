@@ -177,8 +177,6 @@ from drsai.backend.runtime.security import (
 )
 from drsai.relay.security import redact_credentials
 from drsai.backend import gateway_wechat as _gateway_wechat
-from drsai.backend.feedback_service import create_router as _create_feedback_router, get_default_feedback_store
-from drsai.backend.feedback_worker import FeedbackWorker
 
 
 
@@ -1893,8 +1891,6 @@ class AgentManager:
 
 
 manager = AgentManager()
-feedback_store = get_default_feedback_store()
-feedback_worker = FeedbackWorker(feedback_store)
 
 
 def _regression_control_enabled() -> bool:
@@ -1946,7 +1942,6 @@ async def lifespan(app: FastAPI):
     _restore_runtime_workspaces()
 
     await _gateway_wechat.restore()
-    feedback_worker.start()
 
     logger.info(f"Database ready: {_DB_URI}")
 
@@ -1966,7 +1961,6 @@ async def lifespan(app: FastAPI):
         _terminal_provider_instance.close()
 
     await _gateway_wechat.shutdown()
-    await feedback_worker.stop()
 
     if relay_stop is not None:
         relay_stop.set()
@@ -1998,7 +1992,6 @@ app = FastAPI(
 )
 
 app.include_router(_gateway_wechat.router())
-app.include_router(_create_feedback_router(worker_status=feedback_worker.status))
 
 _REMOTE_PROTOCOL_VERSION = PROTOCOL_VERSION
 _remote_workspaces: dict[str, Path] = {}

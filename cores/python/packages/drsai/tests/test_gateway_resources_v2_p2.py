@@ -39,12 +39,6 @@ def test_gateway_exposes_resources_v2_with_session_binding(tmp_path: Path, monke
     monkeypatch.setenv("OPENDRSAI_GATEWAY_INSTANCE_TOKEN", token)
     monkeypatch.setenv("OPENDRSAI_RESOURCE_AUDIT_SALT", "test-only-resource-audit-salt")
 
-    from drsai.backend import feedback_service
-    # Keep the process-wide feedback singleton isolated from this temporary
-    # gateway home.  Direct assignment here would leave later gateway tests
-    # pointing at a pytest directory that has already been removed.
-    monkeypatch.setattr(feedback_service, "FS_DIR", str(home))
-    monkeypatch.setattr(feedback_service, "_default_feedback_store", None)
     from drsai.backend import gateway
     _reset_gateway(gateway, home)
     headers = {"X-OpenDrSai-Gateway-Token": token}

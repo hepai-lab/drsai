@@ -102,69 +102,6 @@
     "name": "send_outbound"
   },
   {
-    "path": "/v1/feedback",
-    "methods": [
-      "POST"
-    ],
-    "name": "submit"
-  },
-  {
-    "path": "/v1/feedback/{feedback_id}",
-    "methods": [
-      "GET"
-    ],
-    "name": "get_feedback"
-  },
-  {
-    "path": "/v1/feedback",
-    "methods": [
-      "GET"
-    ],
-    "name": "list_feedback"
-  },
-  {
-    "path": "/v1/feedback/{feedback_id}/status",
-    "methods": [
-      "POST"
-    ],
-    "name": "update_status"
-  },
-  {
-    "path": "/v1/feedback/{feedback_id}",
-    "methods": [
-      "DELETE"
-    ],
-    "name": "delete_feedback"
-  },
-  {
-    "path": "/v1/feedback/{feedback_id}/attachments/{kind}",
-    "methods": [
-      "GET"
-    ],
-    "name": "read_attachment"
-  },
-  {
-    "path": "/v1/feedback/{feedback_id}/contact",
-    "methods": [
-      "GET"
-    ],
-    "name": "reveal_contact"
-  },
-  {
-    "path": "/v1/feedback/internal/audit",
-    "methods": [
-      "GET"
-    ],
-    "name": "list_audit"
-  },
-  {
-    "path": "/v1/feedback/internal/worker/status",
-    "methods": [
-      "GET"
-    ],
-    "name": "get_worker_status"
-  },
-  {
     "path": "/health",
     "methods": [
       "GET"
