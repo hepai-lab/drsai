@@ -235,7 +235,13 @@ export class BridgeConnection {
   /* ---------------------------------------------------------- 1. runtime */
 
   private async runtimeSummary(): Promise<RuntimeSummary> {
-    const state = await this.deps.runtime.refresh();
+    // Prefer refresh (cheap probe + relaunch-if-needed) so a first-launch race
+    // that left us `failed` can recover on the next renderer poll without a
+    // full app restart.
+    let state = await this.deps.runtime.refresh();
+    if (state.status !== "ready") {
+      state = await this.deps.runtime.ensureReady();
+    }
     if (state.status !== "ready") {
       return {
         reachable: false,

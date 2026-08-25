@@ -67,6 +67,9 @@ export function useDesktop(): [DesktopState, DesktopActions] {
       return null;
     }
     setRuntime(value);
+    // Clear the sticky "still starting" banner once the Runtime is up; the poll
+    // used to update `runtime` and leave the old error string in place.
+    if (value?.reachable) setError(null);
     return value;
   }, []);
 

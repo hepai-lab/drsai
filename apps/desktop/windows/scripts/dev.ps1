@@ -19,8 +19,10 @@ param(
 $ErrorActionPreference = "Stop"
 $IsProductionLaunch = $LaunchMode -eq "Production"
 $LaunchModeName = $LaunchMode.ToLowerInvariant()
+# Default desktop entry is workbench → desktop_gateway on 28643. Legacy stays on
+# 28642/18642 and is reached via `npm run dev:legacy` (or an explicit -GatewayPort).
 if ($GatewayPort -eq 0) {
-    $GatewayPort = if ($IsProductionLaunch) { 18642 } else { 28642 }
+    $GatewayPort = 28643
 }
 $StartupStopwatch = [Diagnostics.Stopwatch]::StartNew()
 $env:OPENDRSAI_DEV_START_EPOCH_MS = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString()
@@ -695,6 +697,9 @@ if (-not $DrsaiHome) {
 }
 $DrsaiHome = [IO.Path]::GetFullPath($DrsaiHome)
 $ElectronUserData = Join-Path $DrsaiHome "electron-user-data"
+if (-not $env:DRSAI_DESKTOP_GATEWAY_HOME) {
+    $env:DRSAI_DESKTOP_GATEWAY_HOME = Join-Path $env:USERPROFILE ".drsai-workbench"
+}
 
 # Desktop development must exercise the same OIDC-only credential boundary as
 # a clean packaged install. Static keys in the host environment or ~/.drsai/.env
@@ -776,7 +781,9 @@ Write-Host "OpenDrSai Windows desktop source bootstrap ($LaunchModeName platform
 Write-Host "  Repository:  $RepoRoot" -ForegroundColor Green
 Write-Host "  DrSai home:  $DrsaiHome" -ForegroundColor Green
 Write-Host "  User data:   $ElectronUserData" -ForegroundColor Green
+Write-Host "  Surface:     workbench (desktop_gateway)" -ForegroundColor Green
 Write-Host "  Gateway:     http://127.0.0.1:$GatewayPort" -ForegroundColor Green
+Write-Host "  State home:  $env:DRSAI_DESKTOP_GATEWAY_HOME" -ForegroundColor Green
 Write-Host "  Platform:    $(if ($IsProductionLaunch) { 'HAI production (OIDC + models)' } else { 'HAI development (OIDC + models)' })" -ForegroundColor Green
 Write-Host "  Skills:      $BuiltInSkillsDir" -ForegroundColor Green
 Write-Host "  Pip index:   $($env:PIP_INDEX_URL)" -ForegroundColor Green
@@ -840,18 +847,19 @@ $GatewayProcess = $null
 $GatewayEnabled = -not $NoGateway -and -not $NoDevServer
 $GatewayHotReload = $GatewayEnabled -and $HotLoad
 Write-Host "[2/3] Gateway" -ForegroundColor Yellow
+if ($GatewayHotReload) {
+    throw @"
+-HotLoad starts the legacy uvicorn on 28642 (`drsai.backend.gateway`).
+The default desktop entry is now workbench (`desktop_gateway` on 28643).
+Use without -HotLoad so Electron owns desktop_gateway, or launch legacy explicitly:
+  cd $DesktopDir
+  npm run dev:legacy
+"@
+}
 if (-not $GatewayEnabled) {
     Write-Host "    SKIP Gateway startup." -ForegroundColor Yellow
-} elseif ($GatewayHotReload) {
-    $GatewayPython = Join-Path $InstallDir "venv\Scripts\python.exe"
-    $GatewayProcess = Start-HotReloadGateway `
-        -PythonPath $GatewayPython `
-        -RepoRoot $RepoRoot `
-        -DrsaiHome $DrsaiHome `
-        -LogDir $DevLogDir `
-        -Port $GatewayPort
 } else {
-    Write-Host "    READY Electron will start Gateway without Python hot reload." -ForegroundColor Green
+    Write-Host "    READY Electron will start desktop_gateway on port $GatewayPort." -ForegroundColor Green
 }
 
 Push-Location $DesktopWorkspaceDir
@@ -919,9 +927,10 @@ try {
     $env:OPENDRSAI_RUNTIME_ROOT = $InstallDir
     $env:OPENDRSAI_ELECTRON_USER_DATA = $ElectronUserData
     $env:OPENDRSAI_GATEWAY_STARTUP = if ($GatewayEnabled) { "eager" } else { "on-demand" }
-    # Source Runtime ownership is session-scoped: normal mode is owned by
-    # Electron, while hot-load mode is owned by the outer watcher below.
+    # Source Runtime ownership is session-scoped: workbench Electron owns
+    # desktop_gateway on 28643. Legacy hot-load is refused above.
     $env:OPENDRSAI_RUNTIME_PERSIST = "0"
+    $env:DRSAI_DESKTOP_GATEWAY_PORT = [string]$GatewayPort
     $env:OPENDRSAI_LAUNCH_GATEWAY_PORT = [string]$GatewayPort
     $env:OPENDRSAI_DEV_GATEWAY_PORT = [string]$GatewayPort
     $env:OPENDRSAI_VOICE_TTS_RUNTIME = "gateway-provider"
@@ -930,14 +939,11 @@ try {
     if (-not $IsProductionLaunch) {
         $env:OPENDRSAI_ENABLE_DUPLEX_VOICE = "1"
     }
-    if ($GatewayHotReload) {
-        $env:DRSAI_GATEWAY_DEV_MANAGED = "1"
-        $env:DRSAI_GATEWAY_HOT_RELOAD = "1"
-        $env:OPENDRSAI_GATEWAY_PORT = [string]$GatewayPort
-    } else {
-        Remove-Item Env:DRSAI_GATEWAY_DEV_MANAGED -ErrorAction SilentlyContinue
-        Remove-Item Env:DRSAI_GATEWAY_HOT_RELOAD -ErrorAction SilentlyContinue
-    }
+    # Never leave legacy "already managed" flags set: workbench would otherwise
+    # stand down for a 28642 process that does not speak desktop-v2.
+    Remove-Item Env:DRSAI_GATEWAY_DEV_MANAGED -ErrorAction SilentlyContinue
+    Remove-Item Env:DRSAI_GATEWAY_HOT_RELOAD -ErrorAction SilentlyContinue
+    Remove-Item Env:OPENDRSAI_WORKBENCH_EXTERNAL_RUNTIME -ErrorAction SilentlyContinue
     if (-not $npm) {
         $npm = Resolve-NpmCommand
     }

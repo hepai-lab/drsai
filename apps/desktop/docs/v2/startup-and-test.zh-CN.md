@@ -81,17 +81,25 @@ set DRSAI_DESKTOP_GATEWAY_HOME=%USERPROFILE%\.drsai-workbench
 
 > ⚠️ 配对令牌**故意**仍从 `DRSAI_HOME` 读——它是桌面端与 Runtime 的交接文件，不是 Runtime 状态，两套共用一个。所以隔离状态目录不会导致 401。
 
-### 2.2 不要用 `scripts/dev.ps1` 启 workbench
+### 2.2 默认入口已切到 workbench
 
-`dev.ps1` 会起 **legacy** 网关（28642）并设 `DRSAI_GATEWAY_DEV_MANAGED=1`。workbench 用的是另一个变量，
-不会被它误导，但它也不会替你起 28643 上的 Runtime。两者可以同时开着，互不干扰。
+`windows-desktop-dev.cmd` → `dev.ps1` → `npm run dev` 现在起的是 **workbench + `desktop_gateway`（28643）**。
+它会注入 `DRSAI_REPO` / `OPENDRSAI_RUNTIME_ROOT`（开发者安装下的 venv），外壳自己 spawn Runtime。
+
+回退 legacy：
+
+```bash
+npm run dev:legacy --workspace opendrsai-windows-desktop
+```
+
+`dev.ps1 -HotLoad` 会起 legacy uvicorn（28642），与 workbench 不兼容，脚本会直接报错。
 
 ### 2.3 两种启动方式
 
-**方式 A（推荐，最省事）**——外壳自己拉起 Runtime：
+**方式 A（推荐）**——`windows-desktop-dev.cmd`，或：
 
 ```bash
-npm run dev:workbench --workspace opendrsai-windows-desktop
+npm run dev --workspace opendrsai-windows-desktop
 ```
 
 Electron 起来后会自己 spawn `python -m drsai.backend.desktop_gateway`。冷启动导入约 48k 行 Python，
@@ -107,7 +115,7 @@ Electron 起来后会自己 spawn `python -m drsai.backend.desktop_gateway`。�
 另开一个终端：
 
 ```bash
-set OPENDRSAI_WORKBENCH_EXTERNAL_RUNTIME=1&& npm run dev:workbench --workspace opendrsai-windows-desktop
+set OPENDRSAI_WORKBENCH_EXTERNAL_RUNTIME=1&& npm run dev --workspace opendrsai-windows-desktop
 ```
 
 `OPENDRSAI_WORKBENCH_EXTERNAL_RUNTIME=1` 让外壳**只接管、不启动**。若 28643 上没人监听，它会直接报错而不是静默起第二个进程。
@@ -288,7 +296,7 @@ digest 是**导入时**算的。重启 Runtime 后这个值必须变；没变就
 新增内容全部是**并列新增**，legacy 一行未改：
 
 ```bash
-npm run dev --workspace opendrsai-windows-desktop
+npm run dev:legacy --workspace opendrsai-windows-desktop
 ```
 
 照旧走 legacy（28642 + `index.html` + 约 200 条 `desktop:*` IPC）。两套可以同时开。
@@ -332,7 +340,7 @@ npm run typecheck --workspace opendrsai-windows-desktop
 ```
 
 ```bash
-npm run dev:workbench --workspace opendrsai-windows-desktop
+npm run dev --workspace opendrsai-windows-desktop
 ```
 
 ```bash

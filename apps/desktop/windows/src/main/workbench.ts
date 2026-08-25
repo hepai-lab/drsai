@@ -12,7 +12,13 @@
  * shell, so the direction of that dependency is checked rather than trusted.
  */
 
+// Same side-effect as legacy `index.ts`: pin DRSAI_HOME / DRSAI_REPO /
+// OPENDRSAI_RUNTIME_ROOT before `paths.ts` is evaluated, so this shell finds the
+// developer install's Python instead of falling back to `~/.drsai/drsai-agent`.
+import "./developmentLaunchEnvironment";
+
 import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { is } from "@electron-toolkit/utils";
 import { createDesktopSurface, type DesktopSurface } from "../../../shared/main/desktopGateway";
@@ -27,13 +33,15 @@ let mainWindow: BrowserWindow | null = null;
  * up with interleaved writes from two journals, so the shell defers rather than
  * competing.
  *
- * Deliberately *not* `DRSAI_GATEWAY_DEV_MANAGED`: `scripts/dev.ps1` sets that
- * one and starts the **legacy** gateway on 28642. Reusing it would make this
- * shell stand down for a Runtime that does not serve any of its 17 routes, and
- * the symptom -- a window stuck on "Runtime not responding" after a normal
- * `dev.ps1` -- would point nowhere near the cause.
+ * Deliberately *not* `DRSAI_GATEWAY_DEV_MANAGED`: that flag means the **legacy**
+ * gateway on 28642 is already up. Standing down for it would leave this shell on
+ * a Runtime that does not serve any of its 17 routes.
  */
 const EXTERNAL_RUNTIME = process.env.OPENDRSAI_WORKBENCH_EXTERNAL_RUNTIME === "1";
+
+/** Isolate workbench session state from the frozen legacy gateway's SQLite. */
+const WORKBENCH_STATE_HOME =
+  process.env.DRSAI_DESKTOP_GATEWAY_HOME?.trim() || join(homedir(), ".drsai-workbench");
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -66,15 +74,15 @@ function createWindow(): BrowserWindow {
     void shell.openExternal(url);
     return { action: "deny" };
   });
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL;
   window.webContents.on("will-navigate", (event, url) => {
-    const allowed = is.dev && process.env.ELECTRON_RENDERER_URL;
-    if (allowed && url.startsWith(process.env.ELECTRON_RENDERER_URL)) return;
+    if (is.dev && rendererUrl && url.startsWith(rendererUrl)) return;
     event.preventDefault();
     void shell.openExternal(url);
   });
 
-  if (is.dev && process.env.ELECTRON_RENDERER_URL) {
-    void window.loadURL(`${process.env.ELECTRON_RENDERER_URL}/workbench.html`);
+  if (is.dev && rendererUrl) {
+    void window.loadURL(`${rendererUrl}/workbench.html`);
   } else {
     void window.loadFile(join(__dirname, "../renderer/workbench.html"));
   }
@@ -85,6 +93,7 @@ void app.whenReady().then(async () => {
   surface = await createDesktopSurface({
     ipcMain,
     externalRuntime: EXTERNAL_RUNTIME,
+    stateHome: WORKBENCH_STATE_HOME,
     onRuntimeLog: (line) => process.stdout.write(line),
   });
 

@@ -164,14 +164,18 @@ export class DesktopRuntimeProcess {
 
     const deadline = Date.now() + READY_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      // Check the child before the port: a crashed import loop would otherwise
-      // keep us polling a socket nothing will ever bind, for the full timeout.
-      if (exitMessage) return this.fail(exitMessage);
+      // Prefer adopting whoever holds the port over treating our child exit as
+      // fatal: a common Windows failure is "port already in use" while an older
+      // Runtime (or a sibling spawn) is already healthy on 28643. Failing before
+      // re-probing leaves the window stuck on "still starting" forever.
       const identity = await probeIdentity();
       if (identity) return this.ready(identity);
+      if (exitMessage) return this.fail(exitMessage);
       await delay(READY_POLL_MS);
     }
-    return this.fail(`The Runtime did not become ready within ${READY_TIMEOUT_MS} ms.`);
+    const late = await probeIdentity();
+    if (late) return this.ready(late);
+    return this.fail(exitMessage ?? `The Runtime did not become ready within ${READY_TIMEOUT_MS} ms.`);
   }
 
   private ready(identity: RuntimeIdentity): RuntimeState {
@@ -184,14 +188,22 @@ export class DesktopRuntimeProcess {
     return this.state;
   }
 
-  /** Re-probes and downgrades a stale `ready`. Cheap enough to call per request. */
+  /**
+   * Re-probes, and if nothing is listening, retries launch.
+   *
+   * The renderer polls `runtime.identity` every few seconds while unreachable.
+   * Returning a sticky `failed` here without retrying is what left the banner on
+   * "still starting" after a first-launch race (port busy, slow import) even once
+   * a healthy Runtime was up.
+   */
   async refresh(): Promise<RuntimeState> {
     const identity = await probeIdentity();
     if (identity) return this.ready(identity);
     if (this.state.status === "ready") {
       this.state = { status: "stopped" };
     }
-    return this.state;
+    if (this.state.status === "starting") return this.state;
+    return this.ensureReady();
   }
 
   stop(): void {
@@ -206,7 +218,7 @@ export class DesktopRuntimeProcess {
 async function probeIdentity(): Promise<RuntimeIdentity | null> {
   try {
     const response = await fetch(`${DESKTOP_GATEWAY_BASE_URL}/v1/runtime`, {
-      signal: AbortSignal.timeout(2_000),
+      signal: abortAfter(2_000),
     });
     if (!response.ok) return null;
     const identity = (await response.json()) as RuntimeIdentity;
@@ -217,6 +229,16 @@ async function probeIdentity(): Promise<RuntimeIdentity | null> {
   } catch {
     return null;
   }
+}
+
+/** `AbortSignal.timeout` is missing on some Electron builds; fall back. */
+function abortAfter(ms: number): AbortSignal {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return AbortSignal.timeout(ms);
+  }
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms).unref?.();
+  return controller.signal;
 }
 
 function delay(ms: number): Promise<void> {

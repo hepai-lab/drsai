@@ -18,8 +18,8 @@ V2 的 TS 面是**并列新增**的，legacy 一行未改。这与 Python 侧的
 
 所以本次交付的封存形态是：
 
-- legacy 保持可运行、可回退，`npm run dev` 行为不变
-- V2 有自己的三层入口，`npm run dev:workbench` 完全不经过 legacy 的任何一行
+- legacy 可通过 `npm run dev:legacy` 回退；默认入口已切到 V2
+- V2 是默认三层入口，`npm run dev` / `windows-desktop-dev.cmd` 走 workbench + `desktop_gateway`
 - 下面这张表说明**哪个 legacy 模块被哪个 V2 模块取代**，供第 2 阶段逐个下线时对照
 
 ---
@@ -62,12 +62,12 @@ terminal / PTY、browser-use、scheduled tasks、workflow marketplace、shares�
 | 0 | `desktop_gateway`（Python，17 条路由 + 49 项测试） | ✅ |
 | 1 | V2 TS 面（3 层，19 个 IPC 方法 + 59 项测试） | ✅ 本次 |
 | 2 | 装依赖后 `npm run typecheck` + `npm run dev:workbench` 实机验收 | ⬜ |
-| 3 | 决定默认入口：把 `dev` / `build` 指向 V2 配置，legacy 降级为 `dev:legacy` | ⬜ 需要产品决定 |
-| 4 | 删除第 1 节左列文件；`gateway.ts` 的启动入口改指 `drsai.backend.desktop_gateway` | ⬜ 依赖阶段 3 |
+| 3 | 决定默认入口：把 `dev` 指向 V2 配置，legacy 降级为 `dev:legacy` | ✅ `dev` / `windows-desktop-dev.cmd` → workbench；`build` 仍为 legacy |
+| 4 | 删除第 1 节左列文件；`gateway.ts` 的启动入口改指 `drsai.backend.desktop_gateway` | ⬜ 依赖阶段 3 + build 切换 |
 | 5 | Python 侧封存：`gateway_legacy.py` + `gateway/` → `backend/_retired/`，保留冻结基线 | ⬜ 依赖阶段 4 |
 
-**阶段 3 之前不要动 legacy。** 目前 `npm run dev`、打包、远程 SSH、微信适配器、`drsai gateway` CLI
-全部依赖它，而其中后三者不属于桌面端，砍掉会波及 TUI/CLI 用户。
+**阶段 3 已切默认 `dev` 入口；`build`/打包仍走 legacy。** 远程 SSH、微信适配器、`drsai gateway` CLI
+仍依赖 legacy 主进程与 28642 gateway，打包切换前不要删左列文件。
 
 ## 4. 两套如何并存
 
@@ -80,7 +80,7 @@ terminal / PTY、browser-use、scheduled tasks、workflow marketplace、shares�
 | IPC 通道 | `desktop:*`（约 200 条） | `drsai:bridge:invoke` + `drsai:bridge:session-event` |
 | 渲染入口 | `index.html` → `src/main.tsx` | `workbench.html` → `src/workbench/main.tsx` |
 | 构建配置 | `electron.vite.config.ts` | `electron.vite.workbench.config.ts` |
-| npm 脚本 | `dev` / `build` | `dev:workbench` / `build:workbench` |
+| npm 脚本 | `dev:legacy` / `build` | `dev` / `dev:workbench` / `build:workbench` |
 
 IPC 前缀不相交，所以迁移期两套可以注册在同一个 `ipcMain` 上而不会有某个 V2 调用被 legacy handler 静默接走。
 
