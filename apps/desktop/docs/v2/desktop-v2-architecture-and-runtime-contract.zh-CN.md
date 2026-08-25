@@ -48,17 +48,17 @@
 | 3.1 | 流式聊天 | |
 | 3.2 | 模型选择 | 仅"选"，不做 provider 配置 CRUD |
 | 3.3 | 会话状态显示 | 运行中 / 等待 / 完成 / 失败 |
-| 3.4 | 语音 | STT + TTS，能力位门控 |
+| 3.4 | 语音输入 | 仅 STT，能力位门控；TTS 与实时双工不做 |
 | 4.1 | 右侧栏文件预览 | |
 
 ### 2.2 保留的能力组与端点收敛
 
-除上表的界面功能外，以下 10 项后端能力需在 V2 中继续可用。它们覆盖现有网关 151/211 条路由，收敛为 **41 个端点**：
+除上表的界面功能外，以下 10 项后端能力需在 V2 中继续可用。它们覆盖现有网关 151/211 条路由，收敛为 **42 个端点**（按「方法 + 路径」计）：
 
 | # | 能力组 | 现有路由 | V2 端点 | 契约分组 | 收敛掉的内容 |
 |---|---|---|---|---|---|
 | 1 | 鉴权 | 10 | 4 | A | 细粒度授权审计、remote handshake |
-| 2 | 配置持久化 | 19 | 4 | F | agents/tools/env/cli/platforms 各自的 CRUD |
+| 2 | 配置持久化 | 19 | 5 | F | agents/tools/env/cli/platforms 各自的 CRUD |
 | 3 | 运行时 | 28 | 6 | B | goal propose/confirm、diagnostics、side-effects |
 | 4 | 模型切换 | 23 | 2 | E | provider CRUD、能力探针、doctor、两套别名系统 |
 | 5 | 工作区 | 38 | 5 | D | git 9 + worktrees 8 + checkpoints 4 + watch/permissions |
@@ -67,7 +67,7 @@
 | 8 | 语音输入 | 2 | 1 | I | 实时 WS 双工 |
 | 9 | gfs | **0** | 9 | H | 见下 |
 | 10 | 网络检索 | 4 | **0** | — | 表达为 `tool_call`，不需要端点 |
-| | **合计** | **151** | **41** | | |
+| | **合计** | **151** | **42** | | |
 
 **保留能力 ≠ 保留路由。** 差额来自现有网关的分层冗余：两套模型别名系统（`/v1/models/config*` 在代码中已标 `deprecated=True`）、provider 配置的完整管理面、git/worktree/checkpoint 操作面、threads 与 sessions 双套会话路径。
 
@@ -98,14 +98,14 @@
 │  Renderer（唯一的业务层）                                  │
 │    features/  auth · sidebar · chat · workspace · preview  │
 │    store/     snapshot + event reducer（单一事实来源）      │
-│    runtime/   RuntimeClient：41 个方法，与端点 1:1    │
+│    runtime/   RuntimeClient：42 个方法，与端点 1:1          │
 └──────────────┬──────────────────────┬─────────────────────┘
                │ HTTP + SSE           │ IPC（≤15 channel）
                │ （业务全部走这里）    │ （仅 native 能力）
                ▼                      ▼
 ┌──────────────────────────┐  ┌──────────────────────────────┐
 │  DrSai Runtime (Python)  │  │  Electron Main               │
-│    41 个 v1 端点         │  │   窗口/托盘、OIDC 交互登录、 │
+│    42 个 v1 端点          │  │   窗口/托盘、OIDC 交互登录、 │
 │    OAEP 事件流           │  │   文件对话框、runtime 进程   │
 │    Agent Kernel          │  │   生命周期、自动更新         │
 │      └ DrSaiAssistant    │  │   （不含任何业务逻辑）       │
@@ -177,7 +177,7 @@ Runtime 保证 `GET /v1/workspaces` 至少返回一个默认工作区（`$DRSAI_
 
 ## 5. Runtime v1 接口契约
 
-**共 41 个端点。** 分组字母对应 §2.2 表的「契约分组」列。
+**共 42 个端点**（按「方法 + 路径」计）。 分组字母对应 §2.2 表的「契约分组」列。
 
 约定：
 
@@ -272,7 +272,7 @@ Runtime 保证 `GET /v1/workspaces` 至少返回一个默认工作区（`$DRSAI_
 
 > 模型选择是 **run 参数**（B3 的 `model` 字段），E2 只负责持久化缺省值。v1 **不迁移** `/v1/config/model-providers/*` 那 14 条管理面，也不迁移已标 `deprecated=True` 的 `/v1/models/config*` 别名系统。
 
-### F. 配置持久化（4）— 能力组 2
+### F. 配置持久化（5）— 能力组 2
 
 现有网关把配置摊成 19 条各自独立的 CRUD（agents / tools / env / cli / platforms）。v1 收敛为**一份配置文档 + 独立的密钥通道**。
 
@@ -281,7 +281,8 @@ Runtime 保证 `GET /v1/workspaces` 至少返回一个默认工作区（`$DRSAI_
 | F1 | `GET /v1/config` | 全部可持久化配置：默认模型、平台开关、网络检索开关、工具开关 |
 | F2 | `PATCH /v1/config` | 部分更新，仅提交变更字段 |
 | F3 | `GET /v1/config/secrets` | **只返回已配置的密钥名与是否存在，绝不返回值** |
-| F4 | `PUT /v1/config/secrets/{key}` | 写入密钥；`DELETE` 同路径移除 |
+| F4 | `PUT /v1/config/secrets/{key}` | 写入密钥 |
+| F5 | `DELETE /v1/config/secrets/{key}` | 移除密钥 |
 
 > 密钥与普通配置分开，是因为 F1 会被前端频繁读取并可能进入日志与错误上报；密钥必须只写不读。
 
@@ -398,14 +399,14 @@ presentation: "card"
 apps/desktop-v2/
 ├── protocol/                    # codegen 产物，禁止手改
 │   ├── oaep.generated.ts        # 自 cores/protocol/oaep/oaep.schema.json
-│   └── runtime-api.generated.ts # 自 openapi/desktop-v2-runtime-v1.yaml
+│   └── runtime-api.generated.ts # 自 cores/protocol/desktop-v2/runtime-v1.openapi.yaml
 ├── main/
 │   ├── index.ts                 # 目标 < 500 行
 │   ├── runtimeProcess.ts        # 启动 / 健康检查 / 退出
 │   ├── oidcLogin.ts             # 交互式登录，产出 id_token
 │   └── ipc.ts                   # channel 白名单，唯一注册处
 └── renderer/
-    ├── runtime/client.ts        # 41 个方法，与端点 1:1，无业务逻辑
+    ├── runtime/client.ts        # 42 个方法，与端点 1:1，无业务逻辑
     ├── store/
     │   ├── sessionStore.ts      # snapshot + event reducer
     │   └── reducer.ts           # (state, OaepEvent) => state，纯函数，单测覆盖
@@ -470,7 +471,7 @@ reducer 是纯函数，必须有覆盖以下场景的单测：乱序到达、重
 
 | 阶段 | 交付 | 完成判据 |
 |---|---|---|
-| **M0 协议冻结** | `openapi/desktop-v2-runtime-v1.yaml` + OAEP fixture 集 | 41 个端点定义完成；fixture 可回放出完整一轮对话 |
+| **M0 协议冻结** | `cores/protocol/desktop-v2/runtime-v1.openapi.yaml` + OAEP fixture 集 | 42 个端点定义完成；fixture 可回放出完整一轮对话 |
 | **M1 垂直切片** | 登录 → 新建会话 → 发一句话 → 流式 token → 产出一个文件出现在工作区 | 端到端跑通；**接口在此刻才算真正定住** |
 | **M2 会话管理** | 2.1 / 2.2 / 2.5 / 3.3 + 断线重连 | 拔网线 30s 恢复后无消息丢失、无重复 |
 | **M3 工作区与预览** | 2.3 / 4.1 / F3 上传 | artifact → 卡片 → 右侧预览链路通 |
