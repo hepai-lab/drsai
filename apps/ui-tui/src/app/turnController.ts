@@ -20,7 +20,7 @@ import { $isStreaming, $current, appendTurn, setCurrent } from './turnStore.js'
 import { $memoryPreview } from './uiStore.js'
 import { newAssistantTurn } from './types.js'
 import { clearHeightCache } from './heightCache.js'
-import { cancelPendingInkThrottles, resetInkLastOutputHeight } from './inkInstanceRef.js'
+import { cancelPendingInkThrottles, resetInkLastOutputHeight, clearInkFullStaticOutput } from './inkInstanceRef.js'
 
 export interface ImageAttachment {
   /** Original file path (for display / debugging). */
@@ -109,10 +109,44 @@ export class TurnController {
     // bottom blank space" bug).
     resetInkLastOutputHeight()
 
+    // Clear Ink's accumulated fullStaticOutput string. This string grows
+    // unboundedly as turns are committed to <Static> — it's a redundant
+    // in-memory copy of text already written to terminal scrollback.
+    // On long sessions it can reach tens of MB, causing heap exhaustion
+    // and TUI crashes. Clearing after each finalize bounds memory to
+    // only the most recent turn's static output.
+    clearInkFullStaticOutput()
+
     const cur = $current.get()
     if (cur) {
+      // If reasoning chunks were never joined (e.g. error/cancel before
+      // message.complete), join them now so the finalized turn has a
+      // complete reasoning string.
+      let reasoning = cur.reasoning
+      let reasoningChunks = cur.reasoningChunks
+      if (reasoningChunks.length > 0 && !reasoning) {
+        reasoning = reasoningChunks.join('')
+        reasoningChunks = []
+      }
+
+      // Release chunks arrays from text ContentParts to free memory.
+      // If message.complete already materialised the text (the normal
+      // path), chunks are already empty — this is a no-op. If finalize
+      // is called via error/cancel, we do the materialisation here.
+      const releasedParts = cur.contentParts.map(part => {
+        if (part.kind !== 'text') return part
+        if (part.chunks.length === 0) return part  // already released
+        if (!part.text) {
+          part.text = part.chunks.join('')
+        }
+        return { ...part, chunks: [] }
+      })
+
       const finalized = {
         ...cur,
+        reasoning,
+        reasoningChunks,
+        contentParts: releasedParts,
         status: cur.status === 'streaming' ? 'complete' as const : cur.status,
         completedAt: Date.now(),
       }

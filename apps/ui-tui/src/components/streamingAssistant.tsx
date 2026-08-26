@@ -48,10 +48,10 @@ import { Box, Text } from 'ink'
 import { useEffect, useState } from 'react'
 
 import { stripTodoWriteArtifacts } from '../app/todoArtifacts.js'
-import { getPartText, type ContentPart, type TextContentPart, type ToolCall } from '../app/types.js'
+import { getPartText, getReasoningText, type ContentPart, type TextContentPart, type ToolCall } from '../app/types.js'
 import { clearHeightCache, getCachedHeight, setCachedHeight } from '../app/heightCache.js'
 import { $current } from '../app/turnStore.js'
-import { $showReasoning, $terminalFocused, $toolDetail } from '../app/uiStore.js'
+import { $showReasoning, $terminalFocused, $toolDetail, $composerInputHeight } from '../app/uiStore.js'
 import { useTerminalSize } from '../hooks/terminalSizeStore.js'
 import { theme } from '../theme.js'
 
@@ -63,25 +63,37 @@ const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', 
 const SPINNER_TICK_MS = 100
 const ELAPSED_TICK_MS = 1000
 
-// Rows we reserve for non-streaming UI OUTSIDE StreamingAssistant's own
-// marginTop + header. This must account for the WORST CASE (narrow
-// terminal layout) where StatusBar and ComposerPane each take:
-//   marginTop(1) + divider(1) + content(1-3) = 3-5 rows each
-// So: StatusBar(5) + ComposerPane(5) + StreamingAssistant marginTop(1)
-//   + header(1) + reasoning(4) + marker(1) + safety(1) = 18
-// We set RESERVED_ROWS = 12 so that the budget formula
-//   budget = rows - RESERVED_ROWS - 1(header) - reasoningRows - 1(marker)
-// keeps the TOTAL dynamic frame (StreamingAssistant + StatusBar + Composer)
-// strictly below stdout.rows, preventing Ink's fullscreen branch
-// (ink.js: lastOutputHeight >= stdout.rows → clearTerminal + fullStaticOutput)
-// from firing. Once fullscreen fires, log.sync() replaces log(), which
-// sets previousLineCount WITHOUT writing to the terminal — corrupting
-// line tracking. At finalize, log.clear() then erases the wrong number
-// of lines, leaving stale content + blank space (the "bottom blank gap"
-// bug introduced when contentParts moved tools into the clip budget
-// without compensating RESERVED_ROWS).
-const RESERVED_ROWS = 12
+// Rows reserved for non-streaming UI OUTSIDE StreamingAssistant.
+//
+// This is now DYNAMIC: the base overhead (StatusBar + ComposerPane
+// marginTop + divider + banner + safety margin) is constant, but the
+// composer's TextInput height is variable — it grows as the user types
+// more lines. The $composerInputHeight atom (updated by TextInput via
+// onHeightChange) provides the current input area height.
+//
+// Breakdown:
+//   ComposerPane:  marginTop(1) + divider(1) + composerInputHeight
+//   StatusBar:     marginTop(1) + divider(1) + content(1) = 3 (wide)
+//   Banner:        0-1 (optional MemoryPreviewBanner)
+//   Safety margin: 1
+//   Total:          composerInputHeight + 6
+//
+// When the user types more lines, composerInputHeight grows, so
+// RESERVED_ROWS grows, and the streaming budget shrinks — keeping the
+// total dynamic frame (StreamingAssistant + StatusBar + Composer)
+// strictly below stdout.rows.
+const RESERVED_BASE_ROWS = 6  // everything except the composer input height
 const MIN_STREAM_ROWS = 3
+
+// Maximum fraction of terminal rows the dynamic streaming frame may
+// occupy. Keeping this well below 1.0 provides a hard ceiling that
+// prevents Ink's fullscreen branch (lastOutputHeight >= stdout.rows)
+// from firing even when the RESERVED_ROWS estimate is too optimistic.
+// At 0.55, a 24-row terminal gets a max budget of ~13 rows for
+// streaming content, leaving ~11 rows for StatusBar + Composer +
+// headers/margins — more than enough, and the frame can never reach
+// 24 rows to trigger fullscreen.
+const MAX_FRAME_FRACTION = 0.55
 
 /**
  * Spinner + elapsed-seconds hook. ``active`` gates the timers so an
@@ -175,6 +187,27 @@ function estimatePartHeight(
   if (toolDetail === 'compact') {
     return 1
   }
+  // ── Operator tools: use tool-specific height estimate ──────────
+  // These tools have custom rendering in OperatorToolLine with
+  // different arg/result line counts than the generic estimator.
+  const opToolNames = new Set([
+    'run_read', 'run_write', 'run_edit', 'run_grep', 'run_glob',
+    'run_bash', 'run_bash_background', 'run_powershell', 'run_powershell_background',
+    'get_bash_task', 'get_powershell_task',
+    'list_bash_tasks', 'list_powershell_tasks',
+    'kill_bash_task', 'kill_powershell_task',
+  ])
+  if (opToolNames.has(tool.name)) {
+    // Header (1) + arg lines (varies by tool, use argCount as upper bound)
+    // + result lines (up to 5 for preview, up to 8 for edit diff)
+    const argCount = Object.keys(tool.args).length
+    const maxResultLines = tool.name === 'run_edit' ? 8 : 5
+    const resultLines = tool.result
+      ? Math.min(tool.result.split('\n').filter(l => l.trim()).length, maxResultLines)
+      : 0
+    // Conservative: 1 (header) + argCount (args) + 1 (arrow or summary) + resultLines
+    return 1 + Math.min(argCount, 3) + (resultLines > 0 ? 1 + resultLines : 0)
+  }
   // Expanded: header (1) + args (N) + result lines (up to 3) + arrow (1)
   const argCount = Object.keys(tool.args).length
   const resultLines = tool.result
@@ -183,10 +216,27 @@ function estimatePartHeight(
   return 1 + argCount + (resultLines > 0 ? 1 + resultLines : 0)
 }
 
+// Maximum number of content parts to scan in clipContentParts.
+// Only the last MAX_SCAN_PARTS items are height-estimated; older
+// parts are assumed to be already-hidden (clipped from top). This
+// bounds the per-flush cost of clipContentParts to O(MAX_SCAN_PARTS)
+// instead of O(total_parts), which matters when a single turn has
+// 50+ parts after compaction.
+const MAX_SCAN_PARTS = 20
+
 /**
  * Build the visible slice of content parts, clipping from the top
  * (oldest) to fit within ``budget`` rows. Returns the visible parts
  * and the number of hidden rows (for the "↑ N earlier lines" marker).
+ *
+ * ── Scan range limit ────────────────────────────────────────────
+ *
+ * Only the last MAX_SCAN_PARTS parts are scanned for height estimation.
+ * Older parts are treated as "definitely hidden" — their exact heights
+ * are not needed since they'll be clipped anyway when total height
+ * exceeds budget. The hiddenRows count for these unscanned parts is
+ * approximated as "all of them" (the marker just says "N earlier lines"
+ * which is fine — the user doesn't need the exact count).
  */
 function clipContentParts(
   parts: ContentPart[],
@@ -197,18 +247,35 @@ function clipContentParts(
 ): { visible: ContentPart[]; hiddenRows: number; firstPartMaxRows: number } {
   if (parts.length === 0) return { visible: [], hiddenRows: 0, firstPartMaxRows: 0 }
 
-  // Calculate height of each part
-  const heights = parts.map(p => estimatePartHeight(p, tools, cols, toolDetail))
+  // Only scan the last MAX_SCAN_PARTS items; older parts are assumed hidden.
+  const scanStart = Math.max(0, parts.length - MAX_SCAN_PARTS)
+  const scanParts = parts.slice(scanStart)
+
+  // Calculate height of each scanned part
+  const heights = scanParts.map(p => estimatePartHeight(p, tools, cols, toolDetail))
   const totalHeight = heights.reduce((a, b) => a + b, 0)
 
-  if (totalHeight <= budget) {
+  if (totalHeight <= budget && scanStart === 0) {
     return { visible: parts, hiddenRows: 0, firstPartMaxRows: 0 }
+  }
+
+  // If scanned parts fit but there are unscanned (older) parts, those
+  // are all hidden.
+  if (totalHeight <= budget) {
+    // All scanned parts fit; older unscanned parts are all hidden.
+    // We don't know their exact heights, so mark them as "hidden" with
+    // a count that at least includes the number of unscanned parts.
+    return {
+      visible: scanParts,
+      hiddenRows: scanStart > 0 ? scanStart : 0,  // approximate: 1 row per unscanned part
+      firstPartMaxRows: 0,
+    }
   }
 
   // Walk from the end (latest) and accumulate until we hit the budget
   let used = 0
-  let cutIndex = parts.length
-  for (let i = parts.length - 1; i >= 0; i--) {
+  let cutIndex = scanParts.length
+  for (let i = scanParts.length - 1; i >= 0; i--) {
     const h = heights[i]
     if (used + h > budget) {
       cutIndex = i + 1
@@ -220,12 +287,12 @@ function clipContentParts(
 
   // If nothing fits (single part taller than budget), keep at least
   // the last part and clip it intra-part (handled by firstPartMaxRows)
-  if (cutIndex >= parts.length) {
-    cutIndex = parts.length - 1
+  if (cutIndex >= scanParts.length) {
+    cutIndex = scanParts.length - 1
     used = 0  // nothing before the last part is fully visible
   }
 
-  const visible = parts.slice(cutIndex)
+  const visible = scanParts.slice(cutIndex)
 
   // If the first visible part is a text part that didn't fully fit,
   // calculate how many rows of it we CAN show (the remainder of the
@@ -239,13 +306,12 @@ function clipContentParts(
     }
   }
 
-  // hiddenRows includes fully hidden parts above + partially hidden
-  // rows in the first visible part
-  const fullHiddenRows = heights.slice(0, cutIndex).reduce((a, b) => a + b, 0)
+  // hiddenRows: fully hidden scanned parts + unscanned older parts
+  const fullHiddenScanned = heights.slice(0, cutIndex).reduce((a, b) => a + b, 0)
   const partialHiddenRows = firstPartMaxRows > 0
     ? heights[cutIndex] - firstPartMaxRows
     : 0
-  const totalHidden = fullHiddenRows + partialHiddenRows
+  const totalHidden = fullHiddenScanned + partialHiddenRows + (scanStart > 0 ? scanStart : 0)
 
   return { visible, hiddenRows: totalHidden, firstPartMaxRows }
 }
@@ -280,6 +346,7 @@ export function StreamingAssistant() {
   const showReasoning = useStore($showReasoning)
   const termFocused = useStore($terminalFocused)
   const toolDetail = useStore($toolDetail)
+  const composerInputHeight = useStore($composerInputHeight)
   const { cols, rows } = useTerminalSize()
 
   // During streaming, text is not maintained on the turn object (see
@@ -298,28 +365,34 @@ export function StreamingAssistant() {
 
   // Compute the row budget for streaming content. Subtract:
   //   - RESERVED_ROWS for StatusBar + ComposerPane + this component's
-  //     own marginTop (see RESERVED_ROWS comment for the full breakdown)
+  //     own marginTop (see RESERVED_BASE_ROWS comment for the full
+  //     breakdown). The composer's TextInput height is now dynamic
+  //     (reported via $composerInputHeight), so the budget shrinks
+  //     when the user types more lines — preventing the total dynamic
+  //     frame from reaching stdout.rows.
   //   - 1 row for the "● assistant" header
   //   - reasoning block height (if shown)
   //   - 1 row for the "↑ N earlier lines" marker (if we end up clipping)
   //   - 1 row SAFETY MARGIN to guarantee the total dynamic frame stays
-  //     STRICTLY below stdout.rows. If the frame ever reaches >= rows,
-  //     Ink's fullscreen branch fires (ink.js): it calls log.sync()
-  //     instead of log(), which sets previousLineCount WITHOUT writing
-  //     to the terminal. At finalize, log.clear() then erases the wrong
-  //     number of lines → stale content + bottom blank space.
+  //     STRICTLY below stdout.rows.
+  //
+  // Then apply MAX_FRAME_FRACTION as a hard ceiling: the streaming
+  // content area may never exceed 55% of terminal rows. This prevents
+  // the total dynamic frame (StreamingAssistant + StatusBar + Composer)
+  // from reaching stdout.rows and triggering Ink's fullscreen branch,
+  // even when RESERVED_ROWS underestimates the real overhead.
   const effectiveCols = Math.max(20, cols - 4)
-  // Guard: if rows is still 0 or impossibly small (terminal size not yet
-  // reported), use a generous default so we don't trigger clipping on
-  // the very first render.
   const effectiveRows = rows > 0 ? rows : 24
-  const reasoningText = showReasoning && cur?.reasoning?.trim() ? cur.reasoning.trim() : ''
+  const reservedRows = composerInputHeight + RESERVED_BASE_ROWS
+  const reasoningText = showReasoning && cur ? getReasoningText(cur).trim() : ''
   const reasoningRows = reasoningText
     ? 1 /* marginTop */ + 1 /* header */ + countVisualRows(reasoningText, Math.max(10, effectiveCols - 2)) + 1 /* footer */
     : 0
+  const rawBudget = effectiveRows - reservedRows - 1 /* header */ - reasoningRows - 1 /* marker */ - 1 /* safety */
+  const maxBudget = Math.floor(effectiveRows * MAX_FRAME_FRACTION)
   const budget = Math.max(
     MIN_STREAM_ROWS,
-    effectiveRows - RESERVED_ROWS - 1 /* header */ - reasoningRows - 1 /* marker */ - 1 /* safety */,
+    Math.min(rawBudget, maxBudget),
   )
 
   // "Thinking" pulse runs only:
@@ -364,10 +437,10 @@ export function StreamingAssistant() {
       {/* ▎ prefix acts as a left-edge progress indicator (like ChatGPT/Copilot sidebar) */}
       <Text color={theme.primary} bold>▎ ● assistant</Text>
 
-      {showReasoning && cur.reasoning.trim() && (
+      {showReasoning && reasoningText && (
         <Box marginTop={1} paddingLeft={2} flexDirection="column">
           <Text color={theme.reasoning} dimColor>┌─ reasoning ─</Text>
-          <Text color={theme.reasoning} dimColor>{cur.reasoning.trim()}</Text>
+          <Text color={theme.reasoning} dimColor>{reasoningText}</Text>
           <Text color={theme.reasoning} dimColor>└─</Text>
         </Box>
       )}

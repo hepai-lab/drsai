@@ -158,6 +158,14 @@ def _print_event(ev: dict) -> None:
         sys.stdout.flush()
     elif t == "message.start":
         print(f"\n[{sid_hint}] ── assistant ──")
+    elif t == "usage.update":
+        usage = payload
+        print(
+            f"\n[{sid_hint}] ── usage (in={usage.get('prompt_tokens', 0)} "
+            f"out={usage.get('completion_tokens', 0)} "
+            f"Σin={usage.get('prompt_tokens_total', 0)} "
+            f"Σout={usage.get('completion_tokens_total', 0)}) ──"
+        )
     elif t == "message.complete":
         usage = payload.get("usage") or {}
         status = payload.get("status") or "complete"

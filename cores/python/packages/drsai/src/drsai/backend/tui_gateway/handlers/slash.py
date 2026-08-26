@@ -405,79 +405,6 @@ def cmd_clear(ctx: SlashContext) -> dict:
     return {"output": f"Session: {ctx.session_id[:8]}", "ui_action": "clear"}
 
 
-def cmd_retry(ctx: SlashContext) -> dict:
-    """Retry the last message."""
-    # Store retry request in session state for UI to pick up
-    return {"output": "Retrying last message…", "ui_action": "retry"}
-
-
-def cmd_save(ctx: SlashContext) -> str:
-    """Save the current conversation (stub; auto-saved)."""
-    return f"Session {ctx.session_id[:8]} (auto-saved)"
-
-
-def cmd_history(ctx: SlashContext) -> dict:
-    """Show conversation history.
-    
-    Usage:
-        /history       — show last 10 messages
-        /history N     — show last N messages
-        /history all   — show all messages
-    """
-    if not ctx.session:
-        return {"output": "Error: no active session"}
-    
-    try:
-        from drsai.backend.cli.history import CLISessionStore
-        store = CLISessionStore(_get_db_manager(), ctx.user_id)
-        messages = store.load(ctx.session_id)
-        
-        # Parse limit
-        limit = 10  # default
-        if ctx.args:
-            arg = ctx.args.strip().lower()
-            if arg == "all":
-                limit = None
-            else:
-                try:
-                    limit = int(arg)
-                except ValueError:
-                    return {"output": f"Invalid argument: {ctx.args}\nUsage: /history [N|all]"}
-        
-        if limit is not None and limit > 0:
-            messages = messages[-limit:]
-        
-        if not messages:
-            return {"output": "No messages in this session"}
-        
-        # Format messages for display
-        lines = ["", f"  Conversation history ({len(messages)} messages):"]
-        lines.append("  " + "─" * 60)
-        
-        for i, msg in enumerate(messages, 1):
-            role = msg.get("role", msg.get("source", "unknown"))
-            content = msg.get("content", "")
-            
-            # Handle content that might be a list or dict
-            if isinstance(content, list):
-                content = str(content)
-            elif isinstance(content, dict):
-                content = str(content)
-            
-            # Truncate long messages
-            if len(content) > 200:
-                content = content[:197] + "..."
-            
-            lines.append(f"  [{i}] {role.upper()}: {content}")
-            lines.append("")
-        
-        return {"output": "\n".join(lines)}
-        
-    except Exception as exc:
-        logger.exception("cmd_history failed")
-        return {"output": f"Error loading history: {type(exc).__name__}: {exc}"}
-
-
 # ── Plan / Prompt ─────────────────────────────────────────────────────────────
 
 def cmd_plan_mode(ctx: SlashContext) -> dict:
@@ -1054,15 +981,6 @@ def cmd_new(ctx: SlashContext) -> dict:
     }
 
 
-def cmd_switch(ctx: SlashContext) -> dict:
-    """Switch to another session. UI handles the picker."""
-    return {
-        "output": "Opening session picker…",
-        "ui_action": "session.switch",
-        "target": ctx.args or None,
-    }
-
-
 def cmd_list(ctx: SlashContext) -> dict:
     """List sessions (opens picker).
     
@@ -1116,27 +1034,6 @@ def cmd_rename(ctx: SlashContext) -> dict:
         return {"output": f"Error: {e}"}
 
 
-def cmd_search(ctx: SlashContext) -> dict:
-    """Search past sessions."""
-    if not ctx.args:
-        return {"output": "Usage: /search <query>"}
-    try:
-        from drsai.backend.cli.history import CLISessionStore
-        store = CLISessionStore(_get_db_manager(), ctx.user_id)
-        results = store.list(limit=200)
-        q = ctx.args.lower()
-        hits = [s for s in results if q in (s.name or "").lower()]
-        if not hits:
-            return {"output": f"No sessions match '{ctx.args}'"}
-        lines = [f"Found {len(hits)} session(s):"]
-        for s in hits[:20]:
-            lines.append(f"  [{s.thread_id[:8]}] {s.name} (msgs={s.message_count})")
-        return {"output": "\n".join(lines)}
-    except Exception as e:
-        logger.exception("search failed")
-        return {"output": f"Error: {e}"}
-
-
 def cmd_find(ctx: SlashContext) -> dict:
     """Natural language search for sessions (semantic + keyword hybrid).
 
@@ -1172,7 +1069,10 @@ def cmd_find(ctx: SlashContext) -> dict:
             tags_str = ' '.join(f'#{t}' for t in (getattr(s, 'tags', []) or [])) if getattr(s, 'tags', None) else ''
             pin_str = ' 📌' if getattr(s, 'pinned', False) else ''
             lines.append(f"  [{s.thread_id[:8]}] {s.name} (msgs={s.message_count}, score={score:.2f}){pin_str} {tags_str}")
-            if s.preview:
+            snippet = getattr(s, 'match_snippet', '')
+            if snippet:
+                lines.append(f"    ✦ {snippet[:100]}")
+            elif s.preview:
                 lines.append(f"    \"{s.preview[:80]}\"")
 
         # Return ui_action so TUI can open a smart search picker
@@ -1186,6 +1086,7 @@ def cmd_find(ctx: SlashContext) -> dict:
                     "name": s.name,
                     "preview": s.preview,
                     "relevance_score": getattr(s, 'relevance_score', 0),
+                    "match_snippet": getattr(s, 'match_snippet', ''),
                 }
                 for s in results[:10]
             ],
@@ -1193,101 +1094,6 @@ def cmd_find(ctx: SlashContext) -> dict:
     except Exception as e:
         logger.exception("find failed")
         return {"output": f"Error: {e}"}
-
-
-def cmd_tag(ctx: SlashContext) -> dict:
-    """Manage session tags.
-
-    Usage:
-        /tag add <tag1> [tag2] ...
-        /tag remove <tag1> [tag2] ...
-        /tag list
-    """
-    if not ctx.session:
-        return {"output": "Error: no active session"}
-    parts = ctx.args.split(None, 1)
-    if not parts:
-        return {"output": "Usage: /tag add|remove|list [tags...]"}
-
-    from drsai.backend.cli.history import CLISessionStore
-    store = CLISessionStore(_get_db_manager(), ctx.user_id)
-
-    subcmd = parts[0].lower()
-    if subcmd == "list":
-        info = store.resolve(ctx.session_id)
-        if info:
-            tags = getattr(info, 'tags', []) or []
-            if tags:
-                return {"output": f"Tags: {' '.join('#' + t for t in tags)}"}
-            return {"output": "No tags set"}
-        return {"output": "Session not found"}
-
-    if subcmd in ("add", "remove") and len(parts) < 2:
-        return {"output": f"Usage: /tag {subcmd} <tag1> [tag2] ..."}
-
-    tags_str = parts[1] if len(parts) > 1 else ""
-    tags = [t.strip().lstrip('#') for t in tags_str.split() if t.strip()]
-
-    if subcmd == "add":
-        ok = store.tag_add(ctx.session_id, tags)
-        if ok:
-            ctx.refresh_info()
-            return {"output": f"Added tags: {' '.join('#' + t for t in tags)}", "ui_action": "session.refresh"}
-        return {"output": "Failed to add tags"}
-
-    if subcmd == "remove":
-        ok = store.tag_remove(ctx.session_id, tags)
-        if ok:
-            ctx.refresh_info()
-            return {"output": f"Removed tags: {' '.join('#' + t for t in tags)}", "ui_action": "session.refresh"}
-        return {"output": "Failed to remove tags"}
-
-    return {"output": f"Unknown subcommand: {subcmd}. Use add, remove, or list."}
-
-
-def cmd_pin(ctx: SlashContext) -> dict:
-    """Pin the current session to top of lists."""
-    if not ctx.session:
-        return {"output": "Error: no active session"}
-    from drsai.backend.cli.history import CLISessionStore
-    store = CLISessionStore(_get_db_manager(), ctx.user_id)
-    ok = store.set_meta_flag(ctx.session_id, "pinned", True)
-    if ok:
-        ctx.refresh_info()
-        return {"output": "📌 Session pinned", "ui_action": "session.refresh"}
-    return {"output": "Failed to pin session"}
-
-
-def cmd_unpin(ctx: SlashContext) -> dict:
-    """Unpin the current session."""
-    if not ctx.session:
-        return {"output": "Error: no active session"}
-    from drsai.backend.cli.history import CLISessionStore
-    store = CLISessionStore(_get_db_manager(), ctx.user_id)
-    ok = store.set_meta_flag(ctx.session_id, "pinned", False)
-    if ok:
-        ctx.refresh_info()
-        return {"output": "Session unpinned", "ui_action": "session.refresh"}
-    return {"output": "Failed to unpin session"}
-
-
-def cmd_archive(ctx: SlashContext) -> dict:
-    """Archive or unarchive the current session.
-
-    Usage:
-        /archive         — archive (hide from default list)
-        /archive off     — unarchive
-    """
-    if not ctx.session:
-        return {"output": "Error: no active session"}
-    from drsai.backend.cli.history import CLISessionStore
-    store = CLISessionStore(_get_db_manager(), ctx.user_id)
-    archived = ctx.args.strip().lower() != "off"
-    ok = store.set_meta_flag(ctx.session_id, "archived", archived)
-    if ok:
-        ctx.refresh_info()
-        return {"output": f"Session {'archived' if archived else 'unarchived'}", "ui_action": "session.refresh"}
-    return {"output": "Failed to archive session"}
 
 
 def cmd_resume(ctx: SlashContext) -> dict:
@@ -1301,21 +1107,6 @@ def cmd_resume(ctx: SlashContext) -> dict:
         "output": f"Resuming session: {ctx.args}",
         "ui_action": "session.switch",
         "target": ctx.args,
-    }
-
-
-def cmd_copy(ctx: SlashContext) -> dict:
-    """Copy the n-th-to-last assistant reply (UI-side via OSC 52)."""
-    n = 1
-    if ctx.args:
-        try:
-            n = int(ctx.args)
-        except ValueError:
-            return {"output": f"Usage: /copy [n]  (got: {ctx.args})"}
-    return {
-        "output": f"Copying last assistant reply #{n} to clipboard…",
-        "ui_action": "copy.reply",
-        "n": n,
     }
 
 
@@ -1340,13 +1131,45 @@ def cmd_status(ctx: SlashContext) -> str:
     return "\n".join(lines)
 
 
+def _format_config_text() -> str:
+    """Format the current CLI config as displayable text with masked keys."""
+    from drsai.backend.cli import config as cli_config
+    if not cli_config.CLI_CONFIG_PATH.exists():
+        return "No config file found. Run /setup wizard to configure."
+    cfg = cli_config.load_config()
+    lines = ["Current Configuration:"]
+    # Show non-sensitive fields first
+    for k, v in sorted(cfg.items()):
+        if k in cli_config._SENSITIVE_KEYS:
+            continue
+        lines.append(f"  {k}: {v}")
+    # Show sensitive fields (masked) with source info
+    env_map = {
+        "api_key": "HEPAI_API_KEY",
+        "anthropic_api_key": "ANTHROPIC_API_KEY",
+        "openai_api_key": "OPENAI_API_KEY",
+    }
+    for k in ["api_key", "anthropic_api_key", "openai_api_key"]:
+        val = cfg.get(k) or ""
+        env_val = os.environ.get(env_map.get(k, ""), "")
+        effective = val or env_val
+        if effective:
+            source = "env" if env_val and not val else "config"
+            lines.append(f"  {k}: {cli_config.mask_key(effective)}  ({source})")
+        else:
+            lines.append(f"  {k}: <not set>")
+    lines.append("")
+    lines.append("↑ Modify via the wizard below, or /setup show for text-only view")
+    return "\n".join(lines)
+
+
 def cmd_setup(ctx: SlashContext) -> dict:
     """Show setup status or re-run setup wizard.
 
     Usage:
-        /setup           — show current config status
-        /setup wizard    — re-run the setup wizard
-        /setup show      — show full config (masked)
+        /setup           — show current config and open wizard to modify
+        /setup wizard    — re-run the setup wizard (same as /setup)
+        /setup show      — show full config (masked) as text only
     """
     args = (ctx.args or "").strip().lower()
 
@@ -1354,30 +1177,23 @@ def cmd_setup(ctx: SlashContext) -> dict:
         return {"output": "", "ui_action": "setup.wizard"}
 
     if args == "show":
-        # Show config with masked keys
-        from drsai.backend.cli import config as cli_config
-        if cli_config.CLI_CONFIG_PATH.exists():
-            cfg = cli_config.load_config()
-            lines = ["Configuration:"]
-            for k, v in sorted(cfg.items()):
-                if "key" in k.lower() or "token" in k.lower():
-                    masked = f"{str(v)[:6]}...{str(v)[-4:]}" if v and len(str(v)) > 10 else "***"
-                    lines.append(f"  {k}: {masked}")
-                else:
-                    lines.append(f"  {k}: {v}")
-            return {"output": "\n".join(lines)}
-        return {"output": "No config file found. Run /setup wizard to configure."}
+        # Show config with masked keys (text only, no wizard)
+        return {"output": _format_config_text()}
 
-    # Default: show status
+    # Default: show full config + open wizard for modification
     from .setup import _status
     status = _status(0, {})
     data = status.get("result", status)
     if data.get("setup_required"):
         return {
-            "output": "⚠  Setup required. Run /setup wizard to configure your API key and model.",
+            "output": "⚠  Setup required. Configure your API key and model below.",
             "ui_action": "setup.wizard",
         }
-    return {"output": "✓ Configured. Use /setup show for details, /setup wizard to reconfigure."}
+    # Config exists — show it and open wizard so user can modify
+    return {
+        "output": _format_config_text(),
+        "ui_action": "setup.wizard",
+    }
 
 
 def cmd_daemons(ctx: SlashContext) -> str:
@@ -1751,9 +1567,6 @@ SLASH_HANDLERS: dict[str, Any] = {
     "fast": cmd_fast,
     "clear": cmd_clear,
     "cls": cmd_clear,
-    "retry": cmd_retry,
-    "save": cmd_save,
-    "history": cmd_history,
     "plan_mode": cmd_plan_mode,
     "pm": cmd_plan_mode,
     "pm_global": cmd_pm_global,
@@ -1784,18 +1597,11 @@ SLASH_HANDLERS: dict[str, Any] = {
     "mc": cmd_max_concurrent,
     # ── Session management ────────────────────────────────────────────────
     "new": cmd_new,
-    "switch": cmd_switch,
     "list": cmd_list,
     "ls": cmd_list,
     "rename": cmd_rename,
-    "search": cmd_search,
     "find": cmd_find,
-    "tag": cmd_tag,
-    "pin": cmd_pin,
-    "unpin": cmd_unpin,
-    "archive": cmd_archive,
     "resume": cmd_resume,
-    "copy": cmd_copy,
     "status": cmd_status,
     "setup": cmd_setup,
     "env": cmd_setup,

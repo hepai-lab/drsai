@@ -7,15 +7,16 @@ import { Box, Text, useApp, useInput } from 'ink'
 import { existsSync, readFileSync } from 'node:fs'
 import { basename, extname, isAbsolute, resolve, win32 } from 'node:path'
 import { homedir } from 'node:os'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 
 import { loadPromptHistory, savePromptHistory } from '../app/promptHistory.js'
 import { isTerminalFocusEvent } from '../app/focusEvents.js'
 import { $isStreaming, $transcript, $current } from '../app/turnStore.js'
 import type { ImageAttachment, TurnController } from '../app/turnController.js'
-import { $activeOverlay, $showReasoning, $userId, $sessionMeta, $memoryPreview, $lastUsage, $remoteHost } from '../app/uiStore.js'
+import { $activeOverlay, $showReasoning, $userId, $sessionMeta, $memoryPreview, $lastUsage, $remoteHost, $composerInputHeight } from '../app/uiStore.js'
 import type { SessionInfo, SessionListResult, SessionResumeResult, SessionCreateResult } from '../gatewayTypes.js'
 import { theme } from '../theme.js'
+import { useTerminalSize } from '../hooks/terminalSizeStore.js'
 
 import { ModelEditor, type ModelEditorValues, type ModelProviderPreset } from './modelEditor.js'
 import { ModelPicker, type ModelEntry } from './modelPicker.js'
@@ -29,6 +30,7 @@ import { SchedulerPanel } from './schedulerPanel.js'
 import { WeChatPanel } from './wechatPanel.js'
 import { GfsPanel } from './gfsPanel.js'
 import { SshRemotePanel } from './sshRemotePanel.js'
+import { SetupScreen } from './setupScreen.js'
 import { SlashOutputOverlay } from './slashOutputOverlay.js'
 import { TextInput } from './textInput.js'
 import { parseHistory } from '../app/historyParser.js'
@@ -225,12 +227,27 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   const { exit } = useApp()
   const isStreaming = useStore($isStreaming)
   const activeOverlay = useStore($activeOverlay)
+  const { cols, rows } = useTerminalSize()
+  // Dynamic divider width: terminal width minus AppLayout paddingX=1×2.
+  const dividerWidth = Math.max(20, cols - 2)
+  // Input box upper bound: 40% of terminal rows, floor 5, cap 15.
+  // This gives the input box enough room to grow before scroll mode
+  // kicks in, preventing premature ↑/↓ arrow markers that annoy users.
+  // (Previous 25% was too aggressive — only 6 rows on a 24-line term.)
+  const inputMaxRows = Math.max(5, Math.min(Math.floor(rows * 0.4), 15))
+  // Stable callback to report input height changes to the global atom.
+  // StreamingAssistant subscribes to $composerInputHeight and adjusts
+  // its RESERVED_ROWS dynamically — when input grows, streaming budget
+  // shrinks, keeping the total dynamic frame < stdout.rows.
+  const handleInputHeightChange = useCallback((h: number) => {
+    $composerInputHeight.set(h)
+  }, [])
   const [slashOutput, setSlashOutput] = useState<string | null>(null)
   const slashOutputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [sessionPicker, setSessionPicker] = useState<SessionInfo[] | null>(null)
   const [smartSearch, setSmartSearch] = useState<{
     query: string
-    results: Array<{ session_id: string; name: string; preview: string; relevance_score: number }>
+    results: Array<{ session_id: string; name: string; preview: string; relevance_score: number; match_snippet?: string }>
   } | null>(null)
   const [quickSwitch, setQuickSwitch] = useState<SessionInfo[] | null>(null)
   const [showSkillsPane, setShowSkillsPane] = useState(false)
@@ -240,6 +257,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   const [wechatPanelOpen, setWechatPanelOpen] = useState(false)
   const [gfsPanelOpen, setGfsPanelOpen] = useState(false)
   const [remotePanelOpen, setRemotePanelOpen] = useState(false)
+  const [setupScreenOpen, setSetupScreenOpen] = useState(false)
   const [modelPicker, setModelPicker] = useState<
     { models: ModelEntry[]; currentAlias?: string } | null
   >(null)
@@ -669,7 +687,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   • History loads automatically on restart
   • Use /export to save full conversation
 
-For more info: https://github.com/yourusername/drsai
+For more info: https://note.ihep.ac.cn/s/Sc5E2Bw1b
 `
       showSlashOutput(helpText) // No timer — full-screen takeover until user dismisses
       return
@@ -822,18 +840,16 @@ For more info: https://github.com/yourusername/drsai
             return
           }
           case 'session.smart_search': {
-            const searchResult = result as { results?: Array<{ session_id: string; name: string; preview: string; relevance_score: number }>; query?: string }
+            const searchResult = result as { results?: Array<{ session_id: string; name: string; preview: string; relevance_score: number; match_snippet?: string }>; query?: string }
             if (searchResult.results && searchResult.results.length > 0) {
               setSmartSearch({
                 query: searchResult.query || '',
                 results: searchResult.results,
               })
+            } else {
+              // No results — show the readable output from the handler
+              showSlashOutput(output || `No sessions match '${searchResult.query || ''}'`)
             }
-            return
-          }
-          case 'copy.reply': {
-            // Future: read $transcript, emit OSC 52
-            showSlashOutput('Clipboard copy not yet wired (OSC 52 pending).', 5000)
             return
           }
           case 'clear': {
@@ -872,11 +888,6 @@ For more info: https://github.com/yourusername/drsai
             }
             return
           }
-          case 'session.refresh': {
-            // Session metadata changed (pin/archive/tag) — show output and refresh if picker is open
-            if (output) showSlashOutput(output, 3000)
-            return
-          }
           case 'daemon.panel': {
             setDaemonPanelOpen(true)
             return
@@ -895,6 +906,14 @@ For more info: https://github.com/yourusername/drsai
           }
           case 'wechat.login': {
             setWechatPanelOpen(true)
+            return
+          }
+          case 'setup.wizard': {
+            // Show config text (if any) before opening the wizard overlay.
+            // The wizard will render on top; when dismissed, the slash
+            // output overlay still holds the config text for reference.
+            if (output) showSlashOutput(output, 0)
+            setSetupScreenOpen(true)
             return
           }
         }
@@ -1004,6 +1023,18 @@ For more info: https://github.com/yourusername/drsai
       <GfsPanel
         gw={controller.gw}
         onDismiss={() => setGfsPanelOpen(false)}
+      />
+    )
+  }
+
+  // Setup wizard overlay (mid-session reconfiguration via /setup wizard)
+  if (setupScreenOpen) {
+    return (
+      <SetupScreen
+        gw={controller.gw}
+        configExists={true}
+        onComplete={() => setSetupScreenOpen(false)}
+        onDismiss={() => setSetupScreenOpen(false)}
       />
     )
   }
@@ -1159,10 +1190,14 @@ For more info: https://github.com/yourusername/drsai
               name: s.name,
               preview: s.preview,
               relevance_score: s.relevance_score || 0,
+              match_snippet: s.match_snippet || '',
             }))
             setSmartSearch({ query, results })
           } catch (err) {
-            // Silently fail — user can retry
+            // Show error as a result entry so the user knows what happened
+            const errMsg = err instanceof Error ? err.message : String(err)
+            setSmartSearch({ query, results: [] })
+            showSlashOutput(`Search error: ${errMsg}`, 5000)
           }
         }}
       />
@@ -1278,7 +1313,7 @@ For more info: https://github.com/yourusername/drsai
   return (
     <Box flexDirection="column" marginTop={1}>
       <Box>
-        <Text color={theme.border}>{'─'.repeat(60)}</Text>
+        <Text color={theme.border}>{'─'.repeat(dividerWidth)}</Text>
       </Box>
       {slashOutput && (
         <Box flexDirection="column" marginBottom={1}>
@@ -1296,6 +1331,16 @@ For more info: https://github.com/yourusername/drsai
         the cursor renders as a steady dim block (so users see *where*
         they will type next), and the placeholder switches to a status
         message. Ctrl+C is handled by the higher-level useInput above.
+
+        Dynamic input box (P0 input crash fix):
+          maxRows  — caps the visible input height at 25% of terminal
+                     rows (max 12). When exceeded, a scroll window
+                     centred on the cursor is shown instead.
+          cols     — terminal column count, used for soft-wrapping long
+                     lines so they don't overflow horizontally.
+          onHeightChange — reports the rendered input height to the
+                     $composerInputHeight atom so StreamingAssistant
+                     can shrink its content budget dynamically.
       */}
       <TextInput
         prompt=" › "
@@ -1315,7 +1360,15 @@ For more info: https://github.com/yourusername/drsai
         onHistoryChange={savePromptHistory}
         onPaste={maybeCollapsePaste}
         onCompletePath={completePath}
+        maxRows={inputMaxRows}
+        cols={cols}
+        onHeightChange={handleInputHeightChange}
       />
+      {/* Bottom divider — closes the input box visually so it reads
+          as a bounded area rather than an open-ended strip. */}
+      <Box>
+        <Text color={theme.border}>{'─'.repeat(dividerWidth)}</Text>
+      </Box>
     </Box>
   )
 }
