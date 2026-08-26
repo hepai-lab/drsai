@@ -48,13 +48,6 @@ COMMAND_REGISTRY: list[CommandDef] = [
         handler="async",
     ),
     CommandDef(
-        "switch",
-        "Switch to another session",
-        "Session",
-        args_hint="<id|name>",
-        handler="async",
-    ),
-    CommandDef(
         "list",
         "List sessions (current workdir by default, use --all for all workdirs)",
         "Session",
@@ -77,25 +70,6 @@ COMMAND_REGISTRY: list[CommandDef] = [
         handler="sync",
     ),
     CommandDef(
-        "history",
-        "Show conversation history (default: last 10 messages)",
-        "Session",
-        args_hint="[N|all]",
-        handler="async",
-    ),
-    CommandDef(
-        "save",
-        "Save the current conversation",
-        "Session",
-        handler="sync",
-    ),
-    CommandDef(
-        "retry",
-        "Retry the last message",
-        "Session",
-        handler="sync",
-    ),
-    CommandDef(
         "resume",
         "Resume a previous session (replays history into the agent)",
         "Session",
@@ -103,17 +77,10 @@ COMMAND_REGISTRY: list[CommandDef] = [
         handler="async",
     ),
     CommandDef(
-        "search",
-        "Search your past sessions (substring, case-insensitive)",
+        "find",
+        "Natural language search across sessions (FTS5 + BM25 hybrid)",
         "Session",
-        args_hint="<query>",
-        handler="async",
-    ),
-    CommandDef(
-        "copy",
-        "Copy the n-th-to-last assistant reply to the clipboard",
-        "Session",
-        args_hint="[n]",
+        args_hint="<query> [--cwd]",
         handler="async",
     ),
 
@@ -155,7 +122,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
     CommandDef(
         "setup",
-        "Re-open setup wizard to change API key / configuration",
+        "Show current config and open wizard to modify API key / configuration",
         "Configuration",
         aliases=("env",),
         handler="sync",
@@ -311,42 +278,6 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<number|status>",
         handler="async",
     ),
-
-    # ── Session Search & Organization ───────────────────────────────────────
-    CommandDef(
-        "find",
-        "Natural language search across sessions (semantic + keyword hybrid)",
-        "Search & Organize",
-        args_hint="<query> [--cwd]",
-        handler="async",
-    ),
-    CommandDef(
-        "tag",
-        "Add/remove/list tags on the current session",
-        "Search & Organize",
-        args_hint="add|remove|list [tags...]",
-        handler="async",
-    ),
-    CommandDef(
-        "pin",
-        "Pin the current session (shows at top of lists)",
-        "Search & Organize",
-        handler="async",
-    ),
-    CommandDef(
-        "unpin",
-        "Unpin the current session",
-        "Search & Organize",
-        handler="async",
-    ),
-    CommandDef(
-        "archive",
-        "Archive or unarchive the current session (hide from default list)",
-        "Search & Organize",
-        args_hint="[off]",
-        handler="async",
-    ),
-
 
     # ── Multimedia ──────────────────────────────────────────────────────
     CommandDef(

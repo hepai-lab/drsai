@@ -19,8 +19,11 @@ export interface ToolCall {
 
 /** Maximum character length for a tool result stored in memory.
  *  Larger results are truncated to prevent heap growth during long
- *  sessions with many tool calls (e.g. reading large files). */
-export const MAX_TOOL_RESULT_CHARS = parseInt(process.env.DRSAI_MAX_TOOL_RESULT || '10000', 10)
+ *  sessions with many tool calls (e.g. reading large files).
+ *  Reduced from 10000 to 5000 — the full output was already
+ *  streamed to the terminal during the tool's execution; the
+ *  in-memory copy only needs enough for the transcript display. */
+export const MAX_TOOL_RESULT_CHARS = parseInt(process.env.DRSAI_MAX_TOOL_RESULT || '5000', 10)
 export const TOOL_TRUNC_SUFFIX = '\n…[output truncated]'
 
 /**
@@ -77,7 +80,8 @@ export function getPartText(part: TextContentPart): string {
 export interface AssistantTurn {
   role: 'assistant'
   text: string                  // streamed body — full concatenated text (legacy / Markdown)
-  reasoning: string             // streamed thinking.delta / reasoning.delta
+  reasoning: string             // streamed thinking.delta / reasoning.delta (lazy-join cache; use getReasoningText())
+  reasoningChunks: string[]     // incremental reasoning segments pushed during streaming (source of truth)
   tools: ToolCall[]
   contentParts: ContentPart[]   // ordered content blocks (text ↔ tool interleaving)
   usage?: UsagePayload
@@ -100,11 +104,29 @@ export function newAssistantTurn(): AssistantTurn {
     role: 'assistant',
     text: '',
     reasoning: '',
+    reasoningChunks: [],
     tools: [],
     contentParts: [],
     status: 'streaming',
     startedAt: Date.now(),
   }
+}
+
+/**
+ * Get the full reasoning text of an AssistantTurn. If the turn was
+ * streamed (has reasoningChunks), join them on first access and cache
+ * the result in ``turn.reasoning``. If the turn has no chunks
+ * (history-loaded), return ``turn.reasoning`` directly.
+ *
+ * Mirrors the chunk-based pattern of ``getPartText()``: each flush
+ * only pushes to the chunks array (O(1)), and the join happens at
+ * most once per render cycle.
+ */
+export function getReasoningText(turn: AssistantTurn): string {
+  if (turn.reasoningChunks.length > 0 && !turn.reasoning) {
+    turn.reasoning = turn.reasoningChunks.join('')
+  }
+  return turn.reasoning
 }
 
 export function toolFromStart(p: ToolStartPayload): ToolCall {

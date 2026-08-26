@@ -50,8 +50,14 @@ export const $transcriptGeneration = atom<number>(0)
 
 // ── Tunables ────────────────────────────────────────────────────────
 
-/** Number of recent turns kept at full fidelity. */
-const KEEP_FULL_TURNS = parseInt(process.env.DRSAI_KEEP_FULL_TURNS || '20', 10)
+/** Number of recent turns kept at full fidelity.
+ *  Reduced from 20 to 10 to bound memory usage during long sessions
+ *  with many tool calls. Each full turn can hold several KB of text
+ *  chunks + tool results; 10 turns is enough for scrollback context
+ *  while keeping memory bounded. Older turns are already in the
+ *  terminal scrollback — truncating their in-memory copies only
+ *  affects potential React re-renders that never actually happen. */
+const KEEP_FULL_TURNS = parseInt(process.env.DRSAI_KEEP_FULL_TURNS || '10', 10)
 
 /** Max chars retained for an old turn's `text` field. */
 const MAX_TRUNCATED_TEXT = parseInt(process.env.DRSAI_MAX_TRUNC_TEXT || '200', 10)
@@ -89,6 +95,7 @@ function truncateTurn(turn: Turn): Turn {
     ...turn,
     text: truncateText(turn.text, MAX_TRUNCATED_TEXT),
     reasoning: '',
+    reasoningChunks: [],
     tools: turn.tools.map(t => ({
       ...t,
       result: t.result ? truncateText(t.result, MAX_TRUNCATED_TOOL) : t.result,

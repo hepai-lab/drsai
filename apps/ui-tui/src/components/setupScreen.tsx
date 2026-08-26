@@ -15,7 +15,7 @@
  */
 
 import { Box, Text, useInput } from 'ink'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import { isTerminalFocusEvent } from '../app/focusEvents.js'
 import type { GatewayClient } from '../gatewayClient.js'
@@ -61,16 +61,30 @@ const PROVIDERS: ProviderOption[] = [
 interface SetupScreenProps {
   gw: GatewayClient
   configExists: boolean
-  /** Called after a successful save. Triggers App to re-bootstrap. */
+  /** Called after a successful save in boot mode. Triggers App to re-bootstrap. */
   onComplete: () => void
+  /** When provided, the component runs in overlay mode: submit() calls this
+   *  instead of onComplete, and Esc/Enter dismisses the error step. */
+  onDismiss?: () => void
 }
 
-type Step = 'username' | 'provider' | 'apikey' | 'baseurl' | 'submitting' | 'done' | 'error'
+type Step = 'username' | 'config' | 'provider' | 'apikey' | 'baseurl' | 'submitting' | 'done' | 'error'
 
-export function SetupScreen({ gw, configExists, onComplete }: SetupScreenProps) {
-  // Skip the username prompt when re-running setup just to fix a missing key
-  // — config already has a user_id we shouldn't overwrite.
-  const [step, setStep] = useState<Step>(configExists ? 'provider' : 'username')
+interface ConfigEntry {
+  value: string
+  source?: string
+}
+
+interface ConfigResponse {
+  config: Record<string, ConfigEntry | string | number | boolean | null>
+  config_path: string
+}
+
+export function SetupScreen({ gw, configExists, onComplete, onDismiss }: SetupScreenProps) {
+  // In overlay mode (configExists=true), start with a 'config' step that
+  // shows the current configuration and lets the user choose to reconfigure
+  // or dismiss. In boot mode (configExists=false), start at 'username'.
+  const [step, setStep] = useState<Step>(configExists ? 'config' : 'username')
   const [cursor, setCursor] = useState(0)
   const [userId, setUserIdValue] = useState('')
   const [provider, setProvider] = useState<Provider | null>(null)
@@ -78,15 +92,51 @@ export function SetupScreen({ gw, configExists, onComplete }: SetupScreenProps) 
   const [, setBaseUrl] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
 
+  // Current config (fetched in overlay mode for display)
+  const [currentConfig, setCurrentConfig] = useState<ConfigResponse | null>(null)
+
+  // Fetch current config when in overlay mode
+  useEffect(() => {
+    if (configExists && step === 'config') {
+      gw.request<ConfigResponse>('setup.config', {})
+        .then((resp: ConfigResponse) => setCurrentConfig(resp))
+        .catch(() => {/* ignore — config display is optional */})
+    }
+  }, [configExists, step, gw])
+
   const selectedProvider = useMemo(
     () => PROVIDERS.find(p => p.key === provider) ?? null,
     [provider],
   )
 
   // Provider selection (arrow keys + Enter + number shortcuts)
+  // Config step (overlay mode): Enter to reconfigure, Esc to dismiss
+  // Error step (overlay mode): Esc/Enter to dismiss
   useInput(
     (input, key) => {
       if (isTerminalFocusEvent(input)) return
+
+      // Config step in overlay mode: Enter starts reconfig, Esc dismisses
+      if (step === 'config' && onDismiss) {
+        if (key.escape) {
+          onDismiss()
+          return
+        }
+        if (key.return) {
+          setStep('provider')
+          return
+        }
+        return
+      }
+
+      // Error step in overlay mode: Esc or Enter dismisses the panel
+      if (step === 'error' && onDismiss) {
+        if (key.escape || key.return) {
+          onDismiss()
+        }
+        return
+      }
+
       if (step !== 'provider') return
       if (key.upArrow) {
         setCursor(c => Math.max(0, c - 1))
@@ -131,8 +181,13 @@ export function SetupScreen({ gw, configExists, onComplete }: SetupScreenProps) 
         user_id: userId || undefined,
       })
       setStep('done')
-      // Small delay so the user sees the success message
-      setTimeout(onComplete, 500)
+      // Overlay mode: close panel after brief success display.
+      // Boot mode: trigger App re-bootstrap.
+      if (onDismiss) {
+        setTimeout(onDismiss, 500)
+      } else {
+        setTimeout(onComplete, 500)
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       setErrorMsg(msg)
@@ -151,12 +206,62 @@ export function SetupScreen({ gw, configExists, onComplete }: SetupScreenProps) 
       <Box marginTop={1}>
         <Text color={theme.muted} dimColor>
           {configExists
-            ? 'No API key configured. Add one below to continue.'
+            ? step === 'config'
+              ? 'Review your configuration below. Press Enter to modify, Esc to close.'
+              : 'No API key configured. Add one below to continue.'
             : 'First run — choose a provider and enter your API key.'}
         </Text>
       </Box>
     </Box>
   )
+
+  if (step === 'config') {
+    // Render current config fields
+    const cfg = currentConfig?.config
+    const configLines: ReactNode[] = []
+    if (cfg) {
+      const entries = Object.entries(cfg).sort(([a], [b]) => a.localeCompare(b))
+      for (const [k, v] of entries) {
+        let display: string
+        if (v && typeof v === 'object' && 'value' in v) {
+          const entry = v as ConfigEntry
+          display = entry.value + (entry.source ? `  (${entry.source})` : '')
+        } else if (v === null || v === undefined) {
+          display = '<not set>'
+        } else {
+          display = String(v)
+        }
+        configLines.push(
+          <Box key={k}>
+            <Text color={theme.text}>  {k.padEnd(20)} </Text>
+            <Text color={theme.muted}>{display}</Text>
+          </Box>
+        )
+      }
+    } else {
+      configLines.push(<Text key="loading" color={theme.muted} dimColor>Loading config…</Text>)
+    }
+
+    return (
+      <Box flexDirection="column" paddingX={1}>
+        {banner}
+        <Box marginTop={1} flexDirection="column">
+          <Text color={theme.accent} bold>Current Configuration</Text>
+          {currentConfig?.config_path && (
+            <Text color={theme.muted} dimColor>{currentConfig.config_path}</Text>
+          )}
+        </Box>
+        <Box marginTop={1} flexDirection="column">
+          {configLines}
+        </Box>
+        <Box marginTop={1}>
+          <Text color={theme.muted} dimColor>
+            Enter: reconfigure · Esc: close
+          </Text>
+        </Box>
+      </Box>
+    )
+  }
 
   if (step === 'username') {
     return (
@@ -240,6 +345,7 @@ export function SetupScreen({ gw, configExists, onComplete }: SetupScreenProps) 
           <TextInput
             prompt="  key › "
             placeholder="paste your API key here, then press Enter"
+            onCancel={() => setStep('provider')}
             onSubmit={text => {
               setApiKey(text)
               setStep('baseurl')
@@ -284,6 +390,7 @@ export function SetupScreen({ gw, configExists, onComplete }: SetupScreenProps) 
             prompt="  url › "
             placeholder="press Enter to use default"
             allowEmpty
+            onCancel={() => setStep('apikey')}
             onSubmit={text => {
               setBaseUrl(text)
               void submit(provider!, apiKey, text)
@@ -310,7 +417,9 @@ export function SetupScreen({ gw, configExists, onComplete }: SetupScreenProps) 
       <Box flexDirection="column" paddingX={1}>
         {banner}
         <Box marginTop={1}>
-          <Text color={theme.good}>✓ Saved. Starting TUI…</Text>
+          <Text color={theme.good}>
+            {onDismiss ? '✓ Saved. New configuration is active.' : '✓ Saved. Starting TUI…'}
+          </Text>
         </Box>
       </Box>
     )
@@ -323,7 +432,9 @@ export function SetupScreen({ gw, configExists, onComplete }: SetupScreenProps) 
       <Box marginTop={1} flexDirection="column">
         <Text color={theme.error}>✗ Setup failed: {errorMsg}</Text>
         <Text color={theme.muted} dimColor>
-          Press Ctrl+D to exit, then re-run `drsai`.
+          {onDismiss
+            ? 'Press Esc or Enter to dismiss, then retry /setup wizard.'
+            : 'Press Ctrl+D to exit, then re-run `drsai`.'}
         </Text>
       </Box>
     </Box>

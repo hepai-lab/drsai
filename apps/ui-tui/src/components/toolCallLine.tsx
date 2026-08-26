@@ -7,6 +7,11 @@
  *   - ``expanded``: multi-line, full arg values + up to 5 lines of
  *     result preview. Used when debugging an agent run where the
  *     exact bash command / grep pattern matters.
+ *
+ * Tool-specific rendering:
+ *   - TodoWrite → TodoWriteLine (checklist rendering)
+ *   - Operator tools (run_bash, run_read, run_write, run_edit, etc.)
+ *     → OperatorToolLine (rich, per-tool icons + diff for edit)
  */
 
 import { useStore } from '@nanostores/react'
@@ -17,6 +22,7 @@ import { $toolDetail } from '../app/uiStore.js'
 import { theme } from '../theme.js'
 
 import { isTodoWriteTool, TodoWriteLine } from './todoWriteLine.js'
+import { isOperatorTool, OperatorToolLine } from './operatorToolLine.js'
 
 interface Props {
   tool: ToolCall
@@ -85,6 +91,10 @@ export function ToolCallLine({ tool }: Props) {
 
   if (isTodoWriteTool(tool)) {
     return <TodoWriteLine tool={tool} />
+  }
+
+  if (isOperatorTool(tool)) {
+    return <OperatorToolLine tool={tool} detail={detail} />
   }
 
   // ── Compact: original 1-line layout ─────────────────────────────────
