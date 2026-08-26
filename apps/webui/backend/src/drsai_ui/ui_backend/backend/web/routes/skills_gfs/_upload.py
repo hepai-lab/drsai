@@ -31,6 +31,7 @@ async def upload_skill(
     changelog: str | None = Form(None),
     source: str | None = Form(None),
     category: str | None = Form(None),
+    owner: str | None = Form(None),
     profile: UploadFile | None = File(None),
 ) -> dict:
     """Upload a skill ZIP. ?type=public (auth required) or ?type=user&user_id=xxx"""
@@ -50,7 +51,7 @@ async def upload_skill(
     if auth_user_id != user_id:
         raise HTTPException(status_code=403, detail="Cannot upload for another user")
     logger.info("[publish] upload_skill → _upload_user user_id=%s slug=%s", user_id, slug)
-    return await _upload_user(file, user_id, slug, display_name or name, icon, description, version, changelog, source, profile, category)
+    return await _upload_user(file, user_id, slug, display_name or name, icon, description, version, changelog, source, profile, category, owner)
 
 
 async def _upload_public(
@@ -143,6 +144,14 @@ async def _upload_public(
 
         if not gfs_put(tmp_zip.name, remote_path, cfg):
             raise HTTPException(status_code=500, detail="Upload to GFS failed")
+
+        # Keep a user-side copy so "my creations" / share / skill-md can find the ZIP.
+        user_remote = _gfs_zip_path("user", canon_slug, user_id, "created")
+        if not gfs_put(tmp_zip.name, user_remote, cfg):
+            logger.warning(
+                "[publish] public upload: user zip copy failed slug=%s user=%s path=%s",
+                canon_slug, user_id, user_remote,
+            )
 
         profile_url: str | None = None
         if profile_tmp:
@@ -238,8 +247,10 @@ async def _upload_user(
     version: str | None, changelog: str | None, source: str | None,
     profile: UploadFile | None = None,
     category: str | None = None,
+    owner: str | None = None,
 ) -> dict:
     from ....datamodel.db import UserSkillMeta
+    from ._gfs import _apply_imported_catalog_fields, _catalog_fields_for_slug, _higraf_catalog_by_slug, _skillmeta_by_slugs
 
     logger.info("[publish] _upload_user enter user_id=%s slug=%s display_name=%s file=%s version=%s",
                 user_id, slug, display_name, file.filename if file else None, version)
@@ -328,6 +339,32 @@ async def _upload_user(
         final_version = (version or "").strip() or parsed.get("version", "0.0.0")
         final_changelog = (changelog or "").strip()
         final_category = (category or "").strip() or None
+        final_owner = user_id
+        if source_val == "imported":
+            catalog = _catalog_fields_for_slug(
+                canon_slug,
+                _skillmeta_by_slugs(await _get_db(), {canon_slug}).get(canon_slug),
+                _higraf_catalog_by_slug().get(canon_slug),
+            )
+            stub = {
+                "owner": (owner or "").strip(),
+                "icon": final_icon,
+                "profile": profile_url or "",
+                "description": final_description or "",
+                "category": final_category or "",
+                "version": final_version or "",
+            }
+            _apply_imported_catalog_fields(stub, user_id, catalog)
+            final_owner = stub.get("owner") or (owner or "").strip() or catalog.get("owner") or ""
+            final_icon = stub.get("icon") or final_icon
+            if not profile_url:
+                profile_url = stub.get("profile") or None
+            if not (final_description or "").strip():
+                final_description = stub.get("description") or final_description
+            if not final_category:
+                final_category = stub.get("category") or None
+            if not final_version or final_version == "0.0.0":
+                final_version = stub.get("version") or final_version
 
         db_mgr = await _get_db()
         existing_resp = db_mgr.get(UserSkillMeta, filters={"user_id": user_id, "slug": canon_slug, "source": source_val})
@@ -338,17 +375,17 @@ async def _upload_user(
             existing.icon = final_icon
             existing.version = final_version
             existing.compatibility = parsed.get("compatibility")
-            existing.owner = user_id
+            existing.owner = final_owner
             existing.source = source_val
             existing.changelog = final_changelog
-            existing.profile = profile_url
+            existing.profile = profile_url or existing.profile
             existing.category = final_category
             to_upsert = existing
         else:
             to_upsert = UserSkillMeta(
                 user_id=user_id, slug=canon_slug, name=final_name,
                 description=final_description, icon=final_icon, version=final_version,
-                compatibility=parsed.get("compatibility"), owner=user_id,
+                compatibility=parsed.get("compatibility"), owner=final_owner,
                 source=source_val, changelog=final_changelog, profile=profile_url,
                 category=final_category,
             )

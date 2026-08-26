@@ -1,4 +1,5 @@
 import { getServerUrl } from "../../utils";
+import { getAuthToken } from "../../../utils/authSession";
 
 export type ManagedUser = {
     user_id: string;
@@ -105,6 +106,26 @@ export class UserAPI {
         if (!data.status) {
             throw new Error(data.message || data.detail || "Failed to update user role");
         }
+    }
+
+    async getCooperInfo(): Promise<{ cooper_info: string; display_name: string }> {
+        const headers: HeadersInit = this.getHeaders();
+        const token = getAuthToken();
+        if (token) {
+            (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
+        }
+        const response = await fetch(
+            `${this.getBaseUrl()}/auth/me`,
+            { headers, credentials: "include" }
+        );
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || data.detail || "Failed to fetch cooper info");
+        }
+        return {
+            cooper_info: (data.data?.cooper_info as string) || "",
+            display_name: (data.data?.display_name as string) || "",
+        };
     }
 }
 

@@ -8,9 +8,9 @@ import tempfile
 from fastapi import HTTPException
 
 from ...config import settings
-from ._constants import _PROFILE_EXT_WHITELIST, SkillType, logger
-from ..gfs_utils import gfs_get, gfs_ls, gfs_put, gfs_read_text, gfs_rm
-from ._skillmd import _parse_skill_md, _read_skill_md_from_zip
+from ._constants import SkillType
+from ..gfs_utils import gfs_get, gfs_ls, gfs_put, gfs_read_text
+from ._skillmd import _parse_skill_md
 from ._cache import _ensure_cache_zip, _read_cached_skill_md
 
 
@@ -108,33 +108,139 @@ def _ensure_user_zip_from_public(cfg: dict, slug: str, user_id: str) -> bool:
     return False
 
 
-def _fill_user_skill_descriptions(rows: list[dict], user_id: str, db_mgr, cfg: dict) -> None:
-    """Backfill empty list descriptions from public catalog or SKILL.md frontmatter."""
+def _skillmeta_by_slugs(db_mgr, slugs: set[str]) -> dict:
+    """Load SkillMeta rows for the given slugs in as few queries as possible."""
+    from sqlmodel import Session, select
+
     from ....datamodel.db import SkillMeta
+
+    if not slugs:
+        return {}
+    result: dict = {}
+    slug_list = list(slugs)
+    # Stay under typical SQL bind-variable limits (sqlite: 999).
+    chunk_size = 400
+    with Session(db_mgr.engine) as session:
+        for i in range(0, len(slug_list), chunk_size):
+            chunk = slug_list[i : i + chunk_size]
+            rows = session.exec(select(SkillMeta).where(SkillMeta.slug.in_(chunk))).all()
+            for row in rows:
+                result[row.slug] = row
+    return result
+
+
+def _higraf_catalog_by_slug() -> dict[str, dict]:
+    try:
+        from ..deer_flow import get_cached_higraf_skills
+    except Exception:
+        return {}
+    out: dict[str, dict] = {}
+    for h in get_cached_higraf_skills("public") or []:
+        slug = str(h.get("skillId") or h.get("id") or "")
+        if slug:
+            out[slug] = h
+    return out
+
+
+def _catalog_fields_for_slug(slug: str, pub=None, higraf: dict | None = None) -> dict:
+    """Original author / icon / cover from the public catalog or Higraf cache."""
+    fields: dict = {}
+    if pub is not None:
+        owner = (getattr(pub, "owner", None) or "").strip()
+        icon = (getattr(pub, "icon", None) or "").strip()
+        profile = (getattr(pub, "profile", None) or "").strip()
+        description = (getattr(pub, "description", None) or "").strip()
+        category = (getattr(pub, "category", None) or "").strip()
+        version = (getattr(pub, "version", None) or "").strip()
+        if owner:
+            fields["owner"] = owner
+        if icon:
+            fields["icon"] = icon
+        if profile:
+            fields["profile"] = profile
+        if description:
+            fields["description"] = description
+        if category:
+            fields["category"] = category
+        if version:
+            fields["version"] = version
+    h = higraf or {}
+    if h:
+        owner = (h.get("authorName") or h.get("author") or "").strip()
+        icon = (h.get("emoji") or "").strip()
+        description = (h.get("description") or "").strip()
+        category = (h.get("categoryL2") or "").strip()
+        version = (h.get("version") or h.get("currentVersion") or "").strip()
+        if owner and not fields.get("owner"):
+            fields["owner"] = owner
+        if icon and (not fields.get("icon") or fields.get("icon") == "package"):
+            fields["icon"] = icon
+        if description and not fields.get("description"):
+            fields["description"] = description
+        if category and not fields.get("category"):
+            fields["category"] = category
+        if version and (not fields.get("version") or fields.get("version") == "0.0.0"):
+            fields["version"] = version
+    if not fields.get("owner"):
+        try:
+            from ..deer_flow import is_higraf_skill_slug
+            if is_higraf_skill_slug(slug):
+                fields["owner"] = "系统预置"
+        except Exception:
+            pass
+    return fields
+
+
+def _apply_imported_catalog_fields(row: dict, user_id: str, catalog: dict) -> None:
+    """Restore original author/logo on a collected skill. Never treat the collector as author."""
+    if not catalog:
+        return
+    cur_owner = (row.get("owner") or "").strip()
+    if catalog.get("owner") and (not cur_owner or cur_owner == user_id):
+        row["owner"] = catalog["owner"]
+    cur_icon = (row.get("icon") or "").strip()
+    if catalog.get("icon") and (not cur_icon or cur_icon == "package"):
+        row["icon"] = catalog["icon"]
+    if catalog.get("profile") and not (row.get("profile") or "").strip():
+        row["profile"] = catalog["profile"]
+    if catalog.get("description") and not (row.get("description") or "").strip():
+        row["description"] = catalog["description"]
+    if catalog.get("category") and not (row.get("category") or "").strip():
+        row["category"] = catalog["category"]
+    cur_ver = (row.get("version") or "").strip()
+    if catalog.get("version") and (not cur_ver or cur_ver == "0.0.0"):
+        row["version"] = catalog["version"]
+
+
+def _enrich_user_skill_rows(rows: list[dict], user_id: str, db_mgr) -> None:
+    """Annotate list rows from a single SkillMeta batch. Never hits GFS.
+
+    Sets ``public``, ``downloads``, and fills empty descriptions from the
+    public catalog or a local SKILL.md cache. Downloading zips during list
+    used to make 100+ item responses several seconds.
+    """
+    if not rows:
+        return
+    slugs = {r.get("slug", "") for r in rows if r.get("slug")}
+    public_by_slug = _skillmeta_by_slugs(db_mgr, slugs)
+    higraf_by_slug = _higraf_catalog_by_slug() if any(r.get("source") == "imported" for r in rows) else {}
     for row in rows:
-        if (row.get("description") or "").strip():
-            continue
         slug = row.get("slug", "")
-        if not slug:
-            continue
-        pub_resp = db_mgr.get(SkillMeta, filters={"slug": slug})
-        if pub_resp.status and pub_resp.data:
-            pub_desc = (pub_resp.data[0].description or "").strip()
+        pub = public_by_slug.get(slug)
+        row["public"] = bool(pub is not None and getattr(pub, "owner", "") == user_id)
+        if pub is not None:
+            row["downloads"] = int(getattr(pub, "downloads", 0) or 0)
+        if row.get("source") == "imported":
+            _apply_imported_catalog_fields(
+                row, user_id, _catalog_fields_for_slug(slug, pub, higraf_by_slug.get(slug)),
+            )
+        if not (row.get("description") or "").strip() and pub is not None:
+            pub_desc = (getattr(pub, "description", None) or "").strip()
             if pub_desc:
                 row["description"] = pub_desc
-                continue
-        source = row.get("source", "created") or "created"
+        if (row.get("description") or "").strip() or not slug:
+            continue
         text = _read_cached_skill_md("user", slug, user_id)
-        if not text:
-            zip_path = _gfs_zip_path("user", slug, user_id, source)
-            gfs_text, zip_tmp = _read_skill_md_from_zip(zip_path, cfg)
-            text = gfs_text
-            if zip_tmp:
-                _ensure_cache_zip("user", slug, zip_tmp, user_id)
-                try:
-                    os.unlink(zip_tmp)
-                except OSError:
-                    pass
         if not text:
             continue
         parsed = _parse_skill_md(text)
@@ -153,18 +259,6 @@ async def _increment_public_downloads(slug: str) -> None:
     row = resp.data[0]
     row.downloads = int(row.downloads or 0) + 1
     db_mgr.upsert(row)
-
-
-def _annotate_user_skill_downloads(rows: list[dict], db_mgr) -> None:
-    """Expose public-catalog download counts on user skill list rows."""
-    from ....datamodel.db import SkillMeta
-    for row in rows:
-        slug = row.get("slug", "")
-        if not slug:
-            continue
-        pub_resp = db_mgr.get(SkillMeta, filters={"slug": slug})
-        if pub_resp.status and pub_resp.data:
-            row["downloads"] = int(pub_resp.data[0].downloads or 0)
 
 
 def _gfs_read_meta_json(skill_type: SkillType, slug: str, cfg: dict, user_id: str = "", source: str = "") -> dict:

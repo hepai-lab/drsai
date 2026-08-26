@@ -538,7 +538,8 @@ async def create_magentic_round_team(
             model_client=get_model_client(model_client_config = model_config),
             model_remote_configs = agent_config,
             chat_id=chat_id,
-            run_info=run_info
+            run_info=run_info,
+            timeout=600,
             )
         
     elif agent_mode == "pip_install":

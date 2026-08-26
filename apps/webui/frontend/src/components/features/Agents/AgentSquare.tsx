@@ -305,7 +305,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       setIsRemoteModalOpen(false);
     } catch (error) {
       console.error("Failed to save remote agent:", error);
-      message.error(error instanceof Error ? error.message : "保存远程智能体失败");
       throw error;
     }
   }, [user?.email, loadAgentList]);
@@ -357,7 +356,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       setEditingCustomAgent(null);
     } catch (err) {
       console.error("Failed to save custom agent:", err);
-      message.error(t("agentsquare.customSaveFailed"));
+      message.error(err instanceof Error && err.message ? err.message : t("agentsquare.customSaveFailed"));
     } finally {
       setIsSavingCustomAgent(false);
     }

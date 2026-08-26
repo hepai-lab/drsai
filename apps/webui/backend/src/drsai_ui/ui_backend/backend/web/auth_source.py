@@ -66,6 +66,57 @@ def resolve_auth_source(
     return "local"
 
 
+# ── cooper info helpers ────────────────────────────────────────────────────────
+
+
+def record_display_name(db, user_id: str, display_name: str) -> None:
+    """Persist display_name (SSO truename) in Userinfo.meta."""
+    if not display_name:
+        return
+    response = db.get(Userinfo, filters={"user_id": user_id}, return_json=False)
+    if response.status and response.data:
+        user: Userinfo = response.data[0]
+        meta = dict(getattr(user, "meta", None) or {})
+        meta["display_name"] = display_name
+        user.meta = meta
+        db.upsert(user)
+
+
+def get_display_name(db, user_id: str) -> str:
+    """Read display_name from Userinfo.meta, defaulting to empty string."""
+    if not user_id:
+        return ""
+    response = db.get(Userinfo, filters={"user_id": user_id}, return_json=False)
+    if response.status and response.data:
+        user: Userinfo = response.data[0]
+        meta = dict(getattr(user, "meta", None) or {})
+        return meta.get("display_name", "")
+    return ""
+
+
+def record_cooper_info(db, user_id: str, cooper_info: str) -> None:
+    """Persist cooperInfo from IHEP UserInfoAndCooperWithToken in Userinfo.meta."""
+    response = db.get(Userinfo, filters={"user_id": user_id}, return_json=False)
+    if response.status and response.data:
+        user: Userinfo = response.data[0]
+        meta = dict(getattr(user, "meta", None) or {})
+        meta["cooper_info"] = cooper_info
+        user.meta = meta
+        db.upsert(user)
+
+
+def get_cooper_info(db, user_id: str) -> str:
+    """Read cooper_info from Userinfo.meta, defaulting to empty string."""
+    if not user_id:
+        return ""
+    response = db.get(Userinfo, filters={"user_id": user_id}, return_json=False)
+    if response.status and response.data:
+        user: Userinfo = response.data[0]
+        meta = dict(getattr(user, "meta", None) or {})
+        return meta.get("cooper_info", "")
+    return ""
+
+
 # ── skill role helpers ────────────────────────────────────────────────────────
 
 SkillRole = Literal["admin", "contributor", "user"]

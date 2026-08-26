@@ -1,6 +1,6 @@
 import React from "react";
 import { Spin } from "antd";
-import { Download, Pencil, BookmarkPlus, BookmarkMinus, Check, Share2, Trash2 } from "lucide-react";
+import { Download, Pencil, BookmarkPlus, BookmarkMinus, Check, Share2, Trash2, Lock } from "lucide-react";
 import MarkdownRenderer from "../components/common/markdownrender";
 import type { SkillsPublicDetail } from "../components/views/api";
 
@@ -94,6 +94,8 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
 
   const hasToggleButton = showToggleButton !== undefined;
 
+  const restricted = skillDetail.restricted === true;
+
   return (
     <div className="flex flex-col gap-6 md:flex-row max-w-full">
       {/* Main content */}
@@ -132,7 +134,7 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
             </div>
           )}
         </div>
-        {skillDetail.body ? (
+        {skillDetail.body && !restricted ? (
           <div className="mt-6 overflow-x-auto rounded-xl border border-border-primary/40 bg-tertiary/10 p-5 dark:border-white/[0.06] dark:bg-white/[0.02]">
             <MarkdownRenderer content={skillDetail.body} />
           </div>
@@ -190,16 +192,40 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
             </div>
           )}
 
+          {/* Restricted access banner */}
+          {restricted && (
+            <div className="rounded-xl border border-amber-200/60 bg-amber-50/80 px-3 py-3 text-xs dark:border-amber-800/40 dark:bg-amber-900/20">
+              <p className="flex items-center gap-1.5 font-medium text-amber-800 dark:text-amber-200">
+                <Lock className="h-3.5 w-3.5" aria-hidden />
+                {t("skillSquare.restrictedTitle")}
+              </p>
+              <p className="mt-1.5 leading-relaxed text-amber-700 dark:text-amber-300">
+                {t("skillSquare.restrictedDesc")}
+              </p>
+            </div>
+          )}
+
           {/* Actions */}
           <div className="space-y-1.5">
-            <button
-              type="button"
-              onClick={() => void onDownload(skillDetail.slug)}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/8"
-            >
-              <Download className="h-3.5 w-3.5" aria-hidden />
-              {t("skillSquare.downloadBtn")}
-            </button>
+            {restricted ? (
+              <button
+                type="button"
+                disabled
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium text-secondary/50 cursor-not-allowed"
+              >
+                <Download className="h-3.5 w-3.5" aria-hidden />
+                {t("skillSquare.downloadBtn")}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void onDownload(skillDetail.slug)}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/8"
+              >
+                <Download className="h-3.5 w-3.5" aria-hidden />
+                {t("skillSquare.downloadBtn")}
+              </button>
+            )}
 
             {/* Private tab: share */}
             {onShare && (

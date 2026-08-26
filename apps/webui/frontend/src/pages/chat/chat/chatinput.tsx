@@ -1,96 +1,33 @@
-import {
-  ExclamationTriangleIcon,
-  PaperAirplaneIcon,
-  PauseCircleIcon,
-  XMarkIcon,
-} from "@heroicons/react/24/outline";
-import {
-  Checkbox,
-  Dropdown,
-  Input,
-  Menu,
-  message,
-  Modal,
-  Spin,
-  Tooltip,
-} from "antd";
-import type { RcFile } from "antd/es/upload/interface";
-import {
-  Brain,
-  ChevronDownIcon,
-  PaperclipIcon,
-  PlusIcon,
-  WrenchIcon
-} from "lucide-react";
+import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
+import { Modal } from "antd";
 import * as React from "react";
 import { appContext } from "../../../hooks/provider";
 import { useLang } from "../../../i18n/useLang";
-import { IStatus } from "../../../components/types/app";
-import { InputRequest, Session } from "../../../components/types/datamodel";
-import { IPlan } from "../../../components/types/plan";
 import PlanView from "../plan";
 import RelevantPlans from "../relevant_plans";
 import "./chatinput.css";
 
-// Import custom hooks
-import { useFileUpload, type ServerUploadedFileInfo } from "./hooks/useFileUpload";
+import { useFileUpload } from "./hooks/useFileUpload";
+import { useLlmSelector } from "./hooks/useLlmSelector";
 import { usePlanSearch } from "./hooks/usePlanSearch";
+import { useSkillAttach } from "./hooks/useSkillAttach";
 
-// Import components
-import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
-import { agentWorkerAPI, skillsAPI, sessionAPI } from "@/components/views/api";
-import { useModeConfigStore } from "@/store/modeConfig";
-import { useConfigStore } from "@/hooks/store";
+import AttachDropdown from "./components/AttachDropdown";
+import AttachedSkillsPreview from "./components/AttachedSkillsPreview";
+import ComposerActionButtons from "./components/ComposerActionButtons";
 import DragDropOverlay from "./components/DragDropOverlay";
 import FilePreview from "./components/FilePreview";
+import LlmSelectorBar from "./components/LlmSelectorBar";
 import PlanPreview from "./components/PlanPreview";
+import SkillAttachModal from "./components/SkillAttachModal";
 
-/** HepAI 技能 ZIP（与 SkillsSquarePage / fileAPI.listHepaiFiles 一致） */
-type HepaiSkillPickRow = { id: string; filename: string; url: string };
+import type { ChatInputHandle, ChatInputProps } from "./types";
+import { SKILL_INSTALL_DEFAULT_LINE } from "./types";
+import { resolveUploadedFiles } from "./utils/resolveUploadedFiles";
 
-const SKILL_INSTALL_DEFAULT_LINE = "帮我安装这些智能体";
+const getTextAreaDefaultHeight = () => "52px";
 
-interface ChatInputProps {
-  onSubmit: (
-    text: string,
-    files: RcFile[] | Array<{
-      name: string;
-      type: string;
-      path: string;
-      suffix: string;
-      size: number;
-      uuid: string;
-      url?: string;
-    }>,
-    accepted?: boolean,
-    plan?: IPlan,
-    llm?: { label: string; value: string }
-  ) => void;
-  error: IStatus | null;
-  disabled?: boolean;
-  onCancel?: () => void;
-  runStatus?: string;
-  inputRequest?: InputRequest;
-  isPlanMessage?: boolean;
-  onPause?: () => void;
-  enable_upload?: boolean;
-  onExecutePlan?: (plan: IPlan) => void;
-  sessionId: number;
-  onTextChange?: (text: string) => void;
-  /** Fired when the user clears the composer via the clear button */
-  onClear?: () => void;
-  /** Already-uploaded files to show in the composer (e.g. chosen in 库) */
-  serverFilesPrefill?: ServerUploadedFileInfo[] | null;
-  /** Visible heading id for textarea aria-labelledby */
-  composerLabelledBy?: string;
-  /** Fallback accessible name when composerLabelledBy is not set */
-  composerAriaLabel?: string;
-}
-
-const ChatInput = React.forwardRef<
-  { focus: () => void; setValue: (value: string) => void },
-  ChatInputProps
->(
+const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
   (
     {
       onSubmit,
@@ -114,14 +51,6 @@ const ChatInput = React.forwardRef<
   ) => {
     const textAreaRef = React.useRef<HTMLTextAreaElement>(null);
     const attachFileInputRef = React.useRef<HTMLInputElement>(null);
-    const [skillModalOpen, setSkillModalOpen] = React.useState(false);
-    const [skillModalLoading, setSkillModalLoading] = React.useState(false);
-    const [skillModalRows, setSkillModalRows] = React.useState<HepaiSkillPickRow[]>([]);
-    const [skillModalSearch, setSkillModalSearch] = React.useState("");
-    const [skillModalSelectedIds, setSkillModalSelectedIds] = React.useState<Set<string>>(
-      () => new Set()
-    );
-    const [attachedSkills, setAttachedSkills] = React.useState<HepaiSkillPickRow[]>([]);
     const [text, setText] = React.useState("");
     const [dragOver, setDragOver] = React.useState(false);
     const [isDragActive, setIsDragActive] = React.useState(false);
@@ -131,63 +60,6 @@ const ChatInput = React.forwardRef<
       user: { email: string };
     };
     const userId = user?.email || "default_user";
-    const { agentInfo, agentId } = useAgentInfo(user?.email);
-    const { session, setSession, sessions, setSessions } = useConfigStore();
-    const setAgentInfo = useModeConfigStore((s) => s.setAgentInfo);
-    const selectedAgent = useModeConfigStore((s) => s.selectedAgent);
-    const setSelectedAgent = useModeConfigStore((s) => s.setSelectedAgent);
-    const [llmList, setLlmList] = React.useState<{ label: string; value: string }[]>([]);
-    const [selectedLlmLabel, setSelectedLlmLabel] = React.useState<string>("");
-    const effectiveSessionId = React.useMemo(() => {
-      const fromProp = Number(sessionId);
-      if (Number.isFinite(fromProp) && fromProp > 0) return fromProp;
-      const fromStore = Number(session?.id);
-      if (Number.isFinite(fromStore) && fromStore > 0) return fromStore;
-      return 0;
-    }, [sessionId, session?.id]);
-    const isSessionBound = effectiveSessionId > 0;
-    const boundSession = React.useMemo((): Session | null => {
-      if (!isSessionBound) return null;
-      if (session?.id === effectiveSessionId) return session;
-      return sessions.find((s) => s.id === effectiveSessionId) ?? null;
-    }, [isSessionBound, effectiveSessionId, session, sessions]);
-
-    React.useEffect(() => {
-      if (agentInfo && agentInfo.agent_config) {
-        const llmList = Object.entries(agentInfo.agent_config).map(([key, value]) => {
-          return {
-            label: key,
-            value: value,
-          };
-        });
-        setLlmList(llmList);
-      } else
-        setLlmList([]);
-
-    }, [agentInfo]);
-
-    React.useEffect(() => {
-      const sessionConfigName =
-        typeof (boundSession?.agent_mode_config as { defult_config_name?: unknown } | undefined)
-          ?.defult_config_name === "string"
-          ? (
-              (boundSession?.agent_mode_config as { defult_config_name: string })
-                .defult_config_name || ""
-            ).trim()
-          : "";
-      const agentConfigName =
-        typeof (agentInfo as { defult_config_name?: unknown } | null)?.defult_config_name ===
-        "string"
-          ? ((agentInfo as { defult_config_name: string }).defult_config_name || "").trim()
-          : "";
-      const defaultConfigName = isSessionBound ? sessionConfigName : agentConfigName;
-
-      if (defaultConfigName && llmList.some((llm) => llm.label === defaultConfigName)) {
-        setSelectedLlmLabel(defaultConfigName);
-      } else {
-        setSelectedLlmLabel("");
-      }
-    }, [isSessionBound, boundSession, agentInfo, llmList]);
 
     const isInputDisabled =
       disabled ||
@@ -196,7 +68,6 @@ const ChatInput = React.forwardRef<
       runStatus === "paused" ||
       inputRequest?.input_type === "approval";
 
-    // Use custom hooks
     const {
       fileList,
       notificationContextHolder,
@@ -213,49 +84,30 @@ const ChatInput = React.forwardRef<
       serverFilesPrefill,
     });
 
-    const filteredSkillModalRows = React.useMemo(() => {
-      const q = skillModalSearch.trim().toLowerCase();
-      if (!q) return skillModalRows;
-      return skillModalRows.filter((r) => r.filename.toLowerCase().includes(q));
-    }, [skillModalRows, skillModalSearch]);
+    const {
+      skillModalOpen,
+      setSkillModalOpen,
+      skillModalLoading,
+      skillModalRows,
+      skillModalSearch,
+      setSkillModalSearch,
+      skillModalTagFilter,
+      skillModalSelectedIds,
+      setSkillModalSelectedIds,
+      attachedSkills,
+      filteredSkillModalRows,
+      openSkillAttachModal,
+      confirmSkillPicker,
+      removeAttachedSkill,
+      clearAttachedSkills,
+      handleSkillModalTagFilter,
+    } = useSkillAttach({ isInputDisabled });
 
-    const openSkillAttachModal = () => {
-      if (!userId || userId === "default_user") {
-        message.warning("请先登录后再选择技能包");
-        return;
-      }
-
-      if (isInputDisabled) return;
-
-      setSkillModalOpen(true);
-      setSkillModalSearch("");
-      setSkillModalLoading(true);
-      void skillsAPI
-        .listUserSkills(userId)
-        .then((rows) => {
-          setSkillModalRows(
-            rows.map((r) => ({ id: r.slug, filename: r.name, url: r.download_url }))
-          );
-          setSkillModalSelectedIds(new Set(attachedSkills.map((s) => s.id)));
-        })
-        .catch((e) => {
-          message.error(e instanceof Error ? e.message : String(e));
-          setSkillModalRows([]);
-        })
-        .finally(() => {
-          setSkillModalLoading(false);
-        });
-    };
-
-    const confirmSkillPicker = () => {
-      const next = skillModalRows.filter((r) => skillModalSelectedIds.has(r.id));
-      setAttachedSkills(next);
-      setSkillModalOpen(false);
-    };
-
-    const removeAttachedSkill = (id: string) => {
-      setAttachedSkills((prev) => prev.filter((s) => s.id !== id));
-    };
+    const { llmList, selectedLlmLabel, selectedLlm, handleLLMSelect } = useLlmSelector({
+      userId,
+      userEmail: user?.email,
+      sessionId,
+    });
 
     const {
       isSearching,
@@ -275,16 +127,11 @@ const ChatInput = React.forwardRef<
       runStatus,
       isPlanMessage,
     });
-    const getTextAreaDefaultHeight = () => {
-      const baseHeight = 52; // 基础高度 52px
-      return `${baseHeight}px`;
-    };
-    // Handle textarea auto-resize
+
     React.useEffect(() => {
       const ta = textAreaRef.current;
       if (!ta) return;
 
-      // 清空后 scrollHeight 有时会沿用撑开前的值，不能直接用来设高度
       if (!text.trim()) {
         ta.style.height = getTextAreaDefaultHeight();
         return;
@@ -302,26 +149,16 @@ const ChatInput = React.forwardRef<
     }, [error]);
 
     React.useEffect(() => {
-      if (!isInputDisabled && textAreaRef.current) {
-        // textAreaRef.current.focus();
-      }
-    }, [isInputDisabled]);
+      if (!isRelevantPlansVisible) return;
 
-    // Handle click outside to close relevant plans
-    React.useEffect(() => {
       const handleClickOutside = (e: MouseEvent) => {
-        if (!isRelevantPlansVisible) return;
-
         const target = e.target as Node;
         const textAreaElement = textAreaRef.current;
-        const planElement = document.querySelector(
-          '[data-component="relevant-plans"]'
-        );
+        const planElement = document.querySelector('[data-component="relevant-plans"]');
 
         const isClickInsideTextArea =
           textAreaElement && textAreaElement.contains(target);
-        const isClickInsidePlans =
-          planElement && planElement.contains(target);
+        const isClickInsidePlans = planElement && planElement.contains(target);
 
         if (!isClickInsideTextArea && !isClickInsidePlans) {
           setIsRelevantPlansVisible(false);
@@ -329,7 +166,7 @@ const ChatInput = React.forwardRef<
       };
 
       const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.key === "Escape" && isRelevantPlansVisible) {
+        if (e.key === "Escape") {
           setIsRelevantPlansVisible(false);
         }
       };
@@ -341,7 +178,7 @@ const ChatInput = React.forwardRef<
         document.removeEventListener("click", handleClickOutside);
         document.removeEventListener("keydown", handleKeyDown);
       };
-    }, [isRelevantPlansVisible]);
+    }, [isRelevantPlansVisible, setIsRelevantPlansVisible]);
 
     const resetInput = () => {
       if (textAreaRef.current) {
@@ -349,7 +186,7 @@ const ChatInput = React.forwardRef<
         textAreaRef.current.style.height = getTextAreaDefaultHeight();
         setText("");
         clearFiles();
-        setAttachedSkills([]);
+        clearAttachedSkills();
         setRelevantPlans([]);
         clearAttachedPlan();
       }
@@ -357,12 +194,9 @@ const ChatInput = React.forwardRef<
       if (onTextChange) {
         onTextChange("");
       }
-
     };
 
-    const handleTextChange = (
-      event: React.ChangeEvent<HTMLTextAreaElement>
-    ) => {
+    const handleTextChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
       const newText = event.target.value;
       setText(newText);
 
@@ -385,19 +219,10 @@ const ChatInput = React.forwardRef<
 
     const submitInternal = (
       query: string,
-      files: RcFile[] | Array<{
-        name: string;
-        type: string;
-        path: string;
-        suffix: string;
-        size: number;
-        uuid: string;
-        url?: string;
-      }>,
+      files: Parameters<ChatInputProps["onSubmit"]>[1],
       accepted: boolean,
       doResetInput: boolean = true
     ) => {
-      const selectedLlm = llmList.find((llm) => llm.label === selectedLlmLabel) || llmList[0];
       if (attachedPlan) {
         onSubmit(query, files as any, accepted, attachedPlan, selectedLlm);
       } else {
@@ -405,7 +230,6 @@ const ChatInput = React.forwardRef<
       }
 
       if (doResetInput) {
-        // 延迟清空文件，确保文件信息已经传递
         setTimeout(() => {
           resetInput();
         }, 100);
@@ -416,228 +240,72 @@ const ChatInput = React.forwardRef<
     const handleSubmit = async () => {
       const trimmedInput = (textAreaRef.current?.value || "").trim();
       if (
-        (trimmedInput ||
-          fileList.length > 0 ||
-          attachedSkills.length > 0) &&
-        !isInputDisabled
+        !(trimmedInput || fileList.length > 0 || attachedSkills.length > 0) ||
+        isInputDisabled
       ) {
-        let query = textAreaRef.current?.value || "";
-        const files = fileList
-          .filter((file) => file.originFileObj)
-          .map((file) => file.originFileObj as RcFile);
-
-        // 如果只有文件没有文字，添加默认提示
-        if (!query.trim() && files.length > 0) {
-          query = "请帮我分析这些文件。";
-        }
-
-        if (attachedSkills.length > 0) {
-          const urlBlock = attachedSkills.map((s) => s.url).join("\n");
-          const base = query.trim();
-          query = base
-            ? `${base}\n\n${SKILL_INSTALL_DEFAULT_LINE}\n\n${urlBlock}`
-            : `${SKILL_INSTALL_DEFAULT_LINE}\n\n${urlBlock}`;
-        }
-
-        // 注意：文件上传已经在 handleFileValidationAndAdd 中处理了
-        // 这里只需要检查是否有上传失败的文件
-        const hasErrorFiles = fileList.some((f) => f.status === "error");
-        if (hasErrorFiles) {
-          message.warning("部分文件上传失败，请检查后重试");
-        }
-
-        // 使用上传后的文件信息（如果已上传），否则使用原始文件
-        // 只使用已成功上传的文件信息（status === "done"）
-        const successfullyUploadedFiles = fileList.filter(
-          (f) => f.status === "done" && f.originFileObj
-        );
-
-        // 优先使用 uploadedFilesInfo（这是最可靠的来源，因为它在文件上传成功后立即更新）
-        let filesToUse: Array<{
-          name: string;
-          type: string;
-          path: string;
-          suffix: string;
-          size: number;
-          uuid: string;
-          url?: string;
-        }> = [];
-
-        // 优先级1: 使用 uploadedFilesInfo（最可靠）
-        if (uploadedFilesInfo.length > 0) {
-          filesToUse = uploadedFilesInfo;
-        } else if (successfullyUploadedFiles.length > 0) {
-          // 优先级2: 如果 uploadedFilesInfo 为空，尝试从 successfullyUploadedFiles 中提取
-          filesToUse = successfullyUploadedFiles
-            .map((file) => {
-              // 优先使用 file.response（上传时存储的结果）
-              if (file.response) {
-                return file.response;
-              }
-              return undefined;
-            })
-            .filter((info): info is NonNullable<typeof info> => info !== undefined);
-        } else if (fileList.length > 0) {
-          // 如果文件还没有上传完成，但 fileList 中有文件，检查是否有 response
-          const filesWithResponse = fileList
-            .filter((f) => f.response)
-            .map((f) => f.response)
-            .filter((info): info is NonNullable<typeof info> => info !== undefined);
-
-          if (filesWithResponse.length > 0) {
-            filesToUse = filesWithResponse;
-          } else {
-            // 尝试从 fileList 中获取所有文件，即使状态不是 done
-            const allFiles = fileList
-              .filter((f) => f.response)
-              .map((f) => f.response)
-              .filter((info): info is NonNullable<typeof info> => info !== undefined);
-            if (allFiles.length > 0) {
-              filesToUse = allFiles;
-            }
-          }
-        }
-
-        // 如果 filesToUse 仍然为空，但 fileList 中有文件，尝试直接使用 fileList 中的文件信息
-        if (filesToUse.length === 0 && fileList.length > 0) {
-          const allPossibleFiles = fileList
-            .map((f) => {
-              // 尝试从 response 获取
-              if (f.response) {
-                return f.response;
-              }
-              // 尝试从 uploadedFilesInfo 匹配
-              const matched = uploadedFilesInfo?.find((info) => info.name === f.name);
-              if (matched) {
-                return matched;
-              }
-              return undefined;
-            })
-            .filter((info): info is NonNullable<typeof info> => info !== undefined);
-
-          if (allPossibleFiles.length > 0) {
-            filesToUse = allPossibleFiles;
-          }
-        }
-
-        // 如果 filesToUse 为空，但 fileList 中有文件，尝试等待文件上传完成
-        if (filesToUse.length === 0 && fileList.length > 0) {
-          const uploadingFiles = fileList.filter((f) => f.status === "uploading");
-          if (uploadingFiles.length > 0) {
-            message.warning("文件正在上传中，请稍候再试");
-            return;
-          }
-          const hasLocalAttachments = fileList.some((f) => f.originFileObj);
-          if (hasLocalAttachments && enable_upload) {
-            message.error(
-              "未能获取已上传文件的信息，请移除附件后重新添加，或确认网络与上传服务正常"
-            );
-            return;
-          }
-        }
-
-        submitInternal(query, filesToUse as any, false, true);
+        return;
       }
+
+      let query = textAreaRef.current?.value || "";
+      const files = fileList
+        .filter((file) => file.originFileObj)
+        .map((file) => file.originFileObj!);
+
+      if (!query.trim() && files.length > 0) {
+        query = "请帮我分析这些文件。";
+      }
+
+      if (attachedSkills.length > 0) {
+        const urlBlock = attachedSkills.map((s) => s.url).join("\n");
+        const base = query.trim();
+        query = base
+          ? `${base}\n\n${SKILL_INSTALL_DEFAULT_LINE}\n\n${urlBlock}`
+          : `${SKILL_INSTALL_DEFAULT_LINE}\n\n${urlBlock}`;
+      }
+
+      const resolved = resolveUploadedFiles({
+        fileList,
+        uploadedFilesInfo,
+        enable_upload,
+      });
+      if (!resolved.ok) return;
+
+      submitInternal(query, resolved.files as any, false, true);
     };
 
     const handlePause = () => {
-      if (onPause) {
-        onPause();
-      }
+      onPause?.();
     };
 
-    const handleLLMSelect = async (llm: { label: string; value: string }) => {
-      try {
-        if (isSessionBound) {
-          let targetSession = boundSession;
-          if (!targetSession?.id) {
-            targetSession = await sessionAPI.getSession(effectiveSessionId, userId);
-          }
-
-          const updatedSession = {
-            ...targetSession,
-            agent_mode_config: {
-              ...(targetSession.agent_mode_config || {}),
-              defult_config_name: llm.label,
-            },
-          } as Session;
-
-          const persisted = await sessionAPI.updateSession(
-            updatedSession.id!,
-            updatedSession,
-            userId
-          );
-
-          setSession(persisted);
-          if (Array.isArray(sessions) && sessions.length > 0) {
-            setSessions(
-              sessions.map((s) => (s.id === persisted.id ? persisted : s))
-            );
-          } else {
-            setSessions([persisted]);
-          }
-          if (selectedAgent) {
-            setSelectedAgent({ ...selectedAgent, defult_config_name: llm.label });
-          }
-          setSelectedLlmLabel(llm.label);
-          message.success(`已选择模型: ${llm.label}`);
-          return;
-        }
-
-        if (!agentId || !agentInfo) {
-          message.warning("请先选择智能体");
-          return;
-        }
-
-        // 新对话（尚未创建会话）：更新智能体全局默认模型
-        const updatedAgentConfig = {
-          id: agentId,
-          defult_config_name: llm.label,
-        };
-
-        await agentWorkerAPI.updateUserAgent(userId, updatedAgentConfig);
-        setAgentInfo({ ...agentInfo, defult_config_name: llm.label });
-        if (selectedAgent) {
-          setSelectedAgent({ ...selectedAgent, defult_config_name: llm.label });
-        }
-        setSelectedLlmLabel(llm.label);
-        message.success(`已选择模型: ${llm.label}`);
-      } catch (error) {
-        console.error("Failed to update LLM selection:", error);
-        const errorMessage = error instanceof Error ? error.message : "更新模型选择失败";
-        message.error(errorMessage);
-      }
-    };
-
-    const handleKeyDown = (
-      event: React.KeyboardEvent<HTMLTextAreaElement>
-    ) => {
+    const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         handleSubmit();
       }
     };
 
-    const applyValue = React.useCallback((value: string) => {
-      setText(value);
-      if (textAreaRef.current) {
-        textAreaRef.current.value = value;
-        if (!value.trim()) {
-          textAreaRef.current.style.height = getTextAreaDefaultHeight();
-        } else {
-          const scrollHeight = textAreaRef.current.scrollHeight;
-          const newHeight = Math.min(scrollHeight, 120);
-          textAreaRef.current.style.height = `${newHeight}px`;
+    const applyValue = React.useCallback(
+      (value: string) => {
+        setText(value);
+        if (textAreaRef.current) {
+          textAreaRef.current.value = value;
+          if (!value.trim()) {
+            textAreaRef.current.style.height = getTextAreaDefaultHeight();
+          } else {
+            const scrollHeight = textAreaRef.current.scrollHeight;
+            const newHeight = Math.min(scrollHeight, 120);
+            textAreaRef.current.style.height = `${newHeight}px`;
+          }
+          textAreaRef.current.focus();
+          textAreaRef.current.setSelectionRange(value.length, value.length);
         }
-        textAreaRef.current.focus();
-        textAreaRef.current.setSelectionRange(value.length, value.length);
-      }
-      if (onTextChange) {
-        onTextChange(value);
-      }
-    }, [onTextChange]);
+        if (onTextChange) {
+          onTextChange(value);
+        }
+      },
+      [onTextChange]
+    );
 
-    // Expose focus and setValue methods via ref
     React.useImperativeHandle(ref, () => ({
       focus: () => {
         textAreaRef.current?.focus();
@@ -645,8 +313,6 @@ const ChatInput = React.forwardRef<
       setValue: applyValue,
     }));
 
-    // Listen for cross-component requests to inject text into the chat input
-    // (e.g. RightPanel 模板库 "click-to-use" flow).
     React.useEffect(() => {
       const handler = (e: Event) => {
         const detail = (e as CustomEvent<{ text?: string; append?: boolean }>).detail;
@@ -678,7 +344,6 @@ const ChatInput = React.forwardRef<
       e.target.value = "";
     };
 
-    // Drag and drop handlers
     const handleDragOver = (e: React.DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
@@ -732,7 +397,6 @@ const ChatInput = React.forwardRef<
       <div className="mt-2 w-full max-w-4xl mx-auto relative">
         {notificationContextHolder}
 
-        {/* Relevant Plans Indicator and Dropdown */}
         {isRelevantPlansVisible && (
           <RelevantPlans
             isSearching={isSearching}
@@ -742,18 +406,18 @@ const ChatInput = React.forwardRef<
           />
         )}
 
-        {/* Drag Drop Overlay */}
         <DragDropOverlay isDragActive={isDragActive && enable_upload} darkMode={darkMode} />
 
-        {/* Attached Items Preview */}
         {(attachedPlan || fileList.length > 0 || attachedSkills.length > 0) && (
           <div
-            className={`-mb-2 mx-1 ${darkMode === "dark"
-              ? "bg-[#121826]/65 shadow-modern"
-              : "bg-violet-50/80 border-violet-200/60"
-              } rounded-t-2xl border-b-0 p-2 flex ${darkMode === "dark" ? "" : "border"} flex-wrap gap-2`}
+            className={`-mb-2 mx-1 ${
+              darkMode === "dark"
+                ? "bg-[#121826]/65 shadow-modern"
+                : "bg-violet-50/80 border-violet-200/60"
+            } rounded-t-2xl border-b-0 p-2 flex ${
+              darkMode === "dark" ? "" : "border"
+            } flex-wrap gap-2`}
           >
-            {/* Attached Plan */}
             {attachedPlan && (
               <PlanPreview
                 plan={attachedPlan}
@@ -763,60 +427,16 @@ const ChatInput = React.forwardRef<
               />
             )}
 
-            {/* Attached HepAI skills (URLs appended on send with default install line) */}
-            {attachedSkills.map((s) => (
-              <div
-                key={s.id}
-                className={`flex items-center gap-2 max-w-[min(100%,22rem)] ${darkMode === "dark"
-                  ? "bg-[#444444] text-white border border-gray-600"
-                  : "bg-white text-magenta-800 border border-magenta-200"
-                  } rounded-lg px-3 py-2 text-xs shadow-sm`}
-              >
-                <WrenchIcon
-                  className={`w-3.5 h-3.5 shrink-0 ${darkMode === "dark" ? "text-gray-300" : "text-magenta-600"
-                    }`}
-                  aria-hidden
-                />
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <span
-                    className={`truncate font-medium ${darkMode === "dark" ? "text-white" : "text-magenta-800"
-                      }`}
-                    title={s.filename}
-                  >
-                    {s.filename}
-                  </span>
-                  <span
-                    className={`truncate text-[11px] ${darkMode === "dark" ? "text-gray-400" : "text-magenta-600"
-                      }`}
-                    title={s.url}
-                  >
-                    {s.url}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeAttachedSkill(s.id)}
-                  className={`shrink-0 rounded-full p-1 ${darkMode === "dark"
-                    ? "hover:bg-red-500/20 hover:text-red-400 text-gray-400"
-                    : "hover:bg-red-100 hover:text-red-600 text-magenta-600"
-                    }`}
-                  aria-label={`移除 ${s.filename}`}
-                >
-                  <XMarkIcon className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-
-            {/* Attached Files */}
-            <FilePreview
-              fileList={fileList}
+            <AttachedSkillsPreview
+              skills={attachedSkills}
               darkMode={darkMode}
-              onRemove={removeFile}
+              onRemove={removeAttachedSkill}
             />
+
+            <FilePreview fileList={fileList} darkMode={darkMode} onRemove={removeFile} />
           </div>
         )}
 
-        {/* Plan View Modal */}
         <Modal
           title={`Plan: ${attachedPlan?.task || "Untitled Plan"}`}
           open={isPlanModalVisible}
@@ -830,103 +450,36 @@ const ChatInput = React.forwardRef<
               task={attachedPlan.task || ""}
               plan={attachedPlan.steps || []}
               viewOnly={true}
-              setPlan={() => { }}
+              setPlan={() => {}}
             />
           )}
         </Modal>
 
-        <Modal
-          title="选择技能包（HepAI）"
+        <SkillAttachModal
           open={skillModalOpen}
+          darkMode={darkMode}
+          loading={skillModalLoading}
+          search={skillModalSearch}
+          tagFilter={skillModalTagFilter}
+          rows={skillModalRows}
+          filteredRows={filteredSkillModalRows}
+          selectedIds={skillModalSelectedIds}
+          onSearchChange={setSkillModalSearch}
+          onTagFilter={handleSkillModalTagFilter}
+          onSelectedIdsChange={setSkillModalSelectedIds}
           onCancel={() => setSkillModalOpen(false)}
-          onOk={() => confirmSkillPicker()}
-          okText="添加"
-          cancelText="取消"
-          destroyOnClose
-          width={560}
-          okButtonProps={{ disabled: skillModalLoading }}
-        >
-          <p
-            className={`mb-3 text-xs ${darkMode === "dark" ? "text-gray-400" : "text-secondary"
-              }`}
-          >
-            发送时会自动附带「{SKILL_INSTALL_DEFAULT_LINE}」与所选 ZIP 的下载链接。
-          </p>
-          <Input
-            allowClear
-            placeholder="按文件名筛选"
-            value={skillModalSearch}
-            onChange={(e) => setSkillModalSearch(e.target.value)}
-            className="mb-3"
-          />
-          {skillModalLoading ? (
-            <div className="flex justify-center py-12">
-              <Spin />
-            </div>
-          ) : filteredSkillModalRows.length === 0 ? (
-            <div
-              className={`rounded-lg border border-dashed py-10 text-center text-sm ${darkMode === "dark"
-                ? "border-gray-600 text-gray-400"
-                : "border-gray-200 text-gray-500"
-                }`}
-            >
-              {skillModalRows.length === 0 ? "暂无技能包，请先到技能广场上传 ZIP" : "无匹配项"}
-            </div>
-          ) : (
-            <ul
-              className={`max-h-[min(60vh,22rem)] space-y-1 overflow-auto rounded-lg border p-2 ${darkMode === "dark" ? "border-gray-600" : "border-gray-200"
-                }`}
-            >
-              {filteredSkillModalRows.map((r) => (
-                <li key={r.id}>
-                  <label
-                    className={`flex cursor-pointer items-start gap-2 rounded-md px-2 py-2 ${darkMode === "dark" ? "hover:bg-white/5" : "hover:bg-violet-50/80"
-                      }`}
-                  >
-                    <Checkbox
-                      checked={skillModalSelectedIds.has(r.id)}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setSkillModalSelectedIds((prev) => {
-                          const next = new Set(prev);
-                          if (checked) next.add(r.id);
-                          else next.delete(r.id);
-                          return next;
-                        });
-                      }}
-                      className="mt-0.5"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span
-                        className={`block text-sm font-medium ${darkMode === "dark" ? "text-gray-100" : "text-gray-800"
-                          }`}
-                      >
-                        {r.filename}
-                      </span>
-                      <span
-                        className={`mt-0.5 block truncate text-xs ${darkMode === "dark" ? "text-gray-500" : "text-gray-500"
-                          }`}
-                        title={r.url}
-                      >
-                        {r.url}
-                      </span>
-                    </span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Modal>
+          onConfirm={confirmSkillPicker}
+        />
 
         <div className="chat-input-wrapper mt-4 p-1">
           <div
-            className={`relative w-full transition-smooth rounded-[28px] shadow-modern ${isDragActive
-              ? "ring-2 ring-accent ring-opacity-50 bg-accent/5"
-              : ""
-              } ${darkMode === "dark"
+            className={`relative w-full transition-smooth rounded-[28px] shadow-modern ${
+              isDragActive ? "ring-2 ring-accent ring-opacity-50 bg-accent/5" : ""
+            } ${
+              darkMode === "dark"
                 ? "bg-[#0d1117] backdrop-blur-sm border border-border-primary/50 hover:border-accent/40 focus-within:border-accent/60"
                 : "bg-white/95 backdrop-blur-sm border border-gray-200/80 hover:border-violet-300/60 focus-within:border-violet-400/70"
-              }`}
+            }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
@@ -941,99 +494,15 @@ const ChatInput = React.forwardRef<
                   className="relative w-full"
                 >
                   {enable_upload && (
-                    <div
-                      className={`absolute left-4 top-1/2 transform -translate-y-1/2 z-10 ${isInputDisabled ? "pointer-events-none opacity-50" : ""
-                        }`}
-                    >
-                      <input
-                        ref={attachFileInputRef}
-                        type="file"
-                        multiple
-                        className="hidden"
-                        aria-hidden
-                        onChange={handleAttachFileInputChange}
-                      />
-                      <Dropdown
-                        overlay={
-                          <Menu className={darkMode === "dark" ? "dark-menu" : ""}>
-                            <Menu.Item
-                              key="attach-file"
-                              onClick={({ domEvent }) => {
-                                domEvent?.preventDefault();
-                                domEvent?.stopPropagation();
-                                if (!isInputDisabled) {
-                                  attachFileInputRef.current?.click();
-                                }
-                              }}
-                            >
-                              <div className="flex items-center gap-2">
-                                <PaperclipIcon
-                                  className={`w-4 h-4 flex-shrink-0 ${darkMode === "dark"
-                                    ? "text-gray-300"
-                                    : "text-magenta-600"
-                                    }`}
-                                />
-                                <span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Attach File</span>
-                              </div>
-                            </Menu.Item>
-                            <Menu.Item
-                              key="attach-skill"
-                              onClick={({ domEvent }) => {
-                                domEvent?.preventDefault();
-                                domEvent?.stopPropagation();
-                                openSkillAttachModal();
-                              }}
-                            >
-                              <div className="flex items-center gap-2">
-                                <WrenchIcon
-                                  className={`w-4 h-4 flex-shrink-0 ${darkMode === "dark"
-                                    ? "text-gray-300"
-                                    : "text-magenta-600"
-                                    }`}
-                                />
-                                <span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Attach Skill</span>
-                              </div>
-                            </Menu.Item>
-                          </Menu>
-                        }
-                        trigger={["click"]}
-                      >
-                        <Tooltip
-                          title={
-                            <span className="text-sm">
-                              {(() => {
-                                const n = fileList.length;
-                                const m = attachedSkills.length;
-                                if (n + m === 0) return "Attach File";
-                                const parts: string[] = [];
-                                if (n) parts.push(`${n} 个文件`);
-                                if (m) parts.push(`${m} 个技能包`);
-                                return parts.join("，");
-                              })()}
-                            </span>
-                          }
-                          placement="top"
-                        >
-                          <button
-                            type="button"
-                            disabled={isInputDisabled}
-                            className={`flex justify-center items-center w-8 h-8 rounded-xl transition-smooth hover-lift relative ${fileList.length + attachedSkills.length > 0
-                              ? "text-accent bg-accent/10"
-                              : darkMode === "dark"
-                                ? "text-secondary hover:text-accent hover:bg-accent/10"
-                                : "text-secondary hover:text-accent hover:bg-accent/10"
-                              }`}
-                          >
-                            <PlusIcon className="h-4 w-4" />
-                            {fileList.length + attachedSkills.length > 0 && (
-                              <span className="absolute -top-1 -right-1 bg-accent text-white text-xs rounded-full w-4 h-4 flex items-center justify-center animate-bounce-in">
-                                {fileList.length + attachedSkills.length}
-                              </span>
-                            )}
-                          </button>
-                        </Tooltip>
-                      </Dropdown>
-                    </div>
+                    <AttachDropdown
+                      darkMode={darkMode}
+                      isInputDisabled={isInputDisabled}
+                      fileCount={fileList.length}
+                      skillCount={attachedSkills.length}
+                      attachFileInputRef={attachFileInputRef}
+                      onAttachFileChange={handleAttachFileInputChange}
+                      onOpenSkillModal={openSkillAttachModal}
+                    />
                   )}
                   <textarea
                     id="queryInput"
@@ -1045,12 +514,11 @@ const ChatInput = React.forwardRef<
                     defaultValue={""}
                     onChange={handleTextChange}
                     onKeyDown={handleKeyDown}
-                    className={`input-enhanced chat-input-scrollbar-hide flex items-center w-full resize-none p-4 ${enable_upload ? "pl-14" : "pl-6"
-                      } ${runStatus === "active" ? "pr-36" : "pr-28"
-                      } rounded-[28px] transition-smooth border-0 bg-transparent ${isInputDisabled
-                        ? "cursor-not-allowed opacity-50"
-                        : ""
-                      } focus:outline-none`}
+                    className={`input-enhanced chat-input-scrollbar-hide flex items-center w-full resize-none p-4 ${
+                      enable_upload ? "pl-14" : "pl-6"
+                    } ${runStatus === "active" ? "pr-36" : "pr-28"} rounded-[28px] transition-smooth border-0 bg-transparent ${
+                      isInputDisabled ? "cursor-not-allowed opacity-50" : ""
+                    } focus:outline-none`}
                     style={{
                       maxHeight: "120px",
                       overflowY: "auto",
@@ -1067,111 +535,23 @@ const ChatInput = React.forwardRef<
                     }
                     disabled={isInputDisabled}
                   />
-                  {/* Right button group */}
-                  <div className="absolute right-2 bottom-2 flex items-center space-x-2">
-                    {/* Clear text button */}
-                    {text.trim().length > 0 && !isInputDisabled && (
-                      <button
-                        type="button"
-                        onClick={clearText}
-                        className="rounded-full flex justify-center items-center h-8 transition-smooth hover-lift text-secondary hover:text-accent hover:bg-accent/10"
-                        aria-label="Clear input"
-                      >
-                        <XMarkIcon className="h-4 w-4" />
-                      </button>
-                    )}
-                    {/* Pause button - allow immediate stop after submit */}
-                    {(runStatus === "active" ||
-                      runStatus === "connected" ||
-                      runStatus === "created") && (
-                        <button
-                          type="button"
-                          onClick={handlePause}
-                          className={`rounded-full flex justify-center items-center w-10 h-10 transition-smooth hover-lift ${darkMode === "dark"
-                            ? "bg-warning-primary/20 hover:bg-warning-primary/30 text-warning-primary"
-                            : "bg-warning-primary/10 hover:bg-warning-primary/20 text-warning-primary"
-                            } shadow-modern`}
-                        >
-                          <PauseCircleIcon className="h-5 w-5" />
-                        </button>
-                      )}
-
-                    {/* Submit button */}
-                    <button
-                      type="button"
-                      onClick={handleSubmit}
-                      disabled={isInputDisabled}
-                      aria-label="发送消息"
-                      className={`transition-smooth rounded-full flex justify-center items-center w-10 h-10 ${isInputDisabled
-                        ? "cursor-not-allowed opacity-50 bg-gray-400"
-                        : darkMode === "dark"
-                          ? "bg-gradient-primary hover:shadow-modern-lg text-white hover-lift pulse-glow"
-                          : "bg-gradient-primary hover:shadow-modern-lg text-white hover-lift pulse-glow"
-                        }`}
-                    >
-                      <PaperAirplaneIcon className="h-5 w-5 transform -rotate-45" />
-                    </button>
-                  </div>
+                  <ComposerActionButtons
+                    darkMode={darkMode}
+                    text={text}
+                    isInputDisabled={isInputDisabled}
+                    runStatus={runStatus}
+                    onClear={clearText}
+                    onPause={handlePause}
+                    onSubmit={handleSubmit}
+                  />
                 </form>
-                {llmList.length > 0 && (
-                  <div
-                    className={`chat-input-model-bar flex items-center gap-2 border-t px-4 py-2 ${darkMode === "dark"
-                      ? "border-border-primary/40"
-                      : "border-gray-200/80"
-                      } ${isInputDisabled ? "pointer-events-none opacity-50" : ""}`}
-                  >
-                    <Brain
-                      className={`h-3.5 w-3.5 shrink-0 ${darkMode === "dark" ? "text-gray-400" : "text-magenta-600"
-                        }`}
-                      aria-hidden
-                    />
-
-                    <Dropdown
-                      overlay={
-                        <Menu className={darkMode === "dark" ? "dark-menu" : ""}>
-                          {llmList.map((llm) => (
-                            <Menu.Item
-                              key={llm.value}
-                              onClick={() => {
-                                handleLLMSelect(llm);
-                              }}
-                              className={darkMode === "dark" ? "text-gray-300 hover:text-white" : ""}
-                            >
-                              <span className="flex w-full min-w-[10rem] items-center justify-between">
-                                <span className={darkMode === "dark" ? "text-gray-300" : ""}>
-                                  {llm.label}
-                                </span>
-                                {llm.label === selectedLlmLabel && (
-                                  <span className="ml-2 font-bold text-green-500">√</span>
-                                )}
-                              </span>
-                            </Menu.Item>
-                          ))}
-                        </Menu>
-                      }
-                      trigger={["click"]}
-                      disabled={isInputDisabled}
-                    >
-                      <button
-                        type="button"
-                        className={`chat-input-model-trigger inline-flex max-w-full items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-smooth ${darkMode === "dark"
-                          ? "bg-white/5 text-gray-200 hover:bg-white/10"
-                          : "bg-violet-50 text-magenta-800 hover:bg-violet-100"
-                          }`}
-                        aria-label={`Switch model, current: ${selectedLlmLabel || llmList[0]?.label}`}
-                      >
-                        <span className="truncate">
-                          {selectedLlmLabel || llmList[0]?.label || "—"}
-                        </span>
-                        <ChevronDownIcon
-                          className={`h-3.5 w-3.5 shrink-0 ${darkMode === "dark" ? "text-gray-400" : "text-magenta-600"
-                            }`}
-                          aria-hidden
-                        />
-                      </button>
-                    </Dropdown>
-                  </div>
-                )}
+                <LlmSelectorBar
+                  darkMode={darkMode}
+                  isInputDisabled={isInputDisabled}
+                  llmList={llmList}
+                  selectedLlmLabel={selectedLlmLabel}
+                  onSelect={handleLLMSelect}
+                />
               </div>
             </div>
           </div>
@@ -1179,14 +559,16 @@ const ChatInput = React.forwardRef<
 
         {error && !error.status && (
           <div
-            className={`p-2 border rounded mt-4 text-sm ${darkMode === "dark"
-              ? "border-orange-500/30 text-orange-400 bg-orange-500/10"
-              : "border-orange-300 text-orange-600 bg-orange-50"
-              }`}
+            className={`p-2 border rounded mt-4 text-sm ${
+              darkMode === "dark"
+                ? "border-orange-500/30 text-orange-400 bg-orange-500/10"
+                : "border-orange-300 text-orange-600 bg-orange-50"
+            }`}
           >
             <ExclamationTriangleIcon
-              className={`h-5 inline-block mr-2 ${darkMode === "dark" ? "text-orange-400" : "text-orange-600"
-                }`}
+              className={`h-5 inline-block mr-2 ${
+                darkMode === "dark" ? "text-orange-400" : "text-orange-600"
+              }`}
             />
             {error.message}
           </div>

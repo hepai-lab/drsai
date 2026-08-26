@@ -81,7 +81,7 @@ export function clearAuthSession(): void {
 }
 
 export type AuthVerifyResult =
-  | { ok: true; userEmail: string; accessToken: string }
+  | { ok: true; userEmail: string; accessToken: string; displayName?: string }
   | { ok: false };
 
 /** Use httpOnly refresh-token cookie to obtain a new access token (SSO production). */
@@ -140,8 +140,9 @@ export async function verifyAuthSession(): Promise<AuthVerifyResult> {
       clearAuthSession();
       return { ok: false };
     }
+    const displayName = (payload?.data?.display_name as string | undefined) || "";
     saveAuthSession(token, userEmail);
-    return { ok: true, userEmail, accessToken: token };
+    return { ok: true, userEmail, accessToken: token, displayName };
   }
 
   if (meResponse.status === 401) {

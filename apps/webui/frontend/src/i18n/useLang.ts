@@ -137,6 +137,8 @@ const dict = {
 
   "userProfile.title":           { zh: "用户信息",           en: "User info" },
   "userProfile.logout":          { zh: "退出登录",           en: "Sign Out" },
+  "userProfile.cooperGroup":     { zh: "合作组",             en: "Cooper Group" },
+  "userProfile.role":            { zh: "角色",               en: "Role" },
 
   // ===== Voice Input / Output / Settings =====
   "voiceinput.notDetected":      { zh: "没有检测到语音，请重试", en: "No speech detected, please try again" },
@@ -407,6 +409,8 @@ const dict = {
   "skillSquare.zipNeedSkillMd":  { zh: "文件夹内需包含 SKILL.md", en: "Folder must contain SKILL.md" },
   "skillSquare.zipTooLarge":     { zh: "打包后超过 10 MB，请精简文件后重试", en: "Archive exceeds 10 MB — reduce file size and retry" },
   "skillSquare.zipPacked":       { zh: "已将文件夹打包为 zip",  en: "Folder packed as zip" },
+  "skillSquare.folderContents":  { zh: "文件夹内容 · %1 个文件", en: "Folder contents · %1 files" },
+  "skillSquare.folderContentsMore": { zh: "还有 %1 个文件未显示", en: "%1 more files not shown" },
   "skillSquare.zipPickError":    { zh: "未能按文件夹读取文件，请使用 Chrome / Edge 等浏览器，或直接「选择 zip 文件」", en: "Could not read as folder — use Chrome/Edge, or select a .zip file directly" },
   "skillSquare.zipFileTooLarge": { zh: "压缩包总大小请不超过 10 MB", en: "Total archive size must not exceed 10 MB" },
   "skillSquare.zipFormatError":  { zh: "请上传 .zip 格式的技能包", en: "Please upload a .zip skill pack" },
@@ -589,6 +593,8 @@ const dict = {
   "skillSquare.notFound":          { zh: "未找到该技能",          en: "Skill not found" },
   "skillSquare.noPublicTitle":     { zh: "暂无公共技能",          en: "No public skills yet" },
   "skillSquare.noPublicDesc":      { zh: "公共技能存储在 GFS 云存储上。请输入 API Key 并点击发布来贡献技能。", en: "Public skills are stored on GFS cloud storage. Enter an API key and click Publish to contribute." },
+  "skillSquare.loadingMore":       { zh: "加载更多…",             en: "Loading more…" },
+  "skillSquare.allLoaded":         { zh: "已加载全部",            en: "All loaded" },
 
   // ===== Skills Square — delete modal =====
   "skillSquare.deleteTitle":       { zh: "删除公共技能？",        en: "Delete public skill?" },
@@ -622,6 +628,12 @@ const dict = {
   "skillSquare.hideBtn":           { zh: "下架",                  en: "Unlist" },
   "skillSquare.makePublicBtn":     { zh: "公开",                  en: "List" },
   "skillSquare.unlistedBadge":     { zh: "已下架",                en: "Unlisted" },
+  "skillSquare.presetBadge":       { zh: "预置技能",              en: "Preset" },
+  "skillSquare.higrafOnlyBadge":   { zh: "仅LHAASO成员可用",     en: "LHAASO members only" },
+  "skillSquare.restrictedTitle":  { zh: "仅LHAASO成员可用",     en: "LHAASO members only" },
+  "skillSquare.restrictedDesc":   { zh: "你可以查看技能简介和版本历史；加入LHAASO后才能启用、查看完整内容或下载技能。", en: "You can view the skill overview and version history. Join LHAASO to enable, view full content, or download the skill." },
+  "skillSquare.systemOwner":       { zh: "系统预置",              en: "System" },
+  "skillSquare.callCount":         { zh: "调用 %1 次",            en: "%1 calls" },
 } as const;
 
 type TranslationKey = keyof typeof dict;
