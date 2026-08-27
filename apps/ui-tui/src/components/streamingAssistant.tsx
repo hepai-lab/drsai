@@ -485,7 +485,7 @@ export function StreamingAssistant() {
       {hasContentParts && hiddenRows > 0 && (
         <Box>
           <Text color={theme.muted} dimColor>
-            {`  ↑ ${hiddenRows} earlier line${hiddenRows > 1 ? 's' : ''} (will appear in scrollback when turn ends)`}
+            {`  ↑ ${hiddenRows} earlier line${hiddenRows > 1 ? 's' : ''} (latest content shown)`}
           </Text>
         </Box>
       )}
@@ -526,7 +526,7 @@ export function StreamingAssistant() {
           {legacyHidden > 0 && (
             <Box>
               <Text color={theme.muted} dimColor>
-                {`  ↑ ${legacyHidden} earlier line${legacyHidden > 1 ? 's' : ''} (will appear in scrollback when turn ends)`}
+                {`  ↑ ${legacyHidden} earlier line${legacyHidden > 1 ? 's' : ''} (latest content shown)`}
               </Text>
             </Box>
           )}

@@ -15,10 +15,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createGatewayEventHandler } from './app/createGatewayEventHandler.js'
 import { FOCUS_IN_INPUT, FOCUS_OUT_INPUT, parseMouseEvent } from './app/focusEvents.js'
 import { parseHistory } from './app/historyParser.js'
+import { stripTodoWriteArtifacts } from './app/todoArtifacts.js'
 import { disableMouseTracking, enableMouseTracking } from './app/terminalControl.js'
 import { TurnController } from './app/turnController.js'
+import { getPartText, type AssistantTurn } from './app/types.js'
 import { $current, $isStreaming, $transcript, setTranscript } from './app/turnStore.js'
-import { $connectionError, $connectionStatus, $copyMode, $lastUsage, $memoryPreview, $remoteHost, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
+import { $connectionError, $connectionStatus, $copyMode, $expandedTurns, $lastUsage, $memoryPreview, $remoteHost, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
 import { AppLayout } from './components/appLayout.js'
 import { SetupScreen } from './components/setupScreen.js'
 import type { GatewayClient } from './gatewayClient.js'
@@ -210,6 +212,78 @@ export function App({ gw }: AppProps) {
           }
         }, 2000)
       }
+      return
+    }
+
+    // Ctrl+E: expand the most recent collapsed assistant turn.
+    //
+    // When a turn's content exceeds the final-render budget,
+    // ``AssistantBlock`` clips it (keeping the latest rows) and shows
+    // "↑ N earlier lines collapsed (Ctrl+E to expand)".  Pressing
+    // Ctrl+E prints the full content to terminal scrollback via
+    // ``console.log()`` (Ink patches this to coordinate with its
+    // output management).  The content appears below the current
+    // dynamic frame; the user can scroll up to read it.
+    //
+    // The turn ID is tracked in ``$expandedTurns`` to avoid printing
+    // the same content twice.  If the most recent turn wasn't
+    // collapsed (content fit within budget), a status hint is shown.
+    if (key.ctrl && _input === 'e') {
+      const transcript = $transcript.get()
+      // Find the last assistant turn
+      let lastAssistant: AssistantTurn | null = null
+      for (let i = transcript.length - 1; i >= 0; i--) {
+        if (transcript[i].role === 'assistant') {
+          lastAssistant = transcript[i] as AssistantTurn
+          break
+        }
+      }
+      if (!lastAssistant) {
+        $statusLine.set('No assistant turn to expand')
+        setTimeout(() => { if ($statusLine.get() === 'No assistant turn to expand') $statusLine.set('') }, 2000)
+        return
+      }
+
+      const turnId = String(lastAssistant.startedAt)
+      const expanded = $expandedTurns.get()
+      if (expanded.has(turnId)) {
+        $statusLine.set('Already expanded')
+        setTimeout(() => { if ($statusLine.get() === 'Already expanded') $statusLine.set('') }, 2000)
+        return
+      }
+
+      // Print the full content to scrollback via console.log (Ink-patched)
+      console.log(`\x1b[38;2;110;110;110m── expanded turn ──\x1b[0m`)
+      if (lastAssistant.contentParts.length > 0) {
+        for (const part of lastAssistant.contentParts) {
+          if (part.kind === 'text') {
+            const text = stripTodoWriteArtifacts(getPartText(part))
+            if (text) console.log(text)
+          } else {
+            const tool = lastAssistant.tools.find(t => t.id === part.toolId)
+            if (tool) {
+              console.log(`  [tool: ${tool.name}]`)
+              if (tool.result) console.log(`  ${tool.result.split('\n').join('\n  ')}`)
+            }
+          }
+        }
+      } else {
+        // Legacy fallback
+        const text = stripTodoWriteArtifacts(lastAssistant.text)
+        if (text) console.log(text)
+      }
+      console.log(`\x1b[38;2;110;110;110m── end expanded ──\x1b[0m`)
+
+      // Mark as expanded
+      const next = new Set(expanded)
+      next.add(turnId)
+      $expandedTurns.set(next)
+      $statusLine.set('Expanded turn content printed to scrollback')
+      setTimeout(() => {
+        if ($statusLine.get() === 'Expanded turn content printed to scrollback') {
+          $statusLine.set('')
+        }
+      }, 3000)
       return
     }
 
