@@ -362,6 +362,13 @@ def get_operator_funcs(
         """
         Replace exact text in file.
         """
+        import unicodedata
+
+        def _normalise(s: str) -> str:
+            """Normalise to NFC + Unix line endings for robust matching."""
+            s = unicodedata.normalize("NFC", s)
+            return s.replace("\r\n", "\n").replace("\r", "\n")
+
         try:
             fp = safe_path(path)
 
@@ -370,15 +377,28 @@ def get_operator_funcs(
                 async with aiofiles.open(fp, 'r', encoding='utf-8') as f:
                     text = await f.read()
 
-                if old_text not in text:
-                    return f"Error: Text not found in {path}"
+                if old_text in text:
+                    # Write operation
+                    new_content = text.replace(old_text, new_text, 1)
+                    async with aiofiles.open(fp, 'w', encoding='utf-8') as f:
+                        await f.write(new_content)
 
-                # Write operation
-                new_content = text.replace(old_text, new_text, 1)
-                async with aiofiles.open(fp, 'w', encoding='utf-8') as f:
-                    await f.write(new_content)
+                    return f"Edited {path}"
 
-                return f"Edited {path}"
+                # Unicode-normalised match (NFC + newline normalisation)
+                norm_text = _normalise(text)
+                norm_old = _normalise(old_text)
+                norm_new = _normalise(new_text)
+
+                if norm_old in norm_text:
+                    norm_result = norm_text.replace(norm_old, norm_new, 1)
+                    async with aiofiles.open(fp, 'w', encoding='utf-8') as f:
+                        await f.write(norm_result)
+
+                    return f"Edited {path} (Unicode-normalised match)"
+
+                return f"Error: Text not found in {path}"
+
         except asyncio.TimeoutError:
             return f"Error: Operation timed out after {timeout}s (file may be partially written)"
 

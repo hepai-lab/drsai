@@ -54,7 +54,11 @@ const BRACKET_PASTE_DETECT_RE = /\x1b?\[20[01]~/
 // Ink hides the real terminal cursor (`\x1b[?25l`) so we draw a fake one
 // using <Text inverse>. Without animation users can't tell whether the
 // TUI has focus — they keep typing speculatively. We toggle visibility
-// at ~530 ms, matching the default xterm blink rate.
+// at ~1000 ms (was 530 ms).  Each toggle triggers a full dynamic frame
+// re-render via Ink's eraseLines()+write() cycle.  On Windows, the 530 ms
+// rate caused the terminal to scroll continuously during idle (after the
+// conversation ended), pushing the bottom content up.  1000 ms halves
+// the re-render frequency while still providing a visible blink.
 //
 // Pause conditions (cursor renders a steady block, no setState loop):
 //   - `active` arg is false (caller says "stop blinking right now")
@@ -75,7 +79,7 @@ const BRACKET_PASTE_DETECT_RE = /\x1b?\[20[01]~/
 //     by only blinking when the input is enabled AND has focus.
 //   - When the input is disabled OR unfocused, we render a steady dim
 //     block so users can still see *where* the cursor lives.
-const CURSOR_BLINK_MS = 530
+const CURSOR_BLINK_MS = 1000
 // How long the cursor stays steady after any keypress before resuming blink.
 const CURSOR_PAUSE_MS = 2000
 

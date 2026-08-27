@@ -46,19 +46,18 @@ export function createGatewayEventHandler(
   //
   //   80 ms → ~12 fps flushes → responsive streaming, smooth text flow.
   //
-  //   With alternate-screen buffer mode enabled (entry.tsx \x1b[?1049h),
-  //   the scroll-anchor issue (P1-01) is fully resolved — the TUI runs in
-  //   its own terminal page so eraseLines() no longer resets the user's
-  //   scrollback. This means we can safely use a lower FLUSH_MS for more
-  //   responsive streaming without the scroll-jank penalty. 80 ms is a
-  //   good balance: ~12 fps updates feel smooth while still coalescing
-  //   token-level bursts.
+  //   With alternate-screen buffer mode disabled (default on all
+  //   platforms), the scroll-anchor issue is mitigated by reducing the
+  //   eraseLines() frequency. We use 120 ms (~8 fps) as a balance:
+  //   responsive enough for smooth streaming, while reducing the
+  //   scroll-reset frequency on Windows Terminal / conhost where
+  //   eraseLines() can yank the user's manual scroll-back to bottom.
   //
   // Override with DRSAI_TUI_FLUSH_MS for tuning. Clamped to [16, 500].
   const envFlush = Number.parseInt(process.env.DRSAI_TUI_FLUSH_MS || '', 10)
   const FLUSH_MS = Number.isFinite(envFlush)
     ? Math.max(16, Math.min(500, envFlush))
-    : 80
+    : 120
   let textBuf = ''
   let reasoningBuf = ''
   let flushTimer: ReturnType<typeof setTimeout> | null = null
@@ -71,6 +70,10 @@ export function createGatewayEventHandler(
   // block so we know when to emit the opening/closing separators.
   let isSubagentActive = false
   let subagentSource = ''
+  // Track whether we received text via subagent.thinking streaming.
+  // If so, subagent.complete should NOT re-add the final text (which
+  // would duplicate what was already streamed into contentParts).
+  let subagentTextReceived = false
 
   // ── Streaming token estimate ───────────────────────────────────────────
   //
@@ -222,6 +225,10 @@ export function createGatewayEventHandler(
         // Reset streaming token estimate for the new turn.
         streamingCharCount = 0
         $streamingTokenEstimate.set(0)
+        // Reset subagent state for the new turn
+        subagentTextReceived = false
+        isSubagentActive = false
+        subagentSource = ''
         // Controller already created the placeholder; nothing to do.
         return
       }
@@ -431,6 +438,7 @@ export function createGatewayEventHandler(
           textBuf += `\n\n┌─ 🤖 ${source} ─────────────────\n`
         }
 
+        subagentTextReceived = true
         textBuf += text
         scheduleFlush()
         return
@@ -499,8 +507,9 @@ export function createGatewayEventHandler(
         const p = ev.payload as { text?: string; source?: string } | undefined
         const finalText = p?.text || ''
         // 如果没有经过 subagent.thinking 流式传输（非流式子智能体），
-        // 则把最终文本作为一次性 delta 追加（带视觉标记）
-        if (finalText) {
+        // 则把最终文本作为一次性 delta 追加（带视觉标记）。
+        // 如果已经通过流式传输接收了文本，则不要重复添加。
+        if (finalText && !subagentTextReceived) {
           const cur = $current.get()
           if (cur && !cur.text && !textBuf) {
             const source = p?.source?.replace(/^sub:/, '') ?? 'subagent'
@@ -510,6 +519,8 @@ export function createGatewayEventHandler(
             scheduleFlush()
           }
         }
+        // Reset for the next subagent invocation
+        subagentTextReceived = false
         $statusLine.set('')
         return
       }
