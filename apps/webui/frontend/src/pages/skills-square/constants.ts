@@ -4,7 +4,7 @@ export const SEARCH_INPUT_CLS =
   "w-full rounded-xl border border-primary/40 bg-tertiary/10 py-2 pl-9 pr-3 text-sm text-primary outline-none placeholder:text-secondary/60 transition-[border-color,box-shadow] duration-200 focus:border-accent/50 focus:ring-1 focus:ring-accent/30 dark:border-white/10 dark:bg-white/[0.04]";
 
 export const SKILL_GRID_CLS =
-  "grid grid-cols-1 gap-4 sm:grid-cols-2 min-[1400px]:grid-cols-3";
+  "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5";
 
 export const HEPAI_MAX_ZIP_BYTES = 10 * 1024 * 1024;
 export const MAX_SKILL_FOLDER_FILES = 200;

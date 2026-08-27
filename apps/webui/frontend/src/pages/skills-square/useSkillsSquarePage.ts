@@ -23,6 +23,7 @@ import { useLang } from "../../i18n/useLang";
 import { useConfigStore } from "../../hooks/store";
 import { getModelApiKeyFromSettings } from "../../utils/modelApiKey";
 import { HEPAI_MAX_ZIP_BYTES, PUBLIC_PAGE_SIZE } from "./constants";
+import { type StatsCardItem } from "./StatsCards";
 import { renderSkillIcon } from "./icons";
 import {
   listFolderFileEntries,
@@ -262,6 +263,32 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
         .map((row) => row.name),
     [tagRows],
   );
+
+  const statsItems: StatsCardItem[] = useMemo(() => {
+    const totalPublic = publicRows.length;
+    const totalPrivate = hepaiRows.length;
+    const totalCategories = availableCategories.length;
+    return [
+      {
+        title: t("skillSquare.statsTotalSkills") || "技能总数",
+        value: totalPublic + totalPrivate,
+        change: 0,
+        changeLabel: "较上月",
+      },
+      {
+        title: t("skillSquare.statsPublicSkills") || "公开技能",
+        value: totalPublic,
+        change: 0,
+        changeLabel: "较上月",
+      },
+      {
+        title: t("skillSquare.statsCategories") || "分类数量",
+        value: totalCategories,
+        change: 0,
+        changeLabel: "",
+      },
+    ];
+  }, [publicRows.length, hepaiRows.length, availableCategories.length, t]);
 
   const resetPublishForm = () => {
     setHepaiZipFile(null);
@@ -1235,6 +1262,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
     packPreviewEntries,
     filteredHepaiRows,
     availableCategories,
+    statsItems,
     resetPublishForm,
     syncPickFromFile,
     handleFolderInputChange,
