@@ -182,8 +182,20 @@ function estimatePartHeight(
     // lazily joins chunks and caches the result in part.text.
     const cleanText = stripTodoWriteArtifacts(stripThinkBlocks(getPartText(part)))
     const rows = countVisualRows(cleanText, cols)
-    setCachedHeight(part.id, part.chunks.length, cols, rows)
-    return rows
+    // Add 1 row for the marginTop={1} on the <Box> that wraps each text
+    // part in the render output. Without this, the clip budget
+    // underestimates the actual yoga height by 1 row per visible text
+    // part. With multiple text parts (common during sub-agent output
+    // where main-agent text + sub-agent text are separate parts), the
+    // cumulative underestimate can push the total dynamic frame height
+    // to or beyond stdout.rows, triggering Ink's fullscreen branch
+    // (clearTerminal + fullStaticOutput + output), which corrupts
+    // log-update's previousLineCount via log.sync(). This causes
+    // eraseLines() to erase the wrong number of lines on subsequent
+    // renders, leaving duplicate output residue at the top.
+    const total = rows + 1  // +1 for marginTop
+    setCachedHeight(part.id, part.chunks.length, cols, total)
+    return total
   }
   // Tool part — find the referenced tool
   const tool = tools.find(t => t.id === part.toolId)
@@ -301,12 +313,18 @@ function clipContentParts(
   // If the first visible part is a text part that didn't fully fit,
   // calculate how many rows of it we CAN show (the remainder of the
   // budget). This enables intra-part text clipping (keep the tail).
+  // Note: firstHeight includes +1 for marginTop, so the text rows
+  // we can show = remaining - 1 (marginTop overhead).
   let firstPartMaxRows = 0
   if (visible.length > 0 && visible[0].kind === 'text') {
     const remaining = budget - used
     const firstHeight = heights[cutIndex]
     if (firstHeight > remaining) {
-      firstPartMaxRows = Math.max(MIN_STREAM_ROWS, remaining)
+      // Subtract 1 from remaining for the marginTop that estimatePartHeight
+      // added. This ensures the actual rendered height (textRows + 1 marginTop)
+      // fits within `remaining`.
+      const textRows = remaining - 1  // -1 for marginTop
+      firstPartMaxRows = Math.max(MIN_STREAM_ROWS, textRows)
     }
   }
 
@@ -374,6 +392,10 @@ export function StreamingAssistant() {
   //     (reported via $composerInputHeight), so the budget shrinks
   //     when the user types more lines — preventing the total dynamic
   //     frame from reaching stdout.rows.
+  //   - 1 row for the root <Box marginTop={1}> wrapper (not previously
+  //     accounted for — this omission allowed the total dynamic frame
+  //     to reach stdout.rows when multiple text parts were visible,
+  //     triggering Ink's fullscreen branch during sub-agent output).
   //   - 1 row for the "● assistant" header
   //   - reasoning block height (if shown)
   //   - 1 row for the "↑ N earlier lines" marker (if we end up clipping)
@@ -392,7 +414,7 @@ export function StreamingAssistant() {
   const reasoningRows = reasoningText
     ? 1 /* marginTop */ + 1 /* header */ + countVisualRows(reasoningText, Math.max(10, effectiveCols - 2)) + 1 /* footer */
     : 0
-  const rawBudget = effectiveRows - reservedRows - 1 /* header */ - reasoningRows - 1 /* marker */ - 1 /* safety */
+  const rawBudget = effectiveRows - reservedRows - 1 /* root marginTop */ - 1 /* header */ - reasoningRows - 1 /* marker */ - 1 /* safety */
   const maxBudget = Math.floor(effectiveRows * MAX_FRAME_FRACTION)
   const budget = Math.max(
     MIN_STREAM_ROWS,
