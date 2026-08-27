@@ -140,6 +140,99 @@ function cursorFromLineCol(lines: string[], line: number, col: number): number {
   return pos
 }
 
+// ── Soft-wrap & visual-line building ──────────────────────────────────
+
+/** Wrap a single logical line to ``maxCols`` columns.
+ *  Returns an array of visual line segments. */
+function softWrap(line: string, maxCols: number): string[] {
+  if (maxCols <= 0 || line.length <= maxCols) return [line]
+  const result: string[] = []
+  for (let i = 0; i < line.length; i += maxCols) {
+    result.push(line.slice(i, i + maxCols))
+  }
+  return result
+}
+
+/** A single visual line produced by ``buildVisualLines``. */
+interface VisualLine {
+  /** Text content of this visual line (already soft-wrapped). */
+  text: string
+  /** True only for the first logical line (i === 0) — gets the prompt
+   *  prefix; all other lines get the indent prefix. */
+  isFirstLogicalLine: boolean
+  /** True if this visual line contains the cursor. */
+  isCursorLine: boolean
+  /** Text before the cursor (only on the cursor line). */
+  before?: string
+  /** Character at the cursor position (only on the cursor line). */
+  at?: string
+  /** Text after the cursor (only on the cursor line). */
+  after?: string
+  /** Length of the full logical line this visual line came from
+   *  (used to check whether the cursor is at end-of-line for masking). */
+  lineLength: number
+}
+
+/** Convert logical lines (split by ``\n``) into visual lines
+ *  (soft-wrapped to ``contentCols``), annotating which visual line
+ *  contains the cursor and the within-visual-line cursor column.
+ *
+ * If ``contentCols`` is 0, no wrapping is performed (each logical
+ * line maps to exactly one visual line — legacy behaviour). */
+function buildVisualLines(
+  allLines: string[],
+  cursorLine: number,
+  cursorCol: number,
+  contentCols: number,
+): VisualLine[] {
+  const result: VisualLine[] = []
+  for (let i = 0; i < allLines.length; i++) {
+    const line = allLines[i]
+    const isFirstLogicalLine = i === 0
+    const wrapped = softWrap(line, contentCols)
+
+    if (i === cursorLine) {
+      const cursorVisualIdx = Math.min(
+        Math.floor(cursorCol / contentCols),
+        wrapped.length - 1,
+      )
+      const visualCol = cursorCol % contentCols
+
+      for (let j = 0; j < wrapped.length; j++) {
+        const vline = wrapped[j]
+        if (j === cursorVisualIdx) {
+          result.push({
+            text: vline,
+            isFirstLogicalLine,
+            isCursorLine: true,
+            before: vline.slice(0, visualCol),
+            at: vline[visualCol] ?? ' ',
+            after: vline.slice(visualCol + 1),
+            lineLength: line.length,
+          })
+        } else {
+          result.push({
+            text: vline,
+            isFirstLogicalLine,
+            isCursorLine: false,
+            lineLength: line.length,
+          })
+        }
+      }
+    } else {
+      for (let j = 0; j < wrapped.length; j++) {
+        result.push({
+          text: wrapped[j],
+          isFirstLogicalLine,
+          isCursorLine: false,
+          lineLength: line.length,
+        })
+      }
+    }
+  }
+  return result
+}
+
 // ── Component ─────────────────────────────────────────────────────────
 
 export interface PathCandidate {
@@ -175,6 +268,10 @@ export interface TextInputProps {
   onSubmit: (text: string) => void
   /** When true, Enter on an empty input still fires onSubmit(""). Useful for "press Enter to skip" prompts. */
   allowEmpty?: boolean
+  /** When provided, pressing Esc calls this callback instead of starting the
+   *  "Esc then Enter = newline" sequence. Use this to let the user cancel
+   *  out of a single-line input (e.g. back to the previous step). */
+  onCancel?: () => void
   /** Pool of completion candidates (e.g. ["/help", "/model", ...]). Optional. */
   completions?: string[]
   /** Persistent history shared across renders. Caller can supply a ref. */
@@ -247,6 +344,31 @@ export interface TextInputProps {
    * items relative to that directory.
    */
   onCompletePath?: (prefix: string) => Promise<PathCandidate[]>
+
+  /**
+   * Maximum number of visual rows the input text area may occupy.
+   * When the total visual lines (after soft-wrapping) exceed this
+   * value, a scroll window centred on the cursor line is rendered
+   * instead of the full content. Default: no limit (all lines shown).
+   */
+  maxRows?: number
+
+  /**
+   * Terminal column count. Used for soft-wrapping long lines so they
+   * do not overflow horizontally. When omitted (or 0), lines are not
+   * wrapped — preserving the legacy behaviour.
+   */
+  cols?: number
+
+  /**
+   * Called whenever the rendered height of the input text area
+   * changes (in terminal rows). The parent can use this to adjust
+   * other components' height budgets (e.g. StreamingAssistant).
+   *
+   * The callback should be stable (``useCallback``) to avoid
+   * unnecessary effect re-runs.
+   */
+  onHeightChange?: (height: number) => void
 }
 
 export function TextInput({
@@ -255,6 +377,7 @@ export function TextInput({
   disabled,
   onSubmit,
   allowEmpty = false,
+  onCancel,
   completions = [],
   history: externalHistory,
   onHistoryChange,
@@ -263,6 +386,9 @@ export function TextInput({
   isActive = true,
   mask = false,
   onCompletePath,
+  maxRows,
+  cols,
+  onHeightChange,
 }: TextInputProps) {
   const [value, setValue] = useState('')
   const [cursor, setCursor] = useState(0)
@@ -455,7 +581,15 @@ export function TextInput({
     //
     // BUT: when @ path mode is active, Esc should cancel path mode —
     // don't swallow it here. Let it fall through to the path mode handler.
+    //
+    // When onCancel is provided, Esc triggers that callback instead of
+    // starting the newline sequence. This lets single-line inputs (e.g.
+    // API key / base URL fields in SetupScreen) use Esc to go back.
     if (key.escape && !pathRef.current.active) {
+      if (onCancel) {
+        onCancel()
+        return
+      }
       pendingEscapeRef.current = true
       return
     }
@@ -862,6 +996,71 @@ export function TextInput({
   const { on: blinkOn, pingActivity } = useCursorBlink(!disabled && blink)
   const showCursorBlock = !disabled && blinkOn
 
+  // ── Soft-wrap & scroll window ──────────────────────────────────────
+  // Convert logical lines into visual lines (soft-wrapped to the
+  // terminal width) and, if the total exceeds maxRows, show a scroll
+  // window centred on the cursor line. This prevents the input area
+  // from growing unboundedly and pushing the StreamingAssistant into
+  // Ink's fullscreen branch (the P0 crash fix).
+  //
+  // contentCols: the number of columns available for text on each line.
+  //   cols (terminal) - 2 (AppLayout paddingX=1×2) - prompt.length
+  //   When cols is 0 or undefined, contentCols is 0 → no wrapping.
+  const contentCols = cols
+    ? Math.max(10, cols - 2 /* AppLayout paddingX */ - prompt.length)
+    : 0  // 0 = no wrapping (legacy behaviour)
+
+  const visualLines: VisualLine[] = showPlaceholder
+    ? []
+    : buildVisualLines(allLines, cursorLine, cursorCol, contentCols)
+
+  const totalVisualLines = visualLines.length
+  // Allow 1 line of overflow before entering scroll mode. This prevents
+  // the "jump" where a single extra line causes the input box to switch
+  // from growing naturally to showing ↑/↓ scroll markers. The visible
+  // area grows by 1 row instead, absorbing the overflow gracefully.
+  const effectiveMaxRows = maxRows && maxRows > 0 ? maxRows : totalVisualLines
+  const needsScroll = totalVisualLines > effectiveMaxRows + 1
+
+  // Find the cursor's visual line index for scroll centring.
+  const cursorVisualIdx = needsScroll
+    ? visualLines.findIndex(v => v.isCursorLine)
+    : 0
+
+  let scrollStart = 0
+  if (needsScroll && cursorVisualIdx >= 0) {
+    scrollStart = Math.max(0, Math.min(
+      cursorVisualIdx - Math.floor(effectiveMaxRows / 2),
+      totalVisualLines - effectiveMaxRows,
+    ))
+  }
+  const visibleVisualLines = needsScroll
+    ? visualLines.slice(scrollStart, scrollStart + effectiveMaxRows)
+    : visualLines
+  const hiddenAbove = needsScroll ? scrollStart : 0
+  const hiddenBelow = needsScroll
+    ? totalVisualLines - scrollStart - effectiveMaxRows
+    : 0
+
+  // Report the rendered input area height to the parent so it can
+  // adjust other components' height budgets (e.g. StreamingAssistant
+  // reads this via $composerInputHeight to set RESERVED_ROWS).
+  //
+  // When scrolling, only reserve rows for markers that are actually
+  // visible (↑ when hiddenAbove > 0, ↓ when hiddenBelow > 0). This
+  // avoids wasting a blank row when only one marker is needed. The
+  // height may shift by ±1 row as the cursor moves through the scroll
+  // window, but this is preferable to always reserving 2 rows.
+  const reportedHeight = showPlaceholder
+    ? 1
+    : needsScroll
+      ? effectiveMaxRows + (hiddenAbove > 0 ? 1 : 0) + (hiddenBelow > 0 ? 1 : 0)
+      : Math.max(1, totalVisualLines)
+
+  useEffect(() => {
+    onHeightChange?.(reportedHeight)
+  }, [reportedHeight, onHeightChange])
+
   // ── Path mode: windowed vertical candidate list ─────────────────────
   // Show a fixed-height window of candidates centred on the selected
   // item so the list scrolls vertically (like `ls -1` with a cursor).
@@ -905,49 +1104,53 @@ export function TextInput({
           </Box>
         </Box>
       ) : (
-        allLines.map((line, i) => {
-          const isFirstLine = i === 0
-          const isCursorLine = i === cursorLine
+        <>
+          {hiddenAbove > 0 && (
+            <Text color={theme.muted} dimColor>  ↑ {hiddenAbove} earlier lines</Text>
+          )}
+          {visibleVisualLines.map((vline, i) => {
+            // Prefix: prompt on first logical line, indent on continuation
+            const prefix = vline.isFirstLogicalLine
+              ? <Text color={theme.primary}>{prompt}</Text>
+              : <Text>{indent}</Text>
 
-          // Prefix: prompt on first line, indent on continuation lines
-          const prefix = isFirstLine
-            ? <Text color={theme.primary}>{prompt}</Text>
-            : <Text>{indent}</Text>
+            if (vline.isCursorLine) {
+              const before = vline.before ?? ''
+              const at = vline.at ?? ' '
+              const after = vline.after ?? ''
 
-          if (isCursorLine) {
-            const before = line.slice(0, cursorCol)
-            const at = line[cursorCol] ?? ' '
-            const after = line.slice(cursorCol + 1)
+              // When masking, replace visible characters with the mask
+              // glyph but keep the cursor block on a non-masked space so
+              // the user can still tell where their cursor is.
+              const visBefore = masked(before)
+              // The cursor sits on top of a real character; replace with
+              // the mask glyph so it doesn't leak a single plaintext char.
+              const visAt = maskChar !== null && cursorCol < vline.lineLength ? maskChar : at
+              const visAfter = masked(after)
 
-            // When masking, replace the visible characters with the mask
-            // glyph but keep the cursor block on a non-masked space so the
-            // user can still tell where their cursor is. The mask char
-            // itself is what appears in `before` / `after` segments.
-            const visBefore = masked(before)
-            // The cursor sits on top of a real character; replace with the
-            // mask glyph so it doesn't leak a single plaintext char.
-            const visAt = maskChar !== null && cursorCol < line.length ? maskChar : at
-            const visAfter = masked(after)
+              return (
+                <Box key={i}>
+                  {prefix}
+                  <Text>
+                    <Text color={theme.text}>{visBefore}</Text>
+                    {renderCursorAt(visAt)}
+                    <Text color={theme.text}>{visAfter}</Text>
+                  </Text>
+                </Box>
+              )
+            }
 
             return (
               <Box key={i}>
                 {prefix}
-                <Text>
-                  <Text color={theme.text}>{visBefore}</Text>
-                  {renderCursorAt(visAt)}
-                  <Text color={theme.text}>{visAfter}</Text>
-                </Text>
+                <Text color={theme.text}>{masked(vline.text) || ' '}</Text>
               </Box>
             )
-          }
-
-          return (
-            <Box key={i}>
-              {prefix}
-              <Text color={theme.text}>{masked(line) || ' '}</Text>
-            </Box>
-          )
-        })
+          })}
+          {hiddenBelow > 0 && (
+            <Text color={theme.muted} dimColor>  ↓ {hiddenBelow} more lines</Text>
+          )}
+        </>
       )}
       {tabCandidates.length > 1 && (
         <Box paddingLeft={2} flexDirection="column">

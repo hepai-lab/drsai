@@ -71,6 +71,7 @@ export interface SessionInfo {
   pinned?: boolean
   archived?: boolean
   relevance_score?: number
+  match_snippet?: string
 }
 
 export interface SessionListResult {
@@ -112,8 +113,11 @@ export interface UsagePayload {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
+  prompt_tokens_total?: number
+  completion_tokens_total?: number
+  total_tokens_accumulated?: number
   model: string
-  status: 'complete' | 'interrupted' | 'error' | string
+  status: 'complete' | 'interrupted' | 'error' | 'streaming' | string
 }
 
 // ── Scheduler / background tasks ──────────────────────────────────────
@@ -285,6 +289,7 @@ export type GatewayEvent =
   | (BaseEvent & { type: 'message.start'; payload?: { role?: 'assistant' } })
   | (BaseEvent & { type: 'message.delta'; payload: { text: string; rendered?: string } })
   | (BaseEvent & { type: 'message.complete'; payload: { text: string; usage: UsagePayload; status: string; reasoning?: string } })
+  | (BaseEvent & { type: 'usage.update'; payload: UsagePayload })
   | (BaseEvent & { type: 'thinking.delta'; payload: { text: string } })
   | (BaseEvent & { type: 'reasoning.delta'; payload: { text: string } })
   | (BaseEvent & { type: 'reasoning.available'; payload: { text: string } })

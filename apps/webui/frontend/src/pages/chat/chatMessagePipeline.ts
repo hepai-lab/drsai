@@ -55,7 +55,7 @@ export function isChatRenderLogEnabled(): boolean {
   } catch {
     /* ignore */
   }
-  return Boolean((import.meta as any)?.env?.DEV);
+  return process.env.NODE_ENV === "development";
 }
 
 export function chatRenderLog(
