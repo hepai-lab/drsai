@@ -471,13 +471,15 @@ async def _persist_higraf_skills(higraf_items: list[dict]) -> None:
         db_mgr.upsert(SkillMeta(
             slug=slug,
             name=h.get("name") or h.get("skillName") or slug,
-            description=h.get("description") or "",
             icon=h.get("emoji") or "package",
             version=h.get("version") or h.get("currentVersion") or "1.0.0",
-            owner=h.get("authorName") or "系统预置",
-            downloads=int(h.get("callCount") or 0),
-            category=h.get("categoryL2") or None,
-            updated_at=updated or datetime.now(),
+            author=h.get("authorName") or "系统预置",
+            owner_id="system",
+            source="higraf",
+            source_ref=slug,
+            source_synced_at=datetime.now(),
+            tags=[h.get("categoryL2")] if h.get("categoryL2") else [],
+            download_count=int(h.get("callCount") or 0),
         ))
         existing.add(slug)
         inserted += 1
@@ -735,60 +737,6 @@ def _parse_skill_frontmatter_fields(content: str) -> dict:
     return fields
 
 
-def _parse_skill_name_from_md(content: str) -> str | None:
-    """从 SKILL.md frontmatter 解析 name 字段（Skill 工具使用的标识）。"""
-    return _parse_skill_frontmatter_fields(content).get("name") or None
-
-
-def wrap_skill_loaded(name: str, content: str) -> str:
-    """Wrap SKILL.md as the Skill tool result, matching SkillLoader.run_skill."""
-    match = re.match(r"^---\s*\n.*?\n---\s*\n(.*)$", content, re.DOTALL)
-    body = match.group(1).strip() if match else content.strip()
-    return (
-        f'<skill-loaded name="{name}">\n'
-        f"    # Skill: {name}\n\n"
-        f"    {body}\n"
-        f"    </skill-loaded>\n\n"
-        "    Follow the instructions in the skill above to complete the user's task."
-    )
-
-
-def find_cached_skill_md(user_id: str, *, slug: str | None = None, name: str | None = None) -> tuple[str | None, str | None, str | None]:
-    """Find a cached SKILL.md. Returns (path_slug, name, content)."""
-    skills_dir = _get_agent_skills_dir(user_id)
-    if not skills_dir.exists():
-        return None, None, None
-
-    candidates: list[Path] = []
-    if slug:
-        candidates.append(skills_dir / slug / "SKILL.md")
-    try:
-        for child in skills_dir.iterdir():
-            md = child / "SKILL.md"
-            if md.is_file():
-                candidates.append(md)
-    except OSError:
-        pass
-
-    seen: set[str] = set()
-    for md in candidates:
-        key = str(md)
-        if key in seen or not md.is_file():
-            continue
-        seen.add(key)
-        try:
-            text = md.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        parsed = _parse_skill_frontmatter_fields(text)
-        parsed_name = parsed.get("name") or md.parent.name
-        if slug and md.parent.name == slug:
-            return md.parent.name, parsed_name, text
-        if name and (parsed_name == name or md.parent.name == name):
-            return md.parent.name, parsed_name, text
-    return None, None, None
-
-
 def _extract_skill_md_from_zip_bytes(zip_bytes: bytes) -> str | None:
     """从 ZIP 字节中提取 SKILL.md 内容。"""
     try:
@@ -813,34 +761,6 @@ def _get_agent_skills_dir(user_id: str) -> Path:
     """
     from drsai.configs.constant import WORKSPACE_RUNS_DIR
     return Path(WORKSPACE_RUNS_DIR) / user_id / "configs" / "skills"
-
-
-def list_cached_user_skills(user_id: str) -> list[dict]:
-    """List all SKILL.md entries in the user's persistent skills cache."""
-    skills_dir = _get_agent_skills_dir(user_id)
-    rows: list[dict] = []
-    if not skills_dir.exists():
-        return rows
-    try:
-        children = sorted(skills_dir.iterdir(), key=lambda p: p.name)
-    except OSError:
-        return rows
-    for child in children:
-        md = child / "SKILL.md"
-        if not child.is_dir() or not md.is_file():
-            continue
-        try:
-            text = md.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        fields = _parse_skill_frontmatter_fields(text)
-        rows.append({
-            "slug": child.name,
-            "name": fields.get("name") or child.name,
-            "source": "",
-            "description": fields.get("description") or "",
-        })
-    return rows
 
 
 def _write_skill_to_dir(skills_dir: Path, slug: str, content: str) -> bool:
@@ -954,14 +874,14 @@ async def install_skills_for_agent(
                     continue
 
             elif source == "user":
-                # 用户私有技能：从 GFS 下载 ZIP 并提取 SKILL.md
+                # 用户私有技能：现在统一从 GFS public_skills/ 下载
                 try:
-                    from .skills_gfs._download import _gfs_download_user_skill_bytes
-                    zip_bytes = await _gfs_download_user_skill_bytes(slug, user_id)
+                    from .skills_gfs._download import _gfs_download_public_skill_bytes
+                    zip_bytes = await _gfs_download_public_skill_bytes(slug)
                     if zip_bytes:
                         content = _extract_skill_md_from_zip_bytes(zip_bytes)
                 except Exception as exc:
-                    logger.warning(f"[DeerFlow] GFS user download failed for {slug}: {exc}")
+                    logger.warning(f"[DeerFlow] GFS download failed for {slug}: {exc}")
                 if not content:
                     failed.append({"id": slug, "reason": "user skill download failed"})
                     continue
@@ -1069,8 +989,8 @@ async def _install_skills_for_user(user_id: str, skills: list[dict]) -> dict:
 
             elif source == "user":
                 try:
-                    from .skills_gfs._download import _gfs_download_user_skill_bytes
-                    zip_bytes = await _gfs_download_user_skill_bytes(slug, user_id)
+                    from .skills_gfs._download import _gfs_download_public_skill_bytes
+                    zip_bytes = await _gfs_download_public_skill_bytes(slug)
                     if zip_bytes:
                         content = _extract_skill_md_from_zip_bytes(zip_bytes)
                 except Exception as exc:

@@ -7,10 +7,10 @@ from .db import (
     Session,
     Settings,
     SkillMeta,
+    SkillDetail,
     SkillTag,
     Team,
     UserAgents,
-    UserSkillMeta,
     DatabaseModel,
 )
 
@@ -50,8 +50,8 @@ __all__ = [
     "Gallery",
     "Plan",
     "SkillMeta",
+    "SkillDetail",
     "SkillTag",
     "UserAgents",
-    "UserSkillMeta",
     "DatabaseModel",
 ]

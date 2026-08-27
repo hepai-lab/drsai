@@ -494,10 +494,8 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
                       darkMode={darkMode}
                       isInputDisabled={isInputDisabled}
                       fileCount={fileList.length}
-                      skillCount={attachedSkills.length}
                       attachFileInputRef={attachFileInputRef}
                       onAttachFileChange={handleAttachFileInputChange}
-                      onOpenSkillModal={openSkillAttachModal}
                     />
                   )}
                   <textarea
@@ -547,6 +545,8 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
                   llmList={llmList}
                   selectedLlmLabel={selectedLlmLabel}
                   onSelect={handleLLMSelect}
+                  skillCount={attachedSkills.length}
+                  onOpenSkillModal={openSkillAttachModal}
                 />
               </div>
             </div>

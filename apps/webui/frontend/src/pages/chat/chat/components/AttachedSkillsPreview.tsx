@@ -1,6 +1,6 @@
 import * as React from "react";
 import { XMarkIcon } from "@heroicons/react/24/outline";
-import { WrenchIcon } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import type { HepaiSkillPickRow } from "../types";
 
 interface AttachedSkillsPreviewProps {
@@ -27,10 +27,11 @@ const AttachedSkillsPreview: React.FC<AttachedSkillsPreviewProps> = ({
               : "bg-white text-magenta-800 border border-magenta-200"
           } rounded-lg px-3 py-2 text-xs shadow-sm`}
         >
-          <WrenchIcon
+          <Sparkles
             className={`w-3.5 h-3.5 shrink-0 ${
-              darkMode === "dark" ? "text-gray-300" : "text-magenta-600"
+              darkMode === "dark" ? "text-violet-300" : "text-violet-600"
             }`}
+            strokeWidth={2}
             aria-hidden
           />
           <div className="flex min-w-0 flex-1 flex-col">

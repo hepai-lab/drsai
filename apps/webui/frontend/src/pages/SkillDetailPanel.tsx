@@ -116,18 +116,17 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
               <p className="mt-2 break-words text-sm leading-relaxed text-secondary">{skillDetail.description}</p>
             )}
           </div>
-          {/* category */}
-          {skillDetail.category && skillDetail.category.trim() !== "" && (
+          {/* tags */}
+          {skillDetail.tags && skillDetail.tags.length > 0 && (
             <div className="flex flex-wrap gap-1.5 pt-1">
-              {skillDetail.category.split(",").map((tag) => {
-                const trimmed = tag.trim();
-                if (!trimmed) return null;
+              {skillDetail.tags.map((tag) => {
+                if (!tag) return null;
                 return (
                   <span
-                    key={trimmed}
+                    key={tag}
                     className="inline-block rounded-full border border-border-primary/40 bg-tertiary/20 px-2 py-0.5 text-[10px] font-medium text-secondary/80"
                   >
-                    {trimmed}
+                    {tag}
                   </span>
                 );
               })}

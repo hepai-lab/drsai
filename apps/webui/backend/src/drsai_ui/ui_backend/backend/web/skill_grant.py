@@ -111,9 +111,8 @@ def summarize_skill_handoff_for_log(
         },
         "attached_skills": skills,
         "remote_agent_howto": {
-            "list": f"GET {base_url}/attached?user_id=<user_id>",
-            "load": f"POST {base_url}/load",
-            "load_body": {"skill": "<frontmatter name>", "user_id": "<user_id>"},
+            "download": f"POST {base_url}/download",
+            "download_body": {"slug": "<slug>", "source": "public|higraf|user", "user_id": "<user_id>"},
             "headers": "X-User-Id: <user_id>; X-Skill-Proxy-Token: <skill_proxy.token>",
         },
     }

@@ -9,7 +9,7 @@ export interface SkillListItemProps {
     description?: string;
     profile?: string;
     owner?: string;
-    category?: string;
+    tags?: string[];
     downloads?: number;
     source?: string;
     preset?: boolean;
@@ -39,8 +39,9 @@ function isEmojiIcon(icon: string | undefined): boolean {
     return /[^\x00-\x7F]/.test(icon) && icon.length <= 8;
 }
 
-function formatCategory(raw: string | undefined, isZh: boolean): string {
-    const first = (raw || "").split(",")[0]?.trim() || "";
+function formatTags(raw: string[] | undefined, isZh: boolean): string {
+    if (!raw || raw.length === 0) return "";
+    const first = raw[0];
     if (!first) return "";
     if (isZh) return CATEGORY_ZH[first] || first;
     return first;
@@ -57,7 +58,7 @@ const SkillListItem: React.FC<SkillListItemProps> = ({
     description,
     profile,
     owner,
-    category,
+    tags,
     downloads = 0,
     source,
     preset,
@@ -70,7 +71,7 @@ const SkillListItem: React.FC<SkillListItemProps> = ({
     const isPreset = Boolean(preset || source === "higraf" || owner === "系统预置");
     const ownerLabel = (owner || "").trim() || (isPreset ? t("skillSquare.systemOwner") : "");
     const avatarChar = ownerLabel ? ownerLabel.charAt(0) : "?";
-    const categoryLabel = formatCategory(category, isZh);
+    const tagLabel = formatTags(tags, isZh);
 
     return (
         <article
@@ -125,9 +126,9 @@ const SkillListItem: React.FC<SkillListItemProps> = ({
                 {description?.trim() || t("skillSquare.noPreviewContent")}
             </p>
 
-            {categoryLabel ? (
+            {tagLabel ? (
                 <span className="mt-3 inline-flex w-fit max-w-full truncate rounded-md bg-tertiary/70 px-2 py-0.5 text-[11px] text-secondary dark:bg-white/[0.07]">
-                    {categoryLabel}
+                    {tagLabel}
                 </span>
             ) : (
                 <span className="mt-3 h-[22px]" />

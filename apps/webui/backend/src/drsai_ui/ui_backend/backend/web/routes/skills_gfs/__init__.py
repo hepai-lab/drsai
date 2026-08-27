@@ -1,17 +1,8 @@
-"""Unified skills router — public + user skills in one bucket, one CRUD surface.
-
-Bucket layout:
-  20294-skills-square/
-  ├── public_skills/{slug}.zip, {slug}/meta.json, {slug}/profile.{ext}
-  └── user_skills/{user_id}/{source}/{slug}.zip, {slug}/meta.json
-
-Every route requires ?type=public or ?type=user.  The type parameter drives
-GFS prefix, DB model, auth, and response format — one handler for both.
-"""
+"""__init__.py — Unified skills router using the new SkillMeta + SkillDetail models."""
 
 from ._constants import router, _SLUG_RE, _MAX_UPLOAD_BYTES, _MAX_PROFILE_BYTES, _PROFILE_EXT_WHITELIST, SkillType, logger
-from ._auth import _get_db, _require_user_id, _resolve_user_from_apikey
-from ._gfs import _gfs_zip_path, _require_gfs
+from ._auth import _get_db, _require_user_id, _resolve_user_from_apikey, _skillmeta_to_dict, _skilldetail_to_dict
+from ._gfs import _gfs_zip_path, _require_gfs, _gfs_user_zip_path
 
 # Import route modules to register their endpoints on the shared router
 from . import _list       # noqa: E402, F401
