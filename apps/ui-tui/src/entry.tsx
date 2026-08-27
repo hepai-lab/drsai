@@ -19,9 +19,11 @@ import { initTerminalSize } from './hooks/terminalSizeStore.js'
 import { VERSION } from './version.js'
 import {
   disableAltScreen,
+  disableBracketedPaste,
   disableFocusReporting,
   disableMouseTracking,
   enableAltScreen,
+  enableBracketedPaste,
   enableFocusReporting,
   enableMouseTracking,
 } from './app/terminalControl.js'
@@ -58,6 +60,9 @@ function restoreTerminal(): void {
   // otherwise switching windows would smear "\e[I" / "\e[O" into the
   // shell prompt forever.
   disableFocusReporting()
+  // Turn off bracketed paste mode so the terminal's paste behaviour
+  // returns to its default (raw text, no \x1b[200~/\x1b[201~ markers).
+  disableBracketedPaste()
   // Switch back to the primary screen buffer so the user's shell
   // history and previous output reappear. The alternate buffer is
   // discarded on exit — this is expected (same as vim/less/htop).
@@ -149,7 +154,18 @@ if (!process.stdin.isTTY) {
   // FLUSH_MS coalescing and PageUp/PageDown internal scroll. Set
   // DRSAI_TUI_USE_ALT_SCREEN=1 if you want the vim/less-style alternate
   // page (clean exit, no scrollback after quit).
-  const altScreenRequested = process.env.DRSAI_TUI_USE_ALT_SCREEN === '1'
+  //
+  // On Windows the primary-buffer trade-off is worse: Windows Terminal
+  // and legacy conhost.exe both handle the erase+re-emit cycle less
+  // gracefully than Linux/macOS terminals, causing the user's question
+  // (and the gold startup banner) to scroll up continuously during
+  // streaming.  We therefore DEFAULT to alt-screen on Windows unless
+  // the user explicitly opts out with DRSAI_TUI_USE_ALT_SCREEN=0.
+  const isWindows = process.platform === 'win32'
+  const altScreenEnv = process.env.DRSAI_TUI_USE_ALT_SCREEN
+  const altScreenRequested =
+    altScreenEnv === '1' ||
+    (isWindows && altScreenEnv !== '0')
   if (altScreenRequested) {
     enableAltScreen()
   }
@@ -175,6 +191,15 @@ if (!process.stdin.isTTY) {
   // Tell the terminal to send focus-in / focus-out events on stdin.
   // The App component sniffs them via useInput to drive the cursor blink.
   enableFocusReporting()
+
+  // Enable bracketed paste mode so paste operations (Ctrl+Shift+V,
+  // middle-click, terminal menu paste) are wrapped with \x1b[200~ …
+  // \x1b[201~ markers. textInput.tsx already detects and strips these
+  // markers — without this mode the paste handler cannot distinguish
+  // pasted text from typed input, and single-line pastes are silently
+  // dropped (because looksLikePastedText() requires either bracket
+  // markers or a newline).
+  enableBracketedPaste()
 
   // ── Banner (pre-print) ──────────────────────────────────────────────
   // Print the "⚡ OpenDrSai" banner ONCE via raw stdout BEFORE Ink takes over

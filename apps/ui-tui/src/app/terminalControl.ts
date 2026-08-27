@@ -25,6 +25,15 @@
  *   - Focus reporting (\x1b[?1004h)
  *       Lets the app know when the terminal window loses focus so we
  *       can pause cursor blink. Only restored on shutdown.
+ *   - Bracketed paste (\x1b[?2004h)
+ *       Makes the terminal wrap paste content with \x1b[200~ … \x1b[201~
+ *       so the app can unambiguously detect pasted text (including over
+ *       SSH). Without this, Ctrl+V / Ctrl+Shift+V / middle-click paste
+ *       arrive as raw characters that the input handler cannot distinguish
+ *       from typed text, and single-line pastes are silently dropped.
+ *       The existing looksLikePastedText() / normalisePastedText() logic
+ *       in textInput.tsx already handles the bracket markers — we just
+ *       need to turn the mode on.
  */
 
 const MOUSE_TRACKING_ENABLE = '\x1b[?1000h\x1b[?1006h'
@@ -36,9 +45,13 @@ const ALT_SCREEN_DISABLE = '\x1b[?1049l'
 const FOCUS_REPORTING_ENABLE = '\x1b[?1004h'
 const FOCUS_REPORTING_DISABLE = '\x1b[?1004l'
 
+const BRACKETED_PASTE_ENABLE = '\x1b[?2004h'
+const BRACKETED_PASTE_DISABLE = '\x1b[?2004l'
+
 let mouseTrackingEnabled = false
 let altScreenEnabled = false
 let focusReportingEnabled = false
+let bracketedPasteEnabled = false
 
 function safeWrite(seq: string): void {
   try {
@@ -109,4 +122,23 @@ export function disableFocusReporting(): void {
 
 export function isFocusReportingEnabled(): boolean {
   return focusReportingEnabled
+}
+
+// ── Bracketed paste ────────────────────────────────────────────────
+
+export function enableBracketedPaste(): void {
+  if (bracketedPasteEnabled) return
+  if (!process.stdout.isTTY) return
+  safeWrite(BRACKETED_PASTE_ENABLE)
+  bracketedPasteEnabled = true
+}
+
+export function disableBracketedPaste(): void {
+  if (!bracketedPasteEnabled) return
+  safeWrite(BRACKETED_PASTE_DISABLE)
+  bracketedPasteEnabled = false
+}
+
+export function isBracketedPasteEnabled(): boolean {
+  return bracketedPasteEnabled
 }

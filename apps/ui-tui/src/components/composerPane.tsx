@@ -1333,11 +1333,13 @@ For more info: https://note.ihep.ac.cn/s/Sc5E2Bw1b
         message. Ctrl+C is handled by the higher-level useInput above.
 
         Dynamic input box (P0 input crash fix):
-          maxRows  — caps the visible input height at 25% of terminal
-                     rows (max 12). When exceeded, a scroll window
-                     centred on the cursor is shown instead.
+          maxRows  — caps the visible input height at 40% of terminal
+                     rows (max 15, min 5). When exceeded, a scroll
+                     window centred on the cursor is shown instead.
           cols     — terminal column count, used for soft-wrapping long
-                     lines so they don't overflow horizontally.
+                     lines so they don't overflow horizontally. Wrapping
+                     is display-width-aware (CJK = 2 cells, emoji = 2
+                     cells) via the stringWidth module.
           onHeightChange — reports the rendered input height to the
                      $composerInputHeight atom so StreamingAssistant
                      can shrink its content budget dynamically.
