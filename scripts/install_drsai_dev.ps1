@@ -48,8 +48,15 @@ $REQUIRED_SPACE_GB = 2
 $REQUIRED_SPACE_BYTES = $REQUIRED_SPACE_GB * 1GB
 
 # Repo root = parent directory of the scripts/ folder containing this script
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$script:RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..")).Path
+# Use $PSScriptRoot (PS 3.0+) -- always available at script level, more reliable
+# than $MyInvocation.MyCommand.Path which can be null in some execution contexts
+if ($PSScriptRoot) {
+    $script:RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+} elseif ($MyInvocation.MyCommand.Path) {
+    $script:RepoRoot = (Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "..")).Path
+} else {
+    Die "Cannot determine script directory. Please run as: .\scripts\install_drsai_dev.ps1"
+}
 
 # -- Logging -------------------------------------------------------------------
 function Write-Section($msg) { Write-Host "`n--- $msg ---" -ForegroundColor Cyan }
@@ -799,9 +806,10 @@ function Do-Sync {
 #  MAIN
 # ==============================================================================
 function Main {
-    # -- Resolve repo root from script location --
-    $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-    $script:RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..")).Path
+    # -- Repo root already set at script level via $PSScriptRoot --
+    # (do not re-compute here; $MyInvocation inside a function refers to
+    #  the function call, not the script, so $MyInvocation.MyCommand.Path
+    #  would be empty)
 
     # -- Handle -Sync action (quick path: skip most setup) --
     if ($Sync) {
