@@ -215,20 +215,28 @@ export function App({ gw }: AppProps) {
       return
     }
 
-    // Ctrl+E: expand the most recent collapsed assistant turn.
+    // Ctrl+X: expand the most recent collapsed assistant turn.
     //
     // When a turn's content exceeds the final-render budget,
     // ``AssistantBlock`` clips it (keeping the latest rows) and shows
-    // "↑ N earlier lines collapsed (Ctrl+E to expand)".  Pressing
-    // Ctrl+E prints the full content to terminal scrollback via
+    // "↑ N earlier lines collapsed (Ctrl+X to expand)".  Pressing
+    // Ctrl+X prints the full content to terminal scrollback via
     // ``console.log()`` (Ink patches this to coordinate with its
     // output management).  The content appears below the current
     // dynamic frame; the user can scroll up to read it.
     //
+    // Why Ctrl+X instead of Ctrl+E?  Ctrl+E is a standard readline
+    // shortcut (move cursor to end of line) and is intercepted by
+    // VSCode's integrated terminal and other editors.  Ctrl+X is not
+    // intercepted by VSCode, terminal emulators, tmux (prefix is
+    // Ctrl+B), or GNU screen (prefix is Ctrl+A).  In bash readline,
+    // Ctrl+X is only a prefix for two-key sequences (Ctrl+X Ctrl+E),
+    // so a single Ctrl+X does nothing — no conflict.
+    //
     // The turn ID is tracked in ``$expandedTurns`` to avoid printing
     // the same content twice.  If the most recent turn wasn't
     // collapsed (content fit within budget), a status hint is shown.
-    if (key.ctrl && _input === 'e') {
+    if (key.ctrl && _input === 'x') {
       const transcript = $transcript.get()
       // Find the last assistant turn
       let lastAssistant: AssistantTurn | null = null

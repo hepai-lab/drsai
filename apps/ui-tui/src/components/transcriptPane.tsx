@@ -57,8 +57,8 @@ import { ToolCallLine } from './toolCallLine.js'
 //   - Budget: ``max(rows * 2, 50)`` — generous enough for normal
 //     responses, but caps pathological cases.
 //   - Truncation direction: show latest (bottom), hide oldest (top).
-//   - Shows "↑ N earlier lines collapsed (Ctrl+E to expand)" marker.
-//   - Ctrl+E prints the full content to scrollback via ``console.log()``.
+//   - Shows "↑ N earlier lines collapsed (Ctrl+X to expand)" marker.
+//   - Ctrl+X prints the full content to scrollback via ``console.log()``.
 //
 // Non-reactive store reads (``.get()``) are intentional here: <Static>
 // items are rendered once and never re-rendered, so we want the
@@ -132,9 +132,24 @@ function clipTextSegment(text: string, maxRows: number, cols: number): {
 /**
  * Build the visible slice of content parts for a completed turn,
  * clipping from the top (oldest) to fit within ``budget`` rows.
+ *
+ * **Final conclusion preservation**: The last text ContentPart is the
+ * LLM's final conclusion text. It is ALWAYS shown in full, even if it
+ * alone exceeds the budget. Earlier content (tool outputs, intermediate
+ * text) is clipped to make room.
+ *
+ * This mirrors the backend's distinction: at ``drsai_assistant.py:1746``,
+ * the final ``Response`` with a ``TextMessage`` is yielded when
+ * ``model_result.content`` is a pure string — marking the turn's
+ * conclusion. In the TUI, this final text arrives via ``message.delta``
+ * events during streaming and becomes the last text ContentPart at
+ * ``message.complete``. By always preserving it, the user can always see
+ * the model's answer without expanding.
+ *
  * Returns the visible parts, the count of hidden rows, and
  * ``firstPartMaxRows`` for intra-part clipping of the first visible
- * text part (if it didn't fully fit).
+ * text part (if it didn't fully fit and is NOT the protected last text
+ * part).
  */
 function clipCompletedContent(
   parts: ContentPart[],
@@ -152,12 +167,66 @@ function clipCompletedContent(
     return { visible: parts, hiddenRows: 0, firstPartMaxRows: 0 }
   }
 
-  // Walk from the end (latest) and accumulate until we hit the budget
-  let used = 0
-  let cutIndex = parts.length
+  // ── Find the last text ContentPart (the LLM's final conclusion) ──
+  let lastTextIdx = -1
   for (let i = parts.length - 1; i >= 0; i--) {
+    if (parts[i].kind === 'text') {
+      lastTextIdx = i
+      break
+    }
+  }
+
+  // ── No text part at all: fall back to end-to-start clipping ──────
+  if (lastTextIdx < 0) {
+    let used = 0
+    let cutIndex = parts.length
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const h = heights[i]
+      if (used + h > budget) {
+        cutIndex = i + 1
+        break
+      }
+      used += h
+      cutIndex = i
+    }
+    if (cutIndex >= parts.length) {
+      cutIndex = parts.length - 1
+      used = 0
+    }
+    const visible = parts.slice(cutIndex)
+    let firstPartMaxRows = 0
+    if (visible.length > 0 && visible[0].kind === 'text') {
+      const remaining = budget - used
+      const firstHeight = heights[cutIndex]
+      if (firstHeight > remaining) {
+        const textRows = Math.max(0, remaining - 1)  // -1 for marginTop
+        firstPartMaxRows = Math.max(3, textRows)
+      }
+    }
+    const fullHidden = heights.slice(0, cutIndex).reduce((a, b) => a + b, 0)
+    const partialHidden = firstPartMaxRows > 0
+      ? heights[cutIndex] - firstPartMaxRows
+      : 0
+    return { visible, hiddenRows: fullHidden + partialHidden, firstPartMaxRows }
+  }
+
+  // ── Reserve the last text part (and anything after it) in full ──
+  // The last text part is the LLM's conclusion; it is always shown
+  // without intra-part clipping. Any tool parts after it (rare: e.g.
+  // error after text) are also reserved.
+  let reservedHeight = 0
+  for (let i = lastTextIdx; i < parts.length; i++) {
+    reservedHeight += heights[i]
+  }
+  const remainingBudget = Math.max(0, budget - reservedHeight)
+
+  // Walk backward from the part before the last text part, fitting
+  // earlier content into whatever budget remains.
+  let used = 0
+  let cutIndex = lastTextIdx
+  for (let i = lastTextIdx - 1; i >= 0; i--) {
     const h = heights[i]
-    if (used + h > budget) {
+    if (used + h > remainingBudget) {
       cutIndex = i + 1
       break
     }
@@ -165,26 +234,21 @@ function clipCompletedContent(
     cutIndex = i
   }
 
-  // If nothing fits (single part taller than budget), keep at least
-  // the last part and clip it intra-part
-  if (cutIndex >= parts.length) {
-    cutIndex = parts.length - 1
-    used = 0
-  }
-
   const visible = parts.slice(cutIndex)
 
-  // If the first visible part is a text part that didn't fully fit,
-  // calculate how many rows of it we CAN show
+  // If the first visible part is a text part that partially fits AND
+  // is NOT the protected last text part, apply intra-part clipping.
   let firstPartMaxRows = 0
-  if (visible.length > 0 && visible[0].kind === 'text') {
-    const remaining = budget - used
+  if (cutIndex < lastTextIdx && visible.length > 0 && visible[0].kind === 'text') {
+    const remaining = remainingBudget - used
     const firstHeight = heights[cutIndex]
     if (firstHeight > remaining) {
       const textRows = Math.max(0, remaining - 1)  // -1 for marginTop
       firstPartMaxRows = Math.max(3, textRows)
     }
   }
+  // If cutIndex === lastTextIdx, the first visible part IS the
+  // protected last text part — show it in full (firstPartMaxRows = 0).
 
   const fullHidden = heights.slice(0, cutIndex).reduce((a, b) => a + b, 0)
   const partialHidden = firstPartMaxRows > 0
@@ -232,7 +296,7 @@ function AssistantBlock({ turn }: { turn: AssistantTurn }) {
         {hiddenRows > 0 && (
           <Box>
             <Text color={theme.muted} dimColor>
-              {`  ↑ ${hiddenRows} earlier line${hiddenRows > 1 ? 's' : ''} collapsed (Ctrl+E to expand)`}
+              {`  ↑ ${hiddenRows} earlier line${hiddenRows > 1 ? 's' : ''} collapsed (Ctrl+X to expand)`}
             </Text>
           </Box>
         )}
@@ -293,7 +357,7 @@ function AssistantBlock({ turn }: { turn: AssistantTurn }) {
       {legacyClip.hiddenLines > 0 && (
         <Box>
           <Text color={theme.muted} dimColor>
-            {`  ↑ ${legacyClip.hiddenLines} earlier line${legacyClip.hiddenLines > 1 ? 's' : ''} collapsed (Ctrl+E to expand)`}
+            {`  ↑ ${legacyClip.hiddenLines} earlier line${legacyClip.hiddenLines > 1 ? 's' : ''} collapsed (Ctrl+X to expand)`}
           </Text>
         </Box>
       )}
