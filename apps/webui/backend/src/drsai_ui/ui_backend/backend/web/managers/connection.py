@@ -79,6 +79,11 @@ class WebSocketManager:
         # Monotonic generation per run_id to avoid stale disconnect races:
         # old websocket finally blocks must not close a newer websocket.
         self._conn_gen: Dict[int, int] = {}
+        # Monotonic generation per start_stream so an old stream's finally/cancel
+        # path cannot pop the replacement stream's tokens or emit a stale
+        # "cancelled" completion to the current websocket.
+        self._stream_gen: Dict[int, int] = {}
+        self._start_locks: Dict[int, asyncio.Lock] = {}
         self._cancellation_tokens: Dict[int, CancellationToken] = {}
         # Runs that are terminal (stopped/error) and should not accept further streaming/input.
         # IMPORTANT: do NOT treat transient websocket disconnect as "closed run".
@@ -173,6 +178,8 @@ class WebSocketManager:
         team_config: Dict[str, Any],
         settings_config: Dict[str, Any],
         files: List[Dict[str, Any]] | None = None,
+        skills: List[Dict[str, Any]] | None = None,
+        request_headers: Dict[str, str] | None = None,
     ) -> None:
         """
         Start streaming task execution with proper run management
@@ -183,44 +190,57 @@ class WebSocketManager:
             team_config (Dict[str, Any]): Configuration for the team
             settings_config (Dict[str, Any]): Configuration for settings
             files (List[Dict[str, Any]] | None): Optional file metadata list
+            skills (List[Dict[str, Any]] | None): Optional skill metadata list [{id, source}]
+            request_headers (Dict[str, str] | None): WS/HTTP headers for public origin
         """
         if run_id not in self._connections:
             raise ValueError(f"No active connection for run {run_id}")
-# Clear stale closed flag (race: old WS disconnect re-added it after connect)
+        # Clear stale closed flag (race: old WS disconnect re-added it after connect)
         self._closed_connections.discard(run_id)
 
         # Starting a new stream explicitly re-opens the run even if a previous attempt stopped.
         # This matches UI expectation: user can send a new prompt after stopping.
         self._closed_connections.discard(run_id)
 
-        # IMPORTANT: if a previous stream is still around (paused / awaiting_input / half-closed),
-        # starting a new stream on the same run_id can deadlock state machines.
-        # Minimal safety: stop and close any existing run resources before starting anew.
-        if run_id in self._cancellation_tokens or run_id in self._team_managers:
-            try:
-                # Internal restart: clean up previous run resources but do not mark the run as terminal.
-                await self.stop_run(run_id, "Restarted by client", mark_closed=False)
-            except Exception as e:
-                logger.warning(f"Failed to stop previous run before restart (run {run_id}): {e}")
-            try:
-                old_tm = self._team_managers.pop(run_id, None)
-                if old_tm:
-                    await old_tm.close()
-            except Exception as e:
-                logger.warning(f"Failed to close previous TeamManager (run {run_id}): {e}")
-            self._streaming_buffers.pop(run_id, None)
-            # Ensure the new stream isn't immediately short-circuited by a terminal flag.
-            self._closed_connections.discard(run_id)
+        if run_id not in self._start_locks:
+            self._start_locks[run_id] = asyncio.Lock()
 
-        team_manager = TeamManager(
-            internal_workspace_root=self.internal_workspace_root,
-            external_workspace_root=self.external_workspace_root,
-            inside_docker=self.inside_docker,
-            config=self.config,
-        )
-        self._team_managers[run_id] = team_manager
-        cancellation_token = CancellationToken()
-        self._cancellation_tokens[run_id] = cancellation_token
+        async with self._start_locks[run_id]:
+            # Bump BEFORE cancelling the previous stream so the old task's
+            # finally/cancel path sees a generation mismatch and stays silent.
+            self._stream_gen[run_id] = self._stream_gen.get(run_id, 0) + 1
+            stream_gen = self._stream_gen[run_id]
+
+            # IMPORTANT: if a previous stream is still around (paused / awaiting_input / half-closed),
+            # starting a new stream on the same run_id can deadlock state machines.
+            # Minimal safety: stop and close any existing run resources before starting anew.
+            if run_id in self._cancellation_tokens or run_id in self._team_managers:
+                try:
+                    # Internal restart: clean up previous run resources but do not
+                    # mark the run as terminal, and do not emit a client-visible
+                    # cancelled completion (that closes the frontend websocket).
+                    await self.stop_run(run_id, "Restarted by client", mark_closed=False)
+                except Exception as e:
+                    logger.warning(f"Failed to stop previous run before restart (run {run_id}): {e}")
+                try:
+                    old_tm = self._team_managers.pop(run_id, None)
+                    if old_tm:
+                        await old_tm.close()
+                except Exception as e:
+                    logger.warning(f"Failed to close previous TeamManager (run {run_id}): {e}")
+                self._streaming_buffers.pop(run_id, None)
+                # Ensure the new stream isn't immediately short-circuited by a terminal flag.
+                self._closed_connections.discard(run_id)
+
+            team_manager = TeamManager(
+                internal_workspace_root=self.internal_workspace_root,
+                external_workspace_root=self.external_workspace_root,
+                inside_docker=self.inside_docker,
+                config=self.config,
+            )
+            self._team_managers[run_id] = team_manager
+            cancellation_token = CancellationToken()
+            self._cancellation_tokens[run_id] = cancellation_token
         final_result = None
 
         try:
@@ -240,6 +260,84 @@ class WebSocketManager:
             )
 
             settings_config["memory_controller_key"] = run.user_id
+
+            # Install skills from the start metadata before running the agent
+            installed_skill_records: list[dict] = []
+            if skills:
+                logger.info(
+                    "[skill debug][connection] run=%s user=%s received skills=%s",
+                    run_id,
+                    run.user_id,
+                    skills,
+                )
+                installed_skill_records = await self._install_skills_for_run(run.user_id, skills)
+            else:
+                logger.info(
+                    "[skill debug][connection] run=%s user=%s received no skills",
+                    run_id,
+                    run.user_id,
+                )
+
+            if installed_skill_records and isinstance(task, str):
+                skill_names = [
+                    str(item.get("name") or item.get("slug"))
+                    for item in installed_skill_records
+                    if isinstance(item, dict) and (item.get("name") or item.get("slug"))
+                ]
+                if skill_names:
+                    quoted = "、".join(f"「{name}」" for name in skill_names)
+                    hint = f"请先使用 Skill 工具加载以下技能：{quoted}，再完成用户任务。"
+                    task = f"{task.strip()}\n\n{hint}" if task.strip() else hint
+                    logger.info(
+                        "[skill debug][connection] run=%s augmented task with skill hint names=%s",
+                        run_id,
+                        skill_names,
+                    )
+
+            from ..skill_grant import build_skill_proxy_payload, resolve_public_origin_from_headers
+
+            request_origin = resolve_public_origin_from_headers(request_headers)
+
+            # Run-level only: skills explicitly selected in this message.
+            # Put them on task message metadata (same channel as attached_files),
+            # not run_info / settings_config — agent reads msg.metadata.
+            attached_skills = [
+                {
+                    "slug": str(item.get("slug") or item.get("id") or ""),
+                    "name": str(item.get("name") or item.get("slug") or ""),
+                    "source": str(item.get("source") or ""),
+                    "description": str(item.get("description") or ""),
+                }
+                for item in installed_skill_records
+                if isinstance(item, dict) and (item.get("name") or item.get("slug") or item.get("id"))
+            ]
+            if attached_skills:
+                skill_proxy = build_skill_proxy_payload(
+                    user_id=run.user_id,
+                    run_id=run_id,
+                    request_origin=request_origin,
+                )
+                task = self._inject_skill_metadata_into_task(
+                    task, skill_proxy=skill_proxy, attached_skills=attached_skills
+                )
+                from ..skill_grant import summarize_skill_handoff_for_log
+                logger.info(
+                    "[skill handoff][connection] run=%s user=%s payload=%s",
+                    run_id,
+                    run.user_id,
+                    json.dumps(
+                        summarize_skill_handoff_for_log(skill_proxy, attached_skills),
+                        ensure_ascii=False,
+                    ),
+                )
+                logger.info(
+                    "[skill metadata][connection] run=%s task_messages=%s",
+                    run_id,
+                    json.dumps(
+                        self._summarize_task_skill_metadata(task),
+                        ensure_ascii=False,
+                    ),
+                )
 
             run.task = MessageConfig(content=task, source="user").model_dump()
 
@@ -591,8 +689,10 @@ class WebSocketManager:
                 except Exception as e:
                     logger.warning(f"Error fetching companion images: {e}")
 
+            still_owner = self._stream_gen.get(run_id) == stream_gen
             if (
-                not cancellation_token.is_cancelled()
+                still_owner
+                and not cancellation_token.is_cancelled()
                 and run_id not in self._closed_connections
             ):
                 if final_result:
@@ -641,7 +741,7 @@ class WebSocketManager:
                         team_result=error_message,
                         error="No final result captured (upstream stream ended early)",
                     )
-            else:
+            elif still_owner:
                 await self._send_message(
                     run_id,
                     {
@@ -659,11 +759,15 @@ class WebSocketManager:
         except Exception as e:
             logger.error(f"Stream error for run {run_id}: {e}")
             traceback.print_exc()
-            await self._handle_stream_error(run_id, e)
+            if self._stream_gen.get(run_id) == stream_gen:
+                await self._handle_stream_error(run_id, e)
         finally:
-            self._chunk_buffers.pop(run_id, None)
-            self._cancellation_tokens.pop(run_id, None)
-            self._team_managers.pop(run_id, None)  # Remove the team manager when done
+            # Only the current stream generation may drop in-memory run resources.
+            # Otherwise a superseded stream's finally clobbers the replacement.
+            if self._stream_gen.get(run_id) == stream_gen:
+                self._chunk_buffers.pop(run_id, None)
+                self._cancellation_tokens.pop(run_id, None)
+                self._team_managers.pop(run_id, None)
 
     async def _save_message(
         self, run_id: int, message: Union[AgentEvent | ChatMessage, LLMCallEventMessage]
@@ -931,8 +1035,11 @@ class WebSocketManager:
                     run_id, status=RunStatus.STOPPED, team_result=stop_message
                 )
 
-                # Then handle websocket communication if connection is active
-                if run_id in self._connections:
+                # Then handle websocket communication if connection is active.
+                # Internal restart (mark_closed=False) must stay silent: the
+                # frontend treats any cancelled completion as terminal and
+                # closes the websocket, which kills the replacement stream.
+                if mark_closed and run_id in self._connections:
                     await self._send_message(
                         run_id,
                         {
@@ -978,16 +1085,6 @@ class WebSocketManager:
             return
         logger.info(f"Disconnecting run {run_id}")
 
-        # If a newer WebSocket has already reconnected for this run, do NOT cancel
-        # the run — the client is re-establishing the connection (e.g. to send
-        # input_response after an input_request pause).  Only stop & clean up
-        # when there really is no active connection left.
-        if run_id in self._connections:
-            logger.info(
-                f"Disconnect for run {run_id} skipped: newer WebSocket already connected"
-            )
-            return
-
         # ── FLUSH accumulated chunks on disconnect ──
         chunk_buf = self._chunk_buffers.pop(run_id, None)
         if chunk_buf:
@@ -1004,20 +1101,29 @@ class WebSocketManager:
                     except Exception as e:
                         pass
 
-        self._closed_connections.add(run_id)
+        # Drop this generation's websocket. A tab close / refresh still has the
+        # dying socket in `_connections`; skipping cleanup in that case left a
+        # dead websocket plus leftover cancellation tokens, so the next start
+        # on the same run_id emitted "Restarted by client" to the new page.
+        self._connections.pop(run_id, None)
 
         # IMPORTANT: a websocket disconnect may be transient (tab refresh, network blip).
         # Do not stop the run by default; allow reconnect + continue. Only stop if explicitly asked.
         if stop_run:
+            self._closed_connections.add(run_id)
             await self.stop_run(run_id, "Connection closed")
-
-        # Clean up resources
-        self._connections.pop(run_id, None)
-        self._cancellation_tokens.pop(run_id, None)
-        self._input_responses.pop(run_id, None)
-        self._run_states.pop(run_id, None)
-        self._state_locks.pop(run_id, None)
-        self._team_op_locks.pop(run_id, None)
+            self._cancellation_tokens.pop(run_id, None)
+            self._input_responses.pop(run_id, None)
+            self._run_states.pop(run_id, None)
+            self._state_locks.pop(run_id, None)
+            self._team_op_locks.pop(run_id, None)
+            self._streaming_buffers.pop(run_id, None)
+            old_tm = self._team_managers.pop(run_id, None)
+            if old_tm:
+                try:
+                    await old_tm.close()
+                except Exception as e:
+                    logger.warning(f"Failed to close TeamManager on disconnect (run {run_id}): {e}")
 
     async def _send_input_request(
         self,
@@ -1246,6 +1352,146 @@ class WebSocketManager:
             logger.error(f"Message formatting error: {e}")
             return None
 
+    @staticmethod
+    def _summarize_task_skill_metadata(
+        task: str | ChatMessage | Sequence[ChatMessage] | None,
+    ) -> list[dict]:
+        """Compact dump of skill-related fields on task message metadata (for debug)."""
+        msgs: list[Any] = []
+        if task is None:
+            return msgs
+        if isinstance(task, str):
+            return [{"type": "str", "note": "task still plain string, no metadata"}]
+        if isinstance(task, (TextMessage, MultiModalMessage)):
+            msgs = [task]
+        elif isinstance(task, Sequence):
+            msgs = [m for m in task if isinstance(m, (TextMessage, MultiModalMessage))]
+        else:
+            return [{"type": type(task).__name__, "note": "unsupported task type"}]
+
+        rows: list[dict] = []
+        for i, msg in enumerate(msgs):
+            md = dict(getattr(msg, "metadata", None) or {})
+            skill_proxy_raw = md.get("skill_proxy")
+            attached_skills_raw = md.get("attached_skills")
+            skill_proxy = None
+            attached_skills = None
+            try:
+                if isinstance(skill_proxy_raw, str):
+                    skill_proxy = json.loads(skill_proxy_raw)
+                elif isinstance(skill_proxy_raw, dict):
+                    skill_proxy = skill_proxy_raw
+            except (json.JSONDecodeError, TypeError):
+                skill_proxy = {"_error": "invalid skill_proxy json", "raw_len": len(str(skill_proxy_raw))}
+            if isinstance(skill_proxy, dict) and skill_proxy.get("token"):
+                skill_proxy = {**skill_proxy, "token": "***"}
+            try:
+                if isinstance(attached_skills_raw, str):
+                    attached_skills = json.loads(attached_skills_raw)
+                elif isinstance(attached_skills_raw, list):
+                    attached_skills = attached_skills_raw
+            except (json.JSONDecodeError, TypeError):
+                attached_skills = {"_error": "invalid attached_skills json"}
+
+            rows.append({
+                "idx": i,
+                "type": type(msg).__name__,
+                "source": getattr(msg, "source", None),
+                "metadata_keys": sorted(md.keys()),
+                "has_skill_proxy": "skill_proxy" in md,
+                "has_attached_skills": "attached_skills" in md,
+                "skill_proxy": skill_proxy,
+                "attached_skills": attached_skills,
+                "content_preview": (getattr(msg, "content", None) or "")[:80]
+                if isinstance(getattr(msg, "content", None), str)
+                else None,
+            })
+        return rows
+
+    @staticmethod
+    def _inject_skill_metadata_into_task(
+        task: str | ChatMessage | Sequence[ChatMessage] | None,
+        *,
+        skill_proxy: dict,
+        attached_skills: list[dict],
+    ) -> str | ChatMessage | Sequence[ChatMessage] | None:
+        """Attach skill_proxy / attached_skills onto user message metadata.
+
+        Same pattern as ``attached_files``: Autogen metadata values are strings,
+        so both fields are JSON-encoded.
+        """
+        if not task or not attached_skills:
+            return task
+
+        from ..skill_grant import redact_skill_proxy_for_log
+
+        meta_update = {
+            "attached_skills": json.dumps(attached_skills, ensure_ascii=False),
+            "skill_proxy": json.dumps(skill_proxy, ensure_ascii=False),
+        }
+        logger.info(
+            "[skill metadata][inject] keys=%s attached_skills_chars=%s skill_proxy_chars=%s skill_proxy=%s",
+            list(meta_update.keys()),
+            len(meta_update["attached_skills"]),
+            len(meta_update["skill_proxy"]),
+            json.dumps(redact_skill_proxy_for_log(skill_proxy), ensure_ascii=False),
+        )
+
+        if isinstance(task, str):
+            # Return a 1-message sequence so connection.py Sequence handlers still apply.
+            return [
+                TextMessage(content=task, source="user", metadata=dict(meta_update))
+            ]
+
+        if isinstance(task, (TextMessage, MultiModalMessage)):
+            md = dict(getattr(task, "metadata", None) or {})
+            md.update(meta_update)
+            task.metadata = md
+            return task
+
+        if isinstance(task, Sequence):
+            for msg in task:
+                if not isinstance(msg, (TextMessage, MultiModalMessage)):
+                    continue
+                md = dict(getattr(msg, "metadata", None) or {})
+                # Prefer the primary user query message (has attached_files or is non-internal).
+                # Always also stamp the last message so remote agents always find it.
+                md.update(meta_update)
+                msg.metadata = md
+            return task
+
+        return task
+
+    async def _install_skills_for_run(self, user_id: str, skills: list[dict]) -> list[dict]:
+        """Install skills for a user before the agent runs.
+
+        Calls the deer_flow skill installation logic directly.
+        Returns the list of successfully installed skill records [{slug, name}].
+        """
+        try:
+            from ..routes.deer_flow import _install_skills_for_user
+            result = await _install_skills_for_user(user_id, skills)
+            installed = result.get("installed", [])
+            failed = result.get("failed", [])
+            skills_dir = result.get("skills_dir")
+            if installed:
+                logger.info(
+                    "[start_stream] installed skills for user %s: %s dir=%s",
+                    user_id,
+                    installed,
+                    skills_dir,
+                )
+            if failed:
+                logger.warning(
+                    "[start_stream] failed to install skills for user %s: %s",
+                    user_id,
+                    failed,
+                )
+            return installed if isinstance(installed, list) else []
+        except Exception as e:
+            logger.warning(f"[start_stream] skill installation skipped for user {user_id}: {e}")
+            return []
+
     async def _get_run(self, run_id: int) -> Optional[Run]:
         """Get run from database
 
@@ -1417,6 +1663,9 @@ class WebSocketManager:
             self._run_states.clear()
             self._state_locks.clear()
             self._team_op_locks.clear()
+            self._stream_gen.clear()
+            self._start_locks.clear()
+            self._team_managers.clear()
 
     @property
     def active_connections(self) -> set[int]:

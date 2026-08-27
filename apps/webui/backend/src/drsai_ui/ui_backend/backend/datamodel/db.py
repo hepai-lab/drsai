@@ -583,10 +583,14 @@ class AgentAccessRequest(SQLModel, table=True):
 
 
 class SkillMeta(SQLModel, table=True):
-    """Public skill metadata — truth source for the skills square listing.
+    """Unified skill metadata — one table for all skills regardless of source/visibility.
 
-    GFS stores the ZIP package + SKILL.md body; this table holds the
-    display/search/sort fields and the atomic downloads counter.
+    GFS layout:
+      higraf/{slug}.zip              — HiGraf synced skills (read-only)
+      user_skills/{owner_id}/{slug}.zip  — user-created skills
+
+    This table is the fast lookup index for list/search/sort operations.
+    Heavy content (body, raw detail) lives in SkillDetail.
     """
 
     __table_args__ = (
@@ -600,60 +604,73 @@ class SkillMeta(SQLModel, table=True):
     )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
-    )  # pylint: disable=not-callable
+    )
     updated_at: datetime = Field(
         default_factory=datetime.now,
         sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
-    )  # pylint: disable=not-callable
+    )
+
+    # ── 技能核心信息 ──
     slug: str = Field(index=True)
     name: str = Field(default="")
-    description: str = Field(default="", sa_column=Column(Text))
     icon: str = Field(default="package")
     version: str = Field(default="0.0.0")
-    compatibility: Optional[str] = Field(default=None)
-    owner: str = Field(default="", index=True)
-    downloads: int = Field(default=0)
     profile: Optional[str] = Field(default=None)
-    changelog: str = Field(default="", sa_column=Column(Text))
-    category: Optional[str] = Field(default=None, index=True)
+    description: str = Field(default="", sa_column=Column(Text))
+
+    # ── 归属与可见性 ──
+    owner_id: str = Field(default="", index=True)          # 所有者邮箱
+    author: str = Field(default="")                         # 作者显示名
+    visibility: str = Field(default="public", index=True)   # public | private | team
+    source: str = Field(default="user", index=True)         # user | higraf (platform source)
+    source_ref: Optional[str] = Field(default=None)         # 上游原始 ID（如 Higraf skill_id）
+    source_synced_at: Optional[datetime] = Field(default=None)  # 上次从上游同步时间
+
+    # ── 用户技能类型（仅 source=user 时有效） ──
+    uskills_type: Optional[str] = Field(default=None)       # created | imported | null (for non-user)
+    imported_ref: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    # imported_ref: {"origin": "higraf"|"user", "owner": "..."|null, "version": "..."}
+
+    # ── 标签 ──
+    tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+
+    # ── 统计 ──
+    download_count: int = Field(default=0)
+
+    # ── 关系 ──
+    collector_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    agent_ids: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
+    team_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON))
 
 
-class UserSkillMeta(SQLModel, table=True):
-    """Private user skill metadata — mirrors SkillMeta but scoped to user_id.
+class SkillDetail(SQLModel, table=True):
+    """Heavy content for a skill — description, body, changelog, and raw upstream detail.
 
-    GFS stores the ZIP package under user/{user_id}/{source}/{slug}.zip;
-    this table is the fast lookup index (same role SkillMeta plays for public skills).
+    Lazily populated on first access to keep the list table (SkillMeta) lightweight.
     """
 
     __table_args__ = (
-        UniqueConstraint("user_id", "slug", "source", name="uq_userskillmeta_user_slug_source"),
+        UniqueConstraint("slug", name="uq_skilldetail_slug"),
         {"sqlite_autoincrement": True},
     )
     id: Optional[int] = Field(default=None, primary_key=True)
-    uuid: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        sa_column=Column(String, unique=True, nullable=False),
-    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
-    )  # pylint: disable=not-callable
+    )
     updated_at: datetime = Field(
         default_factory=datetime.now,
         sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
-    )  # pylint: disable=not-callable
-    user_id: str = Field(index=True)
+    )
+
     slug: str = Field(index=True)
-    name: str = Field(default="")
+
     description: str = Field(default="", sa_column=Column(Text))
-    icon: str = Field(default="package")
-    version: str = Field(default="0.0.0")
-    compatibility: Optional[str] = Field(default=None)
-    owner: str = Field(default="")
-    source: str = Field(default="created")  # "created" or "imported"
-    profile: Optional[str] = Field(default=None)
+    body: str = Field(default="", sa_column=Column(Text))
     changelog: str = Field(default="", sa_column=Column(Text))
-    unlisted: bool = Field(default=False, sa_column=Column(Boolean, server_default=text("0")))
-    category: Optional[str] = Field(default=None, index=True)
+    author_email: Optional[str] = Field(default=None)
+    author_id: Optional[str] = Field(default=None)
+    required_tools: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    detail_raw: Optional[dict] = Field(default=None, sa_column=Column(JSON))
 
 
 class SkillShare(SQLModel, table=True):
@@ -755,8 +772,8 @@ DatabaseModel = (
     | OrganizationMember
     | OrganizationAgent
     | AgentAccessRequest
-| SkillMeta
-    | UserSkillMeta
+    | SkillMeta
+    | SkillDetail
     | SkillShare
     | DesktopAuthTicket
     | SkillTag

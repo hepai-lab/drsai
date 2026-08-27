@@ -13,6 +13,8 @@
  *                        to select; Backspace to go back; Esc to cancel
  *   - Ctrl+A / Ctrl+E    start / end of current line
  *   - Ctrl+U             clear current line
+ *   - Ctrl+V             read system clipboard & paste (fallback for
+ *                        terminals without bracketed-paste support)
  *   - Ctrl+Home          start of entire text (if terminal sends it)
  *   - Ctrl+End           end of entire text (if terminal sends it)
  *
@@ -23,6 +25,13 @@
  *   (< 80 ms after previous input) as part of a paste and insert a newline
  *   instead of submitting.
  *
+ *   Ctrl+V is a FALLBACK for terminals that don't support bracketed-paste
+ *   (e.g. legacy Windows PowerShell / conhost.exe). It reads the system
+ *   clipboard via subprocess (powershell / pbpaste / xclip) and inserts
+ *   the text. On terminals that DO support bracketed-paste, Ctrl+V is
+ *   intercepted by the terminal and arrives as bracketed markers —
+ *   the Ctrl+V handler never fires, so there's no double-paste risk.
+ *
  * Command history persists in-memory for the session; the parent supplies
  * `completions` (a flat list of `/command` strings) to drive Tab.
  */
@@ -31,7 +40,9 @@ import { useStore } from '@nanostores/react'
 import { Box, Text, useInput } from 'ink'
 import { useEffect, useRef, useState } from 'react'
 
+import { readClipboard } from '../app/clipboard.js'
 import { isTerminalFocusEvent, parseMouseEvent } from '../app/focusEvents.js'
+import { charOffsetToVisualPos, softWrapWide, stringWidth } from '../app/stringWidth.js'
 import { $terminalFocused } from '../app/uiStore.js'
 import { theme } from '../theme.js'
 
@@ -142,23 +153,25 @@ function cursorFromLineCol(lines: string[], line: number, col: number): number {
 
 // ── Soft-wrap & visual-line building ──────────────────────────────────
 
-/** Wrap a single logical line to ``maxCols`` columns.
- *  Returns an array of visual line segments. */
+/** Wrap a single logical line to ``maxCols`` terminal cells.
+ *  Returns an array of visual line segments.
+ *
+ *  Uses display-width-aware wrapping (``softWrapWide``) which correctly
+ *  handles CJK double-width characters, emoji, and word boundaries.
+ *  A line of 40 Chinese characters (80 display cells) will wrap at a
+ *  78-cell boundary instead of overflowing. */
 function softWrap(line: string, maxCols: number): string[] {
-  if (maxCols <= 0 || line.length <= maxCols) return [line]
-  const result: string[] = []
-  for (let i = 0; i < line.length; i += maxCols) {
-    result.push(line.slice(i, i + maxCols))
-  }
-  return result
+  return softWrapWide(line, maxCols)
 }
 
 /** A single visual line produced by ``buildVisualLines``. */
 interface VisualLine {
   /** Text content of this visual line (already soft-wrapped). */
   text: string
-  /** True only for the first logical line (i === 0) — gets the prompt
-   *  prefix; all other lines get the indent prefix. */
+  /** True only for the very first visual line overall (i === 0 && j === 0)
+   *  — gets the prompt prefix; all other lines get the indent prefix.
+   *  This ensures wrapped continuation lines from the first logical line
+   *  show the indent, not a duplicate prompt. */
   isFirstLogicalLine: boolean
   /** True if this visual line contains the cursor. */
   isCursorLine: boolean
@@ -178,7 +191,11 @@ interface VisualLine {
  *  contains the cursor and the within-visual-line cursor column.
  *
  * If ``contentCols`` is 0, no wrapping is performed (each logical
- * line maps to exactly one visual line — legacy behaviour). */
+ * line maps to exactly one visual line — legacy behaviour).
+ *
+ * Cursor mapping is display-width-aware: for CJK text where characters
+ * occupy 2 terminal cells each, the cursor's visual line and column
+ * are calculated from accumulated display width, not character count. */
 function buildVisualLines(
   allLines: string[],
   cursorLine: number,
@@ -188,32 +205,56 @@ function buildVisualLines(
   const result: VisualLine[] = []
   for (let i = 0; i < allLines.length; i++) {
     const line = allLines[i]
-    const isFirstLogicalLine = i === 0
     const wrapped = softWrap(line, contentCols)
 
     if (i === cursorLine) {
-      const cursorVisualIdx = Math.min(
-        Math.floor(cursorCol / contentCols),
-        wrapped.length - 1,
-      )
-      const visualCol = cursorCol % contentCols
+      // Map the character offset (cursorCol) to a visual line index
+      // and display column, accounting for CJK double-width characters.
+      const { lineIdx: cursorVisualIdx } =
+        charOffsetToVisualPos(wrapped, cursorCol)
 
       for (let j = 0; j < wrapped.length; j++) {
         const vline = wrapped[j]
         if (j === cursorVisualIdx) {
+          // Calculate the character offset within this visual line.
+          let charOffset = cursorCol
+          for (let k = 0; k < j; k++) {
+            charOffset -= wrapped[k].length
+          }
+          if (charOffset < 0) charOffset = 0
+          if (charOffset > vline.length) charOffset = vline.length
+
+          // Use code-point-safe slicing: iterate over the string to
+          // find the correct character boundary (handles surrogate
+          // pairs for emoji and astral plane characters).
+          let beforeChars = ''
+          let atChar = ' '
+          let afterChars = ''
+          let charCount = 0
+          for (const ch of vline) {
+            if (charCount < charOffset) {
+              beforeChars += ch
+            } else if (charCount === charOffset) {
+              atChar = ch
+            } else {
+              afterChars += ch
+            }
+            charCount++
+          }
+
           result.push({
             text: vline,
-            isFirstLogicalLine,
+            isFirstLogicalLine: i === 0 && j === 0,
             isCursorLine: true,
-            before: vline.slice(0, visualCol),
-            at: vline[visualCol] ?? ' ',
-            after: vline.slice(visualCol + 1),
+            before: beforeChars,
+            at: atChar,
+            after: afterChars,
             lineLength: line.length,
           })
         } else {
           result.push({
             text: vline,
-            isFirstLogicalLine,
+            isFirstLogicalLine: i === 0 && j === 0,
             isCursorLine: false,
             lineLength: line.length,
           })
@@ -223,7 +264,7 @@ function buildVisualLines(
       for (let j = 0; j < wrapped.length; j++) {
         result.push({
           text: wrapped[j],
-          isFirstLogicalLine,
+          isFirstLogicalLine: i === 0 && j === 0,
           isCursorLine: false,
           lineLength: line.length,
         })
@@ -392,6 +433,16 @@ export function TextInput({
 }: TextInputProps) {
   const [value, setValue] = useState('')
   const [cursor, setCursor] = useState(0)
+  // Refs that mirror value/cursor for use in async callbacks (e.g. the
+  // Ctrl+V clipboard-read handler, which must insert text after an async
+  // subprocess completes — by which time the `value`/`cursor` in the
+  // closure would be stale).
+  const valueRef = useRef(value)
+  const cursorRef = useRef(cursor)
+  valueRef.current = value
+  cursorRef.current = cursor
+  // Prevent overlapping Ctrl+V clipboard reads (rapid keypresses).
+  const clipboardInFlightRef = useRef(false)
   const pendingEscapeRef = useRef(false)
 
   // Resolve the mask glyph once per render. ``true`` → ``●``; a single
@@ -521,6 +572,27 @@ export function TextInput({
     }
   }
 
+  /**
+   * Insert text using refs instead of closure state.  Used by async
+   * callbacks (Ctrl+V clipboard read) where `value`/`cursor` from the
+   * render closure would be stale by the time the callback fires.
+   */
+  function insertTextFromRef(text: string) {
+    if (!text) return
+    const val = valueRef.current
+    const cur = cursorRef.current
+    const next = val.slice(0, cur) + text + val.slice(cur)
+    setValue(next)
+    setCursor(cur + text.length)
+    pendingEscapeRef.current = false
+    resetCompletion()
+    if (historyIdx !== -1) {
+      setHistoryIdx(-1)
+      draftRef.current = next
+    }
+    pasteBurstUntilRef.current = Date.now() + 60
+  }
+
   function insertNewline() {
     insertText('\n')
   }
@@ -600,6 +672,46 @@ export function TextInput({
     // Ctrl+O: reliable cross-terminal newline shortcut.
     if (key.ctrl && input === 'o') {
       insertNewline()
+      return
+    }
+
+    // ── Ctrl+V: clipboard paste fallback ──────────────────────────────
+    // When the terminal supports bracketed paste mode (enabled in
+    // entry.tsx), paste operations are wrapped with \x1b[200~ …
+    // \x1b[201~ markers and handled by the looksLikePastedText() block
+    // above.  This Ctrl+V handler is a FALLBACK for terminals that do
+    // NOT support bracketed paste (e.g. legacy Windows PowerShell /
+    // conhost.exe), where Ctrl+V sends the raw \x16 control character
+    // and no paste markers arrive.
+    //
+    // We read the system clipboard via a subprocess (powershell /
+    // pbpaste / xclip) and insert the text asynchronously.
+    // On Windows Terminal (which DOES support bracketed paste), Ctrl+V
+    // is intercepted by the terminal itself and never reaches this
+    // handler — so there's no risk of double-paste.
+    if (key.ctrl && input === 'v') {
+      // Prevent overlapping reads from rapid keypresses.
+      if (clipboardInFlightRef.current) return
+      clipboardInFlightRef.current = true
+      if (pathRef.current.active) exitPathMode()
+      readClipboard()
+        .then(clipboardText => {
+          if (!clipboardText) return
+          const pastedText = normalisePastedText(clipboardText)
+          const replacement = onPaste?.(pastedText)
+          if (replacement === undefined) {
+            insertTextFromRef(pastedText)
+          } else if (replacement !== null) {
+            insertTextFromRef(replacement)
+          }
+          // If replacement === null, parent fully handled it.
+        })
+        .catch(() => {
+          // Clipboard read failed — silently ignore.
+        })
+        .finally(() => {
+          clipboardInFlightRef.current = false
+        })
       return
     }
 
@@ -986,8 +1098,10 @@ export function TextInput({
   const allLines = value.split('\n')
   const [cursorLine, cursorCol] = getLineAndCol(value, cursor)
 
-  // Continuation-line indent = same width as the prompt string
-  const indent = ' '.repeat(prompt.length)
+  // Continuation-line indent = same display width as the prompt string.
+  // Uses stringWidth() to correctly handle prompts containing CJK or
+  // other wide characters (each wide char = 2 spaces needed).
+  const indent = ' '.repeat(stringWidth(prompt))
 
   // Blink only when input is interactive AND parent has focus.
   // Disabled state shows a steady dim block instead of a blinking one so
@@ -1004,10 +1118,12 @@ export function TextInput({
   // Ink's fullscreen branch (the P0 crash fix).
   //
   // contentCols: the number of columns available for text on each line.
-  //   cols (terminal) - 2 (AppLayout paddingX=1×2) - prompt.length
+  //   cols (terminal) - 2 (AppLayout paddingX=1×2) - stringWidth(prompt)
+  //   Uses stringWidth() for display-width-aware calculation (handles
+  //   prompts with CJK or other wide characters).
   //   When cols is 0 or undefined, contentCols is 0 → no wrapping.
   const contentCols = cols
-    ? Math.max(10, cols - 2 /* AppLayout paddingX */ - prompt.length)
+    ? Math.max(10, cols - 2 /* AppLayout paddingX */ - stringWidth(prompt))
     : 0  // 0 = no wrapping (legacy behaviour)
 
   const visualLines: VisualLine[] = showPlaceholder

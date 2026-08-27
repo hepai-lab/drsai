@@ -166,7 +166,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
   const [publishIcon, setPublishIcon] = useState<string>("");
   const [publishVersion, setPublishVersion] = useState("1.0.0");
   const [publishChangelog, setPublishChangelog] = useState("");
-  const [publishCategory, setPublishCategory] = useState<string[]>([]);
+  const [publishTags, setPublishTags] = useState<string[]>([]);
   const [publicProfileFile, setPublicProfileFile] = useState<File | null>(null);
   const publicProfileInputRef = useRef<HTMLInputElement | null>(null);
   const [publicProfilePreview, setPublicProfilePreview] = useState<
@@ -207,7 +207,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
   const collectedSlugs = useMemo(() => {
     const slugs = new Set<string>();
     for (const r of hepaiRows) {
-      if (r.source === "imported" && r.slug) slugs.add(r.slug);
+      if (r.uskills_type === "imported" && r.slug) slugs.add(r.slug);
     }
     return slugs;
   }, [hepaiRows]);
@@ -224,20 +224,17 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
     const q = search.trim().toLowerCase();
     const sourceFiltered = hepaiRows.filter((r) =>
       privateFilter === "collected"
-        ? r.source === "imported"
-        : r.source !== "imported",
+        ? r.uskills_type === "imported"
+        : r.uskills_type !== "imported",
     );
-    const categoryFiltered = activeCategory
+    const tagFiltered = activeCategory
       ? sourceFiltered.filter((r) =>
-          (r.category || "")
-            .split(",")
-            .map((c) => c.trim())
-            .includes(activeCategory),
+          (r.tags || []).includes(activeCategory),
         )
       : sourceFiltered;
     const searchFiltered = !q
-      ? categoryFiltered
-      : categoryFiltered.filter((r) => {
+      ? tagFiltered
+      : tagFiltered.filter((r) => {
           const desc = (r.description ?? "").toLowerCase();
           const by = (r.owner ?? "").toLowerCase();
           const title = (r.name ?? "").toLowerCase();
@@ -298,7 +295,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
     setPublishIcon("");
     setPublishVersion("1.0.0");
     setPublishChangelog("");
-    setPublishCategory([]);
+    setPublishTags([]);
     setPublicProfileFile(null);
     setPublicProfilePreview(null);
     setIsPublicSkill(false);
@@ -528,7 +525,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
         1,
         PUBLIC_PAGE_SIZE,
         publicApiKeyRef.current || undefined,
-        { q: debouncedSearch, category: activeCategory, sort: sortBy },
+        { q: debouncedSearch, tags: activeCategory, sort: sortBy },
       );
       if (gen !== publicFetchGenRef.current) return;
       setPublicRows(result.data);
@@ -554,7 +551,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
         nextPage,
         PUBLIC_PAGE_SIZE,
         publicApiKeyRef.current || undefined,
-        { q: debouncedSearch, category: activeCategory, sort: sortBy },
+        { q: debouncedSearch, tags: activeCategory, sort: sortBy },
       );
       if (gen !== publicFetchGenRef.current) return;
       setPublicRows((prev) => {
@@ -624,10 +621,10 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
       const row =
         privateFilter === "collected"
           ? hepaiRowsRef.current.find(
-              (r) => r.slug === skillSlugFromUrl && r.source === "imported",
+              (r) => r.slug === skillSlugFromUrl && r.uskills_type === "imported",
             ) || hepaiRowsRef.current.find((r) => r.slug === skillSlugFromUrl)
           : hepaiRowsRef.current.find(
-              (r) => r.slug === skillSlugFromUrl && r.source === "created",
+              (r) => r.slug === skillSlugFromUrl && r.uskills_type === "created",
             ) || hepaiRowsRef.current.find((r) => r.slug === skillSlugFromUrl);
       const userId = user?.email || "";
 
@@ -640,7 +637,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
               publicApiKey || undefined,
             );
             const pub = publicRows.find((r) => r.slug === skillSlugFromUrl);
-            const imported = row.source === "imported";
+            const imported = row.uskills_type === "imported";
             if (!cancelled) {
               setSkillDetail({
                 slug: skillSlugFromUrl,
@@ -665,7 +662,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
                   : new Date().toISOString(),
                 downloads: row.downloads ?? pub?.downloads ?? 0,
                 can_edit: !imported,
-                category: row.category || pub?.category,
+                tags: row.tags || pub?.tags,
               });
             }
             return;
@@ -687,7 +684,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
             icon: row.icon || detail.icon,
             version: row.version || detail.version,
             owner:
-              row.source === "imported"
+              row.uskills_type === "imported"
                 ? detail.owner || row.owner
                 : row.owner || detail.owner,
             changelog: sanitizeChangelog(row.changelog) || detail.changelog,
@@ -699,7 +696,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
               ? new Date(row.updated_at).toISOString()
               : detail.updated_at,
             downloads: row.downloads ?? detail.downloads,
-            can_edit: row.source !== "imported",
+            can_edit: row.uskills_type !== "imported",
           });
         } else {
           setSkillDetail(detail);
@@ -771,12 +768,9 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
     setPublishIcon(prefill.icon || "");
     setPublishVersion(prefill.version || "1.0.0");
     setPublishChangelog(sanitizeChangelog(prefill.changelog));
-    setPublishCategory(
-      prefill.category
-        ? prefill.category
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean)
+    setPublishTags(
+      prefill.tags
+        ? prefill.tags
         : [],
     );
     if (resolvedPublic) {
@@ -848,9 +842,9 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
               version: publishVersion.trim() || undefined,
               changelog: publishChangelog.trim() || undefined,
               profile: publicProfileFile || undefined,
-              category:
-                publishCategory.length > 0
-                  ? publishCategory.join(", ")
+              tags:
+                publishTags.length > 0
+                  ? publishTags.join(", ")
                   : undefined,
             },
           );
@@ -872,9 +866,9 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
               version: publishVersion.trim() || undefined,
               changelog: publishChangelog.trim() || undefined,
               profile: publicProfileFile || undefined,
-              category:
-                publishCategory.length > 0
-                  ? publishCategory.join(", ")
+              tags:
+                publishTags.length > 0
+                  ? publishTags.join(", ")
                   : undefined,
             },
           );
@@ -895,9 +889,9 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
               version: publishVersion.trim() || "1.0.0",
               changelog: publishChangelog.trim() || undefined,
               profile: publicProfileFile || undefined,
-              category:
-                publishCategory.length > 0
-                  ? publishCategory.join(", ")
+              tags:
+                publishTags.length > 0
+                  ? publishTags.join(", ")
                   : undefined,
             },
             publicApiKey || undefined,
@@ -913,9 +907,9 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
               version: publishVersion.trim() || "1.0.0",
               changelog: publishChangelog.trim() || undefined,
               source: "created",
-              category:
-                publishCategory.length > 0
-                  ? publishCategory.join(", ")
+              tags:
+                publishTags.length > 0
+                  ? publishTags.join(", ")
                   : undefined,
             },
             publicApiKey || undefined,
@@ -967,15 +961,16 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
           icon: src?.icon,
           description: src?.description,
           version: src?.version,
-          category: src?.category,
+          tags: src?.tags?.join(", "),
           owner: src?.owner,
+          origin: src?.source,
           changelog: src?.changelog,
         },
         publicApiKey || undefined,
       );
       message.success({ content: t("skillSquare.imported"), key: "import" });
       setHepaiRows((prev) => {
-        if (prev.some((r) => r.slug === slug && r.source === "imported"))
+        if (prev.some((r) => r.slug === slug && r.uskills_type === "imported"))
           return prev;
         return [
           ...prev,
@@ -986,7 +981,9 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
             icon: src?.icon || "package",
             version: src?.version || "0.0.0",
             owner: src?.owner || "",
-            source: "imported",
+            owner_id: src?.owner_id || "",
+            source: "user",
+            uskills_type: "imported",
             public: false,
             unlisted: false,
             created_at: new Date().toISOString(),
@@ -995,7 +992,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
             profile: src?.profile || "",
             changelog: src?.changelog || "",
             downloads: src?.downloads ?? 0,
-            category: src?.category,
+            tags: src?.tags,
           },
         ];
       });
@@ -1131,10 +1128,10 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
     const isPublicTab = activeTab === "public";
     const row =
       hepaiRows.find(
-        (r) => r.slug === skillDetail.slug && r.source === "created",
+        (r) => r.slug === skillDetail.slug && r.uskills_type === "created",
       ) || hepaiRows.find((r) => r.slug === skillDetail.slug);
     const source: "created" | "imported" | undefined =
-      row?.source === "imported" ? "imported" : row ? "created" : undefined;
+      row?.uskills_type === "imported" ? "imported" : row ? "created" : undefined;
     const isCreated = source === "created";
     const canEdit = isCreated && !isPublicTab;
     return {
@@ -1230,8 +1227,8 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
     setPublishVersion,
     publishChangelog,
     setPublishChangelog,
-    publishCategory,
-    setPublishCategory,
+    publishTags,
+    setPublishTags,
     publicProfileInputRef,
     publicProfilePreview,
     setPublicProfileFile,

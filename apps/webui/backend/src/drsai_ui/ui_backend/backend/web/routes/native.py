@@ -10,7 +10,7 @@ import shutil
 import tempfile
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -221,6 +221,7 @@ async def record_native_agent_usage(
 async def chat_with_native_agent(
     agent_id: str,
     request: NativeAgentChatRequest,
+    http_request: Request,
     identity: NativeIdentity = Depends(get_native_identity),
     db=Depends(get_db),
     manager=Depends(get_websocket_manager),
@@ -276,6 +277,7 @@ async def chat_with_native_agent(
                 team_config,
                 settings_config,
                 files=runtime_files,
+                request_headers={k: v for k, v in http_request.headers.items()},
             )
         except asyncio.CancelledError:
             raise

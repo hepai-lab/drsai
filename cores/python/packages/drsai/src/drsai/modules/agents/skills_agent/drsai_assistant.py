@@ -218,6 +218,26 @@ def is_retryable_llm_error(error: BaseException) -> bool:
         current = current.__cause__ or current.__context__
     return False
 
+
+def _detect_zip_prefix(zf: Any) -> str:
+    """Return the shared top-level folder of a skill ZIP, or "" if none.
+
+    Skill packages commonly wrap everything under one directory
+    (e.g. ``academic-pipeline/SKILL.md``). When extracting into
+    ``skills_dir/{slug}/`` we want to strip that wrapper so the result is
+    ``skills_dir/{slug}/SKILL.md`` (not ``skills_dir/{slug}/academic-pipeline/SKILL.md``).
+    A shared prefix is detected only if *every* non-directory entry lives under
+    the same single top-level folder.
+    """
+    names = [n for n in zf.namelist() if n and not n.endswith("/")]
+    if not names:
+        return ""
+    first_top = names[0].split("/")[0]
+    if all(n.split("/")[0] == first_top for n in names):
+        return f"{first_top}/"
+    return ""
+
+
 # ── Built-in subagent definitions ──────────────────────────────────────────
 BUILTIN_SUBAGENTS: Dict[str, Dict[str, Any]] = {
     "explore": {
@@ -1339,6 +1359,171 @@ class DrSaiAssistant(DrSaiAgent):
             logger.error(traceback.format_exc())
             return str(e)
 
+    async def _download_remote_skills(
+        self,
+        *,
+        skill_proxy: Dict[str, Any],
+        attached_skills: List[Dict[str, Any]],
+    ) -> List[str]:
+        """Download remote skill ZIP packages and extract them into the user's
+        skills directory.
+
+        The WebUI skill proxy (``POST {base_url}/download``) returns the original
+        skill ZIP (``SKILL.md`` + ``scripts/`` / ``references/`` / ``assets/``).
+        We extract the full package so resource-bearing skills work end-to-end
+        and ``SkillLoader.get_skill_content`` can enumerate their resources.
+
+        Idempotent: a slug whose ``{skills_dir}/{slug}/SKILL.md`` already exists
+        is skipped (first-version policy; switch to version comparison once the
+        proxy stamps a version on ``attached_skills``).
+
+        The subsequent ``_run_startup_checks`` detects the ``skills_dir`` mtime
+        change and reloads ``_cached_skills_loader`` — so the ``Skill`` tool can
+        call the freshly installed skills without an explicit reload here.
+
+        Args:
+            skill_proxy: ``{base_url, user_id, token, ...}`` stamped on message
+                metadata by the WebUI (``skill_grant.build_skill_proxy_payload``).
+            attached_skills: ``[{slug, name, source, description}]`` — the skills
+                the user selected for this message.
+
+        Returns:
+            List of human-readable skill names successfully installed (used to
+            notify the user). Failures are logged and skipped; they never abort
+            the run or the other skills.
+        """
+        import io
+        import zipfile
+        import httpx
+
+        proxy = skill_proxy or {}
+        base_url = str(proxy.get("base_url") or "").rstrip("/")
+        token = str(proxy.get("token") or "")
+        user_id = str(proxy.get("user_id") or "")
+        if not base_url or not token:
+            logger.warning(
+                "[remote-skills] skill_proxy missing base_url or token; skip "
+                f"download (base_url={'set' if base_url else 'empty'}, "
+                f"token={'set' if token else 'empty'})"
+            )
+            return []
+
+        target_skills_dir = self._user_profile_manager.skills_dir
+        target_skills_dir.mkdir(parents=True, exist_ok=True)
+
+        installed_names: List[str] = []
+        headers = {"X-User-Id": user_id, "X-Skill-Proxy-Token": token}
+        timeout = httpx.Timeout(60.0, connect=10.0)
+
+        for item in attached_skills or []:
+            if not isinstance(item, dict):
+                continue
+            slug = str(item.get("slug") or item.get("id") or "").strip()
+            name = str(item.get("name") or slug).strip() or slug
+            source = str(item.get("source") or "public").strip() or "public"
+            if not slug:
+                continue
+
+            dst_dir = target_skills_dir / slug
+
+            # Idempotent: already installed locally → skip download.
+            if (dst_dir / "SKILL.md").exists():
+                installed_names.append(name)
+                logger.debug(f"[remote-skills] skill '{name}' (slug={slug}) already present; skip download")
+                continue
+
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    resp = await client.post(
+                        f"{base_url}/download",
+                        headers=headers,
+                        json={"slug": slug, "source": source, "user_id": user_id},
+                    )
+                if resp.status_code == 404:
+                    logger.warning(f"[remote-skills] skill '{slug}' (source={source}) not found on proxy; skip")
+                    continue
+                if resp.status_code == 403:
+                    logger.warning(f"[remote-skills] skill '{slug}' (source={source}) restricted; skip")
+                    continue
+                resp.raise_for_status()
+
+                # Extract the ZIP into skills_dir/{slug}/, stripping a shared
+                # top-level folder if the package wraps everything under one
+                # directory (e.g. ``academic-pipeline/SKILL.md``).
+                dst_dir.mkdir(parents=True, exist_ok=True)
+                try:
+                    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                        prefix = _detect_zip_prefix(zf)
+                        for member in zf.namelist():
+                            if member.endswith("/"):
+                                continue
+                            rel = member
+                            if prefix and rel.startswith(prefix):
+                                rel = rel[len(prefix):].lstrip("/")
+                            if not rel:
+                                continue
+                            out_path = dst_dir / rel
+                            out_path.parent.mkdir(parents=True, exist_ok=True)
+                            out_path.write_bytes(zf.read(member))
+                except zipfile.BadZipFile as e:
+                    logger.error(f"[remote-skills] bad zip for '{slug}'; removing dir: {e}")
+                    shutil.rmtree(dst_dir, ignore_errors=True)
+                    continue
+
+                if (dst_dir / "SKILL.md").exists():
+                    installed_names.append(name)
+                    logger.info(f"[remote-skills] installed skill '{name}' (slug={slug}, source={source}) -> {dst_dir}")
+                else:
+                    logger.warning(f"[remote-skills] zip for '{slug}' contained no SKILL.md; removing dir")
+                    shutil.rmtree(dst_dir, ignore_errors=True)
+            except Exception as e:
+                logger.error(f"[remote-skills] failed to download/extract skill '{slug}' (source={source}): {e}")
+                # Never abort the run or the remaining skills on a single failure.
+                continue
+
+        return installed_names
+
+    async def _install_attached_skills_from_task(
+        self,
+        task: str | BaseChatMessage | Sequence[BaseChatMessage] | None,
+    ) -> None:
+        """Download attached skill ZIPs from WebUI proxy into local skills_dir.
+
+        Called once at the top of ``run_stream``, before kernel or local stream
+        branches — so skills are available regardless of which path is taken.
+        """
+        skill_proxy = None
+        attached_skills = None
+        target_msg = None
+
+        if isinstance(task, BaseChatMessage):
+            target_msg = task
+        elif isinstance(task, Sequence) and not isinstance(task, str):
+            for msg in task:
+                if isinstance(msg, BaseChatMessage):
+                    sp = msg.metadata.get("skill_proxy")
+                    aks = msg.metadata.get("attached_skills")
+                    if sp and aks:
+                        skill_proxy = sp
+                        attached_skills = aks
+                    target_msg = msg  # last message gets the notification
+        if not skill_proxy or not attached_skills:
+            return
+        try:
+            sp = json.loads(skill_proxy) if isinstance(skill_proxy, str) else skill_proxy
+            aks = json.loads(attached_skills) if isinstance(attached_skills, str) else attached_skills
+            installed_skill_names = await self._download_remote_skills(
+                skill_proxy=sp or {},
+                attached_skills=aks or [],
+            )
+            if installed_skill_names and target_msg is not None:
+                names_text = "、".join(installed_skill_names)
+                target_msg.content = (target_msg.content or "") + (
+                    "\n\n已为你安装以下技能（可通过 Skill 工具调用）：" + names_text
+                )
+        except Exception as e:
+            logger.error(f"Error processing attached_skills: {e}")
+
     async def run_stream(
         self,
         *,
@@ -1356,6 +1541,7 @@ class DrSaiAssistant(DrSaiAgent):
             last_task = task[-1]
             if isinstance(last_task, BaseChatMessage) and isinstance(last_task.content, str):
                 command_text = last_task.content
+        await self._install_attached_skills_from_task(task)
         use_kernel_stream = (
             getattr(self, "_shared_agent_kernel", None) is not None
             and not (command_text is not None and self.is_commands_mode(command_text))
@@ -1408,6 +1594,7 @@ class DrSaiAssistant(DrSaiAgent):
                                 files.append(f"{self._user_profile_manager.download_dir}/{file['name']}")
                         if files:
                             msg.content = msg.content + "\nThe files uploaded by the user are as follows:\n" + "\n".join(files)
+
                         # 由于不同模型的tool call格式的限制，不允许在同一个session中切换模型
                         # settings_config = msg.metadata.get("settings_config")
                         # if settings_config:

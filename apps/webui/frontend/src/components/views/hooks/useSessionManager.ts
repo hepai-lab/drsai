@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { Session, RunStatus } from '../../types/datamodel';
 import { Agent } from '../../../types/common';
 import { sessionAPI, agentAPI } from '../api';
+import type { HepaiSkillPickRow } from '../../../pages/chat/chat/types';
 import { useConfigStore } from '../../../hooks/store';
 import { useModeConfigStore } from '../../../store/modeConfig';
 import { useSessionStorage } from './useSessionStorage';
@@ -26,6 +27,8 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
     query: string;
     files: any[];
     plan?: any;
+    llm?: { label: string; value: string };
+    attachedSkills?: HepaiSkillPickRow[];
   } | null>(null);
 
   // 标记用户主动清空session（使用 ref 避免状态更新延迟）
@@ -246,7 +249,8 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
     query: string,
     files: any[] = [],
     plan?: any,
-    llm?: { label: string; value: string }
+    llm?: { label: string; value: string },
+    attachedSkills?: HepaiSkillPickRow[]
   ) => {
     if (!userEmail) {
       onError?.("User not logged in");
@@ -257,7 +261,7 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
       setIsLoading(true);
 
       // 1. 保存待发送的消息
-      setPendingFirstMessage({ query, files, plan, llm });
+      setPendingFirstMessage({ query, files, plan, llm, attachedSkills });
 
       // 2. 创建新会话
       const sessionData = {

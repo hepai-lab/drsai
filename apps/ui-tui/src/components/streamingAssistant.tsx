@@ -50,6 +50,7 @@ import { useEffect, useState } from 'react'
 import { stripTodoWriteArtifacts } from '../app/todoArtifacts.js'
 import { getPartText, getReasoningText, type ContentPart, type TextContentPart, type ToolCall } from '../app/types.js'
 import { clearHeightCache, getCachedHeight, setCachedHeight } from '../app/heightCache.js'
+import { softWrapWide } from '../app/stringWidth.js'
 import { $current } from '../app/turnStore.js'
 import { $showReasoning, $terminalFocused, $toolDetail, $composerInputHeight } from '../app/uiStore.js'
 import { useTerminalSize } from '../hooks/terminalSizeStore.js'
@@ -122,20 +123,17 @@ function useThinkingPulse(active: boolean, startedAt: number) {
 }
 
 /**
- * Soft-wrap a logical line to `cols` columns and return the wrapped
- * lines. Naïve character-count wrap — no CJK width awareness — but the
- * count only needs to be a (slight) overestimate of visual lines, so
- * this is good enough for the clip threshold. Returns ``['']`` for an
- * empty string so the count matches the visual reality (one blank row).
+ * Soft-wrap a logical line to `cols` terminal cells and return the
+ * wrapped lines. Display-width-aware (CJK = 2 cells, emoji = 2 cells)
+ * via the stringWidth module — prevents height underestimation for
+ * Chinese text which would otherwise cause the frame to overflow.
+ * Returns ``['']`` for an empty string so the count matches the
+ * visual reality (one blank row).
  */
 function visualWrap(line: string, cols: number): string[] {
   if (cols <= 0) return [line]
   if (line.length === 0) return ['']
-  const out: string[] = []
-  for (let i = 0; i < line.length; i += cols) {
-    out.push(line.slice(i, i + cols))
-  }
-  return out
+  return softWrapWide(line, cols)
 }
 
 /** Count the visual rows of ``text`` when wrapped at ``cols`` columns. */

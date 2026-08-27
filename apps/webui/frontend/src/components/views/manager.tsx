@@ -988,7 +988,7 @@ export const SessionManager: React.FC = () => {
     // selectedAgent 来自 zustand persist，刷新后会从 localStorage 恢复旧值，
     // 而此时 agentInfo 还为 null（异步请求未完成），会导致非 DocMaster 时也显示"专属功能"。
     const name = (agentInfo as { name?: string } | null | undefined)?.name || "";
-    return name === "DocMaster";
+    return name === "DocMaster" || name === "DocMaster-test";
   }, [agentInfo]);
 
   // Auto-open right panel when DocMaster agent is selected, close when switching away.
@@ -1733,9 +1733,9 @@ export const SessionManager: React.FC = () => {
                     agent={chatAgent}
                     suppressSampleTasks={sampleTasksDismissed}
                     onDismissSampleTasks={() => setSampleTasksDismissed(true)}
-                    onSubmit={async (agent, query, files, plan, llm) => {
+                    onSubmit={async (agent, query, files, plan, llm, attachedSkills) => {
                       setSampleTasksDismissed(true);
-                      await createNewChatSession(agent, query, files, plan, llm);
+                      await createNewChatSession(agent, query, files, plan, llm, attachedSkills);
                     }}
                   />
                 </Suspense>
