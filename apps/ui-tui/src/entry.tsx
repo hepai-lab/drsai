@@ -151,21 +151,18 @@ if (!process.stdin.isTTY) {
   //
   // Trade-off: Ink's eraseLines() during streaming can momentarily reset
   // the terminal's auto-scroll anchor. We mitigate that with the existing
-  // FLUSH_MS coalescing and PageUp/PageDown internal scroll. Set
-  // DRSAI_TUI_USE_ALT_SCREEN=1 if you want the vim/less-style alternate
-  // page (clean exit, no scrollback after quit).
+  // FLUSH_MS coalescing, increased spinner interval (250 ms), and the
+  // height-clipping in StreamingAssistant that prevents the fullscreen
+  // branch from firing. Set DRSAI_TUI_USE_ALT_SCREEN=1 if you want the
+  // vim/less-style alternate page (clean exit, no scrollback after quit).
   //
-  // On Windows the primary-buffer trade-off is worse: Windows Terminal
-  // and legacy conhost.exe both handle the erase+re-emit cycle less
-  // gracefully than Linux/macOS terminals, causing the user's question
-  // (and the gold startup banner) to scroll up continuously during
-  // streaming.  We therefore DEFAULT to alt-screen on Windows unless
-  // the user explicitly opts out with DRSAI_TUI_USE_ALT_SCREEN=0.
-  const isWindows = process.platform === 'win32'
+  // Previously, alt-screen was DEFAULT ON for Windows to avoid the
+  // erase+re-emit scroll-jank. But that meant the user could NOT scroll
+  // back to view earlier turns (alt-screen has no scrollback). We now
+  // default OFF on ALL platforms — the scroll-jank is mitigated by the
+  // reduced re-render frequency, and the user gets working scrollback.
   const altScreenEnv = process.env.DRSAI_TUI_USE_ALT_SCREEN
-  const altScreenRequested =
-    altScreenEnv === '1' ||
-    (isWindows && altScreenEnv !== '0')
+  const altScreenRequested = altScreenEnv === '1'
   if (altScreenRequested) {
     enableAltScreen()
   }

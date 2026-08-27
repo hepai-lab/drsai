@@ -59,9 +59,15 @@ import { theme } from '../theme.js'
 import { stripThinkBlocks } from './markdownRenderer.js'
 import { ToolCallLine } from './toolCallLine.js'
 
-// Braille rotor — 10 frames is a typical xterm spinner; tick every 100 ms.
+// Braille rotor — 10 frames is a typical xterm spinner.
+// Tick every 250 ms (was 100 ms).  Each tick triggers a full dynamic
+// frame re-render via Ink's eraseLines()+write() cycle.  On Windows
+// Terminal / conhost, the 100 ms rate caused the user's submitted
+// question to visibly "jump" every tick because the erase+rewrite
+// cycle scrolls the terminal.  250 ms is still smooth enough for a
+// spinner animation while cutting re-render frequency by 2.5×.
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-const SPINNER_TICK_MS = 100
+const SPINNER_TICK_MS = 250
 const ELAPSED_TICK_MS = 1000
 
 // Rows reserved for non-streaming UI OUTSIDE StreamingAssistant.
