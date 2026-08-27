@@ -67,6 +67,32 @@ function Write-Warn($msg)    { Write-Host "!  $msg" -ForegroundColor Yellow }
 function Write-Err($msg)     { Write-Host "X  $msg" -ForegroundColor Red }
 function Die($msg)           { Write-Err $msg; exit 1 }
 
+# -- Native command runner -----------------------------------------------------
+# PowerShell 5.1 treats stderr output from native commands as error records
+# (NativeCommandError) when $ErrorActionPreference="Stop". pnpm/npm/node write
+# harmless info to stderr (e.g. "$ node scripts/build.mjs"). This helper runs a
+# native command, captures ALL output (stdout+stderr) without aborting, returns
+# the combined output as string array. Exit code is in $LASTEXITCODE.
+function Invoke-Native {
+    param([Parameter(Mandatory)][scriptblock]$ScriptBlock)
+
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & $ScriptBlock 2>&1 |
+            ForEach-Object {
+                if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                    $_.Exception.Message
+                } else {
+                    $_
+                }
+            }
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+    return $output
+}
+
 # ==============================================================================
 #  Source copy helpers (robocopy apps/ui-tui + cores only)
 # ==============================================================================
@@ -89,13 +115,13 @@ function Copy-RepoSource {
     New-Item -ItemType Directory -Path $dstApps -Force | Out-Null
     $dstAppsTui = Join-Path $dstApps "ui-tui"
     # robocopy exit codes 0-7 are OK, 8+ is failure
-    & robocopy $repoAppsTui $dstAppsTui /MIR /XD node_modules .cache /XF *.log | Out-Null
+    Invoke-Native { & robocopy $repoAppsTui $dstAppsTui /MIR /XD node_modules .cache /XF *.log } | Out-Null
     if ($LASTEXITCODE -ge 8) { Die "robocopy failed for apps\ui-tui (exit code: $LASTEXITCODE)" }
 
     # -- Copy cores (excluding __pycache__, *.pyc, dist) --
     Write-Info "Copying cores..."
     $dstCores = Join-Path $DstRoot "cores"
-    & robocopy $repoCores $dstCores /MIR /XD __pycache__ dist /XF *.pyc | Out-Null
+    Invoke-Native { & robocopy $repoCores $dstCores /MIR /XD __pycache__ dist /XF *.pyc } | Out-Null
     if ($LASTEXITCODE -ge 8) { Die "robocopy failed for cores (exit code: $LASTEXITCODE)" }
 
     # -- Copy skills\skills (pre-built skills catalog) --
@@ -104,7 +130,7 @@ function Copy-RepoSource {
         Write-Info "Copying skills\skills..."
         $dstSkills = Join-Path $DstRoot "skills"
         $dstSkillsSkills = Join-Path $dstSkills "skills"
-        & robocopy $repoSkillsSkills $dstSkillsSkills /MIR | Out-Null
+        Invoke-Native { & robocopy $repoSkillsSkills $dstSkillsSkills /MIR } | Out-Null
         if ($LASTEXITCODE -ge 8) { Die "robocopy failed for skills\skills (exit code: $LASTEXITCODE)" }
     } else {
         Write-Warn "skills\skills not found in repo - skipping (skill selection will be unavailable)"
@@ -155,7 +181,7 @@ function Detect-SystemDeps {
     } catch { }
 
     if ($sysPython) {
-        $pyVer = & $sysPython -c "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')" 2>$null
+        $pyVer = (Invoke-Native { & $sysPython -c "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')" } | Out-String).Trim()
         if ($pyVer) {
             $parts = $pyVer -split '\.'
             $major = [int]$parts[0]
@@ -181,7 +207,7 @@ function Detect-SystemDeps {
             $drsaiPy = Join-Path $script:InstallDir "packages\python\bin\python.exe"
         }
         if (Test-Path $drsaiPy) {
-            $drsaiPyVer = & $drsaiPy --version 2>&1
+            $drsaiPyVer = (Invoke-Native { & $drsaiPy --version } | Out-String).Trim()
             Write-Ok "DrSai portable Python found at $($script:InstallDir)\packages\python - will reuse it"
             Write-Ok "  $drsaiPyVer (skip download)"
             $script:UseSystemPython = $true
@@ -196,7 +222,7 @@ function Detect-SystemDeps {
     } catch { }
 
     if ($sysNode) {
-        $nodeVer = & $sysNode -v 2>$null
+        $nodeVer = (Invoke-Native { & $sysNode -v } | Out-String).Trim()
         if ($nodeVer -match 'v(\d+)') {
             $nodeMajor = [int]$Matches[1]
             if ($nodeMajor -ge 20) {
@@ -217,7 +243,7 @@ function Detect-SystemDeps {
     if (-not $script:UseSystemNode) {
         $drsaiNode = Join-Path $script:InstallDir "packages\node\node.exe"
         if (Test-Path $drsaiNode) {
-            $drsaiNodeVer = & $drsaiNode -v 2>&1
+            $drsaiNodeVer = (Invoke-Native { & $drsaiNode -v } | Out-String).Trim()
             Write-Ok "DrSai portable Node found at $($script:InstallDir)\packages\node - will reuse it"
             Write-Ok "  $drsaiNodeVer (skip download)"
             $script:UseSystemNode = $true
@@ -421,7 +447,7 @@ function Extract-All {
         Write-Info "Extracting Python -> $pyExtractDir"
         if (Test-Path $pyExtractDir) { Remove-Item -Path $pyExtractDir -Recurse -Force }
         # Use tar (built into Windows 10 1803+)
-        & tar -xzf $pyArchive -C $pkgDir 2>&1 | Out-Null
+        Invoke-Native { & tar -xzf $pyArchive -C $pkgDir } | Out-Null
         if ($LASTEXITCODE -ne 0) { Die "tar extraction failed for Python (exit code: $LASTEXITCODE)" }
         # python-build-standalone extracts to 'python' subdir
         if (!(Test-Path $pyExtractDir)) {
@@ -482,7 +508,7 @@ function Setup-Python {
     }
 
     Write-Info "Creating venv -> $venvDir"
-    & $pyExe -m venv $venvDir 2>&1 | Out-Null
+    Invoke-Native { & $pyExe -m venv $venvDir } | Out-Null
     if ($LASTEXITCODE -ne 0) { Die "venv creation failed (exit code: $LASTEXITCODE)" }
 
     $venvPython = Join-Path $venvDir "Scripts\python.exe"
@@ -491,7 +517,7 @@ function Setup-Python {
 
     # Upgrade pip
     Write-Info "Upgrading pip..."
-    & $venvPython -m pip install --upgrade pip setuptools wheel 2>&1 | ForEach-Object { Write-Host "  $_" }
+    Invoke-Native { & $venvPython -m pip install --upgrade pip setuptools wheel } | ForEach-Object { Write-Host "  $_" }
 
     # Editable install of drsai from the COPIED source (not the local repo)
     # This allows pip to install dependencies while keeping the package editable
@@ -501,14 +527,14 @@ function Setup-Python {
 
     Write-Info "Installing drsai (editable) from: $drsaiPkgDir"
     $env:DRSAI_SKIP_TUI_BUILD = "1"
-    & $venvPip install -e "$drsaiPkgDir" 2>&1 | ForEach-Object { Write-Host "  $_" }
+    Invoke-Native { & $venvPip install -e "$drsaiPkgDir" } | ForEach-Object { Write-Host "  $_" }
     $pipExit = $LASTEXITCODE
     Remove-Item Env:\DRSAI_SKIP_TUI_BUILD -ErrorAction SilentlyContinue
     if ($pipExit -ne 0) { Die "pip install -e drsai failed (exit code: $pipExit)" }
 
     # Verify drsai is importable (use version submodule to avoid heavy __init__.py)
     Write-Info "Verifying drsai import..."
-    $version = & $venvPython -c "from drsai.version import __version__; print(__version__)" 2>&1
+    $version = (Invoke-Native { & $venvPython -c "from drsai.version import __version__; print(__version__)" } | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  $version"  # show error
         Die "drsai import verification failed"
@@ -530,24 +556,24 @@ function Setup-Node {
     if (!(Test-Path $nodeExe)) { Die "node.exe not found at $nodeExe" }
 
     Write-Info "Using Node: $nodeExe"
-    & $nodeExe -v 2>&1 | ForEach-Object { Write-Host "  $_" }
+    Invoke-Native { & $nodeExe -v } | ForEach-Object { Write-Host "  $_" }
 
     # Check if pnpm is already available (via corepack)
     $pnpmCmd = Join-Path $script:NodeDir "pnpm.cmd"
     if (-not (Test-Path $pnpmCmd)) {
         Write-Info "Installing pnpm via corepack..."
         $env:PATH = "$script:NodeDir;$env:PATH"
-        & $nodeExe "$script:NodeDir\node_modules\corepack\dist\corepack.js" enable 2>&1 | ForEach-Object { Write-Host "  $_" }
+        Invoke-Native { & $nodeExe "$script:NodeDir\node_modules\corepack\dist\corepack.js" enable } | ForEach-Object { Write-Host "  $_" }
         # If corepack enable did not create pnpm.cmd, try npm install -g
         if (-not (Test-Path $pnpmCmd)) {
             Write-Info "corepack enable did not create pnpm, trying npm install -g pnpm..."
-            & $npmCmd install -g pnpm 2>&1 | ForEach-Object { Write-Host "  $_" }
+            Invoke-Native { & $npmCmd install -g pnpm } | ForEach-Object { Write-Host "  $_" }
         }
     }
 
     if (Test-Path $pnpmCmd) {
         Write-Ok "pnpm available: $pnpmCmd"
-        & $pnpmCmd -v 2>&1 | ForEach-Object { Write-Host "  $_" }
+        Invoke-Native { & $pnpmCmd -v } | ForEach-Object { Write-Host "  $_" }
     } else {
         # Try npx pnpm fallback
         $npxPnpm = Join-Path $script:NodeDir "npx.cmd"
@@ -587,9 +613,9 @@ function Build-Tui {
         # Step 1: pnpm install
         Write-Info "  pnpm install..."
         if ($script:PnpmCmd) {
-            & $script:PnpmCmd install --dir $tuiDir 2>&1 | ForEach-Object { Write-Host "    $_" }
+            Invoke-Native { & $script:PnpmCmd install --dir $tuiDir } | ForEach-Object { Write-Host "    $_" }
         } else {
-            & $script:NpmCmd install --prefix $tuiDir 2>&1 | ForEach-Object { Write-Host "    $_" }
+            Invoke-Native { & $script:NpmCmd install --prefix $tuiDir } | ForEach-Object { Write-Host "    $_" }
         }
         if ($LASTEXITCODE -ne 0) {
             Write-Warn "  pnpm install failed (exit code: $LASTEXITCODE), retrying..."
@@ -599,9 +625,9 @@ function Build-Tui {
         # Step 2: pnpm build
         Write-Info "  pnpm build..."
         if ($script:PnpmCmd) {
-            & $script:PnpmCmd run --dir $tuiDir build 2>&1 | ForEach-Object { Write-Host "    $_" }
+            Invoke-Native { & $script:PnpmCmd run --dir $tuiDir build } | ForEach-Object { Write-Host "    $_" }
         } else {
-            & $script:NpmCmd run --prefix $tuiDir build 2>&1 | ForEach-Object { Write-Host "    $_" }
+            Invoke-Native { & $script:NpmCmd run --prefix $tuiDir build } | ForEach-Object { Write-Host "    $_" }
         }
         if ($LASTEXITCODE -ne 0) {
             Write-Warn "  pnpm build failed (exit code: $LASTEXITCODE), retrying..."
@@ -744,7 +770,7 @@ function Verify-Install {
     Write-Info "Checking drsai import..."
     $venvPy = Join-Path $script:InstallDir "packages\venv\Scripts\python.exe"
     if (Test-Path $venvPy) {
-        $ver = & $venvPy -c "from drsai.version import __version__; print(__version__)" 2>&1
+        $ver = (Invoke-Native { & $venvPy -c "from drsai.version import __version__; print(__version__)" } | Out-String).Trim()
         if ($LASTEXITCODE -eq 0) {
             Write-Ok "drsai version: $ver"
         } else {
