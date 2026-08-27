@@ -334,15 +334,15 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
             {!editingSkillId && (
               <div className="flex items-center gap-3">
                 <div className="text-sm font-medium text-primary">
-                  {t("skillSquare.publishPublic")}
+                  {t("skillSquare.publishPrivate")}
                 </div>
                 <Switch
-                  checked={!isPublicSkill}
-                  onChange={(v) => onPublicSkillChange(!v)}
+                  checked={isPublicSkill}
+                  onChange={(v) => onPublicSkillChange(v)}
                   size="small"
                 />
                 <div className="text-sm font-medium text-primary">
-                  {t("skillSquare.publishPrivate")}
+                  {t("skillSquare.publishPublic")}
                 </div>
               </div>
             )}

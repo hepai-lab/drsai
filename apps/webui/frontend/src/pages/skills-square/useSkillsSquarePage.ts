@@ -20,6 +20,7 @@ import {
 import { appContext } from "../../hooks/provider";
 import { useLocation, useNavigate } from "../../hooks/useRouter";
 import { useLang } from "../../i18n/useLang";
+import { useConfigStore } from "../../hooks/store";
 import { getModelApiKeyFromSettings } from "../../utils/modelApiKey";
 import { HEPAI_MAX_ZIP_BYTES, PUBLIC_PAGE_SIZE } from "./constants";
 import { renderSkillIcon } from "./icons";
@@ -34,7 +35,7 @@ import {
 
 type FileWithRelativePath = File & { webkitRelativePath?: string };
 
-export function useSkillsSquarePage() {
+export function useSkillsSquarePage(skillsSubTab?: string) {
   const { user } = React.useContext(appContext);
   const { t, lang } = useLang();
   const isZh = lang === "zh";
@@ -53,6 +54,30 @@ export function useSkillsSquarePage() {
     setActiveTab(urlTab);
   }, [urlTab]);
 
+  // 从左侧菜单子页签控制状态
+  useEffect(() => {
+    if (!skillsSubTab) return;
+    switch (skillsSubTab) {
+      case "skills_public":
+        setActiveTab("public");
+        setSkillUploadOpen(false);
+        break;
+      case "skills_my_creations":
+        setActiveTab("private");
+        setPrivateFilter("created");
+        setSkillUploadOpen(false);
+        break;
+      case "skills_my_collections":
+        setActiveTab("private");
+        setPrivateFilter("collected");
+        setSkillUploadOpen(false);
+        break;
+      case "skills_publish":
+        setSkillUploadOpen(true);
+        break;
+    }
+  }, [skillsSubTab]);
+
   const [activeCategory, setActiveCategory] = useState("");
   const skillSlugFromUrl = useMemo(() => {
     const params = new URLSearchParams(location.search);
@@ -62,6 +87,18 @@ export function useSkillsSquarePage() {
     null,
   );
   const [skillDetailLoading, setSkillDetailLoading] = useState(false);
+
+  // Sync breadcrumbs in top bar when viewing a skill
+  const setBreadcrumbs = useConfigStore((s) => s.setBreadcrumbs);
+  useEffect(() => {
+    if (skillDetail && skillSlugFromUrl) {
+      setBreadcrumbs([
+        { name: skillDetail.name, current: true },
+      ]);
+    } else {
+      setBreadcrumbs([]);
+    }
+  }, [skillDetail, skillSlugFromUrl, setBreadcrumbs]);
 
   const [publicRows, setPublicRows] = useState<SkillsPublicItem[]>([]);
   const [publicLoading, setPublicLoading] = useState(false);

@@ -320,6 +320,7 @@ export const SessionManager: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [pendingMenuId, setPendingMenuId] = useState<MenuId | null>(null);
+  const [skillsSubTab, setSkillsSubTab] = useState("skills_public");
 
   const menuFromUrl = useMemo(
     () => getMenuIdFromSearch(location.search),
@@ -461,6 +462,19 @@ export const SessionManager: React.FC = () => {
       }
     },
     [isCompact, navigateToMenu]
+  );
+
+  const handleSkillsSubTabChange = useCallback(
+    (subTabId: string) => {
+      setSkillsSubTab(subTabId);
+      // Clear skill param when navigating to a fresh sub-tab
+      const params = new URLSearchParams(location.search);
+      params.delete("skill");
+      params.set("menu", String(MENU_IDS.skillsSquare));
+      params.set("view", String(DEFAULT_VIEW_ID));
+      navigate(`?${params.toString()}`);
+    },
+    [location.search, navigate]
   );
 
   const { user, darkMode } = useContext(appContext);
@@ -1684,6 +1698,8 @@ export const SessionManager: React.FC = () => {
         onSubMenuChange={handleSubMenuChange}
         showAdminNav={showAdminNav}
         leftMenuHistory={rightPanelHistory}
+        skillsSubTab={skillsSubTab}
+        onSkillsSubTabChange={handleSkillsSubTabChange}
         rightPanelTemplates={isDocMaster ? rightPanelTemplates : undefined}
         rightPanelGuanlianyewu={rightPanelGuanlianyewu}
         rightPanelZongheCailiao={rightPanelZongheCailiao}
@@ -1783,7 +1799,7 @@ export const SessionManager: React.FC = () => {
           </div>
         ) : activeSubMenuItem === MENU_IDS.skillsSquare ? (
           <Suspense fallback={<MenuPanelFallback />}>
-            <SkillsSquarePage />
+            <SkillsSquarePage skillsSubTab={skillsSubTab} />
           </Suspense>
         ) : activeSubMenuItem === MENU_IDS.cloud ? (
           <Suspense fallback={<MenuPanelFallback />}>
