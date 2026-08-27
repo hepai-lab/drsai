@@ -732,15 +732,29 @@ function Create-Launcher {
     $pathPrefix = "$script:NodeDir;$venvScripts"
 
     # .cmd launcher that sets up environment and runs the TUI
+    # Mirrors install_drsai.ps1 (non-dev) launcher structure
     $launcherPath = Join-Path $binDir "opendrsai.cmd"
+    $tuiDir = Join-Path $script:InstallDir "apps\ui-tui"
+    $pySrcRoot = Join-Path $script:InstallDir "cores\python\packages\drsai\src"
+    $venvPython = Join-Path $script:InstallDir "packages\venv\Scripts\python.exe"
+
     $launcherContent = @"
 @echo off
 setlocal
-set PATH=$pathPrefix;%PATH%
-set DRSAI_HOME=$script:InstallDir
-cd /d %USERPROFILE%
-"$script:NodeExe" "$script:InstallDir\apps\ui-tui\dist\entry.mjs" %*
-endlocal
+REM -- OpenDrSai dev launcher (live source under install dir) --
+set "INSTALL_DIR=%~dp0.."
+set "DRSAI_HOME=%INSTALL_DIR%"
+set "DRSAI_UI_TUI_DIR=$tuiDir"
+set "DRSAI_PYTHON=$venvPython"
+set "DRSAI_PYTHON_SRC_ROOT=$pySrcRoot"
+set "VIRTUAL_ENV=%INSTALL_DIR%\packages\venv"
+set "PATH=$pathPrefix;%PATH%"
+REM Use console script (drsai.exe) instead of python -m to avoid runpy RuntimeWarning
+if exist "%INSTALL_DIR%\packages\venv\Scripts\drsai.exe" (
+    "%INSTALL_DIR%\packages\venv\Scripts\drsai.exe" %*
+) else (
+    "%INSTALL_DIR%\packages\venv\Scripts\python.exe" -m drsai.backend.run_cli %*
+)
 "@
 
     Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII
