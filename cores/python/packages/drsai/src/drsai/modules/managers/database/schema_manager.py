@@ -14,6 +14,27 @@ from sqlalchemy import Engine, text
 from sqlmodel import SQLModel
 
 
+def _fts_include_object(object, name, type_, reflected, compare_to):
+    """
+    Filter out FTS5 virtual tables and their shadow tables from Alembic
+    autogeneration / comparison.  This is the same logic embedded in the
+    ``env.py`` template, but defined here as a callable for use with
+    ``compare_metadata`` via ``MigrationContext.configure(opts=...)``.
+
+    Without this filter, ``compare_metadata`` detects FTS tables + their
+    shadow tables as "removed tables", causing ``check_schema_status()`` to
+    always report that an upgrade is needed, which in turn triggers a full
+    migration reset that destroys FTS indexes.
+    """
+    if type_ == "table":
+        if "_fts" in name or name.endswith((
+            "_idx", "_content", "_docsize", "_data", "_config",
+            "_insert", "_delete", "_update",
+        )):
+            return False
+    return True
+
+
 class SchemaManager:
     """
     Manages database schema validation and migrations using Alembic.
@@ -157,10 +178,18 @@ def include_object(object, name, type_, reflected, compare_to):
     \"\"\"
     Filter out FTS virtual tables from Alembic autogeneration.
     FTS5 tables have special internal structures that Alembic cannot handle.
+    Without this filter, Alembic detects FTS tables + their shadow tables as
+    'removed tables' and drops them on every migration, destroying the FTS
+    index. This is the root cause of /find returning no results.
     \"\"\"
     if type_ == "table":
-        # Skip FTS tables and their internal tables
-        if "_fts_" in name or name.endswith(("_idx", "_content", "_docsize", "_data", "_config")):
+        # Skip FTS virtual tables (session_messages_fts, session_search_fts,
+        # session_summaries_fts, session_summaries_fts_trigram, etc.)
+        # and ALL their internal shadow tables (*_data, *_idx, *_docsize,
+        # *_config, *_content, *_insert, *_delete, *_update).
+        if "_fts" in name or name.endswith(("_idx", "_content", "_docsize",
+                                          "_data", "_config",
+                                          "_insert", "_delete", "_update")):
             return False
     return True
 
@@ -362,7 +391,10 @@ datefmt = %H:%M:%S
             List[tuple]: List of differences found
         """
         with self.engine.connect() as conn:
-            context = MigrationContext.configure(conn)
+            context = MigrationContext.configure(
+                conn,
+                opts={"include_object": _fts_include_object},
+            )
             diff = compare_metadata(context, SQLModel.metadata)
             return list(diff)
 

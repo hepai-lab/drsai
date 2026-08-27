@@ -1,5 +1,4 @@
 import React from "react";
-import ReactDOM from "react-dom/client";
 import "antd/dist/reset.css";
 /* Self-hosted fonts — avoids blocked fonts.googleapis.com on some networks */
 import "@fontsource/plus-jakarta-sans/500.css";

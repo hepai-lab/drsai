@@ -6,11 +6,11 @@
  */
 
 import type { GatewayClient } from '../gatewayClient.js'
-import type { GatewayEvent } from '../gatewayTypes.js'
+import type { GatewayEvent, UsagePayload } from '../gatewayTypes.js'
 
 import { $approval, $clarify, $secret, $sudo } from './overlayStore.js'
 import type { TurnController } from './turnController.js'
-import { $connectionError, $connectionStatus, $lastUsage, $memoryPreview, $remoteHost, $sessionMeta, $skin, $statusLine, $userId } from './uiStore.js'
+import { $connectionError, $connectionStatus, $lastUsage, $memoryPreview, $remoteHost, $sessionMeta, $skin, $statusLine, $streamingTokenEstimate, $userId } from './uiStore.js'
 import {
   applyToolComplete,
   MAX_TOOL_RESULT_CHARS,
@@ -72,6 +72,25 @@ export function createGatewayEventHandler(
   let isSubagentActive = false
   let subagentSource = ''
 
+  // ── Streaming token estimate ───────────────────────────────────────────
+  //
+  // During streaming, we don't have real token counts until the LLM call
+  // finishes and the API returns usage in the final chunk. To give the user
+  // a real-time sense of how much is being generated, we estimate completion
+  // tokens from the character count of streamed deltas (~4 chars/token for
+  // English, ~2 for CJK — we use 4 as a conservative average).
+  //
+  // The estimate is reset on `message.start` and cleared when `usage.update`
+  // or `message.complete` arrives (we have real data then).
+  let streamingCharCount = 0
+
+  // Maximum number of contentParts to keep in a single in-flight turn.
+  // When exceeded, the oldest text parts are merged into one to prevent
+  // the parts array from growing unboundedly during long agent answers
+  // with many tool calls (e.g. 100+ tool invocations → 200+ parts).
+  // Tool parts are never merged — only text parts.
+  const MAX_CONTENT_PARTS = parseInt(process.env.DRSAI_TUI_MAX_PARTS || '50', 10)
+
   function flushBuffers() {
     flushTimer = null
     if (textBuf) {
@@ -83,7 +102,7 @@ export function createGatewayEventHandler(
         // concatenating strings (O(n) per flush → O(n²) total over a
         // long answer). The full text is lazily joined by getPartText()
         // only when a visible part needs rendering.
-        const parts = [...c.contentParts]
+        let parts = [...c.contentParts]
         const last = parts[parts.length - 1]
         if (last && last.kind === 'text') {
           parts[parts.length - 1] = {
@@ -94,6 +113,41 @@ export function createGatewayEventHandler(
         } else {
           parts.push({ kind: 'text', id: `text-${c.startedAt}-${parts.length}`, chunks: [t], text: '' })
         }
+
+        // ── Content parts compaction ──────────────────────────────
+        // When the parts array grows beyond MAX_CONTENT_PARTS, merge
+        // the oldest text parts into a single consolidated part. This
+        // bounds the array length (and the per-flush cost of
+        // clipContentParts which scans from the end) without losing
+        // any content — merged parts retain their full text via
+        // lazy-join. Tool parts are never merged.
+        if (parts.length > MAX_CONTENT_PARTS) {
+          // Separate the prefix to merge (everything before the last
+          // MAX_CONTENT_PARTS-1 items, but only merge text parts).
+          const keepFromIdx = parts.length - (MAX_CONTENT_PARTS - 1)
+          const prefix = parts.slice(0, keepFromIdx)
+          const suffix = parts.slice(keepFromIdx)
+
+          // Collect all text parts from the prefix and merge them
+          const textParts = prefix.filter(
+            (p): p is import('./types.js').TextContentPart => p.kind === 'text',
+          )
+          if (textParts.length > 1) {
+            const mergedText = textParts
+              .map(p => { if (!p.text) p.text = p.chunks.join(''); return p.text })
+              .join('')
+            const merged = {
+              kind: 'text' as const,
+              id: `merged-${c.startedAt}-${textParts[0].id}`,
+              chunks: [],
+              text: mergedText,
+            }
+            // Re-insert: merged text part + any tool parts from prefix
+            const toolPartsFromPrefix = prefix.filter(p => p.kind !== 'text')
+            parts = [merged, ...toolPartsFromPrefix, ...suffix]
+          }
+        }
+
         // Don't update c.text during streaming — it would copy the
         // entire accumulated text each flush. Text is materialised at
         // finalize() by joining all contentParts' chunks.
@@ -103,7 +157,15 @@ export function createGatewayEventHandler(
     if (reasoningBuf) {
       const r = reasoningBuf
       reasoningBuf = ''
-      updateCurrent(c => ({ ...c, reasoning: c.reasoning + r }))
+      // Push to reasoningChunks (O(1)) instead of concatenating into
+      // reasoning string (O(n) per flush → O(n²) total). The full
+      // text is lazily joined by getReasoningText() only when needed
+      // for rendering.
+      updateCurrent(c => ({
+        ...c,
+        reasoningChunks: [...c.reasoningChunks, r],
+        reasoning: '',  // invalidate lazy-join cache
+      }))
     }
   }
 
@@ -157,12 +219,21 @@ export function createGatewayEventHandler(
 
       // ── Message stream ───────────────────────────────────────
       case 'message.start': {
+        // Reset streaming token estimate for the new turn.
+        streamingCharCount = 0
+        $streamingTokenEstimate.set(0)
         // Controller already created the placeholder; nothing to do.
         return
       }
       case 'message.delta': {
         const text = (ev.payload as { text?: string } | undefined)?.text || ''
         if (!text) return
+        // Update streaming token estimate (~4 chars/token for English)
+        streamingCharCount += text.length
+        const est = Math.ceil(streamingCharCount / 4)
+        if (est !== $streamingTokenEstimate.get()) {
+          $streamingTokenEstimate.set(est)
+        }
         // If we were inside a subagent block, close it before main agent resumes
         if (isSubagentActive) {
           flushBuffers()
@@ -172,6 +243,28 @@ export function createGatewayEventHandler(
         }
         textBuf += text
         scheduleFlush()
+        return
+      }
+      case 'usage.update': {
+        // Real-time token usage from the backend — emitted when each LLM
+        // call completes (before the full turn finishes). Contains both
+        // the most-recent-call values and accumulated totals across all
+        // LLM calls in this turn.
+        const p = ev.payload as UsagePayload | undefined
+        if (p) {
+          $lastUsage.set({
+            model: p.model || '',
+            prompt_tokens: p.prompt_tokens || 0,
+            completion_tokens: p.completion_tokens || 0,
+            total_tokens: p.total_tokens || (p.prompt_tokens || 0) + (p.completion_tokens || 0),
+            prompt_tokens_total: p.prompt_tokens_total,
+            completion_tokens_total: p.completion_tokens_total,
+            total_tokens_accumulated: p.total_tokens_accumulated,
+          })
+          // Clear the streaming estimate — we have real data now.
+          streamingCharCount = 0
+          $streamingTokenEstimate.set(0)
+        }
         return
       }
       case 'message.complete': {
@@ -184,17 +277,24 @@ export function createGatewayEventHandler(
         }
         // Make sure all buffered deltas land in the turn before we close it.
         flushBuffers()
+        // Reset streaming token estimate — the turn is done.
+        streamingCharCount = 0
+        $streamingTokenEstimate.set(0)
         const p = ev.payload as { usage?: unknown; status?: string; reasoning?: string } | undefined
         
-        // ADDED: Store the latest usage in $lastUsage for StatusBar display (Issue #8 fix)
+        // Store the latest usage in $lastUsage for StatusBar display.
+        // Includes accumulated totals from all LLM calls in this turn.
         if (p?.usage) {
-          const usage = p.usage as AssistantTurn['usage']
+          const usage = p.usage as UsagePayload
           if (usage) {
             $lastUsage.set({
-              model: usage.model,
+              model: usage.model || '',
               prompt_tokens: usage.prompt_tokens,
               completion_tokens: usage.completion_tokens,
               total_tokens: usage.total_tokens,
+              prompt_tokens_total: usage.prompt_tokens_total,
+              completion_tokens_total: usage.completion_tokens_total,
+              total_tokens_accumulated: usage.total_tokens_accumulated,
             })
           }
         }
@@ -215,15 +315,36 @@ export function createGatewayEventHandler(
               })
               .join('')
           }
+          // Materialise reasoning from chunks (lazy join)
+          let fullReasoning = t.reasoning
+          if (t.reasoningChunks.length > 0 && !fullReasoning) {
+            fullReasoning = t.reasoningChunks.join('')
+          }
+          // Append any reasoning sent in the complete payload
+          if (p?.reasoning) {
+            fullReasoning = fullReasoning
+              ? fullReasoning + (fullReasoning ? '\n' : '') + p.reasoning
+              : p.reasoning
+          }
+          // Release chunks arrays from text ContentParts to free memory.
+          // The text has been materialised into part.text above; the
+          // chunks array is no longer needed.
+          const releasedParts = t.contentParts.map(part =>
+            part.kind === 'text'
+              ? { ...part, chunks: [] }
+              : part,
+          )
           return {
             ...t,
             text: fullText,
+            reasoning: fullReasoning,
+            reasoningChunks: [],  // clear chunks after joining
+            contentParts: releasedParts,
             usage: (p?.usage as AssistantTurn['usage']) ?? t.usage,
             status:
               p?.status === 'interrupted' || p?.status === 'error'
                 ? (p.status as AssistantTurn['status'])
                 : 'complete',
-            reasoning: p?.reasoning ? t.reasoning + (t.reasoning ? '\n' : '') + p.reasoning : t.reasoning,
           }
         })
         // End of turn — move $current into transcript and clear streaming state.

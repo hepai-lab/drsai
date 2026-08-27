@@ -15,7 +15,7 @@ Event mapping (matches design doc Section "关键事件翻译表"):
 | ToolCallRequestEvent                 | tool.start (per call) | args parsed from JSON-string |
 | ToolCallExecutionEvent               | tool.complete (per call) |   |
 | ToolCallSummaryMessage               | tool.complete (fallback) | DrSaiAgent path |
-| Response                             | message.complete + usage |   |
+| Response                             | message.complete + usage.update | usage.update emitted when tokens captured |
 | TaskResult                           | (turn boundary)      | swept for usage |
 | AgentLogEvent                        | status.update kind=log |   |
 | ThoughtEvent                         | thinking.delta       |   |
@@ -46,17 +46,23 @@ class TurnState:
     streamed_visible: bool = False
     streamed_sources: set[str] = field(default_factory=set)
     pending_tool_calls: dict[str, tuple[str, dict, float]] = field(default_factory=dict)  # tool_id → (name, args, start_ts)
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
+    prompt_tokens: int = 0            # most recent LLM call
+    completion_tokens: int = 0         # most recent LLM call
+    prompt_tokens_total: int = 0      # accumulated across all LLM calls in turn
+    completion_tokens_total: int = 0   # accumulated across all LLM calls in turn
     last_model: str = ""
     last_reasoning: str = ""
     citation_ids: set[str] = field(default_factory=set)
+    _captured_ids: set[int] = field(default_factory=set)  # id() of messages already captured (prevents double-counting)
 
     def usage_payload(self, status: str = "complete") -> dict:
         return {
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.prompt_tokens + self.completion_tokens,
+            "prompt_tokens_total": self.prompt_tokens_total,
+            "completion_tokens_total": self.completion_tokens_total,
+            "total_tokens_accumulated": self.prompt_tokens_total + self.completion_tokens_total,
             "model": self.last_model,
             "status": status,
         }
@@ -111,29 +117,50 @@ def _normalize_task_status(value: Any) -> str:
     return "running"
 
 
-def _capture_usage(message: Any, state: TurnState) -> None:
-    """Best-effort harvest of prompt/completion tokens from any message type."""
+def _capture_usage(message: Any, state: TurnState) -> bool:
+    """Best-effort harvest of prompt/completion tokens from any message type.
+
+    Returns ``True`` if any new usage was captured, ``False`` otherwise.
+    Uses ``id()`` tracking to prevent double-counting when the same message
+    appears in both ``Response.chat_message`` and ``TaskResult.messages``.
+    """
+    msg_id = id(message)
+    if msg_id in state._captured_ids:
+        return False
+    state._captured_ids.add(msg_id)
+
+    prompt = 0
+    completion = 0
+
     models_usage = getattr(message, "models_usage", None)
     if models_usage:
         prompt = getattr(models_usage, "prompt_tokens", 0) or 0
         completion = getattr(models_usage, "completion_tokens", 0) or 0
-        if prompt:
-            state.prompt_tokens = prompt
-        if completion:
-            state.completion_tokens = completion
 
-    # Some message types expose tokens directly.
+    # Direct attributes take precedence (overwrite models_usage values).
     for attr in ("prompt_tokens", "completion_tokens"):
         val = getattr(message, attr, None)
         if isinstance(val, int) and val > 0:
             if attr == "prompt_tokens":
-                state.prompt_tokens = val
+                prompt = val
             else:
-                state.completion_tokens = val
+                completion = val
+
+    captured = False
+    if prompt:
+        state.prompt_tokens = prompt
+        state.prompt_tokens_total += prompt
+        captured = True
+    if completion:
+        state.completion_tokens = completion
+        state.completion_tokens_total += completion
+        captured = True
 
     model = getattr(message, "model", None) or getattr(message, "model_name", None)
     if isinstance(model, str) and model:
         state.last_model = model
+
+    return captured
 
 
 def _is_subagent_source(source: str | None) -> bool:
@@ -357,6 +384,13 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
 
     # ── Tool call request ────────────────────────────────────────────
     if isinstance(message, ToolCallRequestEvent):
+        # Capture usage from each LLM call that produced tool calls.
+        # ToolCallRequestEvent carries models_usage from the CreateResult,
+        # so we can emit usage.update in real-time (before tools execute
+        # and before the final text reply arrives).
+        captured = _capture_usage(message, state)
+        if captured:
+            out.append(("usage.update", state.usage_payload("streaming")))
         msg_source = getattr(message, "source", "") or ""
         is_sub = _is_subagent_source(msg_source)
         calls = message.content or []
@@ -455,7 +489,9 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
 
     # ── TextMessage ──────────────────────────────────────────────────
     if isinstance(message, TextMessage):
-        _capture_usage(message, state)
+        captured = _capture_usage(message, state)
+        if captured:
+            out.append(("usage.update", state.usage_payload("streaming")))
         source = getattr(message, "source", "") or ""
         metadata = getattr(message, "metadata", None) or {}
 
@@ -492,10 +528,10 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
 
     # ── Response (final assistant reply with usage) ──────────────────
     if isinstance(message, Response):
-        _capture_usage(message, state)
+        captured1 = _capture_usage(message, state)
         chat = getattr(message, "chat_message", None)
         if chat is not None:
-            _capture_usage(chat, state)
+            captured2 = _capture_usage(chat, state)
             chat_src = getattr(chat, "source", "") or ""
             metadata = getattr(chat, "metadata", None) or {}
             out.extend(("citation.added", payload) for payload in extract_citation_payloads(metadata, state))
@@ -508,6 +544,10 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
                 if text and not state.streamed_visible:
                     out.append(("message.delta", {"text": text}))
                     state.streamed_visible = True
+        else:
+            captured2 = False
+        if captured1 or captured2:
+            out.append(("usage.update", state.usage_payload("streaming")))
         return out
 
     # ── TaskResult (end-of-turn) ─────────────────────────────────────
