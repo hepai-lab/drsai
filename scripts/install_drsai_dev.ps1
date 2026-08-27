@@ -491,7 +491,7 @@ function Setup-Python {
 
     # Upgrade pip
     Write-Info "Upgrading pip..."
-    & $venvPython -m pip install --upgrade pip 2>&1 | ForEach-Object { Write-Host "  $_" }
+    & $venvPython -m pip install --upgrade pip setuptools wheel 2>&1 | ForEach-Object { Write-Host "  $_" }
 
     # Editable install of drsai from the COPIED source (not the local repo)
     # This allows pip to install dependencies while keeping the package editable
@@ -500,13 +500,20 @@ function Setup-Python {
     if (!(Test-Path $pyproject)) { Die "drsai pyproject.toml not found at $pyproject" }
 
     Write-Info "Installing drsai (editable) from: $drsaiPkgDir"
+    $env:DRSAI_SKIP_TUI_BUILD = "1"
     & $venvPip install -e "$drsaiPkgDir" 2>&1 | ForEach-Object { Write-Host "  $_" }
-    if ($LASTEXITCODE -ne 0) { Die "pip install -e drsai failed (exit code: $LASTEXITCODE)" }
+    $pipExit = $LASTEXITCODE
+    Remove-Item Env:\DRSAI_SKIP_TUI_BUILD -ErrorAction SilentlyContinue
+    if ($pipExit -ne 0) { Die "pip install -e drsai failed (exit code: $pipExit)" }
 
-    # Verify drsai is importable
+    # Verify drsai is importable (use version submodule to avoid heavy __init__.py)
     Write-Info "Verifying drsai import..."
-    & $venvPython -c "import drsai; print('drsai version:', drsai.__version__)" 2>&1 | ForEach-Object { Write-Host "  $_" }
-    if ($LASTEXITCODE -ne 0) { Die "drsai import verification failed" }
+    $version = & $venvPython -c "from drsai.version import __version__; print(__version__)" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  $version"  # show error
+        Die "drsai import verification failed"
+    }
+    Write-Ok "drsai version: $version"
 
     Write-Ok "Python venv + editable drsai installed"
     $script:VenvPython = $venvPython
@@ -731,6 +738,21 @@ endlocal
 function Verify-Install {
     Write-Section "Verifying Installation"
 
+    $allOk = $true
+
+    # Check drsai import (lightweight: only version submodule, avoids heavy __init__.py)
+    Write-Info "Checking drsai import..."
+    $venvPy = Join-Path $script:InstallDir "packages\venv\Scripts\python.exe"
+    if (Test-Path $venvPy) {
+        $ver = & $venvPy -c "from drsai.version import __version__; print(__version__)" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "drsai version: $ver"
+        } else {
+            Write-Err "drsai import failed: $ver"
+            $allOk = $false
+        }
+    }
+
     $checks = @(
         @{ Name="Python venv";       Path=(Join-Path $script:InstallDir "packages\venv\Scripts\python.exe") },
         @{ Name="drsai package";     Path=(Join-Path $script:InstallDir "cores\python\packages\drsai\pyproject.toml") },
@@ -739,7 +761,6 @@ function Verify-Install {
         @{ Name="Launcher";          Path=(Join-Path $script:InstallDir "bin\opendrsai.cmd") }
     )
 
-    $allOk = $true
     foreach ($check in $checks) {
         if (Test-Path $check.Path) {
             Write-Ok "$($check.Name): OK"
