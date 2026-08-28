@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Brain, Cloud, RefreshCw, Save, Search, Server, Settings, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Brain, RefreshCw, Save, Search, Server, Settings, Sparkles, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AuthUser,
@@ -17,8 +17,6 @@ import { LOCAL_OPENDRSAI_AGENT_NAME } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
 import { userFacingFailureMessage } from "../userFacingLanguage";
-import drsaiLogo from "../assets/drsai.png";
-import { OpenAiBrandIcon } from "./OpenAiBrandIcon";
 
 interface AgentSquareViewProps {
   language: AppLanguage;
@@ -77,7 +75,7 @@ export function AgentSquareView({
 
   const filteredAgents = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
-    const visible = agents.filter((agent) => agent.catalogVisibility !== "when_available" || agent.available === true).filter((agent) => {
+    const visible = agents.filter((agent) => agent.id !== "my-codex").filter((agent) => {
       const catalogGroup = agent.catalogGroup ?? (agent.source === "local" ? "local" : "official");
       if (group !== "all" && catalogGroup !== group) return false;
       const isAvailable = isAgentUsable(agent);
@@ -86,10 +84,10 @@ export function AgentSquareView({
       if (!normalizedSearch) return true;
       return [
         agent.name,
-        agent.description,
+        agent.description ?? "",
         agent.localizedDescription?.zh,
         agent.localizedDescription?.en,
-        agent.owner,
+        agent.owner ?? "",
         agent.url,
         agent.mode,
         ...(agent.capabilities ?? []),
@@ -101,8 +99,6 @@ export function AgentSquareView({
     });
     return [...visible].sort((left, right) => {
       if (sort === "name") return left.name.localeCompare(right.name, zh ? "zh-CN" : "en");
-      const saiDoctorOrder = Number(isSaiDoctor(right)) - Number(isSaiDoctor(left));
-      if (saiDoctorOrder) return saiDoctorOrder;
       const leftSelected = left.id === selectedAgentId ? 1 : 0;
       const rightSelected = right.id === selectedAgentId ? 1 : 0;
       return rightSelected - leftSelected || Number(Boolean(right.featured)) - Number(Boolean(left.featured)) || left.name.localeCompare(right.name);
@@ -133,44 +129,27 @@ export function AgentSquareView({
     onStartChat(agent);
   }
 
-  const localAgents = filteredAgents.filter((agent) => (agent.catalogGroup ?? (agent.source === "local" ? "local" : "official")) === "local");
-  const otherAgents = filteredAgents.filter((agent) => !localAgents.includes(agent));
-  const sections = (["official", "mine"] as const)
+  const openDrSai = filteredAgents.find((agent) => agent.source === "local");
+  const otherAgents = filteredAgents.filter((agent) => agent !== openDrSai);
+  const sections = (["local", "official", "mine"] as const)
     .map((sectionGroup) => ({
       group: sectionGroup,
       agents: otherAgents.filter((agent) => (agent.catalogGroup ?? (agent.source === "local" ? "local" : "official")) === sectionGroup),
     }))
     .filter((section) => section.agents.length > 0);
-  const availableCount = agents.filter(isAgentUsable).length;
-  const platformCount = agents.filter((agent) => agent.source !== "local").length;
-  const filtersActive = Boolean(search.trim() || group !== "all" || availability !== "all" || sort !== "default");
-
-  function clearFilters(): void {
-    setSearch("");
-    setGroup("all");
-    setAvailability("all");
-    setSort("default");
-  }
 
   return (
     <section
       className="agent-square-view"
       aria-label={zh ? "智能体面板" : "Agent Panel"}
     >
-      <header className="agent-square-heading">
-        <div className="agent-square-heading-copy">
-          <span className="agent-square-heading-icon"><Sparkles size={19} /></span>
-          <div>
-            <h1>{zh ? "智能体广场" : "Agent Square"}</h1>
-            <p>{zh ? "选择适合当前任务的本机或平台智能体。" : "Choose a local or platform agent for the task at hand."}</p>
-          </div>
-        </div>
-        <div className="agent-square-stats" aria-label={zh ? "智能体概览" : "Agent overview"}>
-          <span><strong>{availableCount}</strong>{zh ? "可用" : "available"}</span>
-          <span><strong>{platformCount}</strong>{zh ? "平台智能体" : "platform"}</span>
-        </div>
-      </header>
       <div className="agent-square-toolbar">
+        <div className="agent-square-title-block">
+          <strong>{zh ? "智能体" : "Agents"}</strong>
+          <span>
+            {filteredAgents.length}/{agents.length}
+          </span>
+        </div>
         <label className="agent-square-search">
           <Search size={15} />
           <input
@@ -202,20 +181,14 @@ export function AgentSquareView({
             disabled={loading || refreshing}
           >
             <RefreshCw size={14} className={loading || refreshing ? "spinning" : ""} />
-            {loading || refreshing ? (zh ? "更新中" : "Refreshing") : (zh ? "刷新" : "Refresh")}
+            {refreshing ? (zh ? "更新中" : "Refreshing") : (zh ? "刷新" : "Refresh")}
           </button>
-          {filtersActive && (
-            <button className="agent-square-clear" type="button" onClick={clearFilters}>
-              <X size={14} />
-              {zh ? "清除" : "Clear"}
-            </button>
-          )}
         </div>
       </div>
 
       <div className="agent-square-content agent-square-empty-content">
         {error && <div className="agent-square-error">{error}</div>}
-        {platformStatus && platformStatus.state !== "loading" && (platformStatus.state !== "ready" || platformStatus.cacheState === "stale") && (
+        {platformStatus && (platformStatus.state !== "ready" || platformStatus.cacheState === "stale") && (
           <div className={platformStatus.state === "error" || platformStatus.state === "forbidden" || platformStatus.state === "requires_login" ? "agent-square-error" : "agent-square-notice"} role="status">
             <span>{getPlatformStatusMessage(platformStatus, zh)}</span>
             <small>
@@ -223,37 +196,31 @@ export function AgentSquareView({
             </small>
           </div>
         )}
-        {localAgents.length > 0 && (
+        {openDrSai && (
           <section className="agent-square-section">
             <h3>
-              <span><Server size={14} />{zh ? "本机智能体" : "Local agents"}</span>
-              <small>{localAgents.length}</small>
+              <Server size={14} />
+              {zh ? "本机 OpenDrSai" : "Local OpenDrSai"}
             </h3>
-            <div className="agent-square-grid">
-              {localAgents.map((agent) => <AgentCard
-                key={`${agent.source}:${agent.id}`}
-                agent={agent}
-                zh={zh}
-                selected={agent.id === selectedAgentId}
-                onConfigure={agent.id === "my-codex" || agent.mode === "oaep-runtime" ? undefined : () => setConfigOpen(true)}
-                onDetails={agent.id === "my-codex" || agent.mode === "oaep-runtime" ? () => setDetailAgent(agent) : undefined}
-                onStartChat={startChat}
-              />)}
-            </div>
+            <AgentFeaturedCard
+              agent={openDrSai}
+              zh={zh}
+              onConfigure={() => setConfigOpen((open) => !open)}
+              onStartChat={startChat}
+            />
           </section>
         )}
 
         {sections.length > 0 ? (
           sections.map((section) => (
             <section className="agent-square-section" key={section.group}>
-              <h3><span><Cloud size={14} />{getGroupLabel(section.group, zh)}</span><small>{section.agents.length}</small></h3>
+              <h3>{getGroupLabel(section.group, zh)}</h3>
               <div className="agent-square-grid">
                 {section.agents.map((agent) => (
                   <AgentCard
                     key={`${agent.source}:${agent.id}`}
                     agent={agent}
                     zh={zh}
-                    selected={agent.id === selectedAgentId}
                     onDetails={() => setDetailAgent(agent)}
                     onStartChat={startChat}
                   />
@@ -261,11 +228,15 @@ export function AgentSquareView({
               </div>
             </section>
           ))
-        ) : !loading && !refreshing ? (
+        ) : (
           <div className="agent-square-empty-state">
             <Sparkles size={18} />
             <span>
-              {search.trim() || group !== "all" || availability !== "all"
+              {loading
+                ? zh
+                  ? "正在读取智能体目录..."
+                  : "Loading agents..."
+                : search.trim() || group !== "all" || availability !== "all"
                   ? zh
                     ? "没有符合当前筛选条件的智能体。"
                     : "No agents match the current filters."
@@ -274,7 +245,7 @@ export function AgentSquareView({
                   : "No additional HAI agents are available for this account."}
             </span>
           </div>
-        ) : null}
+        )}
       </div>
       {detailAgent && (
         <AgentDetailDialog
@@ -295,8 +266,57 @@ export function AgentSquareView({
 
 function getGroupLabel(group: "local" | "official" | "mine", zh: boolean): string {
   if (group === "local") return zh ? "本地智能体" : "Local agents";
-  if (group === "mine") return zh ? "平台智能体" : "Platform agents";
+  if (group === "mine") return zh ? "我的平台智能体" : "My platform agents";
   return zh ? "平台官方智能体" : "Official platform agents";
+}
+
+function AgentFeaturedCard({
+  agent,
+  zh,
+  onConfigure,
+  onStartChat,
+}: {
+  agent: DesktopAgent;
+  zh: boolean;
+  onConfigure: () => void;
+  onStartChat: (agent: DesktopAgent) => void;
+}): React.JSX.Element {
+  const running = isAgentUsable(agent);
+  return (
+    <article className="agent-featured-card my-drsai-card">
+      <AgentLogo agent={agent} large />
+      <div>
+        <div className="agent-title-row">
+          <h2>{agent.name}</h2>
+          <AgentStatusPill agent={agent} zh={zh} />
+        </div>
+        {agent.source === "local" ? (
+          <div className="my-drsai-subtitle">
+            <span>运行在本机的智能体。</span>
+            <span>专属于您的AI智能体❤</span>
+          </div>
+        ) : (
+          <>
+            <span>{agent.owner}</span>
+            <p>{getAgentDescription(agent, zh)}</p>
+          </>
+        )}
+        {agent.error && <small className="agent-card-error">{agent.error}</small>}
+      </div>
+      <div className="agent-featured-actions">
+        <button type="button" className="secondary" data-testid="my-drsai-configure" onClick={onConfigure}>
+          <Settings size={15} />
+          <span>{zh ? "配置" : "Config"}</span>
+        </button>
+        {running && (
+          <button type="button" onClick={() => onStartChat(agent)}>
+            <span>{zh ? "开始使用" : "Use agent"}</span>
+            <ArrowRight size={15} />
+          </button>
+        )}
+      </div>
+    </article>
+  );
 }
 
 function OpenDrSaiConfigPanel({ zh, user, userGroups, workspacePath }: { zh: boolean; user: AuthUser | null; userGroups: string[]; workspacePath?: string }): React.JSX.Element {
@@ -712,47 +732,33 @@ function ConfigToggle({
 function AgentCard({
   agent,
   zh,
-  selected,
   onDetails,
-  onConfigure,
   onStartChat,
 }: {
   agent: DesktopAgent;
   zh: boolean;
-  selected: boolean;
-  onDetails?: () => void;
-  onConfigure?: () => void;
+  onDetails: () => void;
   onStartChat: (agent: DesktopAgent) => void;
 }): React.JSX.Element {
   const running = isAgentUsable(agent);
-  const capabilities = (agent.capabilities ?? []).slice(0, 3);
-  const remainingCapabilities = Math.max(0, (agent.capabilities?.length ?? 0) - capabilities.length);
   return (
-    <article className={`agent-card${running ? "" : " is-unavailable"}${selected ? " is-selected" : ""}`}>
-      <div className="agent-card-header">
-        <div className="agent-card-main">
+    <article className="agent-card">
+      <div className="agent-card-top">
+        <AgentStatusPill agent={agent} zh={zh} />
+      </div>
+      <div className="agent-card-main">
         <AgentLogo agent={agent} />
         <div>
           <h4>{agent.name}</h4>
-          <span>{getAgentOwner(agent, zh)}</span>
+          <span>{agent.owner}</span>
         </div>
-        </div>
-        <AgentStatusPill agent={agent} zh={zh} />
       </div>
       <p>{getAgentDescription(agent, zh)}</p>
-      {capabilities.length > 0 && (
-        <div className="agent-card-tags" aria-label={zh ? "智能体能力" : "Agent capabilities"}>
-          {capabilities.map((capability) => <span key={capability}>{getCapabilityLabel(capability, zh)}</span>)}
-          {remainingCapabilities > 0 && <span>+{remainingCapabilities}</span>}
-        </div>
-      )}
       {!running && <small className="agent-card-error">{getAgentUnavailableReason(agent, zh)}</small>}
       <div className="agent-card-actions">
-        {onConfigure
-          ? <button type="button" className="secondary" data-testid="my-drsai-configure" onClick={onConfigure}><Settings size={14} />{zh ? "配置" : "Configure"}</button>
-          : <button type="button" className="secondary" onClick={onDetails}>{zh ? "详情" : "Details"}</button>}
+        <button type="button" className="secondary" onClick={onDetails}>{zh ? "详情" : "Details"}</button>
         <button type="button" disabled={!running} onClick={() => onStartChat(agent)}>
-          {zh ? "开始使用" : "Use agent"}<ArrowRight size={14} />
+          {zh ? "开始使用" : "Use agent"}
         </button>
       </div>
     </article>
@@ -768,7 +774,7 @@ function AgentStatusPill({
 }): React.JSX.Element {
   return (
     <span className={`agent-status-pill ${agent.source} ${agent.status}${agent.catalogState === "cached" ? " cached" : ""}`}>
-      <i aria-hidden="true" />
+      <Server size={12} />
       {getStatusLabel(agent, zh)}
     </span>
   );
@@ -782,13 +788,10 @@ export function AgentLogo({
   large?: boolean;
 }): React.JSX.Element {
   const [failed, setFailed] = useState(false);
-  const logo = agent.logo || (agent.source === "local" && agent.id !== "my-codex" && agent.mode !== "oaep-runtime" ? drsaiLogo : undefined);
   return (
-    <span className={`agent-logo${agent.id === "my-codex" ? " codex-logo" : ""}${large ? " large" : ""}`}>
-      {agent.id === "my-codex" ? (
-        <OpenAiBrandIcon size={large ? 34 : 30} />
-      ) : logo && !failed ? (
-        <img src={logo} alt="" onError={() => setFailed(true)} />
+    <span className={`agent-logo ${large ? "large" : ""}`}>
+      {agent.logo && !failed ? (
+        <img src={agent.logo} alt="" onError={() => setFailed(true)} />
       ) : agent.name.slice(0, 1).toUpperCase()}
     </span>
   );
@@ -813,7 +816,7 @@ function AgentDetailDialog({
       <section ref={dialogRef} className="agent-detail-dialog" role="dialog" aria-modal="true" aria-label={agent.name}>
         <header>
           <AgentLogo agent={agent} large />
-          <div><h2>{agent.name}</h2><span>{getAgentOwner(agent, zh)}</span></div>
+          <div><h2>{agent.name}</h2><span>{agent.owner}</span></div>
           <button ref={initialFocusRef} type="button" className="icon-button" onClick={onClose} aria-label={zh ? "关闭" : "Close"}><X size={17} /></button>
         </header>
         <p>{getAgentDescription(agent, zh)}</p>
@@ -831,7 +834,6 @@ function AgentDetailDialog({
 }
 
 function getStatusLabel(agent: DesktopAgent, zh: boolean): string {
-  if (agent.id === "my-codex" || agent.catalogVisibility === "when_available") return zh ? "已启用" : "Enabled";
   if (agent.source === "local") return zh ? "本机" : "Local";
   if (agent.catalogState === "cached") return zh ? "缓存结果" : "Cached";
   return isAgentUsable(agent)
@@ -932,42 +934,29 @@ function getCapabilityLabel(capability: string, zh: boolean): string {
   return label ? label[zh ? 0 : 1] : capability;
 }
 
-function isSaiDoctor(agent: DesktopAgent): boolean {
-  return agent.name.trim() === "赛博士";
-}
-
 function getAgentDescription(agent: DesktopAgent, zh: boolean): string {
-  if (agent.id === "my-codex") {
-    return zh
-      ? "通过 Codex Adapter 接入的 OpenAI 官方编程智能体，任务过程遵循 OpenDrSai Agent 协议（OAEP），可复现。"
-      : "OpenAI's official coding agent, integrated through Codex Adapter with reproducible task execution under the OpenDrSai Agent Protocol (OAEP).";
-  }
-  if (agent.source === "local") {
-    return zh
-      ? "运行在本机并随桌面端自动就绪，可使用当前工作区、模型、技能和工具。"
-      : "Runs locally and becomes ready with Desktop, using the current workspace, models, skills, and tools.";
-  }
   const localized = agent.localizedDescription;
   const selected = zh ? localized?.zh ?? localized?.en : localized?.en ?? localized?.zh;
-  if (selected) return selected;
-  const text = agent.description.trim();
-  if (!text.startsWith("{") || !text.endsWith("}")) return text;
+  const resolved = resolveLocalizedText(selected, zh);
+  if (resolved) return resolved;
+  return resolveLocalizedText((agent.description ?? "").trim(), zh);
+}
+
+/** Match WebUI `getLocalizedDescription` for plain text or `{"zh","en"}` JSON. */
+function resolveLocalizedText(text: string | undefined, zh: boolean): string {
+  const value = (text ?? "").trim();
+  if (!value) return "";
+  if (!value.startsWith("{") || !value.endsWith("}")) return value;
   try {
-    const legacy = JSON.parse(text) as unknown;
-    if (!legacy || typeof legacy !== "object" || Array.isArray(legacy)) return text;
+    const legacy = JSON.parse(value) as unknown;
+    if (!legacy || typeof legacy !== "object" || Array.isArray(legacy)) return value;
     const record = legacy as Record<string, unknown>;
     const en = typeof record.en === "string" ? record.en.trim() : "";
     const zhText = typeof record.zh === "string" ? record.zh.trim() : "";
-    return (zh ? zhText || en : en || zhText) || text;
+    return (zh ? zhText || en : en || zhText) || value;
   } catch {
-    return text;
+    return value;
   }
-}
-
-function getAgentOwner(agent: DesktopAgent, zh: boolean): string {
-  if (agent.id === "my-codex") return "OpenAI";
-  if (agent.source === "local") return zh ? "本机运行" : "Local runtime";
-  return agent.owner;
 }
 
 function formatPlatformStatusMeta(status: PlatformAgentStatus, zh: boolean): string {
@@ -984,14 +973,7 @@ function formatPlatformStatusMeta(status: PlatformAgentStatus, zh: boolean): str
 
 function getPlatformStatusMessage(status: PlatformAgentStatus, zh: boolean): string {
   if (status.state === "loading") return zh ? "正在后台更新 HAI 智能体目录。" : "Refreshing the HAI agent catalog in the background.";
-  if (status.state === "requires_login") {
-    const expired = /expired|cannot be refreshed|rejected/i.test(status.message);
-    if (expired) return zh ? "HepAI 登录已失效，请重新登录。" : "Your HepAI session expired. Sign in again.";
-    if (/not a HepAI OIDC session/i.test(status.message)) {
-      return zh ? "当前是本地开发者会话，请登录 HepAI 后查看平台智能体。" : "This is a local developer session. Sign in with HepAI to view platform agents.";
-    }
-    return zh ? "请登录 HepAI 后查看平台智能体。" : "Sign in with HepAI to view platform agents.";
-  }
+  if (status.state === "requires_login") return zh ? "HepAI 登录已失效，请重新登录。" : "Your HepAI session expired. Sign in again.";
   if (status.state === "forbidden") return zh ? "当前账号无权读取 HAI 智能体目录。" : "This account cannot access the HAI agent catalog.";
   if (status.state === "native_api_unavailable") return zh ? "HAI 智能体目录当前不可用，本机 OpenDrSai 仍可使用。" : "The HAI agent catalog is unavailable. Local OpenDrSai remains usable.";
   if (status.cacheState === "stale") return zh ? "目录更新失败，当前显示上次缓存结果。" : "Catalog refresh failed; showing the last cached result.";

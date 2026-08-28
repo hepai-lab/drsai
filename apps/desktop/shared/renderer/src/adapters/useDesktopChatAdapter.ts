@@ -1323,10 +1323,9 @@ export function useDesktopChatAdapter({
       return;
     }
     if (action.type === "open-view") {
-      // Temporarily hide Skills management entry — keep for later reuse.
-      // if (action.viewId === "skills_square") {
-      //   onOpenSkillsSquare?.(action.target);
-      // }
+      if (action.viewId === "skills_square") {
+        onOpenSkillsSquare?.(action.target);
+      }
       return;
     }
     if (action.type === "set-input") {

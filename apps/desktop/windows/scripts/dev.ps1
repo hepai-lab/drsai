@@ -669,10 +669,14 @@ $env:OPENDRSAI_ACTIVE_PLATFORM = if ($IsProductionLaunch) { "production" } else 
 $env:OPENDRSAI_OIDC_ONLY = "1"
 $env:VITE_OPENDRSAI_OIDC_ONLY = "1"
 $PlatformPortalUrl = if ($IsProductionLaunch) { "https://ai.ihep.ac.cn" } else { "https://ai-dev.ihep.ac.cn" }
-$PlatformModelBaseUrl = if ($IsProductionLaunch) { "https://ai.ihep.ac.cn/apiv2/v1" } else { "https://ai-dev.ihep.ac.cn/apiv2/v1" }
+# WebUI test (drsaiv2) and production both use HepAI production base_url for
+# get_ddf_agents (aiapi). Desktop mirrors that for Agent Square in both launch
+# modes. Portal/OIDC stay on the launch-mode portal (ai-dev for Development).
+$PlatformApiBaseUrl = "https://aiapi.ihep.ac.cn/apiv2"
 $env:OPENDRSAI_PLATFORM_BASE_URL = $PlatformPortalUrl
-$env:OPENDRSAI_PLATFORM_API_BASE_URL = $PlatformModelBaseUrl
-$env:OPENDRSAI_MODEL_BASE_URL = $PlatformModelBaseUrl
+$env:OPENDRSAI_PLATFORM_API_BASE_URL = $PlatformApiBaseUrl
+$env:OPENDRSAI_MODEL_BASE_URL = "$PlatformApiBaseUrl/v1"
+$env:OPENDRSAI_DDF_API_BASE_URL = $PlatformApiBaseUrl
 $env:OPENDRSAI_OIDC_ISSUER = "$PlatformPortalUrl/api"
 $BuiltInSkillsDir = Join-Path $RepoRoot "skills\skills"
 if (-not (Test-Path -LiteralPath $BuiltInSkillsDir -PathType Container)) {
@@ -680,6 +684,22 @@ if (-not (Test-Path -LiteralPath $BuiltInSkillsDir -PathType Container)) {
 }
 $env:SYSTEM_SKILLS_DIR = $BuiltInSkillsDir
 Remove-Item Env:HEPAI_API_KEY, Env:OPENAI_API_KEY, Env:OPENAI_ADMIN_KEY -ErrorAction SilentlyContinue
+
+# Propagate GFS cloud settings from the repository .env into the desktop process.
+# desktop_gateway /v1/gfs/* reads DRSAI_GFS_* / GFS_* from process.env (inherited by
+# the spawned gateway). Without this, the restored GFS UI cannot connect.
+$RepoEnvFile = Join-Path $RepoRoot ".env"
+if (Test-Path -LiteralPath $RepoEnvFile) {
+    Get-Content -LiteralPath $RepoEnvFile | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line -or $line.StartsWith("#")) { return }
+        if ($line -match '^(DRSAI_GFS_ENABLED|DRSAI_GFS_MODE|GFS_[A-Z0-9_]+)\s*=\s*(.*)$') {
+            $name = $Matches[1]
+            $value = $Matches[2].Trim().Trim('"').Trim("'")
+            Set-Item -Path "Env:$name" -Value $value
+        }
+    }
+}
 
 # A fresh, isolated developer profile must not stall on an unreachable public
 # PyPI mirror.  The caller can override this with -PipIndexUrl (or the
@@ -742,7 +762,7 @@ Write-Host "  User data:   $ElectronUserData" -ForegroundColor Green
 Write-Host "  Surface:     workbench (desktop_gateway)" -ForegroundColor Green
 Write-Host "  Gateway:     http://127.0.0.1:$GatewayPort" -ForegroundColor Green
 Write-Host "  State home:  $env:DRSAI_DESKTOP_GATEWAY_HOME" -ForegroundColor Green
-Write-Host "  Platform:    $(if ($IsProductionLaunch) { 'HAI production (OIDC + models)' } else { 'HAI development (OIDC + models)' })" -ForegroundColor Green
+Write-Host "  Platform:    $(if ($IsProductionLaunch) { 'WebUI prod portal + HepAI aiapi (DDF)' } else { 'WebUI test: ai-dev OIDC + HepAI aiapi (DDF)' })" -ForegroundColor Green
 Write-Host "  Skills:      $BuiltInSkillsDir" -ForegroundColor Green
 Write-Host "  Pip index:   $($env:PIP_INDEX_URL)" -ForegroundColor Green
 Write-Host "  Desktop app: $DesktopDir" -ForegroundColor Green

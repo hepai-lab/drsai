@@ -257,5 +257,21 @@ class DesktopAgentManager:
         thread.updated_at = time.time()
         _database().upsert(thread)
 
+    async def evict_user(self, user_id: str | None = None) -> None:
+        """Drop cached agents for one user so skill/tool registry changes take effect."""
+        uid = effective_user_id(user_id)
+        prefix = f"{uid}::"
+        async with self._global_lock:
+            for key in list(self._agents):
+                if not key.startswith(prefix):
+                    continue
+                agent = self._agents.pop(key, None)
+                self._aliases.pop(key, None)
+                if agent is not None and hasattr(agent, "close"):
+                    try:
+                        await agent.close()
+                    except Exception as exc:  # pragma: no cover - best effort
+                        logger.debug("close() during evict_user failed for %s: %s", key, exc)
+
 
 __all__ = ["DesktopAgentManager"]

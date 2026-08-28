@@ -7,7 +7,7 @@ import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, ChatTurnCance
 import { LEGACY_MY_DRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
 import { normalizeRuntimeErrorEnvelope } from "../api/errorEnvelope";
 import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, type AuthContext } from "./auth";
-import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToDdfChatInput, respondToPlatformChatInput, stopPlatformChat } from "./agents";
+import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToDdfChatInput, respondToPlatformChatInput, resolvePlatformBearerToken, stopPlatformChat } from "./agents";
 import { getMyDrSaiAgentModelPolicy, listConfiguredAgents } from "./myDrSaiConfig";
 import {
   createChatToolTimelineAccumulator,
@@ -1100,15 +1100,16 @@ async function runChat(
     const resumeState: StreamResumeState = { content: "", fileEventKeys: new Set() };
     const recoveryStartedAt = Date.now();
     const send = async (authContext: AuthContext, recoveryAttempt: number): Promise<boolean> => {
-      if (!authContext.accessToken) {
-        throw new Error("Sign in with HepAI before using a platform agent.");
+      const bearer = resolvePlatformBearerToken(authContext);
+      if (!bearer) {
+        throw new Error("Sign in with HepAI or save a HepAI API key before using a platform agent.");
       }
       const response = await fetch(getPlatformAgentChatUrl(platformDescriptor.platformId), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            Authorization: `Bearer ${authContext.accessToken}`,
+            Authorization: `Bearer ${bearer}`,
             "Idempotency-Key": `desktop-chat-${requestId}`,
           },
           body: JSON.stringify({

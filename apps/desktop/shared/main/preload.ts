@@ -593,6 +593,10 @@ const api: DesktopApi = {
   getAgentCatalogSnapshot: (options) => ipcRenderer.invoke("desktop:get-agent-catalog-snapshot", options),
   setDefaultAgent: (agentId) => ipcRenderer.invoke("desktop:set-default-agent", agentId),
   recordAgentUsage: (agentId) => ipcRenderer.invoke("desktop:record-agent-usage", agentId),
+  getAgentPreferences: () => ipcRenderer.invoke("desktop:get-agent-preferences"),
+  testRemoteAgent: (request) => ipcRenderer.invoke("desktop:test-remote-agent", request),
+  saveRemoteAgent: (request) => ipcRenderer.invoke("desktop:save-remote-agent", request),
+  removeRemoteAgent: (agentId) => ipcRenderer.invoke("desktop:remove-remote-agent", agentId),
   getPlatformAgentStatus: () => ipcRenderer.invoke("desktop:get-platform-agent-status"),
   getMyDrSaiConfig: (workspacePath?: string): Promise<MyDrSaiConfig> =>
     ipcRenderer.invoke("desktop:get-my-drsai-config", workspacePath),

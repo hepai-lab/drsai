@@ -54,10 +54,12 @@ set "DRSAI_GATEWAY_DEV_MANAGED="
 set "DRSAI_GATEWAY_HOT_RELOAD="
 set "OPENDRSAI_WORKBENCH_EXTERNAL_RUNTIME="
 
-REM Platform URLs (development environment)
+REM Platform URLs — align with WebUI test (drsaiv2):
+REM OIDC/portal on ai-dev; DDF agent catalog on HepAI aiapi (same as WebUI get_ddf_agents).
 set "OPENDRSAI_PLATFORM_BASE_URL=https://ai-dev.ihep.ac.cn"
-set "OPENDRSAI_PLATFORM_API_BASE_URL=https://ai-dev.ihep.ac.cn/apiv2/v1"
-set "OPENDRSAI_MODEL_BASE_URL=https://ai-dev.ihep.ac.cn/apiv2/v1"
+set "OPENDRSAI_PLATFORM_API_BASE_URL=https://aiapi.ihep.ac.cn/apiv2"
+set "OPENDRSAI_MODEL_BASE_URL=https://aiapi.ihep.ac.cn/apiv2/v1"
+set "OPENDRSAI_DDF_API_BASE_URL=https://aiapi.ihep.ac.cn/apiv2"
 set "OPENDRSAI_OIDC_ISSUER=https://ai-dev.ihep.ac.cn/api"
 
 REM Built-in skills directory

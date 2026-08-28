@@ -99,11 +99,8 @@ import { PreviewBrowserPanel } from "./components/PreviewBrowserPanel";
 import { ProviderAnalyticsView } from "./components/ProviderAnalyticsView";
 import { SettingsPanel, type SettingsPane } from "./components/SettingsPanel";
 import { BackgroundTaskQueue } from "./components/SkillSquareView";
-// Temporarily hide Skills management UI — keep for later reuse.
-// import { SkillSquareView } from "./components/SkillSquareView";
-// import { SkillsManager } from "./components/SkillsManager";
-// Temporarily hide GFS cloud UI — keep for later reuse.
-// import { GfsView } from "./components/GfsView";
+import { SkillsManager } from "./components/SkillsManager";
+import { GfsView } from "./components/GfsView";
 import { TaskCenterView } from "./components/TaskCenterView";
 import { MobilePairingDialog } from "./components/MobilePairingDialog";
 import { FeedbackDialog } from "./components/FeedbackDialog";
@@ -136,8 +133,7 @@ import {
   useDesktopChatAdapter,
 } from "./adapters/useDesktopChatAdapter";
 import { stripAttachmentContextFromUserContent } from "@shared/attachmentContextDisplay";
-// Temporarily hide Skills management entry — keep for later reuse.
-// import type { ChatCommandAction } from "./chatCommands";
+import type { ChatCommandAction } from "./chatCommands";
 import type { DesktopPlatformDescriptor } from "@shared/platform";
 import { redactSensitiveData } from "../../api/sensitiveData";
 import { buildLocalDesktopDataExport } from "./localDataExport";
@@ -330,9 +326,8 @@ function AuthenticatedApp({
       window.removeEventListener("online", handleOnline);
     };
   }, []);
-  // Temporarily hide Skills management entry — keep for later reuse.
-  // const [skillSquareCommandTarget, setSkillSquareCommandTarget] =
-  //   useState<Extract<ChatCommandAction, { type: "open-view" }>["target"] | null>(null);
+  const [skillSquareCommandTarget, setSkillSquareCommandTarget] =
+    useState<Extract<ChatCommandAction, { type: "open-view" }>["target"] | null>(null);
   const [navHistory, setNavHistory] = useState<NavId[]>([
     MENU_IDS.currentSession,
   ]);
@@ -722,6 +717,7 @@ function AuthenticatedApp({
   );
   const remotePlatformChatAvailable = Boolean(
     selectedChatAgent?.source === "remote"
+    && !selectedChatAgent.id.startsWith("device-remote:")
     && selectedChatAgent.available !== false
     && selectedChatAgent.status === "running",
   );
@@ -771,12 +767,10 @@ function AuthenticatedApp({
       showCompletionNotification(completionNotifications, language, false);
     },
     onForkThreadCreated: handleForkThreadCreated,
-    // Temporarily hide Skills management entry — keep for later reuse.
-    // onOpenSkillsSquare: (target) => {
-    //   setSkillSquareCommandTarget(target ?? null);
-    //   setActiveNav(MENU_IDS.skillsSquare);
-    // },
-    onOpenSkillsSquare: () => undefined,
+    onOpenSkillsSquare: (target) => {
+      setSkillSquareCommandTarget(target ?? null);
+      setActiveNav(MENU_IDS.skillsSquare);
+    },
     onSelectAgent: handleChatAgentSelect,
     onSelectModel: handleChatModelSelect,
     onThreadUpdated: handleThreadUpdated,
@@ -3036,14 +3030,12 @@ function AuthenticatedApp({
         />
       </section>
     ) : activeNav === MENU_IDS.skillsSquare ? (
-      // Temporarily hide Skills management page — keep for later reuse.
-      // <section className="skills-square-panel skills-manager-panel">
-      //   <SkillsManager
-      //     activeThreadId={activeThreadId}
-      //     language={language}
-      //   />
-      // </section>
-      null
+      <section className="skills-square-panel skills-manager-panel">
+        <SkillsManager
+          activeThreadId={activeThreadId}
+          language={language}
+        />
+      </section>
     ) : activeNav === MENU_IDS.myAgents ? (
       <AgentRunWorkspace
         fileContextAttachments={workspaceContextAttachments}
@@ -3099,9 +3091,7 @@ function AuthenticatedApp({
     ) : activeNav === MENU_IDS.usageAnalytics ? (
       <ProviderAnalyticsView language={language} />
     ) : activeNav === MENU_IDS.library ? (
-      // Temporarily hide GFS cloud page — keep for later reuse.
-      // <GfsView language={language} />
-      null
+      <GfsView language={language} />
     ) : activeNav === MENU_IDS.profile ? (
       <ModelSettingsContainer
         initialProvider={myDrSaiConfig?.modelConnection?.model_provider}
@@ -3570,10 +3560,8 @@ function AuthenticatedApp({
       setRightPanelCollapsed(false);
       navigateTo(MENU_IDS.currentSession);
     } else {
-      // Temporarily hide Skills management entry — keep for later reuse.
-      // setSkillSquareCommandTarget({ query: task.targetId || task.title, source: "slash_command" });
-      // navigateTo(MENU_IDS.skillsSquare);
-      navigateTo(MENU_IDS.currentSession);
+      setSkillSquareCommandTarget({ query: task.targetId || task.title, source: "slash_command" });
+      navigateTo(MENU_IDS.skillsSquare);
     }
     setAwaySummary(null);
   }
@@ -4073,16 +4061,25 @@ function loadSidebarComponents(): SidebarComponentVisibility {
   const defaults: SidebarComponentVisibility = {
     square: true,
     agents: true,
-    skills: false,
+    skills: true,
   };
+  const restoreKey = "opendrsai.sidebarComponents.skillsRestore.v1";
   try {
     const value = JSON.parse(window.localStorage.getItem(SIDEBAR_COMPONENTS_STORAGE_KEY) ?? "null") as Partial<SidebarComponentVisibility> | null;
     if (!value || typeof value !== "object") return defaults;
-    return {
+    const restored: SidebarComponentVisibility = {
       square: typeof value.square === "boolean" ? value.square : defaults.square,
       agents: typeof value.agents === "boolean" ? value.agents : defaults.agents,
       skills: typeof value.skills === "boolean" ? value.skills : defaults.skills,
     };
+    // Skills was temporarily hidden with default false; restore once so existing
+    // localStorage does not keep the entry invisible after re-enable.
+    if (!window.localStorage.getItem(restoreKey) && restored.skills === false) {
+      restored.skills = true;
+      window.localStorage.setItem(restoreKey, "1");
+      window.localStorage.setItem(SIDEBAR_COMPONENTS_STORAGE_KEY, JSON.stringify(restored));
+    }
+    return restored;
   } catch {
     return defaults;
   }

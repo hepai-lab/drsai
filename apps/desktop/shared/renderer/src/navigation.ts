@@ -101,6 +101,7 @@ const navDefinitions: Array<{
     id: "chat",
     items: [
       { id: MENU_IDS.currentSession, enabled: true },
+      { id: MENU_IDS.library, enabled: true },
       { id: MENU_IDS.results, enabled: true },
     ],
   },

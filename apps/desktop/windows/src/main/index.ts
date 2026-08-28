@@ -1,4 +1,4 @@
-import "./developmentLaunchEnvironment";
+﻿import "./developmentLaunchEnvironment";
 import { execFile, spawn, type ChildProcess } from "child_process";
 import {
   createReadStream,
@@ -218,22 +218,25 @@ import {
   revealThreadShare,
 } from "./threadShare";
 import {
-  // V2: trimmed — listInstalledSkills, installSkill, uninstallSkill, updateSkill, reloadSkills
+  listInstalledSkills,
   listAvailableSkills,
   getSkillContent,
+  installSkill,
+  uninstallSkill,
+  updateSkill,
+  reloadSkills,
 } from "./skills";
-// V2: trimmed — gateway never mounted gfs routes
-// import {
-//   gfsList,
-//   gfsStat,
-//   gfsRead,
-//   gfsWrite,
-//   gfsUploadFile,
-//   gfsDownloadFile,
-//   gfsDelete,
-//   gfsShareUrl,
-//   gfsHealthcheck,
-// } from "./gfs";
+import {
+  gfsList,
+  gfsStat,
+  gfsRead,
+  gfsWrite,
+  gfsUploadFile,
+  gfsDownloadFile,
+  gfsDelete,
+  gfsShareUrl,
+  gfsHealthcheck,
+} from "./gfs";
 import {
   getRuntimeThreadSnapshot,
   getRuntimeThreadSnapshotEnvelope,
@@ -5821,65 +5824,63 @@ function registerIpc(): void {
   );
 
   // Skills (gateway-managed)
-  // V2: trimmed — gateway has no skills management routes (skills loaded with agent)
-  // secureHandle("desktop:list-installed-skills", (_event, request) =>
-  //   listInstalledSkills((request as { userId?: string } | undefined)?.userId),
-  // );
+  secureHandle("desktop:list-installed-skills", (_event, request) =>
+    listInstalledSkills((request as { userId?: string } | undefined)?.userId),
+  );
   secureHandle("desktop:list-available-skills", (_event, request) =>
     listAvailableSkills((request as { userId?: string } | undefined)?.userId),
   );
   secureHandle("desktop:get-skill-content", (_event, request) =>
     getSkillContent((request as { skillPath: string }).skillPath),
   );
-  // secureHandle("desktop:install-skill", (_event, request) =>
-  //   installSkill(request as Parameters<typeof installSkill>[0]),
-  // );
-  // secureHandle("desktop:uninstall-skill", (_event, request) => {
-  //   const r = request as { name: string; userId?: string };
-  //   return uninstallSkill(r.name, r.userId);
-  // });
-  // secureHandle("desktop:update-skill", (_event, request) => {
-  //   const r = request as { name: string; content: string; userId?: string };
-  //   return updateSkill(r.name, r.content, r.userId);
-  // });
-  // secureHandle("desktop:reload-skills", (_event, request) => {
-  //   const r = (request ?? {}) as { threadId?: string; userId?: string };
-  //   return reloadSkills(r.threadId, r.userId);
-  // });
+  secureHandle("desktop:install-skill", (_event, request) =>
+    installSkill(request as Parameters<typeof installSkill>[0]),
+  );
+  secureHandle("desktop:uninstall-skill", (_event, request) => {
+    const r = request as { name: string; userId?: string };
+    return uninstallSkill(r.name, r.userId);
+  });
+  secureHandle("desktop:update-skill", (_event, request) => {
+    const r = request as { name: string; content: string; userId?: string };
+    return updateSkill(r.name, r.content, r.userId);
+  });
+  secureHandle("desktop:reload-skills", (_event, request) => {
+    const r = (request ?? {}) as { threadId?: string; userId?: string };
+    return reloadSkills(r.threadId, r.userId);
+  });
 
   // GFS cloud storage
-  // V2: trimmed — gateway never mounted gfs routes
-  // secureHandle("desktop:gfs-list", (_event, request) =>
-  //   gfsList(request as Parameters<typeof gfsList>[0]),
-  // );
-  // secureHandle("desktop:gfs-stat", (_event, request) =>
-  //   gfsStat((request as { path: string }).path),
-  // );
-  // secureHandle("desktop:gfs-read", (_event, request) =>
-  //   gfsRead((request as { path: string }).path),
-  // );
-  // secureHandle("desktop:gfs-write", (_event, request) => {
-  //   const r = request as { path: string; content: string; contentType?: string };
-  //   return gfsWrite(r.path, r.content, r.contentType);
-  // });
-  // secureHandle("desktop:gfs-upload-file", (_event, request) =>
-  //   gfsUploadFile(request as Parameters<typeof gfsUploadFile>[0]),
-  // );
-  // secureHandle("desktop:gfs-download-file", (_event, request) =>
-  //   gfsDownloadFile(request as Parameters<typeof gfsDownloadFile>[0]),
-  // );
-  // secureHandle("desktop:gfs-delete", (_event, request) =>
-  //   gfsDelete((request as { path: string }).path),
-  // );
-  // secureHandle("desktop:gfs-share-url", (_event, request) => {
-  //   const r = request as {
-  //     path: string;
-  //     ttlMinutes?: number;
-  //     responseContentType?: string;
-  //   };
-  //   return gfsShareUrl(r.path, r.ttlMinutes, r.responseContentType);
-  // });
-  // secureHandle("desktop:gfs-healthcheck", () => gfsHealthcheck());
+  secureHandle("desktop:gfs-list", (_event, request) =>
+    gfsList(request as Parameters<typeof gfsList>[0]),
+  );
+  secureHandle("desktop:gfs-stat", (_event, request) =>
+    gfsStat((request as { path: string }).path),
+  );
+  secureHandle("desktop:gfs-read", (_event, request) =>
+    gfsRead((request as { path: string }).path),
+  );
+  secureHandle("desktop:gfs-write", (_event, request) => {
+    const r = request as { path: string; content: string; contentType?: string };
+    return gfsWrite(r.path, r.content, r.contentType);
+  });
+  secureHandle("desktop:gfs-upload-file", (_event, request) =>
+    gfsUploadFile(request as Parameters<typeof gfsUploadFile>[0]),
+  );
+  secureHandle("desktop:gfs-download-file", (_event, request) =>
+    gfsDownloadFile(request as Parameters<typeof gfsDownloadFile>[0]),
+  );
+  secureHandle("desktop:gfs-delete", (_event, request) =>
+    gfsDelete((request as { path: string }).path),
+  );
+  secureHandle("desktop:gfs-share-url", (_event, request) => {
+    const r = request as {
+      path: string;
+      ttlMinutes?: number;
+      responseContentType?: string;
+    };
+    return gfsShareUrl(r.path, r.ttlMinutes, r.responseContentType);
+  });
+  secureHandle("desktop:gfs-healthcheck", () => gfsHealthcheck());
 
   secureHandle("desktop:prepare-fork-worktree", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");

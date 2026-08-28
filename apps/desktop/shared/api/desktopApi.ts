@@ -3473,6 +3473,31 @@ export interface DesktopAgentPreferenceResult {
   message: string;
 }
 
+export interface DesktopAgentPreferences {
+  defaultAgentId: string | null;
+  recentAgentIds: string[];
+}
+
+export interface DesktopRemoteAgentTestRequest {
+  name: string;
+  url: string;
+  apiKey: string;
+}
+
+export interface DesktopRemoteAgentTestResult {
+  ok: boolean;
+  message: string;
+  agentInfo?: Record<string, unknown>;
+}
+
+export interface DesktopRemoteAgentSaveRequest {
+  name: string;
+  url: string;
+  apiKey: string;
+  id?: string;
+  agentInfo?: Record<string, unknown>;
+}
+
 export interface MyDrSaiReasoningConfig {
   supported?: boolean;
   effort_levels?: string[];
@@ -5774,6 +5799,10 @@ export interface DesktopApi {
   getAgentCatalogSnapshot(options?: DesktopAgentListOptions): Promise<DesktopAgentCatalogSnapshot>;
   setDefaultAgent(agentId: string): Promise<DesktopAgentPreferenceResult>;
   recordAgentUsage(agentId: string): Promise<DesktopAgentPreferenceResult>;
+  getAgentPreferences(): Promise<DesktopAgentPreferences>;
+  testRemoteAgent(request: DesktopRemoteAgentTestRequest): Promise<DesktopRemoteAgentTestResult>;
+  saveRemoteAgent(request: DesktopRemoteAgentSaveRequest): Promise<DesktopAgent>;
+  removeRemoteAgent(agentId: string): Promise<{ removed: boolean }>;
   getPlatformAgentStatus(): Promise<PlatformAgentStatus>;
   getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiConfig>;
   getMyDrSaiRuntimeModelCatalog(): Promise<RuntimeModelCatalog>;

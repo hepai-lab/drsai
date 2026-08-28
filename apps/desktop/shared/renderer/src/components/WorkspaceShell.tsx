@@ -3,9 +3,9 @@ import {
   ArrowDownAZ,
   ArrowLeft,
   ArrowRight,
-  CalendarClock,
+  // Temporarily unused while Scheduled nav is hidden — keep for later reuse.
+  // CalendarClock,
   ChevronDown,
-  // Temporarily unused while GFS cloud entry is hidden — keep for later reuse.
   Cloud,
   Copy,
   FileText,
@@ -419,16 +419,15 @@ export function WorkspaceShell({
     { id: "help", label: zh ? "帮助" : "Help" },
   ];
   const agentItems = sidebarComponents.square
-    ? getEnabledNavItems(navSections, "agents").filter((item) =>
-        item.id === MENU_IDS.agentSquare
-          ? sidebarComponents.agents
-          : item.id === MENU_IDS.skillsSquare
-            ? sidebarComponents.skills
-            : true,
-      )
+    ? getEnabledNavItems(navSections, "agents").filter((item) => {
+        if (item.id === MENU_IDS.skillsSquare) return false;
+        if (item.id === MENU_IDS.agentSquare) return sidebarComponents.agents;
+        return true;
+      })
     : [];
   const agentSectionLabel = navSections.find((section) => section.id === "agents")?.label ?? (zh ? "广场" : "Square");
-  const resultsItem = getEnabledNavItems(navSections, "chat").find((item) => item.id === MENU_IDS.results);
+  const libraryItem = getEnabledNavItems(navSections, "chat").find((item) => item.id === MENU_IDS.library);
+  const skillsItem = getEnabledNavItems(navSections, "agents").find((item) => item.id === MENU_IDS.skillsSquare);
   const workspaceItems = getEnabledNavItems(navSections, "workspace");
   const workspaceDetails = workspaces.find((workspace) => workspace.id === workspaceDetailsId) ?? null;
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0] ?? null;
@@ -1096,13 +1095,16 @@ export function WorkspaceShell({
   function openThreadMenu(event: React.MouseEvent, thread: WorkspaceThread): void {
     event.preventDefault();
     event.stopPropagation();
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const anchorX = rect.right;
+    const anchorY = rect.bottom + 4;
     setThreadMenu({
       thread,
-      anchorX: event.clientX,
-      anchorY: event.clientY,
-      x: event.clientX,
-      y: event.clientY,
-      preferAbove: event.clientY > window.innerHeight * 0.55,
+      anchorX,
+      anchorY,
+      x: anchorX,
+      y: anchorY,
+      preferAbove: anchorY > window.innerHeight * 0.55,
     });
   }
 
@@ -1403,48 +1405,63 @@ export function WorkspaceShell({
   }
 
   function renderWorkspaceThread(thread: WorkspaceThread, showSourceIcon: boolean): React.JSX.Element {
+    const menuOpen = threadMenu?.thread.id === thread.id;
     return (
-      <button
+      <div
         key={thread.id}
-        type="button"
-        className={`thread-item workspace-thread-item ${showSourceIcon ? "has-source-icon " : ""}${thread.active ? "active" : ""}${thread.activity.kind === "error" ? " failed" : ""}`}
-        onClick={() => onThreadSelect(thread.id)}
-        onContextMenu={(event) => openThreadMenu(event, thread)}
+        className={`workspace-thread-row${thread.active ? " active" : ""}${thread.activity.kind === "error" ? " failed" : ""}${menuOpen ? " menu-open" : ""}`}
       >
-        <span>
-          {thread.unread && <b className="thread-unread-dot" aria-hidden />}
-          {thread.pinned && <b className="thread-pinned-mark" aria-hidden>{"\u2022"}</b>}
-          {thread.fork && (
-            <b
-              className={`thread-fork-mark ${thread.fork.queueStatus ? `queue-${thread.fork.queueStatus}` : ""}`}
-              title={[
-                `Fork worktree: ${thread.fork.worktreePath}`,
-                thread.fork.queueStatus ? `Queue: ${thread.fork.queueStatus}` : "",
-              ].filter(Boolean).join("\n")}
-            >
-              {thread.fork.queueStatus === "waiting_approval" ? "Wait" : thread.fork.queueStatus === "ready" ? "Ready" : "Fork"}
-            </b>
-          )}
-          {thread.title}
-        </span>
-        <span className="thread-item-status">
-          {thread.activity.kind === "idle" ? (
-            <time>{thread.timeLabel}</time>
-          ) : thread.activity.kind === "error" ? (
-            <span
-              className="thread-activity-failed"
-              role="status"
-              aria-label={zh ? "失败" : "Failed"}
-              title={zh ? "失败" : "Failed"}
-            >
-              {zh ? "失败" : "Failed"}
-            </span>
-          ) : (
-            <ThreadActivityBubble state={thread.activity} language={language} />
-          )}
-        </span>
-        {showSourceIcon && <ThreadSourceIcon source={thread.source} zh={zh} />}
-      </button>
+        <button
+          type="button"
+          className={`thread-item workspace-thread-item ${showSourceIcon ? "has-source-icon " : ""}${thread.active ? "active" : ""}${thread.activity.kind === "error" ? " failed" : ""}`}
+          onClick={() => onThreadSelect(thread.id)}
+        >
+          <span>
+            {thread.unread && <b className="thread-unread-dot" aria-hidden />}
+            {thread.pinned && <b className="thread-pinned-mark" aria-hidden>{"\u2022"}</b>}
+            {thread.fork && (
+              <b
+                className={`thread-fork-mark ${thread.fork.queueStatus ? `queue-${thread.fork.queueStatus}` : ""}`}
+                title={[
+                  `Fork worktree: ${thread.fork.worktreePath}`,
+                  thread.fork.queueStatus ? `Queue: ${thread.fork.queueStatus}` : "",
+                ].filter(Boolean).join("\n")}
+              >
+                {thread.fork.queueStatus === "waiting_approval" ? "Wait" : thread.fork.queueStatus === "ready" ? "Ready" : "Fork"}
+              </b>
+            )}
+            {thread.title}
+          </span>
+          <span className="thread-item-status">
+            {thread.activity.kind === "idle" ? (
+              <time>{thread.timeLabel}</time>
+            ) : thread.activity.kind === "error" ? (
+              <span
+                className="thread-activity-failed"
+                role="status"
+                aria-label={zh ? "失败" : "Failed"}
+                title={zh ? "失败" : "Failed"}
+              >
+                {zh ? "失败" : "Failed"}
+              </span>
+            ) : (
+              <ThreadActivityBubble state={thread.activity} language={language} />
+            )}
+          </span>
+          {showSourceIcon && <ThreadSourceIcon source={thread.source} zh={zh} />}
+        </button>
+        <button
+          className="thread-menu-button"
+          type="button"
+          aria-label={zh ? "对话操作" : "Conversation actions"}
+          title={zh ? "对话操作" : "Conversation actions"}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={(event) => openThreadMenu(event, thread)}
+        >
+          <MoreHorizontal size={14} />
+        </button>
+      </div>
     );
   }
 
@@ -2483,14 +2500,22 @@ export function WorkspaceShell({
             />
           </div>
           <div className="sidebar-action-list">
-            <SidebarButton active={activeNav === MENU_IDS.savedPlan} icon={CalendarClock} label={zh ? "已安排" : "Scheduled"} onClick={() => onNavChange(MENU_IDS.savedPlan)} />
-            {resultsItem ? (
+            {libraryItem ? (
               <SidebarButton
-                active={activeNav === MENU_IDS.results}
-                icon={navIcons[MENU_IDS.results]}
-                label={resultsItem.label}
-                navId={MENU_IDS.results}
-                onClick={() => onNavChange(MENU_IDS.results)}
+                active={activeNav === MENU_IDS.library}
+                icon={Cloud}
+                label={libraryItem.label}
+                navId={MENU_IDS.library}
+                onClick={() => onNavChange(MENU_IDS.library)}
+              />
+            ) : null}
+            {skillsItem ? (
+              <SidebarButton
+                active={activeNav === MENU_IDS.skillsSquare}
+                icon={navIcons[MENU_IDS.skillsSquare]}
+                label={skillsItem.label}
+                navId={MENU_IDS.skillsSquare}
+                onClick={() => onNavChange(MENU_IDS.skillsSquare)}
               />
             ) : null}
           </div>
@@ -2537,8 +2562,6 @@ export function WorkspaceShell({
           )}
 
             {workspaceItems.map(({ id, label }) => {
-            // Temporarily hide GFS cloud icon special-case — keep for later reuse.
-            // const Icon = id === MENU_IDS.library ? Cloud : navIcons[id];
             const Icon = navIcons[id];
             return (
               <SidebarButton

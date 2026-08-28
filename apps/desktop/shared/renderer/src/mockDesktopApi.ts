@@ -2334,6 +2334,28 @@ export function installMockDesktopApi(): void {
       saved: true,
       message: "Mock agent usage recorded.",
     }),
+    getAgentPreferences: async () => ({
+      defaultAgentId: null,
+      recentAgentIds: [],
+    }),
+    testRemoteAgent: async () => ({
+      ok: true,
+      message: "Mock remote agent connection verified.",
+      agentInfo: { id: "mock-remote", owner: "Mock", description: "Mock remote agent" },
+    }),
+    saveRemoteAgent: async (request) => ({
+      id: `device-remote:mock`,
+      name: request.name,
+      description: "Mock remote agent",
+      owner: "Mock",
+      source: "remote" as const,
+      status: "running" as const,
+      mode: "remote",
+      available: true,
+      catalogGroup: "mine" as const,
+      url: request.url,
+    }),
+    removeRemoteAgent: async () => ({ removed: true }),
     getPlatformAgentStatus: async () => ({
       state: "ready",
       apiVersion: "fixture-v1",
