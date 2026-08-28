@@ -22,7 +22,6 @@ import PlanPreview from "./components/PlanPreview";
 import SkillAttachModal from "./components/SkillAttachModal";
 
 import type { ChatInputHandle, ChatInputProps } from "./types";
-import { SKILL_INSTALL_DEFAULT_LINE } from "./types";
 import { resolveUploadedFiles } from "./utils/resolveUploadedFiles";
 
 const getTextAreaDefaultHeight = () => "52px";
@@ -224,9 +223,9 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
       doResetInput: boolean = true
     ) => {
       if (attachedPlan) {
-        onSubmit(query, files as any, accepted, attachedPlan, selectedLlm);
+        onSubmit(query, files as any, accepted, attachedPlan, selectedLlm, attachedSkills);
       } else {
-        onSubmit(query, files as any, accepted, undefined, selectedLlm);
+        onSubmit(query, files as any, accepted, undefined, selectedLlm, attachedSkills);
       }
 
       if (doResetInput) {
@@ -255,13 +254,10 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
         query = "请帮我分析这些文件。";
       }
 
-      if (attachedSkills.length > 0) {
-        const urlBlock = attachedSkills.map((s) => s.url).join("\n");
-        const base = query.trim();
-        query = base
-          ? `${base}\n\n${SKILL_INSTALL_DEFAULT_LINE}\n\n${urlBlock}`
-          : `${SKILL_INSTALL_DEFAULT_LINE}\n\n${urlBlock}`;
-      }
+      console.debug("[skill debug][chatinput] before submit", {
+        attachedSkills: attachedSkills.map((s) => ({ id: s.id, source: s.source })),
+        query,
+      });
 
       const resolved = resolveUploadedFiles({
         fileList,
@@ -498,10 +494,8 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
                       darkMode={darkMode}
                       isInputDisabled={isInputDisabled}
                       fileCount={fileList.length}
-                      skillCount={attachedSkills.length}
                       attachFileInputRef={attachFileInputRef}
                       onAttachFileChange={handleAttachFileInputChange}
-                      onOpenSkillModal={openSkillAttachModal}
                     />
                   )}
                   <textarea
@@ -551,6 +545,8 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
                   llmList={llmList}
                   selectedLlmLabel={selectedLlmLabel}
                   onSelect={handleLLMSelect}
+                  skillCount={attachedSkills.length}
+                  onOpenSkillModal={openSkillAttachModal}
                 />
               </div>
             </div>

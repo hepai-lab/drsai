@@ -3,13 +3,13 @@
     position: relative;
 }
 
-/* 输入框底部模型切换栏 */
+/* 输入框底部模型 / Skill 切换栏 */
 .chat-input-model-bar {
-    min-height: 2.25rem;
+    min-height: 2.5rem;
 }
 
 .chat-input-model-trigger:focus-visible {
-    outline: 2px solid rgba(139, 92, 246, 0.5);
+    outline: 2px solid rgba(139, 92, 246, 0.55);
     outline-offset: 2px;
 }
 

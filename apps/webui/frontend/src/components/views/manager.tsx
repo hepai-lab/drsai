@@ -320,6 +320,7 @@ export const SessionManager: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [pendingMenuId, setPendingMenuId] = useState<MenuId | null>(null);
+  const [skillsSubTab, setSkillsSubTab] = useState("skills_public");
 
   const menuFromUrl = useMemo(
     () => getMenuIdFromSearch(location.search),
@@ -461,6 +462,19 @@ export const SessionManager: React.FC = () => {
       }
     },
     [isCompact, navigateToMenu]
+  );
+
+  const handleSkillsSubTabChange = useCallback(
+    (subTabId: string) => {
+      setSkillsSubTab(subTabId);
+      // Clear skill param when navigating to a fresh sub-tab
+      const params = new URLSearchParams(location.search);
+      params.delete("skill");
+      params.set("menu", String(MENU_IDS.skillsSquare));
+      params.set("view", String(DEFAULT_VIEW_ID));
+      navigate(`?${params.toString()}`);
+    },
+    [location.search, navigate]
   );
 
   const { user, darkMode } = useContext(appContext);
@@ -974,7 +988,7 @@ export const SessionManager: React.FC = () => {
     // selectedAgent 来自 zustand persist，刷新后会从 localStorage 恢复旧值，
     // 而此时 agentInfo 还为 null（异步请求未完成），会导致非 DocMaster 时也显示"专属功能"。
     const name = (agentInfo as { name?: string } | null | undefined)?.name || "";
-    return name === "DocMaster";
+    return name === "DocMaster" || name === "DocMaster-test";
   }, [agentInfo]);
 
   // Auto-open right panel when DocMaster agent is selected, close when switching away.
@@ -1684,6 +1698,8 @@ export const SessionManager: React.FC = () => {
         onSubMenuChange={handleSubMenuChange}
         showAdminNav={showAdminNav}
         leftMenuHistory={rightPanelHistory}
+        skillsSubTab={skillsSubTab}
+        onSkillsSubTabChange={handleSkillsSubTabChange}
         rightPanelTemplates={isDocMaster ? rightPanelTemplates : undefined}
         rightPanelGuanlianyewu={rightPanelGuanlianyewu}
         rightPanelZongheCailiao={rightPanelZongheCailiao}
@@ -1717,9 +1733,9 @@ export const SessionManager: React.FC = () => {
                     agent={chatAgent}
                     suppressSampleTasks={sampleTasksDismissed}
                     onDismissSampleTasks={() => setSampleTasksDismissed(true)}
-                    onSubmit={async (agent, query, files, plan, llm) => {
+                    onSubmit={async (agent, query, files, plan, llm, attachedSkills) => {
                       setSampleTasksDismissed(true);
-                      await createNewChatSession(agent, query, files, plan, llm);
+                      await createNewChatSession(agent, query, files, plan, llm, attachedSkills);
                     }}
                   />
                 </Suspense>
@@ -1783,7 +1799,7 @@ export const SessionManager: React.FC = () => {
           </div>
         ) : activeSubMenuItem === MENU_IDS.skillsSquare ? (
           <Suspense fallback={<MenuPanelFallback />}>
-            <SkillsSquarePage />
+            <SkillsSquarePage skillsSubTab={skillsSubTab} />
           </Suspense>
         ) : activeSubMenuItem === MENU_IDS.cloud ? (
           <Suspense fallback={<MenuPanelFallback />}>

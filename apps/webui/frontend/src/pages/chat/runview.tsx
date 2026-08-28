@@ -10,6 +10,7 @@ import { IPlanStep, IPlan } from "../../components/types/plan";
 import ApprovalButtons from "./approval_buttons";
 import ChatInput from "./chat/chatinput";
 import type { ServerUploadedFileInfo } from "./chat/hooks/useFileUpload";
+import type { HepaiSkillPickRow } from "./chat/types";
 import { IStatus } from "../../components/types/app";
 import { RcFile } from "antd/es/upload";
 import AgentPanel from "./panels/AgentPanel";
@@ -322,7 +323,8 @@ interface RunViewProps {
       url?: string;
     }>,
     llm?: { label: string; value: string },
-    inputMetadata?: Record<string, unknown>
+    inputMetadata?: Record<string, unknown>,
+    attachedSkills?: HepaiSkillPickRow[]
   ) => void;
   onRunTask?: (
     query: string,
@@ -337,7 +339,8 @@ interface RunViewProps {
     }>,
     plan?: IPlan,
     fresh_socket?: boolean,
-    llm?: { label: string; value: string }
+    llm?: { label: string; value: string },
+    attachedSkills?: HepaiSkillPickRow[]
   ) => void;
   onCancel?: () => void;
   error?: IStatus | null;
@@ -1993,7 +1996,8 @@ const RunView: React.FC<RunViewProps> = ({
                 }>,
                 accepted = false,
                 plan?: IPlan,
-                llm?: { label: string; value: string }
+                llm?: { label: string; value: string },
+                attachedSkills?: HepaiSkillPickRow[]
               ) => {
                 scrollToBottom("auto", true);
                 if (run.status === "awaiting_input") {
@@ -2002,7 +2006,9 @@ const RunView: React.FC<RunViewProps> = ({
                     accepted,
                     plan,
                     files,
-                    llm
+                    llm,
+                    undefined,
+                    attachedSkills
                   );
                 } else {
                   onRunTask?.(
@@ -2010,7 +2016,8 @@ const RunView: React.FC<RunViewProps> = ({
                     files,
                     plan,
                     true,
-                    llm
+                    llm,
+                    attachedSkills
                   );
                 }
               }}

@@ -2,12 +2,13 @@ import { Bot, ChevronRight, Files, PanelLeftOpen, Plus } from "lucide-react";
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   MENU_IDS,
+  DEFAULT_VIEW_ID,
   type MenuId,
 } from "../components/views/menuRoutes";
 import { appContext } from "../hooks/provider";
 import { useLang } from "../i18n/useLang";
 import { useConfigStore } from "../hooks/store";
-import { useLocation } from "../hooks/useRouter";
+import { useLocation, useNavigate } from "../hooks/useRouter";
 import { useModeConfigStore } from "../store/modeConfig";
 import { useRightPanelStore } from "../store/rightPanel";
 import CanvasFilePreviewPane from "./CanvasFilePreviewPane";
@@ -40,11 +41,28 @@ const Canvas: React.FC<CanvasProps> = ({
   const { darkMode } = useContext(appContext);
   const { t } = useLang();
   const location = useLocation();
+  const navigate = useNavigate();
   const session = useConfigStore((s) => s.session);
+  const breadcrumbs = useConfigStore((s) => s.header.breadcrumbs);
   const agentInfo = useModeConfigStore((s) => s.agentInfo);
   const selectedAgent = useModeConfigStore((s) => s.selectedAgent);
   const agentOfflineSnapshot = useModeConfigStore((s) => s.agentOfflineSnapshot);
   const hasActiveSession = Boolean(session?.id);
+
+  // Clear breadcrumbs on unmount
+  useEffect(() => {
+    return () => {
+      useConfigStore.getState().setBreadcrumbs([]);
+    };
+  }, []);
+
+  const handleBreadcrumbMenuClick = useCallback(() => {
+    const params = new URLSearchParams(location.search);
+    params.delete("skill");
+    params.set("menu", String(activeMenuId));
+    params.set("view", String(DEFAULT_VIEW_ID));
+    navigate(`?${params.toString()}`);
+  }, [location.search, activeMenuId, navigate]);
 
   const previewFile = useRightPanelStore((s) => s.previewFile);
   const setPreviewFile = useRightPanelStore((s) => s.setPreviewFile);
@@ -161,19 +179,52 @@ const Canvas: React.FC<CanvasProps> = ({
       >
         {/* Root */}
         <div className="flex items-center gap-1 min-w-0 flex-shrink z-10">
-          <span className="text-secondary font-medium tracking-wide hidden sm:inline">
+          <span className="text-xs text-secondary font-medium tracking-wide hidden sm:inline">
             OpenDrSai
           </span>
 
-          <ChevronRight className="w-3.5 h-3.5 text-secondary/50 flex-shrink-0 hidden sm:inline" />
-          <span
-            className={`px-2 py-0.5 rounded-md text-xs font-medium ${darkMode === "dark"
-              ? "bg-violet-500/10 text-violet-200"
-              : "bg-violet-100 text-violet-700"
+          <ChevronRight className="w-3.5 h-3.5 text-secondary/40 flex-shrink-0 hidden sm:inline" />
+
+          {/* 技能广场 (clickable only when viewing a skill detail) */}
+          {breadcrumbs && breadcrumbs.length > 0 ? (
+            <button
+              type="button"
+              onClick={handleBreadcrumbMenuClick}
+              className={`px-2 py-0.5 rounded-md text-xs font-medium transition-colors ${
+                darkMode === "dark"
+                  ? "bg-violet-500/10 text-violet-200 hover:bg-violet-500/20"
+                  : "bg-violet-100 text-violet-700 hover:bg-violet-200"
               }`}
-          >
-            {t(activeMenuLabel as Parameters<typeof t>[0])}
-          </span>
+            >
+              {t(activeMenuLabel as Parameters<typeof t>[0])}
+            </button>
+          ) : (
+            <span
+              className={`px-2 py-0.5 rounded-md text-xs font-medium ${
+                darkMode === "dark"
+                  ? "bg-violet-500/10 text-violet-200"
+                  : "bg-violet-100 text-violet-700"
+              }`}
+            >
+              {t(activeMenuLabel as Parameters<typeof t>[0])}
+            </span>
+          )}
+
+          {/* Dynamic breadcrumbs (e.g. skill name) */}
+          {(breadcrumbs ?? []).map((crumb) => (
+            <React.Fragment key={crumb.name}>
+              <ChevronRight className="w-3.5 h-3.5 text-secondary/40 flex-shrink-0 hidden sm:inline" />
+              <span
+                className={`px-2 py-0.5 rounded-md text-xs font-medium truncate max-w-[200px] hidden sm:inline ${
+                  darkMode === "dark"
+                    ? "bg-violet-500/10 text-violet-200"
+                    : "bg-violet-100 text-violet-700"
+                }`}
+              >
+                {crumb.name}
+              </span>
+            </React.Fragment>
+          ))}
         </div>
 
         {showSessionAgentBar && (
