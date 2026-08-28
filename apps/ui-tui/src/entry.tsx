@@ -19,9 +19,11 @@ import { initTerminalSize } from './hooks/terminalSizeStore.js'
 import { VERSION } from './version.js'
 import {
   disableAltScreen,
+  disableBracketedPaste,
   disableFocusReporting,
   disableMouseTracking,
   enableAltScreen,
+  enableBracketedPaste,
   enableFocusReporting,
   enableMouseTracking,
 } from './app/terminalControl.js'
@@ -58,6 +60,9 @@ function restoreTerminal(): void {
   // otherwise switching windows would smear "\e[I" / "\e[O" into the
   // shell prompt forever.
   disableFocusReporting()
+  // Turn off bracketed paste mode so the terminal's paste behaviour
+  // returns to its default (raw text, no \x1b[200~/\x1b[201~ markers).
+  disableBracketedPaste()
   // Switch back to the primary screen buffer so the user's shell
   // history and previous output reappear. The alternate buffer is
   // discarded on exit — this is expected (same as vim/less/htop).
@@ -146,10 +151,18 @@ if (!process.stdin.isTTY) {
   //
   // Trade-off: Ink's eraseLines() during streaming can momentarily reset
   // the terminal's auto-scroll anchor. We mitigate that with the existing
-  // FLUSH_MS coalescing and PageUp/PageDown internal scroll. Set
-  // DRSAI_TUI_USE_ALT_SCREEN=1 if you want the vim/less-style alternate
-  // page (clean exit, no scrollback after quit).
-  const altScreenRequested = process.env.DRSAI_TUI_USE_ALT_SCREEN === '1'
+  // FLUSH_MS coalescing, increased spinner interval (250 ms), and the
+  // height-clipping in StreamingAssistant that prevents the fullscreen
+  // branch from firing. Set DRSAI_TUI_USE_ALT_SCREEN=1 if you want the
+  // vim/less-style alternate page (clean exit, no scrollback after quit).
+  //
+  // Previously, alt-screen was DEFAULT ON for Windows to avoid the
+  // erase+re-emit scroll-jank. But that meant the user could NOT scroll
+  // back to view earlier turns (alt-screen has no scrollback). We now
+  // default OFF on ALL platforms — the scroll-jank is mitigated by the
+  // reduced re-render frequency, and the user gets working scrollback.
+  const altScreenEnv = process.env.DRSAI_TUI_USE_ALT_SCREEN
+  const altScreenRequested = altScreenEnv === '1'
   if (altScreenRequested) {
     enableAltScreen()
   }
@@ -175,6 +188,15 @@ if (!process.stdin.isTTY) {
   // Tell the terminal to send focus-in / focus-out events on stdin.
   // The App component sniffs them via useInput to drive the cursor blink.
   enableFocusReporting()
+
+  // Enable bracketed paste mode so paste operations (Ctrl+Shift+V,
+  // middle-click, terminal menu paste) are wrapped with \x1b[200~ …
+  // \x1b[201~ markers. textInput.tsx already detects and strips these
+  // markers — without this mode the paste handler cannot distinguish
+  // pasted text from typed input, and single-line pastes are silently
+  // dropped (because looksLikePastedText() requires either bracket
+  // markers or a newline).
+  enableBracketedPaste()
 
   // ── Banner (pre-print) ──────────────────────────────────────────────
   // Print the "⚡ OpenDrSai" banner ONCE via raw stdout BEFORE Ink takes over

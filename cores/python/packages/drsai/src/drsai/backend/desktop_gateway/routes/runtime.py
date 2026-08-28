@@ -56,6 +56,18 @@ def _source_digest() -> str:
 SOURCE_DIGEST = _source_digest()
 
 
+@api.get("/health", operation_id="healthCheck")
+async def health_check():
+    """Health probe for the Electron main process.
+
+    The desktop's ``gateway.ts`` polls this before any other route to confirm
+    the spawned Python process is alive.  It returns the simplest possible
+    body so the polling loop can short-circuit on ``status === "ok"``
+    without parsing the full Runtime identity.
+    """
+    return {"status": "ok"}
+
+
 @api.get("/v1/runtime", operation_id="getRuntimeIdentity")
 async def runtime_identity():
     """Identify this Runtime instance and the contract it speaks."""

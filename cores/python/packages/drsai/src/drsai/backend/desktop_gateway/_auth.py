@@ -46,10 +46,12 @@ from drsai.platform_auth import (
 _CORRELATION = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 DEFAULT_OFFLINE_USER_ID = "local"
 
-# The handshake is the only thing a caller may reach before proving itself: the
-# desktop has to be able to ask "which Runtime are you, and are you alive?"
-# before it has a paired token.
-PUBLIC_PATHS = frozenset({"/v1/runtime"})
+# The handshake and health probe are the only things a caller may reach before
+# proving itself: the desktop has to be able to ask "which Runtime are you, and
+# are you alive?" before it has a paired token.  ``/v1/capabilities`` is part of
+# the same handshake: ``LocalRuntimeClient.connect()`` calls it to discover
+# protocol version and feature flags before any authenticated request.
+PUBLIC_PATHS = frozenset({"/v1/runtime", "/v1/capabilities", "/health"})
 
 
 def install(app) -> None:

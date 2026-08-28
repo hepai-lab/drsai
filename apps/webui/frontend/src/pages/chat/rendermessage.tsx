@@ -23,6 +23,7 @@ import {
   FileText,
   FileSpreadsheet,
   Presentation,
+  Wrench,
 } from "lucide-react";
 import {
   ActionButton,
@@ -857,6 +858,33 @@ const RenderUserMessage: React.FC<{
     return [];
   }, [parsedContent.metadata]);
 
+  // attached_skills: JSON string from WebUI start/input_response skill handoff
+  const attachedSkills: { name: string; source: string; description?: string }[] =
+    React.useMemo(() => {
+      const meta = parsedContent.metadata;
+      if (!meta || meta.attached_skills == null || meta.attached_skills === "") {
+        return [];
+      }
+      try {
+        const raw = meta.attached_skills;
+        const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
+        if (!Array.isArray(arr)) return [];
+        return arr
+          .map((s: { name?: string; slug?: string; source?: string; description?: string }) => {
+            const name = String(s?.name || s?.slug || "").trim();
+            if (!name) return null;
+            return {
+              name,
+              source: String(s?.source || ""),
+              description: typeof s?.description === "string" ? s.description : undefined,
+            };
+          })
+          .filter(Boolean) as { name: string; source: string; description?: string }[];
+      } catch {
+        return [];
+      }
+    }, [parsedContent.metadata]);
+
   // Get the text content for editing/copying
   const getTextContent = (): string => {
     if (messageUtils.isMultiModalContent(parsedContent.text)) {
@@ -923,6 +951,25 @@ const RenderUserMessage: React.FC<{
                 <FileTextIcon className="w-3 h-3" />
               )}
               <span className="truncate max-w-[150px]">{file.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Show attached skills from message metadata (backend attached_skills) */}
+      {attachedSkills.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {attachedSkills.map((skill, index) => (
+            <div
+              key={`${skill.name}-${index}`}
+              className="flex items-center gap-1 rounded px-2 py-1 text-xs border border-magenta-200 bg-magenta-50 text-magenta-800 dark:border-gray-600 dark:bg-[#444444] dark:text-gray-100"
+              title={skill.description || skill.source || skill.name}
+            >
+              <Wrench className="w-3 h-3 shrink-0" aria-hidden />
+              <span className="truncate max-w-[160px] font-medium">{skill.name}</span>
+              {skill.source ? (
+                <span className="truncate max-w-[80px] opacity-70">{skill.source}</span>
+              ) : null}
             </div>
           ))}
         </div>

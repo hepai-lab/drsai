@@ -1,0 +1,518 @@
+import type { DesktopAgent, PlatformAgentStatus } from "../api/desktopApi";
+import type { PlatformAgentExecutionDescriptor } from "./agentCatalog";
+
+const AGENTS_PATH = "/api/native/v1/agents";
+
+export interface PlatformAgentAuthProvider {
+  getAccessToken(): Promise<string>;
+  refreshAfterUnauthorized(): Promise<string>;
+  invalidate(): void;
+}
+
+export interface PlatformAgentClientOptions {
+  /** Portal Native API root, used for chat and preference mutations. */
+  baseUrl: string;
+  /** HepAI/DDF API root, used only for DDF runtime operations. */
+  catalogBaseUrl?: string;
+  auth: PlatformAgentAuthProvider;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+  now?: () => Date;
+  refresh?: boolean;
+}
+
+export interface PlatformAgentResult {
+  agents: DesktopAgent[];
+  executionDescriptors: PlatformAgentExecutionDescriptor[];
+  status: PlatformAgentStatus;
+}
+
+export interface PlatformAgentMutationResult {
+  ok: boolean;
+  message: string;
+}
+
+export async function stopPlatformAgentThread(
+  options: PlatformAgentClientOptions,
+  platformId: string,
+  threadId: string,
+): Promise<PlatformAgentMutationResult> {
+  return mutatePlatformAgent(
+    options,
+    `/api/native/v1/agents/${encodeURIComponent(platformId)}/threads/${encodeURIComponent(threadId)}/stop`,
+    { method: "POST" },
+  );
+}
+
+export async function respondPlatformAgentInput(
+  options: PlatformAgentClientOptions,
+  platformId: string,
+  threadId: string,
+  response: string | Record<string, unknown>,
+): Promise<PlatformAgentMutationResult> {
+  return mutatePlatformAgent(
+    options,
+    `/api/native/v1/agents/${encodeURIComponent(platformId)}/threads/${encodeURIComponent(threadId)}/input`,
+    { method: "POST", body: JSON.stringify({ response }) },
+  );
+}
+
+export async function fetchPlatformAgents(
+  options: PlatformAgentClientOptions,
+): Promise<PlatformAgentResult> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const checkedAt = (options.now ?? (() => new Date()))().toISOString();
+  let accessToken: string;
+  try {
+    accessToken = await options.auth.getAccessToken();
+  } catch (error) {
+    const message = error instanceof Error && /not a HepAI OIDC session/i.test(error.message)
+      ? "The current Desktop session is not a HepAI OIDC session. Sign in with HepAI to load platform agents."
+      : "Sign in with HepAI to load platform agents.";
+    return emptyResult("requires_login", message, checkedAt);
+  }
+
+  let response = await requestAgents(fetchImpl, options, accessToken);
+  if (response.status === 401) {
+    try {
+      accessToken = await options.auth.refreshAfterUnauthorized();
+    } catch {
+      options.auth.invalidate();
+      return emptyResult("requires_login", "Your HepAI session expired. Sign in again.", checkedAt);
+    }
+    response = await requestAgents(fetchImpl, options, accessToken);
+    if (response.status === 401) {
+      // A single downstream service rejecting a freshly issued token does not
+      // prove that the Desktop OIDC session is invalid. Keep the global login
+      // intact and report the catalog-specific failure. Only a failed token
+      // refresh above is authoritative enough to invalidate the session.
+      return emptyResult(
+        "error",
+        "The HAI agent catalog rejected a freshly refreshed session (HTTP 401). Your Desktop sign-in remains active.",
+        checkedAt,
+      );
+    }
+  }
+
+  if (response.status === 404 || response.status === 405 || response.status === 501) {
+    return emptyResult(
+      "native_api_unavailable",
+      "The platform Native API is not deployed in this environment. Local agents remain available.",
+      checkedAt,
+    );
+  }
+  if (response.status === 403) {
+    return emptyResult("forbidden", "This account cannot access the platform agent catalog.", checkedAt);
+  }
+  if (!response.ok) {
+    return emptyResult("error", `Platform catalog request failed (HTTP ${response.status}).`, checkedAt);
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    return emptyResult("error", "The platform catalog returned invalid JSON.", checkedAt);
+  }
+  const record = readRecord(body);
+  const dataRecord = readRecord(record.data);
+  let apiVersion = firstString(
+    response.headers.get("x-opendrsai-api-version"),
+    record.api_version,
+    record.version,
+    dataRecord.api_version,
+    dataRecord.version,
+  );
+  let capabilities = normalizeCapabilities(record.capabilities ?? dataRecord.capabilities);
+  // The authoritative HAI /apiv2 catalog already carries version and
+  // capability metadata. A second Portal Native request used to add up to six
+  // seconds to every Agent Square load and could overwrite the DDF catalog's
+  // actual capabilities, so it is intentionally not part of discovery.
+  const normalized = extractAgentArray(body)
+    .map((value) => normalizePlatformAgent(value, options))
+    .filter((item): item is NonNullable<ReturnType<typeof normalizePlatformAgent>> => item !== null);
+  return {
+    agents: normalized.map((item) => item.agent),
+    executionDescriptors: normalized.map((item) => item.executionDescriptor),
+    status: {
+      state: "ready",
+      apiVersion: apiVersion || null,
+      capabilities,
+      message: apiVersion
+        ? `Platform Native API ${apiVersion} is available.`
+        : "Platform Native API is available; version was not advertised.",
+      lastCheckedAt: checkedAt,
+    },
+  };
+}
+
+export async function respondDdfAgentInput(
+  options: PlatformAgentClientOptions,
+  input: {
+    model: string;
+    chatId: string;
+    runId: string;
+    requestId: string;
+    response: string | Record<string, unknown>;
+  },
+): Promise<PlatformAgentMutationResult> {
+  let accessToken: string;
+  try {
+    accessToken = await options.auth.getAccessToken();
+  } catch {
+    return { ok: false, message: "Sign in with HepAI to respond to the agent." };
+  }
+  const request = async (token: string): Promise<Response> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 10_000);
+    try {
+      return await (options.fetchImpl ?? fetch)(joinUrl(options.catalogBaseUrl ?? options.baseUrl, "/agents/input"), {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "Idempotency-Key": input.requestId,
+        },
+        body: JSON.stringify({
+          model: input.model,
+          chat_id: input.chatId,
+          run_id: input.runId,
+          request_id: input.requestId,
+          response: input.response,
+        }),
+        redirect: "error",
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+  let response = await request(accessToken);
+  if (response.status === 401) {
+    try {
+      accessToken = await options.auth.refreshAfterUnauthorized();
+      response = await request(accessToken);
+    } catch {
+      options.auth.invalidate();
+      return { ok: false, message: "Your HepAI session expired. Sign in again." };
+    }
+  }
+  if (response.ok) return { ok: true, message: "Agent input accepted." };
+  const messages: Record<number, string> = {
+    404: "The agent input request is no longer available.",
+    409: "The agent input request conflicts with its current state.",
+    410: "The agent input request expired.",
+    503: "The remote agent is temporarily unavailable. Retry the response.",
+  };
+  return { ok: false, message: messages[response.status] ?? `Agent input failed (HTTP ${response.status}).` };
+}
+
+async function requestAgents(
+  fetchImpl: typeof fetch,
+  options: PlatformAgentClientOptions,
+  accessToken: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 6000);
+  try {
+    // Discovery belongs to the Portal Native API. The Portal maps the OIDC
+    // subject to the user's complete, visibility-filtered catalog and keeps
+    // DDF credentials server-side. Calling /apiv2/agents/list_agents directly
+    // both loses remote/custom aggregation and makes a DDF 401 look like a
+    // Desktop login failure.
+    const url = new URL(joinUrl(options.baseUrl, AGENTS_PATH));
+    url.searchParams.set("refresh", options.refresh ? "true" : "false");
+    return await fetchImpl(url.toString(), {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      redirect: "error",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function emptyResult(
+  state: PlatformAgentStatus["state"],
+  message: string,
+  lastCheckedAt: string,
+): PlatformAgentResult {
+  return {
+    agents: [],
+    executionDescriptors: [],
+    status: { state, apiVersion: null, capabilities: [], message, lastCheckedAt },
+  };
+}
+
+function extractAgentArray(body: unknown): unknown[] {
+  const record = readRecord(body);
+  if (Array.isArray(record.data)) return record.data;
+  const data = readRecord(record.data);
+  if (Array.isArray(data.agents)) return data.agents;
+  if (Array.isArray(data.data)) return data.data;
+  if (Array.isArray(record.agents)) return record.agents;
+  return [];
+}
+
+function normalizePlatformAgent(value: unknown, options: PlatformAgentClientOptions): {
+  agent: DesktopAgent;
+  executionDescriptor: PlatformAgentExecutionDescriptor;
+} | null {
+  const agent = readRecord(value);
+  const config = readRecord(agent.config);
+  const rawId = firstString(agent.id, agent.agent_id, config.id);
+  const name = firstString(agent.name, config.name, agent.worker_name, rawId);
+  if (!rawId || !name || rawId.startsWith("hai.native.") || isModelLikeEntry(name, agent)) return null;
+  const mode = firstString(agent.mode, agent.type, config.mode).toLowerCase();
+  const available = normalizeAvailability(agent);
+  const publicId = `platform:${rawId}`;
+  const model = firstString(agent.model, config.model) || undefined;
+  const models = normalizeModelIds(
+    agent.models ?? agent.allowed_models ?? agent.available_models ??
+    config.models ?? config.allowed_models ?? config.available_models,
+  );
+  const description = normalizeLocalizedDescription(
+    agent.description ?? config.description,
+    "Platform agent.",
+  );
+  const capabilities = normalizeAgentCapabilities(agent.capabilities ?? config.capabilities) ?? [];
+  return {
+    agent: {
+      id: publicId,
+      name,
+      description: description.fallback,
+      localizedDescription: description.localized,
+      owner: firstString(agent.owner, agent.author, "OpenDrSai"),
+      author: firstString(agent.author, agent.publisher) || undefined,
+      source: "remote",
+      status: available ? "running" : "unreachable",
+      available,
+      featured: agent.featured === true,
+      isDefault: agent.is_default === true || agent.isDefault === true,
+      capabilities,
+      lastUsedAt: firstString(agent.last_used_at, agent.lastUsedAt) || undefined,
+      catalogGroup: normalizeCatalogGroup(agent.catalog_group, agent.catalogGroup),
+      model,
+      models,
+      logo: normalizePlatformLogo(firstString(agent.logo, agent.avatar), options),
+      examples: normalizeExamples(agent.examples ?? config.examples),
+      error: available ? undefined : "This platform agent is currently unavailable.",
+      ...(mode ? { mode } : {}),
+    },
+    executionDescriptor: {
+      publicId,
+      platformId: rawId,
+      mode: mode || "remote",
+      name,
+      model,
+      available,
+      capabilities,
+    },
+  };
+}
+
+async function mutatePlatformAgent(
+  options: PlatformAgentClientOptions,
+  path: string,
+  init: { method: "POST" | "PUT"; body?: string },
+): Promise<PlatformAgentMutationResult> {
+  let accessToken: string;
+  try {
+    accessToken = await options.auth.getAccessToken();
+  } catch {
+    return { ok: false, message: "Sign in with HepAI to update agent preferences." };
+  }
+  let response = await requestMutation(options, path, init, accessToken);
+  if (response.status === 401) {
+    try {
+      accessToken = await options.auth.refreshAfterUnauthorized();
+    } catch {
+      options.auth.invalidate();
+      return { ok: false, message: "Your HepAI session expired. Sign in again." };
+    }
+    response = await requestMutation(options, path, init, accessToken);
+    if (response.status === 401) options.auth.invalidate();
+  }
+  if (response.ok) return { ok: true, message: "Agent preference saved." };
+  if (response.status === 403) {
+    return { ok: false, message: "This account cannot update that agent preference." };
+  }
+  if (response.status === 404) {
+    return { ok: false, message: "The selected agent is no longer available." };
+  }
+  return { ok: false, message: `Agent preference request failed (HTTP ${response.status}).` };
+}
+
+async function requestMutation(
+  options: PlatformAgentClientOptions,
+  path: string,
+  init: { method: "POST" | "PUT"; body?: string },
+  accessToken: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 6000);
+  try {
+    return await (options.fetchImpl ?? fetch)(joinUrl(options.baseUrl, path), {
+      method: init.method,
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+      },
+      body: init.body,
+      redirect: "error",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function isModelLikeEntry(name: string, agent: Record<string, unknown>): boolean {
+  if (agent.object === "model") return true;
+  if (agent.object === "agent") return false;
+  return name.includes("/") && !agent.description && !agent.author && !agent.owner;
+}
+
+function normalizeExamples(value: unknown): DesktopAgent["examples"] | undefined {
+  if (typeof value === "string" && value.trim()) return value.trim().slice(0, 500);
+  if (!Array.isArray(value)) {
+    const localized = readRecord(value);
+    const zh = Array.isArray(localized.zh) ? localized.zh : [];
+    const en = Array.isArray(localized.en) ? localized.en : [];
+    const examples: Exclude<DesktopAgent["examples"], string | undefined> = [];
+    for (let index = 0; index < Math.min(4, Math.max(zh.length, en.length)); index += 1) {
+      const zhText = typeof zh[index] === "string" ? zh[index].trim().slice(0, 500) : "";
+      const enText = typeof en[index] === "string" ? en[index].trim().slice(0, 500) : "";
+      if (zhText || enText) examples.push({ zh: zhText, en: enText });
+    }
+    return examples.length > 0 ? examples : undefined;
+  }
+  const examples: Exclude<DesktopAgent["examples"], string | undefined> = [];
+  for (const item of value.slice(0, 4)) {
+    if (typeof item === "string" && item.trim()) {
+      examples.push(item.trim().slice(0, 500));
+      continue;
+    }
+    const record = readRecord(item);
+    const en = firstString(record.en).slice(0, 500);
+    const zh = firstString(record.zh).slice(0, 500);
+    if (en || zh) examples.push({ en, zh });
+  }
+  return examples.length > 0 ? examples : undefined;
+}
+
+function normalizeCapabilities(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  }
+  const record = readRecord(value);
+  if (Array.isArray(record.features)) {
+    return record.features.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  }
+  return Object.entries(record)
+    .filter(([, enabled]) => enabled === true || (typeof enabled === "number" && enabled > 0))
+    .map(([name]) => name);
+}
+
+function normalizeModelIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const models: string[] = [];
+  for (const item of value) {
+    const record = readRecord(item);
+    const model = typeof item === "string"
+      ? item.trim()
+      : firstString(record.id, record.alias, record.model);
+    if (model && !models.includes(model)) models.push(model);
+  }
+  return models.length > 0 ? models : undefined;
+}
+
+function normalizeLocalizedDescription(
+  value: unknown,
+  fallback: string,
+): { fallback: string; localized?: { en?: string; zh?: string } } {
+  let candidate = value;
+  if (typeof candidate === "string") {
+    const text = candidate.trim();
+    if (!text) return { fallback };
+    if (text.startsWith("{") && text.endsWith("}")) {
+      try {
+        candidate = JSON.parse(text);
+      } catch {
+        return { fallback: text };
+      }
+    } else {
+      return { fallback: text };
+    }
+  }
+  const record = readRecord(candidate);
+  const en = firstString(record.en);
+  const zh = firstString(record.zh);
+  if (!en && !zh) return { fallback };
+  return {
+    fallback: en || zh || fallback,
+    localized: {
+      ...(en ? { en } : {}),
+      ...(zh ? { zh } : {}),
+    },
+  };
+}
+
+function normalizeAvailability(agent: Record<string, unknown>): boolean {
+  if (typeof agent.available === "boolean") return agent.available;
+  const value = firstString(agent.availability, agent.status).toLowerCase();
+  return !["disabled", "inactive", "offline", "stopped", "unavailable"].includes(value);
+}
+
+function normalizeAgentCapabilities(value: unknown): string[] | undefined {
+  const capabilities = normalizeCapabilities(value);
+  return capabilities.length ? capabilities : undefined;
+}
+
+function normalizeCatalogGroup(...values: unknown[]): "official" | "mine" {
+  const value = firstString(...values).toLowerCase();
+  return value === "mine" || value === "user" || value === "owned" ? "mine" : "official";
+}
+
+function normalizePlatformLogo(
+  value: string,
+  options: PlatformAgentClientOptions,
+): string | undefined {
+  if (!value) return undefined;
+  try {
+    const base = new URL(options.catalogBaseUrl ?? options.baseUrl);
+    const resolved = new URL(value, base);
+    if (resolved.protocol !== "https:") return undefined;
+    const trustedHosts = [options.catalogBaseUrl, options.baseUrl]
+      .filter((candidate): candidate is string => Boolean(candidate))
+      .map((candidate) => new URL(candidate).hostname.toLowerCase());
+    const host = resolved.hostname.toLowerCase();
+    if (!trustedHosts.some((trusted) => host === trusted || host.endsWith(`.${trusted}`))) {
+      return undefined;
+    }
+    return resolved.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function firstString(...values: unknown[]): string {
+  const value = values.find((candidate) => typeof candidate === "string" && candidate.trim().length > 0);
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function joinUrl(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}

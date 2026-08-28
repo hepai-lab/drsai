@@ -26,6 +26,9 @@ def _enrich_input_response_with_files(
         return metadata
     files_list = metadata.get("files") or []
     if not files_list:
+        # Still expose empty attached_files for frontend parity with start messages.
+        if "attached_files" not in metadata:
+            metadata["attached_files"] = "[]"
         return metadata
     query = ""
     if isinstance(response, str):
@@ -48,6 +51,70 @@ def _enrich_input_response_with_files(
                 metadata["attached_files"] = att
     except Exception as e:
         logger.exception(f"input_response construct_task failed: {e}")
+    return metadata
+
+
+async def _enrich_input_response_with_skills(
+    *,
+    ws_manager: WebSocketManager,
+    user_id: str,
+    run_id: int,
+    metadata: dict | None,
+    request_headers: dict | None = None,
+) -> dict | None:
+    """Install selected skills and stamp attached_skills/skill_proxy for FE + agent."""
+    if not metadata or not isinstance(metadata, dict):
+        return metadata
+
+    skills = metadata.pop("skills", None) or []
+    if not isinstance(skills, list) or not skills:
+        return metadata
+
+    try:
+        installed = await ws_manager._install_skills_for_run(user_id, skills)
+    except Exception as e:
+        logger.exception(
+            "input_response skill install failed run={} user={}: {}",
+            run_id,
+            user_id,
+            e,
+        )
+        return metadata
+
+    attached_skills = [
+        {
+            "slug": str(item.get("slug") or item.get("id") or ""),
+            "name": str(item.get("name") or item.get("slug") or ""),
+            "source": str(item.get("source") or ""),
+            "description": str(item.get("description") or ""),
+        }
+        for item in (installed or [])
+        if isinstance(item, dict) and (item.get("name") or item.get("slug") or item.get("id"))
+    ]
+    if not attached_skills:
+        logger.warning(
+            "[skill debug][ws] input_response install produced no attached_skills run={} skills={}",
+            run_id,
+            skills,
+        )
+        return metadata
+
+    from ..skill_grant import build_skill_proxy_payload, resolve_public_origin_from_headers
+
+    request_origin = resolve_public_origin_from_headers(request_headers or {})
+    skill_proxy = build_skill_proxy_payload(
+        user_id=user_id,
+        run_id=run_id,
+        request_origin=request_origin,
+    )
+    metadata["attached_skills"] = json.dumps(attached_skills, ensure_ascii=False)
+    metadata["skill_proxy"] = json.dumps(skill_proxy, ensure_ascii=False)
+    logger.info(
+        "[skill debug][ws] input_response attached_skills run={} count={} names={}",
+        run_id,
+        len(attached_skills),
+        [s.get("name") for s in attached_skills],
+    )
     return metadata
 
 
@@ -131,6 +198,13 @@ async def run_websocket(
                     team_config = start_metadata.pop("team_config")
                     settings_config = start_metadata.pop("settings_config")
                     files = start_metadata.pop("files", [])
+                    skills = start_metadata.pop("skills", [])
+                    logger.info(
+                        "[skill debug][ws] run=%s files=%s skills=%s",
+                        run_id,
+                        len(files) if isinstance(files, list) else 0,
+                        skills,
+                    )
 
                     # Allow the client to pass model alias either at the
                     # websocket message top level or inside metadata.  Keep the
@@ -166,11 +240,38 @@ async def run_websocket(
                                 f"Run {run_id} has active team manager — routing 'continue' as input_response"
                             )
                             raw_task = message.get("task", "")
-                            await ws_manager.handle_input_response(run_id, raw_task)
+                            continue_meta: dict = {}
+                            if files:
+                                continue_meta["files"] = files
+                            if skills:
+                                continue_meta["skills"] = skills
+                            if continue_meta:
+                                _enrich_input_response_with_files(raw_task, continue_meta)
+                                ws_headers = {k: v for k, v in websocket.headers.items()}
+                                await _enrich_input_response_with_skills(
+                                    ws_manager=ws_manager,
+                                    user_id=run_record.user_id,
+                                    run_id=run_id,
+                                    metadata=continue_meta,
+                                    request_headers=ws_headers,
+                                )
+                                await ws_manager.handle_input_response(
+                                    run_id,
+                                    {"response": raw_task, "metadata": continue_meta},
+                                )
+                            else:
+                                await ws_manager.handle_input_response(run_id, raw_task)
                         else:
+                            ws_headers = {k: v for k, v in websocket.headers.items()}
                             asyncio.create_task(
                                 ws_manager.start_stream(
-                                    run_id, task, team_config, settings_config, files=files
+                                    run_id,
+                                    task,
+                                    team_config,
+                                    settings_config,
+                                    files=files,
+                                    skills=skills,
+                                    request_headers=ws_headers,
                                 )
                             )
                     else:
@@ -217,6 +318,14 @@ async def run_websocket(
                     if isinstance(metadata, dict):
                         metadata = dict(metadata)
                         _enrich_input_response_with_files(response, metadata)
+                        ws_headers = {k: v for k, v in websocket.headers.items()}
+                        await _enrich_input_response_with_skills(
+                            ws_manager=ws_manager,
+                            user_id=run_record.user_id,
+                            run_id=run_id,
+                            metadata=metadata,
+                            request_headers=ws_headers,
+                        )
                     if metadata:
                         settings_config = metadata.get("settings_config")
                         if isinstance(settings_config, dict):

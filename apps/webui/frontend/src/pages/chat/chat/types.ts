@@ -4,8 +4,9 @@ import type { InputRequest } from "../../../components/types/datamodel";
 import type { IPlan } from "../../../components/types/plan";
 import type { ServerUploadedFileInfo } from "./hooks/useFileUpload";
 
-/** HepAI 技能 ZIP（与 SkillsSquarePage / fileAPI.listHepaiFiles 一致） */
-export type HepaiSkillPickRow = { id: string; filename: string; url: string };
+/** HepAI 技能 ZIP（与 SkillsSquarePage / fileAPI.listHepaiFiles 一致）
+ *  source 标识技能来源: "public" | "higraf" | "user" | "catalog" */
+export type HepaiSkillPickRow = { id: string; filename: string; source: string };
 
 export const SKILL_INSTALL_DEFAULT_LINE = "帮我安装这些Skills";
 
@@ -25,7 +26,8 @@ export interface ChatInputProps {
     files: RcFile[] | UploadedFilePayload[],
     accepted?: boolean,
     plan?: IPlan,
-    llm?: { label: string; value: string }
+    llm?: { label: string; value: string },
+    attachedSkills?: HepaiSkillPickRow[]
   ) => void;
   error: IStatus | null;
   disabled?: boolean;

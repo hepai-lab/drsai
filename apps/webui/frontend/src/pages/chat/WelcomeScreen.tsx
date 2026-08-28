@@ -6,6 +6,7 @@ import { Run } from "../../components/types/datamodel";
 import { IStatus } from "../../components/types/app";
 import ChatInput from "./chat/chatinput";
 import type { ServerUploadedFileInfo } from "./chat/hooks/useFileUpload";
+import type { HepaiSkillPickRow } from "./chat/types";
 import SampleTasks from "./sampletasks";
 
 interface WelcomeScreenProps {
@@ -30,7 +31,8 @@ interface WelcomeScreenProps {
         }>,
         accepted: boolean,
         plan?: IPlan,
-        llm?: { label: string; value: string }
+        llm?: { label: string; value: string },
+        attachedSkills?: HepaiSkillPickRow[]
     ) => void;
     onCancel: () => void;
     onPause: () => void;
@@ -102,10 +104,11 @@ export default function WelcomeScreen({
                         }>,
                         accepted = false,
                         plan?: IPlan,
-                        llm?: { label: string; value: string }
+                        llm?: { label: string; value: string },
+                        attachedSkills?: HepaiSkillPickRow[]
                     ) => {
                         setHideSampleTasks(true);
-                        onSubmit(query, files, accepted, plan, llm);
+                        onSubmit(query, files, accepted, plan, llm, attachedSkills);
                     }}
                     error={error}
                     onCancel={onCancel}

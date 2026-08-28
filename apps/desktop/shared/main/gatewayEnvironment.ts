@@ -1,5 +1,5 @@
-export const DEVELOPMENT_GATEWAY_PORT = "28642";
-export const PRODUCTION_GATEWAY_PORT = "18642";
+export const DEVELOPMENT_GATEWAY_PORT = "28643";
+export const PRODUCTION_GATEWAY_PORT = "28643";
 
 type GatewayEnvironment = Readonly<Record<string, string | undefined>>;
 

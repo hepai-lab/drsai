@@ -8,6 +8,7 @@ import {
   Session,
 } from "../../../components/types/datamodel";
 import { IPlan, IPlanStep, convertPlanStepsToJsonString } from "../../../components/types/plan";
+import type { HepaiSkillPickRow } from "../chat/types";
 import { GeneralConfig, useSettingsStore } from "../../../components/store";
 import { settingsAPI } from "../../../components/views/api";
 import {
@@ -104,7 +105,8 @@ export const useTaskActions = ({
         url?: string;
       }> = [],
       llm?: SelectedLlm,
-      inputMetadata?: Record<string, unknown>
+      inputMetadata?: Record<string, unknown>,
+      attachedSkills?: HepaiSkillPickRow[]
     ) => {
       if (!currentRun) {
         handleError(new Error("No active run"));
@@ -187,6 +189,9 @@ export const useTaskActions = ({
                 ...llmPayload,
               },
               ...(processedFiles.length > 0 && { files: processedFiles }),
+              ...(attachedSkills && attachedSkills.length > 0
+                ? { skills: attachedSkills.map((s) => ({ id: s.id, source: s.source })) }
+                : {}),
               ...(hasInputMetadata ? inputMetadata : {}),
             },
           };
@@ -208,6 +213,9 @@ export const useTaskActions = ({
               ...llmPayload,
             },
             ...(processedFiles.length > 0 && { files: processedFiles }),
+            ...(attachedSkills && attachedSkills.length > 0
+              ? { skills: attachedSkills.map((s) => ({ id: s.id, source: s.source })) }
+              : {}),
             ...(hasInputMetadata ? inputMetadata : {}),
           },
         };
@@ -370,7 +378,8 @@ export const useTaskActions = ({
       }> = [],
       plan?: IPlan,
       fresh_socket: boolean = false,
-      llm?: SelectedLlm
+      llm?: SelectedLlm,
+      attachedSkills?: HepaiSkillPickRow[]
     ) => {
       setError(null);
       setNoMessagesYet(false);
@@ -464,8 +473,16 @@ export const useTaskActions = ({
             team_config: teamConfig,
             settings_config,
             lang,
+            ...(attachedSkills && attachedSkills.length > 0
+              ? { skills: attachedSkills.map((s) => ({ id: s.id, source: s.source })) }
+              : {}),
           },
         };
+
+        console.debug("[skill debug][useTaskActions] outbound start payload", {
+          attachedSkills: attachedSkills?.map((s) => ({ id: s.id, source: s.source })) ?? [],
+          metadata: messageToSend.metadata,
+        });
 
         socket.send(JSON.stringify(messageToSend));
 

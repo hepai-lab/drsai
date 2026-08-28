@@ -428,7 +428,8 @@ async def create_magentic_round_team(
     user_id = run_info.pop("user_id")
     run_info["name"] = user_id
     run_info["email"] = user_id
-    
+    # Skills travel on the user message metadata (attached_skills / skill_proxy),
+    # same channel as attached_files — do not put them on run_info.
     if agent_mode == "besiii":
         # raise NotImplementedError("BesIII mode not implemented yet")
         agent = HepAIWorkerAgent(

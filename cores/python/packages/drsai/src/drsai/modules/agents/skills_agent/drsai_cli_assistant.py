@@ -38,6 +38,7 @@ class SessionInfo:
     pinned: bool = False  # pinned to top of lists
     archived: bool = False  # archived (hidden from default list)
     relevance_score: float = 0.0  # search relevance score (populated by smart_search)
+    match_snippet: str = ""  # matched text snippet from FTS search (populated by smart_search)
 
 
 @dataclass

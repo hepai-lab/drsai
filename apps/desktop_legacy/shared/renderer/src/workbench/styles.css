@@ -1,0 +1,372 @@
+/*
+ * Plain CSS, no framework.
+ *
+ * The legacy renderer uses Tailwind, which is a reasonable choice there. Here it
+ * would mean this tree could not be read or built without the Tailwind Vite
+ * plugin, for a surface whose entire point is being small enough to audit.
+ * Custom properties give the same theming for far less machinery.
+ */
+
+:root {
+  --wb-bg: #ffffff;
+  --wb-panel: #f6f7f9;
+  --wb-border: #e2e5ea;
+  --wb-text: #16181d;
+  --wb-muted: #6b7280;
+  --wb-accent: #2563eb;
+  --wb-danger: #b42318;
+  --wb-warning: #b54708;
+  --wb-code-bg: #f2f3f5;
+  --wb-radius: 8px;
+  --wb-mono: ui-monospace, "Cascadia Code", "Consolas", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --wb-bg: #16181d;
+    --wb-panel: #1c1f26;
+    --wb-border: #2a2f38;
+    --wb-text: #e6e8ec;
+    --wb-muted: #9099a8;
+    --wb-accent: #6ea8fe;
+    --wb-danger: #f97066;
+    --wb-warning: #fdb022;
+    --wb-code-bg: #12141a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background: var(--wb-bg);
+  color: var(--wb-text);
+  font: 14px/1.55 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+/* Three panes: history, conversation, files. */
+.wb-app {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr) 300px;
+  height: 100%;
+}
+
+/* ------------------------------------------------------------------ sidebar */
+
+.wb-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px;
+  background: var(--wb-panel);
+  border-right: 1px solid var(--wb-border);
+  overflow: hidden;
+}
+
+.wb-sidebar-section { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.wb-sidebar-grow { flex: 1; min-height: 0; }
+.wb-sidebar-header { display: flex; align-items: center; justify-content: space-between; }
+
+.wb-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--wb-muted);
+}
+
+.wb-select, .wb-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius);
+  background: var(--wb-bg);
+  color: inherit;
+  font: inherit;
+}
+
+.wb-tabs { display: flex; gap: 4px; }
+
+.wb-tab {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--wb-radius);
+  background: transparent;
+  color: var(--wb-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wb-tab[aria-selected="true"] {
+  background: var(--wb-bg);
+  border-color: var(--wb-border);
+  color: var(--wb-text);
+}
+
+.wb-session-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.wb-session {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--wb-radius);
+  padding: 2px 4px;
+}
+
+.wb-session[data-selected] { background: var(--wb-bg); }
+.wb-session:hover .wb-button-ghost { opacity: 1; }
+
+.wb-session-title {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 4px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-profile { border-top: 1px solid var(--wb-border); padding-top: 12px; }
+.wb-profile-name { font-weight: 600; }
+
+/* ------------------------------------------------------------------ buttons */
+
+.wb-button {
+  padding: 5px 10px;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius);
+  background: var(--wb-bg);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.wb-button:disabled { opacity: 0.5; cursor: default; }
+.wb-button-small { padding: 3px 8px; font-size: 12px; }
+.wb-button-ghost { border-color: transparent; background: none; opacity: 0; font-size: 12px; }
+.wb-button-primary { background: var(--wb-accent); border-color: var(--wb-accent); color: #fff; }
+.wb-button-stop { border-color: var(--wb-danger); color: var(--wb-danger); }
+.wb-button[data-recording] { border-color: var(--wb-danger); color: var(--wb-danger); }
+
+/* --------------------------------------------------------------- main pane */
+
+.wb-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+.wb-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--wb-border);
+  font-size: 13px;
+}
+
+.wb-banner[data-level="error"] { color: var(--wb-danger); }
+.wb-banner[data-level="warning"] { color: var(--wb-warning); }
+.wb-banner[data-level="info"] { color: var(--wb-muted); }
+
+.wb-transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wb-transcript-empty { align-items: center; justify-content: center; color: var(--wb-muted); }
+
+/* ----------------------------------------------------------------- entries */
+
+.wb-message { display: flex; }
+.wb-message-user { justify-content: flex-end; }
+
+.wb-message-body {
+  max-width: 76ch;
+  padding: 10px 14px;
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+
+.wb-message-user .wb-message-body { background: var(--wb-panel); }
+.wb-message-body > :first-child { margin-top: 0; }
+.wb-message-body > :last-child { margin-bottom: 0; }
+
+.wb-user-text { margin: 0; font: inherit; white-space: pre-wrap; }
+
+.wb-message-body pre,
+.wb-code {
+  background: var(--wb-code-bg);
+  border-radius: var(--wb-radius);
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-family: var(--wb-mono);
+  font-size: 12.5px;
+  margin: 8px 0;
+}
+
+.wb-output { max-height: 320px; overflow-y: auto; white-space: pre-wrap; }
+
+.wb-reasoning, .wb-tool, .wb-command {
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius);
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.wb-reasoning summary, .wb-tool summary, .wb-command summary {
+  cursor: pointer;
+  color: var(--wb-muted);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.wb-reasoning-body { white-space: pre-wrap; color: var(--wb-muted); padding-top: 6px; }
+.wb-tool-name { font-family: var(--wb-mono); color: var(--wb-text); }
+.wb-tool-status, .wb-exit { margin-left: auto; font-size: 12px; color: var(--wb-muted); }
+.wb-exit[data-failed] { color: var(--wb-danger); }
+.wb-tool[data-status="failed"], .wb-command[data-status="failed"] { border-color: var(--wb-danger); }
+
+.wb-file-change, .wb-artifact, .wb-subtask {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.wb-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--wb-panel);
+  border: 1px solid var(--wb-border);
+  font-size: 11px;
+  color: var(--wb-muted);
+}
+
+.wb-plan ol { margin: 4px 0; padding-left: 20px; }
+.wb-plan li[data-status="completed"] { color: var(--wb-muted); text-decoration: line-through; }
+
+.wb-notice {
+  padding: 8px 12px;
+  border-radius: var(--wb-radius);
+  border: 1px solid var(--wb-border);
+  font-size: 13px;
+}
+
+.wb-notice[data-level="error"] { border-color: var(--wb-danger); color: var(--wb-danger); }
+.wb-notice[data-level="warning"] { border-color: var(--wb-warning); color: var(--wb-warning); }
+
+.wb-typing {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--wb-accent);
+  animation: wb-pulse 1s ease-in-out infinite;
+}
+
+@keyframes wb-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+/* A conversation must stay readable when animation is unwelcome. */
+@media (prefers-reduced-motion: reduce) {
+  .wb-typing { animation: none; opacity: 0.6; }
+}
+
+/* ---------------------------------------------------------------- composer */
+
+.wb-composer {
+  border-top: 1px solid var(--wb-border);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wb-composer-error { color: var(--wb-danger); font-size: 13px; }
+
+.wb-composer-input {
+  width: 100%;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--wb-border);
+  border-radius: var(--wb-radius);
+  background: var(--wb-bg);
+  color: inherit;
+  font: inherit;
+}
+
+.wb-composer-controls { display: flex; align-items: center; gap: 8px; }
+.wb-composer-actions { margin-left: auto; display: flex; gap: 8px; }
+.wb-model-picker { max-width: 240px; padding: 5px 8px; border: 1px solid var(--wb-border); border-radius: var(--wb-radius); background: var(--wb-bg); color: inherit; font: inherit; }
+
+/* ------------------------------------------------------------------- files */
+
+.wb-files {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--wb-panel);
+  border-left: 1px solid var(--wb-border);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wb-file-tree { flex: 1; min-height: 0; overflow-y: auto; font-size: 13px; }
+
+.wb-file-row { display: flex; align-items: center; gap: 4px; border-radius: 4px; }
+.wb-file-row[data-selected] { background: var(--wb-bg); }
+.wb-file-row[data-git] .wb-file-name { color: var(--wb-warning); }
+.wb-file-row[data-git="untracked"] .wb-file-name { color: var(--wb-accent); }
+
+.wb-file-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 2px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-git-badge { font-size: 10px; color: var(--wb-muted); }
+
+.wb-preview {
+  border-top: 1px solid var(--wb-border);
+  padding-top: 8px;
+  max-height: 45%;
+  overflow: auto;
+}
+
+.wb-preview-header { display: flex; flex-direction: column; gap: 2px; font-size: 12px; margin-bottom: 6px; }
+.wb-preview-text { margin: 0; font-family: var(--wb-mono); font-size: 12px; white-space: pre-wrap; }
+.wb-preview-image { max-width: 100%; }
+
+.wb-muted { color: var(--wb-muted); font-size: 12px; }
+.wb-empty { padding: 8px 4px; }
+
+.wb-bridge-unavailable { display: grid; place-content: center; height: 100%; text-align: center; }

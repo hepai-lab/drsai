@@ -81,6 +81,7 @@ def _info_to_dict(info) -> dict:
         "pinned": getattr(info, 'pinned', False),
         "archived": getattr(info, 'archived', False),
         "relevance_score": getattr(info, 'relevance_score', 0.0),
+        "match_snippet": getattr(info, 'match_snippet', ""),
     }
 
 

@@ -105,6 +105,12 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
             if "sqlite" in str(self.engine.url):
                 with self.engine.connect() as conn:
                     conn.execute(text("PRAGMA foreign_keys=ON"))
+            
+            # Repair FTS5 tables BEFORE schema check so that broken vtables
+            # don't cause compare_metadata to fail with "vtable constructor
+            # failed" during check_schema_status() / ensure_schema_up_to_date().
+            self._create_fts_tables()
+
             inspector = inspect(self.engine)
             tables_exist = inspector.get_table_names()
             if not tables_exist:
@@ -125,7 +131,9 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
             else:
                 result_message = "Database is ready"
 
-            # 统一出口：确保 FTS 表存在（幂等）
+            # Run _create_fts_tables() again after migration to ensure FTS
+            # tables survive any Alembic migration that might have dropped
+            # shadow tables.
             self._create_fts_tables()
             return Response(message=result_message, status=True)
 
@@ -172,6 +180,96 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
                     )
                     conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
                     conn.commit()
+
+        # ------------------------------------------------------------------
+        # Detect and repair broken FTS5 virtual tables
+        # ------------------------------------------------------------------
+        # Alembic migrations (or manual schema changes) can drop FTS5 shadow
+        # tables (*_data, *_idx, *_docsize, *_config) while leaving the
+        # virtual table entry in sqlite_master.  When this happens, the vtable
+        # constructor fails on first use ("vtable constructor failed") and
+        # MATCH queries return errors / empty results.
+        #
+        # We detect this by checking whether the *_data shadow table exists.
+        # If the vtable is registered but its shadow table is missing, we DROP
+        # the vtable so that the CREATE VIRTUAL TABLE IF NOT EXISTS below
+        # will recreate it from scratch (with all shadow tables).
+        _fts_vtables = [
+            "session_messages_fts",
+            "session_messages_fts_trigram",
+            "session_summaries_fts",
+            "session_summaries_fts_trigram",
+            "session_search_fts",
+        ]
+        _broken_vtables: list[str] = []
+        with self.engine.connect() as conn:
+            raw = conn.connection
+            for vt_name in _fts_vtables:
+                # Check if the virtual table is registered in sqlite_master
+                row = raw.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (vt_name,),
+                ).fetchone()
+                if not row:
+                    continue  # vtable doesn't exist yet — CREATE will make it
+
+                # Check if the shadow table *_data exists
+                shadow_exists = raw.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (f"{vt_name}_data",),
+                ).fetchone()
+                if shadow_exists:
+                    continue  # shadow table present — vtable is healthy
+
+                # vtable exists in sqlite_master but shadow table is missing → broken
+                _broken_vtables.append(vt_name)
+
+            # Repair all broken vtables in a single writable_schema session
+            if _broken_vtables:
+                _shadow_suffixes = ("_data", "_idx", "_docsize", "_config")
+                _trigger_suffixes = ("_insert", "_delete", "_update")
+                for vt_name in _broken_vtables:
+                    logger.warning(
+                        f"FTS5 table '{vt_name}' is broken (shadow table missing) "
+                        f"— dropping and recreating"
+                    )
+                    # A normal DROP TABLE fails on a broken vtable because
+                    # SQLite tries to invoke the vtable constructor (xConnect)
+                    # to call xDestroy, which fails since shadow tables are
+                    # missing.  Workaround: use writable_schema pragma to
+                    # delete the sqlite_master entry directly, then clean up
+                    # orphaned shadow tables using their exact names (NOT LIKE,
+                    # which would match sibling vtables such as
+                    # session_messages_fts_trigram).
+                    raw.execute("PRAGMA writable_schema=1")
+                    raw.execute(
+                        "DELETE FROM sqlite_master WHERE name=? AND type='table'",
+                        (vt_name,),
+                    )
+                    for suffix in _shadow_suffixes:
+                        raw.execute(
+                            "DELETE FROM sqlite_master WHERE name=? AND type='table'",
+                            (f"{vt_name}{suffix}",),
+                        )
+                    raw.execute("PRAGMA writable_schema=0")
+                    # Drop triggers normally (they don't need the vtable to exist)
+                    for suffix in _trigger_suffixes:
+                        raw.execute(f"DROP TRIGGER IF EXISTS {vt_name}{suffix}")
+                # IMPORTANT: use raw.commit() (DBAPI-level commit), NOT
+                # conn.commit() (SQLAlchemy-level).  The PRAGMA writable_schema
+                # changes are executed on the raw DBAPI connection and are not
+                # tracked by SQLAlchemy's transaction manager.  Using
+                # conn.commit() would commit SQLAlchemy's (empty) transaction
+                # but leave the PRAGMA changes uncommitted, and a new pooled
+                # connection would still see the old (broken) vtable entry.
+                raw.commit()
+                # Invalidate this pooled connection so that executescript()
+                # below gets a fresh sqlite3 connection.  SQLite caches the
+                # schema per-connection; after deleting a vtable entry via
+                # writable_schema, the cache still holds the old (broken)
+                # vtable instance and CREATE VIRTUAL TABLE IF NOT EXISTS would
+                # see the stale entry and silently skip or fail.
+                conn.invalidate()
 
         fts_sql = """
         CREATE VIRTUAL TABLE IF NOT EXISTS session_messages_fts USING fts5(
@@ -308,6 +406,56 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
             logger.info("FTS5 tables initialized")
         except Exception as e:
             logger.warning(f"Failed to initialize FTS5 tables: {e}")
+
+        # ------------------------------------------------------------------
+        # FTS index health check + rebuild if empty
+        # ------------------------------------------------------------------
+        # Even after the broken-vtable repair above, the index can still be
+        # empty if the vtable was freshly recreated.  An external-content FTS5
+        # table with no index returns zero MATCH results even though the backing
+        # rows exist.  Detect this by checking the *_idx shadow table row count
+        # and issue the FTS5 'rebuild' command when needed.
+        _fts_tables_to_check = [
+            ("session_messages_fts", "sessionmessage"),
+            ("session_messages_fts_trigram", "sessionmessage"),
+            ("session_summaries_fts", "sessionsummary"),
+            ("session_summaries_fts_trigram", "sessionsummary"),
+        ]
+        try:
+            with self.engine.connect() as conn:
+                raw = conn.connection
+                for fts_name, backing_table in _fts_tables_to_check:
+                    try:
+                        idx_count = raw.execute(
+                            f"SELECT COUNT(*) FROM {fts_name}_idx"
+                        ).fetchone()[0]
+                    except Exception:
+                        # Shadow table doesn't exist — vtable creation may have
+                        # failed; skip this table.
+                        continue
+                    try:
+                        backing_count = raw.execute(
+                            f"SELECT COUNT(*) FROM {backing_table}"
+                        ).fetchone()[0]
+                    except Exception:
+                        backing_count = 0
+
+                    if backing_count > 0 and idx_count == 0:
+                        logger.info(
+                            f"{fts_name} index is empty ({idx_count} idx rows "
+                            f"vs {backing_count} {backing_table}) — rebuilding FTS index"
+                        )
+                        raw.execute(
+                            f"INSERT INTO {fts_name}({fts_name}) VALUES('rebuild')"
+                        )
+                        # Use raw.commit() (DBAPI-level) to ensure the rebuild
+                        # is committed to disk — conn.commit() only commits
+                        # SQLAlchemy's transaction, which may not track raw
+                        # DBAPI statements.
+                        raw.commit()
+                        logger.info(f"{fts_name} index rebuilt successfully")
+        except Exception as e:
+            logger.warning(f"Failed to check/rebuild FTS index: {e}")
 
         # ------------------------------------------------------------------
         # Session management indexes (for TUI session smart search)

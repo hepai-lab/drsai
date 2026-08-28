@@ -2038,3 +2038,162 @@ function runGitWithInput(
     child.stdin?.end(input);
   });
 }
+
+/* ---------------------------------------------------------------------------
+ * V2 gateway adapters — convert desktop_gateway response shapes to the
+ * existing WorkspaceFileTreeResult / WorkspaceFilePreview types so the
+ * renderer never needs to change.
+ *
+ * Gateway routes (port 28643):
+ *   GET /v1/workspaces/{id}/files  → listWorkspaceFiles (#15)
+ *   GET /v1/workspaces/{id}/file   → readWorkspaceFile  (#16)
+ * ------------------------------------------------------------------------- */
+
+/** Gateway response entry for GET /v1/workspaces/{id}/files (tree shape). */
+interface GatewayFileTreeEntry {
+  name: string;
+  path: string;               // relative to workspace root
+  directory: boolean;
+  size?: number;
+  modified_at?: string;
+  git_status?: string;
+  children?: GatewayFileTreeEntry[];
+}
+
+/** Gateway response for GET /v1/workspaces/{id}/files. */
+interface GatewayFileListResponse {
+  workspace_id: string;
+  shape: "flat" | "tree";
+  data: GatewayFileTreeEntry[];
+  total: number;
+  offset: number;
+  next_offset?: number | null;
+  truncated: boolean;
+  scan_limit: number;
+}
+
+/** Gateway response for GET /v1/workspaces/{id}/file. */
+interface GatewayFileReadResponse {
+  path: string;               // relative to workspace root
+  mime: string;
+  truncated: boolean;
+  size: number;
+  modified_at: string;
+  sha256: string;
+  content?: string;            // present when binary === false
+  data_url?: string;           // present when binary === true
+  binary: boolean;
+  encoding?: string | null;
+}
+
+/** Minimal runtime-client surface needed by the adapters. */
+export interface GatewayFileClient {
+  requestFiles<T>(workspaceId: string, endpoint: string, init?: RequestInit): Promise<T>;
+}
+
+function convertGatewayFileNode(
+  entry: GatewayFileTreeEntry,
+  workspacePath: string,
+): WorkspaceFileNode {
+  const absolutePath = join(workspacePath, entry.path);
+  const isDir = entry.directory;
+  return {
+    name: entry.name,
+    path: absolutePath,
+    relativePath: entry.path,
+    type: isDir ? "directory" : "file",
+    extension: !isDir ? extname(entry.name).toLowerCase() : undefined,
+    size: entry.size,
+    modifiedAt: entry.modified_at,
+    gitStatus: (entry.git_status as WorkspaceFileGitStatus | undefined) ?? undefined,
+    previewKind: !isDir ? classifyPreviewKind(entry.name, entry.size ?? 0) : undefined,
+    children: entry.children?.map((child) => convertGatewayFileNode(child, workspacePath)),
+  };
+}
+
+/** Convert a gateway list-files response to WorkspaceFileTreeResult. */
+export function convertGatewayFileList(
+  response: GatewayFileListResponse,
+  workspacePath: string,
+): WorkspaceFileTreeResult {
+  return {
+    workspacePath,
+    nodes: response.data.map((entry) => convertGatewayFileNode(entry, workspacePath)),
+    totalEntries: response.total,
+    truncated: response.truncated,
+    nextOffset: response.next_offset ?? undefined,
+  };
+}
+
+/** Convert a gateway read-file response to WorkspaceFilePreview. */
+export function convertGatewayFilePreview(
+  response: GatewayFileReadResponse,
+  workspacePath: string,
+): WorkspaceFilePreview {
+  const absolutePath = join(workspacePath, response.path);
+  const name = basename(response.path);
+  const kind = classifyPreviewKind(response.path, response.size);
+  return {
+    workspacePath,
+    path: absolutePath,
+    relativePath: response.path,
+    name,
+    kind,
+    mime: response.mime,
+    size: response.size,
+    modifiedAt: response.modified_at,
+    truncated: response.truncated,
+    fileHash: response.sha256,
+    content: response.content,
+    dataUrl: response.data_url,
+  };
+}
+
+/**
+ * V2 gateway-backed listWorkspaceFiles.  Calls GET /v1/workspaces/{id}/files
+ * (route #15) via the runtime client, then converts the response to the
+ * legacy WorkspaceFileTreeResult shape.
+ */
+export async function listWorkspaceFilesViaGateway(
+  client: GatewayFileClient,
+  request: WorkspaceFileTreeRequest,
+): Promise<WorkspaceFileTreeResult> {
+  const workspaceId = request.workspaceId;
+  if (!workspaceId) throw new Error("workspaceId is required for gateway file listing");
+
+  const params = new URLSearchParams();
+  params.set("path", ".");
+  params.set("depth", String(clampInt(request.maxDepth, 1, 8, DEFAULT_MAX_DEPTH)));
+  if (request.query?.trim()) params.set("query", request.query.trim());
+  params.set("offset", String(clampInt(request.offset, 0, 1_000_000, 0)));
+  params.set("max_entries", String(clampInt(request.maxEntries, 50, 2_000, DEFAULT_MAX_ENTRIES)));
+
+  const response = await client.requestFiles<GatewayFileListResponse>(
+    workspaceId,
+    `/files?${params.toString()}`,
+  );
+  return convertGatewayFileList(response, request.workspacePath);
+}
+
+/**
+ * V2 gateway-backed previewWorkspaceFile.  Calls GET /v1/workspaces/{id}/file
+ * (route #16) via the runtime client, then converts the response to the
+ * legacy WorkspaceFilePreview shape.
+ */
+export async function previewWorkspaceFileViaGateway(
+  client: GatewayFileClient,
+  request: WorkspaceFilePreviewRequest,
+): Promise<WorkspaceFilePreview> {
+  const workspaceId = request.workspaceId;
+  if (!workspaceId) throw new Error("workspaceId is required for gateway file preview");
+
+  const params = new URLSearchParams();
+  params.set("path", request.path);
+  params.set("max_bytes", String(clampInt(request.maxBytes, 8_000, 500_000, DEFAULT_PREVIEW_BYTES)));
+
+  const response = await client.requestFiles<GatewayFileReadResponse>(
+    workspaceId,
+    `/file?${params.toString()}`,
+  );
+  return convertGatewayFilePreview(response, request.workspacePath);
+}

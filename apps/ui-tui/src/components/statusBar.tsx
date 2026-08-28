@@ -19,7 +19,7 @@ import { Box, Text } from 'ink'
 
 import { useTerminalWidth } from '../hooks/terminalSizeStore.js'
 import { $isStreaming } from '../app/turnStore.js'
-import { $connectionStatus, $copyMode, $lastUsage, $sessionMeta, $statusLine, $userId, $remoteHost } from '../app/uiStore.js'
+import { $connectionStatus, $copyMode, $lastUsage, $sessionMeta, $statusLine, $streamingTokenEstimate, $userId, $remoteHost } from '../app/uiStore.js'
 import { theme } from '../theme.js'
 
 /** Truncate a string to at most `maxChars` characters, appending "…" if truncated. */
@@ -38,6 +38,7 @@ export function StatusBar() {
   const statusLine = useStore($statusLine)
   const isStreaming = useStore($isStreaming)
   const lastUsage = useStore($lastUsage)
+  const streamingEstimate = useStore($streamingTokenEstimate)
   const copyMode = useStore($copyMode)
   const cols = useTerminalWidth(80)
   // Padding-aware effective width — appLayout uses paddingX={1} so subtract 2.
@@ -145,15 +146,41 @@ export function StatusBar() {
               <Text color={theme.warn} bold>copy</Text>
             </>
           )}
-          {/* Latest token usage (Issue #8 fix) */}
-          {lastUsage && !isStreaming && (
+          {/* Token usage — shown during and after streaming */}
+          {isStreaming && streamingEstimate > 0 && (
+            <>
+              <Text color={theme.muted}> · </Text>
+              <Text color={theme.muted}>~{streamingEstimate} tokens (est.)</Text>
+              {lastUsage?.total_tokens_accumulated != null && lastUsage.total_tokens_accumulated > 0 && (
+                <Text color={theme.muted}> · Σ {lastUsage.total_tokens_accumulated}</Text>
+              )}
+            </>
+          )}
+          {lastUsage && isStreaming && streamingEstimate === 0 && (
             <>
               <Text color={theme.muted}> · </Text>
               <Text color={theme.muted}>
-                {lastUsage.prompt_tokens}↑ {lastUsage.completion_tokens}↓ = {lastUsage.total_tokens} tokens
+                {lastUsage.prompt_tokens}↑ {lastUsage.completion_tokens}↓
               </Text>
+              {lastUsage.total_tokens_accumulated != null && lastUsage.total_tokens_accumulated > lastUsage.total_tokens && (
+                <Text color={theme.muted}> · Σ {lastUsage.total_tokens_accumulated}</Text>
+              )}
             </>
           )}
+          {lastUsage && !isStreaming && (() => {
+            // After streaming: show accumulated totals across all LLM calls
+            const upTotal = lastUsage.prompt_tokens_total ?? lastUsage.prompt_tokens
+            const downTotal = lastUsage.completion_tokens_total ?? lastUsage.completion_tokens
+            const grandTotal = lastUsage.total_tokens_accumulated ?? lastUsage.total_tokens
+            return (
+              <>
+                <Text color={theme.muted}> · </Text>
+                <Text color={theme.muted}>
+                  {upTotal}↑ {downTotal}↓ = {grandTotal} tokens
+                </Text>
+              </>
+            )
+          })()}
         </Box>
         {statusLineShort && (
           <Box>
@@ -235,13 +262,40 @@ export function StatusBar() {
           </>
         )}
       </Box>
-      {lastUsage && !isStreaming && (
+      {/* Token usage row — shown during and after streaming */}
+      {isStreaming && streamingEstimate > 0 && (
         <Box>
           <Text color={theme.muted}>
-            {lastUsage.prompt_tokens}↑ {lastUsage.completion_tokens}↓ = {lastUsage.total_tokens} tokens
+            ~{streamingEstimate} tokens (est.)
+            {lastUsage?.total_tokens_accumulated != null && lastUsage.total_tokens_accumulated > 0
+              ? ` · Σ ${lastUsage.total_tokens_accumulated}`
+              : ''}
           </Text>
         </Box>
       )}
+      {lastUsage && isStreaming && streamingEstimate === 0 && (
+        <Box>
+          <Text color={theme.muted}>
+            {lastUsage.prompt_tokens}↑ {lastUsage.completion_tokens}↓
+            {lastUsage.total_tokens_accumulated != null && lastUsage.total_tokens_accumulated > lastUsage.total_tokens
+              ? ` · Σ ${lastUsage.total_tokens_accumulated}`
+              : ''}
+          </Text>
+        </Box>
+      )}
+      {lastUsage && !isStreaming && (() => {
+        // After streaming: show accumulated totals across all LLM calls
+        const upTotal = lastUsage.prompt_tokens_total ?? lastUsage.prompt_tokens
+        const downTotal = lastUsage.completion_tokens_total ?? lastUsage.completion_tokens
+        const grandTotal = lastUsage.total_tokens_accumulated ?? lastUsage.total_tokens
+        return (
+          <Box>
+            <Text color={theme.muted}>
+              {upTotal}↑ {downTotal}↓ = {grandTotal} tokens
+            </Text>
+          </Box>
+        )
+      })()}
       {statusLineShort && (
         <Box>
           <Text color={theme.muted} dimColor>{statusLineShort}</Text>

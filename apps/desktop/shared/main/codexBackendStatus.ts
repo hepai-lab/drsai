@@ -2,7 +2,12 @@ import type { CodexBackendState, CodexBackendStatus } from "../api/desktopApi";
 import type { AgentBackendCapability, BackendAccountStatus } from "./runtimeClient";
 
 function unavailableState(capability?: AgentBackendCapability): CodexBackendState {
-  const readiness = capability?.readiness;
+  // When the capability object is entirely undefined the backend is not
+  // registered in the gateway (V2 desktop_gateway only registers "opendrsai").
+  // Treat this as "not_installed" rather than "fault" so the UI does not
+  // offer a "restart" action that would 404.
+  if (!capability) return "not_installed";
+  const readiness = capability.readiness;
   if (readiness?.installed.state === "missing") return "not_installed";
   if (readiness?.contract.state === "blocked") return "version_incompatible";
   return "fault";

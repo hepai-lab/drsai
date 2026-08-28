@@ -51,6 +51,38 @@ def _status(rid, params: dict) -> dict:
     })
 
 
+@method("setup.config")
+def _config(rid, params: dict) -> dict:
+    """Return the current CLI config with sensitive values masked.
+
+    Used by the TUI SetupScreen overlay to display current configuration
+    before the user modifies it via the wizard.
+    """
+    cfg = cli_config.load_config() if cli_config.CLI_CONFIG_PATH.exists() else dict(cli_config.DEFAULT_CONFIG)
+    masked: dict = {}
+    for k, v in cfg.items():
+        if k in cli_config._SENSITIVE_KEYS:
+            # Check both config file and env var for the effective value
+            env_map = {
+                "api_key": "HEPAI_API_KEY",
+                "anthropic_api_key": "ANTHROPIC_API_KEY",
+                "openai_api_key": "OPENAI_API_KEY",
+            }
+            env_val = os.environ.get(env_map.get(k, ""), "")
+            effective = v or env_val
+            if effective:
+                source = "env" if env_val and not v else "config"
+                masked[k] = {"value": cli_config.mask_key(effective), "source": source}
+            else:
+                masked[k] = {"value": "<not set>", "source": "none"}
+        else:
+            masked[k] = v
+    return _ok(rid, {
+        "config": masked,
+        "config_path": str(cli_config.CLI_CONFIG_PATH),
+    })
+
+
 @method("setup.save")
 def _save(rid, params: dict) -> dict:
     """Persist first-run setup choices to ``~/.drsai/cli_config.json``.

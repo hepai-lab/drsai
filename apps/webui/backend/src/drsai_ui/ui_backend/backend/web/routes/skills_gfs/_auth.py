@@ -37,21 +37,44 @@ async def _get_db():
 # Response formatters
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _public_skillmeta_to_dict(row) -> dict:
-    from ....datamodel.db import SkillMeta
+def _skillmeta_to_dict(row) -> dict:
+    """Convert a SkillMeta row to a flat dict for API responses."""
     return {
         "slug": row.slug,
         "name": row.name,
-        "description": row.description,
-        "compatibility": row.compatibility,
         "icon": row.icon,
         "version": row.version,
-        "owner": row.owner,
-        "updated_at": row.updated_at.isoformat() if row.updated_at else "",
-        "downloads": row.downloads,
+        "description": row.description or "",
+        "owner": row.author or row.owner_id,
+        "owner_id": row.owner_id,
+        "author": row.author,
+        "visibility": row.visibility,
+        "source": row.source,
+        "source_ref": row.source_ref,
+        "uskills_type": row.uskills_type,
+        "imported_ref": row.imported_ref if isinstance(row.imported_ref, dict) else None,
+        "tags": row.tags if isinstance(row.tags, list) else [],
+        "downloads": row.download_count,
+        "collector_ids": row.collector_ids if isinstance(row.collector_ids, list) else [],
+        "agent_ids": row.agent_ids if isinstance(row.agent_ids, list) else [],
+        "team_ids": row.team_ids if isinstance(row.team_ids, list) else [],
         "profile": row.profile or "",
-        "changelog": row.changelog or "",
-        "category": row.category or "",
+        "created_at": row.created_at.isoformat() if row.created_at else "",
+        "updated_at": row.updated_at.isoformat() if row.updated_at else "",
+    }
+
+
+def _skilldetail_to_dict(row) -> dict:
+    """Convert a SkillDetail row to a flat dict."""
+    return {
+        "slug": row.slug,
+        "description": row.description,
+        "body": row.body,
+        "changelog": row.changelog,
+        "author_email": row.author_email,
+        "author_id": row.author_id,
+        "required_tools": row.required_tools if isinstance(row.required_tools, list) else [],
+        "detail_raw": row.detail_raw,
     }
 
 
@@ -63,61 +86,6 @@ def _field(item, key: str, default: Any = "") -> Any:
     if val is not None and val != "":
         return val
     return default
-
-
-def _user_skillmeta_to_dict(item, user_id: str) -> dict:
-    """Convert a UserSkillMeta row or GFS meta dict to flat shape (matching public skills)."""
-    slug = _field(item, "slug", "")
-    name = _field(item, "name", slug)
-    description = _field(item, "description", "")
-    icon = _field(item, "icon", "package")
-    version = _field(item, "version", "0.0.0")
-    changelog = _field(item, "changelog", "")
-    source = _field(item, "source", "created")
-    owner = _field(item, "owner", user_id)
-    profile = _field(item, "profile", "")
-
-    created_at = None
-    if hasattr(item, "created_at") and item.created_at:
-        created_at = item.created_at
-    else:
-        raw = item.get("created_at", "") if isinstance(item, dict) else ""
-        if raw:
-            try:
-                created_at = datetime.fromisoformat(raw)
-            except (ValueError, TypeError):
-                pass
-
-    updated_at = None
-    if hasattr(item, "updated_at") and item.updated_at:
-        updated_at = item.updated_at
-    else:
-        raw_upd = item.get("updated_at", "") if isinstance(item, dict) else ""
-        if raw_upd:
-            try:
-                updated_at = datetime.fromisoformat(raw_upd)
-            except (ValueError, TypeError):
-                pass
-
-    unlisted = _field(item, "unlisted", None)
-
-    return {
-        "slug": slug,
-        "name": name,
-        "description": description,
-        "icon": icon,
-        "version": version,
-        "owner": owner,
-        "source": source,
-        "unlisted": bool(unlisted) if unlisted else False,
-        "created_at": created_at.isoformat() if created_at else "",
-        "updated_at": updated_at.isoformat() if updated_at else "",
-        "download_url": f"/api/skills/{slug}/download?type=user&user_id={user_id}",
-        "profile": profile,
-        "changelog": changelog,
-        "downloads": int(_field(item, "downloads", 0) or 0),
-        "category": _field(item, "category", ""),
-    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

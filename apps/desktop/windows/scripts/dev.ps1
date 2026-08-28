@@ -10,7 +10,6 @@ param(
     [switch]$SkipNpmInstall,
     [switch]$NoDevServer,
     [switch]$NoGateway,
-    [switch]$HotLoad,
     [switch]$EnableRegressionControl,
     [string]$PipIndexUrl = "https://pypi.tuna.tsinghua.edu.cn/simple",
     [switch]$ShowLibPngWarnings
@@ -19,8 +18,8 @@ param(
 $ErrorActionPreference = "Stop"
 $IsProductionLaunch = $LaunchMode -eq "Production"
 $LaunchModeName = $LaunchMode.ToLowerInvariant()
-# Default desktop entry is workbench → desktop_gateway on 28643. Legacy stays on
-# 28642/18642 and is reached via `npm run dev:legacy` (or an explicit -GatewayPort).
+# Default desktop entry is workbench → desktop_gateway on 28643.
+# V2 surface: Electron owns desktop_gateway directly, no legacy gateway on 28642.
 if ($GatewayPort -eq 0) {
     $GatewayPort = 28643
 }
@@ -150,47 +149,6 @@ function Assert-DesktopNodeVersion {
     }
 
     throw "Node.js $version is too old for the Windows desktop dev server. This project requires Node.js >= 20.19.0 (Node 22 LTS recommended). Upgrade Node, then remove apps\desktop\node_modules and run npm run dev:bootstrap again."
-}
-
-function Get-TailwindOxideVersion {
-    $oxidePackageJson = "node_modules\@tailwindcss\oxide\package.json"
-    if (Test-Path $oxidePackageJson) {
-        try {
-            $pkg = Get-Content -LiteralPath $oxidePackageJson -Raw | ConvertFrom-Json
-            if ($pkg.version) {
-                return [string]$pkg.version
-            }
-        } catch {
-        }
-    }
-    return "4.2.2"
-}
-
-function Repair-TailwindNativeBinding {
-    param([string]$NpmCommand)
-
-    if (-not (Test-Path "node_modules\@tailwindcss\oxide")) {
-        return
-    }
-
-    $isWindowsX64 = $env:OS -eq "Windows_NT" -and $env:PROCESSOR_ARCHITECTURE -match "^(AMD64|x64)$"
-    if (-not $isWindowsX64) {
-        return
-    }
-
-    $binding = "node_modules\@tailwindcss\oxide-win32-x64-msvc\tailwindcss-oxide.win32-x64-msvc.node"
-    if (Test-Path $binding) {
-        return
-    }
-
-    Write-Host "    Repairing missing Tailwind native binding..." -ForegroundColor Yellow
-    $oxideVersion = Get-TailwindOxideVersion
-    Invoke-StepProcess `
-        -FilePath $NpmCommand `
-        -ArgumentList @("install", "--no-save", "@tailwindcss/oxide-win32-x64-msvc@$oxideVersion") `
-        -Prefix "Installing Tailwind native binding" `
-        -LogName "npm-tailwind-oxide-install" `
-        -LogDir $DevLogDir
 }
 
 function Repair-ElectronBinary {
@@ -845,17 +803,7 @@ if ($InstallOnly) {
 
 $GatewayProcess = $null
 $GatewayEnabled = -not $NoGateway -and -not $NoDevServer
-$GatewayHotReload = $GatewayEnabled -and $HotLoad
 Write-Host "[2/3] Gateway" -ForegroundColor Yellow
-if ($GatewayHotReload) {
-    throw @"
--HotLoad starts the legacy uvicorn on 28642 (`drsai.backend.gateway`).
-The default desktop entry is now workbench (`desktop_gateway` on 28643).
-Use without -HotLoad so Electron owns desktop_gateway, or launch legacy explicitly:
-  cd $DesktopDir
-  npm run dev:legacy
-"@
-}
 if (-not $GatewayEnabled) {
     Write-Host "    SKIP Gateway startup." -ForegroundColor Yellow
 } else {
@@ -894,12 +842,10 @@ try {
         )
         $frontendCacheReady = (Test-Path $FrontendValidationStamp) -and
             ((Get-Content -LiteralPath $FrontendValidationStamp -Raw -ErrorAction SilentlyContinue) -eq $frontendFingerprint) -and
-            (Test-Path "node_modules\electron\dist\electron.exe") -and
-            (Test-Path "node_modules\@tailwindcss\oxide-win32-x64-msvc\tailwindcss-oxide.win32-x64-msvc.node")
+            (Test-Path "node_modules\electron\dist\electron.exe")
         if ($frontendCacheReady) {
             Write-Host "    OK frontend dependency validation cached." -ForegroundColor Green
         } else {
-            Repair-TailwindNativeBinding -NpmCommand $npm
             Repair-ElectronBinary -NpmCommand $npm
             New-Item -ItemType Directory -Force -Path $DevCacheDir | Out-Null
             Set-Content -LiteralPath $FrontendValidationStamp -Value $frontendFingerprint -NoNewline

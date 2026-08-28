@@ -509,14 +509,14 @@ async function startGatewayOnce(): Promise<boolean> {
     ? [
         "-m",
         "uvicorn",
-        "drsai.backend.gateway:app",
+        "drsai.backend.desktop_gateway.app:app",
         "--host",
         GATEWAY_HOST,
         "--port",
         GATEWAY_PORT,
         "--reload",
       ]
-    : ["-m", "drsai.backend.gateway"];
+    : ["-m", "drsai.backend.desktop_gateway"];
 
   const localCodexEnv = await getLocalCodexDevelopmentEnv();
   const identityEnv = desktopUserId

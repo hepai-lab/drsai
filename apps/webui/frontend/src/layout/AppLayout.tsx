@@ -24,6 +24,10 @@ interface AppLayoutProps {
   showAdminNav?: boolean;
   /** 历史会话列表（传入后显示在左侧菜单底部） */
   leftMenuHistory?: React.ReactNode;
+  /** 技能广场当前子页签 */
+  skillsSubTab?: string;
+  /** 技能广场子页签切换 */
+  onSkillsSubTabChange?: (tabId: string) => void;
 
   // RightPanel
   rightPanelTemplates?: React.ReactNode;
@@ -65,6 +69,8 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   children,
   onNewSession,
   showNewSessionButton = false,
+  skillsSubTab,
+  onSkillsSubTabChange,
 }) => {
   const { darkMode } = useContext(appContext);
   const { t } = useLang();
@@ -211,6 +217,8 @@ const AppLayout: React.FC<AppLayoutProps> = ({
       showAdminNav={showAdminNav}
       historyContent={leftMenuHistory}
       onNewSession={onNewSession}
+      skillsSubTab={skillsSubTab}
+      onSkillsSubTabChange={onSkillsSubTabChange}
     />
   );
 

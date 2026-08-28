@@ -9,6 +9,7 @@ import { Agent } from "../../types/common";
 import { IPlan } from "../../components/types/plan";
 import ChatInput from "./chat/chatinput";
 import type { ServerUploadedFileInfo } from "./chat/hooks/useFileUpload";
+import type { HepaiSkillPickRow } from "./chat/types";
 import SampleTasks from "./sampletasks";
 
 const LOGO_BOX_BASE =
@@ -72,7 +73,7 @@ interface NewChatViewProps {
         size: number;
         uuid: string;
         url?: string;
-    }>, plan?: IPlan, llm?: { label: string; value: string }) => Promise<void>;
+    }>, plan?: IPlan, llm?: { label: string; value: string }, attachedSkills?: HepaiSkillPickRow[]) => Promise<void>;
 }
 
 /**
@@ -124,7 +125,8 @@ export default function NewChatView({
         }>,
         accepted: boolean = false,
         plan?: IPlan,
-        llm?: { label: string; value: string }
+        llm?: { label: string; value: string },
+        attachedSkills?: HepaiSkillPickRow[]
     ) => {
         if (isSubmitting || (!query.trim() && (Array.isArray(files) ? files.length === 0 : false))) return;
 
@@ -137,7 +139,7 @@ export default function NewChatView({
         setHideSampleTasks(true);
         setIsSubmitting(true);
         try {
-            await onSubmit((agentInfo ?? agent) as Agent, finalQuery, files, plan, llm);
+            await onSubmit((agentInfo ?? agent) as Agent, finalQuery, files, plan, llm, attachedSkills);
         } finally {
             setIsSubmitting(false);
         }

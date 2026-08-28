@@ -121,9 +121,20 @@ export interface UsageInfo {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
+  prompt_tokens_total?: number
+  completion_tokens_total?: number
+  total_tokens_accumulated?: number
 }
 
 export const $lastUsage = atom<UsageInfo | null>(null)
+
+/**
+ * Streaming token estimate — a rough character-based estimate of
+ * completion tokens during streaming, before real usage data arrives.
+ * Updated on each `message.delta` and reset when `usage.update` or
+ * `message.complete` arrives.
+ */
+export const $streamingTokenEstimate = atom<number>(0)
 
 /**
  * "Copy mode" — when true the TUI temporarily disables mouse tracking so
@@ -141,3 +152,28 @@ export const $lastUsage = atom<UsageInfo | null>(null)
  * mode they are in.
  */
 export const $copyMode = atom<boolean>(false)
+
+/**
+ * Current visual height (in terminal rows) of the composer's TextInput
+ * area, as reported by ``<TextInput>`` via ``onHeightChange``.
+ *
+ * ``<StreamingAssistant>`` reads this atom to dynamically adjust
+ * ``RESERVED_ROWS``: when the user types more lines, the input box
+ * grows, so the streaming content budget shrinks to keep the total
+ * dynamic frame strictly below ``stdout.rows`` (preventing Ink's
+ * fullscreen branch — the P0 crash fix).
+ *
+ * Lifecycle:
+ *   - Default ``1`` (placeholder-only, single line).
+ *   - Grows as the user types multi-line input, up to ``maxRows + 1``
+ *     (1 line of overflow is allowed before scroll mode engages).
+ *   - Once ``maxRows + 1`` is exceeded, TextInput enters scroll mode,
+ *     showing ``maxRows`` visible lines + ↑/↓ markers as needed.
+ *   - Resets to ``1`` when the input is cleared (submit) or when
+ *     streaming begins (disabled → placeholder).
+ *
+ * Formula in StreamingAssistant:
+ *   RESERVED_ROWS = composerInputHeight + 6
+ *   (6 = marginTop(1) + divider(1) + StatusBar(2) + Banner(1) + safety(1))
+ */
+export const $composerInputHeight = atom<number>(1)

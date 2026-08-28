@@ -574,8 +574,8 @@ function AuthenticatedApp({
     if (codexBackendEnabled !== true || !health) return;
     let active = true;
     void desktopApi.getCodexBackendStatus().then((status) => { if (active) setCodexStatus(status); }).catch(() => {
-      if (active) setCodexStatus({ backendId: "codex", state: "fault", available: false, version: null,
-        loggedIn: false, authMode: null, accountLabel: null, reason: "runtime_unavailable", retryable: true, action: "restart" });
+      if (active) setCodexStatus({ backendId: "codex", state: "not_installed", available: false, version: null,
+        loggedIn: false, authMode: null, accountLabel: null, reason: "codex_backend_not_registered", retryable: false, action: "none" });
     });
     return () => { active = false; };
   }, [codexBackendEnabled, health?.gateway.liveness?.generation, health?.gateway.liveness?.state]);

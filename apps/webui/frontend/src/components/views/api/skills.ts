@@ -15,13 +15,16 @@ export type SkillsPublicItem = {
     icon: string;
     version: string;
     owner: string;
+    owner_id?: string;
     updated_at: string;
     downloads: number;
     can_edit?: boolean;
     profile?: string;
     changelog?: string;
-    category?: string;
     source?: string;
+    uskills_type?: string | null;
+    imported_ref?: { origin: string; owner?: string | null; version?: string } | null;
+    tags?: string[];
     academicGroupId?: string;
 };
 
@@ -40,7 +43,9 @@ export type SkillsUserItem = {
     icon: string;
     version: string;
     owner: string;
-    source: "created" | "imported";
+    owner_id?: string;
+    source: "user" | "higraf";
+    uskills_type: "created" | "imported" | null;
     /** Whether this skill is currently published to the public skills square. */
     public: boolean;
     unlisted: boolean;
@@ -50,7 +55,7 @@ export type SkillsUserItem = {
     profile: string;
     changelog: string;
     downloads: number;
-    category?: string;
+    tags?: string[];
 };
 
 export type SkillsUserDetail = SkillsUserItem & {
@@ -161,7 +166,7 @@ export class SkillsAPI {
         page = 1,
         pageSize = 20,
         apiKey?: string,
-        opts?: { q?: string; category?: string; sort?: "name" | "time" },
+        opts?: { q?: string; tags?: string; sort?: "name" | "time"; source?: string },
     ): Promise<{
         data: SkillsPublicItem[];
         pagination: {
@@ -176,7 +181,8 @@ export class SkillsAPI {
         const params = new URLSearchParams({ type: "public", page: String(page), page_size: String(pageSize) });
         if (apiKey) params.set("api_key", apiKey);
         if (opts?.q?.trim()) params.set("q", opts.q.trim());
-        if (opts?.category?.trim()) params.set("category", opts.category.trim());
+        if (opts?.tags?.trim()) params.set("tags", opts.tags.trim());
+        if (opts?.source) params.set("source", opts.source);
         if (opts?.sort) params.set("sort", opts.sort);
         const headers: HeadersInit = this.getHeaders();
         if (apiKey) {
@@ -244,7 +250,7 @@ export class SkillsAPI {
             version?: string;
             changelog?: string;
             profile?: File;
-            category?: string;
+            tags?: string;
         },
     ): Promise<SkillsCatalogUploadResult> {
         const form = new FormData();
@@ -255,7 +261,7 @@ export class SkillsAPI {
         if (meta?.description?.trim()) form.append("description", meta.description.trim());
         if (meta?.version?.trim()) form.append("version", meta.version.trim());
         if (meta?.changelog?.trim()) form.append("changelog", meta.changelog.trim());
-        if (meta?.category?.trim()) form.append("category", meta.category.trim());
+        if (meta?.tags?.trim()) form.append("tags", meta.tags.trim());
         if (meta?.profile) form.append("profile", meta.profile);
         const qs = apiKey ? `?api_key=${encodeURIComponent(apiKey)}` : '';
         const headers: HeadersInit = {};
@@ -288,7 +294,7 @@ export class SkillsAPI {
             version?: string;
             changelog?: string;
             profile?: File;
-            category?: string;
+            tags?: string;
         },
     ): Promise<SkillsCatalogUploadResult> {
         const form = new FormData();
@@ -298,7 +304,7 @@ export class SkillsAPI {
         if (options?.description?.trim()) form.append("description", options.description.trim());
         if (options?.version?.trim()) form.append("version", options.version.trim());
         if (options?.changelog !== undefined) form.append("changelog", options.changelog.trim());
-        if (options?.category?.trim()) form.append("category", options.category.trim());
+        if (options?.tags?.trim()) form.append("tags", options.tags.trim());
         if (options?.profile) form.append("profile", options.profile);
         const qs = apiKey ? `?api_key=${encodeURIComponent(apiKey)}` : '';
         const headers: HeadersInit = {};
@@ -378,7 +384,7 @@ export class SkillsAPI {
         URL.revokeObjectURL(url);
     }
 
-    /** Import a public skill to My Collections — downloads from public GFS, uploads to user GFS. */
+    /** Import a public skill to My Collections — creates a reference record, no zip copy. */
     async importPublicSkill(
         slug: string,
         userId: string,
@@ -387,34 +393,25 @@ export class SkillsAPI {
             icon?: string;
             description?: string;
             version?: string;
-            category?: string;
+            tags?: string;
             owner?: string;
+            origin?: string;
             changelog?: string;
         } | string,
         apiKey?: string,
     ): Promise<{ id: string; url: string }> {
         const fields = typeof meta === "string" ? { display_name: meta } : (meta ?? {});
-        // Step 1: download public skill zip as blob
-        const dlResp = await fetch(
-            `${this.getBaseUrl()}/skills/${encodeURIComponent(slug)}/download?type=public`,
-            { headers: this.getHeaders() },
-        );
-        if (!dlResp.ok) {
-            throw new Error("Failed to download public skill");
-        }
-        const blob = await dlResp.blob();
-        const zipFile = new File([blob], `${slug}.zip`, { type: "application/zip" });
-
-        // Step 2: upload to user GFS with source=imported, preserving original author/logo
-        return this.uploadUserSkill(userId, zipFile, {
+        // Create a reference record — source=user, uskills_type=imported
+        return this.uploadUserSkill(userId, new File([], `${slug}.ref`), {
             display_name: fields.display_name || slug,
             slug,
-            source: "imported",
+            source: "imported",  // legacy: maps to uskills_type=imported
             icon: fields.icon,
             description: fields.description,
             version: fields.version,
-            category: fields.category,
+            tags: fields.tags,
             owner: fields.owner,
+            origin: fields.origin,
             changelog: fields.changelog,
         }, apiKey);
     }
@@ -448,8 +445,9 @@ export class SkillsAPI {
             version?: string;
             changelog?: string;
             source?: string;
-            category?: string;
+            tags?: string;
             owner?: string;
+            origin?: string;
         },
         apiKey?: string,
     ): Promise<{ id: string; url: string }> {
@@ -463,8 +461,9 @@ export class SkillsAPI {
         if (m.version?.trim()) form.append("version", m.version.trim());
         if (m.changelog?.trim()) form.append("changelog", m.changelog.trim());
         if (m.source?.trim()) form.append("source", m.source.trim());
-        if (m.category?.trim()) form.append("category", m.category.trim());
+        if (m.tags?.trim()) form.append("tags", m.tags.trim());
         if (m.owner?.trim()) form.append("owner", m.owner.trim());
+        if (m.origin?.trim()) form.append("origin", m.origin.trim());
         const headers: HeadersInit = {};
         let qs = `type=user&user_id=${encodeURIComponent(userId)}`;
         if (apiKey) {
@@ -498,7 +497,7 @@ export class SkillsAPI {
             changelog?: string;
             source?: string;
             profile?: File;
-            category?: string;
+            tags?: string;
         },
         apiKey?: string,
     ): Promise<{
@@ -519,7 +518,7 @@ export class SkillsAPI {
         if (opts.version?.trim()) form.append("version", opts.version.trim());
         if (opts.changelog !== undefined) form.append("changelog", opts.changelog.trim());
         if (opts.source?.trim()) form.append("source", opts.source.trim());
-        if (opts.category?.trim()) form.append("category", opts.category.trim());
+        if (opts.tags?.trim()) form.append("tags", opts.tags.trim());
         if (opts.profile) form.append("profile", opts.profile);
         const headers: HeadersInit = {};
         let qs = `type=user&user_id=${encodeURIComponent(userId)}`;
@@ -692,7 +691,7 @@ export type HigrafGroupSkillResult = {
     owner: string;
     updated_at: string;
     downloads: number;
-    category: string;
+    tags: string[];
     source: "higraf";
 };
 
@@ -727,7 +726,7 @@ export async function fetchHigrafGroupSkills(
             owner: h.authorName || "",
             updated_at: h.updatedAt || h.updated_at || "",
             downloads: h.callCount || 0,
-            category: h.categoryL2 || "",
+            tags: h.tags || [],
             source: "higraf",
             academicGroupId: h.academicGroupId || "",
         }),

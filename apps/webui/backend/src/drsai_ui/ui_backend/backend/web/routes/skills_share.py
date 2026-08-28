@@ -25,14 +25,14 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from ...datamodel.db import SkillShare, UserSkillMeta
+from ...datamodel.db import SkillShare, SkillMeta
 from ..config import settings
 from .gfs_utils import gfs_get
 from .skills_gfs import (
     _get_db,
     _gfs_zip_path,
+    _gfs_user_zip_path,
     _require_gfs,
-    _require_user_id,
     _SLUG_RE,
 )
 
@@ -94,6 +94,7 @@ async def create_share(
     expires_in_hours: int = Form(24),
 ) -> dict:
     """Create a share link for a private skill. ?user_id=xxx"""
+    from .skills_gfs._auth import _require_user_id
     user_id = _require_user_id(user_id)
     if not _SLUG_RE.match(slug):
         raise HTTPException(status_code=400, detail="Invalid slug")
@@ -101,7 +102,7 @@ async def create_share(
     db_mgr = await _get_db()
 
     # Verify ownership
-    resp = db_mgr.get(UserSkillMeta, filters={"user_id": user_id, "slug": slug})
+    resp = db_mgr.get(SkillMeta, filters={"owner_id": user_id, "slug": slug})
     if not resp.status or not resp.data:
         raise HTTPException(status_code=404, detail="Skill not found")
 
@@ -139,6 +140,7 @@ async def revoke_share(
     user_id: str = Query(...),
 ) -> dict:
     """Revoke a share link. ?user_id=xxx"""
+    from .skills_gfs._auth import _require_user_id
     user_id = _require_user_id(user_id)
     if not _SLUG_RE.match(slug):
         raise HTTPException(status_code=400, detail="Invalid slug")
@@ -160,6 +162,7 @@ async def list_shares(
     user_id: str = Query(...),
 ) -> dict:
     """List active shares for a skill. ?user_id=xxx"""
+    from .skills_gfs._auth import _require_user_id
     user_id = _require_user_id(user_id)
     if not _SLUG_RE.match(slug):
         raise HTTPException(status_code=400, detail="Invalid slug")
@@ -203,10 +206,10 @@ async def get_shared_skill_meta(share_id: str) -> dict:
     if share.expires_at < datetime.utcnow():
         raise HTTPException(status_code=410, detail="Share link has expired")
 
-    # Get skill metadata from UserSkillMeta
+    # Get skill metadata from SkillMeta
     skill_resp = db_mgr.get(
-        UserSkillMeta,
-        filters={"user_id": share.owner_user_id, "slug": share.skill_slug},
+        SkillMeta,
+        filters={"owner_id": share.owner_user_id, "slug": share.skill_slug},
     )
     if not skill_resp.status or not skill_resp.data:
         raise HTTPException(status_code=404, detail="Skill not found")
@@ -224,7 +227,7 @@ async def get_shared_skill_meta(share_id: str) -> dict:
                 "description": getattr(skill, "description", "") or "",
                 "icon": getattr(skill, "icon", "package") or "package",
                 "version": getattr(skill, "version", "0.0.0") or "0.0.0",
-                "owner": getattr(skill, "owner", "") or "",
+                "owner": getattr(skill, "author", "") or "",
                 "profile": getattr(skill, "profile", "") or "",
                 "changelog": getattr(skill, "changelog", "") or "",
             },
@@ -286,24 +289,13 @@ async def download_shared_skill(
     share.access_count = (share.access_count or 0) + 1
     db_mgr.upsert(share)
 
-    # Download from GFS.
-    # Public upload writes ZIP only to public_skills/{slug}.zip, but still
-    # creates UserSkillMeta so the skill shows up in "my creations" and can
-    # be shared. Share download must therefore fall back to the public copy.
+    # Download from GFS — resolve to user_skills/{owner}/{slug}.zip
     cfg = _require_gfs()
     tmp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     tmp_zip.close()
 
-    candidates = [
-        _gfs_zip_path("user", share.skill_slug, share.owner_user_id, "created"),
-        _gfs_zip_path("user", share.skill_slug, share.owner_user_id, "imported"),
-        _gfs_zip_path("public", share.skill_slug),
-    ]
-    ok = False
-    for remote in candidates:
-        if gfs_get(remote, tmp_zip.name, cfg, timeout=30):
-            ok = True
-            break
+    remote = _gfs_user_zip_path(share.skill_slug, share.owner_user_id)
+    ok = gfs_get(remote, tmp_zip.name, cfg, timeout=30)
 
     if not ok:
         try:

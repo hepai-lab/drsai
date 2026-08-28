@@ -189,7 +189,10 @@ import {
   getWorktreeMigrationDiagnostics,
   prepareForkWorktree,
 } from "./forkWorktrees";
-import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../shared/main/myDrSaiConfig";
+import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, // V2: trimmed — diagnoseMyDrSaiModelConnection, saveMyDrSaiModelProvider, testMyDrSaiModelProvider
+  discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, // V2: trimmed — saveMyDrSaiModelProvider,
+  savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, // V2: trimmed — testMyDrSaiModelProvider,
+  testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../shared/main/myDrSaiConfig";
 import { getWebSearchProviderPolicy, updateWebSearchProviderPolicy } from "../../../shared/main/myDrSaiConfig";
 import {
   assertExecutionAllowed,
@@ -215,25 +218,22 @@ import {
   revealThreadShare,
 } from "./threadShare";
 import {
-  listInstalledSkills,
+  // V2: trimmed — listInstalledSkills, installSkill, uninstallSkill, updateSkill, reloadSkills
   listAvailableSkills,
   getSkillContent,
-  installSkill,
-  uninstallSkill,
-  updateSkill,
-  reloadSkills,
 } from "./skills";
-import {
-  gfsList,
-  gfsStat,
-  gfsRead,
-  gfsWrite,
-  gfsUploadFile,
-  gfsDownloadFile,
-  gfsDelete,
-  gfsShareUrl,
-  gfsHealthcheck,
-} from "./gfs";
+// V2: trimmed — gateway never mounted gfs routes
+// import {
+//   gfsList,
+//   gfsStat,
+//   gfsRead,
+//   gfsWrite,
+//   gfsUploadFile,
+//   gfsDownloadFile,
+//   gfsDelete,
+//   gfsShareUrl,
+//   gfsHealthcheck,
+// } from "./gfs";
 import {
   getRuntimeThreadSnapshot,
   getRuntimeThreadSnapshotEnvelope,
@@ -364,7 +364,7 @@ import {
   getRemoteGatewayAccess,
   resolveRemoteWorkspaceTarget,
   prepareRemoteForkWorktree,
-  getRemoteWorkspaceGitDiff,
+  // V2: trimmed — getRemoteWorkspaceGitDiff,
   executeRemoteWorkspaceMutation,
   listRemoteWorkspaceCheckpoints,
   createRemoteWorkspaceCheckpoint,
@@ -372,7 +372,7 @@ import {
   restoreRemoteWorkspaceCheckpoint,
   acceptRemoteWorkspaceCheckpoint,
   summarizeRemoteWorkspaceFolder,
-  getRemoteWorkspaceGitFileAtRef,
+  // V2: trimmed — getRemoteWorkspaceGitFileAtRef,
   getRemoteWorkspaceRootForPath,
   getRemoteThreadSnapshot,
   searchThreadMessagesWithRemoteFallback,
@@ -413,13 +413,15 @@ import {
 import { getIdeContext } from "../../../shared/main/ideContext";
 import {
   getWorkspaceContextOverview,
-  getWorkspaceGitFileAtRef,
+  // V2: trimmed — getWorkspaceGitFileAtRef,
   getWorkspaceGitDiff,
   listWorkspaceFiles,
+  listWorkspaceFilesViaGateway,
   analyzeMaterialConsistency,
   analyzeMaterialRoles,
   queryMaterials,
   previewWorkspaceFile,
+  previewWorkspaceFileViaGateway,
   revertWorkspaceHunk,
   revertWorkspaceFile,
   stageWorkspaceFile,
@@ -584,9 +586,9 @@ import type {
   WorkspaceFileWriteRequest,
   WorkspaceFileWriteResult,
   WorkspaceFileTreeRequest,
-  WorkspaceGitDiffRequest,
+  // V2: trimmed — WorkspaceGitDiffRequest,
   WorkspaceFolderSummaryRequest,
-  WorkspaceGitFileAtRefRequest,
+  // V2: trimmed — WorkspaceGitFileAtRefRequest,
   DesktopWorkflowRunPrepareRequest,
   InteractiveDebugBreakpointRequest,
   InteractiveDebugControlRequest,
@@ -594,7 +596,7 @@ import type {
   InteractiveDebugStartRequest,
   UpdateMyDrSaiConfigRequest,
   UpdateMyDrSaiModelConnectionRequest,
-  SaveMyDrSaiModelProviderRequest,
+  // V2: trimmed — SaveMyDrSaiModelProviderRequest,
 } from "../shared/desktopApi";
 import {
   evaluateExecutionPermission,
@@ -2530,36 +2532,37 @@ async function execGit(
   });
 }
 
-async function requestWorkspaceMutationApproval(
-  action: WorkspaceMutationAction,
-  request: unknown,
-): Promise<unknown> {
-  const actionKind = getWorkspaceMutationActionKind(action);
-  const proposal = await proposeDesktopApproval({
-    source: "workspace",
-    actionKind,
-    title: getWorkspaceMutationTitle(action),
-    detail: getWorkspaceMutationDetail(action, request),
-    target: getStringProperty(request, "path") || getStringProperty(request, "workspacePath"),
-    risk: actionKind === "workspace.revert" ? "medium" : "low",
-    idempotencyKey: getWorkspaceMutationIdempotencyKey(action, request),
-  });
-
-  if (proposal.blocked || !proposal.allowed) {
-    throw new Error(proposal.reason);
-  }
-  if (proposal.queued && proposal.approval) {
-    pendingWorkspaceMutationApprovals.set(proposal.approval.id, {
-      action,
-      request,
-    });
-    await registerDesktopApprovalPayload(proposal.approval.id, "workspace_mutation", { action, request });
-    return createQueuedWorkspaceMutationResult(action, request, proposal.approval.id);
-  }
-
-  await assertExecutionAllowed(actionKind, { approved: true });
-  return executeWorkspaceMutation(action, request);
-}
+// V2: trimmed — requestWorkspaceMutationApproval was only called by trimmed git handlers
+// async function requestWorkspaceMutationApproval(
+//   action: WorkspaceMutationAction,
+//   request: unknown,
+// ): Promise<unknown> {
+//   const actionKind = getWorkspaceMutationActionKind(action);
+//   const proposal = await proposeDesktopApproval({
+//     source: "workspace",
+//     actionKind,
+//     title: getWorkspaceMutationTitle(action),
+//     detail: getWorkspaceMutationDetail(action, request),
+//     target: getStringProperty(request, "path") || getStringProperty(request, "workspacePath"),
+//     risk: actionKind === "workspace.revert" ? "medium" : "low",
+//     idempotencyKey: getWorkspaceMutationIdempotencyKey(action, request),
+//   });
+//
+//   if (proposal.blocked || !proposal.allowed) {
+//     throw new Error(proposal.reason);
+//   }
+//   if (proposal.queued && proposal.approval) {
+//     pendingWorkspaceMutationApprovals.set(proposal.approval.id, {
+//       action,
+//       request,
+//     });
+//     await registerDesktopApprovalPayload(proposal.approval.id, "workspace_mutation", { action, request });
+//     return createQueuedWorkspaceMutationResult(action, request, proposal.approval.id);
+//   }
+//
+//   await assertExecutionAllowed(actionKind, { approved: true });
+//   return executeWorkspaceMutation(action, request);
+// }
 
 async function requestWorkspaceCheckpointRestore(
   request: unknown,
@@ -2846,44 +2849,47 @@ function getWorkspaceMutationActionKind(
     : "workspace.revert";
 }
 
-function getWorkspaceMutationTitle(action: WorkspaceMutationAction): string {
-  return {
-    "stage-file": "Stage workspace file",
-    "revert-file": "Revert workspace file",
-    "stage-hunk": "Stage workspace hunk",
-    "revert-hunk": "Revert workspace hunk",
-  }[action];
-}
+// V2: trimmed — only called by commented-out getWorkspaceMutationDetail
+// function getWorkspaceMutationTitle(action: WorkspaceMutationAction): string {
+//   return {
+//     "stage-file": "Stage workspace file",
+//     "revert-file": "Revert workspace file",
+//     "stage-hunk": "Stage workspace hunk",
+//     "revert-hunk": "Revert workspace hunk",
+//   }[action];
+// }
 
-function getWorkspaceMutationDetail(
-  action: WorkspaceMutationAction,
-  request: unknown,
-): string {
-  const path = getStringProperty(request, "path") || "workspace change";
-  const workspacePath = getStringProperty(request, "workspacePath");
-  const suffix = workspacePath ? ` in ${workspacePath}` : "";
-  return `${getWorkspaceMutationTitle(action)}: ${path}${suffix}`;
-}
+// V2: trimmed — only called by commented-out requestWorkspaceMutationApproval
+// function getWorkspaceMutationDetail(
+//   action: WorkspaceMutationAction,
+//   request: unknown,
+// ): string {
+//   const path = getStringProperty(request, "path") || "workspace change";
+//   const workspacePath = getStringProperty(request, "workspacePath");
+//   const suffix = workspacePath ? ` in ${workspacePath}` : "";
+//   return `${getWorkspaceMutationTitle(action)}: ${path}${suffix}`;
+// }
 
-function getWorkspaceMutationIdempotencyKey(
-  action: WorkspaceMutationAction,
-  request: unknown,
-): string {
-  const workspacePath = getStringProperty(request, "workspacePath");
-  const path = getStringProperty(request, "path");
-  const expectedDiffHash = getStringProperty(request, "expectedDiffHash");
-  const patch = getStringProperty(request, "patch");
-  return [
-    "workspace",
-    action,
-    workspacePath,
-    path,
-    expectedDiffHash,
-    patch ? stableApprovalHash(patch) : "",
-  ]
-    .filter(Boolean)
-    .join(":");
-}
+// V2: trimmed — only called by commented-out requestWorkspaceMutationApproval
+// function getWorkspaceMutationIdempotencyKey(
+//   action: WorkspaceMutationAction,
+//   request: unknown,
+// ): string {
+//   const workspacePath = getStringProperty(request, "workspacePath");
+//   const path = getStringProperty(request, "path");
+//   const expectedDiffHash = getStringProperty(request, "expectedDiffHash");
+//   const patch = getStringProperty(request, "patch");
+//   return [
+//     "workspace",
+//     action,
+//     workspacePath,
+//     path,
+//     expectedDiffHash,
+//     patch ? stableApprovalHash(patch) : "",
+//   ]
+//     .filter(Boolean)
+//     .join(":");
+// }
 
 function stableApprovalHash(value: string): string {
   let hash = 2166136261;
@@ -2900,24 +2906,25 @@ function getStringProperty(request: unknown, key: string): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function createQueuedWorkspaceMutationResult(
-  action: WorkspaceMutationAction,
-  request: unknown,
-  approvalId: string,
-): unknown {
-  const workspacePath = getStringProperty(request, "workspacePath");
-  const path = getStringProperty(request, "path");
-  const queued = {
-    workspacePath,
-    path,
-    approvalId,
-    approvalQueued: true,
-    message: "Workspace change is waiting in Approval Center.",
-  };
-  if (action === "stage-file") return { ...queued, staged: false };
-  if (action === "revert-file") return { ...queued, reverted: false };
-  return { ...queued, applied: false };
-}
+// V2: trimmed — only called by commented-out requestWorkspaceMutationApproval
+// function createQueuedWorkspaceMutationResult(
+//   action: WorkspaceMutationAction,
+//   request: unknown,
+//   approvalId: string,
+// ): unknown {
+//   const workspacePath = getStringProperty(request, "workspacePath");
+//   const path = getStringProperty(request, "path");
+//   const queued = {
+//     workspacePath,
+//     path,
+//     approvalId,
+//     approvalQueued: true,
+//     message: "Workspace change is waiting in Approval Center.",
+//   };
+//   if (action === "stage-file") return { ...queued, staged: false };
+//   if (action === "revert-file") return { ...queued, reverted: false };
+//   return { ...queued, applied: false };
+// }
 
 async function executeWorkspaceMutation(
   action: WorkspaceMutationAction,
@@ -4759,10 +4766,24 @@ function registerIpc(): void {
     return { type: result.type, loginId: result.loginId, verificationUrl: result.verificationUrl, userCode: result.userCode };
   });
   secureHandle("desktop:restart-codex-backend", async () => {
-    const client = await LocalRuntimeClient.connect();
-    await client.restartBackend("codex");
-    const capability = (await client.getCapabilities()).agent_backends?.codex;
-    return presentCodexBackendStatus(capability, await client.getBackendAccount("codex", true));
+    try {
+      const client = await LocalRuntimeClient.connect();
+      await client.restartBackend("codex");
+      const capability = (await client.getCapabilities()).agent_backends?.codex;
+      return presentCodexBackendStatus(capability, await client.getBackendAccount("codex", true));
+    } catch (error) {
+      // V2 desktop_gateway only registers "opendrsai" backend.  If the codex
+      // backend is not registered the gateway returns 404 agent_backend_not_found.
+      // Return a not_installed status instead of propagating the error so the
+      // renderer can gracefully hide the codex UI without an unhandled rejection.
+      return {
+        backendId: "codex", state: "not_installed" as const, available: false, version: null,
+        installed: false, authenticated: false, contractCompatible: false, executable: false,
+        loggedIn: false, authMode: null, accountLabel: null,
+        reason: "codex_backend_not_registered", retryable: false, action: "none" as const,
+        readiness: undefined, binaryIdentity: null,
+      };
+    }
   });
   secureHandle("desktop:sync-codex-workspace-sessions", async (event, workspaceId: string, workspacePath: string, requestId: string) => {
     if (!/^[A-Za-z0-9_.:-]{1,160}$/.test(workspaceId) || !/^[A-Za-z0-9_.:-]{1,200}$/.test(requestId)
@@ -4810,6 +4831,15 @@ function registerIpc(): void {
       if (controller.signal.aborted) {
         emit("cancelled", 0, 0);
         return { workspaceId, cancelled: true, discovered: 0, active: 0, archived: 0,
+          created: 0, updated: 0, skipped: 0, conflicts: 0, threads: [] };
+      }
+      // V2 desktop_gateway only registers "opendrsai" backend. If the codex
+      // backend is not registered the gateway returns 404 and the workspace
+      // sync must degrade to zero results instead of surfacing an error.
+      if (error instanceof RemoteProtocolError && error.status === 404) {
+        emit("projected", 0, 0);
+        emit("persisted", 0, 0);
+        return { workspaceId, discovered: 0, active: 0, archived: 0,
           created: 0, updated: 0, skipped: 0, conflicts: 0, threads: [] };
       }
       throw error;
@@ -5096,18 +5126,48 @@ function registerIpc(): void {
   secureHandle("desktop:workspace-context-overview", async (_event, workspacePath: string, workspaceId?: string) =>
     (await resolveRemoteWorkspaceTarget(workspacePath, workspaceId)) !== "local_or_unknown" ? getRemoteWorkspaceContextOverview(workspacePath, workspaceId) : getWorkspaceContextOverview(workspacePath),
   );
-  secureHandle("desktop:workspace-files", async (_event, request: WorkspaceFileTreeRequest) =>
-    (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? listRemoteWorkspaceFiles(request) : listWorkspaceFiles(request),
-  );
+  secureHandle("desktop:workspace-files", async (_event, request: WorkspaceFileTreeRequest) => {
+    // V2: route through gateway when workspaceId is available
+    if (request?.workspaceId) {
+      try {
+        return await withRuntimeClientForWorkspace(
+          request.workspacePath,
+          request.workspaceId,
+          async ({ client }) => listWorkspaceFilesViaGateway(client, request),
+        );
+      } catch (error) {
+        if (!isLocalRuntimeUnavailableError(error)) throw error;
+        // gateway unavailable — fall through to local fs
+      }
+    }
+    return (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown"
+      ? listRemoteWorkspaceFiles(request)
+      : listWorkspaceFiles(request);
+  });
   secureHandle("desktop:workspace-folder-summary", async (_event, request) => {
     if (process.env.OPENDRSAI_E2E_C2_FOLDER_IMPORT === "1") await new Promise((resolveDelay) => setTimeout(resolveDelay, 350));
     const requestPath = getStringProperty(request, "path");
     const remoteRoot = getRemoteWorkspaceRootForPath(requestPath) || ((await resolveRemoteWorkspaceTarget(requestPath)) !== "local_or_unknown" ? requestPath : null);
     return remoteRoot ? summarizeRemoteWorkspaceFolder(request as WorkspaceFolderSummaryRequest, remoteRoot) : summarizeWorkspaceFolder(request);
   });
-  secureHandle("desktop:workspace-file-preview", async (_event, request: WorkspaceFilePreviewRequest) =>
-    (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? previewRemoteWorkspaceFile(request) : previewWorkspaceFile(request),
-  );
+  secureHandle("desktop:workspace-file-preview", async (_event, request: WorkspaceFilePreviewRequest) => {
+    // V2: route through gateway when workspaceId is available
+    if (request?.workspaceId) {
+      try {
+        return await withRuntimeClientForWorkspace(
+          request.workspacePath,
+          request.workspaceId,
+          async ({ client }) => previewWorkspaceFileViaGateway(client, request),
+        );
+      } catch (error) {
+        if (!isLocalRuntimeUnavailableError(error)) throw error;
+        // gateway unavailable — fall through to local fs
+      }
+    }
+    return (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown"
+      ? previewRemoteWorkspaceFile(request)
+      : previewWorkspaceFile(request);
+  });
   registerConversationResourceReadIpc(secureHandle as never, (path) => {
     if (process.env.OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN !== "1") shell.showItemInFolder(path);
   });
@@ -5435,24 +5495,25 @@ function registerIpc(): void {
     }
     return resolveManagerPresentationRecovery(request);
   });
-  secureHandle("desktop:workspace-git-diff", async (_event, request: WorkspaceGitDiffRequest) =>
-    (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? getRemoteWorkspaceGitDiff(request) : getWorkspaceGitDiff(request),
-  );
-  secureHandle("desktop:workspace-git-file-at-ref", async (_event, request) =>
-    (await resolveRemoteWorkspaceTarget(getStringProperty(request, "workspacePath"), getStringProperty(request, "workspaceId"))) !== "local_or_unknown" ? getRemoteWorkspaceGitFileAtRef(request as WorkspaceGitFileAtRefRequest) : getWorkspaceGitFileAtRef(request),
-  );
-  secureHandle("desktop:workspace-revert-file", async (_event, request) =>
-    requestWorkspaceMutationApproval("revert-file", request),
-  );
-  secureHandle("desktop:workspace-stage-file", async (_event, request) =>
-    requestWorkspaceMutationApproval("stage-file", request),
-  );
-  secureHandle("desktop:workspace-stage-hunk", async (_event, request) =>
-    requestWorkspaceMutationApproval("stage-hunk", request),
-  );
-  secureHandle("desktop:workspace-revert-hunk", async (_event, request) =>
-    requestWorkspaceMutationApproval("revert-hunk", request),
-  );
+  // V2: trimmed — gateway has no git diff/stage/revert routes (only list/open/files/file)
+  // secureHandle("desktop:workspace-git-diff", async (_event, request: WorkspaceGitDiffRequest) =>
+  //   (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? getRemoteWorkspaceGitDiff(request) : getWorkspaceGitDiff(request),
+  // );
+  // secureHandle("desktop:workspace-git-file-at-ref", async (_event, request) =>
+  //   (await resolveRemoteWorkspaceTarget(getStringProperty(request, "workspacePath"), getStringProperty(request, "workspaceId"))) !== "local_or_unknown" ? getRemoteWorkspaceGitFileAtRef(request as WorkspaceGitFileAtRefRequest) : getWorkspaceGitFileAtRef(request),
+  // );
+  // secureHandle("desktop:workspace-revert-file", async (_event, request) =>
+  //   requestWorkspaceMutationApproval("revert-file", request),
+  // );
+  // secureHandle("desktop:workspace-stage-file", async (_event, request) =>
+  //   requestWorkspaceMutationApproval("stage-file", request),
+  // );
+  // secureHandle("desktop:workspace-stage-hunk", async (_event, request) =>
+  //   requestWorkspaceMutationApproval("stage-hunk", request),
+  // );
+  // secureHandle("desktop:workspace-revert-hunk", async (_event, request) =>
+  //   requestWorkspaceMutationApproval("revert-hunk", request),
+  // );
   secureHandle("desktop:workspace-checkpoints-list", async (_event, workspacePath: string, workspaceId?: string) => {
     if ((await resolveRemoteWorkspaceTarget(workspacePath, workspaceId)) !== "local_or_unknown") return listRemoteWorkspaceCheckpoints(workspacePath, workspaceId);
     const resolvedWorkspacePath = await resolveLegacyLocalWorkspaceLabel(workspacePath);
@@ -5550,18 +5611,19 @@ function registerIpc(): void {
   secureHandle("desktop:preview-my-drsai-model-connection", (_event, request: UpdateMyDrSaiModelConnectionRequest) =>
     previewMyDrSaiModelConnection(request),
   );
-  secureHandle("desktop:diagnose-my-drsai-model-connection", (_event, online?: boolean) =>
-    diagnoseMyDrSaiModelConnection(online),
-  );
+  // V2: trimmed — gateway has no model provider config routes (catalog only)
+  // secureHandle("desktop:diagnose-my-drsai-model-connection", (_event, online?: boolean) =>
+  //   diagnoseMyDrSaiModelConnection(online),
+  // );
   secureHandle("desktop:restore-my-drsai-model-connection", (_event, expectedRevision?: string) =>
     restoreMyDrSaiModelConnection(expectedRevision),
   );
-  secureHandle("desktop:save-my-drsai-model-provider", (_event, provider: string, request: SaveMyDrSaiModelProviderRequest) =>
-    saveMyDrSaiModelProvider(provider, request),
-  );
-  secureHandle("desktop:test-my-drsai-model-provider", (_event, provider: string, model?: string) =>
-    testMyDrSaiModelProvider(provider, model),
-  );
+  // secureHandle("desktop:save-my-drsai-model-provider", (_event, provider: string, request: SaveMyDrSaiModelProviderRequest) =>
+  //   saveMyDrSaiModelProvider(provider, request),
+  // );
+  // secureHandle("desktop:test-my-drsai-model-provider", (_event, provider: string, model?: string) =>
+  //   testMyDrSaiModelProvider(provider, model),
+  // );
   secureHandle("desktop:probe-my-drsai-provider-model", (_event, provider: string, request) =>
     probeMyDrSaiProviderModel(provider, request as { model: string; operation: import("../../../shared/api/desktopApi").ModelCapabilityProbeOperation; protocol?: string }),
   );
@@ -5604,7 +5666,36 @@ function registerIpc(): void {
     return persisted ?? remote;
   });
   secureHandle("desktop:get-my-drsai-runtime-model-catalog", () => getMyDrSaiRuntimeModelCatalog());
-  secureHandle("desktop:get-my-drsai-agent-model-policy", (_event, agentId?: string) => getMyDrSaiAgentModelPolicy(agentId));
+  secureHandle("desktop:get-my-drsai-agent-model-policy", async (_event, agentId?: string) => {
+    try {
+      return await getMyDrSaiAgentModelPolicy(agentId);
+    } catch (error) {
+      // If the gateway is not running (e.g. during bootstrap or runtime repair),
+      // return a safe default policy instead of throwing an unhandled IPC error.
+      if (error instanceof Error && error.message.includes("is not running")) {
+        return {
+          agent_id: agentId ?? "default",
+          primary_model: { mode: "explicit" as const, ref: null },
+          image_understanding_model: null,
+          image_generation_model: null,
+          text_to_speech_model: null,
+          realtime_voice_model: null,
+          speech_to_text_model: null,
+          reasoning_effort: null,
+          expected_revision: null,
+          effective_ref: null,
+          effective_image_ref: null,
+          effective_image_understanding_ref: null,
+          effective_image_generation_ref: null,
+          effective_text_to_speech_ref: null,
+          effective_realtime_voice_ref: null,
+          effective_speech_to_text_ref: null,
+          revision: "0",
+        };
+      }
+      throw error;
+    }
+  });
   secureHandle("desktop:get-my-drsai-agent-tool-policy", (_event, agentId: string) => getMyDrSaiAgentToolPolicy(agentId));
   secureHandle("desktop:update-my-drsai-agent-tool-policy", (_event, agentId: string, policy: Parameters<typeof updateMyDrSaiAgentToolPolicy>[1]) => updateMyDrSaiAgentToolPolicy(agentId, policy));
   secureHandle("desktop:preview-my-drsai-agent-tools", (_event, agentId: string) => previewMyDrSaiAgentTools(agentId));
@@ -5730,63 +5821,65 @@ function registerIpc(): void {
   );
 
   // Skills (gateway-managed)
-  secureHandle("desktop:list-installed-skills", (_event, request) =>
-    listInstalledSkills((request as { userId?: string } | undefined)?.userId),
-  );
+  // V2: trimmed — gateway has no skills management routes (skills loaded with agent)
+  // secureHandle("desktop:list-installed-skills", (_event, request) =>
+  //   listInstalledSkills((request as { userId?: string } | undefined)?.userId),
+  // );
   secureHandle("desktop:list-available-skills", (_event, request) =>
     listAvailableSkills((request as { userId?: string } | undefined)?.userId),
   );
   secureHandle("desktop:get-skill-content", (_event, request) =>
     getSkillContent((request as { skillPath: string }).skillPath),
   );
-  secureHandle("desktop:install-skill", (_event, request) =>
-    installSkill(request as Parameters<typeof installSkill>[0]),
-  );
-  secureHandle("desktop:uninstall-skill", (_event, request) => {
-    const r = request as { name: string; userId?: string };
-    return uninstallSkill(r.name, r.userId);
-  });
-  secureHandle("desktop:update-skill", (_event, request) => {
-    const r = request as { name: string; content: string; userId?: string };
-    return updateSkill(r.name, r.content, r.userId);
-  });
-  secureHandle("desktop:reload-skills", (_event, request) => {
-    const r = (request ?? {}) as { threadId?: string; userId?: string };
-    return reloadSkills(r.threadId, r.userId);
-  });
+  // secureHandle("desktop:install-skill", (_event, request) =>
+  //   installSkill(request as Parameters<typeof installSkill>[0]),
+  // );
+  // secureHandle("desktop:uninstall-skill", (_event, request) => {
+  //   const r = request as { name: string; userId?: string };
+  //   return uninstallSkill(r.name, r.userId);
+  // });
+  // secureHandle("desktop:update-skill", (_event, request) => {
+  //   const r = request as { name: string; content: string; userId?: string };
+  //   return updateSkill(r.name, r.content, r.userId);
+  // });
+  // secureHandle("desktop:reload-skills", (_event, request) => {
+  //   const r = (request ?? {}) as { threadId?: string; userId?: string };
+  //   return reloadSkills(r.threadId, r.userId);
+  // });
 
   // GFS cloud storage
-  secureHandle("desktop:gfs-list", (_event, request) =>
-    gfsList(request as Parameters<typeof gfsList>[0]),
-  );
-  secureHandle("desktop:gfs-stat", (_event, request) =>
-    gfsStat((request as { path: string }).path),
-  );
-  secureHandle("desktop:gfs-read", (_event, request) =>
-    gfsRead((request as { path: string }).path),
-  );
-  secureHandle("desktop:gfs-write", (_event, request) => {
-    const r = request as { path: string; content: string; contentType?: string };
-    return gfsWrite(r.path, r.content, r.contentType);
-  });
-  secureHandle("desktop:gfs-upload-file", (_event, request) =>
-    gfsUploadFile(request as Parameters<typeof gfsUploadFile>[0]),
-  );
-  secureHandle("desktop:gfs-download-file", (_event, request) =>
-    gfsDownloadFile(request as Parameters<typeof gfsDownloadFile>[0]),
-  );
-  secureHandle("desktop:gfs-delete", (_event, request) =>
-    gfsDelete((request as { path: string }).path),
-  );
-  secureHandle("desktop:gfs-share-url", (_event, request) => {
-    const r = request as {
-      path: string;
-      ttlMinutes?: number;
-      responseContentType?: string;
-    };
-    return gfsShareUrl(r.path, r.ttlMinutes, r.responseContentType);
-  });
-  secureHandle("desktop:gfs-healthcheck", () => gfsHealthcheck());
+  // V2: trimmed — gateway never mounted gfs routes
+  // secureHandle("desktop:gfs-list", (_event, request) =>
+  //   gfsList(request as Parameters<typeof gfsList>[0]),
+  // );
+  // secureHandle("desktop:gfs-stat", (_event, request) =>
+  //   gfsStat((request as { path: string }).path),
+  // );
+  // secureHandle("desktop:gfs-read", (_event, request) =>
+  //   gfsRead((request as { path: string }).path),
+  // );
+  // secureHandle("desktop:gfs-write", (_event, request) => {
+  //   const r = request as { path: string; content: string; contentType?: string };
+  //   return gfsWrite(r.path, r.content, r.contentType);
+  // });
+  // secureHandle("desktop:gfs-upload-file", (_event, request) =>
+  //   gfsUploadFile(request as Parameters<typeof gfsUploadFile>[0]),
+  // );
+  // secureHandle("desktop:gfs-download-file", (_event, request) =>
+  //   gfsDownloadFile(request as Parameters<typeof gfsDownloadFile>[0]),
+  // );
+  // secureHandle("desktop:gfs-delete", (_event, request) =>
+  //   gfsDelete((request as { path: string }).path),
+  // );
+  // secureHandle("desktop:gfs-share-url", (_event, request) => {
+  //   const r = request as {
+  //     path: string;
+  //     ttlMinutes?: number;
+  //     responseContentType?: string;
+  //   };
+  //   return gfsShareUrl(r.path, r.ttlMinutes, r.responseContentType);
+  // });
+  // secureHandle("desktop:gfs-healthcheck", () => gfsHealthcheck());
 
   secureHandle("desktop:prepare-fork-worktree", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");

@@ -19,13 +19,72 @@ export interface SmartSearchPaneProps {
     name: string
     preview: string
     relevance_score: number
+    match_snippet?: string
   }>
   onSelect: (sessionId: string) => void
   onCancel: () => void
   onSearch: (query: string) => void
 }
 
-const PREVIEW_MAX = 60
+const PREVIEW_MAX = 80
+const SNIPPET_MAX = 100
+
+/**
+ * Render a match snippet with highlighted terms.
+ *
+ * The snippet uses 【...】 delimiters (set by the FTS5 highlight() function
+ * or by the Python-side re.sub in Phase 1). We split on these delimiters
+ * and render the matched terms in a bright accent color.
+ */
+function HighlightedSnippet({ text, maxLen, color }: { text: string; maxLen: number; color: string }) {
+  // Truncate the snippet if it's too long. Try to keep the context around
+  // the first match by finding the first 【 and showing some text before/after.
+  let display = text
+  if (text.length > maxLen) {
+    const firstMark = text.indexOf('【')
+    if (firstMark >= 0) {
+      const start = Math.max(0, firstMark - 20)
+      display = (start > 0 ? '…' : '') + text.slice(start, start + maxLen)
+      if (display.length === maxLen && start + maxLen < text.length) {
+        display += '…'
+      }
+    } else {
+      display = text.slice(0, maxLen) + (text.length > maxLen ? '…' : '')
+    }
+  }
+
+  // Split on 【 and 】 to separate highlighted from non-highlighted text
+  const parts: Array<{ text: string; highlighted: boolean }> = []
+  let remaining = display
+  while (remaining.length > 0) {
+    const open = remaining.indexOf('【')
+    if (open < 0) {
+      parts.push({ text: remaining, highlighted: false })
+      break
+    }
+    if (open > 0) {
+      parts.push({ text: remaining.slice(0, open), highlighted: false })
+    }
+    const close = remaining.indexOf('】', open + 1)
+    if (close < 0) {
+      // Malformed — no closing bracket, just show the rest
+      parts.push({ text: remaining.slice(open + 1), highlighted: true })
+      break
+    }
+    parts.push({ text: remaining.slice(open + 1, close), highlighted: true })
+    remaining = remaining.slice(close + 1)
+  }
+
+  return (
+    <Text>
+      {parts.map((p, i) => (
+        <Text key={i} color={p.highlighted ? color : theme.muted} bold={p.highlighted}>
+          {p.text}
+        </Text>
+      ))}
+    </Text>
+  )
+}
 
 export function SmartSearchPane({ query, results, onSelect, onCancel, onSearch }: SmartSearchPaneProps) {
   const [searchText, setSearchText] = useState(query)
@@ -109,11 +168,15 @@ export function SmartSearchPane({ query, results, onSelect, onCancel, onSearch }
                   <Text color={theme.muted}> [{r.session_id.slice(0, 8)}]</Text>
                   <Text color={theme.primary}> score:{r.relevance_score.toFixed(2)}</Text>
                 </Box>
-                {r.preview && (
-                  <Box>
-                    <Text color={theme.muted} dimColor>     "{r.preview.slice(0, PREVIEW_MAX)}"</Text>
+                {r.match_snippet ? (
+                  <Box marginLeft={5}>
+                    <HighlightedSnippet text={r.match_snippet} maxLen={SNIPPET_MAX} color={theme.warn} />
                   </Box>
-                )}
+                ) : r.preview ? (
+                  <Box marginLeft={5}>
+                    <Text color={theme.muted} dimColor>"{r.preview.slice(0, PREVIEW_MAX)}"</Text>
+                  </Box>
+                ) : null}
               </Box>
             )
           })}

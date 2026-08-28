@@ -818,6 +818,18 @@ export const useChatWebSocket = ({
 
           case "result":
           case "completion":
+            const restartReason =
+              (wsMessage.data as any)?.task_result?.stop_reason ||
+              (wsMessage.data as any)?.stop_reason;
+            // Internal restart on the same run_id. Closing the socket here is
+            // what made "close tab → reopen → send" immediately show cancelled.
+            if (
+              wsMessage.status === "cancelled" &&
+              restartReason === "Restarted by client"
+            ) {
+              return current;
+            }
+
             const status: BaseRunStatus =
               wsMessage.status === "complete"
                 ? "complete"

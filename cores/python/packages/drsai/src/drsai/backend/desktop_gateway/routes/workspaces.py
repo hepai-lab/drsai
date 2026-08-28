@@ -1,8 +1,10 @@
 """Workspaces: the container a session belongs to (2.5) and its files (2.3, 4.1).
 
-Four routes. ``POST /v1/workspaces`` is idempotent on path -- the registry
+Five routes. ``POST /v1/workspaces`` is idempotent on path -- the registry
 returns the existing record when the directory is already open -- so the
 renderer can call it on every launch without accumulating duplicates.
+``DELETE /v1/workspaces/{id}`` is likewise idempotent: closing a workspace
+that is already absent returns 200 instead of 404.
 """
 
 from __future__ import annotations
@@ -39,6 +41,21 @@ async def workspace_open(request: WorkspaceOpenRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     _state.remember_workspace_root(record.workspace_id, Path(record.path))
     return record.as_dict()
+
+
+@api.delete("/v1/workspaces/{workspace_id}", operation_id="closeWorkspace")
+async def workspace_close(workspace_id: str):
+    """Close (archive) a Workspace on the Runtime side (feature 2.5).
+
+    If the Workspace is not registered the endpoint still returns 200 with a
+    minimal body so the renderer can delete its local record without a 404
+    round-trip — this mirrors the idempotent semantics of POST /v1/workspaces.
+    """
+    record = _state.runtime_registry().close_workspace(workspace_id)
+    if record is not None:
+        return record.as_dict()
+    # Idempotent: workspace already absent on the gateway side.
+    return {"workspace_id": workspace_id, "lifecycle": "archived", "path": None}
 
 
 @api.get("/v1/workspaces/{workspace_id}/files", operation_id="listWorkspaceFiles")

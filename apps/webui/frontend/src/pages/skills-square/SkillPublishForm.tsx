@@ -18,11 +18,11 @@ export interface SkillPublishFormProps {
   publishSlug: string;
   publishVersion: string;
   publishChangelog: string;
-  publishCategory: string[];
+  publishTags: string[];
   publishIcon: string;
   isPublicSkill: boolean;
   publicProfilePreview: string | null;
-  availableCategories: string[];
+  availableTags: string[];
   t: TFn;
   setFolderInputRef: (el: HTMLInputElement | null) => void;
   hepaiZipInputRef: React.RefObject<HTMLInputElement | null>;
@@ -33,7 +33,7 @@ export interface SkillPublishFormProps {
   onSlugChange: (value: string) => void;
   onVersionChange: (value: string) => void;
   onChangelogChange: (value: string) => void;
-  onCategoryChange: (value: string[]) => void;
+  onTagsChange: (value: string[]) => void;
   onIconChange: (value: string) => void;
   onPublicSkillChange: (isPublic: boolean) => void;
   onProfileFileChange: (file: File | null, preview: string | null) => void;
@@ -61,11 +61,11 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
   publishSlug,
   publishVersion,
   publishChangelog,
-  publishCategory,
+  publishTags,
   publishIcon,
   isPublicSkill,
   publicProfilePreview,
-  availableCategories,
+  availableTags,
   t,
   setFolderInputRef,
   hepaiZipInputRef,
@@ -76,7 +76,7 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
   onSlugChange,
   onVersionChange,
   onChangelogChange,
-  onCategoryChange,
+  onTagsChange,
   onIconChange,
   onPublicSkillChange,
   onProfileFileChange,
@@ -334,15 +334,15 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
             {!editingSkillId && (
               <div className="flex items-center gap-3">
                 <div className="text-sm font-medium text-primary">
-                  {t("skillSquare.publishPublic")}
+                  {t("skillSquare.publishPrivate")}
                 </div>
                 <Switch
-                  checked={!isPublicSkill}
-                  onChange={(v) => onPublicSkillChange(!v)}
+                  checked={isPublicSkill}
+                  onChange={(v) => onPublicSkillChange(v)}
                   size="small"
                 />
                 <div className="text-sm font-medium text-primary">
-                  {t("skillSquare.publishPrivate")}
+                  {t("skillSquare.publishPublic")}
                 </div>
               </div>
             )}
@@ -478,17 +478,17 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
             </div>
             <div>
               <div className="mb-1.5 text-sm font-medium text-primary">
-                {t("skillSquare.categoryLabel") || "分类"}
+                {t("skillSquare.tagsLabel") || "标签"}
               </div>
               <Select
                 mode="multiple"
                 allowClear
                 maxTagCount="responsive"
-                placeholder={t("skillSquare.categoryPlaceholder") || "选择分类"}
-                value={publishCategory.length > 0 ? publishCategory : undefined}
-                onChange={(v) => onCategoryChange(Array.isArray(v) ? v : [])}
+                placeholder={t("skillSquare.tagsPlaceholder") || "选择标签"}
+                value={publishTags.length > 0 ? publishTags : undefined}
+                onChange={(v) => onTagsChange(Array.isArray(v) ? v : [])}
                 className="w-full [&_.ant-select-selector]:rounded-xl [&_.ant-select-selector]:border-tertiary/40 [&_.ant-select-selector]:bg-background/55 dark:[&_.ant-select-selector]:border-white/10 dark:[&_.ant-select-selector]:bg-white/[0.04]"
-                options={availableCategories.map((c) => ({
+                options={availableTags.map((c) => ({
                   value: c,
                   label: c,
                 }))}

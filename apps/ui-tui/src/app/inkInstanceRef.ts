@@ -37,6 +37,13 @@ interface InkInstanceLike {
    *  fullscreen branch fires, calling log.sync() which corrupts
    *  previousLineCount. Resetting to 0 at finalize prevents this. */
   lastOutputHeight?: number
+  /** Ink's accumulated static output string. Grows unboundedly as
+   *  turns are committed to <Static>. Only used by the fullscreen
+   *  branch (clearTerminal + fullStaticOutput + output) to repaint
+   *  the entire screen. Completed turns are already in terminal
+   *  scrollback, so this is a redundant in-memory copy that can
+   *  cause heap exhaustion and TUI crashes on long sessions. */
+  fullStaticOutput?: string
 }
 
 let _instance: InkInstanceLike | null = null
@@ -82,6 +89,36 @@ export function resetInkLastOutputHeight(): void {
   if (!inst) return
   try {
     inst.lastOutputHeight = 0
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * Clear Ink's internal ``fullStaticOutput`` string. This string
+ * accumulates ALL rendered static (completed turn) output and is
+ * only used by Ink's fullscreen branch to repaint the entire screen
+ * via ``clearTerminal + fullStaticOutput + output``.
+ *
+ * Completed turns are already written to the terminal scrollback by
+ * ``<Static>`` — the in-memory ``fullStaticOutput`` copy is purely
+ * redundant. On long sessions (dozens of turns with large tool
+ * outputs), this string can grow to tens of MB, causing:
+ *   1. Heap exhaustion / OOM crashes
+ *   2. Multi-second synchronous ``stdout.write()`` freezes when the
+ *      fullscreen branch fires
+ *
+ * Clearing it after each finalize means: even if the fullscreen
+ * branch fires during the next turn's streaming, it only re-emits
+ * the LATEST committed turn, not the entire session history.
+ *
+ * Safe to call when no Ink instance is registered.
+ */
+export function clearInkFullStaticOutput(): void {
+  const inst = _instance
+  if (!inst) return
+  try {
+    inst.fullStaticOutput = ''
   } catch {
     // best-effort
   }
