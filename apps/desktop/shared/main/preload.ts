@@ -395,6 +395,11 @@ const api: DesktopApi = {
     ipcRenderer.on("desktop:auth-session-invalidated", listener);
     return () => ipcRenderer.removeListener("desktop:auth-session-invalidated", listener);
   },
+  onAuthSessionRestored: (callback: () => void): (() => void) => {
+    const listener = (): void => callback();
+    ipcRenderer.on("desktop:auth-session-restored", listener);
+    return () => ipcRenderer.removeListener("desktop:auth-session-restored", listener);
+  },
   getA5ServiceGuidanceScenario: () =>
     ipcRenderer.invoke("desktop:e2e-a5-service-guidance-scenario"),
   login: (request: LoginRequest): Promise<LoginResult> =>

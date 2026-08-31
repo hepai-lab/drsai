@@ -9,9 +9,13 @@ that is already absent returns 200 instead of 404.
 
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from starlette.requests import Request
 
 from .. import _state, _workspace_files
 from .._models import WorkspaceOpenRequest
@@ -86,6 +90,53 @@ async def workspace_file(
 ):
     """One file's content for the preview pane (feature 4.1)."""
     return _workspace_files.read_file(workspace_id, path, max_bytes=max_bytes)
+
+
+@api.get(
+    "/v1/workspaces/{workspace_id}/session-catalog-events/stream",
+    operation_id="streamWorkspaceSessionCatalog",
+)
+async def stream_workspace_session_catalog(
+    workspace_id: str,
+    request: Request,
+):
+    """SSE stream of session catalog changes for a workspace.
+
+    Migrated from ``gateway_legacy.py`` L5257.  Drives trusted local clients
+    from the same committed Session Journal as Relay: every time a session is
+    created, updated, or archived within this workspace, a
+    ``session.catalog.changed`` event is emitted.
+    """
+    if _state.runtime_registry().get_workspace(workspace_id, include_closed=True) is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    journal = _state.runtime_engine().conversation_journal
+    cursor = journal.workspace_catalog_watermark(workspace_id)
+
+    async def stream():
+        nonlocal cursor
+        yield ": connected\n\n"
+        while not await request.is_disconnected():
+            events = await asyncio.to_thread(
+                journal.wait_for_workspace_catalog_events,
+                workspace_id,
+                after_cursor=cursor,
+                timeout=15.0,
+                limit=500,
+            )
+            if not events:
+                yield ": heartbeat\n\n"
+                continue
+            for event in events:
+                cursor = int(event["cursor"])
+                public = {key: value for key, value in event.items() if key != "cursor"}
+                payload = json.dumps(public, ensure_ascii=False, separators=(",", ":"))
+                yield f"id: {public['event_id']}\nevent: session.catalog.changed\ndata: {payload}\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def router() -> APIRouter:

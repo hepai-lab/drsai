@@ -9,9 +9,11 @@ Two routes live here:
 
 * ``GET /v1/models`` — the **OpenAI-compatible** model list that
   ``bootstrapDesktop()`` → ``discoverGatewayModels()`` calls during startup.
-  When the request is OIDC-authenticated, it proxies to the HepAI platform
-  ``/models`` endpoint and normalises the response to ``{object: "list", data:
-  [...]}``.  In offline mode it falls back to the locally configured catalog.
+  **Always returns the locally configured catalog** (``DEFAULT_LLM_MODE_CONFIG``
+  / ``llm_mode_config``).  Remote proxying to the HepAI platform ``/models``
+  endpoint is disabled to avoid ``model_unauthorized`` (401) bootstrap failures
+  when the upstream platform rejects a valid local token.  The original
+  platform-proxy code (``_list_platform_models``) is preserved but unused.
 """
 
 from __future__ import annotations
@@ -48,43 +50,42 @@ async def list_models():
     """List available models in OpenAI-compatible format.
 
     Called by ``discoverGatewayModels()`` in the Electron main process during
-    ``bootstrapDesktop()``.  When the request carries an OIDC bearer token
-    (installed by ``_auth`` middleware), it proxies to the HepAI platform
-    ``/models`` endpoint.  In offline mode, it returns the locally configured
-    model catalog instead.
+    ``bootstrapDesktop()``.
+
+    Always returns the locally configured model catalog
+    (``DEFAULT_LLM_MODE_CONFIG`` / ``llm_mode_config``).  The previous
+    behaviour proxied to the HepAI platform ``/models`` endpoint when an
+    OIDC bearer token was present, but that caused ``model_unauthorized``
+    (401) failures during bootstrap when the upstream platform rejected the
+    token — even though the user had already configured models locally.
+    Remote proxying is now disabled; uncomment the block below to restore it.
     """
-    auth = get_platform_auth()
-    if auth is not None:
-        return await _list_platform_models(auth)
+    # --- Remote platform proxy (disabled) ---
+    # auth = get_platform_auth()
+    # if auth is not None:
+    #     return await _list_platform_models(auth)
     return await _list_local_models()
 
 
 async def _list_platform_models(auth) -> dict:
-    """Proxy ``/v1/models`` to the HepAI platform and normalise the response."""
+    """Proxy ``/v1/models`` to the HepAI platform and normalise the response.
+
+    On timeout or connection error, falls back to the locally configured model
+    catalog so that the desktop bootstrap (``discoverGatewayModels``) can still
+    complete successfully instead of blocking the UI with a 504.
+    """
     try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 f"{auth.model_base_url.rstrip('/')}/models",
                 headers={"Authorization": f"Bearer {auth.access_token}"},
             )
-    except httpx.TimeoutException as exc:
-        raise HTTPException(
-            status_code=504,
-            detail={
-                "code": "model_catalog_timeout",
-                "message": "The HepAI model catalog timed out.",
-                "retryable": True,
-            },
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "model_catalog_unreachable",
-                "message": "The HepAI model catalog is temporarily unreachable.",
-                "retryable": True,
-            },
-        ) from exc
+    except (httpx.TimeoutException, httpx.HTTPError) as exc:
+        logger.warning(
+            "Model catalog unreachable (%s); falling back to local catalog",
+            exc,
+        )
+        return await _list_local_models()
 
     try:
         payload = response.json()

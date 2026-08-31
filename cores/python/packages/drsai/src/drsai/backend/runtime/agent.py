@@ -1,4 +1,4 @@
-"""Agent execution owned by an OpenDrSai Runtime.
+﻿"""Agent execution owned by an OpenDrSai Runtime.
 
 This module deliberately contains no HTTP or Desktop concerns.  A Runtime builds
 the immutable context from its own registries, loads an exact Agent Definition
@@ -6,6 +6,11 @@ asset, and dispatches every tool in the Runtime process and Workspace.
 """
 
 from __future__ import annotations
+
+try:
+    from drsai.backend.desktop_gateway._diag import diag_log
+except Exception:
+    def diag_log(msg: str) -> None: pass
 
 import asyncio
 import base64
@@ -1167,11 +1172,19 @@ class RuntimeAgentService:
                     )
                 result = await resume(context, definition, prompt, checkpoint_state, services)
             else:
+                diag_log(f"[DIAG] execute L1170: run_id={run_id} STARTING backend.execute()")
                 result = await backend.execute(context, definition, prompt, services)
+                diag_log(f"[DIAG] execute L1170: run_id={run_id} COMPLETED backend.execute() result_keys={list(result.keys()) if isinstance(result, dict) else type(result)}")
             if callable(phase_marker):
                 phase_marker(run_id, "terminal_finalization")
-            if self.state.get_run(run_id)["status"] == "running":
+            _pre_status = self.state.get_run(run_id)["status"]
+            from loguru import logger as _logger
+            diag_log(f"[DIAG] execute L1173: run_id={run_id} pre_status={_pre_status}")
+            if _pre_status == "running":
                 self.state.transition_run(run_id, "completed")
+                diag_log(f"[DIAG] execute L1174: run_id={run_id} transitioned to completed")
+            else:
+                diag_log(f"[DIAG] execute L1173: run_id={run_id} status is NOT running (got {_pre_status}), skipping transition_run(completed)")
             return {"run": self.state.get_run(run_id), "result": result, "context": context.audit_fields()}
         except asyncio.CancelledError as exc:
             error = RuntimeExecutionError("run_cancelled", "Agent execution was cancelled.")

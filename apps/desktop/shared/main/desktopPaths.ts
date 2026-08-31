@@ -26,7 +26,7 @@ export function createDesktopPathService(options: CreateDesktopPathServiceOption
   const runtimeRoot = environment.OPENDRSAI_RUNTIME_ROOT?.trim() || repository;
   const virtualEnvironment = join(runtimeRoot, "venv");
   const pythonExecutable = join(virtualEnvironment, windows ? "Scripts/python.exe" : "bin/python");
-  const cliExecutable = windows ? join(virtualEnvironment, "Scripts/drsai.exe") : join(runtimeRoot, "drsai");
+  const cliExecutable = join(virtualEnvironment, windows ? "Scripts/drsai.exe" : "drsai");
   const commandExecutable = windows ? join(virtualEnvironment, "Scripts/drsai.cmd") : cliExecutable;
   const enhancedPathEntries = windows
     ? [join(virtualEnvironment, "Scripts"), join(home, "git", "cmd"), join(home, "node")]

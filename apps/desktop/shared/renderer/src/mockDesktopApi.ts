@@ -6527,6 +6527,7 @@ export function installMockDesktopApi(): void {
     },
     onInstallProgress: (callback) => subscribe(installListeners, callback),
     onAuthSessionInvalidated: () => () => undefined,
+    onAuthSessionRestored: () => () => undefined,
     onOidcLoginDebug: (callback) =>
       subscribe(oidcLoginDebugListeners, callback),
     onChatEvent: (callback) => subscribe(chatListeners, callback),

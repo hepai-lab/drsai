@@ -136,6 +136,14 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             kwargs.get("base_url"),
             configured_provider=not self._allow_deferred_oidc,
         )
+        # [DIAG] Temporary diagnostic logging for 401 OIDC signing keys issue
+        import os as _diag_os_init
+        print(f"[DIAG __init__] kwargs['base_url']={kwargs.get('base_url', '<NOT SET>')}", flush=True)
+        print(f"[DIAG __init__] OPENDRSAI_MODEL_BASE_URL env={_diag_os_init.environ.get('OPENDRSAI_MODEL_BASE_URL', '<NOT SET>')}", flush=True)
+        print(f"[DIAG __init__] allow_deferred_oidc={self._allow_deferred_oidc}", flush=True)
+        print(f"[DIAG __init__] credential={type(credential).__name__ if credential else 'None'}", flush=True)
+        if credential:
+            print(f"[DIAG __init__] credential.openai_base_url={credential.openai_base_url}", flush=True)
         if credential:
             kwargs["api_key"] = credential.access_token
             kwargs["base_url"] = credential.openai_base_url
@@ -306,12 +314,22 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
         if not getattr(self, "_uses_platform_auth", True) and not getattr(self, "_oidc_credential_pending", False):
             return
         credential = get_model_credential_provider()
+        # [DIAG] Temporary diagnostic logging for 401 OIDC signing keys issue
+        import os as _diag_os
+        _diag_env_url = _diag_os.environ.get("OPENDRSAI_MODEL_BASE_URL", "<NOT SET>")
+        print(f"[DIAG _bind_platform_auth] OPENDRSAI_MODEL_BASE_URL={_diag_env_url}", flush=True)
+        print(f"[DIAG _bind_platform_auth] credential={type(credential).__name__ if credential else 'None'}", flush=True)
+        if credential:
+            print(f"[DIAG _bind_platform_auth] credential.openai_base_url={credential.openai_base_url}", flush=True)
+            print(f"[DIAG _bind_platform_auth] credential.access_token[:20]={credential.access_token[:20] if credential.access_token else 'None'}...", flush=True)
         if not credential:
             if getattr(self, "_oidc_credential_pending", False):
+                print(f"[DIAG _bind_platform_auth] FAILED: OIDC credential context unavailable, current base_url={self._client.base_url}", flush=True)
                 raise RuntimeError("OIDC credential context is unavailable for this model request.")
             return
         self._client.api_key = credential.access_token
         self._client.base_url = credential.openai_base_url
+        print(f"[DIAG _bind_platform_auth] FINAL base_url={self._client.base_url}", flush=True)
         if credential.delegation_headers:
             self._client._custom_headers = credential.delegation_headers
         self._oidc_credential_pending = False

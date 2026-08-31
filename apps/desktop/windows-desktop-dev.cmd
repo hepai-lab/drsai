@@ -58,7 +58,10 @@ REM Platform URLs — align with WebUI test (drsaiv2):
 REM OIDC/portal on ai-dev; DDF agent catalog on HepAI aiapi (same as WebUI get_ddf_agents).
 set "OPENDRSAI_PLATFORM_BASE_URL=https://ai-dev.ihep.ac.cn"
 set "OPENDRSAI_PLATFORM_API_BASE_URL=https://aiapi.ihep.ac.cn/apiv2"
-set "OPENDRSAI_MODEL_BASE_URL=https://aiapi.ihep.ac.cn/apiv2/v1"
+REM OPENDRSAI_MODEL_BASE_URL intentionally NOT set to aiapi.ihep.ac.cn — the
+REM OIDC token is issued by ai-dev.ihep.ac.cn, and the production aiapi server
+REM cannot verify it (401 "OIDC signing keys are unavailable"). Let
+REM resolve_hepai_model_base_url() resolve the correct URL from the OIDC issuer.
 set "OPENDRSAI_DDF_API_BASE_URL=https://aiapi.ihep.ac.cn/apiv2"
 set "OPENDRSAI_OIDC_ISSUER=https://ai-dev.ihep.ac.cn/api"
 

@@ -433,7 +433,12 @@ def _model_base_url(issuer: str) -> str:
     if override:
         if not override.startswith("https://") and os.environ.get("DRSAI_ALLOW_INSECURE_MODEL_URL") != "1":
             raise ValueError("invalid_model_base_url")
-    return resolve_hepai_model_base_url(os.environ, issuer=issuer)
+    result = resolve_hepai_model_base_url(os.environ, issuer=issuer)
+    # [DIAG] Temporary diagnostic logging for 401 OIDC signing keys issue
+    print(f"[DIAG _model_base_url] issuer={issuer}", flush=True)
+    print(f"[DIAG _model_base_url] OPENDRSAI_MODEL_BASE_URL env={override or '<NOT SET>'}", flush=True)
+    print(f"[DIAG _model_base_url] resolved result={result}", flush=True)
+    return result
 
 
 def _decode_verified_claims(token: str) -> dict[str, object]:

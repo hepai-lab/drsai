@@ -479,7 +479,9 @@ import {
   refreshAuthSession,
   refreshAuthContextAfterUnauthorized,
   requireAuthContext,
+  setAuthSessionInvalidatedNotifier,
   startOidcLogin,
+  AuthSessionError,
 } from "./auth";
 import { maybeRunE2eSmoke } from "./e2eSmoke";
 import {
@@ -3641,7 +3643,14 @@ function secureHandle<T extends unknown[]>(
       void operation.complete(`${channel} completed`).catch(() => undefined);
       return result;
     } catch (error) {
-      void operation.fail(error).catch(() => undefined);
+      // AuthSessionError is already notified via the notifier registered in
+      // app.whenReady(), but we log it here for diagnostics. The error is
+      // re-thrown so the IPC caller (renderer) receives it.
+      if (error instanceof AuthSessionError) {
+        void operation.fail(`${channel} auth session error: ${error.code}`).catch(() => undefined);
+      } else {
+        void operation.fail(error).catch(() => undefined);
+      }
       throw error;
     } finally {
       clearTimeout(waitTimer);
@@ -4674,6 +4683,13 @@ function registerIpc(): void {
     if (result.ok) {
       const userId = result.session?.user?.id || result.session?.user?.email;
       if (userId) await syncAuthIdentityToGateway(userId);
+      // Broadcast auth-session-restored so the renderer can clear any
+      // auth_required blocker and re-trigger bootstrap automatically.
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) {
+          window.webContents.send("desktop:auth-session-restored");
+        }
+      }
       focusMainWindow();
     }
     return result;
@@ -6835,6 +6851,19 @@ async function startDeferredStartupTasks(): Promise<void> {
 
 app.whenReady().then(async () => {
   recordStartupMilestone("electron-ready");
+
+  // Register the auth-session-invalidated notifier so any auth failure
+  // (expired token, refresh failure, session invalidation) broadcasts
+  // `desktop:auth-session-invalidated` to all renderer windows. The
+  // renderer's AuthProvider then shows a "Sign in again" prompt.
+  setAuthSessionInvalidatedNotifier(() => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+        window.webContents.send("desktop:auth-session-invalidated");
+      }
+    }
+  });
+
   configureCompletionNotifications({
     notifications: WINDOWS_NOTIFICATION_SERVICE,
     focusApp: focusMainWindow,

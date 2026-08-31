@@ -1,4 +1,4 @@
-"""The one class genuinely migrated out of the legacy monolith.
+﻿"""The one class genuinely migrated out of the legacy monolith.
 
 ``GatewayOpenDrSaiAgentBackend`` (``gateway_legacy.py:2716``, ~690 lines) is the
 only core asset in the gateway: it implements the ``AgentBackend`` protocol and
@@ -27,6 +27,8 @@ gateway in ``tui_gateway/adapter/``, shared with the TUI.
 """
 
 from __future__ import annotations
+
+from drsai.backend.desktop_gateway._diag import diag_log
 
 import asyncio
 import re
@@ -107,6 +109,7 @@ class DesktopAgentBackend:
             "backend": self.backend_id,
             "prompt_length": len(prompt),
         })
+        diag_log(f"[DIAG] DesktopAgentBackend.execute: run_id={context.run_id} session_id={context.session_id} STARTING")
         # Wall clock and directory baseline so finishing this Run only publishes
         # files it actually wrote, not leftovers from earlier tasks in a shared
         # desktop Workspace.
@@ -123,7 +126,10 @@ class DesktopAgentBackend:
                 user_id=user_id,
                 cancellation=cancellation,
             )
+            diag_log(f"[DIAG] DesktopAgentBackend.execute: run_id={context.run_id} stream created, iterating events...")
+            _event_count = 0
             async for event in stream:
+                _event_count += 1
                 for event_type, payload in translate_conversation_event(event, translation):
                     kind, data = self._normalize_event(context, event_type, payload)
                     if kind == "agent.message.delta":
@@ -131,6 +137,7 @@ class DesktopAgentBackend:
                     elif kind == "citation.added":
                         citations.append(dict(data))
                     services.emit(context, kind, data)
+            diag_log(f"[DIAG] DesktopAgentBackend.execute: run_id={context.run_id} stream exhausted, event_count={_event_count}")
 
             _artifacts.register_new_artifacts(context, baseline, started_at, services.emit)
             content = "".join(content_parts)
@@ -138,6 +145,7 @@ class DesktopAgentBackend:
                 "content": content,
                 **({"citations": citations} if citations else {}),
             })
+            diag_log(f"[DIAG] DesktopAgentBackend.execute: run_id={context.run_id} COMPLETED, content_len={len(content)}")
             return {"content": content}
         except asyncio.CancelledError as exc:
             raise RuntimeExecutionError("run_cancelled", "Run was cancelled.") from exc

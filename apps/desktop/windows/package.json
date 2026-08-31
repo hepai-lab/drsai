@@ -29,7 +29,9 @@
     "node-pty": "1.1.0",
     "qrcode": "^1.5.4",
     "react-markdown": "10.1.0",
-    "remark-gfm": "4.0.1"
+    "remark-gfm": "4.0.1",
+    "jszip": "^3.10.1",
+    "docx-preview": "^0.3.5"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "2.0.0",

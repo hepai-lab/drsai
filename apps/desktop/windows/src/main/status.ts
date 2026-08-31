@@ -61,7 +61,7 @@ export async function getInstallStatus(): Promise<InstallStatus> {
 }
 
 export async function getDesktopHealth(): Promise<DesktopHealth> {
-  const install = getStartupInstallStatus();
+  const install = await getStartupInstallStatus();
   // This is the centralized 2s health poll. It performs a real, singleflight
   // liveness observation instead of repeatedly returning a potentially failed
   // cached snapshot. Gateway hysteresis keeps transient busy periods usable.
@@ -95,7 +95,7 @@ export async function getDeepDesktopHealth(): Promise<DesktopHealth> {
   };
 }
 
-function getStartupInstallStatus(): InstallStatus {
+async function getStartupInstallStatus(): Promise<InstallStatus> {
   const hasPython = existsSync(DRSAI_PYTHON);
   const hasScript = existsSync(DRSAI_SCRIPT) || existsSync(DRSAI_CMD_SCRIPT);
   const hasRepo = existsSync(DRSAI_REPO);
@@ -104,6 +104,7 @@ function getStartupInstallStatus(): InstallStatus {
   const version = hasRepo
     ? readInstalledRuntimeVersion(DRSAI_REPO) ?? readBackendSourceVersion(DRSAI_REPO)
     : null;
+  const prerequisites = await getPrerequisiteStatus();
   return {
     installed,
     home: DRSAI_HOME,
@@ -117,16 +118,7 @@ function getStartupInstallStatus(): InstallStatus {
     configExists: existsSync(DRSAI_CONFIG_FILE),
     envExists: existsSync(DRSAI_ENV_FILE),
     apiKeyConfigured,
-    prerequisites: {
-      pythonOnPath: hasPython,
-      pythonVersion: null,
-      pythonCommand: hasPython ? DRSAI_PYTHON : null,
-      gitOnPath: false,
-      gitVersion: null,
-      gitCommand: null,
-      apiKeyConfigured,
-      problems: [],
-    },
+    prerequisites,
     missing: [hasRepo ? null : "repository", hasPython ? null : "python", hasScript ? null : "drsai-cli"]
       .filter((item): item is string => Boolean(item)),
   };
@@ -155,7 +147,13 @@ export function fallbackUpdateStatus(error: unknown): UpdateStatus {
   };
 }
 
+let cachedPrerequisiteStatus: { value: PrerequisiteStatus; expiry: number } | null = null;
+const PREREQUISITE_CACHE_TTL = 30_000;
+
 async function getPrerequisiteStatus(): Promise<PrerequisiteStatus> {
+  if (cachedPrerequisiteStatus && Date.now() < cachedPrerequisiteStatus.expiry) {
+    return cachedPrerequisiteStatus.value;
+  }
   const [python, git] = await Promise.all([
     getPythonCandidate(),
     getToolCandidate("git", ["--version"]),
@@ -171,7 +169,7 @@ async function getPrerequisiteStatus(): Promise<PrerequisiteStatus> {
     gitVersion ? null : "Git was not found on PATH.",
   ].filter((item): item is string => Boolean(item));
 
-  return {
+  const result = {
     pythonOnPath: Boolean(pythonVersion),
     pythonVersion,
     pythonCommand: python?.command ?? null,
@@ -181,6 +179,8 @@ async function getPrerequisiteStatus(): Promise<PrerequisiteStatus> {
     apiKeyConfigured,
     problems,
   };
+  cachedPrerequisiteStatus = { value: result, expiry: Date.now() + PREREQUISITE_CACHE_TTL };
+  return result;
 }
 
 interface ToolCandidate {

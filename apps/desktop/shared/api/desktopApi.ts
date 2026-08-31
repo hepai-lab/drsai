@@ -5633,6 +5633,7 @@ export interface DesktopApi {
   deleteFeedbackAdmin(feedbackId: string): Promise<boolean>;
   getAuthSession(): Promise<AuthSession>;
   onAuthSessionInvalidated(callback: () => void): () => void;
+  onAuthSessionRestored(callback: () => void): () => void;
   getA5ServiceGuidanceScenario(): Promise<DesktopA5ServiceGuidanceScenario | null>;
   login(request: LoginRequest): Promise<LoginResult>;
   startOidcLogin(request?: { rememberMe?: boolean }): Promise<LoginResult>;

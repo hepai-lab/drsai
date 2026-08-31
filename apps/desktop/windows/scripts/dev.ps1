@@ -675,7 +675,13 @@ $PlatformPortalUrl = if ($IsProductionLaunch) { "https://ai.ihep.ac.cn" } else {
 $PlatformApiBaseUrl = "https://aiapi.ihep.ac.cn/apiv2"
 $env:OPENDRSAI_PLATFORM_BASE_URL = $PlatformPortalUrl
 $env:OPENDRSAI_PLATFORM_API_BASE_URL = $PlatformApiBaseUrl
-$env:OPENDRSAI_MODEL_BASE_URL = "$PlatformApiBaseUrl/v1"
+# OPENDRSAI_MODEL_BASE_URL must NOT override to the production aiapi server.
+# The OIDC token is issued by $PlatformPortalUrl/api (e.g. ai-dev.ihep.ac.cn).
+# Sending a dev OIDC token to the production aiapi.ihep.ac.cn server causes
+# 401 "OIDC signing keys are unavailable" because the production server
+# cannot fetch JWKS from the dev OIDC issuer. Instead, let
+# resolve_hepai_model_base_url() in platform_upstream.py resolve the correct
+# model base URL based on the OIDC issuer (DEVELOPMENT_OIDC_ISSUER → ai-dev).
 $env:OPENDRSAI_DDF_API_BASE_URL = $PlatformApiBaseUrl
 $env:OPENDRSAI_OIDC_ISSUER = "$PlatformPortalUrl/api"
 $BuiltInSkillsDir = Join-Path $RepoRoot "skills\skills"

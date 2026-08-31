@@ -40,9 +40,16 @@ class RunCreateRequest(BaseModel):
     A submit that is retried after a dropped response must land on the run the
     first attempt created; without the key the user gets two agents answering
     the same message.
+
+    The key may be sent in the JSON body **or** in the ``Idempotency-Key``
+    header.  The desktop frontend sends it as a header, so the body field is
+    optional here and the route handler falls back to the header.
+    ``agent_definition`` is accepted for API completeness but the gateway
+    always uses its own default definition for local agents.
     """
 
-    idempotency_key: str = Field(min_length=1, max_length=200)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=200)
+    agent_definition: str | None = None
 
 
 class RunExecuteRequest(BaseModel):

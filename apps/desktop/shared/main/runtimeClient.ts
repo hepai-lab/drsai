@@ -1248,6 +1248,15 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     }
   }
 
+  /**
+   * @deprecated V1 legacy chat-completions path. The V2 desktop gateway
+   * (port 28643) does not serve `/v1/chat/completions`. The authoritative
+   * chat flow is the OAEP path: `createSession` → `subscribeOaepSession`
+   * → `createAgentRun` → `executeAgentRun`. This method is retained only
+   * for RemoteRuntimeClient SSH connections to legacy gateways and is
+   * never called for local desktop runtime. See `desktopGateway/service.ts`
+   * for the V2 implementation.
+   */
   async createRun(request: RuntimeRunRequest, signal?: AbortSignal): Promise<RuntimeRunStream> {
     const requestId = randomUUID();
     const response = await this.request("/v1/chat/completions", {

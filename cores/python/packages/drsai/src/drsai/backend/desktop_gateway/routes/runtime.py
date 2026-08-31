@@ -11,8 +11,10 @@ cannot claim the fingerprint of newer files sitting on disk.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -90,6 +92,21 @@ async def runtime_identity():
         "platform": sys.platform,
         "dev_managed": os.environ.get("DRSAI_GATEWAY_DEV_MANAGED") == "1",
         "runtime_source_digest": SOURCE_DIGEST,
+    }
+
+
+@api.post("/v1/runtime/shutdown", operation_id="shutdownRuntime")
+async def runtime_shutdown():
+    """Stop this Runtime instance after the response is flushed.
+
+    Migrated from ``gateway_legacy.py`` L4674.  The 0.2 s delay lets the HTTP
+    response reach the caller before the process exits.
+    """
+    loop = asyncio.get_running_loop()
+    loop.call_later(0.2, lambda: os.kill(os.getpid(), signal.SIGTERM))
+    return {
+        "stopping": True,
+        "instance_id": _state.runtime_registry().identity.instance_id,
     }
 
 

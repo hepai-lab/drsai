@@ -151,6 +151,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     return unsubscribe;
   }, []);
 
+  // When the main process signals that the auth session has been restored
+  // (e.g. after a successful OIDC re-login), reload the session from the
+  // main process so that session.authenticated becomes true.  Then the
+  // auto-bootstrap useEffect below will see authenticated && !serviceReady
+  // && !serviceBusy && !serviceBlocker and trigger retryBootstrap().
+  useEffect(() => {
+    const unsubscribe = desktopApi.onAuthSessionRestored(async () => {
+      setServiceBlocker(null);
+      setServiceBusy(false);
+      setMessage("Session restored. Re-checking runtime…");
+      try {
+        const next = await desktopApi.getAuthSession();
+        setSession(next);
+      } catch {
+        // If session reload fails, the user can still retry manually.
+      }
+    });
+    return unsubscribe;
+  }, []);
+
   useEffect(() => {
     if (
       !session.authenticated ||

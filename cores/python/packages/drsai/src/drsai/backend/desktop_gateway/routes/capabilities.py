@@ -20,6 +20,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from drsai.backend.remote_ssh.workspace import PROTOCOL_VERSION
+from drsai.oaep.generated import OAEP_PROFILE, OAEP_SCHEMA_SHA256, OAEP_VERSION
 
 from .. import _state
 from .runtime import CAPABILITIES
@@ -40,12 +41,33 @@ _CAPABILITY_VERSIONS: dict[str, int] = {
     "workspace_files": 1,
     "agent-backend": 1,
     "agent-backend-account": 1,
+    # ── OAEP protocol capabilities ──────────────────────────────────────
+    # The frontend's ``selectRuntimeConversationProtocolResult()`` requires
+    # all five of these to be present in ``capabilities`` before it will
+    # select the OAEP path.  Without them the chat flow aborts with
+    # ``oaep_runtime_required`` and the user sees "回复失败".
+    "oaep.v1": 1,
+    "oaep.session.snapshot": 1,
+    "oaep.session.events": 1,
+    "oaep.session.events.stream": 1,
+    "event.cursor_expired": 1,
 }
 
-# Per-protocol metadata.  Trimmed from V1 -- the desktop gateway does not
-# advertise ``relay`` or ``owop`` because those subsystems are not wired in V2.
+# Per-protocol metadata.  V2 advertises ``oaep`` and ``control``.  The
+# desktop gateway does not advertise ``relay`` or ``owop`` because those
+# subsystems are not wired in V2.
 _RUNTIME_PROTOCOLS: dict[str, dict] = {
     "control": {"version": "1"},
+    # OAEP protocol metadata.  The frontend matches ``version``,
+    # ``profiles``, and ``schema_sha256`` against constants generated
+    # from ``cores/protocol/oaep/oaep.schema.json``.  Any mismatch here
+    # causes ``selectRuntimeConversationProtocolResult()`` to return
+    # ``unavailable`` and the chat aborts.
+    "oaep": {
+        "version": OAEP_VERSION,
+        "profiles": [OAEP_PROFILE],
+        "schema_sha256": OAEP_SCHEMA_SHA256,
+    },
 }
 
 

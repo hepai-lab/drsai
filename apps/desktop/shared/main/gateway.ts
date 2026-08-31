@@ -906,11 +906,17 @@ export async function stopGateway(): Promise<boolean> {
 export async function discoverGatewayModels(
   accessToken: string,
 ): Promise<GatewayModelDiscoveryResult> {
+  // Model discovery may require the Gateway to validate the OIDC bearer token
+  // against an external provider. 5 s is too tight when the provider is slow
+  // or network conditions are degraded; 15 s gives ample room while still
+  // failing fast enough for the 4-retry loop to complete within the bootstrap
+  // 30 s budget (4 × 15 s worst-case would exceed it, but in practice the
+  // first successful or 401 response arrives much sooner).
   const response = await requestJson(`${GATEWAY_BASE_URL}/v1/models`, {
     ...getGatewayRequestHeaders(),
     Authorization: `Bearer ${accessToken}`,
     "X-OpenDrSai-Auth-Mode": "oidc",
-  }, 5_000);
+  }, 15_000);
   if (!response.ok) {
     const error = readGatewayError(response.body);
     if (response.statusCode === 401) {

@@ -2326,22 +2326,20 @@ async function runRuntimeBackendChat(
       if (liveSubscription.terminalError) throw liveSubscription.terminalError;
     }),
   ]).catch((error) => { if (!failure) failure = error; });
-  const subscriptionCannotRecover = liveSubscription.phase === "degraded" || liveSubscription.phase === "fatal";
-  const terminalRecoveryTimeoutMs = subscriptionCannotRecover
-    ? 250
-    : failure && isRecoverableNetworkError(failure)
-      ? NETWORK_RECOVERY_WINDOW_MS + 10_000
-      : 10_000;
+  // Wait for the backend to emit a terminal OAEP Run event
+  // (event.run.completed/failed/cancelled). The frontend and backend are both
+  // local, so the backend always sends a terminal event — whether it succeeds,
+  // fails, or times out internally. If the gateway process crashes, the SSE
+  // stream breaks and liveSubscription.done resolves, which is also handled.
+  // The overall CHAT_TIMEOUT_MS (5 min) at the controller level remains as an
+  // absolute safeguard: it aborts the controller, which calls cancelAgentRun,
+  // which makes the backend emit event.run.cancelled.
   await Promise.race([
     runtimeTerminal,
     liveSubscription.done.then(() => {
       if (liveSubscription.terminalError) throw liveSubscription.terminalError;
       throw new Error("oaep_run_terminal_missing: Runtime event subscription ended before the Run terminal");
     }),
-    new Promise<void>((_resolve, reject) => setTimeout(
-      () => reject(new Error("oaep_run_terminal_missing: Runtime execution ended without an OAEP Run terminal")),
-      terminalRecoveryTimeoutMs,
-    )),
   ]).catch((error) => { if (!failure) failure = error; });
   if (!failure && runtimeTerminalStatus === "failed") {
     failure = runtimeTerminalFailure ?? new Error("Runtime Agent Run failed.");

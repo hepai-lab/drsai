@@ -271,6 +271,13 @@ function validateAgentRunRequest(rawRequest: unknown): AgentRunRequest {
   };
 }
 
+/**
+ * @deprecated V1 legacy chat-completions path. This function is disabled
+ * by `legacyAgentRuntimeDisabled()` and will throw. The V2 OAEP path
+ * (`startAgentRun` → `startRuntimeAgentSurface` → `startChat` →
+ * `runRuntimeBackendChat`) is the authoritative chat flow. This function
+ * is retained only as a compatibility shim and should not be called.
+ */
 export async function runLegacyAgentCompatibility(
   webContents: WebContents,
   requestId: string,
