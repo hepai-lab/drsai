@@ -14,7 +14,7 @@ import { appContext } from "../hooks/provider";
 import { useLocation, useNavigate } from "../hooks/useRouter";
 import { useLang } from "../i18n/useLang";
 import UserProfileModal from "../components/userProfile";
-import { clearAuthSession } from "../utils/authSession";
+import { clearAuthSession, logoutRequest } from "../utils/authSession";
 
 const DOCS_URL = "https://docs-drsai.ihep.ac.cn/";
 const GITHUB_URL = "https://github.com/hepai-lab/drsai";
@@ -82,7 +82,8 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
     [t]
   );
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await logoutRequest();
     clearAuthSession();
     if (process.env.GATSBY_SERVICE_MODE === "DEV") {
       window.location.href = "/login?logout=1";

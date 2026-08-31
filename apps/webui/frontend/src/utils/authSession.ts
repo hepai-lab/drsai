@@ -110,6 +110,19 @@ try {
   }
 }
 
+/** Call the server to clear the httpOnly refresh-token cookie. */
+export async function logoutRequest(): Promise<void> {
+  try {
+    await fetch(`${getServerUrl()}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    });
+  } catch {
+    // Best-effort: even if the network call fails, localStorage is cleared
+    // and the user is redirected away.
+  }
+}
+
 /** Validate Bearer token; refresh via cookie when expired or missing access token. */
 export async function verifyAuthSession(): Promise<AuthVerifyResult> {
   const token = getAuthToken();

@@ -9,13 +9,15 @@ import type {
 import SkillListItem from "../SkillListItem";
 import { ENABLE_HEPAI_SKILL_ZIP_UPLOAD, SKILL_GRID_CLS } from "./constants";
 import { renderSkillIcon } from "./icons";
-import type { SkillSquareTab } from "./SkillSquareNav";
+import type { PrivateFilter, SkillSquareTab } from "./SkillSquareNav";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TFn = (key: any, ...args: any[]) => string;
 
 interface SkillSquareListProps {
   activeTab: SkillSquareTab;
+  privateFilter: PrivateFilter;
+  onPrivateFilterChange: (filter: PrivateFilter) => void;
   hepaiLoading: boolean;
   hepaiRows: SkillsUserItem[];
   filteredHepaiRows: SkillsUserItem[];
@@ -34,6 +36,8 @@ interface SkillSquareListProps {
 
 const SkillSquareList: React.FC<SkillSquareListProps> = ({
   activeTab,
+  privateFilter,
+  onPrivateFilterChange,
   hepaiLoading,
   hepaiRows,
   filteredHepaiRows,
@@ -50,6 +54,34 @@ const SkillSquareList: React.FC<SkillSquareListProps> = ({
   onPublishFirst,
 }) => {
   if (activeTab === "private") {
+    // Private filter tab bar — underline tabs
+    const privateTabBar = (
+      <div className="flex items-center gap-0 mb-5 border-b border-gray-200 dark:border-white/10">
+        <button
+          type="button"
+          onClick={() => onPrivateFilterChange("created")}
+          className={`px-4 py-2 -mb-px text-sm font-medium border-b-2 transition-colors whitespace-nowrap select-none ${
+            privateFilter === "created"
+              ? "text-purple-600 dark:text-purple-400 border-purple-500 dark:border-purple-400"
+              : "text-secondary hover:text-primary border-transparent"
+          }`}
+        >
+          {t("skillSquare.myCreations")}
+        </button>
+        <button
+          type="button"
+          onClick={() => onPrivateFilterChange("collected")}
+          className={`px-4 py-2 -mb-px text-sm font-medium border-b-2 transition-colors whitespace-nowrap select-none ${
+            privateFilter === "collected"
+              ? "text-purple-600 dark:text-purple-400 border-purple-500 dark:border-purple-400"
+              : "text-secondary hover:text-primary border-transparent"
+          }`}
+        >
+          {t("skillSquare.myCollections")}
+        </button>
+      </div>
+    );
+
     if (hepaiLoading) {
       return (
         <div className="flex items-center justify-center py-20">
@@ -59,7 +91,9 @@ const SkillSquareList: React.FC<SkillSquareListProps> = ({
     }
     if (hepaiRows.length === 0) {
       return (
-        <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border-primary/70 bg-tertiary/15 px-6 py-20 text-center dark:border-white/12 dark:bg-white/[0.02]">
+        <>
+          {privateTabBar}
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border-primary/70 bg-tertiary/15 px-6 py-20 text-center dark:border-white/12 dark:bg-white/[0.02]">
           <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-border-primary/50 bg-primary shadow-sm dark:border-white/10">
             <Package
               className="h-8 w-8 text-accent"
@@ -85,17 +119,23 @@ const SkillSquareList: React.FC<SkillSquareListProps> = ({
             </Button>
           ) : null}
         </div>
+        </>
       );
     }
     if (filteredHepaiRows.length === 0) {
       return (
-        <div className="flex items-center justify-center rounded-2xl border border-dashed border-border-primary/40 bg-tertiary/10 px-6 py-12 text-center dark:border-white/10 dark:bg-white/[0.02]">
-          <p className="text-sm text-secondary">{t("skillSquare.empty")}</p>
-        </div>
+        <>
+          {privateTabBar}
+          <div className="flex items-center justify-center rounded-2xl border border-dashed border-border-primary/40 bg-tertiary/10 px-6 py-12 text-center dark:border-white/10 dark:bg-white/[0.02]">
+            <p className="text-sm text-secondary">{t("skillSquare.empty")}</p>
+          </div>
+        </>
       );
     }
     return (
-      <div className={SKILL_GRID_CLS}>
+      <>
+        {privateTabBar}
+        <div className={SKILL_GRID_CLS}>
         {filteredHepaiRows.map((r) => {
           const isUnlisted = r.unlisted === true;
           return (
@@ -110,6 +150,7 @@ const SkillSquareList: React.FC<SkillSquareListProps> = ({
               owner={r.owner?.trim() || currentUserEmail?.trim() || ""}
               tags={r.tags}
               downloads={r.downloads}
+              collects={r.collects}
               source={r.source}
               badges={
                 isUnlisted ? (
@@ -124,6 +165,7 @@ const SkillSquareList: React.FC<SkillSquareListProps> = ({
           );
         })}
       </div>
+      </>
     );
   }
 
@@ -172,6 +214,7 @@ const SkillSquareList: React.FC<SkillSquareListProps> = ({
             owner={r.owner}
             tags={r.tags}
             downloads={r.downloads}
+            collects={r.collects}
             source={r.source}
             badges={
               r.academicGroupId === "lhaaso" ? (

@@ -1,21 +1,17 @@
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp, Bot, Globe, Network, User } from "lucide-react";
 import React from "react";
 
-export interface StatsCardItem {
+export interface AgentStatsItem {
   title: string;
   value: string | number;
-  /** Positive = up (green), negative = down (red), 0 = neutral */
   change: number;
-  /** Optional secondary description below the change, e.g. "较上月" */
   changeLabel?: string;
-  /** Optional icon component to display */
   icon?: React.ElementType;
-  /** Optional accent color class for the icon background, e.g. "bg-blue-50 text-blue-600" */
   iconColor?: string;
 }
 
-interface StatsCardsProps {
-  items: StatsCardItem[];
+interface AgentStatsCardsProps {
+  items: AgentStatsItem[];
 }
 
 const CARD_STYLES = [
@@ -41,7 +37,14 @@ const CARD_STYLES = [
   },
 ];
 
-const StatsCards: React.FC<StatsCardsProps> = ({ items }) => {
+const DEFAULT_ICONS: Record<string, React.ElementType> = {
+  total: Bot,
+  official: Globe,
+  remote: Network,
+  custom: User,
+};
+
+const AgentStatsCards: React.FC<AgentStatsCardsProps> = ({ items }) => {
   if (!items.length) return null;
 
   return (
@@ -59,10 +62,7 @@ const StatsCards: React.FC<StatsCardsProps> = ({ items }) => {
             key={idx}
             className="group relative flex-1 cursor-default overflow-hidden rounded-xl border border-gray-200/60 bg-white px-4 py-3.5 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-gray-300/80 hover:shadow-md dark:border-white/[0.06] dark:bg-slate-900 dark:hover:border-white/[0.1]"
           >
-            {/* Subtle gradient glow blob */}
             <div className={`pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full opacity-40 blur-2xl transition-opacity duration-300 group-hover:opacity-70 ${style.glow}`} />
-
-            {/* Top accent stripe */}
             <div className={`absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent ${style.accent} to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100`} />
 
             <div className="relative flex items-start justify-between">
@@ -113,4 +113,5 @@ const StatsCards: React.FC<StatsCardsProps> = ({ items }) => {
   );
 };
 
-export default StatsCards;
+export { DEFAULT_ICONS };
+export default AgentStatsCards;

@@ -23,6 +23,7 @@ import { useLang } from "../../i18n/useLang";
 import { useConfigStore } from "../../hooks/store";
 import { getModelApiKeyFromSettings } from "../../utils/modelApiKey";
 import { HEPAI_MAX_ZIP_BYTES, PUBLIC_PAGE_SIZE } from "./constants";
+import { Globe, LayoutGrid, Download, Heart } from "lucide-react";
 import { type StatsCardItem } from "./StatsCards";
 import { renderSkillIcon } from "./icons";
 import {
@@ -71,6 +72,11 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
       case "skills_my_collections":
         setActiveTab("private");
         setPrivateFilter("collected");
+        setSkillUploadOpen(false);
+        break;
+      case "skills_my_skills":
+        setActiveTab("private");
+        setPrivateFilter("created");
         setSkillUploadOpen(false);
         break;
       case "skills_publish":
@@ -182,7 +188,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
 
   const [shareSkillSlug, setShareSkillSlug] = useState<string | null>(null);
   const [shareSkillName, setShareSkillName] = useState<string>("");
-  const [sortBy, setSortBy] = useState<"name" | "time">("time");
+  const [sortBy, setSortBy] = useState<"name" | "time" | "downloads" | "collects">("time");
   const [sortOpen, setSortOpen] = useState(false);
   const sortRef = useRef<HTMLDivElement>(null);
 
@@ -264,28 +270,39 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
   const statsItems: StatsCardItem[] = useMemo(() => {
     const totalPublic = publicRows.length;
     const totalPrivate = hepaiRows.length;
-    const totalCategories = availableCategories.length;
+    const totalDownloads = publicRows.reduce((sum, r) => sum + (r.downloads || 0), 0);
+    const totalCollects = publicRows.reduce((sum, r) => sum + (r.collects || 0), 0);
     return [
       {
         title: t("skillSquare.statsTotalSkills") || "技能总数",
         value: totalPublic + totalPrivate,
         change: 0,
         changeLabel: "较上月",
+        icon: LayoutGrid,
       },
       {
         title: t("skillSquare.statsPublicSkills") || "公开技能",
         value: totalPublic,
         change: 0,
         changeLabel: "较上月",
+        icon: Globe,
       },
       {
-        title: t("skillSquare.statsCategories") || "分类数量",
-        value: totalCategories,
+        title: t("skillSquare.statsTotalDownloads") || "总下载量",
+        value: totalDownloads,
         change: 0,
-        changeLabel: "",
+        changeLabel: "较上月",
+        icon: Download,
+      },
+      {
+        title: t("skillSquare.statsTotalCollects") || "总收藏量",
+        value: totalCollects,
+        change: 0,
+        changeLabel: "较上月",
+        icon: Heart,
       },
     ];
-  }, [publicRows.length, hepaiRows.length, availableCategories.length, t]);
+  }, [publicRows.length, hepaiRows.length, t]);
 
   const resetPublishForm = () => {
     setHepaiZipFile(null);
@@ -803,6 +820,14 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
       message.warning(t("skillSquare.publishNameRequired"));
       return;
     }
+    if (
+      publishIcon === "__profile__" &&
+      !publicProfileFile &&
+      !publicProfilePreview
+    ) {
+      message.warning(t("skillSquare.selectCover"));
+      return;
+    }
     const version = publishVersion.trim();
     if (!version) {
       message.warning(t("skillSquare.versionRequired"));
@@ -907,6 +932,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
               version: publishVersion.trim() || "1.0.0",
               changelog: publishChangelog.trim() || undefined,
               source: "created",
+              profile: publicProfileFile || undefined,
               tags:
                 publishTags.length > 0
                   ? publishTags.join(", ")
@@ -969,6 +995,12 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
         publicApiKey || undefined,
       );
       message.success({ content: t("skillSquare.imported"), key: "import" });
+      // Optimistic update: increment collects on the public skill
+      setPublicRows((prev) =>
+        prev.map((r) =>
+          r.slug === slug ? { ...r, collects: (r.collects || 0) + 1 } : r,
+        ),
+      );
       setHepaiRows((prev) => {
         if (prev.some((r) => r.slug === slug && r.uskills_type === "imported"))
           return prev;
@@ -992,6 +1024,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
             profile: src?.profile || "",
             changelog: src?.changelog || "",
             downloads: src?.downloads ?? 0,
+            collects: src?.collects ?? 0,
             tags: src?.tags,
           },
         ];
@@ -1085,6 +1118,12 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
             userId,
             publicApiKey || undefined,
           );
+          // Optimistic update: decrement collects on the public skill
+          setPublicRows((prev) =>
+            prev.map((r) =>
+              r.slug === slug ? { ...r, collects: Math.max(0, (r.collects || 0) - 1) } : r,
+            ),
+          );
           setHepaiRows((prev) => prev.filter((r) => r.slug !== slug));
           if (skillDetail?.slug === slug) closeSkillDetail();
           message.success(t("skillSquare.uncollectedToast", displayName));
@@ -1124,7 +1163,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
 
   const detailPanelProps = useMemo(() => {
     if (!skillDetail) return null;
-    const isOwner = !!(user?.email && skillDetail.owner === user.email);
+    const isOwner = !!(user?.email && skillDetail.owner_id === user.email);
     const isPublicTab = activeTab === "public";
     const row =
       hepaiRows.find(
@@ -1259,6 +1298,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
     packPreviewEntries,
     filteredHepaiRows,
     availableCategories,
+    availableTags: availableCategories,
     statsItems,
     resetPublishForm,
     syncPickFromFile,

@@ -18,6 +18,7 @@ export type SkillsPublicItem = {
     owner_id?: string;
     updated_at: string;
     downloads: number;
+    collects: number;
     can_edit?: boolean;
     profile?: string;
     changelog?: string;
@@ -55,6 +56,7 @@ export type SkillsUserItem = {
     profile: string;
     changelog: string;
     downloads: number;
+    collects: number;
     tags?: string[];
 };
 
@@ -179,7 +181,6 @@ export class SkillsAPI {
         };
     }> {
         const params = new URLSearchParams({ type: "public", page: String(page), page_size: String(pageSize) });
-        if (apiKey) params.set("api_key", apiKey);
         if (opts?.q?.trim()) params.set("q", opts.q.trim());
         if (opts?.tags?.trim()) params.set("tags", opts.tags.trim());
         if (opts?.source) params.set("source", opts.source);
@@ -221,13 +222,12 @@ export class SkillsAPI {
 
     /** Get a single public skill with full body. */
     async getPublicSkill(slug: string, apiKey?: string): Promise<SkillsPublicDetail> {
-        const qs = apiKey ? `?api_key=${encodeURIComponent(apiKey)}` : '';
         const headers: HeadersInit = this.getHeaders();
         if (apiKey) {
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }
         const response = await fetch(
-            `${this.getBaseUrl()}/skills/${encodeURIComponent(slug)}?type=public${qs ? '&' + qs.slice(1) : ''}`,
+            `${this.getBaseUrl()}/skills/${encodeURIComponent(slug)}?type=public`,
             { headers },
         );
         const data = await response.json();
@@ -263,12 +263,11 @@ export class SkillsAPI {
         if (meta?.changelog?.trim()) form.append("changelog", meta.changelog.trim());
         if (meta?.tags?.trim()) form.append("tags", meta.tags.trim());
         if (meta?.profile) form.append("profile", meta.profile);
-        const qs = apiKey ? `?api_key=${encodeURIComponent(apiKey)}` : '';
         const headers: HeadersInit = {};
         if (apiKey) {
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }
-        const response = await fetch(`${this.getBaseUrl()}/skills/upload?type=public${qs ? '&' + qs.slice(1) : ''}`, {
+        const response = await fetch(`${this.getBaseUrl()}/skills/upload?type=public`, {
             method: "POST",
             body: form,
             headers,
@@ -306,13 +305,12 @@ export class SkillsAPI {
         if (options?.changelog !== undefined) form.append("changelog", options.changelog.trim());
         if (options?.tags?.trim()) form.append("tags", options.tags.trim());
         if (options?.profile) form.append("profile", options.profile);
-        const qs = apiKey ? `?api_key=${encodeURIComponent(apiKey)}` : '';
         const headers: HeadersInit = {};
         if (apiKey) {
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }
         const response = await fetch(
-            `${this.getBaseUrl()}/skills/${encodeURIComponent(slug)}?type=public${qs ? '&' + qs.slice(1) : ''}`,
+            `${this.getBaseUrl()}/skills/${encodeURIComponent(slug)}?type=public`,
             { method: "PUT", body: form, headers },
         );
         const data = await response.json();
@@ -325,13 +323,12 @@ export class SkillsAPI {
 
     /** Delete a public skill. Must be owner or admin. */
     async deletePublicSkill(slug: string, apiKey?: string): Promise<{ slug: string }> {
-        const qs = apiKey ? `?api_key=${encodeURIComponent(apiKey)}` : '';
         const headers: HeadersInit = this.getHeaders();
         if (apiKey) {
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }
         const response = await fetch(
-            `${this.getBaseUrl()}/skills/${encodeURIComponent(slug)}?type=public${qs ? '&' + qs.slice(1) : ''}`,
+            `${this.getBaseUrl()}/skills/${encodeURIComponent(slug)}?type=public`,
             { method: "DELETE", headers },
         );
         const data = await response.json();
@@ -345,9 +342,8 @@ export class SkillsAPI {
     /** Toggle a user skill's public visibility. */
     async toggleSkillVisibility(slug: string, userId: string, publicVal: boolean, apiKey?: string): Promise<{ slug: string; public: boolean }> {
         const headers: HeadersInit = this.getHeaders();
-        let qs = `type=user&user_id=${encodeURIComponent(userId)}&public=${publicVal}`;
+        const qs = `type=user&user_id=${encodeURIComponent(userId)}&public=${publicVal}`;
         if (apiKey) {
-            qs += `&api_key=${encodeURIComponent(apiKey)}`;
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }
         const response = await fetch(
@@ -399,7 +395,7 @@ export class SkillsAPI {
             changelog?: string;
         } | string,
         apiKey?: string,
-    ): Promise<{ id: string; url: string }> {
+    ): Promise<{ slug: string }> {
         const fields = typeof meta === "string" ? { display_name: meta } : (meta ?? {});
         // Create a reference record — source=user, uskills_type=imported
         return this.uploadUserSkill(userId, new File([], `${slug}.ref`), {
@@ -420,11 +416,10 @@ export class SkillsAPI {
 
     async listUserSkills(userId: string, apiKey?: string): Promise<SkillsUserItem[]> {
         const headers: HeadersInit = this.getHeaders();
-        let qs = `type=user&user_id=${encodeURIComponent(userId)}`;
         if (apiKey) {
-            qs += `&api_key=${encodeURIComponent(apiKey)}`;
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }
+        const qs = `type=user`;
         const url = `${this.getBaseUrl()}/skills?${qs}`;
         const response = await fetch(url, { headers });
         const data = await response.json();
@@ -448,9 +443,10 @@ export class SkillsAPI {
             tags?: string;
             owner?: string;
             origin?: string;
+            profile?: File;
         },
         apiKey?: string,
-    ): Promise<{ id: string; url: string }> {
+    ): Promise<{ slug: string }> {
         const form = new FormData();
         form.append("file", file);
         const m = meta ?? {};
@@ -464,10 +460,10 @@ export class SkillsAPI {
         if (m.tags?.trim()) form.append("tags", m.tags.trim());
         if (m.owner?.trim()) form.append("owner", m.owner.trim());
         if (m.origin?.trim()) form.append("origin", m.origin.trim());
+        if (m.profile) form.append("profile", m.profile);
         const headers: HeadersInit = {};
-        let qs = `type=user&user_id=${encodeURIComponent(userId)}`;
+        const qs = `type=user`;
         if (apiKey) {
-            qs += `&api_key=${encodeURIComponent(apiKey)}`;
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }
         const url = `${this.getBaseUrl()}/skills/upload?${qs}`;
@@ -479,10 +475,10 @@ export class SkillsAPI {
             throw new Error(data?.detail || data?.message || "上传用户技能失败");
         }
         const raw = data.data || {};
-        if (!raw.id || !raw.url) {
+        if (!raw.slug) {
             throw new Error("上传成功但未返回技能信息");
         }
-        return { id: raw.id, url: raw.url };
+        return { slug: raw.slug };
     }
 
     async updateUserSkill(
@@ -521,9 +517,8 @@ export class SkillsAPI {
         if (opts.tags?.trim()) form.append("tags", opts.tags.trim());
         if (opts.profile) form.append("profile", opts.profile);
         const headers: HeadersInit = {};
-        let qs = `type=user&user_id=${encodeURIComponent(userId)}`;
+        const qs = `type=user`;
         if (apiKey) {
-            qs += `&api_key=${encodeURIComponent(apiKey)}`;
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }
         const url = `${this.getBaseUrl()}/skills/${encodeURIComponent(slug)}?${qs}`;
@@ -551,9 +546,8 @@ export class SkillsAPI {
 
     async deleteUserSkill(slug: string, userId: string, apiKey?: string): Promise<void> {
         const headers: HeadersInit = {};
-        let qs = `type=user&user_id=${encodeURIComponent(userId)}`;
+        const qs = `type=user`;
         if (apiKey) {
-            qs += `&api_key=${encodeURIComponent(apiKey)}`;
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }
         const url = `${this.getBaseUrl()}/skills/${encodeURIComponent(slug)}?${qs}`;
@@ -572,13 +566,11 @@ export class SkillsAPI {
 
     async downloadUserSkill(slug: string, userId: string, apiKey?: string): Promise<void> {
         const headers: HeadersInit = this.getHeaders();
-        let qs = `type=user&user_id=${encodeURIComponent(userId)}`;
         if (apiKey) {
-            qs += `&api_key=${encodeURIComponent(apiKey)}`;
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }
         const response = await fetch(
-            `${this.getBaseUrl()}/skills/${encodeURIComponent(slug)}/download?${qs}`,
+            `${this.getBaseUrl()}/skills/${encodeURIComponent(slug)}/download?type=user`,
             { headers },
         );
         if (!response.ok) {
@@ -600,12 +592,10 @@ export class SkillsAPI {
 
     async getUserSkillMd(slug: string, userId: string, apiKey?: string): Promise<{ path: string; content: string }> {
         const headers: HeadersInit = this.getHeaders();
-        let qs = `user_id=${encodeURIComponent(userId)}`;
         if (apiKey) {
-            qs += `&api_key=${encodeURIComponent(apiKey)}`;
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }
-        const url = `${this.getBaseUrl()}/skills/${encodeURIComponent(slug)}/skill-md?${qs}`;
+        const url = `${this.getBaseUrl()}/skills/${encodeURIComponent(slug)}/skill-md`;
         const response = await fetch(url, { headers });
         const data = await response.json();
         if (!response.ok || !data?.status) {

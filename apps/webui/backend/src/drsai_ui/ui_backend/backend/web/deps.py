@@ -236,25 +236,23 @@ async def resolve_user_from_apikey(
     request: Request,
     db: "DatabaseManager | None" = None,
 ) -> str | None:
-    """Resolve user_id from API key in Authorization header or ?api_key query param.
+    """Resolve user_id from API key in Authorization header.
 
     Calls the external API key verification service. The service requires:
-    - api_key query param: the user's API key (to look up)
-    - Authorization header: the admin API key from HEPAI_APP_ADMIN_API_KEY env var
+    - Authorization header: Bearer <user_api_key>
+    - Internal call uses admin API key from HEPAI_APP_ADMIN_API_KEY env var
     """
     import os
 
     verify_url = os.getenv("DRSAI_UI_API_KEY_VERIFY_URL", "http://localhost:42551/apiv2/user")
     admin_api_key = os.getenv("HEPAI_APP_ADMIN_API_KEY", "")
 
-    # Extract user's API key from Authorization header or query param
+    # Extract user's API key from Authorization header
     auth = request.headers.get("Authorization", "")
     api_key: str | None = None
 
     if auth.startswith("bearer ") or auth.startswith("Bearer "):
         api_key = auth.split(" ", 1)[1]
-    if not api_key:
-        api_key = request.query_params.get("api_key")
 
     if not api_key:
         return None  # No API key present, caller decides whether that's ok
