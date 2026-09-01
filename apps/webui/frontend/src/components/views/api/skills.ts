@@ -178,7 +178,7 @@ export class SkillsAPI {
             has_prev: boolean;
         };
     }> {
-        const params = new URLSearchParams({ type: "public", page: String(page), page_size: String(pageSize) });
+        const params = new URLSearchParams({ type: "public", visibility: "public", page: String(page), page_size: String(pageSize) });
         if (apiKey) params.set("api_key", apiKey);
         if (opts?.q?.trim()) params.set("q", opts.q.trim());
         if (opts?.tags?.trim()) params.set("tags", opts.tags.trim());

@@ -84,11 +84,11 @@ const SkillsSquarePage: React.FC<SkillsSquarePageProps> = ({ skillsSubTab }) => 
                 publishSlug={vm.publishSlug}
                 publishVersion={vm.publishVersion}
                 publishChangelog={vm.publishChangelog}
-                publishCategory={vm.publishCategory}
+                publishTags={vm.publishTags}
                 publishIcon={vm.publishIcon}
                 isPublicSkill={vm.isPublicSkill}
                 publicProfilePreview={vm.publicProfilePreview}
-                availableCategories={vm.availableCategories}
+                availableTags={vm.availableCategories}
                 t={vm.t}
                 setFolderInputRef={vm.setFolderInputRef}
                 hepaiZipInputRef={vm.hepaiZipInputRef}
@@ -99,7 +99,7 @@ const SkillsSquarePage: React.FC<SkillsSquarePageProps> = ({ skillsSubTab }) => 
                 onSlugChange={vm.setPublishSlug}
                 onVersionChange={vm.setPublishVersion}
                 onChangelogChange={vm.setPublishChangelog}
-                onCategoryChange={vm.setPublishCategory}
+                onTagsChange={vm.setPublishTags}
                 onIconChange={vm.setPublishIcon}
                 onPublicSkillChange={vm.setIsPublicSkill}
                 onProfileFileChange={(file, preview) => {

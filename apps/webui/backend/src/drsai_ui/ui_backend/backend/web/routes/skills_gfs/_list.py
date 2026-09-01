@@ -128,6 +128,10 @@ async def _list_skills(
             return {"status": True, "data": [], "pagination": {"page": 1, "page_size": page_size, "total": 0, "total_pages": 0, "has_next": False, "has_prev": False}}
         source_clean = "user"
 
+    # ── type=public → default to visibility=public unless explicitly overridden ──
+    if type_clean == "public" and not vis_clean:
+        vis_clean = "public"
+
     filters: dict = {}
     if source_clean and source_clean in ("user", "higraf"):
         filters["source"] = source_clean
