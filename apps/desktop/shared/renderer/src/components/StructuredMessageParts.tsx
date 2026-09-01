@@ -18,6 +18,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { stripTrailingSourceList } from "../sourceListPresentation";
+import { stripAgentToolDebugText } from "../chatOutputModel";
 import type { InlineCitationLink } from "../citationMarkerPlugin";
 import { boundedProcessWindow, PROCESS_ACTIVITY_WINDOW_SIZE, PROCESS_PART_WINDOW_SIZE } from "../boundedProcessWindow";
 import {
@@ -214,7 +215,9 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
 
   function renderPart(part: StructuredAssistantPart): React.JSX.Element | null {
     if (part.kind === "markdown") {
-      const displayedMarkdown = publicSources.length ? stripTrailingSourceList(part.markdown) : part.markdown;
+      const displayedMarkdown = stripAgentToolDebugText(
+        publicSources.length ? stripTrailingSourceList(part.markdown) : part.markdown,
+      );
       return displayedMarkdown ? (
         <div key={part.id} className={`structured-markdown-part ${focusedPartId === part.id ? "relation-focus" : ""}`} data-structured-part-id={part.id}>
           <ChatMessageContent
@@ -448,11 +451,14 @@ function ProcessWindowNavigation({
 }
 
 function reproducibilitySummaryLabel(level: RunReproducibilityLevel, language: "en" | "zh"): string {
+  // Chat badge must match Run Inspector wording. "证据不足" made successful
+  // GFS listings look like the answer failed verification; this level only
+  // means the run manifest lacks fields needed for exact replay/export.
   const labels: Record<RunReproducibilityLevel, readonly [string, string]> = {
     exact: ["可精确复现", "Exact evidence"],
     compatible: ["可兼容复现", "Compatible evidence"],
     partial: ["部分可复现", "Partial evidence"],
-    unavailable: ["证据不足", "Evidence unavailable"],
+    unavailable: ["暂不可复现", "Not reproducible yet"],
   };
   return labels[level][language === "zh" ? 0 : 1];
 }

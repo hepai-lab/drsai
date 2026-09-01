@@ -227,15 +227,24 @@ import {
   reloadSkills,
 } from "./skills";
 import {
+  listPublicSkillsSquare,
+  installPublicSkillSquare,
+} from "../../../shared/main/skillsSquare";
+import {
   gfsList,
   gfsStat,
   gfsRead,
   gfsWrite,
   gfsUploadFile,
+  gfsUploadContent,
   gfsDownloadFile,
+  gfsDownloadToDisk,
   gfsDelete,
   gfsShareUrl,
   gfsHealthcheck,
+  gfsGetConfig,
+  gfsSaveConfig,
+  gfsClearConfig,
 } from "./gfs";
 import {
   getRuntimeThreadSnapshot,
@@ -5864,6 +5873,12 @@ function registerIpc(): void {
     const r = (request ?? {}) as { threadId?: string; userId?: string };
     return reloadSkills(r.threadId, r.userId);
   });
+  secureHandle("desktop:list-public-skills-square", (_event, request) =>
+    listPublicSkillsSquare((request as Parameters<typeof listPublicSkillsSquare>[0]) ?? {}),
+  );
+  secureHandle("desktop:install-public-skill-square", (_event, request) =>
+    installPublicSkillSquare(request as Parameters<typeof installPublicSkillSquare>[0]),
+  );
 
   // GFS cloud storage
   secureHandle("desktop:gfs-list", (_event, request) =>
@@ -5882,8 +5897,14 @@ function registerIpc(): void {
   secureHandle("desktop:gfs-upload-file", (_event, request) =>
     gfsUploadFile(request as Parameters<typeof gfsUploadFile>[0]),
   );
+  secureHandle("desktop:gfs-upload-content", (_event, request) =>
+    gfsUploadContent(request as Parameters<typeof gfsUploadContent>[0]),
+  );
   secureHandle("desktop:gfs-download-file", (_event, request) =>
     gfsDownloadFile(request as Parameters<typeof gfsDownloadFile>[0]),
+  );
+  secureHandle("desktop:gfs-download-to-disk", (_event, request) =>
+    gfsDownloadToDisk((request as { path: string }).path),
   );
   secureHandle("desktop:gfs-delete", (_event, request) =>
     gfsDelete((request as { path: string }).path),
@@ -5897,6 +5918,11 @@ function registerIpc(): void {
     return gfsShareUrl(r.path, r.ttlMinutes, r.responseContentType);
   });
   secureHandle("desktop:gfs-healthcheck", () => gfsHealthcheck());
+  secureHandle("desktop:gfs-get-config", () => gfsGetConfig());
+  secureHandle("desktop:gfs-save-config", (_event, request) =>
+    gfsSaveConfig(request as Parameters<typeof gfsSaveConfig>[0]),
+  );
+  secureHandle("desktop:gfs-clear-config", () => gfsClearConfig());
 
   secureHandle("desktop:prepare-fork-worktree", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");

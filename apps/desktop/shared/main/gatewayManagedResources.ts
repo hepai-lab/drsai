@@ -2,14 +2,20 @@ import type {
   GatewayAvailableSkill,
   GatewaySkill,
   GatewaySkillInstallRequest,
+  GfsConfigSaveRequest,
+  GfsConfigSaveResult,
+  GfsConfigClearResult,
+  GfsConfigStatus,
   GfsDownloadRequest,
+  GfsHealthcheckResult,
   GfsListRequest,
   GfsListResult,
   GfsObjectInfo,
   GfsUploadRequest,
+  GfsUploadContentRequest,
 } from "../api/desktopApi";
 import { getAuthSession } from "./auth";
-import { getGatewayRequestHeaders } from "./gateway";
+import { getAuthenticatedGatewayRequestHeaders } from "./gateway";
 import { resolveGatewayPort } from "./gatewayEnvironment";
 
 const gatewayBaseUrl = `http://127.0.0.1:${resolveGatewayPort()}`;
@@ -19,10 +25,11 @@ async function requestGateway<T>(method: string, path: string, body?: unknown, t
   const session = await getAuthSession().catch(() => null);
   const userId = session?.user?.email?.trim() || session?.user?.id?.trim() || "";
   const payload = body === undefined ? undefined : JSON.stringify(body);
+  const authHeaders = await getAuthenticatedGatewayRequestHeaders();
   const response = await fetch(new URL(path, gatewayBaseUrl), {
     method,
     headers: {
-      ...getGatewayRequestHeaders(),
+      ...authHeaders,
       Accept: "application/json",
       ...(userId ? { "X-OpenDrSai-User": userId } : {}),
       ...(payload ? { "Content-Type": "application/json" } : {}),
@@ -75,7 +82,14 @@ export const gfsStat = (path: string): Promise<GfsObjectInfo> => requestGateway(
 export const gfsRead = (path: string): Promise<{ path: string; content: string }> => requestGateway("POST", "/v1/gfs/read", { path });
 export const gfsWrite = (path: string, content: string, contentType?: string): Promise<{ path: string; etag: string }> => requestGateway("POST", "/v1/gfs/write", { path, content, ...(contentType ? { content_type: contentType, contentType } : {}) });
 export const gfsUploadFile = (request: GfsUploadRequest): Promise<{ path: string; size: number }> => requestGateway("POST", "/v1/gfs/upload", request);
+export const gfsUploadContent = (request: GfsUploadContentRequest): Promise<{ path: string; size: number; etag?: string }> =>
+  requestGateway("POST", "/v1/gfs/upload-content", request);
 export const gfsDownloadFile = (request: GfsDownloadRequest): Promise<{ localPath: string; size: number }> => requestGateway("POST", "/v1/gfs/download", request);
 export const gfsDelete = (path: string): Promise<{ path: string }> => requestGateway("POST", "/v1/gfs/delete", { path });
 export const gfsShareUrl = (path: string, ttlMinutes?: number, responseContentType?: string): Promise<{ url: string; expiresAt: string }> => requestGateway("POST", "/v1/gfs/share-url", { path, ttl_minutes: ttlMinutes ?? 60, ...(responseContentType ? { response_content_type: responseContentType, responseContentType } : {}) });
-export const gfsHealthcheck = (): Promise<{ ok: boolean; bucket?: string; mode?: string; reason?: string }> => requestGateway("GET", "/v1/gfs/health");
+export const gfsHealthcheck = (): Promise<GfsHealthcheckResult> => requestGateway("GET", "/v1/gfs/health");
+export const gfsGetConfig = (): Promise<GfsConfigStatus> => requestGateway("GET", "/v1/gfs/config");
+export const gfsSaveConfig = (request: GfsConfigSaveRequest): Promise<GfsConfigSaveResult> =>
+  requestGateway("POST", "/v1/gfs/config", request);
+export const gfsClearConfig = (): Promise<GfsConfigClearResult> =>
+  requestGateway("DELETE", "/v1/gfs/config");

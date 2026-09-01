@@ -178,6 +178,12 @@ def _tool_decision_domain(name: str) -> str | None:
         return "image_edit"
     if lowered.startswith("regression_"):
         return "regression"
+    if lowered.startswith("gfs_"):
+        # Personal GFS bucket ops are host-local storage, same class as
+        # workspace file tools. Leaving them unclassified made prompts like
+        # 「查一下云盘…元信息」require retrieval while no gfs domain satisfied
+        # it → required_tool_unavailable / Desktop Runtime false alarm.
+        return "workspace"
     return None
 
 
@@ -333,6 +339,21 @@ def build_tool_decision_requirement(input_text: str, available_tools: Sequence[s
             if tool_name in available and any(needle in folded or needle.replace(" ", "") in compact for needle in needles):
                 preferred_tool = tool_name
                 break
+    if preferred_tool is None and any(name.startswith("gfs_") for name in names):
+        gfs_rules = (
+            ("gfs_stat", ("元信息", "文件大小", "etag", "stat")),
+            ("gfs_ls", ("根目录", "目录下有哪些", "目录下有", "列出", "看一下我云盘")),
+            ("gfs_share_url", ("临时下载链接", "预签名", "share url", "分享链接")),
+            ("gfs_delete", ("从云盘删", "删掉云盘", "删除云盘")),
+            ("gfs_upload", ("上传到云盘", "上传到 uploads")),
+            ("gfs_download", ("下载到本地", "从云盘下载")),
+            ("gfs_write", ("写到云盘", "写入云盘", "outputs/")),
+            ("gfs_read", ("读一下云盘", "读取云盘")),
+        )
+        for tool_name, needles in gfs_rules:
+            if tool_name in available and any(needle in folded for needle in needles):
+                preferred_tool = tool_name
+                break
     if preferred_tool is not None:
         domain = _tool_decision_domain(preferred_tool)
         if domain is not None:
@@ -397,6 +418,23 @@ def build_tool_decision_requirement(input_text: str, available_tools: Sequence[s
         # “查一下” can mean search the user's local saved memory. Requiring a
         # Web tool here would reject the correct search_memory selection.
         domains.discard("retrieval")
+    # “查一下云盘…元信息” is a GFS/host storage fact, not public-web retrieval.
+    # Without this, 「查一下」 forces retrieval while gfs_* used to be unclassified
+    # → required_tool_unavailable with a false Desktop Runtime limitation.
+    #
+    # When GFS tools are not registered (Desktop toggle off), do **not** force
+    # workspace/retrieval: the model should answer that GFS is disabled instead
+    # of thrashing Skill / shell / run_glob until the run stops with no text.
+    gfs_intent = any(value in folded for value in ("gfs", "云盘", "bucket"))
+    has_gfs_tools = any(name.startswith("gfs_") for name in names)
+    if gfs_intent and has_gfs_tools:
+        domains.add("workspace")
+        if not explicit_public_retrieval:
+            domains.discard("retrieval")
+    elif gfs_intent and not has_gfs_tools:
+        domains.discard("workspace")
+        if not explicit_public_retrieval:
+            domains.discard("retrieval")
     if workspace_code_diagnosis:
         # Words such as “验证修复” describe local tests, not public-Web fact
         # verification. Prefer actual Workspace evidence unless the user also

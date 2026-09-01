@@ -2677,28 +2677,140 @@ export function installMockDesktopApi(): void {
     revealThreadShare: async () => true,
     listInstalledSkills: async () =>
       mockInstalledSkills.map(({ content: _content, ...skill }) => skill),
-    listAvailableSkills: async () => [],
+    listAvailableSkills: async () => {
+      const installed = new Set(mockInstalledSkills.map((skill) => skill.name));
+      const catalog = [
+        {
+          name: "ihep-gfs-skill",
+          category: "skills",
+          description: "操作高能所 GFS 对象存储（jcli）。",
+          path: "",
+          source: "skills",
+          installed: installed.has("ihep-gfs-skill"),
+        },
+        {
+          name: "academic-search",
+          category: "skills",
+          description: "学术文献检索与整理。",
+          path: "",
+          source: "skills",
+          installed: installed.has("academic-search"),
+        },
+        {
+          name: "download-skills",
+          category: "skills",
+          description: "从 clawhub.ai 下载技能到本地目录。",
+          path: "",
+          source: "skills",
+          installed: installed.has("download-skills"),
+        },
+      ];
+      return catalog;
+    },
+    listPublicSkillsSquare: async (request) => {
+      const installed = new Set(mockInstalledSkills.map((skill) => skill.name));
+      const all = [
+        {
+          slug: "skill-39c1b15b3680",
+          name: "web-search",
+          description: "Web search helper from WebUI public square.",
+          downloads: 67,
+          source: "higraf",
+          owner: "higraf",
+          installed: installed.has("skill-39c1b15b3680") || installed.has("web-search"),
+        },
+        {
+          slug: "meeting-and-brief",
+          name: "meeting-and-brief",
+          description: "Meeting notes to briefing.",
+          downloads: 0,
+          source: "user",
+          owner: "demo",
+          installed: installed.has("meeting-and-brief"),
+        },
+        {
+          slug: "ihep-gfs-skill",
+          name: "ihep-gfs-skill",
+          description: "GFS skill published on WebUI.",
+          downloads: 0,
+          source: "user",
+          owner: "demo",
+          installed: installed.has("ihep-gfs-skill"),
+        },
+      ].filter((item) => {
+        const q = request?.q?.trim().toLowerCase();
+        if (!q) return true;
+        return item.slug.includes(q) || item.name.includes(q) || item.description.toLowerCase().includes(q);
+      });
+      const page = request?.page ?? 1;
+      const pageSize = request?.pageSize ?? 20;
+      const installedCount = all.filter((item) => item.installed).length;
+      const notInstalledCount = all.length - installedCount;
+      const installFilter = request?.installFilter ?? "all";
+      const filtered =
+        installFilter === "installed"
+          ? all.filter((item) => item.installed)
+          : installFilter === "not_installed"
+            ? all.filter((item) => !item.installed)
+            : all;
+      const start = (page - 1) * pageSize;
+      const items = filtered.slice(start, start + pageSize);
+      return {
+        items,
+        page,
+        pageSize,
+        total: filtered.length,
+        hasNext: start + pageSize < filtered.length,
+        installedCount,
+        notInstalledCount,
+      };
+    },
     getSkillContent: async (request) => {
       const skill = mockInstalledSkills.find((item) => item.path === request.skillPath || item.name === request.skillPath);
       if (!skill) throw new Error(`Skill not found: ${request.skillPath}`);
       return { path: `${skill.path}/SKILL.md`, content: skill.content };
     },
     installSkill: async (request) => {
-      if (mockInstalledSkills.some((skill) => skill.name === request.name)) {
-        throw new Error(`skill '${request.name}' already exists`);
+      const existing = mockInstalledSkills.find((skill) => skill.name === request.name);
+      if (existing) {
+        if (request.content) {
+          existing.content = request.content;
+          existing.size = request.content.length;
+          existing.mtime = Date.now() / 1000;
+        }
+        return { status: "ok", name: existing.name, path: existing.path };
       }
       const content = request.content || defaultMockSkillContent(request.name);
       const path = `mock://skills/${request.name}`;
       mockInstalledSkills.push({
         name: request.name,
-        category: "user",
-        description: "",
+        category: request.source || "user",
+        description: request.source ? `Installed from ${request.source}` : "",
         path,
         size: content.length,
         mtime: Date.now() / 1000,
         content,
       });
       return { status: "ok", name: request.name, path };
+    },
+    installPublicSkillSquare: async (request) => {
+      const name = request.name || request.slug;
+      const existing = mockInstalledSkills.find((skill) => skill.name === name);
+      if (existing) {
+        return { status: "ok", name: existing.name, path: existing.path, files: 2 };
+      }
+      const content = defaultMockSkillContent(name);
+      const path = `mock://skills/${name}`;
+      mockInstalledSkills.push({
+        name,
+        category: "webui-public",
+        description: `Installed from WebUI public square (${request.slug})`,
+        path,
+        size: content.length,
+        mtime: Date.now() / 1000,
+        content,
+      });
+      return { status: "ok", name, path, files: 2 };
     },
     updateSkill: async (request) => {
       const skill = mockInstalledSkills.find((item) => item.name === request.name);
@@ -2724,13 +2836,50 @@ export function installMockDesktopApi(): void {
     gfsRead: async (request) => ({ path: request.path, content: "" }),
     gfsWrite: async (request) => ({ path: request.path, etag: "mock" }),
     gfsUploadFile: async (request) => ({ path: request.remotePath, size: 0 }),
+    gfsUploadContent: async (request) => ({ path: request.remotePath, size: 0 }),
     gfsDownloadFile: async (request) => ({ localPath: request.localPath, size: 0 }),
+    gfsDownloadToDisk: async (request) => ({
+      canceled: false,
+      localPath: `/tmp/${request.path.split("/").pop() ?? "gfs-download"}`,
+      size: 0,
+    }),
     gfsDelete: async (request) => ({ path: request.path }),
     gfsShareUrl: async () => ({
       url: "https://example.invalid/mock-gfs-share",
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),
     }),
-    gfsHealthcheck: async () => ({ ok: true, mode: "mock" }),
+    gfsHealthcheck: async () => ({ ok: true, mode: "mock", needsSetup: false }),
+    gfsGetConfig: async () => ({
+      configured: true,
+      enabled: true,
+      needsSetup: false,
+      mode: "mock",
+      bucket: "mock-bucket",
+      email: "mock@example.com",
+      accessKeyMasked: "***mock",
+      secretKeyMasked: "***key",
+      portalUrl: "https://gfs.ihep.ac.cn/",
+      homeEnvPath: "~/.drsai/.env",
+      cliConfigPath: "~/.drsai/configs/cli_config.json",
+    }),
+    gfsSaveConfig: async () => ({
+      ok: true,
+      configured: true,
+      enabled: true,
+      needsSetup: false,
+      mode: "mock",
+      portalUrl: "https://gfs.ihep.ac.cn/",
+      message: "mock saved",
+    }),
+    gfsClearConfig: async () => ({
+      ok: true,
+      configured: false,
+      enabled: false,
+      needsSetup: true,
+      mode: "mock",
+      portalUrl: "https://gfs.ihep.ac.cn/",
+      message: "mock cleared",
+    }),
     prepareForkWorktree: async (request) => {
       const slug = (request.intent || "subtask")
         .toLowerCase()

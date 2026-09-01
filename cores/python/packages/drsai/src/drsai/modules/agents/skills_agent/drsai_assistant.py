@@ -120,10 +120,18 @@ _DESKTOP_READ_ONLY_TOOLS = {
     # unknown-tool fallback below, which classifies for external side effects and
     # demands approval — so a second parallel lookup failed the whole Run.
     "knowledge_search",
+    # GFS personal bucket tools. Without these they fall through to
+    # external_write+required; Desktop has no approval handler so the kernel
+    # auto-rejects, force-completes the tool_call with result=null, and the
+    # next turn fails with conversation_tool_result_missing.
+    "gfs_ls", "gfs_stat", "gfs_read", "gfs_share_url",
     "regression_list_suites", "regression_list_cases", "regression_get_case",
     "regression_preflight", "regression_history", "regression_get", "regression_events",
 }
-_DESKTOP_LOCAL_WRITE_TOOLS = {"run_write", "run_edit", "TodoWrite", "UpdateUserConfig"}
+_DESKTOP_LOCAL_WRITE_TOOLS = {
+    "run_write", "run_edit", "TodoWrite", "UpdateUserConfig",
+    "gfs_write", "gfs_upload", "gfs_download", "gfs_delete",
+}
 _DESKTOP_CONDITIONAL_TOOLS = {
     "run_bash", "run_bash_background", "run_powershell", "kill_bash_task",
     "kill_powershell_task",

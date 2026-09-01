@@ -30,7 +30,7 @@ import inspect
 import os
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from loguru import logger
 
@@ -117,6 +117,25 @@ class DesktopAgentManager:
                 agent = await asyncio.to_thread(create_agent, **kwargs)
             if hasattr(agent, "lazy_init"):
                 await agent.lazy_init()
+            try:
+                workbench = getattr(agent, "_workbench", None)
+                listed = list(getattr(workbench, "_tools", None) or getattr(agent, "_tools", []) or [])
+                tool_names = []
+                for tool in listed:
+                    name = getattr(tool, "name", None)
+                    if not isinstance(name, str) or not name:
+                        schema = getattr(tool, "schema", None)
+                        if isinstance(schema, Mapping):
+                            name = schema.get("name")
+                    if isinstance(name, str) and name:
+                        tool_names.append(name)
+                gfs_names = [name for name in tool_names if name.startswith("gfs_")]
+                logger.info(
+                    "Agent ready: user={} session={} tools={} gfs_tools={}",
+                    uid, session_id, len(tool_names), gfs_names,
+                )
+            except Exception as exc:  # pragma: no cover - diagnostics only
+                logger.debug("Unable to list tools after create_agent: %s", exc)
             state = await self._load_state(session_id, uid)
             if state and hasattr(agent, "load_state"):
                 await agent.load_state(state)
@@ -265,6 +284,14 @@ class DesktopAgentManager:
         thread.updated_at = time.time()
         _database().upsert(thread)
 
+    async def _close_cached(self, key: str, agent: Any) -> None:
+        self._aliases.pop(key, None)
+        if agent is not None and hasattr(agent, "close"):
+            try:
+                await agent.close()
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.debug("close() during agent eviction failed for {}: {}", key, exc)
+
     async def evict_user(self, user_id: str | None = None) -> None:
         """Drop cached agents for one user so skill/tool registry changes take effect."""
         uid = effective_user_id(user_id)
@@ -274,12 +301,16 @@ class DesktopAgentManager:
                 if not key.startswith(prefix):
                     continue
                 agent = self._agents.pop(key, None)
-                self._aliases.pop(key, None)
-                if agent is not None and hasattr(agent, "close"):
-                    try:
-                        await agent.close()
-                    except Exception as exc:  # pragma: no cover - best effort
-                        logger.debug("close() during evict_user failed for %s: %s", key, exc)
+                await self._close_cached(key, agent)
+
+    async def evict_all(self) -> int:
+        """Drop every cached Agent (process-wide tool/config changes such as GFS)."""
+        async with self._global_lock:
+            keys = list(self._agents)
+            for key in keys:
+                agent = self._agents.pop(key, None)
+                await self._close_cached(key, agent)
+            return len(keys)
 
 
 __all__ = ["DesktopAgentManager"]

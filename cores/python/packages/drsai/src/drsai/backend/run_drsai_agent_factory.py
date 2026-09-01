@@ -296,6 +296,61 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     return default
 
 
+def _live_cli_config_path() -> Path:
+    """Resolve ``cli_config.json`` from the current ``DRSAI_HOME`` (not import-time)."""
+    from drsai.version import __appname__
+
+    home = os.environ.get("DRSAI_HOME") or str(Path.home() / f".{__appname__}")
+    return Path(home).expanduser() / "configs" / "cli_config.json"
+
+
+def _overlay_live_gfs_config(cli_cfg: dict[str, Any]) -> dict[str, Any]:
+    """Keep Agent GFS tools aligned with the on-disk toggle.
+
+    ``CLI_CONFIG_PATH`` is fixed at import time from ``DRSAI_HOME``. Desktop
+    sets ``DRSAI_HOME`` before import in normal flows, but after toggle on/off
+    we still re-read the live home file so enable/disable cannot drift from a
+    stale in-memory merge or a mismatched import-time path.
+    """
+    path = _live_cli_config_path()
+    if not path.is_file():
+        # Live home has no config file: treat GFS as cleared.
+        if "gfs" in cli_cfg:
+            return {key: value for key, value in cli_cfg.items() if key != "gfs"}
+        return cli_cfg
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Failed to re-read live cli_config for GFS (%s): %s", path, exc)
+        return cli_cfg
+    if not isinstance(saved, dict):
+        return cli_cfg
+    merged = dict(cli_cfg)
+    if "gfs" in saved:
+        merged["gfs"] = saved["gfs"]
+    else:
+        merged.pop("gfs", None)
+    return merged
+
+
+_GFS_TOOL_PROMPT = (
+    "GFS cloud-drive tools are available in this session: "
+    "gfs_ls, gfs_stat, gfs_read, gfs_write, gfs_upload, gfs_download, gfs_delete, gfs_share_url. "
+    "When the user asks about 云盘 / GFS / their bucket, call these tools directly. "
+    "Do not load ihep-gfs-skill, do not run jcli, and do not invent local paths such as gfs_mount."
+)
+
+_GFS_DISABLED_PROMPT = (
+    "GFS cloud-drive tools are NOT enabled in this session "
+    "(Desktop 「GFS 云盘」 is off or credentials were cleared). "
+    "If the user asks about GFS / 云盘 / gfs_* / jcli / ihep-gfs-skill, "
+    "reply immediately in plain Chinese with this meaning (you may rephrase slightly):\n"
+    "「当前没有可用的 GFS 云盘工具。请打开左侧「GFS 云盘」，开启开关并保存密钥后再新建任务重试。」\n"
+    "Do not print DSML, tool_calls, XML, run_bash, run_powershell, jcli, or gfs_mount. "
+    "Do not load skills or run shell commands for this request."
+)
+
+
 def _build_cwd_prompt(cli_cfg: dict[str, Any], work_dir: str = "") -> str:
     """Compose a small system-prompt prefix that tells the agent the user's
     current working directory.
@@ -352,7 +407,7 @@ def _build_gfs_tools(
     """根据 ``cli_cfg["gfs"]`` 配置生成 GFS personal-mode 工具列表。
 
     **唯一配置来源是 ``cli_cfg["gfs"]``**（即 ``cli_config.json`` 中用户通过
-    TUI ``/gfs`` 面板输入的值）。不读取 ``os.environ``，不回退 ``.env``。
+    TUI ``/gfs`` 或 Desktop 云盘保存写入的值）。不读取 ``os.environ``，不回退 ``.env``。
 
     若 ``cli_cfg`` 无 ``gfs`` 配置、``enabled`` 为 false、或验证不完整，
     返回空列表——不加载任何 GFS 工具，不浪费 agent 上下文。
@@ -464,7 +519,7 @@ def create_agent(
         - only_in_workspace = True  (tools restricted to cwd + storage_dir)
         - extra_work_dirs = [storage_dir]  (agent can access its own internal files)
     """
-    cli_cfg = cli_cfg or load_config()
+    cli_cfg = _overlay_live_gfs_config(cli_cfg or load_config())
 
     # LLM catalog: env > cli_cfg > built-in default.
     llm_config_path = _resolve(cli_cfg, "llm_config_file", "LLM_CONFIG_FILE") or None
@@ -881,8 +936,26 @@ def create_agent(
     gfs_tools = _build_gfs_tools(user_id, cli_cfg=cli_cfg)
     if gfs_tools:
         final_tools = list(extra_tools or []) + gfs_tools
+        if _GFS_TOOL_PROMPT not in cwd_prompt:
+            cwd_prompt = f"{cwd_prompt}\n\n{_GFS_TOOL_PROMPT}"
+        logger.info(
+            "Attaching %s GFS tools for user=%s (cli_config gfs.enabled=%s)",
+            len(gfs_tools),
+            user_id,
+            (cli_cfg.get("gfs") or {}).get("enabled") if isinstance(cli_cfg.get("gfs"), dict) else None,
+        )
     else:
         final_tools = list(extra_tools) if extra_tools else None
+        if _GFS_DISABLED_PROMPT not in cwd_prompt:
+            cwd_prompt = f"{cwd_prompt}\n\n{_GFS_DISABLED_PROMPT}"
+        gfs_block = cli_cfg.get("gfs") if isinstance(cli_cfg.get("gfs"), dict) else None
+        logger.info(
+            "No GFS tools attached for user=%s (live_path=%s, has_gfs_block=%s, enabled=%s)",
+            user_id,
+            _live_cli_config_path(),
+            gfs_block is not None,
+            _as_bool((gfs_block or {}).get("enabled"), default=False) if gfs_block else False,
+        )
 
     # ── Sub-agent config ──
     final_sub_agent_config = sub_agent_config or {}

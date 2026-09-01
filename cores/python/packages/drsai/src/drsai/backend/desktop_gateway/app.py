@@ -1,4 +1,4 @@
-"""The FastAPI application: config + runtime + audio + models + runs + sessions + workspaces.
+"""The FastAPI application: config + runtime + audio + models + runs + sessions + workspaces + gfs.
 
 This is a **separate app** from ``gateway_legacy``'s, deliberately. Mounting
 these routers onto the legacy ``app`` would inherit its middleware stack and
@@ -18,7 +18,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from . import _auth, _state
-from drsai.backend.gfs_api import register_gfs_routes
 from drsai.backend.skills_api import register_skills_routes
 
 from .routes import (
@@ -30,6 +29,7 @@ from .routes import (
     config_providers,
     config_tools,
     config_knowledge,
+    gfs,
     identity,
     models,
     runs,
@@ -58,6 +58,7 @@ ROUTERS = (
     capabilities.router,
     agent_backends.router,
     identity.router,
+    gfs.router,
 )
 
 
@@ -102,7 +103,6 @@ def create_app() -> FastAPI:
     _auth.install(app)
     for factory in ROUTERS:
         app.include_router(factory())
-    register_gfs_routes(app)
     register_skills_routes(app)
     return app
 

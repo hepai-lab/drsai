@@ -115,6 +115,29 @@ def test_search_saved_memory_phrase_does_not_require_public_web() -> None:
     assert resolve_tool_decision(requirement, ["search_memory"])["category"] == "required_tool_selected"
 
 
+def test_gfs_stat_cloud_query_does_not_require_public_web() -> None:
+    # 「查一下」 alone used to force retrieval; with no web tools that became
+    # required_tool_unavailable / false Desktop Runtime. Cloud metadata is a
+    # GFS/workspace fact.
+    prompt = "帮我查一下云盘里 uploads/demo.jpg 的大小和元信息。"
+    tools = ["gfs_ls", "gfs_stat", "gfs_read", "gfs_write"]
+    requirement = build_tool_decision_requirement(prompt, tools)
+
+    assert "retrieval" not in requirement["required_domains"]
+    assert "workspace" in requirement["required_domains"]
+    assert resolve_tool_decision(requirement, ["gfs_stat"])["category"] == "required_tool_selected"
+
+
+def test_gfs_query_without_gfs_tools_allows_direct_answer() -> None:
+    # Desktop GFS toggle off: no gfs_* tools. Forcing workspace/retrieval here
+    # made the agent thrash Skill/shell and finish with no final text.
+    prompt = "用 GFS 工具看一下我云盘根目录有什么。"
+    requirement = build_tool_decision_requirement(prompt, ["run_glob", "run_read", "web_search"])
+
+    assert requirement["required_domains"] == []
+    assert resolve_tool_decision(requirement, [])["category"] == "direct_answer"
+
+
 def test_screenshot_diagnosis_does_not_require_retrieval_tools() -> None:
     prompt = (
         "请分析这张 OpenDrSai Desktop 截图：\n"
