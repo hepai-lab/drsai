@@ -97,6 +97,7 @@ async def _get_skill(slug: str, request: Request) -> dict:
             "owner": "", "owner_id": "", "author": "", "visibility": "public",
             "source": "user", "uskills_type": None, "imported_ref": None,
             "downloads": 0,
+            "collects": 0,
             "collector_ids": [], "agent_ids": [], "team_ids": [],
             "profile": "", "created_at": "", "updated_at": "",
             "can_edit": can_edit,

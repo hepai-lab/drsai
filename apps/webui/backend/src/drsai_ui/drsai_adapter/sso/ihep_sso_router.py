@@ -31,7 +31,6 @@ from drsai_ui.ui_backend.backend.web.routes.desktop_auth import (
 )
 from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, AgentModeConfig, UserAgents
 from drsai_ui.agent_factory.agent_mode_cofigs import (
-    get_agent_mode_config, 
     get_default_agent_mode_config,
     get_agents_mode
     )

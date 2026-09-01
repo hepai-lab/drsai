@@ -3,17 +3,26 @@ import { pickAgentForSessionStart } from "@/utils/agentPreference";
 import { parseModelApiKeyFromSettingsConfig } from "@/utils/modelApiKey";
 import { DRSAI_RECENT_AGENTS_KEY } from "@/utils/recentAgentsStorage";
 import { message } from "antd";
-import { ArrowRight, Plus, RefreshCw, Star } from "lucide-react";
-import React, { useCallback, useContext, useEffect, useState } from "react";
+import {
+  Bot,
+  Globe,
+  Network,
+  Plus,
+  RefreshCw,
+  Search,
+  User,
+} from "lucide-react";
+import React, { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { parse } from "yaml";
 import { appContext } from "../../../hooks/provider";
 import { useLang } from "../../../i18n/useLang";
 import { Agent } from "../../../types/common";
 import { Button } from "../../common/Button";
 import { CustomAgentData } from "../../common/agent-form/CustomAgentForm";
-import { getDescriptionForSearch, getLocalizedDescription, getServerUrl } from "../../utils";
+import { getDescriptionForSearch, getServerUrl } from "../../utils";
 import { agentWorkerAPI, settingsAPI } from "../../views/api";
 import { AgentCard, AgentCardData } from "./AgentCard";
+import AgentStatsCards, { type AgentStatsItem } from "./AgentStatsCards";
 import CustomAgentModal from "./CustomAgentModal";
 import RemoteAgentModal from "./RemoteAgentModal";
 interface AgentSquareProps {
@@ -41,13 +50,50 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   const [isSavingCustomAgent, setIsSavingCustomAgent] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [search, setSearch] = useState("");
-  const [ownerFilter, setOwnerFilter] = useState<"all" | "mine" | "official">("all");
+  const [ownerFilter, setOwnerFilter] = useState<"all" | "local" | "remote">("all");
   const [sortBy, setSortBy] = useState<"recent" | "name">("recent");
   const [recentAgentIds, setRecentAgentIds] = useState<string[]>([]);
   /** 未配置平台模型 API Key：不阻塞页面，仍可使用「连接远程」 */
   const [noModelApiKeyForList, setNoModelApiKeyForList] = useState(false);
   /** Server-side user default agent id */
   const [userDefaultAgentId, setUserDefaultAgentId] = useState<string | null>(null);
+  /** Search expand toggle */
+  const [searchExpanded, setSearchExpanded] = useState(false);
+
+  // Compute stats from agent list
+  const statsItems = useMemo((): AgentStatsItem[] => {
+    const baseList = agentList.filter((a) => a.mode !== "magentic-one");
+    const total = baseList.length;
+    const official = baseList.filter((a) => a.mode !== "remote" && a.mode !== "custom").length;
+    const remote = baseList.filter((a) => a.mode === "remote").length;
+    const custom = baseList.filter((a) => a.mode === "custom").length;
+    return [
+      {
+        title: t("agentsquare.statsTotal"),
+        value: total,
+        change: 0,
+        icon: Bot,
+      },
+      {
+        title: t("agentsquare.statsOfficial"),
+        value: official,
+        change: 0,
+        icon: Globe,
+      },
+      {
+        title: t("agentsquare.statsRemote"),
+        value: remote,
+        change: 0,
+        icon: Network,
+      },
+      {
+        title: t("agentsquare.statsCustom"),
+        value: custom,
+        change: 0,
+        icon: User,
+      },
+    ];
+  }, [agentList, t]);
 
   const readRecentAgentIds = useCallback(() => {
     try {
@@ -144,7 +190,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       onRemove: (agent.mode === "remote" || agent.mode === "custom")
         ? (id?: string) => handleRemoveRemoteAgent(id || agent.id)
         : undefined,
-      onSetDefault: (id?: string) => handleSetDefault(id || agent.id),
+      // onSetDefault: (id?: string) => handleSetDefault(id || agent.id),
       onClick: () => { },
     };
   }, [user?.email, handleRemoveRemoteAgent, handleSetDefault, userDefaultAgentId]);
@@ -495,14 +541,11 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     );
   }
 
-  const isMine = (agent: AgentCardData) =>
-    Boolean(user?.email) && agent.owner === user?.email;
-
   const matchOwner = (agent: AgentCardData) => {
     if (ownerFilter === "all") return true;
-    if (ownerFilter === "mine") return isMine(agent);
-    // official
-    return agent.mode !== "remote" && agent.mode !== "custom";
+    if (ownerFilter === "local") return agent.mode !== "remote" && agent.mode !== "custom";
+    // remote
+    return agent.mode === "remote";
   };
 
   const matchSearch = (agent: AgentCardData) => {
@@ -574,216 +617,250 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   };
 
   return (
-    <div className={`flex flex-col h-full ${className}`}>
-      {/* 工具条（置顶） */}
-      <div className="sticky top-0 z-10 mb-4 bg-transparent pr-4">
-        <div className="ml-4 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white/70 px-3 py-2 backdrop-blur dark:border-[#2a2a3a] dark:bg-[#101018]/70">
-          <div className="flex min-w-[260px] flex-1 items-center gap-2">
-            <div className="text-sm font-semibold text-[#233457] dark:text-[#e4e8ff]">
-              {t("agentsquare.title")}
-              <span className="ml-2 text-xs font-normal text-[#9aa2b2] dark:text-[#b6bdd0]">
-                {filteredList.length}/{baseList.length}
-              </span>
-            </div>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t("agentsquare.searchPlaceholder")}
-              className="ml-2 h-8 w-full max-w-[420px] rounded-lg border border-[#e7e7ef] bg-white px-3 text-sm outline-none transition-colors focus:border-[#d3adf7] dark:border-[#2a2a3a] dark:bg-[#0f0f16] dark:text-[#e4e8ff]"
-            />
+    <div className={`relative flex h-full flex-col bg-[#f8f9fc] dark:bg-primary ${className}`}>
+      {/* Decorative background */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
+        <div className="absolute -top-20 right-0 h-80 w-80 rounded-full bg-violet-400/[0.07] blur-3xl dark:bg-violet-500/[0.10]" />
+        <div className="absolute -top-10 -left-10 h-64 w-64 rounded-full bg-blue-400/[0.05] blur-3xl dark:bg-blue-500/[0.08]" />
+        <div className="absolute -bottom-20 -left-16 h-72 w-72 rounded-full bg-amber-400/[0.04] blur-3xl dark:bg-amber-500/[0.06]" />
+        <div className="absolute -bottom-10 right-10 h-56 w-56 rounded-full bg-emerald-400/[0.04] blur-3xl dark:bg-emerald-500/[0.06]" />
+        <div className="absolute left-1/2 top-0 h-48 w-[min(600px,90vw)] -translate-x-1/2 rounded-full bg-accent/[0.06] blur-3xl dark:bg-accent/[0.12]" />
+        <div
+          className="absolute inset-0 opacity-[0.025] dark:opacity-[0.035]"
+          style={{
+            backgroundImage: "radial-gradient(circle, currentColor 1px, transparent 1px)",
+            backgroundSize: "20px 20px",
+          }}
+        />
+      </div>
+
+      {/* Scrollable content */}
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto pt-3 pb-6 px-4 lg:px-6">
+
+        {/* Stats cards */}
+        {baseList.length > 0 && (
+          <div className="shrink-0 pb-4 pr-4">
+            <AgentStatsCards items={statsItems} />
           </div>
+        )}
 
-          <div className="flex flex-wrap items-center gap-2">
-            {/* <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                setEditingCustomAgent(null);
-                setIsCustomModalOpen(true);
-              }}
-              icon={<Sparkles className="h-3 w-3" />}
-              className="text-xs px-2 py-1 border-0 shadow-none"
-            >
-              自定义
-            </Button> */}
-
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setIsRemoteModalOpen(true)}
-              icon={<Plus className="h-3 w-3" />}
-              className="h-8 rounded-lg !border border-[#e7e7ef] bg-white/80 px-3 text-xs font-medium text-[#334155]  backdrop-blur-sm hover:bg-white hover:border-[#c7b8ff] active:translate-y-0 dark:border-[#2a2a3a] dark:bg-[#0f0f16]/80 dark:text-[#cfd6e9] dark:hover:bg-[#121226] dark:hover:border-[#5d3fcd]/50"
-            >
-              {t("agentsquare.connectRemote")}
-            </Button>
-
-            {/* owner filter */}
-            <div className="flex items-center rounded-lg border border-[#e7e7ef] bg-white px-1 py-1 text-xs dark:border-[#2a2a3a] dark:bg-[#0f0f16]">
+        {/* Enhanced filter bar */}
+        <div className="shrink-0 pb-2 pr-4">
+          <div className="flex items-center gap-2">
+            {/* Category chips */}
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto scrollbar-none">
               {(
                 [
                   ["all", t("agentsquare.filterAll")],
-                  ["mine", t("agentsquare.filterMine")],
-                  ["official", t("agentsquare.filterOfficial")],
+                  ["local", t("agentsquare.filterOfficial")],
+                  ["remote", t("agentsquare.connectRemote")],
                 ] as const
-              ).map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setOwnerFilter(key)}
-                  className={`rounded-md px-2 py-1 transition-colors ${ownerFilter === key
-                    ? "bg-[#ece9ff] text-[#5d3fcd] dark:bg-[#2a2342] dark:text-[#bca8ff]"
-                    : "text-[#55627a] hover:bg-[#f2f2f7] dark:text-[#b6bdd0] dark:hover:bg-[#1a1a26]"
-                    }`}
-                >
-                  {label}
-                </button>
-              ))}
+              ).map(([key, label]) => {
+                const active = key === ownerFilter;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setOwnerFilter(key)}
+                    className={`shrink-0 px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200 whitespace-nowrap select-none border ${active
+                      ? "bg-purple-50 text-purple-600 !border-purple-400 focus:!border-purple-400 dark:bg-purple-500/15 dark:text-purple-300 dark:!border-purple-400/60"
+                      : "bg-white text-gray-500 border-gray-200/60 hover:text-gray-700 hover:bg-gray-50 dark:bg-white/[0.03] dark:text-gray-400 dark:border-white/[0.08] dark:hover:text-gray-200 dark:hover:bg-white/[0.06]"
+                      }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
 
-            {/* sort */}
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
-              className="h-8 rounded-lg border border-[#e7e7ef] bg-white px-2 text-xs text-[#55627a] outline-none dark:border-[#2a2a3a] dark:bg-[#0f0f16] dark:text-[#b6bdd0]"
-            >
-              <option value="recent">{t("agentsquare.sortRecent")}</option>
-              <option value="name">{t("agentsquare.sortName")}</option>
-            </select>
+            {/* Right controls */}
+            <div className="flex shrink-0 items-center gap-1">
+              {/* Search */}
+              {searchExpanded ? (
+                <div className="relative max-w-[160px]">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" aria-hidden />
+                  <input
+                    type="search"
+                    autoFocus
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    onBlur={() => {
+                      if (!search.trim()) setSearchExpanded(false);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        setSearch("");
+                        setSearchExpanded(false);
+                      }
+                    }}
+                    placeholder={t("agentsquare.searchPlaceholder")}
+                    className="w-full rounded-xl border border-primary/40 bg-tertiary/10 py-2 pl-9 pr-3 text-sm text-primary outline-none placeholder:text-secondary/60 transition-[border-color,box-shadow] duration-200 focus:border-accent/50 focus:ring-1 focus:ring-accent/30 dark:border-white/10 dark:bg-white/[0.04]"
+                  />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setSearchExpanded(true)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-tertiary/10 hover:text-primary"
+                  title={t("agentsquare.searchPlaceholder")}
+                >
+                  <Search className="h-4 w-4" aria-hidden />
+                </button>
+              )}
 
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-              icon={<RefreshCw className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`} />}
-              className="h-8 rounded-lg !border border-[#d4c9ff] bg-[#f5f3ff]/90 px-3 text-xs font-medium text-[#5d3fcd]  backdrop-blur-sm   dark:border-[#5d3fcd]/40 dark:bg-[#2a2342]/80 dark:text-[#bca8ff] dark:hover:border-[#7c5ce8] dark:hover:bg-[#322a4a]"
-            >
-              {t("agentsquare.refresh")}
-            </Button>
+              {/* Sort toggle */}
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="h-8 cursor-pointer appearance-none rounded-lg border border-gray-200/60 bg-white px-2.5 pr-6 text-xs font-medium text-gray-500 outline-none transition-colors hover:border-gray-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400 dark:hover:border-white/[0.15]"
+                style={{
+                  backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none'%3E%3Cpath d='M3 5l3 3 3-3' stroke='%239ca3af' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")",
+                  backgroundRepeat: "no-repeat",
+                  backgroundPosition: "right 4px center",
+                }}
+              >
+                <option value="recent">{t("agentsquare.sortRecent")}</option>
+                <option value="name">{t("agentsquare.sortName")}</option>
+              </select>
+
+              {/* Connect remote */}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setIsRemoteModalOpen(true)}
+                icon={<Plus className="h-3 w-3" />}
+                className="h-8 rounded-lg !border border-gray-200/60 bg-white/80 px-3 text-xs font-medium text-gray-500 backdrop-blur-sm hover:bg-white hover:border-gray-300 active:translate-y-0 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:border-white/[0.15]"
+              >
+                {t("agentsquare.connectRemote")}
+              </Button>
+
+              {/* Refresh */}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                icon={<RefreshCw className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`} />}
+                className="h-8 rounded-lg !border border-purple-200/60 bg-purple-50/80 px-3 text-xs font-medium text-purple-600 backdrop-blur-sm hover:bg-purple-50 hover:border-purple-300 dark:border-purple-500/20 dark:bg-purple-500/10 dark:text-purple-300 dark:hover:bg-purple-500/15 dark:hover:border-purple-500/30"
+              >
+                {t("agentsquare.refresh")}
+              </Button>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* 检查是否没有智能体 */}
-      {baseList.length === 0 ? (
-        <div
-          className="flex flex-col items-center justify-center h-64 flex-1 px-4 text-center"
-        >
-          {noModelApiKeyForList ? (
-            <>
-              <div className="text-[#334155] dark:text-[#cfd6e9] mb-2 font-medium">
-                {t("agentsquare.noApiKeyTitle")}
-              </div>
-              <div className="text-secondary text-sm max-w-md">
-                {t("agentsquare.noApiKeyDesc")}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="text-secondary mb-2">{t("agentsquare.noAgents")}</div>
-              <div className="text-secondary text-sm">{t("agentsquare.noAgentsDesc")}</div>
-            </>
-          )}
-        </div>
-      ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          {/* 主推位：我的默认智能体 */}
-          {defaultAgent && (
-            <div className="mb-4 pl-4 pr-4">
-              <div className="w-full max-w-[min(100%,36rem)]">
-                <div className="mb-2 flex items-center gap-1.5">
-                  <Star className="h-3 w-3 fill-[#c4b5fd] text-[#c4b5fd] dark:fill-[#a78bfa] dark:text-[#a78bfa]" />
-                  <span className="text-xs font-semibold tracking-wide text-[#55627a] dark:text-[#b6bdd0]">
-                    {t("agentsquare.myDefaultAgent")}
-                  </span>
+        {/* 检查是否没有智能体 */}
+        {baseList.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-64 flex-1 px-4 text-center">
+            {noModelApiKeyForList ? (
+              <>
+                <div className="text-[#334155] dark:text-[#cfd6e9] mb-2 font-medium">
+                  {t("agentsquare.noApiKeyTitle")}
                 </div>
-
-                <div className="flex flex-col gap-3 rounded-[18px] border border-[#ddd3ef] bg-[#fafafe] p-4 shadow-[0_6px_16px_rgba(43,51,72,0.035)] dark:border-[#433a5e] dark:bg-[rgba(167,139,250,0.08)] dark:shadow-[0_8px_20px_rgba(0,0,0,0.18)] sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[#f8f9fc] ring-1 ring-inset ring-[#dfe3ec] dark:bg-[#222032] dark:ring-[#3b3651]">
-                      <img
-                        src={defaultAgent.logo}
-                        alt=""
-                        className="h-5 w-5 object-contain"
-                      />
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <h3 className="truncate text-[15px] font-semibold tracking-[-0.02em] text-[#25324a] dark:text-[#eef2ff]">
-                        {defaultAgent.name}
-                      </h3>
-                      <div className="mt-0.5 truncate text-[12px] text-[#8f98ac] dark:text-[#9fa8bf]">
-                        {defaultAgent.owner}
-                      </div>
-                      <p className="mt-1 line-clamp-2 text-[13px] leading-snug text-[#404e67] dark:text-[#c7d0e6]">
-                        {getLocalizedDescription(defaultAgent.description, lang)}
-                      </p>
-                    </div>
+                <div className="text-secondary text-sm max-w-md">
+                  {t("agentsquare.noApiKeyDesc")}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-secondary mb-2">{t("agentsquare.noAgents")}</div>
+                <div className="text-secondary text-sm">{t("agentsquare.noAgentsDesc")}</div>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0 pr-4">
+            {/* 主推位：我的默认智能体 - 暂时注释 */}
+            {/* {defaultAgent && (
+              <div className="mb-5">
+                <div className="w-full max-w-[min(100%,36rem)]">
+                  <div className="mb-2 flex items-center gap-1.5">
+                    <Star className="h-3 w-3 fill-[#c4b5fd] text-[#c4b5fd] dark:fill-[#a78bfa] dark:text-[#a78bfa]" />
+                    <span className="text-xs font-semibold tracking-wide text-[#55627a] dark:text-[#b6bdd0]">
+                      {t("agentsquare.myDefaultAgent")}
+                    </span>
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-2 sm:flex-col sm:items-end">
-                    {defaultAgent.mode === "custom" && (
+                  <div className="flex flex-col gap-3 rounded-[18px] border border-[#ddd3ef] bg-[#fafafe] p-4 shadow-[0_6px_16px_rgba(43,51,72,0.035)] dark:border-[#433a5e] dark:bg-[rgba(167,139,250,0.08)] dark:shadow-[0_8px_20px_rgba(0,0,0,0.18)] sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[#f8f9fc] ring-1 ring-inset ring-[#dfe3ec] dark:bg-[#222032] dark:ring-[#3b3651]">
+                        <img
+                          src={defaultAgent.logo}
+                          alt=""
+                          className="h-5 w-5 object-contain"
+                        />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <h3 className="truncate text-[15px] font-semibold tracking-[-0.02em] text-[#25324a] dark:text-[#eef2ff]">
+                          {defaultAgent.name}
+                        </h3>
+                        <div className="mt-0.5 truncate text-[12px] text-[#8f98ac] dark:text-[#9fa8bf]">
+                          {defaultAgent.owner}
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-[13px] leading-snug text-[#404e67] dark:text-[#c7d0e6]">
+                          {getLocalizedDescription(defaultAgent.description, lang)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-2 sm:flex-col sm:items-end">
+                      {defaultAgent.mode === "custom" && (
+                        <button
+                          type="button"
+                          onClick={() => handleEditCustomAgent(defaultAgent)}
+                          className="inline-flex h-8 items-center justify-center rounded-[10px] border border-[#ebe7f1] bg-white px-3 text-xs font-medium text-[#5f5a73] transition hover:border-[#d3adf7] hover:text-[#544d92] dark:border-[#2f2a41] dark:bg-[#1c1628] dark:text-[#d0c0e8]"
+                        >
+                          {t("agentsquare.edit")}
+                        </button>
+                      )}
+
                       <button
                         type="button"
-                        onClick={() => handleEditCustomAgent(defaultAgent)}
-                        className="inline-flex h-8 items-center justify-center rounded-[10px] border border-[#ebe7f1] bg-white px-3 text-xs font-medium text-[#5f5a73] transition hover:border-[#d3adf7] hover:text-[#544d92] dark:border-[#2f2a41] dark:bg-[#1c1628] dark:text-[#d0c0e8]"
+                        onClick={() => startWithAgent(defaultAgent)}
+                        title={t("agentsquare.startChat")}
+                        aria-label={t("agentsquare.startChat")}
+                        className="agent-featured-cta group/cta"
                       >
-                        {t("agentsquare.edit")}
+                        <span className="agent-featured-cta__shine" aria-hidden />
+                        <span className="agent-featured-cta__label">{t("agentsquare.startChat")}</span>
+                        <span className="agent-featured-cta__arrow">
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </span>
                       </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => startWithAgent(defaultAgent)}
-                      title={t("agentsquare.startChat")}
-                      aria-label={t("agentsquare.startChat")}
-                      className="agent-featured-cta group/cta"
-                    >
-                      <span className="agent-featured-cta__shine" aria-hidden />
-                      <span className="agent-featured-cta__label">{t("agentsquare.startChat")}</span>
-                      <span className="agent-featured-cta__arrow">
-                        <ArrowRight className="h-3.5 w-3.5" />
-                      </span>
-                    </button>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
+            )} */}
 
-          {/* 最近使用 */}
-          {recentAgents.length > 0 && (
-            <div className="mb-5 pl-4 pr-4">
-              <div className="mb-2 flex items-center justify-between">
-                <div className="text-xs font-semibold tracking-wide text-[#55627a] dark:text-[#b6bdd0]">
-                  {t("agentsquare.recentUsed")}
+            {/* 最近使用 - 暂时注释 */}
+            {/* {recentAgents.length > 0 && (
+              <div className="mb-5">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-xs font-semibold tracking-wide text-[#55627a] dark:text-[#b6bdd0]">
+                    {t("agentsquare.recentUsed")}
+                  </div>
+                </div>
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
+                  {recentAgents
+                    .slice(0, 6)
+                    .map((agent) => (
+                      <AgentCard
+                        key={`recent-${agent.id || agent.name}`}
+                        agent={agent}
+                        onEdit={agent.mode === "custom" ? () => handleEditCustomAgent(agent) : undefined}
+                      />
+                    ))}
                 </div>
               </div>
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
-                {recentAgents
-                  .filter((a) => (defaultAgent?.id ? a.id !== defaultAgent.id : true))
-                  .slice(0, 6)
-                  .map((agent) => (
-                    <AgentCard
-                      key={`recent-${agent.id || agent.name}`}
-                      agent={agent}
-                      onEdit={agent.mode === "custom" ? () => handleEditCustomAgent(agent) : undefined}
-                    />
-                  ))}
-              </div>
-            </div>
-          )}
-
-          <div className="pl-4 pr-4 pb-6">
-            <div className="mb-2 text-xs font-semibold tracking-wide text-[#55627a] dark:text-[#b6bdd0]">
-            {t("agentsquare.all")}
-            </div>
+            )} */}
             {filteredList.length === 0 ? (
               <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-[#e7e7ef] text-sm text-[#9aa2b2] dark:border-[#2a2a3a] dark:text-[#8f97ad]">
                 {t("agentsquare.noMatch")}
               </div>
             ) : (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-5">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-5 pb-6">
                 {sortList(filteredList).map((agent) => (
                   <AgentCard
                     key={agent.id || agent.name}
@@ -794,8 +871,8 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
               </div>
             )}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* 自定义智能体弹框 */}
       <CustomAgentModal

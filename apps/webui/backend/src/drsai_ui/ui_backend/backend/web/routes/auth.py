@@ -15,7 +15,7 @@ from .....drsai_adapter.sso.jwt import (
     decode_jwt_token,
     get_current_user_id,
 )
-from ..auth_cookies import REFRESH_COOKIE_NAME, set_refresh_cookie
+from ..auth_cookies import REFRESH_COOKIE_NAME, clear_refresh_cookie, set_refresh_cookie
 from ..auth_source import get_cooper_info, get_display_name
 from ..deps import get_db
 
@@ -74,4 +74,12 @@ async def refresh_access_token(request: Request):
         }
     )
     set_refresh_cookie(response, rotated_refresh.access_token)
+    return response
+
+
+@router.post("/logout")
+async def logout(request: Request):
+    """Clear the httpOnly refresh-token cookie so the client cannot silently re-authenticate."""
+    response = JSONResponse(content={"status": True, "data": {}})
+    clear_refresh_cookie(response)
     return response

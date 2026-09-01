@@ -25,7 +25,7 @@ import magneticOneIcon from "../../assets/magentic-one.png";
 import magneticTwoIcon from "../../assets/magentic-two.svg";
 import { appContext } from "../../hooks/provider";
 import { useLang } from "../../i18n/useLang";
-import { clearAuthSession } from "../../utils/authSession";
+import { clearAuthSession, logoutRequest } from "../../utils/authSession";
 import { Agent } from "../../types/common";
 import { Button } from "../common/Button";
 import SubMenu from "../common/SubMenu";
@@ -86,7 +86,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [isAgentsExpanded, setIsAgentsExpanded] = React.useState(true);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await logoutRequest();
     clearAuthSession();
     // 根据GATSBY_SSO环境变量决定跳转目标
     if (process.env.GATSBY_SERVICE_MODE === "DEV") {

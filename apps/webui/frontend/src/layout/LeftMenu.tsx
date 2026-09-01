@@ -1,20 +1,20 @@
 import { Tooltip } from "antd";
 import {
-  BookmarkPlus,
-  ChartColumn,
+  BarChart3,
+  Bot,
   ChevronLeft,
   ChevronRight,
-  Clock,
-  Cloud,
-  Globe,
-  Grid2X2,
-  MessageSquare,
   ChevronDown,
+  FolderOpen,
+  Globe,
+  History,
+  MessageCircle,
+  Puzzle,
+  Rocket,
   Settings,
-  Upload,
-  UserCog,
+  Star,
+  UserCircle,
   Users,
-  Wrench,
 } from "lucide-react";
 import React, { useContext, useEffect, useState } from "react";
 import { appContext } from "../hooks/provider";
@@ -40,16 +40,15 @@ interface LeftMenuProps {
 type SectionId = "chat" | "skills" | "settings" | "history";
 
 const SECTIONS: { id: SectionId; icon: React.ReactNode; label: string; defaultItem: string }[] = [
-  { id: "chat", icon: <MessageSquare className="w-3.5 h-3.5" />, label: "Chat", defaultItem: "current_session" },
-  { id: "history", icon: <Clock className="w-3.5 h-3.5" />, label: "History", defaultItem: "" },
+  { id: "chat", icon: <MessageCircle className="w-3.5 h-3.5" />, label: "Chat", defaultItem: "current_session" },
+  { id: "history", icon: <History className="w-3.5 h-3.5" />, label: "History", defaultItem: "" },
   { id: "settings", icon: <Settings className="w-3.5 h-3.5" />, label: "Settings", defaultItem: "profile" },
 ];
 
 // 技能广场子菜单 ID
 const SKILLS_SUB_MENU_IDS = {
   skillsPublic: "skills_public",
-  skillsMyCreations: "skills_my_creations",
-  skillsMyCollections: "skills_my_collections",
+  skillsMySkills: "skills_my_skills",
   skillsPublish: "skills_publish",
 };
 
@@ -80,6 +79,9 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
       setExpanded((e) => ({ ...e, chat: true }));
     } else if (historyContent) {
       setExpanded((e) => ({ ...e, history: true }));
+    }
+    if (activeSubMenuItem !== "skills_square") {
+      setExpanded((e) => ({ ...e, skills: false }));
     }
   }, [activeSubMenuItem]);
 
@@ -165,27 +167,23 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
         </button>
 
         <div className="flex flex-col items-center gap-1 mt-2">
-          {(["chat"] as SectionId[]).map((id) => {
-            const s = SECTIONS.find((x) => x.id === id)!;
-            const isSectionActive = SECTION_ITEMS[s.id].includes(activeSubMenuItem);
-            return (
-              <Tooltip key={s.id} title={t(("leftmenu.section." + s.id) as Parameters<typeof t>[0])} placement="right">
-                <button
-                  type="button"
-                  onClick={() => { onSubMenuChange(s.defaultItem); onClose(); }}
-                  className={`flex items-center justify-center w-7 h-7 rounded-lg transition-colors ${isSectionActive
-                    ? "text-accent bg-accent/10"
-                    : isDark
-                      ? "text-secondary hover:text-primary hover:bg-white/5"
-                      : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
-                    }`}
-                >
-                  {s.icon}
-                </button>
-              </Tooltip>
-            );
-          })}
+          {/* Chat */}
+          <Tooltip title={t("leftmenu.nav.startChat")} placement="right">
+            <button
+              type="button"
+              onClick={() => { onSubMenuChange("current_session"); onClose(); }}
+              className={`flex items-center justify-center w-7 h-7 rounded-lg transition-colors ${activeSubMenuItem === "current_session"
+                ? "text-accent bg-accent/10"
+                : isDark
+                  ? "text-secondary hover:text-primary hover:bg-white/5"
+                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
+                }`}
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+            </button>
+          </Tooltip>
 
+          {/* Agent Square */}
           <Tooltip title={t("leftmenu.nav.agentSquare")} placement="right">
             <button
               type="button"
@@ -197,10 +195,11 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
                   : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
                 }`}
             >
-              <Grid2X2 className="w-3.5 h-3.5" />
+              <Bot className="w-3.5 h-3.5" />
             </button>
           </Tooltip>
 
+          {/* Skills Square */}
           <Tooltip title={t("leftmenu.nav.skillsSquare")} placement="right">
             <button
               type="button"
@@ -212,10 +211,11 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
                   : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
                 }`}
             >
-              <Wrench className="w-3.5 h-3.5" />
+              <Puzzle className="w-3.5 h-3.5" />
             </button>
           </Tooltip>
 
+          {/* Files */}
           <Tooltip title={t("leftmenu.section.files")} placement="right">
             <button
               type="button"
@@ -227,30 +227,39 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
                   : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
                 }`}
             >
-              <Cloud className="w-3.5 h-3.5" />
+              <FolderOpen className="w-3.5 h-3.5" />
             </button>
           </Tooltip>
 
-          {(["history", "settings"] as SectionId[]).map((id) => {
-            const s = SECTIONS.find((x) => x.id === id)!;
-            const isSectionActive = SECTION_ITEMS[s.id].includes(activeSubMenuItem);
-            return (
-              <Tooltip key={s.id} title={t(("leftmenu.section." + s.id) as Parameters<typeof t>[0])} placement="right">
-                <button
-                  type="button"
-                  onClick={() => { onSubMenuChange(s.defaultItem); onClose(); }}
-                  className={`flex items-center justify-center w-7 h-7 rounded-lg transition-colors ${isSectionActive
-                    ? "text-accent bg-accent/10"
-                    : isDark
-                      ? "text-secondary hover:text-primary hover:bg-white/5"
-                      : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
-                    }`}
-                >
-                  {s.icon}
-                </button>
-              </Tooltip>
-            );
-          })}
+          {/* History */}
+          <Tooltip title={t("leftmenu.section.history")} placement="right">
+            <button
+              type="button"
+              onClick={() => { onSubMenuChange(""); onClose(); }}
+              className={`flex items-center justify-center w-7 h-7 rounded-lg transition-colors ${isDark
+                ? "text-secondary hover:text-primary hover:bg-white/5"
+                : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
+                }`}
+            >
+              <History className="w-3.5 h-3.5" />
+            </button>
+          </Tooltip>
+
+          {/* Settings */}
+          <Tooltip title={t("leftmenu.section.settings")} placement="right">
+            <button
+              type="button"
+              onClick={() => { onSubMenuChange("profile"); onClose(); }}
+              className={`flex items-center justify-center w-7 h-7 rounded-lg transition-colors ${SECTION_ITEMS.settings.includes(activeSubMenuItem)
+                ? "text-accent bg-accent/10"
+                : isDark
+                  ? "text-secondary hover:text-primary hover:bg-white/5"
+                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
+                }`}
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </button>
+          </Tooltip>
         </div>
       </div>
     );
@@ -282,9 +291,12 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
           onClick={() => {
             if (onNewSession) onNewSession();
           }}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold tracking-wide transition-colors text-secondary hover:text-primary hover:bg-tertiary/25"
+          className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold tracking-wide transition-colors ${activeSubMenuItem === "current_session"
+            ? "bg-accent/15 text-accent shadow-sm"
+            : "text-secondary hover:text-primary hover:bg-tertiary/25"
+            }`}
         >
-          <MessageSquare className="w-3.5 h-3.5" />
+          <MessageCircle className="w-3.5 h-3.5" />
           <span>{t("leftmenu.nav.startChat")}</span>
         </button>
 
@@ -298,9 +310,9 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
             className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold tracking-wide transition-colors ${activeSubMenuItem === "agent_square"
               ? "bg-accent/15 text-accent shadow-sm"
               : "text-secondary hover:text-primary hover:bg-tertiary/25"
-            }`}
+              }`}
           >
-            <Grid2X2 className="w-3.5 h-3.5" />
+            <Bot className="w-3.5 h-3.5" />
             <span>{t("leftmenu.nav.agentSquare")}</span>
           </button>
         </div>
@@ -313,13 +325,10 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
               onSubMenuChange("skills_square");
               toggleSection("skills");
             }}
-            className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-semibold tracking-wide transition-colors ${isSkillsActive
-              ? "bg-accent/15 text-accent shadow-sm"
-              : "text-secondary hover:text-primary hover:bg-tertiary/25"
-            }`}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-semibold tracking-wide text-secondary hover:text-primary hover:bg-tertiary/25 transition-colors"
           >
             <div className="flex items-center gap-2">
-              <Wrench className="w-3.5 h-3.5" />
+              <Puzzle className="w-3.5 h-3.5" />
               <span>{t("leftmenu.nav.skillsSquare")}</span>
             </div>
             {expanded.skills ? (
@@ -344,27 +353,15 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => onSkillsSubTabChange?.(SKILLS_SUB_MENU_IDS.skillsMyCreations)}
-                className={`relative w-full flex items-center gap-2.5 pl-7 pr-3 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${isSkillsSubActive(SKILLS_SUB_MENU_IDS.skillsMyCreations)
+                onClick={() => onSkillsSubTabChange?.(SKILLS_SUB_MENU_IDS.skillsMySkills)}
+                className={`relative w-full flex items-center gap-2.5 pl-7 pr-3 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${isSkillsSubActive(SKILLS_SUB_MENU_IDS.skillsMySkills)
                   ? "bg-accent/15 text-accent font-semibold shadow-sm"
                   : "text-secondary hover:text-primary hover:bg-tertiary/25"
                   }`}
               >
-                {isSkillsSubActive(SKILLS_SUB_MENU_IDS.skillsMyCreations) && <span className="absolute left-3 h-4 w-0.5 rounded-full bg-accent" />}
-                <Wrench className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">{t("skillSquare.myCreations")}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onSkillsSubTabChange?.(SKILLS_SUB_MENU_IDS.skillsMyCollections)}
-                className={`relative w-full flex items-center gap-2.5 pl-7 pr-3 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${isSkillsSubActive(SKILLS_SUB_MENU_IDS.skillsMyCollections)
-                  ? "bg-accent/15 text-accent font-semibold shadow-sm"
-                  : "text-secondary hover:text-primary hover:bg-tertiary/25"
-                  }`}
-              >
-                {isSkillsSubActive(SKILLS_SUB_MENU_IDS.skillsMyCollections) && <span className="absolute left-3 h-4 w-0.5 rounded-full bg-accent" />}
-                <BookmarkPlus className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">{t("skillSquare.myCollections")}</span>
+                {isSkillsSubActive(SKILLS_SUB_MENU_IDS.skillsMySkills) && <span className="absolute left-3 h-4 w-0.5 rounded-full bg-accent" />}
+                <Star className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">{t("skillSquare.mySkills")}</span>
               </button>
               <button
                 type="button"
@@ -375,7 +372,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
                   }`}
               >
                 {isSkillsSubActive(SKILLS_SUB_MENU_IDS.skillsPublish) && <span className="absolute left-3 h-4 w-0.5 rounded-full bg-accent" />}
-                <Upload className="w-3.5 h-3.5 shrink-0" />
+                <Rocket className="w-3.5 h-3.5 shrink-0" />
                 <span className="truncate">{t("skillSquare.publishSkill")}</span>
               </button>
             </div>
@@ -394,7 +391,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
               : "text-secondary hover:text-primary hover:bg-tertiary/25"
               }`}
           >
-            <Cloud className="w-3.5 h-3.5" />
+            <FolderOpen className="w-3.5 h-3.5" />
             <span>{t("leftmenu.section.files")}</span>
           </button>
         </div>
@@ -403,7 +400,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
 
         {/* ── 历史会话 ── */}
         <div className="pb-2">
-          <SectionHeader id="history" icon={<Clock className="w-3.5 h-3.5" />} />
+          <SectionHeader id="history" icon={<History className="w-3.5 h-3.5" />} />
           {expanded.history && historyContent && (
             <div className="mt-0.5 space-y-0.5">
               {historyContent}
@@ -420,7 +417,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
             <div className="mt-0.5 space-y-0.5">
               <NavItem
                 id="profile"
-                icon={<UserCog className="w-3.5 h-3.5" />}
+                icon={<UserCircle className="w-3.5 h-3.5" />}
                 label={t("leftmenu.nav.profile")}
                 onClick={() => onSubMenuChange("profile")}
               />
@@ -429,7 +426,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
                   <div className="h-px bg-border-primary/15 my-1" />
                   <NavItem
                     id="usage_analytics"
-                    icon={<ChartColumn className="w-3.5 h-3.5" />}
+                    icon={<BarChart3 className="w-3.5 h-3.5" />}
                     label={t("leftmenu.nav.usageAnalytics")}
                     onClick={() => onSubMenuChange("usage_analytics")}
                   />

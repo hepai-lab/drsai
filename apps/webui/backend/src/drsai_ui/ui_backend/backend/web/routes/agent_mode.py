@@ -8,7 +8,6 @@ from ..deps import get_db
 from ..auth_source import get_user_source
 from .....drsai_adapter.sso.jwt import get_current_user_id
 from .....agent_factory.agent_mode_cofigs import (
-    get_agent_mode_config, 
     get_default_agent_mode_config,
     get_agents_mode
     )
