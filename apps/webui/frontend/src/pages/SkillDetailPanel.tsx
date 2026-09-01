@@ -318,7 +318,7 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
               )}
             </div>
           ) : activeTab === "description" ? (
-            <div className="rounded-xl border border-gray-200/70 bg-gray-50/50 p-6 dark:border-white/[0.06] dark:bg-white/[0.02]">
+            <div>
               {skillDetail.description ? (
                 <p className="text-sm leading-relaxed text-gray-700 dark:text-gray-300">{skillDetail.description}</p>
               ) : (

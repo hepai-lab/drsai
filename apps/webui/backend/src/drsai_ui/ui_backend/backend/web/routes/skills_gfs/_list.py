@@ -101,21 +101,15 @@ async def _list_skills(
 ) -> dict:
     from ....datamodel.db import SkillMeta
 
-    type_clean = (type or "").strip().lower()
-
     resolved_user_id = await _resolve_user_from_apikey(request)
-
-    # type=public → allow unauthenticated access (public data)
-    if type_clean == "public" and not resolved_user_id:
-        resolved_user_id = ""
-
-    if type_clean != "public" and not resolved_user_id:
+    if not resolved_user_id:
         raise HTTPException(status_code=401, detail="API key required")
 
     db_mgr = await _get_db()
     from ...authz import get_is_platform_admin
-    is_admin = get_is_platform_admin(db_mgr, resolved_user_id) if resolved_user_id else False
+    is_admin = get_is_platform_admin(db_mgr, resolved_user_id)
 
+    type_clean = (type or "").strip().lower()
     source_clean = (source or "").strip().lower()
     utype_clean = (uskills_type or "").strip().lower()
     vis_clean = (visibility or "").strip().lower()

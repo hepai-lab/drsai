@@ -139,14 +139,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             config,
         )
 
-        # Trigger Higraf skills refresh in background so public list includes them
-        try:
-            from .routes.deer_flow import schedule_higraf_skills_refresh
-            schedule_higraf_skills_refresh("public")
-            logger.info("Scheduled Higraf skills refresh")
-        except Exception:
-            logger.warning("Failed to schedule Higraf skills refresh", exc_info=True)
-
         # Any other initialization code
         ui_url = getattr(app.state, "ui_path_prefix", "") or "/"
         logger.info(

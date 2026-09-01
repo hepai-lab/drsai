@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import tempfile
 
 from fastapi import Depends, HTTPException, Query, Request
@@ -13,8 +12,6 @@ from ._auth import _get_db, _resolve_user_from_apikey, _skillmeta_to_dict, _skil
 from ._gfs import _gfs_zip_path, _require_gfs
 from ._skillmd import _parse_skill_md, _read_skill_md_from_zip
 from ._cache import _ensure_cache_zip
-
-_HIGRAF_SKILL_SLUG_RE = re.compile(r"^skill-[a-zA-Z0-9-]+$")
 
 
 @router.get("/{slug}")
@@ -42,12 +39,6 @@ async def _get_skill(slug: str, request: Request) -> dict:
     resp = db_mgr.get(SkillMeta, filters={"slug": slug})
 
     if not resp.status or not resp.data:
-        # Try Higraf fallback for skill-xxx style slugs
-        if _HIGRAF_SKILL_SLUG_RE.match(slug):
-            detail = await _try_higraf_fallback(slug, db_mgr)
-            if detail:
-                return detail
-
         # Try GFS fallback — check both higraf/ and user_skills/ paths
         cfg = _require_gfs()
         # Try higraf path first
@@ -182,83 +173,3 @@ async def _populate_detail_from_gfs(slug: str, source: str = "user", owner_id: s
             }
     return {"description": "", "body": "", "changelog": "", "author_email": None,
             "author_id": None, "required_tools": [], "detail_raw": None}
-
-
-async def _try_higraf_fallback(slug: str, db_mgr) -> dict | None:
-    """Try to fetch skill detail from Higraf and persist it locally."""
-    try:
-        from ..deer_flow import (
-            fetch_higraf_skill_detail,
-            download_higraf_skill_bytes,
-            _HIGRAF_SKILL_SLUG_RE as _HIGRAF_RE,
-            _persist_higraf_skills,
-        )
-    except ImportError:
-        return None
-
-    if not _HIGRAF_RE.match(slug):
-        return None
-
-    # Fetch skill detail from Higraf
-    detail = await fetch_higraf_skill_detail(slug)
-    if not detail:
-        return None
-
-    name = detail.get("name") or detail.get("skillName") or slug
-    description = detail.get("description") or ""
-    icon = detail.get("emoji") or "package"
-    version = detail.get("version") or detail.get("currentVersion") or "1.0.0"
-    author = detail.get("authorName") or "系统预置"
-    tags = [detail.get("categoryL2")] if detail.get("categoryL2") else []
-    downloads = int(detail.get("callCount") or 0)
-
-    # Try to get the body content from a download
-    body = ""
-    try:
-        zip_bytes, restricted = await download_higraf_skill_bytes(slug)
-        if zip_bytes and not restricted:
-            import io, zipfile
-            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-                for name in zf.namelist():
-                    if name.rstrip("/").split("/")[-1].lower() == "skill.md":
-                        body = zf.read(name).decode("utf-8", errors="replace")
-                        break
-    except Exception:
-        logger.warning("_try_higraf_fallback: download failed for %s", slug, exc_info=True)
-
-    # Construct response
-    meta = {
-        "slug": slug,
-        "name": name,
-        "icon": icon,
-        "version": version,
-        "description": description,
-        "tags": tags,
-        "owner": author,
-        "owner_id": "system",
-        "author": author,
-        "visibility": "public",
-        "source": "higraf",
-        "uskills_type": None,
-        "imported_ref": None,
-        "downloads": downloads,
-        "collects": 0,
-        "collector_ids": [],
-        "agent_ids": [],
-        "team_ids": [],
-        "profile": "",
-        "created_at": "",
-        "updated_at": "",
-        "can_edit": False,
-    }
-    skill_detail = {
-        "description": description,
-        "body": body,
-        "changelog": "",
-        "author_email": None,
-        "author_id": None,
-        "required_tools": detail.get("required_tools") or [],
-        "detail_raw": None,
-    }
-
-    return {"status": True, "data": {**meta, **skill_detail}}
