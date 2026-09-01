@@ -75,17 +75,50 @@ export function createGatewayEventHandler(
   // would duplicate what was already streamed into contentParts).
   let subagentTextReceived = false
 
+  // When > 0, the next flushBuffers() call(s) will create a new text
+  // contentPart instead of appending to the last one. This is used
+  // when transitioning between main agent and subagent text to keep
+  // them in separate contentParts, preventing the subagent's visual
+  // markers from being mixed into the main agent's markdown blocks.
+  // Using a counter instead of a boolean so multiple force-new-part
+  // requests can be queued (e.g. one for the subagent block, one for
+  // the subsequent main agent text).
+  let pendingForceNewPart = 0
+
   // ── Streaming token estimate ───────────────────────────────────────────
   //
   // During streaming, we don't have real token counts until the LLM call
   // finishes and the API returns usage in the final chunk. To give the user
   // a real-time sense of how much is being generated, we estimate completion
-  // tokens from the character count of streamed deltas (~4 chars/token for
-  // English, ~2 for CJK — we use 4 as a conservative average).
+  // tokens from the character count of streamed deltas.
+  //
+  // CJK-aware estimation: Chinese/Japanese/Korean characters tokenize at
+  // roughly 0.6 tokens/char (1 char ≈ 0.6 tokens for BPE tokenizers like
+  // tiktoken), while ASCII text tokenizes at ~4 chars/token. We track
+  // CJK and non-CJK character counts separately and blend the estimate.
   //
   // The estimate is reset on `message.start` and cleared when `usage.update`
   // or `message.complete` arrives (we have real data then).
-  let streamingCharCount = 0
+  let streamingCjkCount = 0
+  let streamingOtherCount = 0
+
+  /** Count CJK characters in a string (code-point based, no regex). */
+  function countCjkChars(text: string): number {
+    let count = 0
+    for (const ch of text) {
+      const code = ch.codePointAt(0)!
+      if (
+        (code >= 0x4e00 && code <= 0x9fff) ||  // CJK Unified Ideographs
+        (code >= 0x3400 && code <= 0x4dbf) ||  // CJK Extension A
+        (code >= 0x3000 && code <= 0x30ff) ||  // CJK Symbols + Hiragana + Katakana
+        (code >= 0xff00 && code <= 0xffef) ||  // Full-width Forms
+        (code >= 0xac00 && code <= 0xd7af)    // Korean Hangul Syllables
+      ) {
+        count++
+      }
+    }
+    return count
+  }
 
   // Maximum number of contentParts to keep in a single in-flight turn.
   // When exceeded, the oldest text parts are merged into one to prevent
@@ -99,6 +132,10 @@ export function createGatewayEventHandler(
     if (textBuf) {
       const t = textBuf
       textBuf = ''
+      // Consume the force-new-part counter — if > 0, create a new text
+      // contentPart instead of appending to the last one.
+      const forceNew = pendingForceNewPart > 0
+      if (forceNew) pendingForceNewPart--
       updateCurrent(c => {
         // Maintain ordered contentParts: if the last part is a text
         // segment, append a chunk (O(1) amortised) instead of
@@ -107,7 +144,7 @@ export function createGatewayEventHandler(
         // only when a visible part needs rendering.
         let parts = [...c.contentParts]
         const last = parts[parts.length - 1]
-        if (last && last.kind === 'text') {
+        if (!forceNew && last && last.kind === 'text') {
           parts[parts.length - 1] = {
             ...last,
             chunks: [...last.chunks, t],
@@ -223,8 +260,12 @@ export function createGatewayEventHandler(
       // ── Message stream ───────────────────────────────────────
       case 'message.start': {
         // Reset streaming token estimate for the new turn.
-        streamingCharCount = 0
+        streamingCjkCount = 0
+        streamingOtherCount = 0
         $streamingTokenEstimate.set(0)
+        // Clear last usage so StatusBar doesn't show previous turn's tokens
+        // during the gap before the first delta arrives.
+        $lastUsage.set(null)
         // Reset subagent state for the new turn
         subagentTextReceived = false
         isSubagentActive = false
@@ -235,16 +276,26 @@ export function createGatewayEventHandler(
       case 'message.delta': {
         const text = (ev.payload as { text?: string } | undefined)?.text || ''
         if (!text) return
-        // Update streaming token estimate (~4 chars/token for English)
-        streamingCharCount += text.length
-        const est = Math.ceil(streamingCharCount / 4)
+        // CJK-aware token estimation: CJK chars ≈0.6 tokens/char,
+        // other chars ≈0.25 tokens/char (4 chars/token).
+        const cjk = countCjkChars(text)
+        streamingCjkCount += cjk
+        streamingOtherCount += text.length - cjk
+        const est = Math.ceil(streamingCjkCount * 0.6 + streamingOtherCount / 4)
         if (est !== $streamingTokenEstimate.get()) {
           $streamingTokenEstimate.set(est)
         }
         // If we were inside a subagent block, close it before main agent resumes
         if (isSubagentActive) {
           flushBuffers()
+          // Force new part for the closing marker
+          pendingForceNewPart++
           textBuf += '\n└───────────────────────────────\n'
+          // Flush the closing marker immediately so it's in its own
+          // contentPart, then request another new part for the
+          // main agent text that follows.
+          flushBuffers()
+          pendingForceNewPart++
           isSubagentActive = false
           subagentSource = ''
         }
@@ -269,7 +320,8 @@ export function createGatewayEventHandler(
             total_tokens_accumulated: p.total_tokens_accumulated,
           })
           // Clear the streaming estimate — we have real data now.
-          streamingCharCount = 0
+          streamingCjkCount = 0
+          streamingOtherCount = 0
           $streamingTokenEstimate.set(0)
         }
         return
@@ -278,6 +330,7 @@ export function createGatewayEventHandler(
         // Close any active subagent block before finalizing
         if (isSubagentActive) {
           flushBuffers()
+          pendingForceNewPart++
           textBuf += '\n└───────────────────────────────\n'
           isSubagentActive = false
           subagentSource = ''
@@ -285,7 +338,8 @@ export function createGatewayEventHandler(
         // Make sure all buffered deltas land in the turn before we close it.
         flushBuffers()
         // Reset streaming token estimate — the turn is done.
-        streamingCharCount = 0
+        streamingCjkCount = 0
+        streamingOtherCount = 0
         $streamingTokenEstimate.set(0)
         const p = ev.payload as { usage?: unknown; status?: string; reasoning?: string } | undefined
         
@@ -432,6 +486,10 @@ export function createGatewayEventHandler(
         // 如果之前不在子智能体模式，先 flush 主缓冲区并插入开始标记
         if (!isSubagentActive) {
           flushBuffers()
+          // Force the next flush to create a NEW text contentPart
+          // so subagent text (with its visual markers) is separated
+          // from the main agent's text contentPart.
+          pendingForceNewPart++
           isSubagentActive = true
           const source = (ev.payload as { source?: string } | undefined)?.source?.replace(/^sub:/, '') ?? 'subagent'
           subagentSource = source
@@ -498,8 +556,14 @@ export function createGatewayEventHandler(
         // 子智能体完成 — 如有流式输出则添加结束标记
         if (isSubagentActive) {
           flushBuffers()
+          // Force new part for the closing marker
+          pendingForceNewPart++
           textBuf += '\n└───────────────────────────────\n'
-          scheduleFlush()
+          // Flush the closing marker immediately into its own
+          // contentPart, then request another new part for any
+          // subsequent main agent text.
+          flushBuffers()
+          pendingForceNewPart++
           isSubagentActive = false
           subagentSource = ''
         }
@@ -513,10 +577,16 @@ export function createGatewayEventHandler(
           const cur = $current.get()
           if (cur && !cur.text && !textBuf) {
             const source = p?.source?.replace(/^sub:/, '') ?? 'subagent'
+            // Force new part so the subagent text (with markers) is
+            // separated from the main agent's text contentPart.
+            pendingForceNewPart++
             textBuf += `\n\n┌─ 🤖 ${source} ─────────────────\n`
             textBuf += finalText
             textBuf += '\n└───────────────────────────────\n'
-            scheduleFlush()
+            // Flush immediately into its own contentPart, then
+            // request another new part for subsequent main agent text.
+            flushBuffers()
+            pendingForceNewPart++
           }
         }
         // Reset for the next subagent invocation
@@ -543,6 +613,7 @@ export function createGatewayEventHandler(
         // up to the error is preserved.
         if (isSubagentActive) {
           flushBuffers()
+          pendingForceNewPart++
           textBuf += '\n└───────────────────────────────\n'
           isSubagentActive = false
           subagentSource = ''
@@ -551,8 +622,10 @@ export function createGatewayEventHandler(
         const msg = (ev.payload as { message?: string } | undefined)?.message || 'unknown error'
         const cur = $current.get()
         if (cur) {
-          // Materialise full text from chunks (same as message.complete).
+          // Materialise full text from chunks (same as message.complete),
+          // and release the chunks arrays to free memory.
           let fullText = cur.text
+          let fullReasoning = cur.reasoning
           if (cur.contentParts.length > 0 && !fullText) {
             fullText = cur.contentParts
               .filter((part): part is import('./types.js').TextContentPart => part.kind === 'text')
@@ -562,7 +635,24 @@ export function createGatewayEventHandler(
               })
               .join('')
           }
-          setCurrent({ ...cur, text: fullText, status: 'error', errorMessage: msg })
+          if (cur.reasoningChunks.length > 0 && !fullReasoning) {
+            fullReasoning = cur.reasoningChunks.join('')
+          }
+          // Release chunks arrays from text ContentParts to free memory.
+          const releasedParts = cur.contentParts.map(part =>
+            part.kind === 'text'
+              ? { ...part, chunks: [] }
+              : part,
+          )
+          setCurrent({
+            ...cur,
+            text: fullText,
+            reasoning: fullReasoning,
+            reasoningChunks: [],
+            contentParts: releasedParts,
+            status: 'error',
+            errorMessage: msg,
+          })
           // End of turn (errored) — finalize too.
           controller?.finalize()
         } else {

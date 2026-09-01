@@ -151,9 +151,6 @@ export function StatusBar() {
             <>
               <Text color={theme.muted}> · </Text>
               <Text color={theme.muted}>~{streamingEstimate} tokens (est.)</Text>
-              {lastUsage?.total_tokens_accumulated != null && lastUsage.total_tokens_accumulated > 0 && (
-                <Text color={theme.muted}> · Σ {lastUsage.total_tokens_accumulated}</Text>
-              )}
             </>
           )}
           {lastUsage && isStreaming && streamingEstimate === 0 && (
@@ -162,25 +159,16 @@ export function StatusBar() {
               <Text color={theme.muted}>
                 {lastUsage.prompt_tokens}↑ {lastUsage.completion_tokens}↓
               </Text>
-              {lastUsage.total_tokens_accumulated != null && lastUsage.total_tokens_accumulated > lastUsage.total_tokens && (
-                <Text color={theme.muted}> · Σ {lastUsage.total_tokens_accumulated}</Text>
-              )}
             </>
           )}
-          {lastUsage && !isStreaming && (() => {
-            // After streaming: show accumulated totals across all LLM calls
-            const upTotal = lastUsage.prompt_tokens_total ?? lastUsage.prompt_tokens
-            const downTotal = lastUsage.completion_tokens_total ?? lastUsage.completion_tokens
-            const grandTotal = lastUsage.total_tokens_accumulated ?? lastUsage.total_tokens
-            return (
-              <>
-                <Text color={theme.muted}> · </Text>
-                <Text color={theme.muted}>
-                  {upTotal}↑ {downTotal}↓ = {grandTotal} tokens
-                </Text>
-              </>
-            )
-          })()}
+          {lastUsage && !isStreaming && (
+            <>
+              <Text color={theme.muted}> · </Text>
+              <Text color={theme.muted}>
+                {lastUsage.prompt_tokens}↑ {lastUsage.completion_tokens}↓ = {lastUsage.total_tokens} tokens
+              </Text>
+            </>
+          )}
         </Box>
         {statusLineShort && (
           <Box>
@@ -265,37 +253,23 @@ export function StatusBar() {
       {/* Token usage row — shown during and after streaming */}
       {isStreaming && streamingEstimate > 0 && (
         <Box>
-          <Text color={theme.muted}>
-            ~{streamingEstimate} tokens (est.)
-            {lastUsage?.total_tokens_accumulated != null && lastUsage.total_tokens_accumulated > 0
-              ? ` · Σ ${lastUsage.total_tokens_accumulated}`
-              : ''}
-          </Text>
+          <Text color={theme.muted}>~{streamingEstimate} tokens (est.)</Text>
         </Box>
       )}
       {lastUsage && isStreaming && streamingEstimate === 0 && (
         <Box>
           <Text color={theme.muted}>
             {lastUsage.prompt_tokens}↑ {lastUsage.completion_tokens}↓
-            {lastUsage.total_tokens_accumulated != null && lastUsage.total_tokens_accumulated > lastUsage.total_tokens
-              ? ` · Σ ${lastUsage.total_tokens_accumulated}`
-              : ''}
           </Text>
         </Box>
       )}
-      {lastUsage && !isStreaming && (() => {
-        // After streaming: show accumulated totals across all LLM calls
-        const upTotal = lastUsage.prompt_tokens_total ?? lastUsage.prompt_tokens
-        const downTotal = lastUsage.completion_tokens_total ?? lastUsage.completion_tokens
-        const grandTotal = lastUsage.total_tokens_accumulated ?? lastUsage.total_tokens
-        return (
-          <Box>
-            <Text color={theme.muted}>
-              {upTotal}↑ {downTotal}↓ = {grandTotal} tokens
-            </Text>
-          </Box>
-        )
-      })()}
+      {lastUsage && !isStreaming && (
+        <Box>
+          <Text color={theme.muted}>
+            {lastUsage.prompt_tokens}↑ {lastUsage.completion_tokens}↓ = {lastUsage.total_tokens} tokens
+          </Text>
+        </Box>
+      )}
       {statusLineShort && (
         <Box>
           <Text color={theme.muted} dimColor>{statusLineShort}</Text>

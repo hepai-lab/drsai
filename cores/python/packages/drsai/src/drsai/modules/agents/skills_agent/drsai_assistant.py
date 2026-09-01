@@ -1144,6 +1144,11 @@ class DrSaiAssistant(DrSaiAgent):
     def update_user_skills(self) -> Tuple[Optional[SkillLoader], Optional[str]]:
         """加载/更新用户技能
 
+        When ``cli_config["enabled_skills"]`` is set (list of skill names),
+        only those skills are synced from the built-in directory.  When it
+        is ``None`` (user hasn't been prompted yet), all built-in skills
+        are synced (legacy behaviour).
+
         Returns:
             Tuple[Optional[SkillLoader], Optional[str]]: (skills_loader, error_message)
         """
@@ -1152,6 +1157,16 @@ class DrSaiAssistant(DrSaiAgent):
 
         try:
             user_skills_dir = self._user_profile_manager.skills_dir
+
+            # Load enabled_skills from cli_config (selective sync)
+            enabled_skills: Optional[list[str]] = None
+            try:
+                from drsai.backend.cli import config as cli_config
+                if cli_config.CLI_CONFIG_PATH.exists():
+                    cfg = cli_config.load_config()
+                    enabled_skills = cfg.get("enabled_skills")
+            except Exception:
+                pass
 
             # 1. 先检查并同步系统skill目录到用户skill目录
             if self._skills_dir:
@@ -1165,6 +1180,13 @@ class DrSaiAssistant(DrSaiAgent):
                         skill_file = skill_folder / "SKILL.md"
                         if not skill_file.exists():
                             continue
+
+                        # Selective sync: if enabled_skills is a list,
+                        # only sync skills in that list. If None, sync all.
+                        if enabled_skills is not None:
+                            if skill_folder.name not in enabled_skills:
+                                continue
+
                         user_skill_folder = user_skills_dir / skill_folder.name
                         user_skill_file = user_skill_folder / "SKILL.md"
                         should_update = False
@@ -1181,6 +1203,18 @@ class DrSaiAssistant(DrSaiAgent):
                                 shutil.rmtree(user_skill_folder)
                             shutil.copytree(skill_folder, user_skill_folder)
                             logger.info(f"Updated skill '{skill_folder.name}' from system to user directory")
+
+            # 1b. If enabled_skills is set, remove skills not in the list
+            if enabled_skills is not None and user_skills_dir.exists():
+                for existing in user_skills_dir.iterdir():
+                    if not existing.is_dir():
+                        continue
+                    if existing.name not in enabled_skills:
+                        try:
+                            shutil.rmtree(existing)
+                            logger.info(f"Removed unselected skill '{existing.name}' from user directory")
+                        except Exception as exc:
+                            logger.warning(f"Failed to remove skill '{existing.name}': {exc}")
 
             # 2. 然后从用户的skills目录加载
             if user_skills_dir.exists() and list(user_skills_dir.glob("*/SKILL.md")):

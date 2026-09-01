@@ -23,6 +23,8 @@ import { $current, $isStreaming, $transcript, setTranscript } from './app/turnSt
 import { $connectionError, $connectionStatus, $copyMode, $expandedTurns, $lastUsage, $memoryPreview, $remoteHost, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
 import { AppLayout } from './components/appLayout.js'
 import { SetupScreen } from './components/setupScreen.js'
+import { AuthScreen } from './components/authScreen.js'
+import { SkillsSetupScreen } from './components/skillsSetupScreen.js'
 import type { GatewayClient } from './gatewayClient.js'
 import type { SessionCreateResult, SessionInfo, SessionListResult, SessionResumeResult } from './gatewayTypes.js'
 import { theme } from './theme.js'
@@ -66,6 +68,8 @@ function preprintMemoryBanner(text: string): void {
 type Bootstrap =
   | { phase: 'connecting' }
   | { phase: 'setup'; configExists: boolean }
+  | { phase: 'auth'; authReason: 'first_run' | 'expired' }
+  | { phase: 'skills_setup'; skillsReason: 'first_run' | 'post_auth' }
   | { phase: 'resuming'; session: SessionInfo }
   | { phase: 'ready'; sessionId: string; controller: TurnController }
   | { phase: 'error'; message: string }
@@ -410,6 +414,9 @@ export function App({ gw }: AppProps) {
     interface SetupSnapshot {
       setup_required?: boolean
       config_exists?: boolean
+      auth_mode?: string
+      auth_authenticated?: boolean
+      skills_selected?: boolean
     }
     let setupStatus: SetupSnapshot | null = null
     const unsubSetup = gw.onEvent('gateway.ready', ev => {
@@ -503,8 +510,40 @@ export function App({ gw }: AppProps) {
     }
 
     // Stash on the App's closure so SetupScreen can trigger it after save.
+    // Post-setup flow: if user chose OIDC auth → auth screen → skills → resolve
+    // If user chose API key → skills → resolve
     setupCompleteHandlerRef.current = async () => {
       try {
+        // Check current auth status to decide next step
+        const authStatus = await gw.request<{
+          auth_mode: string
+          authenticated: boolean
+          token_expired: boolean
+          setup_required: boolean
+        }>('auth.status', {})
+
+        // If user chose OIDC but isn't authenticated yet → show auth screen
+        if (authStatus.auth_mode === 'oidc' && !authStatus.authenticated) {
+          setBoot({ phase: 'auth', authReason: 'first_run' })
+          return
+        }
+
+        // If user hasn't done skills selection yet → show skills screen
+        if (!authStatus.setup_required) {
+          // Check skills_selected from the setup snapshot
+          // We re-check via a fresh auth.status call (which includes skills info
+          // indirectly via cli_config) — but actually we need setup.skills.list
+          // to know if skills_selected. Use the captured setupStatus instead.
+          // For simplicity, always show skills setup on first run.
+          const setupResp = await gw.request<{
+            skills_selected: boolean
+          }>('setup.status', {})
+          if (!setupResp.skills_selected) {
+            setBoot({ phase: 'skills_setup', skillsReason: 'post_auth' })
+            return
+          }
+        }
+
         await resolveSession()
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -528,6 +567,18 @@ export function App({ gw }: AppProps) {
             phase: 'setup',
             configExists: !!captured.config_exists,
           })
+          return
+        }
+
+        // Config exists — check if OIDC token needs refreshing/re-login
+        if (captured?.auth_mode === 'oidc' && !captured?.auth_authenticated) {
+          setBoot({ phase: 'auth', authReason: 'expired' })
+          return
+        }
+
+        // Check if skills selection hasn't been done yet
+        if (captured && !captured.skills_selected) {
+          setBoot({ phase: 'skills_setup', skillsReason: 'first_run' })
           return
         }
 
@@ -561,6 +612,56 @@ export function App({ gw }: AppProps) {
         gw={gw}
         configExists={boot.configExists}
         onComplete={() => {
+          setBoot({ phase: 'connecting' })
+          void setupCompleteHandlerRef.current?.()
+        }}
+      />
+    )
+  }
+  if (boot.phase === 'auth') {
+    return (
+      <AuthScreen
+        gw={gw}
+        onComplete={() => {
+          // After auth, check skills setup
+          void (async () => {
+            try {
+              const setupResp = await gw.request<{ skills_selected: boolean }>('setup.status', {})
+              if (!setupResp.skills_selected) {
+                setBoot({ phase: 'skills_setup', skillsReason: 'post_auth' })
+              } else {
+                setBoot({ phase: 'connecting' })
+                void setupCompleteHandlerRef.current?.()
+              }
+            } catch {
+              setBoot({ phase: 'connecting' })
+              void setupCompleteHandlerRef.current?.()
+            }
+          })()
+        }}
+        onCancel={() => {
+          // Go back to setup
+          setBoot({ phase: 'setup', configExists: true })
+        }}
+      />
+    )
+  }
+  if (boot.phase === 'skills_setup') {
+    return (
+      <SkillsSetupScreen
+        gw={gw}
+        onComplete={() => {
+          setBoot({ phase: 'connecting' })
+          void setupCompleteHandlerRef.current?.()
+        }}
+        onSkip={async () => {
+          // Persist skills_selected=true on the backend so the user
+          // is not bounced back to this screen on next boot.
+          try {
+            await gw.request('setup.skills.install', { skills: [] })
+          } catch {
+            // Best-effort — continue regardless
+          }
           setBoot({ phase: 'connecting' })
           void setupCompleteHandlerRef.current?.()
         }}
