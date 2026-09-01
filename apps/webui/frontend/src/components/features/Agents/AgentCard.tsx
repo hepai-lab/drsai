@@ -27,6 +27,7 @@ interface AgentCardData {
 interface AgentCardProps {
   agent: AgentCardData;
   onEdit?: (id?: string) => void;
+  onCardClick?: (agent: AgentCardData) => void;
 }
 
 const DEFAULT_AVATAR =
@@ -53,9 +54,17 @@ const pushRecentAgent = (agentId?: string) => {
   }
 };
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit, onCardClick }) => {
   const { setAgentId, setMode } = useModeConfigStore();
   const { t, lang } = useLang();
+
+  const handleCardClick = () => {
+    if (onCardClick) {
+      onCardClick(agent);
+    } else {
+      handleTryClick();
+    }
+  };
 
   const handleTryClick = async () => {
     setAgentId(agent.id || "");
@@ -114,13 +123,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
   return (
     <div
       className={CARD_CLS}
-      onClick={handleTryClick}
+      onClick={handleCardClick}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          handleTryClick();
+          handleCardClick();
         }
       }}
     >

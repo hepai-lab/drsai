@@ -38,14 +38,13 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
   const isProductPage = normalizePath(location.pathname) === "/welcome";
 
   const navLinkClass = (active: boolean) =>
-    `text-sm font-semibold px-2.5 sm:px-3 py-1.5 rounded-lg transition-colors ${
-      active
-        ? darkMode === "dark"
-          ? "text-accent cursor-default"
-          : "text-violet-700 cursor-default"
-        : darkMode === "dark"
-          ? "text-secondary hover:text-primary hover:bg-white/5"
-          : "text-secondary hover:text-violet-700 hover:bg-violet-50"
+    `text-sm font-semibold px-2.5 sm:px-3 py-1.5 rounded-lg transition-colors ${active
+      ? darkMode === "dark"
+        ? "text-accent cursor-default"
+        : "text-violet-700 cursor-default"
+      : darkMode === "dark"
+        ? "text-secondary hover:text-primary hover:bg-white/5"
+        : "text-secondary hover:text-violet-700 hover:bg-violet-50"
     }`;
 
   const resourcesMenuItems = useMemo(
@@ -95,11 +94,10 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
   return (
     <>
       <div
-        className={`flex-shrink-0 flex items-center h-12 lg:h-14 px-2 lg:px-3 ${
-          darkMode === "dark"
-            ? "bg-[#0f0f0f]/65 backdrop-blur-md shadow-[0_12px_28px_-24px_rgba(0,0,0,0.95)]"
-            : "bg-white/70 border-b border-gray-200/80 backdrop-blur-md"
-        } z-[70]`}
+        className={`flex-shrink-0 flex items-center h-12 lg:h-14 px-2 lg:px-3 ${darkMode === "dark"
+          ? "bg-[#0f0f0f]/65 backdrop-blur-md shadow-[0_12px_28px_-24px_rgba(0,0,0,0.95)]"
+          : "bg-white/70 border-b border-gray-200/80 backdrop-blur-md"
+          } z-[70]`}
       >
         {/* Left: mobile menu */}
         <div className="flex w-9 flex-shrink-0 items-center lg:w-0 lg:overflow-hidden">
@@ -160,17 +158,6 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
 
         {/* Right: search + theme + lang + user */}
         <div className="ml-auto flex items-center gap-0.5 lg:gap-1 flex-shrink-0">
-          <Input
-            prefix={<Search className="w-4 h-4 text-secondary" />}
-            placeholder={t("topnav.search.placeholder")}
-            className={`hidden lg:block w-64 rounded-xl mr-2 ${
-              darkMode === "dark"
-                ? "[&_.ant-input]:!bg-white/5 [&_.ant-input]:!text-primary [&_.ant-input-affix-wrapper]:!bg-white/5 [&_.ant-input-affix-wrapper]:!border-border-primary/50"
-                : "[&_.ant-input]:!bg-white/85 [&_.ant-input-affix-wrapper]:!bg-white/90 [&_.ant-input-affix-wrapper]:!border-gray-200"
-            }`}
-            allowClear
-          />
-
           <Tooltip
             title={darkMode === "dark" ? t("topnav.theme.light") : t("topnav.theme.dark")}
           >
@@ -219,11 +206,10 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
               placement="bottomRight"
             >
               <button
-                className={`flex items-center gap-2 px-2 py-1.5 rounded-xl text-sm font-medium transition-colors ml-0.5 lg:ml-1 ${
-                  darkMode === "dark"
-                    ? "text-secondary hover:text-accent hover:bg-white/5"
-                    : "text-secondary hover:text-accent hover:bg-violet-50"
-                }`}
+                className={`flex items-center gap-2 px-2 py-1.5 rounded-xl text-sm font-medium transition-colors ml-0.5 lg:ml-1 ${darkMode === "dark"
+                  ? "text-secondary hover:text-accent hover:bg-white/5"
+                  : "text-secondary hover:text-accent hover:bg-violet-50"
+                  }`}
               >
                 {user.avatar_url ? (
                   <img

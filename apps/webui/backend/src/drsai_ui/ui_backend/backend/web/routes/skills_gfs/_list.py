@@ -12,7 +12,19 @@ from __future__ import annotations
 from fastapi import HTTPException, Query, Request
 
 from ._constants import logger, router
-from ._auth import _get_db, _resolve_user_from_apikey, _skillmeta_to_dict
+from ._auth import (
+    _get_db,
+    _is_collector,
+    _is_created_by_user,
+    _is_owner,
+    _maybe_repair_dirty_collect,
+    _normalize_uid,
+    _repair_corrupted_owner,
+    _repair_missing_owner_id,
+    _resolve_user_from_apikey,
+    _skillmeta_to_dict,
+    _user_display_name,
+)
 
 
 _DEFAULT_PAGE_SIZE = 20
@@ -114,9 +126,11 @@ async def _list_skills(
     utype_clean = (uskills_type or "").strip().lower()
     vis_clean = (visibility or "").strip().lower()
 
-    # ── type=user → only return skills owned by the authenticated user ──────
-    if type_clean == "user":
+  # type=user: "我的创建" uses owner_id; "我的收藏" uses collector_ids (any source).
+    if type_clean == "user" and utype_clean == "created" and not source:
         source_clean = "user"
+    if type_clean == "public" and not vis_clean:
+        vis_clean = "public"
 
     # ── type=public → default to visibility=public unless explicitly overridden ──
     if type_clean == "public" and not vis_clean:
@@ -131,20 +145,44 @@ async def _list_skills(
     resp = db_mgr.get(SkillMeta, filters=filters if filters else None, order="asc")
     rows = list(resp.data or []) if resp.status else []
 
-    # ── Apply uskills_type filter ──────────────────────────────────────────
-    if utype_clean and utype_clean in ("created", "imported"):
-        rows = [r for r in rows if getattr(r, "uskills_type", None) == utype_clean]
+    uid = _normalize_uid(resolved_user_id)
 
-    # ── type=user → always filter by authenticated user ─────────────────────
+    # ── type=user → filter by authenticated user ────────────────────────────
     if type_clean == "user":
-        rows = [r for r in rows if r.owner_id == resolved_user_id]
+        display_name = _user_display_name(db_mgr, resolved_user_id)
+        for row in rows:
+            changed = False
+            if _repair_missing_owner_id(row, resolved_user_id, display_name):
+                changed = True
+            if _maybe_repair_dirty_collect(row, resolved_user_id):
+                changed = True
+            if changed:
+                db_mgr.upsert(row)
+        if utype_clean == "imported":
+            rows = [r for r in rows if _is_collector(r, resolved_user_id)]
+        elif utype_clean == "created":
+            rows = [
+                r for r in rows
+                if _is_created_by_user(r, resolved_user_id, display_name)
+            ]
+        else:
+            rows = [
+                r for r in rows
+                if _is_owner(r, resolved_user_id, display_name)
+                or _is_collector(r, resolved_user_id)
+            ]
+        # Return full user library (created + collected), not just one page.
+        if page_size == _DEFAULT_PAGE_SIZE:
+            page_size = _MAX_PAGE_SIZE
 
     items = []
     for row in rows:
         item = _skillmeta_to_dict(row)
         item["can_edit"] = is_admin or (
-            resolved_user_id == row.owner_id or resolved_user_id == row.author
+            uid == _normalize_uid(row.owner_id) or uid == _normalize_uid(row.author)
         )
+        if resolved_user_id:
+            item["is_collected"] = _is_collector(row, resolved_user_id)
         items.append(item)
 
     q_clean = (q or "").strip()
@@ -163,3 +201,38 @@ async def _list_skills(
 
     page_items, pagination = _paginate(items, page, page_size)
     return {"status": True, "data": page_items, "pagination": pagination}
+
+
+@router.get("/stats")
+async def skill_stats(request: Request) -> dict:
+    """Return aggregate skill statistics (total count, public count, downloads, collects).
+
+    These are computed from ALL SkillMeta rows, not just the current page.
+    No authentication required — this is public aggregate data.
+    """
+    from ....datamodel.db import SkillMeta
+
+    db_mgr = await _get_db()
+    resp = db_mgr.get(SkillMeta, filters=None, order="asc")
+    rows = list(resp.data or []) if resp.status else []
+
+    total_skills = len(rows)
+    public_skills = 0
+    total_downloads = 0
+    total_collects = 0
+
+    for row in rows:
+        if row.visibility == "public":
+            public_skills += 1
+        total_downloads += int(row.download_count or 0)
+        total_collects += len(row.collector_ids) if isinstance(row.collector_ids, list) else 0
+
+    return {
+        "status": True,
+        "data": {
+            "total_skills": total_skills,
+            "public_skills": public_skills,
+            "total_downloads": total_downloads,
+            "total_collects": total_collects,
+        },
+    }

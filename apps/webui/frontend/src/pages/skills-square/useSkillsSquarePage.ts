@@ -23,7 +23,7 @@ import { useLang } from "../../i18n/useLang";
 import { useConfigStore } from "../../hooks/store";
 import { getModelApiKeyFromSettings } from "../../utils/modelApiKey";
 import { HEPAI_MAX_ZIP_BYTES, PUBLIC_PAGE_SIZE } from "./constants";
-import { Globe, LayoutGrid, Download, Heart } from "lucide-react";
+import { LayoutGrid, Download, Heart } from "lucide-react";
 import { type StatsCardItem } from "./StatsCards";
 import { renderSkillIcon } from "./icons";
 import {
@@ -68,16 +68,25 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
         setActiveTab("private");
         setPrivateFilter("created");
         setSkillUploadOpen(false);
+        setActiveCategory("");
+        setSearch("");
+        setSearchExpanded(false);
         break;
       case "skills_my_collections":
         setActiveTab("private");
         setPrivateFilter("collected");
         setSkillUploadOpen(false);
+        setActiveCategory("");
+        setSearch("");
+        setSearchExpanded(false);
         break;
       case "skills_my_skills":
         setActiveTab("private");
         setPrivateFilter("created");
         setSkillUploadOpen(false);
+        setActiveCategory("");
+        setSearch("");
+        setSearchExpanded(false);
         break;
       case "skills_publish":
         setSkillUploadOpen(true);
@@ -106,6 +115,13 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
       setBreadcrumbs([]);
     }
   }, [skillDetail, skillSlugFromUrl, setBreadcrumbs]);
+
+  // Clear breadcrumbs when leaving this page
+  useEffect(() => {
+    return () => {
+      setBreadcrumbs([]);
+    };
+  }, [setBreadcrumbs]);
 
   const [publicRows, setPublicRows] = useState<SkillsPublicItem[]>([]);
   const [publicLoading, setPublicLoading] = useState(false);
@@ -144,6 +160,27 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
       cancelled = true;
     };
   }, [user?.email]);
+
+  const [statsData, setStatsData] = useState<{
+    total_skills: number;
+    public_skills: number;
+    total_downloads: number;
+    total_collects: number;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    skillsAPI.getStats().then((data) => {
+      if (!cancelled) setStatsData(data);
+    }).catch(() => {
+      if (!cancelled) setStatsData(null);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const refreshStats = useCallback(() => {
+    skillsAPI.getStats().then(setStatsData).catch(() => setStatsData(null));
+  }, []);
 
   const [skillUploadOpen, setSkillUploadOpen] = useState(false);
   const [skillUploading, setSkillUploading] = useState(false);
@@ -212,11 +249,25 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
 
   const collectedSlugs = useMemo(() => {
     const slugs = new Set<string>();
+    const currentEmail = (user?.email || "").trim().toLowerCase();
+    const isCollected = (r: {
+      slug?: string;
+      collector_ids?: string[];
+      is_collected?: boolean;
+    }) => {
+      if (r.is_collected) return true;
+      return (r.collector_ids || []).some(
+        (id) => id.trim().toLowerCase() === currentEmail,
+      );
+    };
     for (const r of hepaiRows) {
-      if (r.uskills_type === "imported" && r.slug) slugs.add(r.slug);
+      if (r.slug && isCollected(r)) slugs.add(r.slug);
+    }
+    for (const r of publicRows) {
+      if (r.slug && isCollected(r)) slugs.add(r.slug);
     }
     return slugs;
-  }, [hepaiRows]);
+  }, [hepaiRows, publicRows, user?.email]);
 
   const hepaiPickPreview = useMemo(
     () =>
@@ -228,19 +279,22 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
 
   const filteredHepaiRows = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const currentEmail = (user?.email || "").trim().toLowerCase();
+    const isCollected = (r: SkillsUserItem) =>
+      Boolean(r.is_collected) ||
+      (r.collector_ids || []).some((id) => id.trim().toLowerCase() === currentEmail);
+    const isCreatedByUser = (r: SkillsUserItem) =>
+      (r.owner_id || "").trim().toLowerCase() === currentEmail &&
+      r.uskills_type !== "imported" &&
+      !isCollected(r);
     const sourceFiltered = hepaiRows.filter((r) =>
       privateFilter === "collected"
-        ? r.uskills_type === "imported"
-        : r.uskills_type !== "imported",
+        ? isCollected(r)
+        : isCreatedByUser(r),
     );
-    const tagFiltered = activeCategory
-      ? sourceFiltered.filter((r) =>
-          (r.tags || []).includes(activeCategory),
-        )
-      : sourceFiltered;
     const searchFiltered = !q
-      ? tagFiltered
-      : tagFiltered.filter((r) => {
+      ? sourceFiltered
+      : sourceFiltered.filter((r) => {
           const desc = (r.description ?? "").toLowerCase();
           const by = (r.owner ?? "").toLowerCase();
           const title = (r.name ?? "").toLowerCase();
@@ -257,7 +311,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
         new Date(a.updated_at || 0).getTime()
       );
     });
-  }, [hepaiRows, search, privateFilter, activeCategory, sortBy]);
+  }, [hepaiRows, search, privateFilter, sortBy, user?.email]);
 
   const availableCategories = useMemo(
     () =>
@@ -268,41 +322,31 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
   );
 
   const statsItems: StatsCardItem[] = useMemo(() => {
-    const totalPublic = publicRows.length;
-    const totalPrivate = hepaiRows.length;
-    const totalDownloads = publicRows.reduce((sum, r) => sum + (r.downloads || 0), 0);
-    const totalCollects = publicRows.reduce((sum, r) => sum + (r.collects || 0), 0);
+    const s = statsData;
     return [
       {
         title: t("skillSquare.statsTotalSkills") || "技能总数",
-        value: totalPublic + totalPrivate,
+        value: s?.total_skills ?? 0,
         change: 0,
         changeLabel: "较上月",
         icon: LayoutGrid,
       },
       {
-        title: t("skillSquare.statsPublicSkills") || "公开技能",
-        value: totalPublic,
-        change: 0,
-        changeLabel: "较上月",
-        icon: Globe,
-      },
-      {
         title: t("skillSquare.statsTotalDownloads") || "总下载量",
-        value: totalDownloads,
+        value: s?.total_downloads ?? 0,
         change: 0,
         changeLabel: "较上月",
         icon: Download,
       },
       {
         title: t("skillSquare.statsTotalCollects") || "总收藏量",
-        value: totalCollects,
+        value: s?.total_collects ?? 0,
         change: 0,
         changeLabel: "较上月",
         icon: Heart,
       },
     ];
-  }, [publicRows.length, hepaiRows.length, t]);
+  }, [statsData, t]);
 
   const resetPublishForm = () => {
     setHepaiZipFile(null);
@@ -369,15 +413,15 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
   };
 
   useEffect(() => {
-    if (activeTab !== "private") return;
     const userId = user?.email || "";
     if (!userId) {
       setHepaiLoading(false);
+      setHepaiRows([]);
       return;
     }
     if (publicApiKeyLoading) return;
     let cancelled = false;
-    setHepaiLoading(true);
+    if (activeTab === "private") setHepaiLoading(true);
     (async () => {
       try {
         const rows = await skillsAPI.listUserSkills(
@@ -956,6 +1000,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
       );
       setSkillUploadOpen(false);
       resetPublishForm();
+      refreshStats();
     } catch (e) {
       message.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -989,6 +1034,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
           version: src?.version,
           tags: src?.tags?.join(", "),
           owner: src?.owner,
+          owner_id: src?.owner_id,
           origin: src?.source,
           changelog: src?.changelog,
         },
@@ -998,11 +1044,14 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
       // Optimistic update: increment collects on the public skill
       setPublicRows((prev) =>
         prev.map((r) =>
-          r.slug === slug ? { ...r, collects: (r.collects || 0) + 1 } : r,
+          r.slug === slug
+            ? { ...r, collects: (r.collects || 0) + 1, is_collected: true }
+            : r,
         ),
       );
       setHepaiRows((prev) => {
-        if (prev.some((r) => r.slug === slug && r.uskills_type === "imported"))
+        const currentEmail = (user?.email || "").trim().toLowerCase();
+        if (prev.some((r) => r.slug === slug && (r.collector_ids || []).some((id) => id.trim().toLowerCase() === currentEmail)))
           return prev;
         return [
           ...prev,
@@ -1026,10 +1075,13 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
             downloads: src?.downloads ?? 0,
             collects: src?.collects ?? 0,
             tags: src?.tags,
+            collector_ids: [user?.email || ""],
+            is_collected: true,
           },
         ];
       });
       setHepaiRefreshKey((k) => k + 1);
+      refreshStats();
     } catch (e) {
       message.error({
         content: e instanceof Error ? e.message : String(e),
@@ -1088,10 +1140,13 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
             slug,
             userId,
             publicApiKey || undefined,
+            "delete",
           );
           setHepaiRows((prev) => prev.filter((r) => r.slug !== slug));
           if (skillDetail?.slug === slug) closeSkillDetail();
           message.success(t("skillSquare.skillDeletedToast", displayName));
+          setHepaiRefreshKey((k) => k + 1);
+          refreshStats();
         } catch (e) {
           message.error(e instanceof Error ? e.message : String(e));
         }
@@ -1117,16 +1172,21 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
             slug,
             userId,
             publicApiKey || undefined,
+            "uncollect",
           );
           // Optimistic update: decrement collects on the public skill
           setPublicRows((prev) =>
             prev.map((r) =>
-              r.slug === slug ? { ...r, collects: Math.max(0, (r.collects || 0) - 1) } : r,
+              r.slug === slug
+                ? { ...r, collects: Math.max(0, (r.collects || 0) - 1), is_collected: false }
+                : r,
             ),
           );
           setHepaiRows((prev) => prev.filter((r) => r.slug !== slug));
           if (skillDetail?.slug === slug) closeSkillDetail();
           message.success(t("skillSquare.uncollectedToast", displayName));
+          setHepaiRefreshKey((k) => k + 1);
+          refreshStats();
         } catch (e) {
           message.error(e instanceof Error ? e.message : String(e));
         }
@@ -1156,6 +1216,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
           ? t("skillSquare.published", slug)
           : t("skillSquare.hidden", slug),
       );
+      refreshStats();
     } catch (e) {
       message.error(e instanceof Error ? e.message : String(e));
     }
@@ -1163,14 +1224,32 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
 
   const detailPanelProps = useMemo(() => {
     if (!skillDetail) return null;
+    const currentEmail = (user?.email || "").trim().toLowerCase();
     const isOwner = !!(user?.email && skillDetail.owner_id === user.email);
     const isPublicTab = activeTab === "public";
     const row =
       hepaiRows.find(
-        (r) => r.slug === skillDetail.slug && r.uskills_type === "created",
+        (r) => r.slug === skillDetail.slug && (r.owner_id || "").trim().toLowerCase() === currentEmail,
       ) || hepaiRows.find((r) => r.slug === skillDetail.slug);
-    const source: "created" | "imported" | undefined =
-      row?.uskills_type === "imported" ? "imported" : row ? "created" : undefined;
+    const isCollected =
+      collectedSlugs.has(skillDetail.slug) ||
+      Boolean(
+        row &&
+          ((row.is_collected) ||
+            (row.collector_ids || []).some(
+              (id) => id.trim().toLowerCase() === currentEmail,
+            )),
+      );
+    const isCreatedByUser =
+      row &&
+      (row.owner_id || "").trim().toLowerCase() === currentEmail &&
+      row.uskills_type !== "imported" &&
+      !isCollected;
+    const source: "created" | "imported" | undefined = isCollected
+      ? "imported"
+      : isCreatedByUser
+        ? "created"
+        : undefined;
     const isCreated = source === "created";
     const canEdit = isCreated && !isPublicTab;
     return {
@@ -1208,6 +1287,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
     skillDetailLoading,
     user,
     hepaiRows,
+    collectedSlugs,
     collectedSlugs,
     importingSlug,
     closeSkillDetail,

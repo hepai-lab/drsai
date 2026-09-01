@@ -168,91 +168,95 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
         {/* Subtle gradient accent bar at top */}
         <div className="h-1 w-full bg-gradient-to-r from-accent/60 via-purple-400/40 to-blue-400/30" />
         <div className="p-5">
-        <div className="flex flex-col md:flex-row md:items-start gap-4">
-          {/* Left: icon + name + meta */}
-          <div className="flex items-start gap-4 min-w-0 flex-1">
-            {profileSrc ? (
-              <img src={profileSrc} alt={skillDetail.name} className="h-14 w-14 rounded-2xl object-cover shrink-0 shadow-sm ring-1 ring-gray-200/80 dark:ring-white/10" />
-            ) : (
-              renderSkillIcon(skillDetail.icon, "h-14 w-14 rounded-2xl shrink-0", "h-7 w-7")
-            )}
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="break-words text-xl font-bold text-gray-900 dark:text-white leading-tight">{skillDetail.name}</h1>
-                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0 ${sourceColor(skillSource)}`}>
-                  <Globe className="h-3 w-3" />{sourceLabel(skillSource, isZh)}
-                </span>
-              </div>
+          <div className="flex flex-col md:flex-row md:items-start gap-4">
+            {/* Left: icon + name + meta */}
+            <div className="flex items-start gap-4 min-w-0 flex-1">
+              {profileSrc ? (
+                <img src={profileSrc} alt={skillDetail.name} className="h-14 w-14 rounded-2xl object-cover shrink-0 shadow-sm ring-1 ring-gray-200/80 dark:ring-white/10" />
+              ) : (
+                renderSkillIcon(skillDetail.icon, "h-14 w-14 rounded-2xl shrink-0", "h-7 w-7")
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="break-words text-xl font-bold text-gray-900 dark:text-white leading-tight">{skillDetail.name}</h1>
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0 ${sourceColor(skillSource)}`}>
+                    <Globe className="h-3 w-3" />{sourceLabel(skillSource, isZh)}
+                  </span>
+                </div>
 
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                {skillDetail.version && skillDetail.version !== "0.0.0" && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                  {skillDetail.version && skillDetail.version !== "0.0.0" && (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
+                      <GitBranch className="h-3 w-3" /> v{skillDetail.version}
+                    </span>
+                  )}
                   <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
-                    <GitBranch className="h-3 w-3" /> v{skillDetail.version}
+                    <Download className="h-3 w-3" />{skillDetail.downloads ?? 0}
                   </span>
-                )}
-                <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
-                  <Download className="h-3 w-3" />{skillDetail.downloads ?? 0}
-                </span>
-                <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
-                  <Heart className="h-3 w-3" />{skillDetail.collects ?? 0}
-                </span>
-                {ownerLabel && (
-                  <span className="inline-flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
-                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-accent/20 text-[8px] font-bold text-accent">{ownerAvatar}</span>
-                    <span className="truncate max-w-[120px]" title={ownerLabel}>{ownerLabel}</span>
+                  <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
+                    <Heart className="h-3 w-3" />{skillDetail.collects ?? 0}
                   </span>
-                )}
-                {skillDetail.created_at && (
-                  <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400" title={new Date(skillDetail.created_at).toLocaleDateString()}>
-                    <Calendar className="h-3 w-3" />{formatRelativeTime(skillDetail.created_at, isZh)}
-                  </span>
+                  {ownerLabel && (
+                    <span className="inline-flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-accent/20 text-[8px] font-bold text-accent">{ownerAvatar}</span>
+                      <span className="truncate max-w-[120px]" title={ownerLabel}>{ownerLabel}</span>
+                    </span>
+                  )}
+                  {skillDetail.created_at && (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400" title={new Date(skillDetail.created_at).toLocaleDateString()}>
+                      <Calendar className="h-3 w-3" />{formatRelativeTime(skillDetail.created_at, isZh)}
+                    </span>
+                  )}
+                </div>
+
+                {skillDetail.category && skillDetail.category.trim() !== "" && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {skillDetail.category.split(",").map((t) => {
+                      const trimmed = t.trim();
+                      if (!trimmed) return null;
+                      return <span key={trimmed} className="inline-block rounded-full border border-gray-200 bg-gray-50 px-2.5 py-0.5 text-[10px] font-medium text-gray-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-gray-400">{trimmed}</span>;
+                    })}
+                  </div>
                 )}
               </div>
+            </div>
 
-              {skillDetail.category && skillDetail.category.trim() !== "" && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {skillDetail.category.split(",").map((t) => {
-                    const trimmed = t.trim();
-                    if (!trimmed) return null;
-                    return <span key={trimmed} className="inline-block rounded-full border border-gray-200 bg-gray-50 px-2.5 py-0.5 text-[10px] font-medium text-gray-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-gray-400">{trimmed}</span>;
-                  })}
+            {/* Right: action buttons */}
+            <div className="flex md:flex-col gap-2 shrink-0">
+              {restricted ? (
+                <div className="flex items-center justify-center gap-2 rounded-xl bg-gray-100 px-4 py-2 text-xs font-medium text-gray-400 cursor-not-allowed whitespace-nowrap dark:bg-white/[0.05] dark:text-gray-500 w-full">
+                  <Download className="h-4 w-4" />{t("skillSquare.downloadBtn")}
+                </div>
+              ) : (
+                <button type="button" onClick={() => void onDownload(skillDetail.slug)}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-white shadow-sm transition-all hover:bg-purple-600 hover:shadow-md active:scale-[0.98] whitespace-nowrap w-full">
+                  <Download className="h-4 w-4" />{t("skillSquare.downloadBtn")}
+                </button>
+              )}
+              {isCollected !== undefined && onImport && (
+                isCollected ? (
+                  <div
+                    className="flex items-center justify-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800 shadow-sm ring-1 ring-emerald-200/60 cursor-default whitespace-nowrap w-full dark:border-emerald-500/50 dark:bg-emerald-500/20 dark:text-emerald-200 dark:ring-emerald-500/25"
+                    aria-label={t("skillSquare.collected")}
+                  >
+                    <Check className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-300" strokeWidth={2.5} />
+                    {t("skillSquare.collected")}
+                  </div>
+                ) : (
+                  <button type="button" disabled={isImporting} onClick={() => onImport?.(skillDetail.slug, skillDetail.name)}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-blue-500 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-all hover:bg-blue-600 hover:shadow-md active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap w-full">
+                    {isImporting ? <span className="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/30 border-t-white" /> : <BookmarkPlus className="h-4 w-4" />}
+                    {isImporting ? t("skillSquare.collecting") : t("skillSquare.importBtn")}
+                  </button>
+                )
+              )}
+              {hasOtherActions && (
+                <div className="hidden md:flex flex-col gap-1 rounded-xl border border-gray-200/70 bg-gray-50/50 p-1.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
+                  {otherActions}
                 </div>
               )}
             </div>
           </div>
-
-          {/* Right: action buttons */}
-          <div className="flex md:flex-col gap-2 shrink-0">
-            {restricted ? (
-              <div className="flex items-center justify-center gap-2 rounded-xl bg-gray-100 px-4 py-2 text-xs font-medium text-gray-400 cursor-not-allowed whitespace-nowrap dark:bg-white/[0.05] dark:text-gray-500 w-full">
-                <Download className="h-4 w-4" />{t("skillSquare.downloadBtn")}
-              </div>
-            ) : (
-              <button type="button" onClick={() => void onDownload(skillDetail.slug)}
-                className="flex items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-white shadow-sm transition-all hover:bg-purple-600 hover:shadow-md active:scale-[0.98] whitespace-nowrap w-full">
-                <Download className="h-4 w-4" />{t("skillSquare.downloadBtn")}
-              </button>
-            )}
-            {isCollected !== undefined && onImport && (
-              isCollected ? (
-                <div className="flex items-center justify-center gap-2 rounded-xl bg-blue-50 px-4 py-2 text-xs font-medium text-blue-400 dark:bg-blue-500/10 dark:text-blue-400/60 cursor-default whitespace-nowrap w-full">
-                  <Check className="h-4 w-4" strokeWidth={2.5} />{t("skillSquare.collected")}
-                </div>
-              ) : (
-                <button type="button" disabled={isImporting} onClick={() => onImport?.(skillDetail.slug, skillDetail.name)}
-                  className="flex items-center justify-center gap-2 rounded-xl bg-blue-500 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-all hover:bg-blue-600 hover:shadow-md active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap w-full">
-                  {isImporting ? <span className="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/30 border-t-white" /> : <BookmarkPlus className="h-4 w-4" />}
-                  {isImporting ? t("skillSquare.collecting") : t("skillSquare.importBtn")}
-                </button>
-              )
-            )}
-            {hasOtherActions && (
-              <div className="hidden md:flex flex-col gap-1 rounded-xl border border-gray-200/70 bg-gray-50/50 p-1.5 dark:border-white/[0.06] dark:bg-white/[0.02]">
-                {otherActions}
-              </div>
-            )}
-          </div>
-        </div>
         </div>
       </div>
 
@@ -318,7 +322,7 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
               )}
             </div>
           ) : activeTab === "description" ? (
-            <div>
+            <div className="rounded-xl border border-gray-200/70 bg-gray-50/50 p-6 dark:border-white/[0.06] dark:bg-white/[0.02]">
               {skillDetail.description ? (
                 <p className="text-sm leading-relaxed text-gray-700 dark:text-gray-300">{skillDetail.description}</p>
               ) : (

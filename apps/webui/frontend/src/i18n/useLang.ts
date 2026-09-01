@@ -305,6 +305,13 @@ const dict = {
   "agentsquare.statsCustom":      { zh: "自定义智能体",      en: "Custom" },
   "agentsquare.owner":            { zh: "创建者",            en: "Owner" },
 
+  // ===== Agent Detail Panel =====
+  "agentDetail.back":            { zh: "返回智能体广场",      en: "Back to Agent Square" },
+  "agentDetail.startChat":       { zh: "开始对话",            en: "Start Chat" },
+  "agentDetail.featured":        { zh: "精选",                en: "Featured" },
+  "agentDetail.edit":            { zh: "编辑智能体",          en: "Edit Agent" },
+  "agentDetail.remove":          { zh: "移除智能体",          en: "Remove Agent" },
+
   // ===== Remote Agent Modal =====
   "remoteModal.title":           { zh: "连接远程智能体",     en: "Connect Remote Agent" },
   "remoteModal.verified":        { zh: "已通过验证",         en: "Verified" },
@@ -402,6 +409,18 @@ const dict = {
   "skillSquare.iconSparkles":    { zh: "创意",                  en: "Sparkles" },
   "skillSquare.iconBot":         { zh: "智能体",                en: "Agent" },
   "skillSquare.iconFileText":    { zh: "文档",                  en: "Document" },
+  "skillSquare.iconSearch":      { zh: "搜索",                  en: "Search" },
+  "skillSquare.iconDatabase":    { zh: "数据库",                en: "Database" },
+  "skillSquare.iconGlobe":       { zh: "网络",                  en: "Globe" },
+  "skillSquare.iconPalette":     { zh: "调色板",                en: "Palette" },
+  "skillSquare.iconCamera":      { zh: "相机",                  en: "Camera" },
+  "skillSquare.iconMusic":       { zh: "音乐",                  en: "Music" },
+  "skillSquare.iconVideo":       { zh: "视频",                  en: "Video" },
+  "skillSquare.iconBookOpen":    { zh: "书籍",                  en: "Book" },
+  "skillSquare.iconMessageSquare": { zh: "聊天",                 en: "Chat" },
+  "skillSquare.iconSettings":    { zh: "设置",                  en: "Settings" },
+  "skillSquare.iconShield":      { zh: "安全",                  en: "Shield" },
+  "skillSquare.iconZap":         { zh: "闪电",                  en: "Zap" },
   "skillSquare.customIcon":      { zh: "自定义",                en: "Custom" },
 
   "skillSquare.previewSkillMd":  { zh: "预览 SKILL.md",        en: "Preview SKILL.md" },
@@ -433,7 +452,7 @@ const dict = {
 
   "skillSquare.modalPublish":    { zh: "发布技能包",            en: "Publish Skill Pack" },
   "skillSquare.modalSlug":       { zh: "Slug（唯一标识，可选）", en: "Slug (unique ID, optional)" },
-  "skillSquare.modalDisplayName":{ zh: "显示名称",              en: "Display name" },
+  "skillSquare.modalDisplayName":{ zh: "名称",              en: "Display name" },
   "skillSquare.modalIcon":       { zh: "图标",                  en: "Icon" },
   "skillSquare.modalDescription":{ zh: "描述",                  en: "Description" },
   "skillSquare.modalVersion":    { zh: "版本",                  en: "Version" },
@@ -563,7 +582,7 @@ const dict = {
   "skillSquare.selectFolder":      { zh: "选择文件夹",            en: "Select Folder" },
   "skillSquare.selectZip":         { zh: "选择 zip 文件",        en: "Select Zip File" },
   "skillSquare.replaceZip":        { zh: "替换 zip 文件",        en: "Replace Zip File" },
-  "skillSquare.displayName":       { zh: "显示名称",              en: "Display Name" },
+  "skillSquare.displayName":       { zh: "名称",              en: "Display Name" },
   "skillSquare.displayNamePlaceholder": { zh: "Skill 显示名称",  en: "Skill Display Name" },
   "skillSquare.slugLabel":         { zh: "Slug（目录名）",       en: "Slug (directory name)" },
   "skillSquare.slugPlaceholder":   { zh: "例: my-skill",         en: "e.g. my-skill" },

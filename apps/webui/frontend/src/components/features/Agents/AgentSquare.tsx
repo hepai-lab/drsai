@@ -22,6 +22,7 @@ import { CustomAgentData } from "../../common/agent-form/CustomAgentForm";
 import { getDescriptionForSearch, getServerUrl } from "../../utils";
 import { agentWorkerAPI, settingsAPI } from "../../views/api";
 import { AgentCard, AgentCardData } from "./AgentCard";
+import AgentDetailPanel from "./AgentDetailPanel";
 import AgentStatsCards, { type AgentStatsItem } from "./AgentStatsCards";
 import CustomAgentModal from "./CustomAgentModal";
 import RemoteAgentModal from "./RemoteAgentModal";
@@ -59,6 +60,8 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   const [userDefaultAgentId, setUserDefaultAgentId] = useState<string | null>(null);
   /** Search expand toggle */
   const [searchExpanded, setSearchExpanded] = useState(false);
+  /** Selected agent for detail panel */
+  const [selectedAgent, setSelectedAgent] = useState<AgentCardData | null>(null);
 
   // Compute stats from agent list
   const statsItems = useMemo((): AgentStatsItem[] => {
@@ -429,6 +432,14 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     setIsCustomModalOpen(true);
   }, []);
 
+  const handleCardClick = useCallback((agent: AgentCardData) => {
+    setSelectedAgent(agent);
+  }, []);
+
+  const handleBackFromDetail = useCallback(() => {
+    setSelectedAgent(null);
+  }, []);
+
   const handleRefresh = useCallback(async () => {
     if (!user?.email) {
       message.warning(t("agentsquare.cannotRefresh"));
@@ -637,240 +648,177 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       {/* Scrollable content */}
       <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto pt-3 pb-6 px-4 lg:px-6">
 
-        {/* Stats cards */}
-        {baseList.length > 0 && (
-          <div className="shrink-0 pb-4 pr-4">
-            <AgentStatsCards items={statsItems} />
-          </div>
+        {selectedAgent ? (
+          /* Agent detail panel */
+          <AgentDetailPanel
+            agent={selectedAgent}
+            onBack={handleBackFromDetail}
+            onStartChat={startWithAgent}
+            onEdit={selectedAgent.mode === "custom" ? (a) => handleEditCustomAgent(a) : undefined}
+            onRemove={
+              (selectedAgent.mode === "remote" || selectedAgent.mode === "custom")
+                ? (a) => handleRemoveRemoteAgent(a.id)
+                : undefined
+            }
+          />
+        ) : (
+          <>
+            {/* Stats cards */}
+            {baseList.length > 0 && (
+              <div className="shrink-0 pb-4 pr-4">
+                <AgentStatsCards items={statsItems} />
+              </div>
+            )}
+
+            {/* Enhanced filter bar */}
+            <div className="shrink-0 pb-2 pr-4">
+              <div className="flex items-center gap-2">
+                {/* Category chips */}
+                <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto scrollbar-none">
+                  {(
+                    [
+                      ["all", t("agentsquare.filterAll")],
+                      ["local", t("agentsquare.filterOfficial")],
+                      ["remote", t("agentsquare.connectRemote")],
+                    ] as const
+                  ).map(([key, label]) => {
+                    const active = key === ownerFilter;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setOwnerFilter(key)}
+                        className={`shrink-0 px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200 whitespace-nowrap select-none border ${active
+                          ? "bg-purple-50 text-purple-600 !border-purple-400 focus:!border-purple-400 dark:bg-purple-500/15 dark:text-purple-300 dark:!border-purple-400/60"
+                          : "bg-white text-gray-500 border-gray-200/60 hover:text-gray-700 hover:bg-gray-50 dark:bg-white/[0.03] dark:text-gray-400 dark:border-white/[0.08] dark:hover:text-gray-200 dark:hover:bg-white/[0.06]"
+                          }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Right controls */}
+                <div className="flex shrink-0 items-center gap-1">
+                  {/* Search */}
+                  {searchExpanded ? (
+                    <div className="relative max-w-[160px]">
+                      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" aria-hidden />
+                      <input
+                        type="search"
+                        autoFocus
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        onBlur={() => {
+                          if (!search.trim()) setSearchExpanded(false);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            setSearch("");
+                            setSearchExpanded(false);
+                          }
+                        }}
+                        placeholder={t("agentsquare.searchPlaceholder")}
+                        className="w-full rounded-xl border border-primary/40 bg-tertiary/10 py-2 pl-9 pr-3 text-sm text-primary outline-none placeholder:text-secondary/60 transition-[border-color,box-shadow] duration-200 focus:border-accent/50 focus:ring-1 focus:ring-accent/30 dark:border-white/10 dark:bg-white/[0.04]"
+                      />
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setSearchExpanded(true)}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-tertiary/10 hover:text-primary"
+                      title={t("agentsquare.searchPlaceholder")}
+                    >
+                      <Search className="h-4 w-4" aria-hidden />
+                    </button>
+                  )}
+
+                  {/* Sort toggle */}
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as any)}
+                    className="h-8 cursor-pointer appearance-none rounded-lg border border-gray-200/60 bg-white px-2.5 pr-6 text-xs font-medium text-gray-500 outline-none transition-colors hover:border-gray-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400 dark:hover:border-white/[0.15]"
+                    style={{
+                      backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none'%3E%3Cpath d='M3 5l3 3 3-3' stroke='%239ca3af' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")",
+                      backgroundRepeat: "no-repeat",
+                      backgroundPosition: "right 4px center",
+                    }}
+                  >
+                    <option value="recent">{t("agentsquare.sortRecent")}</option>
+                    <option value="name">{t("agentsquare.sortName")}</option>
+                  </select>
+
+                  {/* Connect remote */}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setIsRemoteModalOpen(true)}
+                    icon={<Plus className="h-3 w-3" />}
+                    className="h-8 rounded-lg !border border-gray-200/60 bg-white/80 px-3 text-xs font-medium text-gray-500 backdrop-blur-sm hover:bg-white hover:border-gray-300 active:translate-y-0 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:border-white/[0.15]"
+                  >
+                    {t("agentsquare.connectRemote")}
+                  </Button>
+
+                  {/* Refresh */}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleRefresh}
+                    disabled={isRefreshing}
+                    icon={<RefreshCw className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`} />}
+                    className="h-8 rounded-lg !border border-purple-200/60 bg-purple-50/80 px-3 text-xs font-medium text-purple-600 backdrop-blur-sm hover:bg-purple-50 hover:border-purple-300 dark:border-purple-500/20 dark:bg-purple-500/10 dark:text-purple-300 dark:hover:bg-purple-500/15 dark:hover:border-purple-500/30"
+                  >
+                    {t("agentsquare.refresh")}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </>
         )}
 
-        {/* Enhanced filter bar */}
-        <div className="shrink-0 pb-2 pr-4">
-          <div className="flex items-center gap-2">
-            {/* Category chips */}
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto scrollbar-none">
-              {(
-                [
-                  ["all", t("agentsquare.filterAll")],
-                  ["local", t("agentsquare.filterOfficial")],
-                  ["remote", t("agentsquare.connectRemote")],
-                ] as const
-              ).map(([key, label]) => {
-                const active = key === ownerFilter;
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setOwnerFilter(key)}
-                    className={`shrink-0 px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200 whitespace-nowrap select-none border ${active
-                      ? "bg-purple-50 text-purple-600 !border-purple-400 focus:!border-purple-400 dark:bg-purple-500/15 dark:text-purple-300 dark:!border-purple-400/60"
-                      : "bg-white text-gray-500 border-gray-200/60 hover:text-gray-700 hover:bg-gray-50 dark:bg-white/[0.03] dark:text-gray-400 dark:border-white/[0.08] dark:hover:text-gray-200 dark:hover:bg-white/[0.06]"
-                      }`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Right controls */}
-            <div className="flex shrink-0 items-center gap-1">
-              {/* Search */}
-              {searchExpanded ? (
-                <div className="relative max-w-[160px]">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" aria-hidden />
-                  <input
-                    type="search"
-                    autoFocus
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    onBlur={() => {
-                      if (!search.trim()) setSearchExpanded(false);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") {
-                        setSearch("");
-                        setSearchExpanded(false);
-                      }
-                    }}
-                    placeholder={t("agentsquare.searchPlaceholder")}
-                    className="w-full rounded-xl border border-primary/40 bg-tertiary/10 py-2 pl-9 pr-3 text-sm text-primary outline-none placeholder:text-secondary/60 transition-[border-color,box-shadow] duration-200 focus:border-accent/50 focus:ring-1 focus:ring-accent/30 dark:border-white/10 dark:bg-white/[0.04]"
-                  />
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setSearchExpanded(true)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-tertiary/10 hover:text-primary"
-                  title={t("agentsquare.searchPlaceholder")}
-                >
-                  <Search className="h-4 w-4" aria-hidden />
-                </button>
-              )}
-
-              {/* Sort toggle */}
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="h-8 cursor-pointer appearance-none rounded-lg border border-gray-200/60 bg-white px-2.5 pr-6 text-xs font-medium text-gray-500 outline-none transition-colors hover:border-gray-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400 dark:hover:border-white/[0.15]"
-                style={{
-                  backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none'%3E%3Cpath d='M3 5l3 3 3-3' stroke='%239ca3af' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")",
-                  backgroundRepeat: "no-repeat",
-                  backgroundPosition: "right 4px center",
-                }}
-              >
-                <option value="recent">{t("agentsquare.sortRecent")}</option>
-                <option value="name">{t("agentsquare.sortName")}</option>
-              </select>
-
-              {/* Connect remote */}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setIsRemoteModalOpen(true)}
-                icon={<Plus className="h-3 w-3" />}
-                className="h-8 rounded-lg !border border-gray-200/60 bg-white/80 px-3 text-xs font-medium text-gray-500 backdrop-blur-sm hover:bg-white hover:border-gray-300 active:translate-y-0 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:border-white/[0.15]"
-              >
-                {t("agentsquare.connectRemote")}
-              </Button>
-
-              {/* Refresh */}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                icon={<RefreshCw className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`} />}
-                className="h-8 rounded-lg !border border-purple-200/60 bg-purple-50/80 px-3 text-xs font-medium text-purple-600 backdrop-blur-sm hover:bg-purple-50 hover:border-purple-300 dark:border-purple-500/20 dark:bg-purple-500/10 dark:text-purple-300 dark:hover:bg-purple-500/15 dark:hover:border-purple-500/30"
-              >
-                {t("agentsquare.refresh")}
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        {/* 检查是否没有智能体 */}
-        {baseList.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-64 flex-1 px-4 text-center">
-            {noModelApiKeyForList ? (
-              <>
-                <div className="text-[#334155] dark:text-[#cfd6e9] mb-2 font-medium">
-                  {t("agentsquare.noApiKeyTitle")}
-                </div>
-                <div className="text-secondary text-sm max-w-md">
-                  {t("agentsquare.noApiKeyDesc")}
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="text-secondary mb-2">{t("agentsquare.noAgents")}</div>
-                <div className="text-secondary text-sm">{t("agentsquare.noAgentsDesc")}</div>
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="flex-1 min-h-0 pr-4">
-            {/* 主推位：我的默认智能体 - 暂时注释 */}
-            {/* {defaultAgent && (
-              <div className="mb-5">
-                <div className="w-full max-w-[min(100%,36rem)]">
-                  <div className="mb-2 flex items-center gap-1.5">
-                    <Star className="h-3 w-3 fill-[#c4b5fd] text-[#c4b5fd] dark:fill-[#a78bfa] dark:text-[#a78bfa]" />
-                    <span className="text-xs font-semibold tracking-wide text-[#55627a] dark:text-[#b6bdd0]">
-                      {t("agentsquare.myDefaultAgent")}
-                    </span>
-                  </div>
-
-                  <div className="flex flex-col gap-3 rounded-[18px] border border-[#ddd3ef] bg-[#fafafe] p-4 shadow-[0_6px_16px_rgba(43,51,72,0.035)] dark:border-[#433a5e] dark:bg-[rgba(167,139,250,0.08)] dark:shadow-[0_8px_20px_rgba(0,0,0,0.18)] sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex min-w-0 flex-1 items-center gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[#f8f9fc] ring-1 ring-inset ring-[#dfe3ec] dark:bg-[#222032] dark:ring-[#3b3651]">
-                        <img
-                          src={defaultAgent.logo}
-                          alt=""
-                          className="h-5 w-5 object-contain"
-                        />
-                      </div>
-
-                      <div className="min-w-0 flex-1">
-                        <h3 className="truncate text-[15px] font-semibold tracking-[-0.02em] text-[#25324a] dark:text-[#eef2ff]">
-                          {defaultAgent.name}
-                        </h3>
-                        <div className="mt-0.5 truncate text-[12px] text-[#8f98ac] dark:text-[#9fa8bf]">
-                          {defaultAgent.owner}
-                        </div>
-                        <p className="mt-1 line-clamp-2 text-[13px] leading-snug text-[#404e67] dark:text-[#c7d0e6]">
-                          {getLocalizedDescription(defaultAgent.description, lang)}
-                        </p>
-                      </div>
+        {!selectedAgent && (
+          <>
+            {/* 检查是否没有智能体 */}
+            {baseList.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-64 flex-1 px-4 text-center">
+                {noModelApiKeyForList ? (
+                  <>
+                    <div className="text-[#334155] dark:text-[#cfd6e9] mb-2 font-medium">
+                      {t("agentsquare.noApiKeyTitle")}
                     </div>
-
-                    <div className="flex shrink-0 items-center gap-2 sm:flex-col sm:items-end">
-                      {defaultAgent.mode === "custom" && (
-                        <button
-                          type="button"
-                          onClick={() => handleEditCustomAgent(defaultAgent)}
-                          className="inline-flex h-8 items-center justify-center rounded-[10px] border border-[#ebe7f1] bg-white px-3 text-xs font-medium text-[#5f5a73] transition hover:border-[#d3adf7] hover:text-[#544d92] dark:border-[#2f2a41] dark:bg-[#1c1628] dark:text-[#d0c0e8]"
-                        >
-                          {t("agentsquare.edit")}
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() => startWithAgent(defaultAgent)}
-                        title={t("agentsquare.startChat")}
-                        aria-label={t("agentsquare.startChat")}
-                        className="agent-featured-cta group/cta"
-                      >
-                        <span className="agent-featured-cta__shine" aria-hidden />
-                        <span className="agent-featured-cta__label">{t("agentsquare.startChat")}</span>
-                        <span className="agent-featured-cta__arrow">
-                          <ArrowRight className="h-3.5 w-3.5" />
-                        </span>
-                      </button>
+                    <div className="text-secondary text-sm max-w-md">
+                      {t("agentsquare.noApiKeyDesc")}
                     </div>
-                  </div>
-                </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-secondary mb-2">{t("agentsquare.noAgents")}</div>
+                    <div className="text-secondary text-sm">{t("agentsquare.noAgentsDesc")}</div>
+                  </>
+                )}
               </div>
-            )} */}
-
-            {/* 最近使用 - 暂时注释 */}
-            {/* {recentAgents.length > 0 && (
-              <div className="mb-5">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="text-xs font-semibold tracking-wide text-[#55627a] dark:text-[#b6bdd0]">
-                    {t("agentsquare.recentUsed")}
+            ) : (
+              <div className="flex-1 min-h-0 pr-4">
+                {filteredList.length === 0 ? (
+                  <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-[#e7e7ef] text-sm text-[#9aa2b2] dark:border-[#2a2a3a] dark:text-[#8f97ad]">
+                    {t("agentsquare.noMatch")}
                   </div>
-                </div>
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
-                  {recentAgents
-                    .slice(0, 6)
-                    .map((agent) => (
+                ) : (
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-5 pb-6">
+                    {sortList(filteredList).map((agent) => (
                       <AgentCard
-                        key={`recent-${agent.id || agent.name}`}
+                        key={agent.id || agent.name}
                         agent={agent}
                         onEdit={agent.mode === "custom" ? () => handleEditCustomAgent(agent) : undefined}
+                        onCardClick={handleCardClick}
                       />
                     ))}
-                </div>
-              </div>
-            )} */}
-            {filteredList.length === 0 ? (
-              <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-[#e7e7ef] text-sm text-[#9aa2b2] dark:border-[#2a2a3a] dark:text-[#8f97ad]">
-                {t("agentsquare.noMatch")}
-              </div>
-            ) : (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-5 pb-6">
-                {sortList(filteredList).map((agent) => (
-                  <AgentCard
-                    key={agent.id || agent.name}
-                    agent={agent}
-                    onEdit={agent.mode === "custom" ? () => handleEditCustomAgent(agent) : undefined}
-                  />
-                ))}
+                  </div>
+                )}
               </div>
             )}
-          </div>
+          </>
         )}
       </div>
 

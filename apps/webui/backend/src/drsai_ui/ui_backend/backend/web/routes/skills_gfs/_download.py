@@ -82,7 +82,7 @@ async def download_skill(
 
 @router.get("/{slug}/profile")
 async def get_profile(slug: str) -> FileResponse:
-    """Serve the profile image for a skill. Tries user_skills, higraf, then public_skills."""
+    """Serve the profile image for a skill. Tries user_skills, then higraf."""
     if not _SLUG_RE.match(slug):
         raise HTTPException(status_code=400, detail="Invalid slug")
 
@@ -194,29 +194,6 @@ async def _gfs_download_public_skill_bytes(slug: str) -> bytes | None:
 
     cfg = _require_gfs()
     remote = _gfs_zip_path(slug, owner_id=owner_id, source=source)
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-    tmp.close()
-    try:
-        ok = gfs_get(remote, tmp.name, cfg, timeout=60)
-        if not ok:
-            return None
-        with open(tmp.name, "rb") as f:
-            return f.read()
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
-
-
-async def _gfs_download_user_skill_bytes(slug: str, user_id: str) -> bytes | None:
-    """Download user skill ZIP bytes from user_skills/{user_id}/{slug}.zip."""
-    import tempfile
-    import os
-    from ..gfs_utils import gfs_get
-
-    cfg = _require_gfs()
-    remote = _gfs_user_zip_path(slug, user_id)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     tmp.close()
     try:
