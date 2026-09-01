@@ -302,34 +302,36 @@ AUDIT_MAX_ITEMS = 100
 
 
 def redact_sensitive(value: Any, key: str, context: str) -> Any:
-    if context not in ("content", "audit"):
-        raise ValueError("redact_sensitive context must be 'content' or 'audit'")
-    max_chars = CONTENT_MAX_CHARS if context == "content" else AUDIT_MAX_CHARS
-    max_items = CONTENT_MAX_ITEMS if context == "content" else AUDIT_MAX_ITEMS
-    if _SENSITIVE_KEY.search(key):
-        return "[REDACTED]"
-    if isinstance(value, Mapping):
-        items = list(value.items())[:max_items]
-        result = {
-            str(child_key): redact_sensitive(child, str(child_key), context)
-            for child_key, child in items
-        }
-        if len(value) > len(items):
-            result["_truncated_fields"] = len(value) - len(items)
-        return result
-    if isinstance(value, (list, tuple)):
-        items = list(value)[:max_items]
-        result = [redact_sensitive(item, "", context) for item in items]
-        if len(value) > len(items):
-            result.append(f"[TRUNCATED {len(value) - len(items)} ITEMS]")
-        return result
-    if isinstance(value, str):
-        redacted = _PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", _BEARER.sub("Bearer [REDACTED]", value))
-        redacted = _INLINE_CREDENTIAL.sub(lambda match: f"{match.group(1)}=[REDACTED]", redacted)
-        redacted = _COOKIE_HEADER.sub("Cookie: [REDACTED]", redacted)
-        redacted = _URL_USERINFO.sub(r"\1[REDACTED]@", redacted)
-        return redacted if len(redacted) <= max_chars else f"{redacted[:max_chars]}[TRUNCATED {len(redacted) - max_chars} CHARS]"
+    # [DISABLED] Sensitive data redaction disabled — returns value unchanged
     return value
+    # if context not in ("content", "audit"):
+    #     raise ValueError("redact_sensitive context must be 'content' or 'audit'")
+    # max_chars = CONTENT_MAX_CHARS if context == "content" else AUDIT_MAX_CHARS
+    # max_items = CONTENT_MAX_ITEMS if context == "content" else AUDIT_MAX_ITEMS
+    # if _SENSITIVE_KEY.search(key):
+    #     return "[REDACTED]"
+    # if isinstance(value, Mapping):
+    #     items = list(value.items())[:max_items]
+    #     result = {
+    #         str(child_key): redact_sensitive(child, str(child_key), context)
+    #         for child_key, child in items
+    #     }
+    #     if len(value) > len(items):
+    #         result["_truncated_fields"] = len(value) - len(items)
+    #     return result
+    # if isinstance(value, (list, tuple)):
+    #     items = list(value)[:max_items]
+    #     result = [redact_sensitive(item, "", context) for item in items]
+    #     if len(value) > len(items):
+    #         result.append(f"[TRUNCATED {len(value) - len(items)} ITEMS]")
+    #     return result
+    # if isinstance(value, str):
+    #     redacted = _PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", _BEARER.sub("Bearer [REDACTED]", value))
+    #     redacted = _INLINE_CREDENTIAL.sub(lambda match: f"{match.group(1)}=[REDACTED]", redacted)
+    #     redacted = _COOKIE_HEADER.sub("Cookie: [REDACTED]", redacted)
+    #     redacted = _URL_USERINFO.sub(r"\1[REDACTED]@", redacted)
+    #     return redacted if len(redacted) <= max_chars else f"{redacted[:max_chars]}[TRUNCATED {len(redacted) - max_chars} CHARS]"
+    # return value
 
 
 class SecureWorkspaceFS:

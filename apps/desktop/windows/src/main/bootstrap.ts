@@ -6,7 +6,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { refreshAuthContextAfterUnauthorized, requireAuthContext } from "./auth";
 import { replaceFileSafely } from "./atomicFileReplace";
-import { discoverGatewayModels, startGateway, syncAuthIdentityToGateway, type GatewayModelDiscoveryResult } from "./gateway";
+import { discoverGatewayModels, startGateway, type GatewayModelDiscoveryResult } from "./gateway";
 import { DRSAI_HOME } from "./paths";
 import { getInstallStatus } from "./status";
 
@@ -17,7 +17,6 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
   if (auth.authMode !== "oidc" || !auth.accessToken) {
     throw new Error("HepAI OIDC sign-in is required before preparing OpenDrSai.");
   }
-  await syncAuthIdentityToGateway(auth.userId);
 
   const install = await getInstallStatus();
   if (!install.installed) {

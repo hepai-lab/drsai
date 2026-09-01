@@ -206,6 +206,49 @@ def translate_kernel_event(
         state.terminal_kind = kind
         state.terminal_payload = payload
         return ()
+    # --- Subagent lifecycle events ---
+    # The kernel emits these from _start_subagents / _subagent_completed /
+    # _subagent_failed / _subagent_cancelled.  Surfacing them as structured
+    # AgentLogEvents with content_type="subagent" lets the front end render a
+    # dedicated subagent panel instead of an opaque generic log line.
+    if kind == "subagent.started":
+        return (AgentLogEvent(
+            source=str(payload.get("agent_name") or state.assistant_name),
+            title=f"subagent.started:{payload.get('subagent_id', '')}",
+            content=str(payload.get("title") or payload.get("summary") or ""),
+            content_type="subagent",
+            metadata={
+                "kernel_event": kind,
+                "subagent_id": str(payload.get("subagent_id") or ""),
+                "subagent_type": str(payload.get("subagent_type") or ""),
+                "child_run_id": str(payload.get("child_run_id") or ""),
+            },
+        ),)
+    if kind == "subagent.thinking":
+        # Streaming text from a child agent.  Emit as a chunk so the UI shows
+        # the subagent working in real time, but tag metadata so the front end
+        # can route it to the subagent panel rather than the main stream.
+        return (ModelClientStreamingChunkEvent(
+            content=str(payload.get("text") or ""),
+            source=str(payload.get("agent_name") or state.assistant_name),
+        ),)
+    if kind in {"subagent.completed", "subagent.failed", "subagent.cancelled"}:
+        status = kind.split(".")[-1]
+        summary = str(payload.get("summary") or payload.get("result") or "")
+        if kind == "subagent.failed":
+            summary = f"Subagent failed: {payload.get('code', '')}"
+        return (AgentLogEvent(
+            source=str(payload.get("agent_name") or state.assistant_name),
+            title=f"subagent.{status}:{payload.get('subagent_id', '')}",
+            content=summary,
+            content_type="subagent",
+            metadata={
+                "kernel_event": kind,
+                "subagent_id": str(payload.get("subagent_id") or ""),
+                "child_run_id": str(payload.get("child_run_id") or ""),
+                "retryable": bool(payload.get("retryable", False)) if kind == "subagent.failed" else False,
+            },
+        ),)
     if kind in {
         "run.started", "tool.decision", "verification.required", "verification.unavailable",
         "approval.requested", "approval.decided", "runtime.degraded", "runtime.lifecycle_changed",

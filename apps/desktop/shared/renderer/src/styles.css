@@ -4355,6 +4355,7 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
   min-height: 0;
   height: auto;
   overflow: auto;
+  overscroll-behavior: contain;
   padding:
     22px
     max(18px, calc((100% - var(--chat-content-max-width)) / 2 + 18px))
@@ -4449,6 +4450,7 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
   border-radius: 8px;
   background: var(--app-panel-soft);
   font-size: 12px;
+  flex-shrink: 0;
 }
 
 .message.user {
@@ -6800,6 +6802,12 @@ button.structured-activity-detail:hover {
 .composer-tool-menu button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.composer-tool-group + .composer-tool-group {
+  border-top: 1px solid color-mix(in srgb, var(--app-border-soft) 60%, transparent);
+  padding-top: 2px;
+  margin-top: 2px;
 }
 
 .composer button:disabled {

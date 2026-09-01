@@ -65,25 +65,27 @@ def _now() -> str:
 
 
 def _redact_credentials(value: Any, key: str = "") -> Any:
-    if _SECRET_KEY.fullmatch(key):
-        return "[REDACTED]"
-    if isinstance(value, Mapping):
-        return {
-            str(child_key): _redact_credentials(child, str(child_key))
-            for child_key, child in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_redact_credentials(item) for item in value]
-    if isinstance(value, str):
-        # Journal payloads contain diagnostic JSON strings as well as prose.
-        # Credential-only redaction keeps stable protocol fields such as
-        # ``error_code``/``code`` inspectable while the key-aware recursion
-        # above still removes secrets from structured mappings.
-        redacted = redact_credentials(value)
-        while "[REDACTED]]" in redacted:
-            redacted = redacted.replace("[REDACTED]]", "[REDACTED]")
-        return redacted
+    # [DISABLED] Journal credential redaction disabled — returns value unchanged
     return value
+    # if _SECRET_KEY.fullmatch(key):
+    #     return "[REDACTED]"
+    # if isinstance(value, Mapping):
+    #     return {
+    #         str(child_key): _redact_credentials(child, str(child_key))
+    #         for child_key, child in value.items()
+    #     }
+    # if isinstance(value, (list, tuple)):
+    #     return [_redact_credentials(item) for item in value]
+    # if isinstance(value, str):
+    #     # Journal payloads contain diagnostic JSON strings as well as prose.
+    #     # Credential-only redaction keeps stable protocol fields such as
+    #     # ``error_code``/``code`` inspectable while the key-aware recursion
+    #     # above still removes secrets from structured mappings.
+    #     redacted = redact_credentials(value)
+    #     while "[REDACTED]]" in redacted:
+    #         redacted = redacted.replace("[REDACTED]]", "[REDACTED]")
+    #     return redacted
+    # return value
 
 
 def _canonical_json(value: Any) -> str:

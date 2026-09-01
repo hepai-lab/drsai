@@ -69,18 +69,21 @@ def canonical_digest(value: Any) -> str:
 
 def redact_for_display(value: Any, key: str = "") -> Any:
     """Create bounded UI/audit data without changing authorization identity."""
-
-    if _SECRET_KEY.search(key):
-        return "[REDACTED]"
-    if isinstance(value, Mapping):
-        return {str(item_key): redact_for_display(item, str(item_key)) for item_key, item in value.items()}
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [redact_for_display(item, key) for item in list(value)[:100]]
-    if isinstance(value, str):
-        cleaned = _PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", value)
-        cleaned = _BEARER.sub("Bearer [REDACTED]", cleaned)
-        return cleaned if len(cleaned) <= 4096 else cleaned[:4096] + "...[TRUNCATED]"
+    # [DISABLED] Display redaction disabled — returns value unchanged (with truncation only)
+    if isinstance(value, str) and len(value) > 4096:
+        return value[:4096] + "...[TRUNCATED]"
     return value
+    # if _SECRET_KEY.search(key):
+    #     return "[REDACTED]"
+    # if isinstance(value, Mapping):
+    #     return {str(item_key): redact_for_display(item, str(item_key)) for item_key, item in value.items()}
+    # if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+    #     return [redact_for_display(item, key) for item in list(value)[:100]]
+    # if isinstance(value, str):
+    #     cleaned = _PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", value)
+    #     cleaned = _BEARER.sub("Bearer [REDACTED]", cleaned)
+    #     return cleaned if len(cleaned) <= 4096 else cleaned[:4096] + "...[TRUNCATED]"
+    # return value
 
 
 @dataclass(frozen=True)

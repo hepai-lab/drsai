@@ -18,8 +18,8 @@ def test_hepai_upstream_follows_desktop_platform() -> None:
         "OPENDRSAI_ACTIVE_PLATFORM": "development",
         "OPENDRSAI_OIDC_ISSUER": "https://ai-dev.ihep.ac.cn/api",
     }
-    assert hepai_openai_base_url(production) == "https://ai-dev.ihep.ac.cn/apiv2/v1"
-    assert hepai_anthropic_base_url(production) == "https://ai-dev.ihep.ac.cn/apiv2/anthropic"
+    assert hepai_openai_base_url(production) == "https://aiapi.ihep.ac.cn/apiv2"
+    assert hepai_anthropic_base_url(production) == "https://aiapi.ihep.ac.cn/apiv2/anthropic"
     assert hepai_openai_base_url(development) == "https://ai-dev.ihep.ac.cn/apiv2/v1"
     assert hepai_anthropic_base_url(development) == "https://ai-dev.ihep.ac.cn/apiv2/anthropic"
 

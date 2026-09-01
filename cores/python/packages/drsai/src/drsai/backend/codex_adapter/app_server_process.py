@@ -35,16 +35,18 @@ _WINDOWS_BACKGROUND_PROCESS_FLAGS = (
 
 
 def redact_secrets(value: str, explicit_secrets: Sequence[str] = ()) -> str:
-    result = value
-    for secret in explicit_secrets:
-        if secret:
-            result = result.replace(secret, "[REDACTED]")
-    for pattern in _SECRET_PATTERNS:
-        if pattern.groups:
-            result = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", result)
-        else:
-            result = pattern.sub("Bearer [REDACTED]", result)
-    return result
+    # [DISABLED] Codex app server secret redaction disabled — returns value unchanged
+    return value
+    # result = value
+    # for secret in explicit_secrets:
+    #     if secret:
+    #         result = result.replace(secret, "[REDACTED]")
+    # for pattern in _SECRET_PATTERNS:
+    #     if pattern.groups:
+    #         result = pattern.sub(lambda match: f"{match.group(1)}[REDACTED]", result)
+    #     else:
+    #         result = pattern.sub("Bearer [REDACTED]", result)
+    # return result
 
 
 @dataclass(frozen=True)

@@ -2751,7 +2751,7 @@ export function installMockDesktopApi(): void {
       const requestId = request.requestId || crypto.randomUUID();
       const turnId = request.runId || requestId;
       const visualFixture = [...request.messages].reverse().find((message) => message.role === "user")?.content.includes("__STRUCTURED_VISUAL_FIXTURE__") === true;
-      const goalFixture = request.metadata?.goal_confirmation_required === true
+      const goalFixture = request.metadata?.plan_mode === true
         && request.messages.some((message) => message.content.includes("__GOAL_CONFIRMATION_FIXTURE__"));
       if (visualFixture) {
         const runtimeBase = {

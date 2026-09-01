@@ -106,6 +106,7 @@ async def run_execute(run_id: str, request: RunExecuteRequest, raw_request: Requ
                     request.prompt,
                     correlation_id,
                     model_override=request.model_alias or None,
+                    plan_mode=bool(metadata.get("plan_mode")),
                 )
             diag_log(f"[DIAG] runs.py execute(): run_id={run_id} detached task COMPLETED")
             return result

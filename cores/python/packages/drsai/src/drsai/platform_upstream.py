@@ -9,10 +9,10 @@ import os
 DEVELOPMENT_OIDC_ISSUER = "https://ai-dev.ihep.ac.cn/api"
 PRODUCTION_OIDC_ISSUER = "https://ai.ihep.ac.cn/api"
 DEVELOPMENT_MODEL_BASE_URL = "https://ai-dev.ihep.ac.cn/apiv2/v1"
-# Until the HAI production service is restored, even a legacy production
-# issuer is routed to the development model service. New desktop OIDC sessions
-# are issued by DEVELOPMENT_OIDC_ISSUER.
-PRODUCTION_MODEL_BASE_URL = DEVELOPMENT_MODEL_BASE_URL
+# Desktop dev mode (OPENDRSAI_DESKTOP_DEV=1 / OPENDRSAI_ACTIVE_PLATFORM=development /
+# OPENDRSAI_OIDC_ISSUER=ai-dev.ihep.ac.cn/api) routes model API calls to the
+# development model service. The production path is the stable aiapi endpoint.
+PRODUCTION_MODEL_BASE_URL = "https://aiapi.ihep.ac.cn/apiv2"
 
 
 def resolve_hepai_model_base_url(

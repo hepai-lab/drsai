@@ -689,12 +689,16 @@ class CodexNativeEventDecoder:
         )
 
     def safe(self, value: Any, key: str = "") -> Any:
-        if _SECRET.search(key):
-            return "[REDACTED]"
-        if isinstance(value, Mapping):
-            return {str(k): self.safe(v, str(k)) for k, v in value.items()}
-        if isinstance(value, list):
-            return [self.safe(v) for v in value[:100]]
-        if isinstance(value, str):
-            return value if len(value) <= self.max_field_chars else value[: self.max_field_chars] + "…[truncated]"
-        return value if isinstance(value, (int, float, bool, type(None))) else type(value).__name__
+        # [DISABLED] Native decoder secret redaction disabled — returns value unchanged (with truncation only)
+        if isinstance(value, str) and len(value) > self.max_field_chars:
+            return value[: self.max_field_chars] + "…[truncated]"
+        return value if isinstance(value, (int, float, bool, type(None))) or isinstance(value, str) else type(value).__name__ if not isinstance(value, (Mapping, list)) else value
+        # if _SECRET.search(key):
+        #     return "[REDACTED]"
+        # if isinstance(value, Mapping):
+        #     return {str(k): self.safe(v, str(k)) for k, v in value.items()}
+        # if isinstance(value, list):
+        #     return [self.safe(v) for v in value[:100]]
+        # if isinstance(value, str):
+        #     return value if len(value) <= self.max_field_chars else value[: self.max_field_chars] + "…[truncated]"
+        # return value if isinstance(value, (int, float, bool, type(None))) else type(value).__name__

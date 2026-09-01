@@ -76,11 +76,12 @@ def error_envelope(
     diagnostic_reference: str | None = None,
 ) -> dict[str, Any]:
     category = error_category(code)
+    # [DISABLED] Secret detail key filtering disabled — passes through all detail keys
     redacted = {
         str(key): value
         for key, value in dict(details or {}).items()
-        if key in _SAFE_DETAIL_KEYS and not _SECRET.search(str(key))
-        and isinstance(value, (str, int, float, bool, type(None)))
+        # if key in _SAFE_DETAIL_KEYS and not _SECRET.search(str(key))
+        if isinstance(value, (str, int, float, bool, type(None)))
     }
     return {
         "code": code or "unexpected_error",

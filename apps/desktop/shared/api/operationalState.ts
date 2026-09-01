@@ -13,12 +13,24 @@ export interface OperationalLayerState {
   status: "complete" | "current" | "pending";
 }
 
+export interface OperationalStateBlockerInfo {
+  kind: string;
+  title: string;
+  message: string;
+  diagnosticCode: string;
+  retryable: boolean;
+}
+
 export interface OperationalStateDecision {
   currentLayer: OperationalLayer;
   blockingLayer: OperationalLayer | null;
   state: string;
   readyForRun: boolean;
   layers: OperationalLayerState[];
+  /** Detailed blocker information when the runtime is blocked. */
+  blocker?: OperationalStateBlockerInfo | null;
+  /** Install status details: what runtime components are missing. */
+  installMissing?: string[] | null;
 }
 
 const ORDER: OperationalLayer[] = ["identity", "runtime", "agent", "workspace"];

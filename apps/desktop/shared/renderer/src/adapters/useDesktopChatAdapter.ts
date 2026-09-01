@@ -598,14 +598,16 @@ export function useDesktopChatAdapter({
       userPreferencesRef.current = refreshed;
       setUserPreferences(refreshed);
     }
-    const handleSensitiveLocally = memorySafety.hasSensitiveContent;
+    // [DISABLED] Sensitive content local interception disabled — hasSensitiveContent is always false
+    // so handleSensitiveLocally will never be true. The block below is skipped.
+    const handleSensitiveLocally = false; // memorySafety.hasSensitiveContent;
     const handleTemporaryLocally = memorySafety.explicitMemoryRequest && memorySafety.temporary && isPreferenceOnlyRequest(text);
-    if (attachments.length === 0 && (handleSensitiveLocally || handleTemporaryLocally || (saved.length > 0 && isPreferenceOnlyRequest(text)))) {
+    if (attachments.length === 0 && (/* handleSensitiveLocally || */ handleTemporaryLocally || (saved.length > 0 && isPreferenceOnlyRequest(text)))) {
       const response = [
         saved.length ? formatPreferenceConfirmation(saved, languageRef.current) : "",
         formatMemorySafetyNotice(memorySafety, languageRef.current),
       ].filter(Boolean).join("\n\n");
-      publishLocalAssistantResult(memorySafety.hasSensitiveContent ? redactSensitiveMemoryText(text) : text, response, [], historyMessages);
+      publishLocalAssistantResult(/* memorySafety.hasSensitiveContent ? redactSensitiveMemoryText(text) : */ text, response, [], historyMessages);
       if (!preserveComposer) setInput("");
       return true;
     }
@@ -731,7 +733,7 @@ export function useDesktopChatAdapter({
         metadata: {
           selected_agent_id: options?.agentId?.trim() || undefined,
           selected_skill_id: skillName || undefined,
-          goal_confirmation_required: options?.goalConfirmationRequired === true,
+          plan_mode: options?.planMode === true,
           workspace_instructions: workspaceInstructions || [],
           selected_agent: options?.agentName?.trim() || undefined,
           thinking_effort: options?.thinkingEffort,

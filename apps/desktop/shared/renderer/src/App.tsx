@@ -2795,6 +2795,14 @@ function AuthenticatedApp({
           operationalStateControl={shouldShowOperationalStateBar(operationalDecision) ? (
             <DiagnosticsContainer
               decision={operationalDecision}
+              blocker={auth.serviceBlocker ? {
+                kind: auth.serviceBlocker.kind,
+                title: auth.serviceBlocker.title,
+                message: auth.serviceBlocker.message,
+                diagnosticCode: auth.serviceBlocker.diagnosticCode,
+                retryable: auth.serviceBlocker.retryable,
+              } : null}
+              installMissing={health?.install?.missing ?? null}
               language={language}
               formatError={(error) => {
                 // Prefer explicit recovery guidance (e.g. model auth failure) over the generic backend fallback.

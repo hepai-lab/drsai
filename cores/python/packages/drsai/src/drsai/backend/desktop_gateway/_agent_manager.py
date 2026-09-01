@@ -34,7 +34,7 @@ from typing import Any, Optional
 
 from loguru import logger
 
-from drsai.backend.run_drsai_agent_factory import DEFAULT_CONFIG_NAME, create_agent
+from drsai.backend.run_drsai_agent_factory import DEFAULT_CONFIG_NAME, PLAN_MODE_SYSTEM_PROMPT, create_agent
 from drsai.modules.managers.database import DatabaseManager
 from drsai.modules.managers.datamodel.db import RunStatus, Thread
 from drsai.modules.managers.datamodel.types import Response as DBResponse
@@ -140,6 +140,7 @@ class DesktopAgentManager:
         work_dir: str | None = None,
         workspace_id: str | None = None,
         cancellation_token: Any = None,
+        plan_mode: bool = False,
     ):
         """Drive one turn, yielding raw autogen events.
 
@@ -162,6 +163,13 @@ class DesktopAgentManager:
             agent = await self.get_or_create(
                 session_id, uid, model_alias=model_alias, work_dir=work_dir,
             )
+            # Apply plan mode: set or clear PLAN_MODE_SYSTEM_PROMPT as the
+            # injected prefix.  Called every turn so a prior plan-mode turn
+            # does not leak into a normal turn (the Agent is cached per key).
+            if hasattr(agent, "inject_system_prompt"):
+                agent.inject_system_prompt(
+                    prefix=PLAN_MODE_SYSTEM_PROMPT if plan_mode else ""
+                )
             await self._set_status(session_id, uid, RunStatus.ACTIVE)
             # The Workspace binding is turn-scoped: one long-lived Agent serves
             # many Runs, and a leaked workspace path would let a later Run write

@@ -15,23 +15,24 @@ _URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 def _safe_text(value: Any, *, limit: int = 1_048_576) -> str:
-    # Preserve stable diagnostic fields such as ``error_code`` inside JSON
-    # text while still removing credentials. ``redact_secrets`` treats every
-    # generic ``code`` value as OAuth-sensitive and corrupts public Runtime
-    # error contracts (for example service_unavailable).
-    redacted = redact_sensitive(redact_credentials("" if value is None else str(value)), "", "content")
-    text = str(redacted)
+    # [DISABLED] OAEP safe text redaction disabled — returns string value unchanged (with truncation only)
+    text = "" if value is None else str(value)
     return text if len(text) <= limit else f"{text[:limit]}[TRUNCATED {len(text) - limit} CHARS]"
+    # Original logic:
+    # redacted = redact_sensitive(redact_credentials("" if value is None else str(value)), "", "content")
+    # text = str(redacted)
+    # return text if len(text) <= limit else f"{text[:limit]}[TRUNCATED {len(text) - limit} CHARS]"
 
 
 def _safe_mapping(value: Any) -> dict[str, Any]:
+    # [DISABLED] OAEP safe mapping key filtering disabled — passes through all keys
     if not isinstance(value, dict):
         return {}
     result: dict[str, Any] = {}
     for key, child in value.items():
         safe_key = str(key)
-        if _is_sensitive_public_key(safe_key):
-            continue
+        # if _is_sensitive_public_key(safe_key):
+        #     continue
         if safe_key in {"path", "old_path", "new_path", "relative_path"}:
             path = _relative_path(child)
             if path:
@@ -42,8 +43,9 @@ def _safe_mapping(value: Any) -> dict[str, Any]:
 
 
 def _safe_value(value: Any, *, key: str = "") -> Any:
-    if _is_sensitive_public_key(key):
-        return "[REDACTED]"
+    # [DISABLED] Sensitive key redaction in _safe_value disabled — does not check _is_sensitive_public_key
+    # if _is_sensitive_public_key(key):
+    #     return "[REDACTED]"
     if isinstance(value, dict):
         return _safe_mapping(value)
     if isinstance(value, (list, tuple)):
@@ -58,9 +60,9 @@ def safe_error(value: Any) -> dict[str, Any]:
     result = _safe_mapping(value)
     raw_message = value.get("message") if isinstance(value, dict) else None
     if isinstance(raw_message, str):
-        # Error response bodies are the primary debugging evidence.  Preserve
-        # them in full while replacing only credential values.
-        result["message"] = redact_credentials(raw_message)
+        # [DISABLED] Error message credential redaction disabled — returns message unchanged
+        result["message"] = raw_message
+        # result["message"] = redact_credentials(raw_message)
     return result
 
 

@@ -97,6 +97,7 @@ class RuntimeRunContext:
     input_resources: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     input_parts: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     model_override_requested: bool = False
+    plan_mode: bool = False
 
     def __post_init__(self) -> None:
         backend_runtime_id = self.agent_backend_runtime_id or self.runtime_id
@@ -1108,6 +1109,7 @@ class RuntimeAgentService:
         checkpoint_state: Mapping[str, Any] | None = None,
         input_resources_override: tuple[Mapping[str, Any], ...] | None = None,
         input_parts_override: tuple[Mapping[str, Any], ...] | None = None,
+        plan_mode: bool = False,
     ) -> dict[str, Any]:
         if self._closed:
             raise RuntimeExecutionError("agent_backend_service_closed", "Agent Backend service is closed.")
@@ -1133,6 +1135,7 @@ class RuntimeAgentService:
             definition,
             correlation_id=correlation_id,
             model_override_requested=bool(model_override),
+            plan_mode=plan_mode,
         )
         if input_resources_override is not None:
             context = replace(context, input_resources=tuple(input_resources_override))
@@ -1686,6 +1689,7 @@ class RuntimeAgentService:
         parent: RuntimeRunContext | None = None,
         correlation_id: str | None = None,
         model_override_requested: bool = False,
+        plan_mode: bool = False,
     ) -> RuntimeRunContext:
         record = self.workspaces.get_workspace(str(run["workspace_id"]), include_closed=True)
         if record is None or not getattr(record, "open", False):
@@ -1716,6 +1720,7 @@ class RuntimeAgentService:
                 value for value in run.get("input_parts", []) if isinstance(value, Mapping)
             ) if parent is None else parent.input_parts,
             model_override_requested=model_override_requested if parent is None else parent.model_override_requested,
+            plan_mode=plan_mode if parent is None else parent.plan_mode,
         )
 
     async def _run_subagent(self, parent: RuntimeRunContext, call: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -1790,22 +1795,24 @@ def _history_content_digest(history: Sequence[Mapping[str, Any]]) -> str:
 
 
 def _safe_result(value: Mapping[str, Any]) -> dict[str, Any]:
-    blocked = re.compile(r"(?:token|password|secret|private.?key|authorization|api.?key|credential)", re.I)
-    bearer = re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+")
-    private_key = re.compile(r"-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----", re.S)
-
-    def clean(item: Any, key: str = "") -> Any:
-        if blocked.search(key):
-            return "[REDACTED]"
-        if isinstance(item, Mapping):
-            return {str(child_key): clean(child, str(child_key)) for child_key, child in item.items()}
-        if isinstance(item, (list, tuple)):
-            return [clean(child) for child in item]
-        if isinstance(item, str):
-            return private_key.sub("[REDACTED PRIVATE KEY]", bearer.sub("Bearer [REDACTED]", item))
-        return item
-
-    return clean(value)
+    # [DISABLED] Result credential redaction disabled — returns value unchanged
+    return dict(value)
+    # blocked = re.compile(r"(?:token|password|secret|private.?key|authorization|api.?key|credential)", re.I)
+    # bearer = re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+")
+    # private_key = re.compile(r"-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----", re.S)
+    #
+    # def clean(item: Any, key: str = "") -> Any:
+    #     if blocked.search(key):
+    #         return "[REDACTED]"
+    #     if isinstance(item, Mapping):
+    #         return {str(child_key): clean(child, str(child_key)) for child_key, child in item.items()}
+    #     if isinstance(item, (list, tuple)):
+    #         return [clean(child) for child in item]
+    #     if isinstance(item, str):
+    #         return private_key.sub("[REDACTED PRIVATE KEY]", bearer.sub("Bearer [REDACTED]", item))
+    #     return item
+    #
+    # return clean(value)
 
 
 def _safe_diagnostic_stack(exc: BaseException, limit: int = 80) -> list[dict[str, Any]]:

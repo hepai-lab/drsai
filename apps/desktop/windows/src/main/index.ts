@@ -6987,6 +6987,10 @@ app.whenReady().then(async () => {
   setRemoteFileChangePublisher((change) => {
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:workspace-file-change-event", change);
   });
+  // Eager gateway start: the gateway process starts in the background while
+  // the renderer renders the login screen. When the user finishes signing in
+  // the gateway is already running or nearly ready, so bootstrapDesktop is fast.
+  void startGateway();
   createWindow();
   startUpdateScheduler();
   handleDeepLinkArgv(process.argv);

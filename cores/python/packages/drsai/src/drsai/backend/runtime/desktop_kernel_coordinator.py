@@ -188,6 +188,11 @@ class DesktopKernelCoordinator:
                 elif outbound.message_type is MessageType.CHECKPOINT_REQUEST:
                     await self._checkpoint(outbound.payload)
                 elif outbound.message_type is MessageType.MODEL_REQUEST:
+                    # Carry subagent_id from the Model request through every
+                    # host response so the Kernel routes chunks/completions to
+                    # _model_chunk's subagent branch instead of mistaking a
+                    # subagent's output for the main agent's final answer.
+                    subagent_id = outbound.payload.get("subagent_id")
                     try:
                         stream = getattr(self._model, "stream", None)
                         if callable(stream):
@@ -200,9 +205,12 @@ class DesktopKernelCoordinator:
                                     # Provider call. Feed them into the Kernel immediately
                                     # and yield its Runtime Events before requesting the next
                                     # Provider fragment.
+                                    chunk_payload: dict[str, Any] = {"delta": item.text}
+                                    if subagent_id is not None:
+                                        chunk_payload["subagent_id"] = subagent_id
                                     commands = self._kernel.handle(response(
                                         MessageType.MODEL_CHUNK,
-                                        {"delta": item.text},
+                                        chunk_payload,
                                         "model-chunk",
                                     ))
                                     for command in commands:
@@ -227,23 +235,32 @@ class DesktopKernelCoordinator:
                         # exception (including HTTP status and provider response
                         # body). Preserve that diagnostic text across the compact
                         # Kernel protocol, redacting credential values only.
-                        send(response(MessageType.MODEL_FAILED, {
+                        fail_payload: dict[str, Any] = {
                             "code": type(error).__name__,
                             "message": redact_credentials(str(error)).strip() or type(error).__name__,
                             "retryable": False,
-                        }, "model-failed"))
+                        }
+                        if subagent_id is not None:
+                            fail_payload["subagent_id"] = subagent_id
+                        send(response(MessageType.MODEL_FAILED, fail_payload, "model-failed"))
                         continue
                     # Atomic ModelPorts can still return buffered deltas. Production
                     # Desktop uses ``stream`` above and therefore reaches the UI as
                     # each Provider fragment arrives.
-                    for delta in result.deltas:
-                        send(response(MessageType.MODEL_CHUNK, {"delta": delta}, "model-chunk"))
-                    send(response(MessageType.MODEL_COMPLETED, {
+                    completed_payload: dict[str, Any] = {
                         "content": result.content or "".join(result.deltas),
                         "tool_calls": [dict(value) for value in result.tool_calls],
                         "finish_reason": result.finish_reason,
                         "reasoning_summary": result.reasoning_summary,
-                    }, "model-completed"))
+                    }
+                    if subagent_id is not None:
+                        completed_payload["subagent_id"] = subagent_id
+                    for delta in result.deltas:
+                        chunk_payload = {"delta": delta}
+                        if subagent_id is not None:
+                            chunk_payload["subagent_id"] = subagent_id
+                        send(response(MessageType.MODEL_CHUNK, chunk_payload, "model-chunk"))
+                    send(response(MessageType.MODEL_COMPLETED, completed_payload, "model-completed"))
                 elif outbound.message_type is MessageType.TOOL_CALL_REQUEST:
                     result = await self._tool(outbound.payload)
                     if result.call_id != outbound.payload.get("call_id"):

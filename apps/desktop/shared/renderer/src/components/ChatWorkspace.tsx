@@ -249,7 +249,7 @@ export interface ChatSubmitOptions {
   agentName?: string;
   draftParts?: ChatDraftPart[];
   forkQueueAgentAssignments?: ChatForkQueueAgentAssignment[];
-  goalConfirmationRequired?: boolean;
+  planMode?: boolean;
   model?: string;
   replaceFromMessageId?: string;
   runtimeMode?: ChatRuntimeMode | null;
@@ -557,10 +557,10 @@ function ChatWorkspaceImpl({
   const materialRoleRequestRef = useRef(0);
   const materialConsistencyRequestRef = useRef(0);
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>(defaultThinkingEffort);
-  const [taskInteractionMode, setTaskInteractionMode] = useState<"normal" | "confirm_goal">("normal");
+  const [taskInteractionMode, setTaskInteractionMode] = useState<"normal" | "plan">("normal");
   const [searchOpen, setSearchOpen] = useState(false);
   const [metaMenuOpen, setMetaMenuOpen] = useState<"configuration" | "skill" | null>(null);
-  const [configurationSection, setConfigurationSection] = useState<"agent" | "model" | "thinking" | "task" | null>(null);
+  const [configurationSection, setConfigurationSection] = useState<"model" | "thinking" | "task" | null>(null);
   const [configurationSubmenuPosition, setConfigurationSubmenuPosition] = useState({ top: 0, left: 0, maxHeight: 220 });
   const [installedSkills, setInstalledSkills] = useState<GatewaySkill[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
@@ -724,6 +724,43 @@ function ChatWorkspaceImpl({
   const turnRailNavigationTargetRef = useRef<string | null>(null);
   const turnRailNavigationTimerRef = useRef<number | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
+  // Undo/redo history for the controlled textarea.  The browser's native
+  // undo stack is reset every time React writes `value` back into the
+  // element, so we maintain our own past/present/future triple.
+  const inputHistoryRef = useRef<{ past: string[]; present: string; future: string[]; lastExternal: string }>({
+    past: [],
+    present: "",
+    future: [],
+    lastExternal: "",
+  });
+  // Push the current value onto the undo stack, clearing redo.  Called before
+  // every programmatic mutation (insertTextAtCursor, slash commands, etc.).
+  const pushInputHistory = useCallback((snapshot: string): void => {
+    const history = inputHistoryRef.current;
+    // Collapse consecutive duplicates (e.g. multiple cursor moves).
+    if (history.past.at(-1) !== snapshot) {
+      history.past.push(snapshot);
+      if (history.past.length > 200) history.past.shift();
+    }
+    history.future = [];
+  }, []);
+
+  // Track input prop changes from outside the textarea (e.g. voice transcript
+  // insertion, edit-and-resend restore, slash command auto-complete) so that
+  // the undo history stays in sync with external mutations.
+  useEffect(() => {
+    const history = inputHistoryRef.current;
+    if (input !== history.present) {
+      // Only record external-driven changes (not our own undo/redo calls).
+      if (input !== history.lastExternal) {
+        history.past.push(history.present);
+        if (history.past.length > 200) history.past.shift();
+        history.future = [];
+      }
+      history.present = input;
+      history.lastExternal = input;
+    }
+  }, [input]);
 
   useEffect(() => {
     if (composerFocusRequest <= 0 || conversationHistoryPending) return undefined;
@@ -1128,8 +1165,8 @@ function ChatWorkspaceImpl({
   const thinkingEffortMenuLabel = showThinkingEffort
     ? thinkingEffortLabel
     : (zh ? "当前模型不支持" : "Not supported by this model");
-  const taskInteractionModeLabel = taskInteractionMode === "confirm_goal"
-    ? (zh ? "目标" : "Goal")
+  const taskInteractionModeLabel = taskInteractionMode === "plan"
+    ? (zh ? "计划" : "Plan")
     : (zh ? "常规" : "Normal");
   const composerConfigurationSummary = [
     activeAgentName,
@@ -1937,6 +1974,63 @@ function ChatWorkspaceImpl({
   async function submitDuplexText(): Promise<void> { if (attachments.length || externalAttachments.length || inlineMentionAttachments.length) { setVoiceError(zh ? "实时语音中的文字消息暂不支持附件；请先移除附件。" : "Text messages inside Realtime voice do not support attachments yet. Remove attachments first."); return; } const value = input.trim(); if (!value) return; const submitted = await duplexVoiceInput.sendText(value, duplexTextStrategy); if (submitted) { onInputChange(""); setVoiceError(null); } else setVoiceError(zh ? "文字未发送。可能已有一条待发送消息，或实时连接不可用。" : "Text was not sent. Another message may already be pending, or Realtime is unavailable."); }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
+    // Undo: Ctrl+Z (Windows/Linux) or Cmd+Z (Mac).  Must be checked before
+    // the IME / submit logic below, and must not fire during IME composition.
+    const isUndo = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
+      && (event.key === "z" || event.key === "Z");
+    const isRedo = (event.ctrlKey || event.metaKey) && !event.altKey
+      && (event.key === "y" || event.key === "Y"
+        || ((event.key === "z" || event.key === "Z") && event.shiftKey));
+
+    if (isUndo && !isTextCompositionEvent(event.nativeEvent)) {
+      const history = inputHistoryRef.current;
+      if (history.past.length > 0) {
+        event.preventDefault();
+        const previous = history.past.pop()!;
+        history.future.unshift(history.present);
+        history.present = previous;
+        // Mark as our own change so the sync effect does not double-record.
+        history.lastExternal = previous;
+        onInputChange(previous);
+        // Restore cursor to end after undo so the user can continue typing.
+        window.requestAnimationFrame(() => {
+          const textarea = textareaRef.current;
+          if (textarea) {
+            const pos = Math.min(previous.length, textarea.selectionStart);
+            textarea.setSelectionRange(pos, pos);
+          }
+        });
+      }
+      return;
+    }
+    if (isRedo && !isTextCompositionEvent(event.nativeEvent)) {
+      const history = inputHistoryRef.current;
+      if (history.future.length > 0) {
+        event.preventDefault();
+        const next = history.future.shift()!;
+        history.past.push(history.present);
+        history.present = next;
+        history.lastExternal = next;
+        onInputChange(next);
+        window.requestAnimationFrame(() => {
+          const textarea = textareaRef.current;
+          if (textarea) {
+            const pos = Math.min(next.length, textarea.selectionStart);
+            textarea.setSelectionRange(pos, pos);
+          }
+        });
+      }
+      return;
+    }
+
+    // ESC closes the tools menu when open.
+    if (event.key === "Escape" && toolsOpen) {
+      event.preventDefault();
+      setToolsOpen(false);
+      attachmentButtonRef.current?.focus();
+      return;
+    }
+
     if (!shouldSubmitTextInput(event.nativeEvent)) return;
     event.preventDefault();
     if (decideWeChatComposerSubmit({
@@ -1977,6 +2071,23 @@ function ChatWorkspaceImpl({
     textareaRef.current?.focus({ preventScroll: true });
   }
 
+  function startEditUserMessage(userMessageId: string): void {
+    const user = messages.find((message) => message.id === userMessageId && message.role === "user");
+    if (!user) return;
+    if (!pendingReplaceFromMessageId) {
+      editResendBackupRef.current = { input, attachments };
+    }
+    onInputChange(user.content);
+    setPendingReplaceFromMessageId(user.id);
+    setAttachments(user.attachments?.length
+      ? user.attachments.map((attachment) => ({
+          ...attachment,
+          id: `${attachment.path || attachment.name || "attachment"}-${crypto.randomUUID()}`,
+        }))
+      : []);
+    textareaRef.current?.focus({ preventScroll: true });
+  }
+
   function cancelEditAndResend(): void {
     const backup = editResendBackupRef.current;
     setPendingReplaceFromMessageId(null);
@@ -1995,7 +2106,7 @@ function ChatWorkspaceImpl({
       {
         agentId: selectedAgentId,
         agentName: activeAgentName,
-        goalConfirmationRequired: isLocalOpenDrSaiAgent && taskInteractionMode === "confirm_goal",
+        planMode: isLocalOpenDrSaiAgent && taskInteractionMode === "plan",
         model: selectedModelName,
         replaceFromMessageId: user.id,
         runtimeMode: currentRuntimeMode,
@@ -2040,7 +2151,7 @@ function ChatWorkspaceImpl({
           forkQueueAgentSelections,
           agentOptions,
         ),
-        goalConfirmationRequired: isLocalOpenDrSaiAgent && taskInteractionMode === "confirm_goal",
+        planMode: isLocalOpenDrSaiAgent && taskInteractionMode === "plan",
         model: selectedModelName,
         runtimeMode: currentRuntimeMode,
         skillName: selectedSkillName,
@@ -2278,12 +2389,14 @@ function ChatWorkspaceImpl({
   function insertTextAtCursor(text: string): void {
     const textarea = textareaRef.current;
     if (!textarea) {
+      pushInputHistory(input);
       onInputChange(input ? `${input}${text}` : text);
       return;
     }
     const start = textarea.selectionStart ?? input.length;
     const end = textarea.selectionEnd ?? start;
     const next = `${input.slice(0, start)}${text}${input.slice(end)}`;
+    pushInputHistory(input);
     onInputChange(next);
     window.setTimeout(() => {
       textarea.focus();
@@ -2625,7 +2738,7 @@ function ChatWorkspaceImpl({
     textareaRef.current?.focus();
   }
 
-  function selectTaskInteractionMode(mode: "normal" | "confirm_goal"): void {
+  function selectTaskInteractionMode(mode: "normal" | "plan"): void {
     setTaskInteractionMode(mode);
     setMetaMenuOpen(null);
     setConfigurationSection(null);
@@ -3224,6 +3337,16 @@ function ChatWorkspaceImpl({
                   onDelete={onDeleteMessage}
                 />
               ) : null}
+              {message.role === "user" && message.content ? (
+                <UserMessageActions
+                  content={message.content}
+                  messageId={message.id}
+                  zh={zh}
+                  turnActionsDisabled={Boolean(activeRequestId) || !canChat}
+                  onEditAndResend={startEditUserMessage}
+                  onDelete={onDeleteMessage}
+                />
+              ) : null}
             </div>
           </VirtualizedMessage>
           );
@@ -3265,96 +3388,15 @@ function ChatWorkspaceImpl({
         </div>
       )}
       {emptyChat && !conversationHistoryPending && (
-        <div className={`empty-chat-intro${introMenuOpen ? " menu-open" : ""}`} role="group" aria-label={zh ? "新建会话" : "New conversation"}>
+        <div className="empty-chat-intro" role="group" aria-label={zh ? "新建会话" : "New conversation"}>
           <img className="empty-chat-logo" src={drsaiLogo} alt="OpenDrSai" />
           <h1>
             <span>
-              {zh ? "在" : "In"}
-              <span className="empty-chat-selector" ref={introMenuOpen === "workspace" ? introPickerRef : undefined}>
-                <button
-                  type="button"
-                  className="empty-chat-selector-trigger"
-                  title={`${activeWorkspaceName} · ${workspaceLocationLabel}`}
-                  aria-expanded={introMenuOpen === "workspace"}
-                  onClick={() => toggleIntroMenu("workspace")}
-                >
-                  <strong>{activeWorkspaceName}</strong>
-                  <ChevronDown size={17} aria-hidden />
-                </button>
-                {introMenuOpen === "workspace" ? (
-                  <div className="empty-chat-selector-menu" role="dialog" aria-label={zh ? "切换工作区" : "Switch workspace"}>
-                    <label className="empty-chat-selector-search">
-                      <Search size={15} aria-hidden />
-                      <input
-                        autoFocus
-                        value={introSearchQuery}
-                        onChange={(event) => setIntroSearchQuery(event.target.value)}
-                        placeholder={zh ? "搜索工作区" : "Search workspaces"}
-                      />
-                    </label>
-                    <div className="empty-chat-selector-list">
-                      {filteredIntroWorkspaces.map((workspace) => (
-                        <button
-                          type="button"
-                          key={workspace.id}
-                          className={workspace.id === selectedWorkspaceId ? "active" : ""}
-                          onClick={() => selectWorkspace(workspace.id)}
-                        >
-                          {workspace.location === "remote" ? <Globe2 size={16} /> : <Folder size={16} />}
-                          <span><b>{workspace.name}</b><small>{workspace.location === "remote" ? (zh ? "远程" : "Remote") : (zh ? "本机" : "Local")}</small></span>
-                          {workspace.id === selectedWorkspaceId ? <Check size={16} aria-label={zh ? "当前工作区" : "Current workspace"} /> : null}
-                        </button>
-                      ))}
-                      {filteredIntroWorkspaces.length === 0 ? <p>{zh ? "没有匹配的工作区" : "No matching workspaces"}</p> : null}
-                    </div>
-                  </div>
-                ) : null}
-              </span>
-              {zh ? "工作区，" : "workspace,"}
-            </span>
-            <span>
-              {zh ? "用" : "What should we do with"}
-              <span className="empty-chat-selector" ref={introMenuOpen === "agent" ? introPickerRef : undefined}>
-                <button
-                  type="button"
-                  className="empty-chat-selector-trigger"
-                  disabled={!hasAgentOptions}
-                  aria-expanded={introMenuOpen === "agent"}
-                  onClick={() => toggleIntroMenu("agent")}
-                >
-                  <strong>{activeAgentName}</strong>
-                  <ChevronDown size={17} aria-hidden />
-                </button>
-                {introMenuOpen === "agent" ? (
-                  <div className="empty-chat-selector-menu" role="dialog" aria-label={zh ? "切换智能体" : "Switch agent"}>
-                    <label className="empty-chat-selector-search">
-                      <Search size={15} aria-hidden />
-                      <input
-                        autoFocus
-                        value={introSearchQuery}
-                        onChange={(event) => setIntroSearchQuery(event.target.value)}
-                        placeholder={zh ? "搜索智能体" : "Search agents"}
-                      />
-                    </label>
-                    <div className="empty-chat-selector-list">
-                      {filteredIntroAgents.map((agent) => (
-                        <button
-                          type="button"
-                          key={agent.id}
-                          className={agent.id === selectedAgentId ? "active" : ""}
-                          onClick={() => selectAgent(agent.id)}
-                        >
-                          <AgentInlineIcon agent={agent} size={16} />
-                          <span><b>{agent.name}</b><small>{getAgentOptionMeta(agent, zh)}</small></span>
-                          {agent.id === selectedAgentId ? <Check size={16} aria-label={zh ? "当前智能体" : "Current agent"} /> : null}
-                        </button>
-                      ))}
-                      {filteredIntroAgents.length === 0 ? <p>{zh ? "没有匹配的智能体" : "No matching agents"}</p> : null}
-                    </div>
-                  </div>
-                ) : null}
-              </span>
-              {zh ? "智能体，做什么呢？" : "?"}
+              {zh ? "在 " : "In "}
+              <strong>{activeWorkspaceName}</strong>
+              {zh ? " 工作区，用 " : " workspace, using "}
+              <strong>{activeAgentName}</strong>
+              {zh ? " 智能体，做什么呢？" : " agent, what should we do?"}
             </span>
           </h1>
           {emptyChatPreferenceNotice ? (
@@ -3697,54 +3739,73 @@ function ChatWorkspaceImpl({
                   type="button"
                   className="composer-icon-button"
                   aria-expanded={toolsOpen}
-                  aria-label={zh ? "添加附件" : "Add attachment"}
-                  title={zh ? "添加附件" : "Add attachment"}
+                  aria-label={zh ? "添加附件或工具" : "Add attachment or tool"}
+                  title={zh ? "添加附件或工具" : "Add attachment or tool"}
                   onClick={() => setToolsOpen((open) => !open)}
                 >
                   <Plus size={18} />
                 </button>
                 {toolsOpen && (
                   <div className="composer-tool-menu">
-                    <button type="button" onClick={() => openPreviewBrowser()}>
-                      <Globe2 size={15} />
-                      Open Preview
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!canAttachIdeCurrentFile}
-                      onClick={() => {
-                        onAttachIdeCurrentFile?.();
-                        setToolsOpen(false);
-                      }}
-                    >
-                      <FileCode2 size={15} />
-                      IDE current file
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!canAttachIdeCurrentSelection}
-                      onClick={() => {
-                        onAttachIdeCurrentSelection?.();
-                        setToolsOpen(false);
-                      }}
-                    >
-                      <TextCursorInput size={15} />
-                      IDE selection
-                    </button>
-                    <button type="button" onClick={() => onRefreshIdeContext?.()}>
-                      <RefreshCw size={15} />
-                      Refresh IDE context
-                    </button>
-                    <button type="button" onClick={addFiles}>
-                      <span data-testid="composer-add-file-label" hidden />
-                      <Paperclip size={15} />
-                      {zh ? "添加文件" : "Add File"}
-                    </button>
-                    <button type="button" onClick={addFolder}>
-                      <span data-testid="composer-add-folder-label" hidden />
-                      <FolderPlus size={15} />
-                      {zh ? "添加文件夹" : "Add Folder"}
-                    </button>
+                    {/* Attachments group — the core "+" functionality */}
+                    <div className="composer-tool-group" role="group" aria-label={zh ? "附件" : "Attachments"}>
+                      <button type="button" onClick={addFiles}>
+                        <span data-testid="composer-add-file-label" hidden />
+                        <Paperclip size={15} />
+                        {zh ? "添加文件" : "Add File"}
+                      </button>
+                      <button type="button" onClick={addFolder}>
+                        <span data-testid="composer-add-folder-label" hidden />
+                        <FolderPlus size={15} />
+                        {zh ? "添加文件夹" : "Add Folder"}
+                      </button>
+                    </div>
+                    {/* IDE integration group */}
+                    <div className="composer-tool-group" role="group" aria-label={zh ? "IDE 集成" : "IDE Integration"}>
+                      <button
+                        type="button"
+                        disabled={!canAttachIdeCurrentFile}
+                        title={!canAttachIdeCurrentFile ? (zh ? "需要先在 IDE 中打开文件" : "Open a file in the IDE first") : undefined}
+                        onClick={() => {
+                          onAttachIdeCurrentFile?.();
+                          setToolsOpen(false);
+                        }}
+                      >
+                        <FileCode2 size={15} />
+                        {zh ? "IDE 当前文件" : "IDE current file"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!canAttachIdeCurrentSelection}
+                        title={!canAttachIdeCurrentSelection ? (zh ? "需要先在 IDE 中选中文本" : "Select text in the IDE first") : undefined}
+                        onClick={() => {
+                          onAttachIdeCurrentSelection?.();
+                          setToolsOpen(false);
+                        }}
+                      >
+                        <TextCursorInput size={15} />
+                        {zh ? "IDE 选中文本" : "IDE selection"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled
+                        title={zh ? "当前版本暂不支持此功能" : "This feature is not currently supported"}
+                      >
+                        <RefreshCw size={15} />
+                        {zh ? "刷新 IDE 上下文" : "Refresh IDE context"}
+                      </button>
+                    </div>
+                    {/* Tools group */}
+                    <div className="composer-tool-group" role="group" aria-label={zh ? "工具" : "Tools"}>
+                      <button
+                        type="button"
+                        disabled
+                        title={zh ? "当前版本暂不支持此功能" : "This feature is not currently supported"}
+                      >
+                        <Globe2 size={15} />
+                        {zh ? "预览浏览器" : "Open Preview"}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -4078,20 +4139,13 @@ function ChatWorkspaceImpl({
                     }}
                   >
                     <div className="composer-configuration-rows">
-                      <button type="button" disabled={!hasAgentOptions} aria-expanded={configurationSection === "agent"} onMouseEnter={(event) => revealConfigurationSection("agent", event.currentTarget)} onFocus={(event) => revealConfigurationSection("agent", event.currentTarget)} onClick={(event) => revealConfigurationSection("agent", event.currentTarget)}><span><strong>{zh ? "智能体" : "Agent"}</strong><small>{activeAgentName}</small></span><ChevronRight size={14} /></button>
                       <button type="button" aria-expanded={configurationSection === "model"} onMouseEnter={(event) => revealConfigurationSection("model", event.currentTarget)} onFocus={(event) => revealConfigurationSection("model", event.currentTarget)} onClick={(event) => revealConfigurationSection("model", event.currentTarget)}><span><strong>{zh ? "模型" : "Model"}</strong><small>{activeModelName}</small></span><ChevronRight size={14} /></button>
                       <button type="button" disabled={!showThinkingEffort} aria-expanded={configurationSection === "thinking"} onMouseEnter={(event) => revealConfigurationSection("thinking", event.currentTarget)} onFocus={(event) => revealConfigurationSection("thinking", event.currentTarget)} onClick={(event) => revealConfigurationSection("thinking", event.currentTarget)}><span><strong>{zh ? "推理强度" : "Reasoning effort"}</strong><small>{thinkingEffortMenuLabel}</small></span><ChevronRight size={14} /></button>
-                      <button type="button" data-testid="composer-task-mode" disabled={!isLocalOpenDrSaiAgent || showStop} aria-expanded={configurationSection === "task"} onMouseEnter={(event) => revealConfigurationSection("task", event.currentTarget)} onFocus={(event) => revealConfigurationSection("task", event.currentTarget)} onClick={(event) => revealConfigurationSection("task", event.currentTarget)}><span><strong>{zh ? "任务模式" : "Task mode"}</strong><small>{taskInteractionModeLabel}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" data-testid="composer-plan-mode" disabled={!isLocalOpenDrSaiAgent || showStop} aria-expanded={configurationSection === "task"} onMouseEnter={(event) => revealConfigurationSection("task", event.currentTarget)} onFocus={(event) => revealConfigurationSection("task", event.currentTarget)} onClick={(event) => revealConfigurationSection("task", event.currentTarget)}><span><strong>{zh ? "计划模式" : "Plan mode"}</strong><small>{taskInteractionModeLabel}</small></span><ChevronRight size={14} /></button>
                     </div>
-                    {configurationSection ? <div className="composer-configuration-submenu" style={configurationSubmenuPosition} role="menu" aria-label={configurationSection === "agent" ? (zh ? "选择智能体" : "Choose agent") : configurationSection === "model" ? (zh ? "选择模型" : "Choose model") : configurationSection === "thinking" ? (zh ? "选择推理强度" : "Choose reasoning effort") : (zh ? "选择任务模式" : "Choose task mode")}>
+                    {configurationSection ? <div className="composer-configuration-submenu" style={configurationSubmenuPosition} role="menu" aria-label={configurationSection === "model" ? (zh ? "选择模型" : "Choose model") : configurationSection === "thinking" ? (zh ? "选择推理强度" : "Choose reasoning effort") : (zh ? "选择计划模式" : "Choose plan mode")}>
                       <div className="composer-configuration-options">
-                        {configurationSection === "agent" ? agentOptions.map((agent) => (
-                          <button key={agent.id} type="button" role="menuitemradio" aria-checked={agent.id === selectedAgentId} className={`composer-agent-option${agent.id === selectedAgentId ? " active" : ""}`} onClick={() => selectAgent(agent.id)}>
-                            <AgentInlineIcon agent={agent} size={16} />
-                            <span><strong>{agent.name}</strong><small>{getAgentOptionMeta(agent, zh)}</small></span>
-                            {agent.id === selectedAgentId ? <Check size={14} aria-hidden /> : null}
-                          </button>
-                        )) : configurationSection === "model" ? (hasModelOptions ? modelOptions.map((model) => {
+                        {configurationSection === "model" ? (hasModelOptions ? modelOptions.map((model) => {
                           const selected = (model.alias || model.model) === selectedModelName
                             && (!selectedModelProviderId || model.provider_id === selectedModelProviderId);
                           const primaryReady = supportsFullAgentPrimaryRuntime(model);
@@ -4109,9 +4163,9 @@ function ChatWorkspaceImpl({
                             <span><strong>{getThinkingEffortLabel(effort, zh)}</strong></span>
                             {effort === thinkingEffort ? <Check size={14} aria-hidden /> : null}
                           </button>
-                        )) : (["normal", "confirm_goal"] as const).map((mode) => (
-                          <button key={mode} type="button" role="menuitemradio" aria-checked={mode === taskInteractionMode} data-testid={`composer-task-mode-${mode}`} disabled={!isLocalOpenDrSaiAgent || showStop} className={mode === taskInteractionMode ? "active" : ""} onClick={() => selectTaskInteractionMode(mode)}>
-                            <span><strong>{mode === "normal" ? (zh ? "常规" : "Normal") : (zh ? "目标" : "Goal")}</strong><small>{mode === "normal" ? (zh ? "适合日常问答和简单任务，立即开始" : "Best for everyday questions and simple tasks; starts right away") : (zh ? "适合复杂任务，开始前与你核对需求和预期结果" : "Best for complex tasks; reviews your needs and expected result first")}</small></span>
+                        )) : (["normal", "plan"] as const).map((mode) => (
+                          <button key={mode} type="button" role="menuitemradio" aria-checked={mode === taskInteractionMode} data-testid={`composer-plan-mode-${mode}`} disabled={!isLocalOpenDrSaiAgent || showStop} className={mode === taskInteractionMode ? "active" : ""} onClick={() => selectTaskInteractionMode(mode)}>
+                            <span><strong>{mode === "normal" ? (zh ? "常规" : "Normal") : (zh ? "计划" : "Plan")}</strong><small>{mode === "normal" ? (zh ? "适合日常问答和简单任务，立即开始" : "Best for everyday questions and simple tasks; starts right away") : (zh ? "适合复杂任务，开始前与你深入讨论需求和方案" : "Best for complex tasks; interviews you relentlessly to align on the plan first")}</small></span>
                             {mode === taskInteractionMode ? <Check size={14} aria-hidden /> : null}
                           </button>
                         ))}
@@ -4711,6 +4765,66 @@ function StreamingStatus({
       <time>{zh ? `已执行 ${elapsedSeconds} 秒` : `Running ${elapsedSeconds}s`}</time>
       {message.firstFeedbackAt && message.startedAt ? <small>{zh ? "首个状态" : "First status"} {Math.max(0, message.firstFeedbackAt - message.startedAt)}ms</small> : null}
       {message.firstDeltaAt && message.startedAt ? <small>{zh ? "首个模型片段" : "First model delta"} {Math.max(0, message.firstDeltaAt - message.startedAt)}ms</small> : null}
+    </div>
+  );
+}
+
+function UserMessageActions({
+  content,
+  messageId,
+  zh,
+  turnActionsDisabled = false,
+  onEditAndResend,
+  onDelete,
+}: {
+  content: string;
+  messageId: string;
+  zh: boolean;
+  turnActionsDisabled?: boolean;
+  onEditAndResend?: (messageId: string) => void;
+  onDelete?: (messageId: string) => void;
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy(): Promise<void> {
+    try {
+      if (!await copyTextSafely(content)) return;
+    } catch {
+      return;
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <div className="message-actions user-message-actions" aria-live="polite">
+      <button type="button" onClick={() => void handleCopy()} title={zh ? "复制输入" : "Copy input"}>
+        {copied ? <Check size={13} /> : <ClipboardList size={13} />}
+        <span>{copied ? (zh ? "已复制" : "Copied") : (zh ? "复制" : "Copy")}</span>
+      </button>
+      {onEditAndResend ? (
+        <button
+          type="button"
+          data-testid={`user-message-action-edit-resend-${messageId}`}
+          disabled={turnActionsDisabled}
+          onClick={() => onEditAndResend(messageId)}
+          title={zh ? "编辑并重发" : "Edit & resend"}
+        >
+          <Pencil size={13} />
+          <span>{zh ? "编辑并重发" : "Edit & resend"}</span>
+        </button>
+      ) : null}
+      {onDelete ? (
+        <button
+          type="button"
+          data-testid={`user-message-action-delete-${messageId}`}
+          onClick={() => onDelete(messageId)}
+          title={zh ? "删除本条" : "Delete"}
+        >
+          <Trash2 size={13} />
+          <span>{zh ? "删除" : "Delete"}</span>
+        </button>
+      ) : null}
     </div>
   );
 }

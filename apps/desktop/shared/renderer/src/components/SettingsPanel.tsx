@@ -133,11 +133,16 @@ function androidRelativeTime(raw: string | null | undefined, language: AppLangua
   return language === "zh" ? `${days}天前` : `${days}d ago`;
 }
 
+/* Inline SVG data-URIs for provider logos (replaces dead new URL() calls to non-existent legacy/ paths). */
+const deepseekLogoSvg = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#4D6BFE" d="M12 0a12 12 0 100 24 12 12 0 000-24zm6.025 9.275c.382.45.65 1.05.75 1.725h-4.8c-.825 0-1.5-.675-1.5-1.5v-4.725c.675.113 1.275.383 1.725.762l3.075 3.075c.3.3.525.6.45.663z M18.775 12.75c-.1.675-.368 1.275-.762 1.725l-3.075 3.075c-.45.382-1.05.65-1.725.75v-4.8c0-.825.675-1.5 1.5-1.5h4.063z M11.25 18.775c-.675-.1-1.275-.368-1.725-.762l-3.075-3.075c-.382-.45-.65-1.05-.75-1.725h4.8c.825 0 1.5.675 1.5 1.5v4.062z M5.525 11.25c.1-.675.368-1.275.762-1.725l3.075-3.075c.45-.382 1.05-.65 1.725-.75v4.8c0 .825-.675 1.5-1.5 1.5H5.525z"/></svg>`)}`;
+const geminiLogoSvg = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#1BA1E2" d="M12 24c0-6.627 5.373-12 12-12-6.627 0-12-5.373-12-12C12 6.627 6.627 12 0 12c6.627 0 12 5.373 12 12z"/></svg>`)}`;
+const openrouterLogoSvg = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" rx="4" fill="#1C1C1C"/><path d="M6 8h4v2H8v6H6V8zm6 0h2v8h-2V8zm6 0v8h-2v-2h2V8z" fill="#fff"/></svg>`)}`;
+
 const bundledModelProviderLogos: Record<string, string> = {
-  deepseek: new URL("../../../../legacy/drsai-desktop/src/renderer/src/assets/logos/deepseek-color.svg", import.meta.url).href,
+  deepseek: deepseekLogoSvg,
   openai: openAiLogo,
-  gemini: new URL("../../../../legacy/drsai-desktop/src/renderer/src/assets/logos/gemini-color.svg", import.meta.url).href,
-  openrouter: new URL("../../../../legacy/drsai-desktop/src/renderer/src/assets/logos/openrouter.svg", import.meta.url).href,
+  gemini: geminiLogoSvg,
+  openrouter: openrouterLogoSvg,
 };
 
 const BUILTIN_MODEL_PROVIDER_PRESETS: MyDrSaiProviderPreset[] = [

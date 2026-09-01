@@ -137,8 +137,6 @@ const MAX_WORKSPACE_NAME_CHARS = 120;
 const MAX_ATTACHMENTS = 20;
 const MAX_ATTACHMENT_PATH_CHARS = 2048;
 const MAX_ATTACHMENT_NAME_CHARS = 260;
-const MAX_ATTACHMENT_CONTEXT_FILES = 5;
-const MAX_ATTACHMENT_CONTEXT_FILE_BYTES = 64_000;
 const MAX_ATTACHMENT_CONTEXT_TOTAL_CHARS = 80_000;
 export const NATIVE_IMAGE_FILE_LIMIT_BYTES = 20 * 1024 * 1024;
 export const NATIVE_IMAGE_TOTAL_LIMIT_BYTES = 50 * 1024 * 1024;
@@ -1414,10 +1412,18 @@ export async function stageAttachments(
         refs.push(reference);
         const size = sourceInfo.size;
         const sha256 = await sha256File(sourceAbs, signal);
+        // For image files, include base64 data as content so the Runtime can
+        // create multimodal messages (matching ui-tui's design).
+        let imageContent: string | undefined;
+        if (imageMime) {
+          const imageBuffer = await readFile(sourceAbs);
+          imageContent = `data:${imageMime};base64,${imageBuffer.toString("base64")}`;
+        }
         resources.push({
           protocol: "oaep.input/1", resource_id: resourceId, kind: "file",
           name: attachment.name, permission: "read", status: "encoded", reference, size_bytes: size, sha256,
           ...(imageMime ? { mime: imageMime } : {}),
+          ...(imageContent ? { content: imageContent } : {}),
         });
         continue;
       }
@@ -1446,6 +1452,13 @@ export async function stageAttachments(
       const destRel = relative(root, destPath).replace(/\\/g, "/");
       const size = (await stat(destPath).catch(() => null))?.size;
       const sha256 = await sha256File(destPath, signal);
+      // For image files, include base64 data as content so the Runtime can
+      // create multimodal messages (matching ui-tui's design).
+      let imageContent: string | undefined;
+      if (imageMime) {
+        const imageBuffer = await readFile(destPath);
+        imageContent = `data:${imageMime};base64,${imageBuffer.toString("base64")}`;
+      }
       staged.push({ ...attachment, path: destPath, name: destName });
       refs.push(destRel);
       resources.push({
@@ -1454,6 +1467,7 @@ export async function stageAttachments(
         ...(typeof size === "number" ? { size_bytes: size } : {}),
         ...(imageMime ? { mime: imageMime } : {}),
         sha256,
+        ...(imageContent ? { content: imageContent } : {}),
       });
     } catch (error) {
       if (signal?.aborted) throw signal.reason ?? error;
@@ -2489,6 +2503,10 @@ export interface AttachmentContextItem {
   load?: "full" | "partial" | "none";
   sourceChars?: number;
   loadedChars?: number;
+  /** True for image files that have been base64-encoded as a data URL in content. */
+  isImage?: boolean;
+  /** MIME type for image attachments (e.g. "image/png"). */
+  mime?: string;
 }
 
 export async function enrichAttachmentsWithMaterialRoles(
@@ -2543,7 +2561,6 @@ export async function buildAttachmentContext(attachments: ChatRequest["attachmen
   if (!attachments?.length) return [];
   const context: AttachmentContextItem[] = [];
   let includedFiles = 0;
-  let totalChars = 0;
   for (const attachment of attachments) {
     if (
       attachment.kind === "browser" ||
@@ -2598,55 +2615,65 @@ export async function buildAttachmentContext(attachments: ChatRequest["attachmen
       });
       continue;
     }
-    if (includedFiles >= MAX_ATTACHMENT_CONTEXT_FILES) {
-      context.push(fileMetadataContext(attachment, "file-limit-exceeded"));
+    // --- Image file: read, base64-encode, and prepare for multimodal injection ---
+    if (NATIVE_IMAGE_EXTENSIONS.has(extname(attachment.name || attachment.path).toLowerCase())) {
+      try {
+        const info = await stat(attachment.path);
+        if (!info.isFile()) {
+          context.push({ ...attachment, included: false, reason: "not-a-file", load: "none" });
+          continue;
+        }
+        if (info.size > NATIVE_IMAGE_FILE_LIMIT_BYTES) {
+          context.push(fileMetadataContext(attachment, "file-too-large", info.size));
+          continue;
+        }
+        const buffer = await readFile(attachment.path);
+        const mime = inspectNativeImageBytes(buffer, attachment.name, true);
+        if (!mime) {
+          context.push(fileMetadataContext(attachment, "binary-file", info.size));
+          continue;
+        }
+        const dataUrl = `data:${mime};base64,${buffer.toString("base64")}`;
+        context.push({
+          ...attachment,
+          included: true,
+          sizeBytes: info.size,
+          content: dataUrl,
+          load: "full",
+          sourceChars: dataUrl.length,
+          loadedChars: dataUrl.length,
+          // Mark as image so withAttachmentContext can handle it differently
+          isImage: true,
+          mime,
+        } as AttachmentContextItem & { isImage: true; mime: string });
+        includedFiles += 1;
+      } catch {
+        context.push({ ...attachment, included: false, reason: "unreadable", load: "none" });
+      }
       continue;
     }
+    // --- Non-image file: only pass filename/path metadata, do NOT read content ---
+    // The agent will use its own file-reading tools to access the file.
     try {
       const info = await stat(attachment.path);
       if (!info.isFile()) {
         context.push({ ...attachment, included: false, reason: "not-a-file", load: "none" });
         continue;
       }
-      if (info.size > MAX_ATTACHMENT_CONTEXT_FILE_BYTES) {
-        context.push(fileMetadataContext(attachment, "file-too-large", info.size));
-        continue;
-      }
-      const buffer = await readFile(attachment.path);
-      if (looksBinary(buffer)) {
-        context.push(fileMetadataContext(attachment, "binary-file", info.size));
-        continue;
-      }
-      const content = buffer.toString("utf8").replace(/\u0000/g, "").trim();
-      if (!content) {
-        context.push({
-          ...attachment, included: false, reason: "empty-file", sizeBytes: info.size,
-          load: "none", sourceChars: 0, loadedChars: 0,
-        });
-        continue;
-      }
-      const remainingChars = MAX_ATTACHMENT_CONTEXT_TOTAL_CHARS - totalChars;
-      if (remainingChars <= 0) {
-        context.push({
-          ...attachment, included: false, reason: "context-limit-exceeded", sizeBytes: info.size,
-          load: "none", sourceChars: content.length, loadedChars: 0,
-        });
-        continue;
-      }
-      const clipped = content.length > remainingChars ? content.slice(0, remainingChars) : content;
-      const truncated = clipped.length < content.length;
+      const content = [
+        `File: ${attachment.name}`,
+        `Path: ${attachment.path}`,
+        attachment.title ? `Title: ${attachment.title}` : "",
+        attachment.note ? `Note: ${attachment.note}` : "",
+      ].filter(Boolean).join("\n");
       context.push({
         ...attachment,
         included: true,
-        reason: truncated ? "truncated" : undefined,
         sizeBytes: info.size,
-        content: clipped,
-        load: truncated ? "partial" : "full",
-        sourceChars: content.length,
-        loadedChars: clipped.length,
+        content,
+        load: "none",
+        loadedChars: 0,
       });
-      includedFiles += 1;
-      totalChars += clipped.length;
     } catch {
       context.push({ ...attachment, included: false, reason: "unreadable", load: "none" });
     }
@@ -2693,6 +2720,17 @@ export function withAttachmentContext(messages: ChatMessage[], context: Attachme
       ...describeAttachmentCoverage(context),
     ].join("\n"),
     ...included.map((item, index) => {
+      // For image attachments, do NOT inject the base64 data URL into the
+      // text prompt — it is sent as multimodal content via input_resources.
+      if (item.isImage) {
+        return [
+          `Attachment ${index + 1}: ${item.name}`,
+          `Kind: ${item.kind}`,
+          `Path: ${item.path}`,
+          `MIME: ${item.mime || "unknown"}`,
+          `Loaded: image — sent as multimodal content alongside this text`,
+        ].join("\n");
+      }
       const load = describeAttachmentLoad(item);
       return [
         `Attachment ${index + 1}: ${item.name}`,
@@ -2768,17 +2806,6 @@ function describeAttachmentLoad(item: AttachmentContextItem): string | undefined
   }
   if (item.load === "none") return "metadata only — this file's text was not provided";
   return undefined;
-}
-
-function looksBinary(buffer: Buffer): boolean {
-  if (!buffer.length) return false;
-  const sample = buffer.subarray(0, Math.min(buffer.length, 4096));
-  let suspicious = 0;
-  for (const byte of sample) {
-    if (byte === 0) return true;
-    if (byte < 7 || (byte > 14 && byte < 32)) suspicious += 1;
-  }
-  return suspicious / sample.length > 0.08;
 }
 
 async function readSse(

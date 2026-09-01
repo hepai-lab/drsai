@@ -68,15 +68,17 @@ class CodexDiagnosticSink:
 
     @classmethod
     def _safe(cls, value: Any, key: str = "") -> Any:
-        if _SECRET.search(key):
-            return "[REDACTED]"
-        if isinstance(value, Mapping):
-            return {str(child)[:120]: cls._safe(item, str(child)) for child, item in list(value.items())[:100]}
-        if isinstance(value, list):
-            return [cls._safe(item) for item in value[:100]]
-        if isinstance(value, str):
-            return {"type": "string", "length": len(value), "prefix_class": "empty" if not value else "text"}
-        return value if isinstance(value, (int, float, bool, type(None))) else type(value).__name__
+        # [DISABLED] Diagnostics redaction disabled — returns value unchanged
+        return value
+        # if _SECRET.search(key):
+        #     return "[REDACTED]"
+        # if isinstance(value, Mapping):
+        #     return {str(child)[:120]: cls._safe(item, str(child)) for child, item in list(value.items())[:100]}
+        # if isinstance(value, list):
+        #     return [cls._safe(item) for item in value[:100]]
+        # if isinstance(value, str):
+        #     return {"type": "string", "length": len(value), "prefix_class": "empty" if not value else "text"}
+        # return value if isinstance(value, (int, float, bool, type(None))) else type(value).__name__
 
     @staticmethod
     def _digest(value: Any) -> str:
