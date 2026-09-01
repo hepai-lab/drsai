@@ -45,6 +45,19 @@ def test_knowledge_search_is_read_only_without_approval() -> None:
     assert metadata["approval_mode"] == "none"
 
 
+def test_gfs_tools_do_not_require_desktop_approval() -> None:
+    # Same failure mode as knowledge_search: unknown-tool default →
+    # external_write+required → Desktop auto-rejects → empty tool result.
+    for name in ("gfs_ls", "gfs_stat", "gfs_read", "gfs_share_url"):
+        metadata = _desktop_execution_metadata(name, f"workbench:{name}")
+        assert metadata["risk"] == "read_only", name
+        assert metadata["approval_mode"] == "none", name
+    for name in ("gfs_write", "gfs_upload", "gfs_download", "gfs_delete"):
+        metadata = _desktop_execution_metadata(name, f"workbench:{name}")
+        assert metadata["risk"] == "local_write", name
+        assert metadata["approval_mode"] == "none", name
+
+
 def test_explicit_local_memory_tool_satisfies_source_attribution_request() -> None:
     requirement = build_tool_decision_requirement(
         "Call retrieve_from_memory exactly once and cite source marker P3-KB-42.",

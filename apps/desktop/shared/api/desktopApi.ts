@@ -1565,6 +1565,48 @@ export interface GatewayAvailableSkill extends GatewaySkill {
   installed: boolean;
 }
 
+/** WebUI public Skills Square item (`GET /api/skills?type=public`). */
+export interface DesktopPublicSkill {
+  slug: string;
+  name: string;
+  description: string;
+  owner?: string;
+  version?: string;
+  downloads?: number;
+  tags?: string[];
+  source?: string;
+  updatedAt?: string;
+  installed: boolean;
+}
+
+export interface DesktopPublicSkillsPage {
+  items: DesktopPublicSkill[];
+  page: number;
+  pageSize: number;
+  total: number;
+  hasNext: boolean;
+  /** Catalog totals for the current search (not limited to the current page). */
+  installedCount: number;
+  notInstalledCount: number;
+}
+
+export interface DesktopPublicSkillsListRequest {
+  page?: number;
+  pageSize?: number;
+  q?: string;
+  tags?: string;
+  sort?: "name" | "time";
+  installFilter?: "all" | "installed" | "not_installed";
+  userId?: string;
+}
+
+export interface DesktopPublicSkillInstallRequest {
+  slug: string;
+  name?: string;
+  userId?: string;
+  threadId?: string;
+}
+
 export interface GatewaySkillInstallRequest {
   name: string;
   content?: string;
@@ -1597,9 +1639,59 @@ export interface GfsUploadRequest {
   remotePath: string;
 }
 
+export interface GfsUploadContentRequest {
+  remotePath: string;
+  contentBase64: string;
+  contentType?: string;
+}
+
 export interface GfsDownloadRequest {
   remotePath: string;
   localPath: string;
+}
+
+export interface GfsConfigStatus {
+  configured: boolean;
+  enabled: boolean;
+  needsSetup: boolean;
+  mode: string;
+  bucket?: string;
+  email?: string;
+  endpoint?: string;
+  accessKey?: string;
+  secretKey?: string;
+  accessKeyMasked?: string;
+  secretKeyMasked?: string;
+  portalUrl: string;
+  homeEnvPath?: string;
+  cliConfigPath?: string;
+}
+
+export interface GfsConfigSaveRequest {
+  accessKey: string;
+  secretKey: string;
+  bucket: string;
+  email?: string;
+  endpoint?: string;
+}
+
+export interface GfsConfigSaveResult extends GfsConfigStatus {
+  ok: boolean;
+  message?: string;
+}
+
+export interface GfsConfigClearResult extends GfsConfigStatus {
+  ok: boolean;
+  message?: string;
+}
+
+export interface GfsHealthcheckResult {
+  ok: boolean;
+  bucket?: string;
+  mode?: string;
+  reason?: string;
+  needsSetup?: boolean;
+  portalUrl?: string;
 }
 
 export type DesktopWorkflowTemplateStatus =
@@ -6212,8 +6304,15 @@ export interface DesktopApi {
   // Skills (gateway-managed)
   listInstalledSkills(request?: { userId?: string }): Promise<GatewaySkill[]>;
   listAvailableSkills(request?: { userId?: string }): Promise<GatewayAvailableSkill[]>;
+  listPublicSkillsSquare(request?: DesktopPublicSkillsListRequest): Promise<DesktopPublicSkillsPage>;
   getSkillContent(request: { skillPath: string }): Promise<{ path: string; content: string }>;
   installSkill(request: GatewaySkillInstallRequest): Promise<{ status: string; name: string; path: string }>;
+  installPublicSkillSquare(request: DesktopPublicSkillInstallRequest): Promise<{
+    status: string;
+    name: string;
+    path: string;
+    files: number;
+  }>;
   updateSkill(request: { name: string; content: string; userId?: string }): Promise<{ status: string; name: string; path: string }>;
   uninstallSkill(request: { name: string; userId?: string }): Promise<{ status: string; name: string }>;
   reloadSkills(request?: { threadId?: string; userId?: string }): Promise<{ ok: boolean; reloaded: boolean }>;
@@ -6228,12 +6327,19 @@ export interface DesktopApi {
     contentType?: string;
   }): Promise<{ path: string; etag: string }>;
   gfsUploadFile(request: GfsUploadRequest): Promise<{ path: string; size: number }>;
+  gfsUploadContent(request: GfsUploadContentRequest): Promise<{ path: string; size: number; etag?: string }>;
   gfsDownloadFile(request: GfsDownloadRequest): Promise<{ localPath: string; size: number }>;
+  gfsDownloadToDisk(request: {
+    path: string;
+  }): Promise<{ canceled: boolean; localPath?: string; size?: number }>;
   gfsDelete(request: { path: string }): Promise<{ path: string }>;
   gfsShareUrl(request: {
     path: string;
     ttlMinutes?: number;
     responseContentType?: string;
   }): Promise<{ url: string; expiresAt: string }>;
-  gfsHealthcheck(): Promise<{ ok: boolean; bucket?: string; mode?: string; reason?: string }>;
+  gfsHealthcheck(): Promise<GfsHealthcheckResult>;
+  gfsGetConfig(): Promise<GfsConfigStatus>;
+  gfsSaveConfig(request: GfsConfigSaveRequest): Promise<GfsConfigSaveResult>;
+  gfsClearConfig(): Promise<GfsConfigClearResult>;
 }

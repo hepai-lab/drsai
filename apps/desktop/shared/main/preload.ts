@@ -733,12 +733,28 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:list-installed-skills", request),
   listAvailableSkills: (request?: { userId?: string }): Promise<GatewayAvailableSkill[]> =>
     ipcRenderer.invoke("desktop:list-available-skills", request),
+  listPublicSkillsSquare: (request?: {
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    tags?: string;
+    sort?: "name" | "time";
+    installFilter?: "all" | "installed" | "not_installed";
+    userId?: string;
+  }) => ipcRenderer.invoke("desktop:list-public-skills-square", request),
   getSkillContent: (request: { skillPath: string }): Promise<{ path: string; content: string }> =>
     ipcRenderer.invoke("desktop:get-skill-content", request),
   installSkill: (
     request: GatewaySkillInstallRequest,
   ): Promise<{ status: string; name: string; path: string }> =>
     ipcRenderer.invoke("desktop:install-skill", request),
+  installPublicSkillSquare: (request: {
+    slug: string;
+    name?: string;
+    userId?: string;
+    threadId?: string;
+  }): Promise<{ status: string; name: string; path: string; files: number }> =>
+    ipcRenderer.invoke("desktop:install-public-skill-square", request),
   updateSkill: (request: {
     name: string;
     content: string;
@@ -772,10 +788,20 @@ const api: DesktopApi = {
     request: GfsUploadRequest,
   ): Promise<{ path: string; size: number }> =>
     ipcRenderer.invoke("desktop:gfs-upload-file", request),
+  gfsUploadContent: (request: {
+    remotePath: string;
+    contentBase64: string;
+    contentType?: string;
+  }): Promise<{ path: string; size: number; etag?: string }> =>
+    ipcRenderer.invoke("desktop:gfs-upload-content", request),
   gfsDownloadFile: (
     request: GfsDownloadRequest,
   ): Promise<{ localPath: string; size: number }> =>
     ipcRenderer.invoke("desktop:gfs-download-file", request),
+  gfsDownloadToDisk: (
+    request: { path: string },
+  ): Promise<{ canceled: boolean; localPath?: string; size?: number }> =>
+    ipcRenderer.invoke("desktop:gfs-download-to-disk", request),
   gfsDelete: (request: { path: string }): Promise<{ path: string }> =>
     ipcRenderer.invoke("desktop:gfs-delete", request),
   gfsShareUrl: (request: {
@@ -789,7 +815,54 @@ const api: DesktopApi = {
     bucket?: string;
     mode?: string;
     reason?: string;
+    needsSetup?: boolean;
+    portalUrl?: string;
   }> => ipcRenderer.invoke("desktop:gfs-healthcheck"),
+  gfsGetConfig: (): Promise<{
+    configured: boolean;
+    enabled: boolean;
+    needsSetup: boolean;
+    mode: string;
+    bucket?: string;
+    email?: string;
+    endpoint?: string;
+    accessKey?: string;
+    secretKey?: string;
+    accessKeyMasked?: string;
+    secretKeyMasked?: string;
+    portalUrl: string;
+    homeEnvPath?: string;
+    cliConfigPath?: string;
+  }> => ipcRenderer.invoke("desktop:gfs-get-config"),
+  gfsSaveConfig: (request: {
+    accessKey: string;
+    secretKey: string;
+    bucket: string;
+    email?: string;
+    endpoint?: string;
+  }): Promise<{
+    ok: boolean;
+    configured: boolean;
+    enabled?: boolean;
+    needsSetup: boolean;
+    mode: string;
+    bucket?: string;
+    portalUrl: string;
+    message?: string;
+    homeEnvPath?: string;
+    cliConfigPath?: string;
+  }> => ipcRenderer.invoke("desktop:gfs-save-config", request),
+  gfsClearConfig: (): Promise<{
+    ok: boolean;
+    configured: boolean;
+    enabled: boolean;
+    needsSetup: boolean;
+    mode: string;
+    portalUrl: string;
+    message?: string;
+    homeEnvPath?: string;
+    cliConfigPath?: string;
+  }> => ipcRenderer.invoke("desktop:gfs-clear-config"),
   prepareForkWorktree: (
     request: DesktopForkWorktreeRequest,
   ): Promise<DesktopForkWorktreeResult> =>

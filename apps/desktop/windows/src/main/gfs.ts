@@ -1,4 +1,6 @@
 import { request as httpRequest } from "http";
+import { basename, join } from "path";
+import { BrowserWindow, app, dialog, shell } from "electron";
 import type {
   GfsObjectInfo,
   GfsListRequest,
@@ -7,7 +9,7 @@ import type {
   GfsDownloadRequest,
 } from "../shared/desktopApi";
 import { getAuthSession } from "./auth";
-import { getGatewayRequestHeaders } from "./gateway";
+import { getAuthenticatedGatewayRequestHeaders } from "./gateway";
 import { resolveGatewayPort } from "../../../shared/main/gatewayEnvironment";
 
 const GATEWAY_BASE_URL = `http://127.0.0.1:${resolveGatewayPort()}`;
@@ -22,11 +24,12 @@ async function gatewayFetch<T>(
     session?.user?.email?.trim() ||
     session?.user?.id?.trim() ||
     "";
+  const authHeaders = await getAuthenticatedGatewayRequestHeaders();
 
   return new Promise((resolve, reject) => {
     const json = body !== undefined ? JSON.stringify(body) : undefined;
     const headers: Record<string, string> = {
-      ...getGatewayRequestHeaders(),
+      ...authHeaders,
       Accept: "application/json",
       ...(userId ? { "X-OpenDrSai-User": userId } : {}),
     };
@@ -100,10 +103,57 @@ export async function gfsUploadFile(req: GfsUploadRequest): Promise<{ path: stri
   return gatewayFetch("POST", "/v1/gfs/upload", req);
 }
 
+export async function gfsUploadContent(request: {
+  remotePath: string;
+  contentBase64: string;
+  contentType?: string;
+}): Promise<{ path: string; size: number; etag?: string }> {
+  return gatewayFetch("POST", "/v1/gfs/upload-content", {
+    remotePath: request.remotePath,
+    contentBase64: request.contentBase64,
+    ...(request.contentType ? { contentType: request.contentType } : {}),
+  });
+}
+
 export async function gfsDownloadFile(
   req: GfsDownloadRequest,
 ): Promise<{ localPath: string; size: number }> {
   return gatewayFetch("POST", "/v1/gfs/download", req);
+}
+
+/**
+ * Prompt for a local save path, then download the remote GFS object via gateway.
+ * Avoids opening a signed URL in the system browser (images would preview inline).
+ */
+export async function gfsDownloadToDisk(
+  remotePath: string,
+): Promise<{ canceled: boolean; localPath?: string; size?: number }> {
+  const suggestedName = basename(remotePath.replace(/\/+$/, "")) || "gfs-download";
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const selected = win
+    ? await dialog.showSaveDialog(win, {
+        title: "保存到本地",
+        defaultPath: join(app.getPath("downloads"), suggestedName),
+        buttonLabel: "保存",
+      })
+    : await dialog.showSaveDialog({
+        title: "保存到本地",
+        defaultPath: join(app.getPath("downloads"), suggestedName),
+        buttonLabel: "保存",
+      });
+  if (selected.canceled || !selected.filePath) {
+    return { canceled: true };
+  }
+  const result = await gfsDownloadFile({
+    remotePath,
+    localPath: selected.filePath,
+  });
+  try {
+    shell.showItemInFolder(result.localPath);
+  } catch {
+    // reveal is best-effort
+  }
+  return { canceled: false, localPath: result.localPath, size: result.size };
 }
 
 export async function gfsDelete(path: string): Promise<{ path: string }> {
@@ -129,6 +179,64 @@ export async function gfsHealthcheck(): Promise<{
   bucket?: string;
   mode?: string;
   reason?: string;
+  needsSetup?: boolean;
+  portalUrl?: string;
 }> {
   return gatewayFetch("GET", "/v1/gfs/health");
+}
+
+export async function gfsGetConfig(): Promise<{
+  configured: boolean;
+  enabled: boolean;
+  needsSetup: boolean;
+  mode: string;
+  bucket?: string;
+  email?: string;
+  endpoint?: string;
+  portalUrl: string;
+  homeEnvPath?: string;
+  cliConfigPath?: string;
+  accessKeyMasked?: string;
+  secretKeyMasked?: string;
+  accessKey?: string;
+  secretKey?: string;
+}> {
+  return gatewayFetch("GET", "/v1/gfs/config");
+}
+
+export async function gfsSaveConfig(request: {
+  accessKey: string;
+  secretKey: string;
+  bucket: string;
+  email?: string;
+  endpoint?: string;
+}): Promise<{
+  ok: boolean;
+  configured: boolean;
+  enabled?: boolean;
+  needsSetup: boolean;
+  mode: string;
+  bucket?: string;
+  portalUrl: string;
+  message?: string;
+  homeEnvPath?: string;
+  cliConfigPath?: string;
+  accessKeyMasked?: string;
+  secretKeyMasked?: string;
+}> {
+  return gatewayFetch("POST", "/v1/gfs/config", request);
+}
+
+export async function gfsClearConfig(): Promise<{
+  ok: boolean;
+  configured: boolean;
+  enabled: boolean;
+  needsSetup: boolean;
+  mode: string;
+  portalUrl: string;
+  message?: string;
+  homeEnvPath?: string;
+  cliConfigPath?: string;
+}> {
+  return gatewayFetch("DELETE", "/v1/gfs/config");
 }

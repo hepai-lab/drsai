@@ -106,7 +106,7 @@ import {
 import { ChatMessageContent } from "./ChatMessageContent";
 import { ThreadActivityBubble } from "./ThreadActivityBubble";
 import { StructuredMessageParts, type InteractionResponse } from "./StructuredMessageParts";
-import { getReasoningChatText, getVisibleChatText } from "../chatOutputModel";
+import { getReasoningChatText, getVisibleChatText, stripAgentToolDebugText } from "../chatOutputModel";
 import { createSmoothFollowOutputController } from "../smoothFollowOutput";
 import { VoiceCaptureBar } from "./voice/VoiceCaptureBar";
 import { VoiceReviewBar } from "./voice/VoiceReviewBar";
@@ -5871,7 +5871,7 @@ function isEmptyAssistantShell(message: UiMessage): boolean {
 }
 
 function getAssistantDisplayContent(message: UiMessage): string {
-  return getAssistantSpeechText(message, getVisibleChatText);
+  return stripAgentToolDebugText(getAssistantSpeechText(message, getVisibleChatText));
 }
 
 function getWorkspaceDisplayName(workspacePath: string | undefined, zh: boolean): string {
