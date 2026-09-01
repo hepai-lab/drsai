@@ -124,7 +124,7 @@ function Copy-RepoSource {
     Invoke-Native { & robocopy $repoCores $dstCores /MIR /XD __pycache__ dist /XF *.pyc } | Out-Null
     if ($LASTEXITCODE -ge 8) { Die "robocopy failed for cores (exit code: $LASTEXITCODE)" }
 
-    # -- Copy skills\skills (pre-built skills catalog) --
+    # -- Copy skills\skills (pre-built skills catalog, used by opendrsai CLI at startup) --
     $repoSkillsSkills = Join-Path $script:RepoRoot "skills\skills"
     if (Test-Path $repoSkillsSkills) {
         Write-Info "Copying skills\skills..."
@@ -142,7 +142,7 @@ function Copy-RepoSource {
     if (!(Test-Path $pkgJson))   { Die "Copy failed: apps\ui-tui\package.json missing" }
     if (!(Test-Path $pyproject)) { Die "Copy failed: drsai pyproject.toml missing" }
 
-    Write-Ok "Source copied: apps\ui-tui + cores + skills\skills -> $DstRoot"
+    Write-Ok "Source copied: apps\ui-tui + cores -> $DstRoot"
 }
 
 # ==============================================================================
@@ -258,22 +258,78 @@ function Detect-SystemDeps {
 function Select-InstallDir {
     Write-Section "Install Directory"
 
-    if ([string]::IsNullOrWhiteSpace($InstallDir)) {
-        $script:InstallDir = $DEFAULT_INSTALL_DIR
-    } else {
-        $script:InstallDir = $InstallDir
+    # Step 1: Check OPENDRSAI environment variable for existing installation
+    if (-not [string]::IsNullOrWhiteSpace($env:OPENDRSAI)) {
+        Write-Info "Found OPENDRSAI environment variable: $env:OPENDRSAI"
+        $existingLauncher = Join-Path $env:OPENDRSAI "bin\opendrsai.cmd"
+        if (Test-Path $existingLauncher) {
+            Write-Warn "Found existing installation at: $env:OPENDRSAI"
+            $response = Read-Host "  Remove existing installation? (bin/ and packages/venv will be deleted; source, configs and data are preserved) [y/N]"
+            if ($response -match "^[yY]") {
+                Write-Info "Removing existing installation at $env:OPENDRSAI..."
+                $binPath = Join-Path $env:OPENDRSAI "bin"
+                $venvPath = Join-Path $env:OPENDRSAI "packages\venv"
+                $dlPath = Join-Path $env:OPENDRSAI "packages\.download"
+                if (Test-Path $binPath)  { Remove-Item -Path $binPath -Recurse -Force -ErrorAction SilentlyContinue }
+                if (Test-Path $venvPath) { Remove-Item -Path $venvPath -Recurse -Force -ErrorAction SilentlyContinue }
+                if (Test-Path $dlPath)   { Remove-Item -Path $dlPath -Recurse -Force -ErrorAction SilentlyContinue }
+                Write-Ok "Existing installation removed"
+            } else {
+                Write-Info "Keeping existing installation at $env:OPENDRSAI"
+            }
+        } else {
+            Write-Info "No existing installation found at $env:OPENDRSAI"
+        }
     }
-    Write-Info "Install dir: $($script:InstallDir)"
 
-    $parent = Split-Path $script:InstallDir -Parent
-    if ($parent -and !(Test-Path $parent)) {
-        New-Item -ItemType Directory -Path $parent -Force | Out-Null
-    }
+    # Step 2: Let user choose install path (or use -InstallDir if provided)
+    while ($true) {
+        if (-not [string]::IsNullOrWhiteSpace($InstallDir)) {
+            # -InstallDir was provided via command line, use it directly
+            $script:InstallDir = $InstallDir
+            Write-Info "Install dir (from -InstallDir): $($script:InstallDir)"
+        } else {
+            Write-Host ""
+            Write-Host "  Choose install directory:" -ForegroundColor White
+            Write-Host "  [1] Default: $DEFAULT_INSTALL_DIR"
+            Write-Host "  [2] Enter a custom path"
+            $choice = Read-Host "  Select option [1]"
+            if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
 
-    $checkDir = if (Test-Path $script:InstallDir) { $script:InstallDir } else { $parent }
-    if (!$checkDir) { $checkDir = $env:USERPROFILE }
+            switch ($choice.Trim()) {
+                "1" {
+                    $script:InstallDir = $DEFAULT_INSTALL_DIR
+                }
+                "2" {
+                    $customDir = Read-Host "  Enter install path"
+                    if ([string]::IsNullOrWhiteSpace($customDir)) {
+                        Write-Warn "Empty path, please try again"
+                        continue
+                    }
+                    $script:InstallDir = $customDir.Trim()
+                }
+                default {
+                    Write-Warn "Invalid option: $choice, please try again"
+                    continue
+                }
+            }
+        }
 
-    do {
+        # Step 3: Create directory if it doesn't exist
+        try {
+            if (!(Test-Path $script:InstallDir)) {
+                New-Item -ItemType Directory -Path $script:InstallDir -Force | Out-Null
+            }
+        } catch {
+            Write-Warn "Failed to create directory: $($script:InstallDir) - $_"
+            $InstallDir = ""
+            $script:InstallDir = ""
+            continue
+        }
+
+        # Step 4: Check disk space
+        $checkDir = $script:InstallDir
+        if (!(Test-Path $checkDir)) { $checkDir = $env:USERPROFILE }
         $drive = (Get-Item $checkDir).PSDrive.Name
         $driveInfo = Get-PSDrive -Name $drive -ErrorAction SilentlyContinue
         if (!$driveInfo) {
@@ -283,17 +339,16 @@ function Select-InstallDir {
         }
         $availGB = [math]::Round($availBytes / 1GB, 1)
 
-        if ($availBytes -ge $REQUIRED_SPACE_BYTES) {
-            break
+        if ($availBytes -lt $REQUIRED_SPACE_BYTES) {
+            Write-Warn "Insufficient disk space: ${availGB}GB < ${REQUIRED_SPACE_GB}GB"
+            $InstallDir = ""
+            $script:InstallDir = ""
+            continue
         }
 
-        Write-Warn "Insufficient disk space: ${availGB}GB < ${REQUIRED_SPACE_GB}GB"
-        $userDir = Read-Host "Enter a different install directory (or press Enter to cancel)"
-        if ([string]::IsNullOrWhiteSpace($userDir)) { Die "Installation cancelled by user" }
-        $script:InstallDir = $userDir
-        New-Item -ItemType Directory -Path $script:InstallDir -Force | Out-Null
-        $checkDir = $script:InstallDir
-    } while ($true)
+        # Success
+        break
+    }
 
     Write-Ok "Available space: ${availGB}GB (>= ${REQUIRED_SPACE_GB}GB)"
     Write-Ok "Install directory: $($script:InstallDir)"
@@ -649,76 +704,6 @@ function Build-Tui {
 }
 
 # ==============================================================================
-#  9. INSTALL SKILLS (multi-select menu from skills/skills/)
-# ==============================================================================
-function Install-Skills {
-    Write-Section "Installing Skills"
-
-    $skillsDir = Join-Path $script:InstallDir "skills\skills"
-    if (!(Test-Path $skillsDir)) {
-        Write-Warn "skills/skills directory not found - skipping skill installation"
-        return
-    }
-
-    $skillSubdirs = Get-ChildItem $skillsDir -Directory -ErrorAction SilentlyContinue | Sort-Object Name
-    if ($skillSubdirs.Count -eq 0) {
-        Write-Warn "No skills found in skills/skills - skipping"
-        return
-    }
-
-    Write-Info "Available skills:"
-    for ($i = 0; $i -lt $skillSubdirs.Count; $i++) {
-        $skillName = $skillSubdirs[$i].Name
-        $skillMd = Join-Path $skillSubdirs[$i].FullName "SKILL.md"
-        $desc = ""
-        if (Test-Path $skillMd) {
-            $firstLine = Get-Content $skillMd -TotalCount 1 -ErrorAction SilentlyContinue
-            if ($firstLine) { $desc = $firstLine.TrimStart('#').Trim() }
-        }
-        Write-Host ("  [{0}] {1} - {2}" -f ($i + 1), $skillName, $desc)
-    }
-
-    Write-Host ""
-    Write-Host "Enter skill numbers to install (comma-separated), 'all' for all, or Enter to skip:"
-    $selection = Read-Host
-
-    $selected = @()
-    if ($selection -match "^all\$" -or $selection -match "^a\$") {
-        $selected = $skillSubdirs | ForEach-Object { $_.Name }
-    } elseif ($selection.Trim()) {
-        $nums = $selection -split '[,\s]+' | Where-Object { $_ -match '^\d+\$' }
-        foreach ($n in $nums) {
-            $idx = [int]$n - 1
-            if ($idx -ge 0 -and $idx -lt $skillSubdirs.Count) {
-                $selected += $skillSubdirs[$idx].Name
-            }
-        }
-    }
-
-    if ($selected.Count -eq 0) {
-        Write-Info "No skills selected - skipping"
-        return
-    }
-
-    # Skills are already copied by Copy-RepoSource, just create the skills config
-    $skillsConfigDir = Join-Path $script:InstallDir ".drsai\workspace\runs\$env:USERNAME\configs\skills"
-    New-Item -ItemType Directory -Path $skillsConfigDir -Force | Out-Null
-
-    foreach ($skillName in $selected) {
-        $srcSkillDir = Join-Path $skillsDir $skillName
-        $dstSkillDir = Join-Path $skillsConfigDir $skillName
-        if (Test-Path $srcSkillDir) {
-            # Copy the skill to the user's config directory
-            if (Test-Path $dstSkillDir) { Remove-Item -Path $dstSkillDir -Recurse -Force }
-            Copy-Item -Path $srcSkillDir -Destination $dstSkillDir -Recurse -Force
-            Write-Ok "Skill installed: $skillName"
-        }
-    }
-
-    Write-Ok "$($selected.Count) skill(s) installed"
-}
-
-# ==============================================================================
 #  10. CREATE LAUNCHER (.cmd batch file)
 # ==============================================================================
 function Create-Launcher {
@@ -901,7 +886,7 @@ function Main {
     # 5. Check existing installation
     Check-Existing
 
-    # 6. Copy local repo source (apps/ui-tui + cores + skills/skills)
+    # 6. Copy local repo source (apps/ui-tui + cores)
     Copy-RepoSource -DstRoot $script:InstallDir
 
     # 7. Download runtime deps (Python + Node, if not using system)
@@ -919,13 +904,10 @@ function Main {
     # 11. Build TUI
     Build-Tui
 
-    # 12. Install skills
-    Install-Skills
-
-    # 13. Create launcher
+    # 12. Create launcher
     Create-Launcher
 
-    # 14. Verify
+    # 13. Verify
     Verify-Install
 }
 
