@@ -222,11 +222,10 @@ const AppLayout: React.FC<AppLayoutProps> = ({
     />
   );
 
-  const resizeHandleClass = `w-1 rounded-full transition-colors flex-shrink-0 ${
-    darkMode === "dark"
+  const resizeHandleClass = `w-1 rounded-full transition-colors flex-shrink-0 ${darkMode === "dark"
       ? "bg-white/5 hover:bg-white/20"
       : "bg-gray-200/60 hover:bg-gray-300/80"
-  }`;
+    }`;
 
   const rightPanel = (
     <div className="flex h-full">
@@ -274,14 +273,12 @@ const AppLayout: React.FC<AppLayoutProps> = ({
       <div className="h-screen flex flex-col bg-primary overflow-hidden relative">
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
           <div
-            className={`absolute -top-24 -left-20 h-72 w-72 rounded-full blur-3xl ${
-              darkMode === "dark" ? "bg-violet-500/10" : "bg-violet-400/20"
-            }`}
+            className={`absolute -top-24 -left-20 h-72 w-72 rounded-full blur-3xl ${darkMode === "dark" ? "bg-violet-500/10" : "bg-violet-400/20"
+              }`}
           />
           <div
-            className={`absolute -bottom-28 right-6 h-80 w-80 rounded-full blur-3xl ${
-              darkMode === "dark" ? "bg-blue-500/10" : "bg-cyan-300/25"
-            }`}
+            className={`absolute -bottom-28 right-6 h-80 w-80 rounded-full blur-3xl ${darkMode === "dark" ? "bg-blue-500/10" : "bg-cyan-300/25"
+              }`}
           />
         </div>
 
@@ -289,17 +286,15 @@ const AppLayout: React.FC<AppLayoutProps> = ({
 
         <div
           ref={containerRef}
-          className={`flex-1 flex overflow-hidden relative z-10 ${
-            isCompact ? "p-1 gap-0" : "p-2 gap-2"
-          }`}
+          className={`flex-1 flex overflow-hidden relative z-10 ${isCompact ? "p-1 gap-0" : "p-2 gap-2"
+            }`}
         >
           {/* Left: desktop inline */}
           {!isCompact && (
             <>
               <div
-                className={`flex-shrink-0 h-full transition-all duration-300 overflow-hidden shadow-modern ${
-                  isSidebarOpen ? "rounded-2xl" : "rounded-lg"
-                } ${panelShellClass}`}
+                className={`flex-shrink-0 h-full transition-all duration-300 overflow-hidden shadow-modern ${isSidebarOpen ? "rounded-2xl" : "rounded-lg"
+                  } ${panelShellClass}`}
                 style={{ width: isSidebarOpen ? leftWidth : sizes.left.collapsed }}
               >
                 {leftMenu}
@@ -311,11 +306,10 @@ const AppLayout: React.FC<AppLayoutProps> = ({
                   aria-orientation="vertical"
                   aria-label={t("applayout.resize.left")}
                   onPointerDown={beginLeftDrag}
-                  className={`w-1 rounded-full transition-colors ${
-                    darkMode === "dark"
+                  className={`w-1 rounded-full transition-colors ${darkMode === "dark"
                       ? "bg-white/5 hover:bg-white/12"
                       : "bg-gray-200/60 hover:bg-gray-300/80"
-                  }`}
+                    }`}
                   style={{ cursor: "col-resize", touchAction: "none" }}
                 />
               )}
@@ -324,11 +318,10 @@ const AppLayout: React.FC<AppLayoutProps> = ({
 
           {/* Center: canvas */}
           <div
-            className={`flex-1 min-w-0 rounded-2xl shadow-modern overflow-hidden ${
-              darkMode === "dark"
+            className={`flex-1 min-w-0 rounded-2xl shadow-modern overflow-hidden ${darkMode === "dark"
                 ? "bg-[#0d1117]/70 backdrop-blur-md shadow-modern-lg"
                 : "bg-white/85 border border-gray-200/70 backdrop-blur-md"
-            }`}
+              }`}
           >
             <Canvas
               activeMenuId={activeSubMenuItem as MenuId}

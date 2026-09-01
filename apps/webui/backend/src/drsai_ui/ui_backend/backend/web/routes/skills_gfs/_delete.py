@@ -35,14 +35,8 @@ async def _delete_skill(slug: str, user_id: str) -> dict:
     existing = resp.data[0]
 
     if existing.owner_id and existing.owner_id != user_id and existing.source != "higraf":
-        from ....datamodel.db import Userinfo as _U
-        uresp = db_mgr.get(_U, filters={"user_id": user_id}, return_json=False)
-        if uresp.status and uresp.data:
-            umeta = dict(getattr(uresp.data[0], "meta", None) or {})
-            skill_role = umeta.get("skill_role", "user")
-        else:
-            skill_role = "user"
-        if skill_role != "admin":
+        from ...authz import get_is_platform_admin
+        if not get_is_platform_admin(db_mgr, user_id):
             raise HTTPException(status_code=403, detail="Not the owner of this skill")
 
     cfg = _require_gfs()

@@ -13,6 +13,10 @@ import openDrSaiLogo from "../assets/logo.svg";
 import { getServerUrl } from "../components/utils";
 import { appContext } from "../hooks/provider";
 
+const WEBUI_URL = process.env.GATSBY_WEBUI_URL;
+const CHAT_ENTRY_URL = WEBUI_URL
+  ? `${WEBUI_URL.replace(/\/$/, "")}/login`
+  : "/login";
 const WINDOWS_DOWNLOAD_URL =
   process.env.GATSBY_WINDOWS_DOWNLOAD_URL ||
   "https://download-opendrsai.ihep.ac.cn/releases/v1.5.5/windows/OpenDrSai-Windows-Installer-x64.msi";
@@ -240,10 +244,10 @@ const WelcomePage = () => {
 
         <div className="mt-7 flex w-full max-w-md flex-col gap-3 sm:mt-8 sm:flex-row sm:justify-center">
           <a
-            href="https://opendrsai.ihep.ac.cn"
+            href={CHAT_ENTRY_URL}
             className="group inline-flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl bg-gradient-to-r from-violet-600 to-blue-600 px-5 py-2.5 text-sm font-extrabold text-white no-underline shadow-lg shadow-violet-500/20 transition hover:-translate-y-0.5"
           >
-            <span className="inline-flex items-center gap-2">
+            <span className="inline-flex items-center gap-2 text-white transition group-hover:drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]">
               {isZh ? "直接开始对话" : "Start chatting"}
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
             </span>
@@ -317,9 +321,9 @@ const WelcomePage = () => {
         </div>
       </section>
 
-      <section id="clients" className="relative z-10 mx-auto max-w-6xl px-4 sm:px-8">
+      <section id="clients" className="relative z-10 mx-auto max-w-3xl px-4 sm:px-8">
         <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/80 shadow-[0_18px_60px_-36px_rgba(76,29,149,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/[0.035]">
-          <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-5">
+          <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-2">
             <ClientItem
               icon={<WebBrowserLogo />}
               title="WebUI"
@@ -327,24 +331,6 @@ const WelcomePage = () => {
               action={isZh ? "开始对话" : "Open"}
               href="/login"
               orderClass="order-2 sm:order-1"
-            />
-            <ClientItem
-              icon={<WindowsLogo />}
-              title="Windows"
-              detail={isZh ? "连接本地工作区" : "Connect local workspaces"}
-              action={isZh ? "查看" : "View"}
-              active={activeClient === "windows"}
-              onClick={() => toggleClient("windows")}
-              orderClass="order-3 sm:order-2"
-            />
-            <ClientItem
-              icon={<AndroidLogo />}
-              title="Android"
-              detail={isZh ? "移动处理与查看进度" : "Work and follow progress"}
-              action={isZh ? "查看" : "View"}
-              active={activeClient === "android"}
-              onClick={() => toggleClient("android")}
-              orderClass="order-1 border-l-0 sm:order-3 sm:border-l"
             />
             <button
               type="button"
@@ -362,28 +348,6 @@ const WelcomePage = () => {
                 <span className="block font-extrabold">Terminal UI</span>
                 <span className="mt-1 block text-xs font-medium leading-4 text-slate-400">
                   {isZh ? "终端 Vibe Coding" : "Terminal vibe coding"}
-                </span>
-              </span>
-              <span className="hidden text-xs font-extrabold text-violet-700 sm:inline dark:text-violet-300">
-                {isZh ? "查看" : "View"}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => toggleClient("macos")}
-              className={`order-5 flex min-h-24 min-w-[165px] snap-start items-center gap-3 border-l border-slate-100 p-4 text-left text-slate-950 transition sm:min-h-36 sm:min-w-0 sm:gap-4 sm:border-l sm:border-t-0 sm:p-5 dark:border-white/5 dark:text-white ${
-                activeClient === "macos"
-                  ? "bg-violet-50/80 dark:bg-violet-500/10"
-                  : "bg-transparent hover:bg-violet-50/60 dark:hover:bg-violet-500/[0.06]"
-              }`}
-            >
-              <span className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-slate-100 dark:bg-white/10">
-                <AppleLogo />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block font-extrabold">macOS</span>
-                <span className="mt-1 block text-xs font-medium text-slate-400">
-                  {isZh ? "Apple 芯片版" : "Apple silicon"}
                 </span>
               </span>
               <span className="hidden text-xs font-extrabold text-violet-700 sm:inline dark:text-violet-300">
