@@ -731,8 +731,9 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:reveal-thread-share", filePath),
   listInstalledSkills: (request?: { userId?: string }): Promise<GatewaySkill[]> =>
     ipcRenderer.invoke("desktop:list-installed-skills", request),
-  listAvailableSkills: (request?: { userId?: string }): Promise<GatewayAvailableSkill[]> =>
+  listAvailableSkills: (request?: { userId?: string; coreOnly?: boolean }): Promise<GatewayAvailableSkill[]> =>
     ipcRenderer.invoke("desktop:list-available-skills", request),
+  // Online skills temporarily disabled — keep invoke channels but main rejects.
   listPublicSkillsSquare: (request?: {
     page?: number;
     pageSize?: number;
@@ -741,7 +742,10 @@ const api: DesktopApi = {
     sort?: "name" | "time";
     installFilter?: "all" | "installed" | "not_installed";
     userId?: string;
+    detailSlug?: string;
   }) => ipcRenderer.invoke("desktop:list-public-skills-square", request),
+  getPublicSkillDetail: (request: { slug: string }) =>
+    ipcRenderer.invoke("desktop:get-public-skill-detail", request),
   getSkillContent: (request: { skillPath: string }): Promise<{ path: string; content: string }> =>
     ipcRenderer.invoke("desktop:get-skill-content", request),
   installSkill: (
@@ -755,6 +759,20 @@ const api: DesktopApi = {
     threadId?: string;
   }): Promise<{ status: string; name: string; path: string; files: number }> =>
     ipcRenderer.invoke("desktop:install-public-skill-square", request),
+  importSkillFolder: (request: {
+    folderPath: string;
+    name?: string;
+    userId?: string;
+    threadId?: string;
+  }): Promise<{ status: string; name: string; path: string; files: number }> =>
+    ipcRenderer.invoke("desktop:import-skill-folder", request),
+  installSkillZip: (request: {
+    zipPath: string;
+    name?: string;
+    userId?: string;
+    threadId?: string;
+  }): Promise<{ status: string; name: string; path: string; files: number }> =>
+    ipcRenderer.invoke("desktop:install-skill-zip", request),
   updateSkill: (request: {
     name: string;
     content: string;

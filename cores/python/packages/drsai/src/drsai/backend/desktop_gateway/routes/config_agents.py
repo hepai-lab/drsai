@@ -194,21 +194,38 @@ async def list_skills(user_id: str | None = None) -> dict[str, Any]:
             try:
                 content = skill_md.read_text(encoding="utf-8", errors="replace")[:4000]
                 name, description, category = _parse_skill_frontmatter(content)
+                st = skill_md.stat()
                 skills.append({
                     "name": name or skill_dir.name,
                     "category": category or "",
                     "description": description or "",
                     "path": str(skill_dir),
+                    "size": int(st.st_size),
+                    "mtime": int(st.st_mtime),
                 })
             except Exception:
+                try:
+                    st = skill_md.stat()
+                    mtime, size = int(st.st_mtime), int(st.st_size)
+                except OSError:
+                    mtime, size = 0, 0
                 skills.append({
                     "name": skill_dir.name,
                     "category": "",
                     "description": "",
                     "path": str(skill_dir),
+                    "size": size,
+                    "mtime": mtime,
                 })
 
-    return {"object": "list", "data": sorted(skills, key=lambda s: (s["category"], s["name"]))}
+    # 按名称升序（与桌面端「已安装」一致）
+    return {
+        "object": "list",
+        "data": sorted(
+            skills,
+            key=lambda s: str(s.get("name") or "").lower(),
+        ),
+    }
 
 
 # =============================================================================

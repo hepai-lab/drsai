@@ -1563,6 +1563,8 @@ export interface GatewaySkill {
 export interface GatewayAvailableSkill extends GatewaySkill {
   source: string;
   installed: boolean;
+  /** Bundled folder id (may differ from frontmatter name, e.g. ragflow-knowledge). */
+  bundledId?: string;
 }
 
 /** WebUI public Skills Square item (`GET /api/skills?type=public`). */
@@ -1588,6 +1590,9 @@ export interface DesktopPublicSkillsPage {
   /** Catalog totals for the current search (not limited to the current page). */
   installedCount: number;
   notInstalledCount: number;
+  availableTags?: string[];
+  /** Present when `detailSlug` is requested via listPublicSkillsSquare. */
+  detail?: DesktopPublicSkillDetail;
 }
 
 export interface DesktopPublicSkillsListRequest {
@@ -1598,6 +1603,8 @@ export interface DesktopPublicSkillsListRequest {
   sort?: "name" | "time";
   installFilter?: "all" | "installed" | "not_installed";
   userId?: string;
+  /** Fetch one public skill detail through the list IPC channel (stale-preload compat). */
+  detailSlug?: string;
 }
 
 export interface DesktopPublicSkillInstallRequest {
@@ -1605,6 +1612,26 @@ export interface DesktopPublicSkillInstallRequest {
   name?: string;
   userId?: string;
   threadId?: string;
+}
+
+/** WebUI public skill detail (`GET /api/skills/{slug}?type=public`). */
+export interface DesktopPublicSkillDetail {
+  slug: string;
+  name: string;
+  description: string;
+  body: string;
+  icon?: string;
+  version?: string;
+  owner?: string;
+  downloads?: number;
+  tags?: string[];
+  source?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  changelog?: string;
+  compatibility?: string;
+  restricted?: boolean;
+  profile?: string;
 }
 
 export interface GatewaySkillInstallRequest {
@@ -6303,8 +6330,9 @@ export interface DesktopApi {
 
   // Skills (gateway-managed)
   listInstalledSkills(request?: { userId?: string }): Promise<GatewaySkill[]>;
-  listAvailableSkills(request?: { userId?: string }): Promise<GatewayAvailableSkill[]>;
+  listAvailableSkills(request?: { userId?: string; coreOnly?: boolean }): Promise<GatewayAvailableSkill[]>;
   listPublicSkillsSquare(request?: DesktopPublicSkillsListRequest): Promise<DesktopPublicSkillsPage>;
+  getPublicSkillDetail(request: { slug: string }): Promise<DesktopPublicSkillDetail>;
   getSkillContent(request: { skillPath: string }): Promise<{ path: string; content: string }>;
   installSkill(request: GatewaySkillInstallRequest): Promise<{ status: string; name: string; path: string }>;
   installPublicSkillSquare(request: DesktopPublicSkillInstallRequest): Promise<{
@@ -6313,6 +6341,18 @@ export interface DesktopApi {
     path: string;
     files: number;
   }>;
+  importSkillFolder(request: {
+    folderPath: string;
+    name?: string;
+    userId?: string;
+    threadId?: string;
+  }): Promise<{ status: string; name: string; path: string; files: number }>;
+  installSkillZip(request: {
+    zipPath: string;
+    name?: string;
+    userId?: string;
+    threadId?: string;
+  }): Promise<{ status: string; name: string; path: string; files: number }>;
   updateSkill(request: { name: string; content: string; userId?: string }): Promise<{ status: string; name: string; path: string }>;
   uninstallSkill(request: { name: string; userId?: string }): Promise<{ status: string; name: string }>;
   reloadSkills(request?: { threadId?: string; userId?: string }): Promise<{ ok: boolean; reloaded: boolean }>;

@@ -231,6 +231,10 @@ import {
   installPublicSkillSquare,
 } from "../../../shared/main/skillsSquare";
 import {
+  importSkillFromFolderPath,
+  installSkillFromZipPath,
+} from "../../../shared/main/skillArchive";
+import {
   gfsList,
   gfsStat,
   gfsRead,
@@ -5855,7 +5859,10 @@ function registerIpc(): void {
     listInstalledSkills((request as { userId?: string } | undefined)?.userId),
   );
   secureHandle("desktop:list-available-skills", (_event, request) =>
-    listAvailableSkills((request as { userId?: string } | undefined)?.userId),
+    listAvailableSkills(
+      (request as { userId?: string; coreOnly?: boolean } | undefined)?.userId,
+      (request as { userId?: string; coreOnly?: boolean } | undefined)?.coreOnly,
+    ),
   );
   secureHandle("desktop:get-skill-content", (_event, request) =>
     getSkillContent((request as { skillPath: string }).skillPath),
@@ -5880,6 +5887,18 @@ function registerIpc(): void {
   );
   secureHandle("desktop:install-public-skill-square", (_event, request) =>
     installPublicSkillSquare(request as Parameters<typeof installPublicSkillSquare>[0]),
+  );
+  secureHandle("desktop:import-skill-folder", (_event, request) =>
+    importSkillFromFolderPath(
+      (request as { folderPath: string }).folderPath,
+      request as Parameters<typeof importSkillFromFolderPath>[1],
+    ),
+  );
+  secureHandle("desktop:install-skill-zip", (_event, request) =>
+    installSkillFromZipPath(
+      (request as { zipPath: string }).zipPath,
+      request as Parameters<typeof installSkillFromZipPath>[1],
+    ),
   );
 
   // GFS cloud storage

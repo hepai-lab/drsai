@@ -10028,14 +10028,18 @@ async def uninstall_skill(
     references = []
     for agent_name in list_agent_names():
         policy = load_agent_runtime_policy(agent_name)
-        if (
-            skill_name in policy.skills.enabled or skill_name in policy.skills.disabled
-            or (policy.skills.mode in {"inherit", "all_enabled"} and skill_name not in policy.skills.disabled)
-        ):
+        # Explicit list membership only — inherit/all_enabled is catalog availability.
+        if skill_name in policy.skills.enabled or skill_name in policy.skills.disabled:
             references.append({"kind": "agent_skill_reference", "agent_name": agent_name, "skill_id": skill_name})
     if references:
+        agents = ", ".join(sorted({str(r["agent_name"]) for r in references}))
         raise HTTPException(status_code=409, detail={
-            "code": "skill_in_use", "message": "Skill is referenced by one or more Agents", "references": references,
+            "code": "skill_in_use",
+            "message": (
+                f"Skill is referenced by one or more Agents ({agents}). "
+                "Remove it from those agents' skill policy (enabled/disabled lists) first."
+            ),
+            "references": references,
         })
     skills_dir = _get_skills_dir(user_id)
     skill_dir = skills_dir / skill_name

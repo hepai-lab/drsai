@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from drsai.config import list_agent_names, load_agent_runtime_policy
+from drsai.modules.components.skills.core_skills import CORE_PREINSTALL_SKILL_IDS
 
 from drsai.backend.desktop_gateway._auth import effective_user_id
 
@@ -51,14 +52,51 @@ def _get_available_skills_dirs() -> list[Path]:
     return [root] if root is not None else []
 
 
-def _find_bundled_skill_md(name: str, source: str | None = None) -> Path | None:
+def _resolve_bundled_skill_root(name: str, source: str | None = None) -> Path | None:
     for skills_dir in _get_available_skills_dirs():
         if source and skills_dir.name != source:
             continue
-        candidate = skills_dir / name / "SKILL.md"
-        if candidate.exists():
+        candidate = skills_dir / name
+        if (candidate / "SKILL.md").exists():
             return candidate
+
+    # docx ships under anthropic_skills_collection until promoted to skills/skills.
+    if name == "docx" and not source:
+        for skills_dir in _get_available_skills_dirs():
+            extra = skills_dir.parent / "anthropic_skills_collection" / name
+            if (extra / "SKILL.md").exists():
+                return extra
     return None
+
+
+def _find_bundled_skill_md(name: str, source: str | None = None) -> Path | None:
+    root = _resolve_bundled_skill_root(name, source)
+    return (root / "SKILL.md") if root is not None else None
+
+
+def _skill_summary_from_dir(skill_dir: Path, *, source_name: str, installed_names: set[str]) -> dict:
+    skill_md = skill_dir / "SKILL.md"
+    try:
+        content = skill_md.read_text(encoding="utf-8", errors="replace")[:4000]
+        name, description, _category = _parse_skill_frontmatter(content)
+        name = name or skill_dir.name
+        return {
+            "name": name,
+            "description": description or "",
+            "category": source_name,
+            "source": source_name,
+            "installed": name in installed_names or skill_dir.name in installed_names,
+            "bundled_id": skill_dir.name,
+        }
+    except Exception:
+        return {
+            "name": skill_dir.name,
+            "description": "",
+            "category": source_name,
+            "source": source_name,
+            "installed": skill_dir.name in installed_names,
+            "bundled_id": skill_dir.name,
+        }
 
 
 def _parse_skill_frontmatter(content: str) -> tuple[str, str, str]:
@@ -106,27 +144,49 @@ def register_skills_routes(app: FastAPI) -> None:
                 try:
                     content = skill_md.read_text(encoding="utf-8", errors="replace")[:4000]
                     name, description, category = _parse_skill_frontmatter(content)
+                    st = skill_md.stat()
                     skills.append(
                         {
                             "name": name or skill_dir.name,
                             "category": category or "",
                             "description": description or "",
                             "path": str(skill_dir),
+                            "size": int(st.st_size),
+                            "mtime": int(st.st_mtime),
                         },
                     )
                 except Exception:
+                    try:
+                        st = skill_md.stat()
+                        mtime = int(st.st_mtime)
+                        size = int(st.st_size)
+                    except OSError:
+                        mtime = 0
+                        size = 0
                     skills.append(
                         {
                             "name": skill_dir.name,
                             "category": "",
                             "description": "",
                             "path": str(skill_dir),
+                            "size": size,
+                            "mtime": mtime,
                         },
                     )
-        return {"object": "list", "data": sorted(skills, key=lambda s: (s["category"], s["name"]))}
+        # 按名称升序（与桌面端「已安装」一致）
+        return {
+            "object": "list",
+            "data": sorted(
+                skills,
+                key=lambda s: str(s.get("name") or "").lower(),
+            ),
+        }
 
     @app.get("/v1/skills/available")
-    async def list_available_skills(user_id: str | None = Query(default=None)):
+    async def list_available_skills(
+        user_id: str | None = Query(default=None),
+        core_only: bool = Query(default=False),
+    ):
         installed_names: set[str] = set()
         user_skills_dir = _get_skills_dir(user_id)
         if user_skills_dir.exists():
@@ -135,45 +195,39 @@ def register_skills_routes(app: FastAPI) -> None:
                     installed_names.add(entry.name)
 
         results: list[dict] = []
-        for skills_dir in _get_available_skills_dirs():
-            source_name = skills_dir.name
-            if not skills_dir.exists():
-                continue
-            for skill_dir in sorted(skills_dir.iterdir()):
-                if not skill_dir.is_dir():
+        if core_only:
+            for skill_id in CORE_PREINSTALL_SKILL_IDS:
+                root = _resolve_bundled_skill_root(skill_id)
+                if root is None:
                     continue
-                skill_md = skill_dir / "SKILL.md"
-                if not skill_md.exists():
+                results.append(_skill_summary_from_dir(root, source_name="skills", installed_names=installed_names))
+        else:
+            for skills_dir in _get_available_skills_dirs():
+                source_name = skills_dir.name
+                if not skills_dir.exists():
                     continue
-                try:
-                    content = skill_md.read_text(encoding="utf-8", errors="replace")[:4000]
-                    name, description, _category = _parse_skill_frontmatter(content)
-                    name = name or skill_dir.name
+                for skill_dir in sorted(skills_dir.iterdir()):
+                    if not skill_dir.is_dir():
+                        continue
+                    if not (skill_dir / "SKILL.md").exists():
+                        continue
                     results.append(
-                        {
-                            "name": name,
-                            "description": description or "",
-                            "category": source_name,
-                            "source": source_name,
-                            "installed": name in installed_names,
-                        },
+                        _skill_summary_from_dir(skill_dir, source_name=source_name, installed_names=installed_names),
                     )
-                except Exception:
-                    results.append(
-                        {
-                            "name": skill_dir.name,
-                            "description": "",
-                            "category": source_name,
-                            "source": source_name,
-                            "installed": skill_dir.name in installed_names,
-                        },
-                    )
+            for skill_id in CORE_PREINSTALL_SKILL_IDS:
+                if skill_id in {item.get("bundled_id") for item in results}:
+                    continue
+                root = _resolve_bundled_skill_root(skill_id)
+                if root is None:
+                    continue
+                results.append(_skill_summary_from_dir(root, source_name="skills", installed_names=installed_names))
 
         seen: set[str] = set()
         deduped: list[dict] = []
         for item in results:
-            if item["name"] not in seen:
-                seen.add(item["name"])
+            key = str(item.get("bundled_id") or item["name"])
+            if key not in seen:
+                seen.add(key)
                 deduped.append(item)
         return {"object": "list", "data": sorted(deduped, key=lambda s: (s["category"], s["name"]))}
 
@@ -200,11 +254,16 @@ def register_skills_routes(app: FastAPI) -> None:
         if req.source and not content:
             bundled_skill_md = _find_bundled_skill_md(req.name, req.source)
             if bundled_skill_md is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Bundled skill '{req.name}' not found in source '{req.source}'",
-                )
-            bundled_skill_dir = bundled_skill_md.parent
+                # Allow install by bundled folder id when frontmatter name differs.
+                bundled_skill_dir = _resolve_bundled_skill_root(req.name, req.source)
+                if bundled_skill_dir is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Bundled skill '{req.name}' not found in source '{req.source}'",
+                    )
+                bundled_skill_md = bundled_skill_dir / "SKILL.md"
+            else:
+                bundled_skill_dir = bundled_skill_md.parent
             content = bundled_skill_md.read_text(encoding="utf-8", errors="replace")
 
         if not content:
@@ -247,23 +306,26 @@ def register_skills_routes(app: FastAPI) -> None:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", skill_name):
             raise HTTPException(status_code=400, detail="Skill name is invalid")
 
+        # 仅当 Agent 策略里显式列出该 skill（enabled / disabled）时视为占用。
+        # inherit / all_enabled 表示「目录可用」，不等于固定引用；否则默认 all_enabled
+        # 会让任意已装 skill 都删不掉。
         references = []
         for agent_name in list_agent_names():
             policy = load_agent_runtime_policy(agent_name)
-            if (
-                skill_name in policy.skills.enabled
-                or skill_name in policy.skills.disabled
-                or (policy.skills.mode in {"inherit", "all_enabled"} and skill_name not in policy.skills.disabled)
-            ):
+            if skill_name in policy.skills.enabled or skill_name in policy.skills.disabled:
                 references.append(
                     {"kind": "agent_skill_reference", "agent_name": agent_name, "skill_id": skill_name},
                 )
         if references:
+            agents = ", ".join(sorted({str(r["agent_name"]) for r in references}))
             raise HTTPException(
                 status_code=409,
                 detail={
                     "code": "skill_in_use",
-                    "message": "Skill is referenced by one or more Agents",
+                    "message": (
+                        f"Skill is referenced by one or more Agents ({agents}). "
+                        "Remove it from those agents' skill policy (enabled/disabled lists) first."
+                    ),
                     "references": references,
                 },
             )

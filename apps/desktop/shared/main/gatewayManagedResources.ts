@@ -23,7 +23,8 @@ const maxResponseBytes = 8 * 1024 * 1024;
 
 async function requestGateway<T>(method: string, path: string, body?: unknown, timeoutMs = 30_000): Promise<T> {
   const session = await getAuthSession().catch(() => null);
-  const userId = session?.user?.email?.trim() || session?.user?.id?.trim() || "";
+  // Prefer OIDC subject for identity headers; email aliases cause gateway 403.
+  const userId = session?.user?.id?.trim() || session?.user?.email?.trim() || "";
   const payload = body === undefined ? undefined : JSON.stringify(body);
   const authHeaders = await getAuthenticatedGatewayRequestHeaders();
   const response = await fetch(new URL(path, gatewayBaseUrl), {
@@ -46,10 +47,14 @@ async function requestGateway<T>(method: string, path: string, body?: unknown, t
 }
 
 async function skillsUserId(explicit?: string): Promise<string | undefined> {
+  const session = await getAuthSession().catch(() => null);
+  // Gateway `effective_user_id` keys storage by verified OIDC subject. Passing an
+  // email (or any other alias) triggers subject_mismatch 403.
+  const subject = session?.user?.id?.trim() || "";
+  if (subject) return subject;
   const value = explicit?.trim();
   if (value) return value;
-  const session = await getAuthSession().catch(() => null);
-  return session?.user?.id?.trim() || session?.user?.email?.trim() || undefined;
+  return session?.user?.email?.trim() || undefined;
 }
 
 const userQuery = async (userId?: string) => {
@@ -60,8 +65,10 @@ const userQuery = async (userId?: string) => {
 export async function listInstalledSkills(userId?: string): Promise<GatewaySkill[]> {
   return (await requestGateway<{ data: GatewaySkill[] }>("GET", `/v1/skills${await userQuery(userId)}`)).data ?? [];
 }
-export async function listAvailableSkills(userId?: string): Promise<GatewayAvailableSkill[]> {
-  return (await requestGateway<{ data: GatewayAvailableSkill[] }>("GET", `/v1/skills/available${await userQuery(userId)}`)).data ?? [];
+export async function listAvailableSkills(userId?: string, coreOnly?: boolean): Promise<GatewayAvailableSkill[]> {
+  const base = await userQuery(userId);
+  const core = coreOnly ? `${base ? "&" : "?"}core_only=true` : "";
+  return (await requestGateway<{ data: GatewayAvailableSkill[] }>("GET", `/v1/skills/available${base}${core}`)).data ?? [];
 }
 export const getSkillContent = (skillPath: string) => requestGateway<{ path: string; content: string }>("GET", `/v1/skills/${encodeURIComponent(skillPath)}`);
 export async function installSkill(request: GatewaySkillInstallRequest) {

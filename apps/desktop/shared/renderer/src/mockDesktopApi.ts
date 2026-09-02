@@ -2677,9 +2677,36 @@ export function installMockDesktopApi(): void {
     revealThreadShare: async () => true,
     listInstalledSkills: async () =>
       mockInstalledSkills.map(({ content: _content, ...skill }) => skill),
-    listAvailableSkills: async () => {
+    listAvailableSkills: async (request) => {
       const installed = new Set(mockInstalledSkills.map((skill) => skill.name));
       const catalog = [
+        {
+          name: "pptx",
+          bundledId: "pptx",
+          category: "skills",
+          description: "Create and edit PowerPoint presentations.",
+          path: "",
+          source: "skills",
+          installed: installed.has("pptx"),
+        },
+        {
+          name: "docx",
+          bundledId: "docx",
+          category: "skills",
+          description: "Create and edit Word documents.",
+          path: "",
+          source: "skills",
+          installed: installed.has("docx"),
+        },
+        {
+          name: "ragflow-knowledge",
+          bundledId: "ragflow-knowledge",
+          category: "skills",
+          description: "RAGFlow knowledge base management.",
+          path: "",
+          source: "skills",
+          installed: installed.has("ragflow-knowledge"),
+        },
         {
           name: "ihep-gfs-skill",
           category: "skills",
@@ -2705,65 +2732,20 @@ export function installMockDesktopApi(): void {
           installed: installed.has("download-skills"),
         },
       ];
+      if (request?.coreOnly) {
+        return catalog.filter((item) => item.bundledId === "pptx" || item.bundledId === "docx" || item.bundledId === "ragflow-knowledge");
+      }
       return catalog;
     },
-    listPublicSkillsSquare: async (request) => {
-      const installed = new Set(mockInstalledSkills.map((skill) => skill.name));
-      const all = [
-        {
-          slug: "skill-39c1b15b3680",
-          name: "web-search",
-          description: "Web search helper from WebUI public square.",
-          downloads: 67,
-          source: "higraf",
-          owner: "higraf",
-          installed: installed.has("skill-39c1b15b3680") || installed.has("web-search"),
-        },
-        {
-          slug: "meeting-and-brief",
-          name: "meeting-and-brief",
-          description: "Meeting notes to briefing.",
-          downloads: 0,
-          source: "user",
-          owner: "demo",
-          installed: installed.has("meeting-and-brief"),
-        },
-        {
-          slug: "ihep-gfs-skill",
-          name: "ihep-gfs-skill",
-          description: "GFS skill published on WebUI.",
-          downloads: 0,
-          source: "user",
-          owner: "demo",
-          installed: installed.has("ihep-gfs-skill"),
-        },
-      ].filter((item) => {
-        const q = request?.q?.trim().toLowerCase();
-        if (!q) return true;
-        return item.slug.includes(q) || item.name.includes(q) || item.description.toLowerCase().includes(q);
-      });
-      const page = request?.page ?? 1;
-      const pageSize = request?.pageSize ?? 20;
-      const installedCount = all.filter((item) => item.installed).length;
-      const notInstalledCount = all.length - installedCount;
-      const installFilter = request?.installFilter ?? "all";
-      const filtered =
-        installFilter === "installed"
-          ? all.filter((item) => item.installed)
-          : installFilter === "not_installed"
-            ? all.filter((item) => !item.installed)
-            : all;
-      const start = (page - 1) * pageSize;
-      const items = filtered.slice(start, start + pageSize);
-      return {
-        items,
-        page,
-        pageSize,
-        total: filtered.length,
-        hasNext: start + pageSize < filtered.length,
-        installedCount,
-        notInstalledCount,
-      };
+    // Online skills temporarily disabled (keep in sync with skillsSquare ENABLE_ONLINE_SKILLS).
+    listPublicSkillsSquare: async () => {
+      throw new Error("Online skills are temporarily disabled.");
+    },
+    getPublicSkillDetail: async () => {
+      throw new Error("Online skills are temporarily disabled.");
+    },
+    installPublicSkillSquare: async () => {
+      throw new Error("Online skills are temporarily disabled.");
     },
     getSkillContent: async (request) => {
       const skill = mockInstalledSkills.find((item) => item.path === request.skillPath || item.name === request.skillPath);
@@ -2793,24 +2775,34 @@ export function installMockDesktopApi(): void {
       });
       return { status: "ok", name: request.name, path };
     },
-    installPublicSkillSquare: async (request) => {
-      const name = request.name || request.slug;
-      const existing = mockInstalledSkills.find((skill) => skill.name === name);
-      if (existing) {
-        return { status: "ok", name: existing.name, path: existing.path, files: 2 };
-      }
-      const content = defaultMockSkillContent(name);
+    importSkillFolder: async (request) => {
+      const name = request.name || "imported_skill";
       const path = `mock://skills/${name}`;
       mockInstalledSkills.push({
         name,
-        category: "webui-public",
-        description: `Installed from WebUI public square (${request.slug})`,
+        category: "import",
+        description: `Imported from ${request.folderPath}`,
         path,
-        size: content.length,
+        size: 128,
         mtime: Date.now() / 1000,
-        content,
+        content: defaultMockSkillContent(name),
       });
-      return { status: "ok", name, path, files: 2 };
+      return { status: "ok", name, path, files: 3 };
+    },
+    installSkillZip: async (request) => {
+      const base = request.zipPath.split(/[\\/]/).pop()?.replace(/\.zip$/i, "") || "zip_skill";
+      const name = request.name || base;
+      const path = `mock://skills/${name}`;
+      mockInstalledSkills.push({
+        name,
+        category: "zip",
+        description: `Installed from ${request.zipPath}`,
+        path,
+        size: 256,
+        mtime: Date.now() / 1000,
+        content: defaultMockSkillContent(name),
+      });
+      return { status: "ok", name, path, files: 4 };
     },
     updateSkill: async (request) => {
       const skill = mockInstalledSkills.find((item) => item.name === request.name);

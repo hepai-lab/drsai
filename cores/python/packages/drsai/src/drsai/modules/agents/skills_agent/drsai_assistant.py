@@ -1168,36 +1168,9 @@ class DrSaiAssistant(DrSaiAgent):
         try:
             user_skills_dir = self._user_profile_manager.skills_dir
 
-            # 1. 先检查并同步系统skill目录到用户skill目录
-            if self._skills_dir:
-                for system_skills_dir in self._skills_dir:
-                    system_path = Path(system_skills_dir)
-                    if not system_path.exists():
-                        continue
-                    for skill_folder in system_path.iterdir():
-                        if not skill_folder.is_dir():
-                            continue
-                        skill_file = skill_folder / "SKILL.md"
-                        if not skill_file.exists():
-                            continue
-                        user_skill_folder = user_skills_dir / skill_folder.name
-                        user_skill_file = user_skill_folder / "SKILL.md"
-                        should_update = False
-                        if not user_skill_file.exists():
-                            should_update = True
-                        else:
-                            system_mtime = skill_file.stat().st_mtime
-                            user_mtime = user_skill_file.stat().st_mtime
-                            if system_mtime > user_mtime:
-                                should_update = True
-
-                        if should_update:
-                            if user_skill_folder.exists():
-                                shutil.rmtree(user_skill_folder)
-                            shutil.copytree(skill_folder, user_skill_folder)
-                            logger.info(f"Updated skill '{skill_folder.name}' from system to user directory")
-
-            # 2. 然后从用户的skills目录加载
+            # Skills are installed on demand (Skills Manager / gateway install).
+            # Do not auto-sync the full bundled catalog into the user directory.
+            # 从用户的 skills 目录加载
             if user_skills_dir.exists() and list(user_skills_dir.glob("*/SKILL.md")):
                 skills_loader = SkillLoader(skills_dir=str(user_skills_dir))
 
