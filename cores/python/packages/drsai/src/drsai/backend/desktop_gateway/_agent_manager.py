@@ -34,6 +34,13 @@ from typing import Any, Mapping, Optional
 
 from loguru import logger
 
+# ARCHIVED(2026-09-02): Desktop now reuses the TUI legacy path
+# (kernel_surface="tui" below). The desktop-kernel middle layer in
+# backend/runtime (desktop_agent_kernel_adapter.py, desktop_autogen_ports.py,
+# desktop_kernel_coordinator.py, desktop_kernel_run_stream.py,
+# desktop_kernel_events.py, desktop_manager_ports.py) is archived: Desktop no
+# longer executes it. Delegate/subagents are handled directly by
+# DrSaiAssistant._process_model_result / _execute_subagent, same as the TUI.
 from drsai.backend.run_drsai_agent_factory import DEFAULT_CONFIG_NAME, PLAN_MODE_SYSTEM_PROMPT, create_agent
 from drsai.modules.managers.database import DatabaseManager
 from drsai.modules.managers.datamodel.db import RunStatus, Thread
@@ -110,6 +117,14 @@ class DesktopAgentManager:
                 # Artifact delivery is a host capability, not a user-toggled
                 # tool: every Agent must be able to publish a file it created.
                 extra_tools=[deliver_artifact],
+                # ARCHIVED(2026-09-02): Desktop reuses the TUI legacy path.
+                # run_drsai_agent_factory sets _shared_agent_kernel=None for
+                # kernel_surface=="tui", so DrSaiAssistant.run_stream() falls
+                # back to its own tool loop and handles Delegate/subagents
+                # directly. The backend/runtime desktop-kernel middle layer
+                # (desktop_agent_kernel_adapter.py etc.) is archived and no
+                # longer executes for Desktop.
+                kernel_surface="tui",
             )
             if inspect.iscoroutinefunction(create_agent):
                 agent = await create_agent(**kwargs)

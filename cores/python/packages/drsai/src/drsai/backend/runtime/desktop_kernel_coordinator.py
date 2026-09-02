@@ -1,5 +1,10 @@
 """Dependency-light Desktop/TUI Host driver for the shared Agent Kernel.
 
+ARCHIVED(2026-09-02): Desktop now reuses the TUI legacy path; see
+desktop_agent_kernel_adapter.py for details. Kept importable for legacy
+callers only.
+
+
 The coordinator owns no Agent decisions. It services requests emitted by
 ``DrSaiAgentKernel`` through Desktop-provided model, Tool and checkpoint ports.
 Production Autogen adapters are layered on these small ports separately.
@@ -69,7 +74,7 @@ class DesktopKernelCoordinator:
         checkpoint: CheckpointPort,
         approval: ApprovalPort | None = None,
         artifact: ArtifactPort | None = None,
-        max_host_steps: int = 64,
+        max_host_steps: int = 1000_000,
     ) -> None:
         if getattr(kernel, "_factory_runtime_surface", None) != "desktop":
             raise ValueError("desktop_kernel_surface_required")
@@ -122,6 +127,18 @@ class DesktopKernelCoordinator:
                     "message": redact_credentials(str(error)).strip() or type(error).__name__,
                     "retryable": True,
                 }
+                # ARCHIVED(2026-09-02): the shared desktop-kernel subagent
+                # machinery (_start_subagents/_subagent_failed in
+                # mobile_core/engine.py) is archived for Desktop; Delegate is
+                # handled directly by DrSaiAssistant. Kept only for legacy
+                # importers of these archived adapters.
+                # Carry subagent_id from the failed command so _model_failed
+                # routes to _subagent_failed (graceful subagent failure
+                # reported as a tool result to the main agent) instead of
+                # treating it as a main-agent failure that kills the run.
+                _failed_subagent_id = command.payload.get("subagent_id")
+                if _failed_subagent_id is not None:
+                    fail_payload["subagent_id"] = _failed_subagent_id
                 try:
                     queue.extend(self._kernel.handle(response(
                         MessageType.MODEL_FAILED, fail_payload, "kernel-command-failed",
@@ -188,6 +205,8 @@ class DesktopKernelCoordinator:
                 elif outbound.message_type is MessageType.CHECKPOINT_REQUEST:
                     await self._checkpoint(outbound.payload)
                 elif outbound.message_type is MessageType.MODEL_REQUEST:
+                    # ARCHIVED(2026-09-02): desktop-kernel subagent routing is
+                    # archived for Desktop (Delegate handled by DrSaiAssistant).
                     # Carry subagent_id from the Model request through every
                     # host response so the Kernel routes chunks/completions to
                     # _model_chunk's subagent branch instead of mistaking a
@@ -262,8 +281,24 @@ class DesktopKernelCoordinator:
                         send(response(MessageType.MODEL_CHUNK, chunk_payload, "model-chunk"))
                     send(response(MessageType.MODEL_COMPLETED, completed_payload, "model-completed"))
                 elif outbound.message_type is MessageType.TOOL_CALL_REQUEST:
-                    result = await self._tool(outbound.payload)
-                    if result.call_id != outbound.payload.get("call_id"):
+                    # ARCHIVED(2026-09-02): desktop-kernel Delegate is archived
+                    # for Desktop (handled directly by DrSaiAssistant). The
+                    # try/except below remains for legacy tool-port robustness.
+                    # Wrap tool execution in try/except so a tool-port exception
+                    # (e.g. Delegate/subagent failure) is reported back to the
+                    # Kernel as a failed tool result instead of killing the
+                    # entire Run.  This mirrors the MODEL_REQUEST handler.
+                    call_id = outbound.payload.get("call_id")
+                    try:
+                        result = await self._tool(outbound.payload)
+                    except Exception as error:
+                        result = DesktopToolResult(
+                            call_id or "",
+                            False,
+                            {"content": redact_credentials(str(error)).strip() or type(error).__name__},
+                            type(error).__name__.lower(),
+                        )
+                    if result.call_id != call_id:
                         raise RuntimeError("desktop_tool_call_identity_mismatch")
                     send(response(MessageType.TOOL_RESULT, {
                         "call_id": result.call_id,

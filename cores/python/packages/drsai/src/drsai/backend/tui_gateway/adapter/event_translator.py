@@ -560,6 +560,58 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
     if AgentLogEvent is not None and isinstance(message, AgentLogEvent):
         content = getattr(message, "content", None) or getattr(message, "message", None)
         log_text = _safe_str(content)
+        metadata = getattr(message, "metadata", None) or {}
+        content_type = getattr(message, "content_type", "") or ""
+        kernel_event = str(metadata.get("kernel_event") or "")
+
+        # ── Subagent lifecycle events ──
+        # When the desktop kernel emits subagent.started / subagent.completed /
+        # subagent.failed / subagent.cancelled, translate_kernel_event() wraps
+        # them in AgentLogEvent with content_type="subagent".  Route them to the
+        # conversation projector's subagent.* handlers instead of the generic
+        # status.update path.
+        if content_type == "subagent" or kernel_event.startswith("subagent."):
+            subagent_id = str(metadata.get("subagent_id") or "")
+            _sub_source = f"sub:{getattr(message, 'source', '') or 'subagent'}"
+            if kernel_event == "subagent.started":
+                out.append(("subagent.thinking", {
+                    "text": "",
+                    "source": _sub_source,
+                    "title": log_text,
+                    "subagent_id": subagent_id,
+                }))
+                return out
+            if kernel_event in {"subagent.completed", "subagent.complete"}:
+                out.append(("subagent.complete", {
+                    "text": log_text,
+                    "source": _sub_source,
+                    "subagent_id": subagent_id,
+                }))
+                return out
+            if kernel_event == "subagent.failed":
+                out.append(("subagent.complete", {
+                    "text": f"Subagent failed: {metadata.get('code', '')}",
+                    "source": _sub_source,
+                    "subagent_id": subagent_id,
+                    "status": "error",
+                }))
+                return out
+            if kernel_event == "subagent.cancelled":
+                out.append(("subagent.complete", {
+                    "text": "Subagent cancelled",
+                    "source": _sub_source,
+                    "subagent_id": subagent_id,
+                    "status": "cancelled",
+                }))
+                return out
+            # Unknown subagent.* event — still route as thinking (delta)
+            out.append(("subagent.thinking", {
+                "text": log_text,
+                "source": _sub_source,
+                "subagent_id": subagent_id,
+            }))
+            return out
+
         # Truncate long log texts (e.g. FunctionCall with big arguments)
         # to avoid flooding the TUI status bar.  Max ~3 terminal lines ≈ 300 chars.
         MAX_LOG_CHARS = 300

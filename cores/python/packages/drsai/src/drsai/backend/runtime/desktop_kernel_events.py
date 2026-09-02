@@ -1,4 +1,9 @@
-"""Translate shared Kernel events to the existing Desktop/TUI Autogen stream."""
+"""Translate shared Kernel events to the existing Desktop/TUI Autogen stream.
+
+ARCHIVED(2026-09-02): Desktop now reuses the TUI legacy path; see
+desktop_agent_kernel_adapter.py for details. Kept importable for legacy
+callers only.
+"""
 
 from __future__ import annotations
 
@@ -206,6 +211,11 @@ def translate_kernel_event(
         state.terminal_kind = kind
         state.terminal_payload = payload
         return ()
+    # ARCHIVED(2026-09-02): Desktop now reuses the TUI legacy path, so the
+    # shared desktop-kernel subagent machinery (DrSaiAgentKernel._start_subagents
+    # / _subagent_completed / _subagent_failed / _subagent_cancelled) is
+    # archived and never runs for Desktop. Delegate/subagents are handled
+    # directly by DrSaiAssistant._process_model_result / _execute_subagent.
     # --- Subagent lifecycle events ---
     # The kernel emits these from _start_subagents / _subagent_completed /
     # _subagent_failed / _subagent_cancelled.  Surfacing them as structured
@@ -228,9 +238,15 @@ def translate_kernel_event(
         # Streaming text from a child agent.  Emit as a chunk so the UI shows
         # the subagent working in real time, but tag metadata so the front end
         # can route it to the subagent panel rather than the main stream.
+        # IMPORTANT: source MUST start with "sub:" so that
+        # tui_gateway/adapter/event_translator._is_subagent_source() routes
+        # this to "subagent.thinking" instead of treating it as a main-agent
+        # "message.delta".  Without the prefix, subagent streaming text would
+        # be silently merged into the parent's message bubble.
+        _agent_name = str(payload.get("agent_name") or state.assistant_name)
         return (ModelClientStreamingChunkEvent(
             content=str(payload.get("text") or ""),
-            source=str(payload.get("agent_name") or state.assistant_name),
+            source=f"sub:{_agent_name}",
         ),)
     if kind in {"subagent.completed", "subagent.failed", "subagent.cancelled"}:
         status = kind.split(".")[-1]

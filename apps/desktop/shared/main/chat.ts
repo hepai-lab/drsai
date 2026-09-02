@@ -144,8 +144,12 @@ const NATIVE_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp
 const MAX_BROWSER_SCREENSHOT_DATA_URL_CHARS = 2_000_000;
 const MAX_SSE_BUFFER_CHARS = 1_000_000;
 const MAX_ERROR_BODY_BYTES = 64_000;
-const CHAT_TIMEOUT_MS = getPositiveIntEnv("OPENDRSAI_CHAT_TIMEOUT_MS", 300_000);
-const NETWORK_RECOVERY_WINDOW_MS = getPositiveIntEnv("OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS", 180_000);
+// Execution time limits disabled: the backend has its own safeguards
+// (DEFAULT_MAX_TOOL_ROUNDS, max_turn_count, etc.). Frontend total-time
+// limits caused premature session interruption at ~50-68 operations.
+// Set OPENDRSAI_CHAT_TIMEOUT_MS > 0 to re-enable the absolute timeout.
+const CHAT_TIMEOUT_MS = getPositiveIntEnv("OPENDRSAI_CHAT_TIMEOUT_MS", 0);
+const NETWORK_RECOVERY_WINDOW_MS = getPositiveIntEnv("OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS", Number.MAX_SAFE_INTEGER);
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const platformInputTargets = new Map<string, { agentId: string; chatId: string; runId: string }>();
@@ -856,13 +860,6 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
     if (typeof content !== "string" || !content.trim()) {
       throw new Error("Chat message content is invalid.");
     }
-    if (content.length > MAX_MESSAGE_CHARS) {
-      throw new Error(`Chat message cannot exceed ${MAX_MESSAGE_CHARS} characters.`);
-    }
-    totalChars += content.length;
-    if (totalChars > MAX_TOTAL_CHARS) {
-      throw new Error(`Chat request cannot exceed ${MAX_TOTAL_CHARS} characters.`);
-    }
     return { role: role as ChatMessage["role"], content };
   });
   return {
@@ -1070,7 +1067,10 @@ async function runChat(
     `stage: attachments enriched (${attachmentContext.filter((item) => item.included).length}/${attachmentContext.length})`,
   );
 
-  const timeout = setTimeout(() => controller.abort("timeout"), CHAT_TIMEOUT_MS);
+  // Timeout disabled when CHAT_TIMEOUT_MS = 0 (default). The backend has
+  // its own execution limits; the frontend no longer enforces a total
+  // wall-clock timeout that prematurely aborts long agent sessions.
+  const timeout = CHAT_TIMEOUT_MS > 0 ? setTimeout(() => controller.abort("timeout"), CHAT_TIMEOUT_MS) : null;
   try {
     if (!platformDescriptor) {
       await runRuntimeBackendChat(
@@ -1278,7 +1278,7 @@ async function runChat(
     }
     throw error;
   } finally {
-    clearTimeout(timeout);
+    if (timeout) clearTimeout(timeout);
     chatTurns.get(requestId)?.subscription?.stop();
   }
 }
@@ -1341,10 +1341,14 @@ export async function stageAttachments(
           });
           staged.push({ ...attachment, kind: "file", path: stagedImage.destPath, name: stagedImage.destName });
           refs.push(stagedImage.destRel);
+          // Include base64 data as content so the Runtime can create
+          // multimodal messages (matching ui-tui's design).
+          const clipboardImageContent = `data:${mime};base64,${bytes.toString("base64")}`;
           resources.push({
             protocol: "oaep.input/1", resource_id: resourceId, kind: "file",
             name: stagedImage.destName, permission: "read", status: "encoded",
             reference: stagedImage.destRel, size_bytes: bytes.length, sha256: stagedImage.sha256, mime,
+            content: clipboardImageContent,
           });
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
@@ -2345,9 +2349,10 @@ async function runRuntimeBackendChat(
   // local, so the backend always sends a terminal event — whether it succeeds,
   // fails, or times out internally. If the gateway process crashes, the SSE
   // stream breaks and liveSubscription.done resolves, which is also handled.
-  // The overall CHAT_TIMEOUT_MS (5 min) at the controller level remains as an
-  // absolute safeguard: it aborts the controller, which calls cancelAgentRun,
-  // which makes the backend emit event.run.cancelled.
+  // The frontend total-time timeout (CHAT_TIMEOUT_MS) is disabled by default
+  // (0). The backend enforces its own execution limits. When enabled via env,
+  // it aborts the controller, which calls cancelAgentRun, which makes the
+  // backend emit event.run.cancelled.
   await Promise.race([
     runtimeTerminal,
     liveSubscription.done.then(() => {
@@ -2562,6 +2567,24 @@ export async function buildAttachmentContext(attachments: ChatRequest["attachmen
   const context: AttachmentContextItem[] = [];
   let includedFiles = 0;
   for (const attachment of attachments) {
+    // Clipboard image — treat like a file image. The actual base64 content is
+    // sent as an OaepInputResource via stageAttachments; here we only mark it
+    // as an image so withAttachmentContext shows metadata instead of raw data.
+    if (isClipboardImageAttachment(attachment)) {
+      const mime = attachment.screenshotDataUrl?.match(/^data:([^;]+);/)?.[1] || "image/png";
+      context.push({
+        ...attachment,
+        included: true,
+        content: attachment.screenshotDataUrl || "clipboard-image",
+        load: "full",
+        sourceChars: attachment.screenshotDataUrl?.length ?? 0,
+        loadedChars: attachment.screenshotDataUrl?.length ?? 0,
+        isImage: true,
+        mime,
+      } as AttachmentContextItem & { isImage: true; mime: string });
+      includedFiles += 1;
+      continue;
+    }
     if (
       attachment.kind === "browser" ||
       attachment.kind === "terminal" ||

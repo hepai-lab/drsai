@@ -4392,10 +4392,12 @@ const PICKED_FILE_INSPECTION_TIMEOUT_MS = 15_000;
 type PickedFileInspection = Pick<PickedFileDescriptor, "status" | "message" | "diagnosticCode" | "processingMode" | "recoveryAction" | "sensitiveDataDetected" | "sensitiveKinds" | "sensitiveValueCount" | "privacyNotice">;
 
 async function inspectPickedFile(path: string, category: PickedFileDescriptor["category"], extension: string): Promise<PickedFileInspection> {
+  // Non-categorized files (ZIP, archives, code, etc.) are allowed — the agent
+  // reads file contents through its own file-reading tools, so we only pass
+  // the file path/metadata and do not need to parse the content here.
   if (category === "other") return {
-    status: "unsupported", diagnosticCode: "unsupported_format", processingMode: "blocked",
-    message: "暂不支持这种文件格式；其他已选文件仍可使用。",
-    recoveryAction: "请转换为 PDF、Word、Excel、CSV、图片或文本后重新导入。",
+    status: "ready", processingMode: "full",
+    message: "文件已加入任务；智能体将通过自己的工具读取文件内容。",
   };
   const handle = await openFile(path, "r");
   try {

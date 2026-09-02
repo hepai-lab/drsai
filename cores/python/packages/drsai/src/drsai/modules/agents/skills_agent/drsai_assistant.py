@@ -1557,6 +1557,11 @@ class DrSaiAssistant(DrSaiAgent):
             if isinstance(last_task, BaseChatMessage) and isinstance(last_task.content, str):
                 command_text = last_task.content
         await self._install_attached_skills_from_task(task)
+        # ARCHIVED(2026-09-02): Desktop now follows the TUI legacy path, so
+        # `_shared_agent_kernel` is always None for Desktop/TUI agents and this
+        # kernel-stream branch never runs. The backend/runtime desktop-kernel
+        # middle layer is archived; Delegate/subagents are handled directly by
+        # _process_model_result / _execute_subagent below.
         use_kernel_stream = (
             getattr(self, "_shared_agent_kernel", None) is not None
             and not (command_text is not None and self.is_commands_mode(command_text))
@@ -2862,17 +2867,11 @@ class DrSaiAssistant(DrSaiAgent):
                         call_id=call_id,
                         is_error=True,
                     ))
-                    yield TextMessage(
-                        content=str(e) + "\n\n",
-                        source=agent_name,
-                        metadata={"interal": "no"},
-                    )
-                    yield StopMessage(
-                        content=str(e),
-                        source=agent_name,
-                    )
-                    return
-                    return
+                    # Do NOT return early — fall through to the end of
+                    # _process_model_result so exec_results are paired into
+                    # model_context.  An early return leaves unpaired
+                    # FunctionCall messages that cause API errors on the
+                    # next LLM round.
 
             elif tool_name == "UpdateUserConfig":
                 # UpdateUserConfig tool handling
@@ -3552,34 +3551,37 @@ class DrSaiAssistant(DrSaiAgent):
             context: Optional background information.
             cancellation_token: Cancellation token for early termination.
         """
-        # 1. Depth check
-        self._check_delegate_depth()
-
-        # 2. Create subagent (remote / daemon if config type indicates it)
-        cfg = self._user_sub_agents.get(sub_agent_name, {})
-        agent_type = cfg.get("type", "DrSaiAgent")
-        if agent_type in ("HepAIWorkerAgent", "RemoteAgent"):
-            subagent = await self._create_remote_subagent(sub_agent_name)
-        elif agent_type == "DaemonAgent":
-            subagent = await self._create_daemon_subagent(sub_agent_name)
-        else:
-            subagent = await self._create_local_subagent(sub_agent_name)
-
-        # 3. Build task messages (Hermes-style: no parent history)
-        task_messages = self._build_subagent_messages(
-            prompt=prompt,
-            work_dir=str(self._work_dir),
-            context=context,
-        )
-
-        # 4. Execute with timeout — IMPORTANT: give each subagent its OWN
-        #    CancellationToken to prevent close() from cancelling the parent's
-        #    shared token (which would kill sibling parallel subagents).
-        timeout = cfg.get("timeout", self._subagent_timeout)
-        parent_ct = cancellation_token or CancellationToken()
-        ct = CancellationToken()  # subagent-own token
-
+        subagent = None
         try:
+            # 1. Depth check (inside try so DelegateDepthExceededError is
+            #    caught and yielded as a TextMessage instead of propagating
+            #    to the caller and killing the parent run).
+            self._check_delegate_depth()
+
+            # 2. Create subagent (remote / daemon if config type indicates it)
+            cfg = self._user_sub_agents.get(sub_agent_name, {})
+            agent_type = cfg.get("type", "DrSaiAgent")
+            if agent_type in ("HepAIWorkerAgent", "RemoteAgent"):
+                subagent = await self._create_remote_subagent(sub_agent_name)
+            elif agent_type == "DaemonAgent":
+                subagent = await self._create_daemon_subagent(sub_agent_name)
+            else:
+                subagent = await self._create_local_subagent(sub_agent_name)
+
+            # 3. Build task messages (Hermes-style: no parent history)
+            task_messages = self._build_subagent_messages(
+                prompt=prompt,
+                work_dir=str(self._work_dir),
+                context=context,
+            )
+
+            # 4. Execute with timeout — IMPORTANT: give each subagent its OWN
+            #    CancellationToken to prevent close() from cancelling the parent's
+            #    shared token (which would kill sibling parallel subagents).
+            timeout = cfg.get("timeout", self._subagent_timeout)
+            parent_ct = cancellation_token or CancellationToken()
+            ct = CancellationToken()  # subagent-own token
+
             # Propagate cancellation from parent to subagent via a watcher.
             async def _watch_parent_cancel(parent: CancellationToken, child: CancellationToken):
                 try:
@@ -3623,8 +3625,20 @@ class DrSaiAssistant(DrSaiAgent):
             )
         except DelegateDepthExceededError as e:
             yield TextMessage(content=str(e), source="system")
+        except Exception as e:
+            # Catch-all: any exception from subagent creation, lazy_init, or
+            # on_messages_stream that isn't TimeoutError or
+            # DelegateDepthExceededError.  Yield a TextMessage so the caller
+            # (delegate() or _process_model_result) receives *something*
+            # instead of the exception propagating and killing the run.
+            logger.exception(f"Unexpected error executing subagent '{sub_agent_name}': {e}")
+            yield TextMessage(
+                content=f"⚠️ Subagent '{sub_agent_name}' failed: {type(e).__name__}: {e}",
+                source="system",
+            )
         finally:
-            await self._safe_close_subagent(subagent, sub_agent_name)
+            if subagent is not None:
+                await self._safe_close_subagent(subagent, sub_agent_name)
 
     async def _execute_subagents_parallel(
         self,

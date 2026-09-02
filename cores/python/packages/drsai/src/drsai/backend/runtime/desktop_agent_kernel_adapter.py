@@ -1,4 +1,15 @@
-"""Bind a production-style Desktop Agent host to the shared Kernel stream."""
+"""Bind a production-style Desktop Agent host to the shared Kernel stream.
+
+ARCHIVED(2026-09-02): Desktop now reuses the TUI legacy path
+(desktop_gateway/_agent_manager.py passes kernel_surface="tui", so
+run_drsai_agent_factory sets _shared_agent_kernel=None and
+DrSaiAssistant.run_stream() handles Delegate/subagents directly). This module
+and the other desktop-kernel middle-layer files (desktop_autogen_ports.py,
+desktop_kernel_coordinator.py, desktop_kernel_run_stream.py,
+desktop_kernel_events.py, desktop_manager_ports.py) are archived: they are no
+longer executed by the Desktop gateway. Keep them importable for legacy
+callers and archived references only.
+"""
 
 from __future__ import annotations
 

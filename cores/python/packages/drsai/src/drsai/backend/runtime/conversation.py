@@ -142,7 +142,7 @@ class StructuredConversationProjector:
             }
             self.activities[activity_id] = activity
             events.append(self._event("activity.updated", source, activity=activity))
-        elif event_type in {"subagent.thinking", "subagent.complete"}:
+        elif event_type in {"subagent.thinking", "subagent.complete", "subagent.completed"}:
             events.extend(self._subtask(event_type, payload, source))
         elif event_type == "progress.update":
             events.extend(self._progress(payload, source))
@@ -295,9 +295,19 @@ class StructuredConversationProjector:
             self.parts[part_id] = part
             events.append(self._event("part.started", source, part=dict(part)))
         summary = str(payload.get("text") or payload.get("summary") or "")
-        if event_type == "subagent.complete":
+        # Normalize "subagent.completed" → "subagent.complete" for the
+        # comparison below.  The kernel emits "subagent.completed" (with the
+        # -ed suffix) but the projector's contract uses "subagent.complete".
+        is_complete = event_type in {"subagent.complete", "subagent.completed"}
+        status_override = str(payload.get("status") or "").lower()
+        if is_complete:
             part["summary"] = summary
-            part["status"] = "completed"
+            if status_override in {"error", "failed"}:
+                part["status"] = "error"
+            elif status_override in {"cancelled", "canceled", "aborted"}:
+                part["status"] = "cancelled"
+            else:
+                part["status"] = "completed"
             events.append(self._event("part.completed", source, part=dict(part)))
         else:
             events.append(self._event(

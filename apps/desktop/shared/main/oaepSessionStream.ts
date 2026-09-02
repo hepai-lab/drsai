@@ -136,7 +136,9 @@ function positiveIntEnv(name: string, fallback: number): number {
 // Keep OAEP recovery aligned with the desktop chat/agent recovery contract.
 // Tests may shorten this window, while production retains the three-minute
 // interruption tolerance documented above.
-const OAEP_NETWORK_RECOVERY_WINDOW_MS = positiveIntEnv("OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS", 180_000);
+// Execution time limits disabled: the frontend no longer enforces a
+// total-time recovery window that prematurely terminates long sessions.
+const OAEP_NETWORK_RECOVERY_WINDOW_MS = positiveIntEnv("OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS", Number.MAX_SAFE_INTEGER);
 
 export class OaepSyncDegradedError extends Error {
   readonly code = "oaep_sync_degraded";

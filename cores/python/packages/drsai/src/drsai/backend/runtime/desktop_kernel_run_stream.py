@@ -1,4 +1,9 @@
-"""Desktop/TUI stream facade whose execution is owned by DrSaiAgentKernel."""
+"""Desktop/TUI stream facade whose execution is owned by DrSaiAgentKernel.
+
+ARCHIVED(2026-09-02): Desktop now reuses the TUI legacy path; see
+desktop_agent_kernel_adapter.py for details. Kept importable for legacy
+callers only.
+"""
 
 from __future__ import annotations
 

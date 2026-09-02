@@ -1615,6 +1615,10 @@ class AgentManager:
 
 
             try:
+                # ARCHIVED(2026-09-02): Desktop reuses the TUI legacy path; the
+                # desktop-kernel middle layer is archived. desktop_regression_control_scope
+                # is kept for legacy callers but has no effect on Desktop's
+                # DrSaiAssistant tool loop.
                 from drsai.backend.runtime.desktop_agent_kernel_adapter import desktop_regression_control_scope
                 with desktop_regression_control_scope(regression_control_resources):
                     async for event in agent.run_stream(
@@ -2808,6 +2812,10 @@ class GatewayOpenDrSaiAgentBackend:
             if definition.reasoning_effort is not None:
                 run_kwargs["reasoning_effort"] = definition.reasoning_effort
             if self._runner is None:
+                # ARCHIVED(2026-09-02): Desktop reuses the TUI legacy path; the
+                # desktop-kernel middle layer is archived. trusted_evidence_domains
+                # is kept for legacy callers; Desktop's DrSaiAssistant tool loop
+                # does not consume it.
                 from drsai.backend.runtime.desktop_agent_kernel_adapter import trusted_evidence_domains
                 run_kwargs["trusted_evidence_domains"] = trusted_evidence_domains(context.input_resources)
                 run_kwargs["regression_control_resources"] = context.input_resources
@@ -3088,6 +3096,10 @@ class GatewayOpenDrSaiAgentBackend:
                 run_kwargs["tool_approval_handler"] = approve_registry_tool
             context_token = _runtime_image_context.set(context)
             try:
+                # ARCHIVED(2026-09-02): Desktop reuses the TUI legacy path; the
+                # desktop-kernel middle layer is archived. desktop_regression_control_scope
+                # is kept for legacy callers but has no effect on Desktop's
+                # DrSaiAssistant tool loop.
                 from drsai.backend.runtime.desktop_agent_kernel_adapter import desktop_regression_control_scope
                 with desktop_regression_control_scope(context.input_resources):
                     events = run_stream(**run_kwargs)

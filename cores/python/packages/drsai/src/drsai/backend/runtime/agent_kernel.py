@@ -51,8 +51,8 @@ SKILL_MANIFEST_VERSION = "p9-skill-manifest-v1"
 # MAX_INLINE_TOOL_OUTPUT_CHARS = 16_384
 DEFAULT_MAX_TOOL_ROUNDS = 100_000
 DEFAULT_MAX_PARALLEL_TOOL_CALLS = 100
-MAX_INLINE_TOOL_OUTPUT_CHARS = 100_000_000
-# === END BYPASS ===
+MAX_INLINE_TOOL_OUTPUT_CHARS = 100_000_000_000
+DEFAULT_MAX_MESSAGES = 1000_000
 READ_ONLY_RETRYABLE_TOOL_ERRORS = (
     "http_408", "http_429", "http_500", "http_502", "http_503", "http_504",
     "timeout", "rate_limited", "temporarily_unavailable",
@@ -1893,7 +1893,7 @@ def agent_kernel_identity(
 class ContextBudgetPolicy:
     context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
     reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS
-    max_messages: int = 20
+    max_messages: int = DEFAULT_MAX_MESSAGES
     summary_tokens: int = DEFAULT_CONTEXT_SUMMARY_TOKENS
 
     @property
@@ -1914,7 +1914,7 @@ class ContextBudgetPolicy:
         result = cls(
             context_window_tokens=values.get("context_window_tokens", DEFAULT_CONTEXT_WINDOW_TOKENS),
             reserved_output_tokens=values.get("reserved_output_tokens", DEFAULT_RESERVED_OUTPUT_TOKENS),
-            max_messages=values.get("max_messages", 20),
+            max_messages=values.get("max_messages", DEFAULT_MAX_MESSAGES),
             summary_tokens=values.get("summary_tokens", DEFAULT_CONTEXT_SUMMARY_TOKENS),
         )
         # if not isinstance(result.context_window_tokens, int) or not 1_024 <= result.context_window_tokens <= 2_000_000:
@@ -2451,6 +2451,10 @@ def assemble_agent_context(
     # history still carries the orphaned tool_call.  Without this patch every
     # subsequent _request() would crash in validate_conversation_context with
     # conversation_tool_result_missing.
+    # NOTE: The synthetic content used to say "conversation was interrupted"
+    # which was misleading when the subagent actually completed successfully
+    # but the coordinator simply lost the subagent_id routing.  The message is
+    # now neutral so the model can proceed without hallucinating a failure.
     _pending_call_ids: set[str] = set()
     _resolved_call_ids: set[str] = set()
     for _msg in normalized:
@@ -2470,7 +2474,7 @@ def assemble_agent_context(
             "role": "tool",
             "tool_call_id": _orphan_id,
             "name": "delegate",
-            "content": "[subagent result unavailable: conversation was interrupted]",
+            "content": "[delegate tool result was not persisted in history; proceed with available context]",
         })
 
     units = _history_units(normalized)

@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from drsai.backend.cli.config import load_config, save_config
 from drsai.backend.runtime.agent_kernel import (
     AgentRunConfig,
+    DEFAULT_MAX_MESSAGES,
     DEFAULT_SYSTEM_PROMPT,
     agent_kernel_identity,
     desktop_production_parity_manifest,
@@ -331,24 +332,6 @@ def _overlay_live_gfs_config(cli_cfg: dict[str, Any]) -> dict[str, Any]:
     else:
         merged.pop("gfs", None)
     return merged
-
-
-_GFS_TOOL_PROMPT = (
-    "GFS cloud-drive tools are available in this session: "
-    "gfs_ls, gfs_stat, gfs_read, gfs_write, gfs_upload, gfs_download, gfs_delete, gfs_share_url. "
-    "When the user asks about 云盘 / GFS / their bucket, call these tools directly. "
-    "Do not load ihep-gfs-skill, do not run jcli, and do not invent local paths such as gfs_mount."
-)
-
-_GFS_DISABLED_PROMPT = (
-    "GFS cloud-drive tools are NOT enabled in this session "
-    "(Desktop 「GFS 云盘」 is off or credentials were cleared). "
-    "If the user asks about GFS / 云盘 / gfs_* / jcli / ihep-gfs-skill, "
-    "reply immediately in plain Chinese with this meaning (you may rephrase slightly):\n"
-    "「当前没有可用的 GFS 云盘工具。请打开左侧「GFS 云盘」，开启开关并保存密钥后再新建任务重试。」\n"
-    "Do not print DSML, tool_calls, XML, run_bash, run_powershell, jcli, or gfs_mount. "
-    "Do not load skills or run shell commands for this request."
-)
 
 
 def _build_cwd_prompt(cli_cfg: dict[str, Any], work_dir: str = "") -> str:
@@ -921,41 +904,43 @@ def create_agent(
     cwd_prompt = _build_cwd_prompt(cli_cfg, work_dir=cwd)
 
     # ── Security mode (design-20260623 §6.2) ──
-    # enable_security=False: CLI mode (personal use, all tools open)
+    # enable_security=False: CLI/Desktop mode (personal use, all tools open)
     # enable_security=True:  server mode (permission tiers + Skill elevation)
     if enable_security:
         allow_basic_tools = ["run_read"]  # user: read-only (Skill elevation adds more)
         only_in_workspace_sec = True
         allow_dangerous = False
     else:
-        allow_basic_tools = None           # CLI: full access
-        only_in_workspace_sec = cli_cfg.get("workspace_enabled", True)
-        allow_dangerous = cli_cfg.get("dangerous_allowed", False)
+        allow_basic_tools = None           # CLI/Desktop: full access
+        # Desktop app defaults: workspace unrestricted and dangerous commands
+        # allowed unless the user explicitly restricts them via CLI config.
+        # This matches the OpenDrSai desktop's personal-use contract — the
+        # user already has full system access on their own machine, so
+        # sandboxing /workspace and blocking /dangerous would only prevent
+        # the agent from doing useful work without adding real security.
+        only_in_workspace_sec = cli_cfg.get("workspace_enabled", False)
+        allow_dangerous = cli_cfg.get("dangerous_allowed", True)
 
     # ── Merge extra_tools with GFS tools ──
     gfs_tools = _build_gfs_tools(user_id, cli_cfg=cli_cfg)
     if gfs_tools:
         final_tools = list(extra_tools or []) + gfs_tools
-        if _GFS_TOOL_PROMPT not in cwd_prompt:
-            cwd_prompt = f"{cwd_prompt}\n\n{_GFS_TOOL_PROMPT}"
-        logger.info(
-            "Attaching %s GFS tools for user=%s (cli_config gfs.enabled=%s)",
-            len(gfs_tools),
-            user_id,
-            (cli_cfg.get("gfs") or {}).get("enabled") if isinstance(cli_cfg.get("gfs"), dict) else None,
-        )
+        # logger.info(
+        #     "Attaching %s GFS tools for user=%s (cli_config gfs.enabled=%s)",
+        #     len(gfs_tools),
+        #     user_id,
+        #     (cli_cfg.get("gfs") or {}).get("enabled") if isinstance(cli_cfg.get("gfs"), dict) else None,
+        # )
     else:
         final_tools = list(extra_tools) if extra_tools else None
-        if _GFS_DISABLED_PROMPT not in cwd_prompt:
-            cwd_prompt = f"{cwd_prompt}\n\n{_GFS_DISABLED_PROMPT}"
         gfs_block = cli_cfg.get("gfs") if isinstance(cli_cfg.get("gfs"), dict) else None
-        logger.info(
-            "No GFS tools attached for user=%s (live_path=%s, has_gfs_block=%s, enabled=%s)",
-            user_id,
-            _live_cli_config_path(),
-            gfs_block is not None,
-            _as_bool((gfs_block or {}).get("enabled"), default=False) if gfs_block else False,
-        )
+        # logger.info(
+        #     "No GFS tools attached for user=%s (live_path=%s, has_gfs_block=%s, enabled=%s)",
+        #     user_id,
+        #     _live_cli_config_path(),
+        #     gfs_block is not None,
+        #     _as_bool((gfs_block or {}).get("enabled"), default=False) if gfs_block else False,
+        # )
 
     # ── Sub-agent config ──
     final_sub_agent_config = sub_agent_config or {}
@@ -1039,9 +1024,12 @@ def create_agent(
     )
     exporter = getattr(assistant, "export_production_parity_manifest", None)
     parity_manifest = exporter() if callable(exporter) else desktop_production_parity_manifest(assistant)
-    # TUI 走 legacy 路径,屏蔽 desktop 内核的 fail-closed 策略
-    # (memory 门禁 / verification / citation / context budget / artifact 强制)。
-    # 工具循环控制与能力快照校验由 legacy 层保留。
+    # ARCHIVED(2026-09-02): Desktop reuses the TUI legacy path. kernel_surface
+    # is now effectively "tui" for the Desktop gateway (see
+    # desktop_gateway/_agent_manager.py), so `_shared_agent_kernel` is None and
+    # DrSaiAssistant.run_stream() uses its own tool loop, handling Delegate /
+    # subagents directly. The backend/runtime desktop-kernel middle layer is
+    # archived and never executes for Desktop.
     tui_legacy_path = kernel_surface == "tui"
     effective_shared_kernel = None if tui_legacy_path else shared_agent_kernel
     if isinstance(assistant, dict):
@@ -1053,7 +1041,7 @@ def create_agent(
             "policy_version": "p9-context-budget-v1",
             "context_window_tokens": int(token_limit),
                 "reserved_output_tokens": max(1, min(int(reserved_output_tokens), int(token_limit) - 1)),
-            "max_messages": 80,
+            "max_messages": DEFAULT_MAX_MESSAGES,
                 "summary_tokens": min(1_024, max(0, (int(token_limit) - int(reserved_output_tokens)) // 8)),
         }
         assistant._production_parity_manifest = parity_manifest

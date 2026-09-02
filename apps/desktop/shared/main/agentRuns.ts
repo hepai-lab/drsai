@@ -41,8 +41,12 @@ const MAX_TASK_CHARS = 80_000;
 const MAX_WORKSPACE_PATH_CHARS = 2048;
 const MAX_SSE_BUFFER_CHARS = 1_000_000;
 const MAX_ERROR_BODY_BYTES = 64_000;
-const AGENT_RUN_TIMEOUT_MS = getPositiveIntEnv("OPENDRSAI_AGENT_RUN_TIMEOUT_MS", 300_000);
-const NETWORK_RECOVERY_WINDOW_MS = getPositiveIntEnv("OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS", 180_000);
+// Execution time limits disabled: the backend has its own safeguards
+// (DEFAULT_MAX_TOOL_ROUNDS, max_turn_count, etc.). Frontend total-time
+// limits caused premature session interruption at ~50-68 operations.
+// Set OPENDRSAI_AGENT_RUN_TIMEOUT_MS > 0 to re-enable the absolute timeout.
+const AGENT_RUN_TIMEOUT_MS = getPositiveIntEnv("OPENDRSAI_AGENT_RUN_TIMEOUT_MS", 0);
+const NETWORK_RECOVERY_WINDOW_MS = getPositiveIntEnv("OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS", Number.MAX_SAFE_INTEGER);
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const RUN_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 interface ActiveAgentRun {
@@ -305,7 +309,10 @@ export async function runLegacyAgentCompatibility(
     await new Promise<void>((_resolve, reject) => controller.signal.addEventListener("abort", () => reject(new DOMException("Packaged Agent crash fixture aborted.", "AbortError")), { once: true }));
   }
 
-  const timeout = setTimeout(() => controller.abort("timeout"), AGENT_RUN_TIMEOUT_MS);
+  // Timeout disabled when AGENT_RUN_TIMEOUT_MS = 0 (default). The backend has
+  // its own execution limits; the frontend no longer enforces a total
+  // wall-clock timeout that prematurely aborts long agent sessions.
+  const timeout = AGENT_RUN_TIMEOUT_MS > 0 ? setTimeout(() => controller.abort("timeout"), AGENT_RUN_TIMEOUT_MS) : null;
   const changeSetCheckpointId = await prepareAgentChangeSetCheckpoint(request, runId);
   const beforeFiles = await readWorkspaceFileSnapshot(request.workspacePath);
   try {
@@ -436,7 +443,7 @@ export async function runLegacyAgentCompatibility(
     await emitWorkspaceSnapshotEvents(webContents, requestId, sessionId, runId, request.workspacePath, beforeFiles);
     throw error;
   } finally {
-    clearTimeout(timeout);
+    if (timeout) clearTimeout(timeout);
   }
   /* c8 ignore stop */
 }

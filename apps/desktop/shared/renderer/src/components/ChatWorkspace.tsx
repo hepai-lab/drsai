@@ -2050,8 +2050,13 @@ function ChatWorkspaceImpl({
     if (!imageFiles.length && !pathMentionText) return;
 
     event.preventDefault();
-    insertTextAtCursor(pathMentionText || text);
-    if (imageFiles.length) void addClipboardImageAttachments(imageFiles);
+    // When pasting clipboard images, do not insert clipboard text into the
+    // input box — the image is sent as a multimodal message, not as text.
+    if (imageFiles.length) {
+      void addClipboardImageAttachments(imageFiles);
+    } else {
+      insertTextAtCursor(pathMentionText || text);
+    }
   }
 
   function startEditAndResend(assistantMessageId: string): void {
@@ -4327,14 +4332,22 @@ function ChatWorkspaceImpl({
                 </div>
 
                 {showStop ? (
-                  <>
-                    {input.trim() ? <button className="composer-submit" type="submit" title={zh ? "默认排在当前任务之后" : "Queue after the current task"}>
-                      <Send size={16} />{zh ? "排队发送" : "Queue"}
-                    </button> : null}
-                    <button className="composer-submit" type="submit" title={zh ? "发送并停止当前任务输出，开始新任务" : "Send and stop current task output, start new task"}>
-                      <Send size={16} />{zh ? "发送并停止" : "Send & Stop"}
+                  input.trim() ? (
+                    <>
+                      <button className="composer-submit" type="submit" title={zh ? "默认排在当前任务之后" : "Queue after the current task"}>
+                        <Send size={16} />{zh ? "排队发送" : "Queue"}
+                      </button>
+                      <button type="button" className="composer-submit" title={zh ? "发送并停止当前任务输出，开始新任务" : "Send and stop current task output, start new task"}
+                        onClick={async () => { try { await onAbort(); } catch { /* best-effort */ } void submitWithAttachments(); }}>
+                        <Send size={16} />{zh ? "发送并停止" : "Send & Stop"}
+                      </button>
+                    </>
+                  ) : (
+                    <button type="button" className="composer-submit" title={zh ? "停止当前任务" : "Stop current task"}
+                      onClick={() => void onAbort()}>
+                      <Square size={16} />{zh ? "停止" : "Stop"}
                     </button>
-                  </>
+                  )
                 ) : (
                   <button className="composer-submit" type="submit" title={zh ? "发送消息" : "Send message"}>
                     <Send size={16} />
@@ -5049,15 +5062,9 @@ async function createClipboardImageAttachment(
 ): Promise<ComposerAttachment | null> {
   const name = file.name?.trim() || `clipboard-image-${index + 1}`;
   const tooLarge = file.size > MAX_CLIPBOARD_IMAGE_BYTES;
-  const visibleText = [
-    `Clipboard image: ${name}.`,
-    `MIME type: ${file.type || "unknown"}.`,
-    `Size: ${formatBytes(file.size)}.`,
-    tooLarge
-      ? `Image data URL was not attached because it exceeds ${formatBytes(MAX_CLIPBOARD_IMAGE_BYTES)}.`
-      : "Image data URL captured from an explicit paste event.",
-    "No OCR, vision model, filesystem write, network call, or provider send was performed while preparing this clipboard context.",
-  ].join("\n");
+  // visibleText is undefined for clipboard images — the actual image content
+  // is sent as a multimodal OaepInputResource, not as text metadata.
+  const visibleText = undefined;
   const screenshotDataUrl = tooLarge ? undefined : await blobToDataUrl(file);
   return {
     id: crypto.randomUUID(),
@@ -5405,11 +5412,7 @@ function parseInlineContextMentions(input: string, workspacePath: string): ChatA
 function normalizePastedLocalPathMentions(text: string): string | null {
   const mentions = extractPastedLocalPathMentions(text);
   if (!mentions.length) return null;
-  const prefix = [
-    "Reviewed pasted local path context.",
-    "No clipboard polling, filesystem read, network call, or provider send was performed while preparing these mentions.",
-  ].join(" ");
-  return `${prefix}\n${mentions.join("\n")}`;
+  return mentions.join("\n");
 }
 
 function extractPastedLocalPathMentions(text: string): string[] {
