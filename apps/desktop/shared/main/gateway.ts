@@ -4,7 +4,7 @@ import { Agent, get } from "http";
 import { connect as connectTcp } from "net";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import type { GatewayEndpointStatus, GatewayLiveness, GatewayStatus } from "../api/desktopApi";
+import type { GatewayEndpointStatus, GatewayLiveness, GatewayStartState, GatewayStatus } from "../api/desktopApi";
 import type { DesktopProcessService } from "../api";
 import { DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, getEnhancedPath } from "./paths";
 import { collectMigrationAliases, getCliConfigUserId, rememberUserIdAlias, setCliConfigUserId } from "./userIdentity";
@@ -83,6 +83,10 @@ let gatewayLastSuccessAt: number | null = null;
 let gatewayDegradedSince: number | null = null;
 let gatewayConsecutiveFailures = 0;
 let gatewayObservationGeneration = 0;
+// Outcome of the most recent explicit start attempt (null = no attempt yet).
+// This lets callers distinguish "still booting" from "attempt finished and
+// failed" while the renderer health poll and bootstrap run independently.
+let gatewayLastAttemptSucceeded: boolean | null = null;
 
 interface GatewayEndpointProbe extends GatewayEndpointStatus {
   error?: string;
@@ -181,9 +185,14 @@ export async function getGatewayStatus(): Promise<GatewayStatus> {
 
 export async function startGateway(): Promise<boolean> {
   if (gatewayStartPromise) return gatewayStartPromise;
-  gatewayStartPromise = startGatewayOnce().finally(() => {
-    gatewayStartPromise = null;
-  });
+  gatewayStartPromise = startGatewayOnce()
+    .then((ready) => {
+      gatewayLastAttemptSucceeded = ready;
+      return ready;
+    })
+    .finally(() => {
+      gatewayStartPromise = null;
+    });
   return gatewayStartPromise;
 }
 
@@ -213,19 +222,37 @@ export async function syncAuthIdentityToGateway(explicitUserId?: string): Promis
   process.env.DRSAI_DESKTOP_USER = userId;
   process.env.DRSAI_USER_ID = userId;
 
-  // Runtime override does not evict agents, but an unchanged identity must not
-  // generate a PUT (and INFO log) on every health/recovery cycle.
-  if (identityChanged) await putGatewayJson("/v1/config/user-name", { user_name: userId });
-
-  // cli_config PUT evicts the user's agent pool — only when the id changes.
-  if (identityChanged && previousCliUserId !== userId) {
-    if (previousCliUserId) rememberUserIdAlias(previousCliUserId, userId);
-    await putGatewayJson("/v1/config/cli/user_id", { value: userId });
+  // Skip all network calls when nothing changed.
+  if (!identityChanged && lastCanonicalizedUserId === userId) {
+    return userId;
   }
+
+  // Resolve auth context (for email) in parallel with identity PUTs.
+  // canonicalizeHistoricalUserIds needs the email; the PUTs do not.
+  const authContextPromise = requireCoordinatedAuthContext().catch(() => null);
+
+  const identityPuts: Promise<void>[] = [];
+  if (identityChanged) {
+    identityPuts.push(putGatewayJson("/v1/config/user-name", { user_name: userId }));
+    if (previousCliUserId !== userId) {
+      if (previousCliUserId) rememberUserIdAlias(previousCliUserId, userId);
+      identityPuts.push(putGatewayJson("/v1/config/cli/user_id", { value: userId }));
+    }
+  }
+
+  // Wait for auth context and identity PUTs in parallel.
+  const [authContext] = await Promise.all([
+    authContextPromise,
+    Promise.all(identityPuts),
+  ]);
 
   lastSyncedGatewayUserId = userId;
   if (identityChanged || lastCanonicalizedUserId !== userId) {
-    await canonicalizeHistoricalUserIds(userId, previousCliUserId);
+    await canonicalizeHistoricalUserIds(
+      userId,
+      previousCliUserId,
+      authContext?.session.user?.email ?? null,
+    );
   }
   return userId;
 }
@@ -235,16 +262,12 @@ registerGatewayIdentitySynchronizer(syncAuthIdentityToGateway);
 async function canonicalizeHistoricalUserIds(
   canonicalUserId: string,
   previousCliUserId: string | null,
+  email?: string | null,
 ): Promise<void> {
-  let email: string | null = null;
-  try {
-    email = (await requireCoordinatedAuthContext()).session.user?.email ?? null;
-  } catch {
-    email = null;
-  }
+  // Email is pre-resolved by the caller to parallelize with identity PUTs.
   const aliases = collectMigrationAliases({
     canonicalUserId,
-    email,
+    email: email ?? null,
     previousCliUserId,
   });
   await putGatewayJson("/v1/identity/canonicalize", {
@@ -264,6 +287,20 @@ export function getGatewaySnapshot(): GatewayStatus {
   const probe = gatewayProbeCache?.probe ?? gatewayLastKnownGood;
   if (!probe) return gatewayStatusFromProbe(null, false);
   return gatewayStatusFromProbe(probe, false);
+}
+
+function currentGatewayStartState(probe: GatewayProbe | null): GatewayStartState {
+  // A Desktop-managed start attempt is in flight (spawn + readiness poll).
+  if (gatewayStartPromise) return "starting";
+  // The endpoint answered healthy: whatever the ownership, it is ready now.
+  if (probe?.ready) return "ready";
+  // Desktop spawned the process but the readiness poll has not succeeded yet.
+  if (gatewayProcess && !gatewayProcess.killed) return "starting";
+  // The last explicit start attempt concluded before the endpoint became
+  // usable (spawn error, readiness timeout, or an unusable port occupant).
+  if (gatewayLastAttemptSucceeded === false) return "failed";
+  // No Desktop-managed process and no conclusive attempt: idle.
+  return "idle";
 }
 
 function gatewayStatusFromProbe(probe: GatewayProbe | null, includeLogTail: boolean): GatewayStatus {
@@ -286,6 +323,7 @@ function gatewayStatusFromProbe(probe: GatewayProbe | null, includeLogTail: bool
   return {
     ready: Boolean(managed && liveness.effectiveReady),
     managed,
+    startState: currentGatewayStartState(probe),
     externalReady: liveness.effectiveReady,
     externalConflict: Boolean(probe?.portOpen && !managed && !externalMode),
     baseUrl: GATEWAY_BASE_URL,
@@ -563,7 +601,12 @@ async function startGatewayOnce(): Promise<boolean> {
   });
   gatewayProcess.once("exit", (code, signal) => {
     if (code === 0 || signal === "SIGTERM") gatewayRegistration?.exited(code, signal);
-    else gatewayRegistration?.crashed(code, signal);
+    else {
+      gatewayRegistration?.crashed(code, signal);
+      // A spontaneous crash is a failed start/lifecycle, not an idle stop.
+      // stopGateway() explicitly clears this flag back to null afterwards.
+      gatewayLastAttemptSucceeded = false;
+    }
     gatewayRegistration = null;
     gatewayProcess = null;
     adoptedPersistentRuntime = false;
@@ -888,6 +931,7 @@ export async function stopGateway(): Promise<boolean> {
       const killed = !(await checkGatewayEndpoints()) || await killPortOccupant(GATEWAY_PORT);
       if (killed) {
         adoptedPersistentRuntime = false;
+        gatewayLastAttemptSucceeded = null;
         invalidateGatewayObservation(true);
       }
       return killed;
@@ -897,6 +941,7 @@ export async function stopGateway(): Promise<boolean> {
 
   gatewayStopPromise = terminateGatewayProcessTree(proc).finally(() => {
     if (gatewayProcess === proc && !isProcessRunning(proc)) gatewayProcess = null;
+    gatewayLastAttemptSucceeded = null;
     invalidateGatewayObservation(true);
     gatewayStopPromise = null;
   });
@@ -907,16 +952,14 @@ export async function discoverGatewayModels(
   accessToken: string,
 ): Promise<GatewayModelDiscoveryResult> {
   // Model discovery may require the Gateway to validate the OIDC bearer token
-  // against an external provider. 5 s is too tight when the provider is slow
-  // or network conditions are degraded; 15 s gives ample room while still
-  // failing fast enough for the 4-retry loop to complete within the bootstrap
-  // 30 s budget (4 × 15 s worst-case would exceed it, but in practice the
-  // first successful or 401 response arrives much sooner).
+  // against an external provider. 5 s per attempt is sufficient for healthy
+  // providers; the 2-retry loop (worst case 11 s) stays well within the 30 s
+  // bootstrap budget. A slow provider will simply retry, not block startup.
   const response = await requestJson(`${GATEWAY_BASE_URL}/v1/models`, {
     ...getGatewayRequestHeaders(),
     Authorization: `Bearer ${accessToken}`,
     "X-OpenDrSai-Auth-Mode": "oidc",
-  }, 15_000);
+  }, 5_000);
   if (!response.ok) {
     const error = readGatewayError(response.body);
     if (response.statusCode === 401) {

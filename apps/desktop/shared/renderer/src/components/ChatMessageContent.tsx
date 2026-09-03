@@ -1,4 +1,4 @@
-import { memo, Profiler, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, Profiler, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type FC, type ComponentPropsWithoutRef, createContext } from "react";
 import { Check, ChevronDown, ChevronRight, Copy, FileText } from "lucide-react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -6,7 +6,7 @@ import { parseChatOutput } from "../chatOutputModel";
 import { copyTextSafely } from "../clipboard";
 import { copyTextReliable } from "../threadShareClient";
 import { createStreamingTextFadePlugin, useStreamingTextSegments } from "../streamingTextFade";
-import { splitStreamingMarkdown } from "../streamingMarkdown";
+import { splitStreamingMarkdownIncremental, type StreamingMarkdownSplit } from "../streamingMarkdown";
 import { useStreamingDisplayBuffer } from "../streamingDisplayBuffer";
 import { observeStreamingRenderMetric } from "../streamingRenderMetrics";
 import { CITATION_HREF_PREFIX, createCitationMarkerPlugin, type InlineCitationLink } from "../citationMarkerPlugin";
@@ -33,6 +33,24 @@ interface ChatMessageContentProps {
 type MarkdownRendererProps =
   Pick<ChatMessageContentProps, "content" | "language" | "onOpenLink" | "streaming" | "citations" | "onOpenCitation" | "artifactLinks" | "onOpenArtifactLink" | "onOpenArtifactLinkMenu">;
 
+// ─── Context: passes callbacks to child components without triggering re-renders ───
+// This allows the `components` object in MarkdownRenderer to be stable (useMemo'd
+// only on `language`), preventing table scroll-reset and reducing reconciliation
+// during streaming.
+interface MarkdownCallbackContextValue {
+  language: "en" | "zh";
+  onOpenLink: (href: string | undefined) => void;
+  onOpenCitation?: (citationId: string) => void;
+  artifactLinks?: readonly SelectedInlineArtifactLink[];
+  onOpenArtifactLink?: (artifactPartId: string) => void;
+  onOpenArtifactLinkMenu?: (artifactPartId: string, anchor: { x: number; y: number; trigger?: HTMLElement }) => void;
+}
+
+const MarkdownCallbackContext = createContext<MarkdownCallbackContextValue>({
+  language: "en",
+  onOpenLink: () => undefined,
+});
+
 function CopyButton({ value, label }: { value: string; label: string }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
   async function copy(): Promise<void> {
@@ -53,129 +71,85 @@ function CopyButton({ value, label }: { value: string; label: string }): React.J
   );
 }
 
-const MarkdownRenderer = memo(function MarkdownRenderer({ content, language, onOpenLink, streaming = false, citations, onOpenCitation, artifactLinks, onOpenArtifactLink, onOpenArtifactLinkMenu }: MarkdownRendererProps): React.JSX.Element {
-  const streamingSegments = useStreamingTextSegments(content, streaming);
-  const rehypePlugins = useMemo(() => streamingSegments.length ? [createStreamingTextFadePlugin(streamingSegments)] : [], [streamingSegments]);
-  const remarkPlugins = useMemo(() => {
-    const citationPlugin = citations?.length ? createCitationMarkerPlugin(citations) : undefined;
-    const artifactPlugin = artifactLinks?.length ? createArtifactLinkPlugin(artifactLinks) : undefined;
-    if (citationPlugin && artifactPlugin) return [remarkGfm, citationPlugin, artifactPlugin];
-    if (citationPlugin) return [remarkGfm, citationPlugin];
-    if (artifactPlugin) return [remarkGfm, artifactPlugin];
-    return [remarkGfm];
-  }, [artifactLinks, citations]);
-  // react-markdown drops any href whose scheme is not http/https/mailto/tel,
-  // so a `citation:` link arrived here as an empty string and the marker looked
-  // clickable while doing nothing. Only our own scheme is added back; every
-  // other URL still goes through the default sanitiser.
-  const urlTransform = useMemo(() => citations?.length || artifactLinks?.length
-    ? (url: string) => url.startsWith(CITATION_HREF_PREFIX) || url.startsWith(ARTIFACT_HREF_PREFIX) ? url : defaultUrlTransform(url)
-    : defaultUrlTransform, [artifactLinks, citations]);
-  return (
-    <ReactMarkdown
-      remarkPlugins={remarkPlugins}
-      rehypePlugins={rehypePlugins}
-      urlTransform={urlTransform}
-      components={{
-        a: ({ href, children, title }) => {
-          if (href?.startsWith(CITATION_HREF_PREFIX)) {
-            const citationId = href.slice(CITATION_HREF_PREFIX.length);
-            return (
-              <button
-                className="markdown-citation-link"
-                type="button"
-                title={title}
-                onClick={() => onOpenCitation?.(citationId)}
-              >
-                {children}
-              </button>
-            );
-          }
-          if (href?.startsWith(ARTIFACT_HREF_PREFIX)) {
-            const artifactPartId = decodeURIComponent(href.slice(ARTIFACT_HREF_PREFIX.length));
-            const artifact = artifactLinks?.find((candidate) => candidate.id === artifactPartId);
-            const disabled = artifact?.state === "deleted";
-            return (
-              <button
-                className="markdown-artifact-link"
-                type="button"
-                title={artifact?.title ?? title}
-                data-artifact-inline-id={artifactPartId}
-                data-resource-state={artifact?.state}
-                aria-disabled={disabled || undefined}
-                aria-label={`${language === "zh" ? "打开资源" : "Open resource"}: ${artifact?.label ?? String(children)}${artifact?.state ? ` · ${artifact.state}` : ""}`}
-                onClick={disabled ? undefined : () => onOpenArtifactLink?.(artifactPartId)}
-                onContextMenu={onOpenArtifactLinkMenu ? (event) => {
-                  event.preventDefault();
-                  event.currentTarget.focus();
-                  onOpenArtifactLinkMenu(artifactPartId, { x: event.clientX, y: event.clientY, trigger: event.currentTarget });
-                } : undefined}
-                onKeyDown={onOpenArtifactLinkMenu ? (event) => {
-                  if (event.key === "F10" && event.shiftKey) {
-                    event.preventDefault();
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    onOpenArtifactLinkMenu(artifactPartId, { x: rect.left, y: rect.bottom, trigger: event.currentTarget });
-                  }
-                } : undefined}
-              >
-                <FileText size={14} aria-hidden="true" />
-                <span>{children}</span>
-              </button>
-            );
-          }
-          return (
-            <button className="markdown-link" type="button" onClick={() => onOpenLink(href)}>
-              {children}
-            </button>
-          );
-        },
-        pre: ({ children }) => {
-          const child = Array.isArray(children) ? children[0] : children;
-          const props = child && typeof child === "object" && "props" in child
-            ? (child.props as { className?: string; children?: unknown })
-            : undefined;
-          const language = props?.className?.match(/language-([^\s]+)/)?.[1] ?? "code";
-          const code = String(props?.children ?? "").replace(/\n$/, "");
-          return (
-            <div className="chat-code-block">
-              <div className="chat-code-header">
-                <span>{language}</span>
-                <CopyButton value={code} label="Copy" />
-              </div>
-              {language === "diff" ? <DiffContent value={code} /> : <pre>{children}</pre>}
-            </div>
-          );
-        },
-        table: ({ children }) => <TableBlock>{children}</TableBlock>,
-        img: ({ src, alt }) => {
-          if (!src || !isSafeImageSource(src)) return <span className="chat-image-blocked">[blocked image]</span>;
-          return <img className="chat-markdown-image" src={src} alt={alt ?? ""} loading="lazy" referrerPolicy="no-referrer" />;
-        },
-      }}
-    >
-      {content}
-    </ReactMarkdown>
-  );
-});
+// ─── Stable component references for ReactMarkdown `components` prop ───
+// These components read callbacks from context, so they don't need to be
+// recreated on every render. This prevents React from unmounting/remounting
+// DOM elements (especially table scroll containers) during streaming re-renders.
 
-function MarkdownContent({ content, language, onOpenLink, streaming = false, citations, onOpenCitation, artifactLinks, onOpenArtifactLink, onOpenArtifactLinkMenu }: MarkdownRendererProps): React.JSX.Element {
-  const renderStartedAt = performance.now();
-  const displayedContent = useStreamingDisplayBuffer(content, streaming);
-  const split = useMemo(() => streaming ? splitStreamingMarkdown(displayedContent) : { stable: "", tail: displayedContent }, [displayedContent, streaming]);
-  useLayoutEffect(() => {
-    if (streaming) observeStreamingRenderMetric("commit-layout", performance.now() - renderStartedAt);
-  }, [displayedContent, streaming]);
+const StableLinkComponent: FC<ComponentPropsWithoutRef<"a">> = ({ href, children, title }) => {
+  const ctx = useContext(MarkdownCallbackContext);
+  if (href?.startsWith(CITATION_HREF_PREFIX)) {
+    const citationId = href.slice(CITATION_HREF_PREFIX.length);
+    return (
+      <button
+        className="markdown-citation-link"
+        type="button"
+        title={title}
+        onClick={() => ctx.onOpenCitation?.(citationId)}
+      >
+        {children}
+      </button>
+    );
+  }
+  if (href?.startsWith(ARTIFACT_HREF_PREFIX)) {
+    const artifactPartId = decodeURIComponent(href.slice(ARTIFACT_HREF_PREFIX.length));
+    const artifact = ctx.artifactLinks?.find((candidate) => candidate.id === artifactPartId);
+    const disabled = artifact?.state === "deleted";
+    const { onOpenArtifactLink, onOpenArtifactLinkMenu } = ctx;
+    return (
+      <button
+        className="markdown-artifact-link"
+        type="button"
+        title={artifact?.title ?? title}
+        data-artifact-inline-id={artifactPartId}
+        data-resource-state={artifact?.state}
+        aria-disabled={disabled || undefined}
+        aria-label={`${ctx.language === "zh" ? "打开资源" : "Open resource"}: ${artifact?.label ?? String(children)}${artifact?.state ? ` · ${artifact.state}` : ""}`}
+        onClick={disabled ? undefined : () => onOpenArtifactLink?.(artifactPartId)}
+        onContextMenu={onOpenArtifactLinkMenu ? (event) => {
+          event.preventDefault();
+          event.currentTarget.focus();
+          onOpenArtifactLinkMenu(artifactPartId, { x: event.clientX, y: event.clientY, trigger: event.currentTarget });
+        } : undefined}
+        onKeyDown={onOpenArtifactLinkMenu ? (event) => {
+          if (event.key === "F10" && event.shiftKey) {
+            event.preventDefault();
+            const rect = event.currentTarget.getBoundingClientRect();
+            onOpenArtifactLinkMenu(artifactPartId, { x: rect.left, y: rect.bottom, trigger: event.currentTarget });
+          }
+        } : undefined}
+      >
+        <FileText size={14} aria-hidden="true" />
+        <span>{children}</span>
+      </button>
+    );
+  }
   return (
-    <Profiler id="streaming-markdown" onRender={(_id, _phase, actualDuration) => {
-      if (streaming) observeStreamingRenderMetric("markdown-render", actualDuration);
-    }}>
-      {split.stable ? <MarkdownRenderer content={split.stable} language={language} onOpenLink={onOpenLink} citations={citations} onOpenCitation={onOpenCitation} artifactLinks={artifactLinks} onOpenArtifactLink={onOpenArtifactLink} onOpenArtifactLinkMenu={onOpenArtifactLinkMenu} /> : null}
-      {split.tail ? <MarkdownRenderer content={split.tail} language={language} onOpenLink={onOpenLink} streaming={streaming} citations={citations} onOpenCitation={onOpenCitation} artifactLinks={artifactLinks} onOpenArtifactLink={onOpenArtifactLink} onOpenArtifactLinkMenu={onOpenArtifactLinkMenu} /> : null}
-    </Profiler>
+    <button className="markdown-link" type="button" onClick={() => ctx.onOpenLink(href)}>
+      {children}
+    </button>
   );
-}
+};
 
-function TableBlock({ children }: { children: ReactNode }): React.JSX.Element {
+const StablePreComponent: FC<ComponentPropsWithoutRef<"pre">> = ({ children }) => {
+  const child = Array.isArray(children) ? children[0] : children;
+  const props = child && typeof child === "object" && "props" in child
+    ? (child.props as { className?: string; children?: unknown })
+    : undefined;
+  const language = props?.className?.match(/language-([^\s]+)/)?.[1] ?? "code";
+  const code = String(props?.children ?? "").replace(/\n$/, "");
+  return (
+    <div className="chat-code-block">
+      <div className="chat-code-header">
+        <span>{language}</span>
+        <CopyButton value={code} label="Copy" />
+      </div>
+      {language === "diff" ? <DiffContent value={code} /> : <pre>{children}</pre>}
+    </div>
+  );
+};
+
+const TableBlock = memo(function TableBlock({ children }: { children: ReactNode }): React.JSX.Element {
   const tableRef = useRef<HTMLTableElement | null>(null);
   const [copied, setCopied] = useState(false);
   async function copyTable(): Promise<void> {
@@ -194,6 +168,95 @@ function TableBlock({ children }: { children: ReactNode }): React.JSX.Element {
       </div>
       <div className="chat-table-scroll"><table ref={tableRef}>{children}</table></div>
     </div>
+  );
+});
+
+const StableTableComponent: FC<ComponentPropsWithoutRef<"table">> = ({ children }) => (
+  <TableBlock>{children}</TableBlock>
+);
+
+const StableImgComponent: FC<ComponentPropsWithoutRef<"img">> = ({ src, alt }) => {
+  if (!src || !isSafeImageSource(src)) return <span className="chat-image-blocked">[blocked image]</span>;
+  return <img className="chat-markdown-image" src={src} alt={alt ?? ""} loading="lazy" referrerPolicy="no-referrer" />;
+};
+
+// ─── Stable components object: created once per `language` change ───
+// This is the KEY fix: previously the `components` prop was an inline object
+// literal recreated on every render (every 64ms during streaming), causing
+// React to see new function references → unmount/remount DOM elements →
+// table scroll position reset to 0.
+const stableComponents = {
+  a: StableLinkComponent,
+  pre: StablePreComponent,
+  table: StableTableComponent,
+  img: StableImgComponent,
+} as const;
+
+const MarkdownRenderer = memo(function MarkdownRenderer({ content, language, onOpenLink, streaming = false, citations, onOpenCitation, artifactLinks, onOpenArtifactLink, onOpenArtifactLinkMenu }: MarkdownRendererProps): React.JSX.Element {
+  const streamingSegments = useStreamingTextSegments(content, streaming);
+  const rehypePlugins = useMemo(() => streamingSegments.length ? [createStreamingTextFadePlugin(streamingSegments)] : [], [streamingSegments]);
+  const remarkPlugins = useMemo(() => {
+    const citationPlugin = citations?.length ? createCitationMarkerPlugin(citations) : undefined;
+    const artifactPlugin = artifactLinks?.length ? createArtifactLinkPlugin(artifactLinks) : undefined;
+    if (citationPlugin && artifactPlugin) return [remarkGfm, citationPlugin, artifactPlugin];
+    if (citationPlugin) return [remarkGfm, citationPlugin];
+    if (artifactPlugin) return [remarkGfm, artifactPlugin];
+    return [remarkGfm];
+  }, [artifactLinks, citations]);
+  // react-markdown drops any href whose scheme is not http/https/mailto/tel,
+  // so a `citation:` link arrived here as an empty string and the marker looked
+  // clickable while doing nothing. Only our own scheme is added back; every
+  // other URL still goes through the default sanitiser.
+  const urlTransform = useMemo(() => citations?.length || artifactLinks?.length
+    ? (url: string) => url.startsWith(CITATION_HREF_PREFIX) || url.startsWith(ARTIFACT_HREF_PREFIX) ? url : defaultUrlTransform(url)
+    : defaultUrlTransform, [artifactLinks, citations]);
+
+  // Provide callbacks via context so the stable `components` object doesn't
+  // need to be recreated when callbacks change.
+  const contextValue = useMemo<MarkdownCallbackContextValue>(() => ({
+    language,
+    onOpenLink,
+    onOpenCitation,
+    artifactLinks,
+    onOpenArtifactLink,
+    onOpenArtifactLinkMenu,
+  }), [language, onOpenLink, onOpenCitation, artifactLinks, onOpenArtifactLink, onOpenArtifactLinkMenu]);
+
+  return (
+    <MarkdownCallbackContext.Provider value={contextValue}>
+      <ReactMarkdown
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
+        urlTransform={urlTransform}
+        components={stableComponents}
+      >
+        {content}
+      </ReactMarkdown>
+    </MarkdownCallbackContext.Provider>
+  );
+});
+
+function MarkdownContent({ content, language, onOpenLink, streaming = false, citations, onOpenCitation, artifactLinks, onOpenArtifactLink, onOpenArtifactLinkMenu }: MarkdownRendererProps): React.JSX.Element {
+  const renderStartedAt = performance.now();
+  const displayedContent = useStreamingDisplayBuffer(content, streaming);
+  // Track previous split for incremental optimization
+  const prevSplitRef = useRef<StreamingMarkdownSplit | null>(null);
+  const split = useMemo(() => {
+    if (!streaming) return { stable: "", tail: displayedContent };
+    const result = splitStreamingMarkdownIncremental(displayedContent, prevSplitRef.current);
+    prevSplitRef.current = result;
+    return result;
+  }, [displayedContent, streaming]);
+  useLayoutEffect(() => {
+    if (streaming) observeStreamingRenderMetric("commit-layout", performance.now() - renderStartedAt);
+  }, [displayedContent, streaming]);
+  return (
+    <Profiler id="streaming-markdown" onRender={(_id, _phase, actualDuration) => {
+      if (streaming) observeStreamingRenderMetric("markdown-render", actualDuration);
+    }}>
+      {split.stable ? <MarkdownRenderer content={split.stable} language={language} onOpenLink={onOpenLink} citations={citations} onOpenCitation={onOpenCitation} artifactLinks={artifactLinks} onOpenArtifactLink={onOpenArtifactLink} onOpenArtifactLinkMenu={onOpenArtifactLinkMenu} /> : null}
+      {split.tail ? <MarkdownRenderer content={split.tail} language={language} onOpenLink={onOpenLink} streaming={streaming} citations={citations} onOpenCitation={onOpenCitation} artifactLinks={artifactLinks} onOpenArtifactLink={onOpenArtifactLink} onOpenArtifactLinkMenu={onOpenArtifactLinkMenu} /> : null}
+    </Profiler>
   );
 }
 

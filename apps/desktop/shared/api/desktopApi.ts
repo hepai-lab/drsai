@@ -209,6 +209,14 @@ export interface PrerequisiteStatus {
   problems: string[];
 }
 
+/**
+ * Startup lifecycle of the local Gateway as observed by the Desktop main
+ * process. "starting" means a start attempt is in flight (or the managed
+ * process is alive but has not become ready yet); the renderer must treat
+ * that as progress, never as a failure/blocker.
+ */
+export type GatewayStartState = "idle" | "starting" | "ready" | "failed";
+
 export interface GatewayStatus {
   ready: boolean;
   managed: boolean;
@@ -217,6 +225,7 @@ export interface GatewayStatus {
   baseUrl: string;
   pid: number | null;
   lastLog: string;
+  startState?: GatewayStartState;
   portOpen?: boolean;
   diagnosticCode?: string;
   diagnosticMessage?: string;

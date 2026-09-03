@@ -574,6 +574,22 @@ function AuthenticatedApp({
     });
     return () => { active = false; };
   }, [codexBackendEnabled, health?.gateway.liveness?.generation, health?.gateway.liveness?.state]);
+  // Runtime health and the renderer bootstrap (startGateway + model catalog)
+  // are independent observations. When the endpoint is healthy but bootstrap
+  // has not converged yet (e.g. it failed while the Gateway was still booting
+  // or the catalog endpoint lagged behind /health), retry the bootstrap as
+  // soon as the health poll first observes the transition to ready. Firing
+  // once per transition keeps this from turning into a tight retry loop.
+  const gatewayWasReadyRef = useRef(false);
+  useEffect(() => {
+    const readyNow = Boolean(health?.gatewayReady);
+    const becameReady = readyNow && !gatewayWasReadyRef.current;
+    gatewayWasReadyRef.current = readyNow;
+    if (!becameReady) return;
+    if (auth.serviceReady || auth.serviceBusy) return;
+    if (auth.serviceBlocker && !auth.serviceBlocker.retryable) return;
+    void auth.retryBootstrap();
+  }, [auth.serviceBlocker?.kind, auth.serviceBlocker?.retryable, auth.serviceBusy, auth.serviceReady, health?.gatewayReady]);
   const workspaces = storedWorkspaces;
   const workspaceCatalogKey = workspaces
     .map((workspace) => `${workspace.id}:${getComparablePath(workspace.path)}`)
@@ -729,9 +745,13 @@ function AuthenticatedApp({
   const chatUnavailableReason = remotePlatformChatAvailable
     ? undefined
     : auth.serviceBusy
-    ? language === "zh"
-      ? "正在后台检查模型服务，完成后即可发送。"
-      : "Checking model services in the background. Sending will be available shortly."
+      ? language === "zh"
+        ? "正在后台检查模型服务，完成后即可发送。"
+        : "Checking model services in the background. Sending will be available shortly."
+    : !auth.serviceReady && health?.gateway?.startState === "starting"
+      ? language === "zh"
+        ? "正在启动本地运行时，请稍候。"
+        : "Starting the local runtime; this takes a moment."
     : !auth.serviceReady
       ? getServiceUnavailableReason(auth.serviceBlocker, language)
       : !health
@@ -2693,11 +2713,11 @@ function AuthenticatedApp({
   const operationalSelectedModelRef = myDrSaiAgentModelPolicy?.effective_ref;
   const actualOperationalFacts = {
     identity: auth.loading ? "loading" : user ? "authenticated" : "anonymous",
-    runtime: auth.serviceBlocker && !auth.serviceBusy
-      ? "blocked"
-      : auth.serviceReady
-        ? "ready"
-        : auth.serviceBusy || !health
+    runtime: auth.serviceReady
+      ? "ready"
+      : auth.serviceBlocker && !auth.serviceBusy
+        ? (health?.gateway?.startState === "starting" ? "preparing" : "blocked")
+        : auth.serviceBusy || !health || health?.gateway?.startState === "starting"
           ? "preparing"
           : "unknown",
     agent: !agentCatalogLoaded
@@ -2795,13 +2815,7 @@ function AuthenticatedApp({
           operationalStateControl={shouldShowOperationalStateBar(operationalDecision) ? (
             <DiagnosticsContainer
               decision={operationalDecision}
-              blocker={auth.serviceBlocker ? {
-                kind: auth.serviceBlocker.kind,
-                title: auth.serviceBlocker.title,
-                message: auth.serviceBlocker.message,
-                diagnosticCode: auth.serviceBlocker.diagnosticCode,
-                retryable: auth.serviceBlocker.retryable,
-              } : null}
+              blocker={auth.serviceBlocker ? localizeOperationalBlocker(auth.serviceBlocker, language) : null}
               installMissing={health?.install?.missing ?? null}
               language={language}
               formatError={(error) => {
@@ -6649,17 +6663,25 @@ function DesktopStatusPanel({
       : zh
         ? "未安装"
         : "Missing";
-  const gatewayStatus = health?.gateway.externalConflict
+  const gatewayStatus = health?.gateway.startState === "starting"
     ? zh
-      ? "端口冲突"
-      : "Port conflict"
-    : health?.gateway.ready
+      ? "正在启动"
+      : "Starting"
+    : health?.gateway.startState === "failed"
       ? zh
-        ? "就绪"
-        : "Ready"
-      : zh
-        ? "已停止"
-        : "Stopped";
+        ? "启动失败"
+        : "Start failed"
+    : health?.gateway.externalConflict
+      ? zh
+        ? "端口冲突"
+        : "Port conflict"
+      : health?.gateway.ready
+        ? zh
+          ? "就绪"
+          : "Ready"
+        : zh
+          ? "已停止"
+          : "Stopped";
   const modeLabel =
     health?.mode === "local"
       ? zh
@@ -6936,6 +6958,76 @@ function getServiceUnavailableReason(
       return "本地运行环境缺失或版本不匹配。";
     case "service_unavailable":
       return "本地模型服务暂不可用，正在后台重试。";
+  }
+}
+
+/**
+ * Blocker text sent from the main process is authored in English. Keep the
+ * display copy (modal + readiness bar + diagnostics) consistent with the
+ * active UI language so one failure state never renders mixed-language,
+ * contradicting messages.
+ */
+function localizeOperationalBlocker(
+  blocker: DesktopBootstrapBlocker,
+  language: AppLanguage,
+): { kind: string; title: string; message: string; diagnosticCode: string; retryable: boolean } {
+  const code = blocker.diagnosticCode ?? "";
+  if (language !== "zh") {
+    return {
+      kind: blocker.kind,
+      title: blocker.title,
+      message: blocker.message,
+      diagnosticCode: code,
+      retryable: blocker.retryable,
+    };
+  }
+  switch (blocker.kind) {
+    case "auth_required":
+      return {
+        kind: blocker.kind,
+        title: "需要重新登录",
+        message: code === "auth-session-invalidated"
+          ? "登录状态已失效，请重新登录后继续使用。"
+          : "开始任务前需要有效的 HepAI 登录。",
+        diagnosticCode: code,
+        retryable: blocker.retryable,
+      };
+    case "permission_denied":
+      return {
+        kind: blocker.kind,
+        title: "当前账号没有可用的模型服务",
+        message: code === "account-no-model-service"
+          ? "该账号已登录，但没有被授予可用的 OpenDrSai 模型服务。"
+          : "该账号当前没有使用 OpenDrSai 模型服务的权限。",
+        diagnosticCode: code,
+        retryable: blocker.retryable,
+      };
+    case "runtime_missing":
+      return {
+        kind: blocker.kind,
+        title: "本地运行环境需要修复",
+        message: code === "runtime-version-mismatch"
+          ? "本地运行环境版本与桌面端不匹配，需要更新后才能运行任务。"
+          : "运行任务所需的本地运行环境缺失或损坏，需要修复或安装。",
+        diagnosticCode: code,
+        retryable: blocker.retryable,
+      };
+    case "service_unavailable":
+    default: {
+      const isCatalog = code.startsWith("model_catalog") || code === "model-catalog-unavailable";
+      const isRuntime = /gateway|runtime|service/.test(code);
+      return {
+        kind: blocker.kind,
+        title: isCatalog ? "模型服务暂时不可用" : "本地服务暂时不可用",
+        message: isCatalog
+          ? "模型目录暂时无法访问，正在自动重试；本地服务本身可能已经就绪。"
+          : isRuntime
+            ? "本地任务服务正在启动或暂不可用，正在自动重试。"
+            : "本地服务未就绪，正在自动重试；若持续失败请查看诊断信息。",
+        diagnosticCode: code,
+        retryable: blocker.retryable,
+      };
+    }
   }
 }
 

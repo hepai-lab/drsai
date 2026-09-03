@@ -33,6 +33,12 @@ const anonymousSession: AuthSession = {
   authMode: null,
 };
 
+// Backoff for automatic service_unavailable retries. The desktop Gateway may
+// need tens of seconds on a cold start (Python imports, model catalog), so a
+// bounded exponential schedule replaces the old 2-attempt policy that left
+// the UI stuck on "unavailable" while the backend was actually coming up.
+const SERVICE_UNAVAILABLE_RETRY_DELAYS_MS = [4_000, 8_000, 15_000, 30_000, 30_000, 60_000];
+
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }): React.JSX.Element {
@@ -48,6 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   const [message, setMessage] = useState<string | null>(null);
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
   const bootstrapPromiseRef = useRef<Promise<boolean> | null>(null);
+  const bootstrapEpochRef = useRef(0);
   const initialLoadPromiseRef = useRef<Promise<void> | null>(null);
 
   function applyA5ServiceGuidanceScenario(scenario: DesktopA5ServiceGuidanceScenario): void {
@@ -92,16 +99,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
 
   function retryBootstrap(): Promise<boolean> {
     if (bootstrapPromiseRef.current) return bootstrapPromiseRef.current;
+    // Epoch-guard bootstrap results: a session-restore/logout that happens
+    // while a bootstrap is in flight must never let that older result
+    // overwrite the newer state (stale errors popping after a fresh attempt).
+    const epoch = bootstrapEpochRef.current + 1;
+    bootstrapEpochRef.current = epoch;
     setServiceBusy(true);
     const operation = (async () => {
       try {
         const bootstrap = await desktopApi.bootstrapDesktop();
+        if (epoch !== bootstrapEpochRef.current) return bootstrap.ready;
         setServiceReady(bootstrap.ready);
         setServiceBlocker(bootstrap.ready ? null : bootstrap.blocker ?? classifyBootstrapBlocker(bootstrap.message));
         setMessage(bootstrap.message);
         if (bootstrap.ready) serviceRetryCountRef.current = 0;
         return bootstrap.ready;
       } catch (error) {
+        if (epoch !== bootstrapEpochRef.current) return false;
         setServiceReady(false);
         const nextMessage = error instanceof Error ? error.message : "OpenDrSai service preparation failed.";
         setServiceBlocker(classifyBootstrapBlocker(nextMessage));
@@ -158,6 +172,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   // && !serviceBusy && !serviceBlocker and trigger retryBootstrap().
   useEffect(() => {
     const unsubscribe = desktopApi.onAuthSessionRestored(async () => {
+      // Invalidate any in-flight bootstrap: its result must not overwrite the
+      // freshly restored session state below.
+      bootstrapEpochRef.current += 1;
+      serviceRetryCountRef.current = 0;
       setServiceBlocker(null);
       setServiceBusy(false);
       setMessage("Session restored. Re-checking runtime…");
@@ -202,11 +220,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       return undefined;
     }
     const count = serviceRetryCountRef.current;
-    if (count >= 2) {
-      return undefined; // Max retries exhausted — stop auto-retry.
+    if (count >= SERVICE_UNAVAILABLE_RETRY_DELAYS_MS.length) {
+      // Backoff window exhausted — the blocker stays visible with a manual
+      // recovery affordance instead of an endless silent retry loop.
+      return undefined;
     }
-    const delays = [5000, 15000];
-    const delay = delays[count] ?? 15000;
+    const delay = SERVICE_UNAVAILABLE_RETRY_DELAYS_MS[count] ?? 30_000;
     const timer = window.setTimeout(() => {
       serviceRetryCountRef.current = count + 1;
       void retryBootstrap();

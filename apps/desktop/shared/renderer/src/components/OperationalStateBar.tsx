@@ -68,27 +68,34 @@ export function OperationalStateBar({
     : STATE_COPY[decision.state]?.[language] ?? decision.state;
   const [open, setOpen] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
-  const modalDismissedRef = useRef(false);
+  const dismissedBlockerKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (AUTO_OPEN_STATES.has(decision.state)) setOpen(true);
   }, [decision.currentLayer, decision.state]);
 
-  // Show the blocker modal when runtime is blocked and blocker details are
-  // available. Only auto-show once per blocker; dismissing it prevents
-  // re-showing for the same blocker instance.
+  // Show the blocker modal only when the runtime layer is truly blocked (not
+  // while it is still starting/retrying), and never re-open a blocker the
+  // user already dismissed. Keying on the whole blocker instance keeps
+  // transient startup diagnostic-code churn from re-popping the dialog.
   useEffect(() => {
     if (
-      decision.blockingLayer === "runtime" &&
-      blocker &&
-      !modalDismissedRef.current
+      decision.blockingLayer !== "runtime" ||
+      decision.state !== "blocked" ||
+      !blocker
     ) {
-      setModalVisible(true);
+      return;
     }
-  }, [decision.blockingLayer, blocker?.diagnosticCode]);
+    const key = `${blocker.kind}:${blocker.diagnosticCode}:${blocker.message}`;
+    if (dismissedBlockerKeyRef.current === key) return;
+    setModalVisible(true);
+  }, [blocker, decision.blockingLayer, decision.state]);
 
   function dismissModal(): void {
-    modalDismissedRef.current = true;
+    if (blocker) {
+      dismissedBlockerKeyRef.current =
+        `${blocker.kind}:${blocker.diagnosticCode}:${blocker.message}`;
+    }
     setModalVisible(false);
     onDismissBlocker?.();
   }

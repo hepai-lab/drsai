@@ -12,10 +12,12 @@ import {
   Image,
   Info,
   ListChecks,
+  Loader2,
   Quote,
   Reply,
   Table2,
   TriangleAlert,
+  XCircle,
 } from "lucide-react";
 import { stripTrailingSourceList } from "../sourceListPresentation";
 import { stripAgentToolDebugText } from "../chatOutputModel";
@@ -252,15 +254,33 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
       ) : null;
     }
     if (part.kind === "reasoning") return <StructuredReasoning key={part.id} part={part} language={language} onOpenLink={onOpenLink} />;
-    if (part.kind === "progress") return <div className={`structured-progress ${part.status}`} key={part.id} role="status">
-      {part.status === "completed" ? <CheckCircle2 size={14} aria-hidden="true" /> : <CircleEllipsis size={14} aria-hidden="true" />}
-      <ChatMessageContent content={part.summary} streaming={part.status === "running"} language={language} onOpenLink={onOpenLink} />
-      {part.total !== undefined && part.completed !== undefined ? <small>{part.completed}/{part.total}</small> : null}
-    </div>;
+    if (part.kind === "progress") {
+      const ProgressIcon = part.status === "completed" ? CheckCircle2 : part.status === "error" ? AlertCircle : part.status === "cancelled" ? XCircle : part.status === "running" ? Loader2 : CircleEllipsis;
+      const progressIconClass = part.status === "running" ? "structured-progress-icon spinning" : "structured-progress-icon";
+      return <div className={`structured-progress ${part.status}`} key={part.id} role="status" data-phase={part.phase || undefined}>
+        <ProgressIcon size={14} className={progressIconClass} aria-hidden="true" />
+        <span className="structured-progress-text">
+          {part.phase ? <em className="structured-progress-phase">{part.phase}</em> : null}
+          <ChatMessageContent content={part.summary} streaming={part.status === "running"} language={language} onOpenLink={onOpenLink} />
+        </span>
+        {part.total !== undefined && part.completed !== undefined ? <small className="structured-progress-count">{part.completed}/{part.total}</small> : null}
+      </div>;
+    }
     if (part.kind === "artifact") return <ArtifactItem key={part.id} part={part} language={language} workspacePath={workspacePath} resourceState={resourceState(part, resourceStates)} focused={focusedPartId === part.id} onOpen={() => onOpenArtifact(part)} onOpenMenu={onOpenArtifactMenu ? (anchor) => onOpenArtifactMenu(part, anchor) : undefined} />;
     if (part.kind === "citation") return <CitationItem key={part.id} part={part} index={citationParts.findIndex((candidate) => candidate.id === part.id) + 1} language={language} resourceState={resourceState(part, resourceStates)} focused={focusedPartId === part.id} onOpen={() => onOpenCitation(part)} onOpenMenu={onOpenCitationMenu && (part.resourceRef || part.associationId) ? (anchor) => onOpenCitationMenu(part, anchor) : undefined} onBack={part.markdownPartId ? () => focusPart(part.markdownPartId as string) : undefined} />;
     if (part.kind === "interaction") return <InteractionItem compact key={part.id} part={part} language={language} responded={respondedRequestIds.has(part.requestId)} capabilityConfigured={configuredCapabilityRequestIds.has(part.requestId)} onRespond={onRespondInteraction} onRequestText={onRequestTextInteraction} onOpenResult={onOpenDebug} onOpenLink={onOpenLink} />;
-    if (part.kind === "subtask") return <div className={`structured-subtask ${part.status}`} key={part.id}><ListChecks size={14} aria-hidden="true" /><span><strong>{part.title}</strong>{part.summary ? ` · ${part.summary}` : ""}</span></div>;
+    if (part.kind === "subtask") {
+      const SubtaskIcon = part.status === "completed" ? CheckCircle2 : part.status === "error" ? AlertCircle : part.status === "cancelled" ? XCircle : part.status === "running" ? Loader2 : CircleEllipsis;
+      const iconClass = part.status === "running" ? "structured-subtask-icon spinning" : "structured-subtask-icon";
+      return <div className={`structured-subtask ${part.status}`} key={part.id} data-agent={part.agentName || undefined}>
+        <SubtaskIcon size={14} className={iconClass} aria-hidden="true" />
+        <span className="structured-subtask-text">
+          <strong>{part.title}</strong>
+          {part.summary ? ` · ${part.summary}` : ""}
+        </span>
+        {part.agentName ? <span className="structured-subtask-agent">{part.agentName}</span> : null}
+      </div>;
+    }
     return <NoticeItem key={part.id} part={part} language={language} onOpenDebug={onOpenDebug} />;
   }
 

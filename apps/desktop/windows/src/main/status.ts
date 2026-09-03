@@ -61,11 +61,11 @@ export async function getInstallStatus(): Promise<InstallStatus> {
 }
 
 export async function getDesktopHealth(): Promise<DesktopHealth> {
-  const install = await getStartupInstallStatus();
-  // This is the centralized 2s health poll. It performs a real, singleflight
-  // liveness observation instead of repeatedly returning a potentially failed
-  // cached snapshot. Gateway hysteresis keeps transient busy periods usable.
-  const gateway = await getGatewayStatus();
+  // Parallelize install check and gateway probe to avoid sequential blocking.
+  const [install, gateway] = await Promise.all([
+    getStartupInstallStatus(),
+    getGatewayStatus(),
+  ]);
   return {
     installed: install.installed,
     gatewayReady: gateway.ready,
@@ -198,14 +198,16 @@ async function getPythonCandidate(): Promise<ToolCandidate | null> {
     { command: "py", args: ["-3.11", ...versionArgs] },
     { command: "python3", args: versionArgs },
   ];
-  let firstFound: ToolCandidate | null = null;
-
-  for (const candidate of candidates) {
-    const tool = await getToolCandidate(candidate.command, candidate.args);
-    if (tool && !firstFound) firstFound = tool;
-    if (tool && isPythonVersionSupported(tool.output)) return tool;
-  }
-  return firstFound;
+  // Run all candidates in parallel and pick the first supported one.
+  const results = await Promise.all(
+    candidates.map((candidate) => getToolCandidate(candidate.command, candidate.args)),
+  );
+  // Prefer the first supported version, fall back to the first found.
+  const supported = results.find((tool): tool is ToolCandidate =>
+    tool !== null && isPythonVersionSupported(tool.output),
+  );
+  if (supported) return supported;
+  return results.find((tool): tool is ToolCandidate => tool !== null) ?? null;
 }
 
 async function getToolCandidate(

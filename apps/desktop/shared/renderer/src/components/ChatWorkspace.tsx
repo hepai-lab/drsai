@@ -232,6 +232,13 @@ const THINKING_EFFORTS: ThinkingEffort[] = ["none", "low", "medium", "high", "xh
 const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGE_COUNT = 4;
 const MAX_CLIPBOARD_PATH_MENTIONS = 6;
+
+// Module-level style constants to avoid creating new object references on every render.
+const VOICE_BUTTON_WRAPPER_STYLE: React.CSSProperties = { position: "relative", display: "inline-flex" };
+const VOICE_MENU_STYLE: React.CSSProperties = { position: "absolute", bottom: "calc(100% + 8px)", right: "0", zIndex: 45, display: "grid", gap: "4px", padding: "8px", border: "1px solid var(--app-panel-border)", borderRadius: "12px", background: "var(--app-card-bg)", boxShadow: "var(--app-shadow-menu)", minWidth: "180px" };
+const VOICE_MENU_ITEM_STYLE: React.CSSProperties = { display: "flex", alignItems: "center", gap: "8px", padding: "8px 12px", border: "none", borderRadius: "8px", background: "var(--app-accent)", color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 500, textAlign: "left", width: "100%" };
+const VOICE_MENU_DIVIDER_STYLE: React.CSSProperties = { height: "1px", background: "var(--app-panel-border)", margin: "4px 0" };
+
 function useEventCallback<Args extends unknown[], Result>(callback: (...args: Args) => Result): (...args: Args) => Result {
   const callbackRef = useRef(callback);
   callbackRef.current = callback;
@@ -442,6 +449,65 @@ function ChatWorkspaceImpl({
   onLoadEarlierHistory,
   onSubmit,
 }: ChatWorkspaceProps): React.JSX.Element {
+  // The composer textarea is mirrored in local state so that keystrokes only
+  // re-render this component instead of the whole AuthenticatedApp tree. The
+  // adapter `input` prop is the external source of truth (thread switch,
+  // slash commands, retry/edit) and is updated with a short trailing debounce
+  // while typing; submit and programmatic edits flush immediately.
+  const [composerText, setComposerText] = useState(input);
+  const composerTextRef = useRef(input);
+  const composerSyncTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Track IME composition (Chinese/Japanese/Korean input method). During
+  // composition we must still call setComposerText so the controlled textarea
+  // value stays in sync (otherwise any re-render would erase the composition).
+  // We skip only the upstream onInputChange push, because parent re-renders
+  // during composition can interrupt the browser's IME process and commit raw
+  // pinyin letters instead of the composed characters.
+  const isComposingRef = useRef(false);
+
+  const clearComposerSyncTimer = (): void => {
+    if (composerSyncTimerRef.current !== undefined) {
+      clearTimeout(composerSyncTimerRef.current);
+      composerSyncTimerRef.current = undefined;
+    }
+  };
+
+  // Programmatic edits (insert text, undo/redo, slash/mention pick, drafts,
+  // clear after send) must reach both the textarea and the adapter now.
+  const applyComposerText = useCallback((next: string): void => {
+    isComposingRef.current = false;
+    clearComposerSyncTimer();
+    composerTextRef.current = next;
+    setComposerText(next);
+    onInputChange(next);
+  }, [onInputChange]);
+
+  // User typing: keep the textarea instant; push upstream on a trailing pause
+  // so App-level derived work happens at most once per burst.
+  // During IME composition, setComposerText still runs (so the controlled
+  // textarea value stays in sync and re-renders don't erase composition text),
+  // but the upstream onInputChange is deferred until compositionend fires.
+  const handleComposerTyping = useCallback((next: string): void => {
+    composerTextRef.current = next;
+    setComposerText(next);
+    if (isComposingRef.current) return;
+    clearComposerSyncTimer();
+    composerSyncTimerRef.current = setTimeout(() => {
+      composerSyncTimerRef.current = undefined;
+      onInputChange(composerTextRef.current);
+    }, 80);
+  }, [onInputChange]);
+
+  // Adopt external value changes (thread switch, setInput from commands).
+  useEffect(() => {
+    if (composerTextRef.current === input) return;
+    clearComposerSyncTimer();
+    composerTextRef.current = input;
+    setComposerText(input);
+  }, [input]);
+
+  useEffect(() => clearComposerSyncTimer, []);
+
   const [toolsOpen, setToolsOpen] = useState(false);
   const [conversationResourceStates, setConversationResourceStates] = useState<Record<string, ConversationResourceResolveResult["state"]>>({});
   const [conversationResourceNotice, setConversationResourceNotice] = useState<string | null>(null);
@@ -495,7 +561,7 @@ function ChatWorkspaceImpl({
       .slice(-20);
     return runIds.join("\n");
   }, [messages]);
-  const chatStreaming = messages.some((message) => message.streaming);
+  const chatStreaming = useMemo(() => messages.some((message) => message.streaming), [messages]);
 
   useEffect(() => {
     setWechatConfirmationPending(false);
@@ -1064,7 +1130,7 @@ function ChatWorkspaceImpl({
     setGoalConfirmationEditing(false);
     setGoalConfirmationDraft(parseGoalConfirmationPrompt(activeGoalConfirmation?.prompt ?? ""));
   }, [activeGoalConfirmation?.requestId, activeGoalConfirmation?.prompt]);
-  const hasStreamingMessage = messages.some((message) => message.streaming);
+  const hasStreamingMessage = useMemo(() => messages.some((message) => message.streaming), [messages]);
   const showStop = Boolean(activeRequestId || hasStreamingMessage);
 
   // Leftover approval cards from timed-out/failed runs block the composer.
@@ -1084,7 +1150,7 @@ function ChatWorkspaceImpl({
     showStop,
   ]);
 
-  const emptyChat = messages.every((message) => message.id === "welcome");
+  const emptyChat = useMemo(() => messages.every((message) => message.id === "welcome"), [messages]);
   const conversationMessages = useMemo(
     () => messages.filter((message) => message.id !== "welcome"),
     [messages],
@@ -1102,6 +1168,10 @@ function ChatWorkspaceImpl({
     const existing = new Set(conversationMessages.map((message) => message.id));
     return [...conversationMessages, ...duplexHistoryMessages.filter((message) => !existing.has(message.id))];
   }, [conversationMessages, duplexHistoryMessages]);
+  const renderedMessages = useMemo(
+    () => visibleMessages.filter((message) => !isEmptyAssistantShell(message)),
+    [visibleMessages],
+  );
   const turnRailMarkers = useMemo(
     () => visibleMessages
       .filter((message) => message.role === "user")
@@ -1114,11 +1184,11 @@ function ChatWorkspaceImpl({
   const emptyChatPreferenceNotice = emptyChat
     ? messages.find((message) => message.id === "welcome")?.content.split("\n\n").slice(1).join("\n\n").trim() || ""
     : "";
-  const activeAgent = agentOptions.find((agent) => agent.id === selectedAgentId);
+  const activeAgent = useMemo(() => agentOptions.find((agent) => agent.id === selectedAgentId), [agentOptions, selectedAgentId]);
   const activeAgentName = selectedAgentName?.trim() || activeAgent?.name || "OpenDrSai";
-  const isLocalOpenDrSaiAgent = agentOptions.some(
+  const isLocalOpenDrSaiAgent = useMemo(() => agentOptions.some(
     (agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex",
-  );
+  ), [agentOptions, selectedAgentId]);
   const workspaceLocationLabel =
     workspaceLocation === "remote"
       ? zh
@@ -1186,16 +1256,16 @@ function ChatWorkspaceImpl({
   );
   const activeWorkspaceName = workspaceName?.trim() || getWorkspaceDisplayName(workspacePath, zh);
   const normalizedIntroSearch = introSearchQuery.trim().toLocaleLowerCase();
-  const filteredIntroWorkspaces = workspaceOptions.filter((workspace) =>
+  const filteredIntroWorkspaces = useMemo(() => workspaceOptions.filter((workspace) =>
     !normalizedIntroSearch
       || workspace.name.toLocaleLowerCase().includes(normalizedIntroSearch)
       || workspace.path.toLocaleLowerCase().includes(normalizedIntroSearch),
-  );
-  const filteredIntroAgents = agentOptions.filter((agent) =>
+  ), [workspaceOptions, normalizedIntroSearch]);
+  const filteredIntroAgents = useMemo(() => agentOptions.filter((agent) =>
     !normalizedIntroSearch
       || agent.name.toLocaleLowerCase().includes(normalizedIntroSearch)
       || getAgentOptionMeta(agent, zh).toLocaleLowerCase().includes(normalizedIntroSearch),
-  );
+  ), [agentOptions, normalizedIntroSearch, zh]);
   const slashCommandQuery = input.trimStart().startsWith("/")
     ? input.trimStart().slice(1).toLowerCase()
     : "";
@@ -1261,9 +1331,15 @@ function ChatWorkspaceImpl({
   const displayedVoicePhase = voicePreferences.interactionMode === "duplex"
     ? duplexVoiceInput.phase
     : voiceTurnState.phase;
-  const latestCompletedAssistantMessage = [...messages]
-    .reverse()
-    .find((message) => message.role === "assistant" && !message.streaming && !message.error && getAssistantDisplayContent(message));
+  const latestCompletedAssistantMessage = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.role === "assistant" && !message.streaming && !message.error && getAssistantDisplayContent(message)) {
+        return message;
+      }
+    }
+    return undefined;
+  }, [messages]);
   const latestCompletedAssistantSpeechText = latestCompletedAssistantMessage
     ? getAssistantDisplayContent(latestCompletedAssistantMessage)
     : "";
@@ -1698,7 +1774,7 @@ function ChatWorkspaceImpl({
       if (!detail || typeof detail !== "object") return;
       const command = (detail as { command?: unknown }).command;
       if (typeof command !== "string" || !command.trim()) return;
-      onInputChange(command.trim());
+      applyComposerText(command.trim());
       window.setTimeout(() => textareaRef.current?.focus(), 0);
     }
 
@@ -1937,7 +2013,7 @@ function ChatWorkspaceImpl({
     if (channelSource === "wechat") {
       const decision = decideWeChatComposerSubmit({
         channelSource, trigger: "button", available: wechatCapability?.available === true,
-        confirmed: wechatConfirmationPending, sending: wechatSending, hasText: Boolean(input.trim()),
+        confirmed: wechatConfirmationPending, sending: wechatSending, hasText: Boolean(composerText.trim()),
       });
       if (decision === "blocked" || !runtimeSessionId) return;
       if (decision === "request_confirmation") {
@@ -1949,12 +2025,12 @@ function ChatWorkspaceImpl({
       const idempotencyKey = `wechat-desktop:${crypto.randomUUID()}`;
       void desktopApi.sendToWeChat({
         sessionId: runtimeSessionId,
-        text: input.trim(),
+        text: composerText.trim(),
         idempotencyKey,
         confirmExternalSend: true,
       }).then((result) => {
         setWechatSendStatus(result.status === "sent" ? (zh ? "已发送到微信" : "Sent to WeChat") : (zh ? "发送结果未知，请勿立即重复发送" : "Delivery outcome is unknown; do not resend immediately"));
-        if (result.status === "sent") onInputChange("");
+        if (result.status === "sent") applyComposerText("");
       }).catch((error) => {
         setWechatSendStatus(error instanceof Error ? error.message : String(error));
       }).finally(() => {
@@ -1971,7 +2047,7 @@ function ChatWorkspaceImpl({
     void submitWithAttachments();
   }
 
-  async function submitDuplexText(): Promise<void> { if (attachments.length || externalAttachments.length || inlineMentionAttachments.length) { setVoiceError(zh ? "实时语音中的文字消息暂不支持附件；请先移除附件。" : "Text messages inside Realtime voice do not support attachments yet. Remove attachments first."); return; } const value = input.trim(); if (!value) return; const submitted = await duplexVoiceInput.sendText(value, duplexTextStrategy); if (submitted) { onInputChange(""); setVoiceError(null); } else setVoiceError(zh ? "文字未发送。可能已有一条待发送消息，或实时连接不可用。" : "Text was not sent. Another message may already be pending, or Realtime is unavailable."); }
+  async function submitDuplexText(): Promise<void> { if (attachments.length || externalAttachments.length || inlineMentionAttachments.length) { setVoiceError(zh ? "实时语音中的文字消息暂不支持附件；请先移除附件。" : "Text messages inside Realtime voice do not support attachments yet. Remove attachments first."); return; } const value = composerText.trim(); if (!value) return; const submitted = await duplexVoiceInput.sendText(value, duplexTextStrategy); if (submitted) { applyComposerText(""); setVoiceError(null); } else setVoiceError(zh ? "文字未发送。可能已有一条待发送消息，或实时连接不可用。" : "Text was not sent. Another message may already be pending, or Realtime is unavailable."); }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
     // Undo: Ctrl+Z (Windows/Linux) or Cmd+Z (Mac).  Must be checked before
@@ -1991,7 +2067,7 @@ function ChatWorkspaceImpl({
         history.present = previous;
         // Mark as our own change so the sync effect does not double-record.
         history.lastExternal = previous;
-        onInputChange(previous);
+        applyComposerText(previous);
         // Restore cursor to end after undo so the user can continue typing.
         window.requestAnimationFrame(() => {
           const textarea = textareaRef.current;
@@ -2011,7 +2087,7 @@ function ChatWorkspaceImpl({
         history.past.push(history.present);
         history.present = next;
         history.lastExternal = next;
-        onInputChange(next);
+        applyComposerText(next);
         window.requestAnimationFrame(() => {
           const textarea = textareaRef.current;
           if (textarea) {
@@ -2035,7 +2111,7 @@ function ChatWorkspaceImpl({
     event.preventDefault();
     if (decideWeChatComposerSubmit({
       channelSource, trigger: "keyboard", available: wechatCapability?.available === true,
-      confirmed: wechatConfirmationPending, sending: wechatSending, hasText: Boolean(input.trim()),
+      confirmed: wechatConfirmationPending, sending: wechatSending, hasText: Boolean(composerText.trim()),
     }) === "blocked") return;
     void submitWithAttachments();
   }
@@ -2065,7 +2141,7 @@ function ChatWorkspaceImpl({
     if (!pendingReplaceFromMessageId) {
       editResendBackupRef.current = { input, attachments };
     }
-    onInputChange(user.content);
+    applyComposerText(user.content);
     setPendingReplaceFromMessageId(user.id);
     setAttachments(user.attachments?.length
       ? user.attachments.map((attachment) => ({
@@ -2082,7 +2158,7 @@ function ChatWorkspaceImpl({
     if (!pendingReplaceFromMessageId) {
       editResendBackupRef.current = { input, attachments };
     }
-    onInputChange(user.content);
+    applyComposerText(user.content);
     setPendingReplaceFromMessageId(user.id);
     setAttachments(user.attachments?.length
       ? user.attachments.map((attachment) => ({
@@ -2097,7 +2173,7 @@ function ChatWorkspaceImpl({
     const backup = editResendBackupRef.current;
     setPendingReplaceFromMessageId(null);
     if (backup) {
-      onInputChange(backup.input);
+      applyComposerText(backup.input);
       setAttachments(backup.attachments);
     }
     editResendBackupRef.current = null;
@@ -2129,6 +2205,7 @@ function ChatWorkspaceImpl({
       return;
     }
     const isVoiceSubmission = voiceTurnState.phase === "ready_to_send";
+    const textDraft = isVoiceSubmission ? "" : composerTextRef.current;
     if (isVoiceSubmission) {
       voiceResponseBaselineRef.current = new Set(messages
         .filter((message) => message.role === "assistant")
@@ -2161,6 +2238,7 @@ function ChatWorkspaceImpl({
         runtimeMode: currentRuntimeMode,
         skillName: selectedSkillName,
         thinkingEffort: !isLocalOpenDrSaiAgent || thinkingEffortSupported ? thinkingEffort : undefined,
+        ...(!isVoiceSubmission ? { text: textDraft } : {}),
         ...(pendingReplaceFromMessageId ? { replaceFromMessageId: pendingReplaceFromMessageId } : {}),
         onStarted: isVoiceSubmission
           ? ({ assistantMessageId, requestId, userMessageId }) => dispatchVoiceTurn({
@@ -2173,6 +2251,7 @@ function ChatWorkspaceImpl({
       },
     );
     if (submitted) {
+      if (!isVoiceSubmission) applyComposerText("");
       setAttachments([]);
       onClearExternalAttachments?.();
       setSelectedSkillName(null);
@@ -2205,7 +2284,7 @@ function ChatWorkspaceImpl({
   }
 
   function clearInput(): void {
-    onInputChange("");
+    applyComposerText("");
     textareaRef.current?.focus();
   }
 
@@ -2393,16 +2472,16 @@ function ChatWorkspaceImpl({
 
   function insertTextAtCursor(text: string): void {
     const textarea = textareaRef.current;
+    const liveText = composerTextRef.current;
     if (!textarea) {
-      pushInputHistory(input);
-      onInputChange(input ? `${input}${text}` : text);
+      applyComposerText(liveText ? `${liveText}${text}` : text);
       return;
     }
-    const start = textarea.selectionStart ?? input.length;
+    const start = textarea.selectionStart ?? liveText.length;
     const end = textarea.selectionEnd ?? start;
-    const next = `${input.slice(0, start)}${text}${input.slice(end)}`;
-    pushInputHistory(input);
-    onInputChange(next);
+    const next = `${liveText.slice(0, start)}${text}${liveText.slice(end)}`;
+    pushInputHistory(liveText);
+    applyComposerText(next);
     window.setTimeout(() => {
       textarea.focus();
       const cursor = start + text.length;
@@ -2557,7 +2636,7 @@ function ChatWorkspaceImpl({
     if (voicePreferences.confirmBeforeSend) {
       const selection = voiceSelectionRef.current ?? { start: input.length, end: input.length };
       const insertion = insertVoiceTranscript(input, transcript, selection);
-      onInputChange(insertion.value);
+      applyComposerText(insertion.value);
       setVoiceReviewSource(null);
       setVoiceReviewText(null);
       voiceRetryBlobRef.current = null;
@@ -2570,7 +2649,7 @@ function ChatWorkspaceImpl({
 
     const selection = voiceSelectionRef.current ?? { start: input.length, end: input.length };
     const insertion = insertVoiceTranscript(input, transcript, selection);
-    onInputChange(insertion.value);
+    applyComposerText(insertion.value);
     setVoiceReviewSource(null);
     setVoiceReviewText(null);
     voiceAutoSubmitRequestRef.current = requestId;
@@ -2585,7 +2664,7 @@ function ChatWorkspaceImpl({
     if (text) {
       const selection = voiceSelectionRef.current ?? { start: input.length, end: input.length };
       const insertion = insertVoiceTranscript(input, text, selection);
-      onInputChange(insertion.value);
+      applyComposerText(insertion.value);
       cursor = insertion.cursor;
     }
     if (voiceReviewSource === "serial") dispatchVoiceTurn({ type: "review_accepted" });
@@ -2625,12 +2704,12 @@ function ChatWorkspaceImpl({
   }
 
   function selectSamplePrompt(prompt: string): void {
-    onInputChange(prompt);
+    applyComposerText(prompt);
     textareaRef.current?.focus();
   }
 
   function selectSlashCommand(command: ChatCommandName): void {
-    onInputChange(`/${command} `);
+    applyComposerText(`/${command} `);
     textareaRef.current?.focus();
   }
 
@@ -2700,7 +2779,7 @@ function ChatWorkspaceImpl({
 
   function applySkillToComposer(skillName: string): void {
     const cleaned = stripSkillPrefixFromInput(input, selectedSkillName).replace(/^\s+/, "");
-    if (cleaned !== input) onInputChange(cleaned);
+    if (cleaned !== input) applyComposerText(cleaned);
     setSelectedSkillName(skillName);
     setMetaMenuOpen(null);
     textareaRef.current?.focus();
@@ -2708,7 +2787,7 @@ function ChatWorkspaceImpl({
 
   function clearSelectedSkill(): void {
     const cleaned = stripSkillPrefixFromInput(input, selectedSkillName);
-    if (cleaned !== input) onInputChange(cleaned);
+    if (cleaned !== input) applyComposerText(cleaned);
     setSelectedSkillName(null);
     textareaRef.current?.focus();
   }
@@ -2859,7 +2938,7 @@ function ChatWorkspaceImpl({
   }
 
   function applyMaterialTaskSuggestion(suggestion: MaterialTaskSuggestion): void {
-    onInputChange(suggestion.prompt);
+    applyComposerText(suggestion.prompt);
     if (hasDesktopApi()) {
       void desktopApi.getGatewayStatus().then((status) => {
         setMaterialSuggestionRuntimeReady(status.ready && !status.externalConflict);
@@ -2880,7 +2959,7 @@ function ChatWorkspaceImpl({
     const prompt = zh
       ? `请根据材料比较结果继续核对${issueTitles ? ` ${issueTitles}` : "所有发现"}，逐项说明冲突双方或新旧数值、具体文件位置、修正建议和仍不确定的地方。不要覆盖原文件。`
       : `Continue from the material comparison and verify ${issueTitles || "every finding"}. For each item, cite both sides or the old and new values, exact file locations, a correction, and remaining uncertainty. Do not overwrite source files.`;
-    onInputChange(prompt);
+    applyComposerText(prompt);
     window.setTimeout(() => {
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(prompt.length, prompt.length);
@@ -3220,7 +3299,7 @@ function ChatWorkspaceImpl({
         onPointerDown={handleMessageListPointerDown}
         onKeyDown={handleMessageListKeyDown}
       >
-        {visibleMessages.filter((message) => !isEmptyAssistantShell(message)).map((message, messageIndex) => {
+        {renderedMessages.map((message, messageIndex) => {
           const assistantContent = message.role === "assistant"
             ? getAssistantDisplayContent(message)
             : message.content;
@@ -3628,7 +3707,7 @@ function ChatWorkspaceImpl({
             </section>
           ) : null}
 
-          {materialRolePhase === "ready" && !input.trim() && materialTaskSuggestions.length > 0 ? (
+          {materialRolePhase === "ready" && !composerText.trim() && materialTaskSuggestions.length > 0 ? (
             <section className="material-task-suggestions" data-testid="material-task-suggestions">
               <div className="material-task-suggestions-header">
                 <strong>{zh ? "你可以接着做" : "Suggested next tasks"}</strong>
@@ -3964,7 +4043,7 @@ function ChatWorkspaceImpl({
                     {duplexVoiceInput.temporaryDiagnosticsExpiresAt ? <><small>Temporary numeric diagnostics active until {new Date(duplexVoiceInput.temporaryDiagnosticsExpiresAt).toLocaleTimeString()}.</small><button type="button" onClick={duplexVoiceInput.disableTemporaryDiagnostics}>Disable and erase</button></> : <button type="button" onClick={() => duplexVoiceInput.enableTemporaryDiagnostics()}>Enable temporary diagnostics (10 min)</button>}
                   </span>
                   <label><span>{zh ? "文字发送" : "Text timing"}</span><select aria-label={zh ? "实时语音文字发送时机" : "Realtime text send timing"} value={duplexTextStrategy} onChange={(event) => setDuplexTextStrategy(event.target.value as "after_response" | "interrupt_now")}><option value="after_response">{zh ? "当前回答后发送" : "Send after current answer"}</option><option value="interrupt_now">{zh ? "立即打断并发送" : "Interrupt and send now"}</option></select></label>
-                  {duplexVoiceInput.pendingText ? <small role="status">{zh ? "文字将在当前回答结束后发送。" : "Text will be sent after the current answer."} <button type="button" onClick={() => { const restored = duplexVoiceInput.cancelPendingText(); if (restored) onInputChange(restored); }}>{zh ? "取消并恢复草稿" : "Cancel and restore draft"}</button></small> : null}
+                  {duplexVoiceInput.pendingText ? <small role="status">{zh ? "文字将在当前回答结束后发送。" : "Text will be sent after the current answer."} <button type="button" onClick={() => { const restored = duplexVoiceInput.cancelPendingText(); if (restored) applyComposerText(restored); }}>{zh ? "取消并恢复草稿" : "Cancel and restore draft"}</button></small> : null}
                   {Object.values(duplexVoiceInput.toolStatuses).slice(-1).map((tool, index) => <small key={`${tool.status}-${index}`}>{tool.detail ?? tool.status}</small>)}
                   <button type="button" onClick={() => void duplexVoiceInput.finishTurn()} disabled={duplexVoiceInput.microphonePaused}>{zh ? "结束本轮发言" : "Finish turn"}</button>
                   <button type="button" aria-keyshortcuts="Alt+Shift+P" aria-pressed={duplexVoiceInput.microphonePaused} onClick={() => void (duplexVoiceInput.microphonePaused ? duplexVoiceInput.resumeMicrophone() : duplexVoiceInput.pauseMicrophone())}>{duplexVoiceInput.microphonePaused ? (zh ? "继续麦克风" : "Resume microphone") : (zh ? "暂停麦克风" : "Pause microphone")}</button>
@@ -4003,8 +4082,20 @@ function ChatWorkspaceImpl({
                   <textarea
                     data-testid="composer-input"
                     ref={textareaRef}
-                    value={input}
-                    onChange={(event) => onInputChange(event.target.value)}
+                    value={composerText}
+                    onChange={(event) => handleComposerTyping(event.target.value)}
+                    onCompositionStart={() => {
+                      isComposingRef.current = true;
+                    }}
+                    onCompositionEnd={(event) => {
+                      isComposingRef.current = false;
+                      // Chrome (Electron) fires compositionend BEFORE the final
+                      // input event, so onChange will pick up the composed text
+                      // normally. But in case the input event was already
+                      // processed (compositionend after input in some browsers),
+                      // force the update with the final composed value.
+                      handleComposerTyping(event.currentTarget.value);
+                    }}
                     onKeyDown={handleKeyDown}
                     onPaste={handlePaste}
                     placeholder={
@@ -4223,7 +4314,7 @@ function ChatWorkspaceImpl({
               </div>
               */}
               <div className="composer-actions composer-actions-meta">
-                {input.trim() && !showStop ? (
+                {composerText.trim() && !showStop ? (
                   <button
                     type="button"
                     className="composer-icon-button"
@@ -4250,7 +4341,7 @@ function ChatWorkspaceImpl({
                   <button type="button" onClick={() => runDuplexReadinessAction(duplexReadinessActions.primary)}>{duplexReadinessActions.primary === "open_agent_settings" ? (zh ? "打开智能体配置" : "Open Agent configuration") : duplexReadinessActions.primary === "switch_to_serial" ? (zh ? "使用单次输入" : "Use single input") : (zh ? "重新检查" : "Check again")}</button>
                   {duplexReadinessActions.fallback ? <button type="button" onClick={() => runDuplexReadinessAction(duplexReadinessActions.fallback!)}>{zh ? "使用单次输入" : "Use single input"}</button> : null}
                 </div> : null}
-                                <div style={{position:"relative", display:"inline-flex"}}>
+                                <div style={VOICE_BUTTON_WRAPPER_STYLE}>
                 <button
                   type="button"
                   ref={voiceButtonRef} className={`composer-icon-button composer-voice-button ${voiceState === "recording" || duplexVoiceInput.phase === "active" ? "recording" : ""}`}
@@ -4278,16 +4369,16 @@ function ChatWorkspaceImpl({
                   ) : voiceState === "recording" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering" ? <MicOff size={16} /> : <Mic size={16} />}
                 </button>
                   {voiceMenuOpen && (
-                    <div style={{position:"absolute", bottom:"calc(100% + 8px)", right:"0", zIndex:45, display:"grid", gap:"4px", padding:"8px", border:"1px solid var(--app-panel-border)", borderRadius:"12px", background:"var(--app-card-bg)", boxShadow:"var(--app-shadow-menu)", minWidth:"180px"}} ref={voiceMenuRef}>
+                    <div style={VOICE_MENU_STYLE} ref={voiceMenuRef}>
                       <button
                         type="button"
-                        style={{display:"flex", alignItems:"center", gap:"8px", padding:"8px 12px", border:"none", borderRadius:"8px", background:"var(--app-accent)", color:"#fff", cursor:"pointer", fontSize:"13px", fontWeight:500, textAlign:"left", width:"100%"}}
+                        style={VOICE_MENU_ITEM_STYLE}
                         onClick={() => { setVoiceMenuOpen(false); void startVoiceRecording(); }}
                       >
                         <Mic size={16} />
                         {zh ? "开始录音" : "Start recording"}
                       </button>
-                      <div style={{height:"1px", background:"var(--app-panel-border)", margin:"4px 0"}} />
+                      <div style={VOICE_MENU_DIVIDER_STYLE} />
 <select
                   className="composer-voice-mode"
                   data-testid="composer-voice-mode"
@@ -4332,7 +4423,7 @@ function ChatWorkspaceImpl({
                 </div>
 
                 {showStop ? (
-                  input.trim() ? (
+                  composerText.trim() ? (
                     <>
                       <button className="composer-submit" type="submit" title={zh ? "默认排在当前任务之后" : "Queue after the current task"}>
                         <Send size={16} />{zh ? "排队发送" : "Queue"}
@@ -4474,7 +4565,7 @@ function getStructuredPartEstimateText(part: StructuredAssistantPart): string {
   return part.message;
 }
 
-function VirtualizedMessage({
+const VirtualizedMessage = memo(function VirtualizedMessage({
   message,
   className,
   pinned,
@@ -4531,7 +4622,7 @@ function VirtualizedMessage({
       {renderContent ? children : null}
     </article>
   );
-}
+}, (prev, next) => prev.message === next.message && prev.pinned === next.pinned);
 
 function formatPickedFileMeta(file: PickedFileDescriptor, zh: boolean): string {
   const category = {

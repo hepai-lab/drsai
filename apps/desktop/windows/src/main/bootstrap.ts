@@ -6,7 +6,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { refreshAuthContextAfterUnauthorized, requireAuthContext } from "./auth";
 import { replaceFileSafely } from "./atomicFileReplace";
-import { discoverGatewayModels, startGateway, type GatewayModelDiscoveryResult } from "./gateway";
+import { discoverGatewayModels, startGateway, syncAuthIdentityToGateway, type GatewayModelDiscoveryResult } from "./gateway";
 import { DRSAI_HOME } from "./paths";
 import { getInstallStatus } from "./status";
 
@@ -59,8 +59,17 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
       },
     );
   }
-
-  const discovery = await discoverModelsWithRecovery(auth.accessToken);
+  // The Gateway may have been started eagerly (before sign-in completed), in
+  // which case startGatewayOnce could not sync an identity it did not know
+  // yet. Sync now that the signed-in user is known. syncAuthIdentityToGateway
+  // is idempotent: it only writes to the Gateway when the identity changed.
+  // Run identity sync in parallel with model discovery — both are independent
+  // HTTP calls to the already-running Gateway, and the model endpoint
+  // resolves the user from the OIDC bearer token, not the synced user_id.
+  const discovery = await Promise.all([
+    syncAuthIdentityToGateway(auth.userId).catch(() => undefined),
+    discoverModelsWithRecovery(auth.accessToken),
+  ]).then(([, d]) => d);
   await writeModelCatalogStatus(discovery).catch(() => undefined);
   if (discovery.state !== "ready") {
     if (discovery.state === "forbidden") {
@@ -144,7 +153,7 @@ async function writeModelCatalogStatus(discovery: GatewayModelDiscoveryResult): 
 async function discoverModelsWithRecovery(accessToken: string): Promise<GatewayModelDiscoveryResult> {
   let token = accessToken;
   let refreshed = false;
-  const retryDelays = [0, 250, 750, 1_500];
+  const retryDelays = [0, 500];
   let lastResult: GatewayModelDiscoveryResult | null = null;
   for (const delayMs of retryDelays) {
     if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
