@@ -45,14 +45,14 @@
 
 import { useStore } from '@nanostores/react'
 import { Box, Text } from 'ink'
-import { useEffect, useState } from 'react'
-
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { stripTodoWriteArtifacts } from '../app/todoArtifacts.js'
 import { getPartText, getReasoningText, type ContentPart, type TextContentPart, type ToolCall } from '../app/types.js'
 import { clearHeightCache, getCachedHeight, setCachedHeight } from '../app/heightCache.js'
 import { softWrapWide } from '../app/stringWidth.js'
 import { $current } from '../app/turnStore.js'
 import { $showReasoning, $terminalFocused, $toolDetail, $composerInputHeight } from '../app/uiStore.js'
+import { guardStreamingFrame } from '../app/inkInstanceRef.js'
 import { useTerminalSize } from '../hooks/terminalSizeStore.js'
 import { theme } from '../theme.js'
 
@@ -96,11 +96,14 @@ const MIN_STREAM_ROWS = 3
 // occupy. Keeping this well below 1.0 provides a hard ceiling that
 // prevents Ink's fullscreen branch (lastOutputHeight >= stdout.rows)
 // from firing even when the RESERVED_ROWS estimate is too optimistic.
-// At 0.55, a 24-row terminal gets a max budget of ~13 rows for
-// streaming content, leaving ~11 rows for StatusBar + Composer +
-// headers/margins — more than enough, and the frame can never reach
-// 24 rows to trigger fullscreen.
-const MAX_FRAME_FRACTION = 0.55
+//
+// At 0.45, a 24-row terminal gets a max budget of ~10 rows for
+// streaming content, leaving ~14 rows for StatusBar + Composer +
+// headers/margins. This is conservative but prevents the total
+// dynamic frame from reaching stdout.rows on any terminal size ≥ 16
+// rows. The guardStreamingFrame() safety net catches any edge cases
+// where the budget estimate is still off.
+const MAX_FRAME_FRACTION = 0.45
 
 /**
  * Spinner + elapsed-seconds hook. ``active`` gates the timers so an
@@ -399,14 +402,20 @@ export function StreamingAssistant() {
   //   - 1 row for the "● assistant" header
   //   - reasoning block height (if shown)
   //   - 1 row for the "↑ N earlier lines" marker (if we end up clipping)
-  //   - 1 row SAFETY MARGIN to guarantee the total dynamic frame stays
-  //     STRICTLY below stdout.rows.
+  //   - 2 rows SAFETY MARGIN (was 1) to guarantee the total dynamic
+  //     frame stays STRICTLY below stdout.rows. The extra row accounts
+  //     for the StatusBar's variable height (2-6 rows depending on
+  //     narrow/wide layout and statusLine visibility) which
+  //     RESERVED_BASE_ROWS may underestimate.
   //
   // Then apply MAX_FRAME_FRACTION as a hard ceiling: the streaming
-  // content area may never exceed 55% of terminal rows. This prevents
+  // content area may never exceed 45% of terminal rows. This prevents
   // the total dynamic frame (StreamingAssistant + StatusBar + Composer)
   // from reaching stdout.rows and triggering Ink's fullscreen branch,
   // even when RESERVED_ROWS underestimates the real overhead.
+  // The guardStreamingFrame() call in useLayoutEffect + flushBuffers()
+  // provides an additional safety net that catches any remaining edge
+  // cases by unconditionally resetting lastOutputHeight to 0.
   const effectiveCols = Math.max(20, cols - 4)
   const effectiveRows = rows > 0 ? rows : 24
   const reservedRows = composerInputHeight + RESERVED_BASE_ROWS
@@ -414,7 +423,7 @@ export function StreamingAssistant() {
   const reasoningRows = reasoningText
     ? 1 /* marginTop */ + 1 /* header */ + countVisualRows(reasoningText, Math.max(10, effectiveCols - 2)) + 1 /* footer */
     : 0
-  const rawBudget = effectiveRows - reservedRows - 1 /* root marginTop */ - 1 /* header */ - reasoningRows - 1 /* marker */ - 1 /* safety */
+  const rawBudget = effectiveRows - reservedRows - 1 /* root marginTop */ - 1 /* header */ - reasoningRows - 1 /* marker */ - 2 /* safety */
   const maxBudget = Math.floor(effectiveRows * MAX_FRAME_FRACTION)
   const budget = Math.max(
     MIN_STREAM_ROWS,
@@ -430,6 +439,25 @@ export function StreamingAssistant() {
     cur.status === 'streaming' &&
     !hasStreamContent
   const pulse = useThinkingPulse(showThinking && termFocused, cur?.startedAt ?? Date.now())
+
+  // ── Proactive fullscreen-branch guard ────────────────────────────
+  // Reset Ink's lastOutputHeight to 0 on EVERY render of this component.
+  // This prevents Ink's fullscreen branch (lastOutputHeight >= stdout.rows)
+  // from firing, which would clearTerminal + re-emit fullStaticOutput +
+  // corrupt log-update's previousLineCount via log.sync().
+  //
+  // useLayoutEffect fires synchronously during React commit, BEFORE Ink's
+  // onRender is triggered by the yoga layout pass. This ensures
+  // lastOutputHeight is 0 when onRender checks the fullscreen condition.
+  // Combined with the guardStreamingFrame() call in flushBuffers(), this
+  // covers ALL re-render paths:
+  //   - Streaming flushes (createGatewayEventHandler.ts flushBuffers)
+  //   - Spinner ticks (useThinkingPulse setInterval)
+  //   - Store changes ($composerInputHeight, $showReasoning, etc.)
+  //   - Terminal resize (useTerminalSize)
+  useLayoutEffect(() => {
+    guardStreamingFrame()
+  })
 
   if (!cur) return null
 

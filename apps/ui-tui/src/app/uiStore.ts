@@ -129,14 +129,6 @@ export interface UsageInfo {
 export const $lastUsage = atom<UsageInfo | null>(null)
 
 /**
- * Streaming token estimate — a rough character-based estimate of
- * completion tokens during streaming, before real usage data arrives.
- * Updated on each `message.delta` and reset when `usage.update` or
- * `message.complete` arrives.
- */
-export const $streamingTokenEstimate = atom<number>(0)
-
-/**
  * "Copy mode" — when true the TUI temporarily disables mouse tracking so
  * the user can select / copy text in the terminal with the mouse.
  *

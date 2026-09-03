@@ -19,7 +19,7 @@ import { Box, Text } from 'ink'
 
 import { useTerminalWidth } from '../hooks/terminalSizeStore.js'
 import { $isStreaming } from '../app/turnStore.js'
-import { $connectionStatus, $copyMode, $lastUsage, $sessionMeta, $statusLine, $streamingTokenEstimate, $userId, $remoteHost } from '../app/uiStore.js'
+import { $connectionStatus, $copyMode, $lastUsage, $sessionMeta, $statusLine, $userId, $remoteHost } from '../app/uiStore.js'
 import { theme } from '../theme.js'
 
 /** Truncate a string to at most `maxChars` characters, appending "…" if truncated. */
@@ -38,7 +38,6 @@ export function StatusBar() {
   const statusLine = useStore($statusLine)
   const isStreaming = useStore($isStreaming)
   const lastUsage = useStore($lastUsage)
-  const streamingEstimate = useStore($streamingTokenEstimate)
   const copyMode = useStore($copyMode)
   const cols = useTerminalWidth(80)
   // Padding-aware effective width — appLayout uses paddingX={1} so subtract 2.
@@ -146,21 +145,7 @@ export function StatusBar() {
               <Text color={theme.warn} bold>copy</Text>
             </>
           )}
-          {/* Token usage — shown during and after streaming */}
-          {isStreaming && streamingEstimate > 0 && (
-            <>
-              <Text color={theme.muted}> · </Text>
-              <Text color={theme.muted}>~{streamingEstimate} tokens (est.)</Text>
-            </>
-          )}
-          {lastUsage && isStreaming && streamingEstimate === 0 && (
-            <>
-              <Text color={theme.muted}> · </Text>
-              <Text color={theme.muted}>
-                {lastUsage.prompt_tokens}↑ {lastUsage.completion_tokens}↓
-              </Text>
-            </>
-          )}
+          {/* Latest token usage — shown after each run completes */}
           {lastUsage && !isStreaming && (
             <>
               <Text color={theme.muted}> · </Text>
@@ -250,19 +235,7 @@ export function StatusBar() {
           </>
         )}
       </Box>
-      {/* Token usage row — shown during and after streaming */}
-      {isStreaming && streamingEstimate > 0 && (
-        <Box>
-          <Text color={theme.muted}>~{streamingEstimate} tokens (est.)</Text>
-        </Box>
-      )}
-      {lastUsage && isStreaming && streamingEstimate === 0 && (
-        <Box>
-          <Text color={theme.muted}>
-            {lastUsage.prompt_tokens}↑ {lastUsage.completion_tokens}↓
-          </Text>
-        </Box>
-      )}
+      {/* Latest token usage — shown after each run completes */}
       {lastUsage && !isStreaming && (
         <Box>
           <Text color={theme.muted}>

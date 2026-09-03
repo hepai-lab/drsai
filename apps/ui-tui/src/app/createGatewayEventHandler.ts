@@ -10,7 +10,7 @@ import type { GatewayEvent, UsagePayload } from '../gatewayTypes.js'
 
 import { $approval, $clarify, $secret, $sudo } from './overlayStore.js'
 import type { TurnController } from './turnController.js'
-import { $connectionError, $connectionStatus, $lastUsage, $memoryPreview, $remoteHost, $sessionMeta, $skin, $statusLine, $streamingTokenEstimate, $userId } from './uiStore.js'
+import { $connectionError, $connectionStatus, $lastUsage, $memoryPreview, $remoteHost, $sessionMeta, $skin, $statusLine, $userId } from './uiStore.js'
 import {
   applyToolComplete,
   MAX_TOOL_RESULT_CHARS,
@@ -19,6 +19,7 @@ import {
   type AssistantTurn,
 } from './types.js'
 import { $current, setCurrent, updateCurrent } from './turnStore.js'
+import { guardStreamingFrame } from './inkInstanceRef.js'
 
 export function createGatewayEventHandler(
   _gw: GatewayClient,
@@ -85,41 +86,6 @@ export function createGatewayEventHandler(
   // the subsequent main agent text).
   let pendingForceNewPart = 0
 
-  // ── Streaming token estimate ───────────────────────────────────────────
-  //
-  // During streaming, we don't have real token counts until the LLM call
-  // finishes and the API returns usage in the final chunk. To give the user
-  // a real-time sense of how much is being generated, we estimate completion
-  // tokens from the character count of streamed deltas.
-  //
-  // CJK-aware estimation: Chinese/Japanese/Korean characters tokenize at
-  // roughly 0.6 tokens/char (1 char ≈ 0.6 tokens for BPE tokenizers like
-  // tiktoken), while ASCII text tokenizes at ~4 chars/token. We track
-  // CJK and non-CJK character counts separately and blend the estimate.
-  //
-  // The estimate is reset on `message.start` and cleared when `usage.update`
-  // or `message.complete` arrives (we have real data then).
-  let streamingCjkCount = 0
-  let streamingOtherCount = 0
-
-  /** Count CJK characters in a string (code-point based, no regex). */
-  function countCjkChars(text: string): number {
-    let count = 0
-    for (const ch of text) {
-      const code = ch.codePointAt(0)!
-      if (
-        (code >= 0x4e00 && code <= 0x9fff) ||  // CJK Unified Ideographs
-        (code >= 0x3400 && code <= 0x4dbf) ||  // CJK Extension A
-        (code >= 0x3000 && code <= 0x30ff) ||  // CJK Symbols + Hiragana + Katakana
-        (code >= 0xff00 && code <= 0xffef) ||  // Full-width Forms
-        (code >= 0xac00 && code <= 0xd7af)    // Korean Hangul Syllables
-      ) {
-        count++
-      }
-    }
-    return count
-  }
-
   // Maximum number of contentParts to keep in a single in-flight turn.
   // When exceeded, the oldest text parts are merged into one to prevent
   // the parts array from growing unboundedly during long agent answers
@@ -129,6 +95,15 @@ export function createGatewayEventHandler(
 
   function flushBuffers() {
     flushTimer = null
+    // Proactively prevent Ink's fullscreen branch from firing on the
+    // upcoming re-render. This is the KEY FIX for the "streaming content
+    // keeps getting pushed up, creating blank space" bug. Without this,
+    // if the previous streaming frame's height was close to or exceeded
+    // stdout.rows, Ink's onRender triggers clearTerminal + fullStaticOutput
+    // + output, which wipes the screen and re-emits ALL committed turns,
+    // pushing existing content UP and creating blank gaps that accumulate
+    // on every flush.
+    guardStreamingFrame()
     if (textBuf) {
       const t = textBuf
       textBuf = ''
@@ -259,13 +234,6 @@ export function createGatewayEventHandler(
 
       // ── Message stream ───────────────────────────────────────
       case 'message.start': {
-        // Reset streaming token estimate for the new turn.
-        streamingCjkCount = 0
-        streamingOtherCount = 0
-        $streamingTokenEstimate.set(0)
-        // Clear last usage so StatusBar doesn't show previous turn's tokens
-        // during the gap before the first delta arrives.
-        $lastUsage.set(null)
         // Reset subagent state for the new turn
         subagentTextReceived = false
         isSubagentActive = false
@@ -276,15 +244,6 @@ export function createGatewayEventHandler(
       case 'message.delta': {
         const text = (ev.payload as { text?: string } | undefined)?.text || ''
         if (!text) return
-        // CJK-aware token estimation: CJK chars ≈0.6 tokens/char,
-        // other chars ≈0.25 tokens/char (4 chars/token).
-        const cjk = countCjkChars(text)
-        streamingCjkCount += cjk
-        streamingOtherCount += text.length - cjk
-        const est = Math.ceil(streamingCjkCount * 0.6 + streamingOtherCount / 4)
-        if (est !== $streamingTokenEstimate.get()) {
-          $streamingTokenEstimate.set(est)
-        }
         // If we were inside a subagent block, close it before main agent resumes
         if (isSubagentActive) {
           flushBuffers()
@@ -319,10 +278,6 @@ export function createGatewayEventHandler(
             completion_tokens_total: p.completion_tokens_total,
             total_tokens_accumulated: p.total_tokens_accumulated,
           })
-          // Clear the streaming estimate — we have real data now.
-          streamingCjkCount = 0
-          streamingOtherCount = 0
-          $streamingTokenEstimate.set(0)
         }
         return
       }
@@ -337,10 +292,6 @@ export function createGatewayEventHandler(
         }
         // Make sure all buffered deltas land in the turn before we close it.
         flushBuffers()
-        // Reset streaming token estimate — the turn is done.
-        streamingCjkCount = 0
-        streamingOtherCount = 0
-        $streamingTokenEstimate.set(0)
         const p = ev.payload as { usage?: unknown; status?: string; reasoning?: string } | undefined
         
         // Store the latest usage in $lastUsage for StatusBar display.
