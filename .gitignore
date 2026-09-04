@@ -65,6 +65,9 @@ scratch.py
 # DocMaster — user-uploaded templates and fill outputs (never share)
 examples/agent_groupchat/docmaster/workspace/
 
+# Local DEFAULT_REMOTE_AGENTS catalog (copy from remote_agents.example.json)
+apps/webui/backend/remote_agents.json
+
 # eval
 
 eval/results/

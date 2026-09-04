@@ -1,0 +1,43 @@
+[
+    {
+        "mode": "remote",
+        "is_public": true,
+        "name": "DocMaster",
+        "url": "https://your-docmaster-host.example/apiv2",
+        "description": "{\"en\":\"A professional Word/PPT document processing agent\",\"zh\":\"专业的 Word/PPT 文档处理智能体\"}",
+        "version": "0.1.0",
+        "author": "your.name@ihep.ac.cn",
+        "owner": "your.name@ihep.ac.cn",
+        "logo": "https://aiapi.ihep.ac.cn/apiv2/files/<file-id>/preview",
+        "id": "00000000-0000-0000-0000-000000000001",
+        "capabilities": [
+            "chat",
+            "streaming",
+            "file-input",
+            "document-analysis",
+            "document-editing",
+            "document-formatting",
+            "docx",
+            "pptx"
+        ],
+        "examples": [
+            {
+                "en": "Create a DOCX file with a short poem, using SimSun as the font.",
+                "zh": "创建一个 docx 文件，内容为一首短诗，使用宋体字体。"
+            },
+            {
+                "en": "Create a 5-slide PPT introducing IHEP.",
+                "zh": "制作一份 5 页的 PPT，介绍高能所。"
+            },
+            {
+                "en": "Please help me analyze the main content of this document.",
+                "zh": "请帮我分析这份文档的主要内容。"
+            }
+        ],
+        "agent_config": {
+            "hepai/deepseek-v4-pro": "deepseek-ai/deepseek-v4-pro",
+            "hepai/deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash"
+        },
+        "defult_config_name": "hepai/deepseek-v4-flash"
+    }
+]
