@@ -4,14 +4,14 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, Optional, cast
 
-from dotenv import load_dotenv
-
-load_dotenv()
 from loguru import logger
 
 from hepai import HepAI
 from hepai.types import APIKeyInfo
+from drsai_ui.env_load import load_webui_dotenv
 from drsai_ui.platform_config import get_active_platform
+
+load_webui_dotenv()
 
 
 def _extract_api_key_from_json(obj: object) -> Optional[str]:
@@ -28,22 +28,52 @@ def _extract_api_key_from_json(obj: object) -> Optional[str]:
     return None
 
 
-SCIENCE_USER_SHARED_API_KEY = os.getenv("SCIENCE_USER_SHARED_API_KEY", os.getenv("HEPAI_API_KEY", ""))
+SHARED_API_KEY_USER_SOURCES = frozenset({"science_user", "user_agent"})
+
+
+def uses_shared_api_key(user_source: str | None) -> bool:
+    """science_user / user_agent 走共享 key，不按个人账号去 HepAI 拉 key。"""
+    return (user_source or "").strip() in SHARED_API_KEY_USER_SOURCES
+
+
+def shared_api_key() -> str:
+    return os.getenv("SCIENCE_USER_SHARED_API_KEY") or os.getenv("HEPAI_API_KEY") or ""
+
+
+def should_fetch_personal_key() -> bool:
+    """Fetch a per-user HepAI key when PROD is set or an admin key is available.
+
+    SERVICE_MODE is often missing if only cwd/.env was loaded; an admin key
+    is enough to call fetch_api_key and must not fall back to HEPAI_API_KEY.
+    """
+    mode = (os.getenv("SERVICE_MODE") or "").strip()
+    if mode == "PROD":
+        return True
+    return bool((os.getenv("HEPAI_APP_ADMIN_API_KEY") or "").strip())
 
 
 class PersonalKeyConfigFetcher:
     """获取个人密钥配置"""
     def __init__(self) -> None:
-        self.service_mode = os.getenv("SERVICE_MODE")
         self._hepai_base_url = get_active_platform().base_url
-        if self.service_mode == "PROD":
+        self._client: Optional[HepAI] = None
+
+    @property
+    def service_mode(self) -> str | None:
+        return os.getenv("SERVICE_MODE")
+
+    @property
+    def client(self) -> HepAI:
+        if self._client is None:
             admin_api_key = os.getenv("HEPAI_APP_ADMIN_API_KEY")
-            assert admin_api_key, (
-                "HEPAI_APP_ADMIN_API_KEY is not set, please set it in .env file"
-            )
-            self.client = HepAI(
+            if not admin_api_key:
+                raise RuntimeError(
+                    "HEPAI_APP_ADMIN_API_KEY is not set, please set it in .env file"
+                )
+            self._client = HepAI(
                 api_key=admin_api_key, base_url=self._hepai_base_url
             )
+        return self._client
 
     def _fetch_personal_key_raw(self, username: str) -> str:
         """
@@ -95,12 +125,12 @@ class PersonalKeyConfigFetcher:
 
         Args:
             username: 用户标识（邮箱）
-            user_source: 用户来源，"science_user" 使用共享 key，不走 HepAI
+            user_source: 用户来源，"science_user" / "user_agent" 使用共享 key，不走 HepAI
         """
-        if user_source == "science_user":
-            return SCIENCE_USER_SHARED_API_KEY
+        if uses_shared_api_key(user_source):
+            return shared_api_key()
 
-        if self.service_mode == "PROD":
+        if should_fetch_personal_key():
             try:
                 api_key = self.client.fetch_api_key(username=username)
             except TypeError as exc:
@@ -116,12 +146,20 @@ class PersonalKeyConfigFetcher:
             if not api_key or not getattr(api_key, "api_key", None):
                 return self._fetch_personal_key_raw(username)
             return cast(APIKeyInfo, api_key).api_key
+
+        api_key = os.getenv("HEPAI_API_KEY", "hepai_api_key_not_found")
+        if api_key == "hepai_api_key_not_found":
+            logger.warning(
+                "Using HEPAI_API_KEY in development mode, please set it in .env "
+                "or environment variables in production mode"
+            )
         else:
-            api_key = os.getenv("HEPAI_API_KEY", "hepai_api_key_not_found")
-            # assert api_key, "HEPAI_API_KEY not found, please add it in .env or environment variables in development mode"
-            if api_key == "hepai_api_key_not_found":
-                logger.warning("Using HEPAI_API_KEY in development mode, please set it in .env or environment variables in production mode")
-            return api_key
+            logger.warning(
+                "SERVICE_MODE is not PROD and HEPAI_APP_ADMIN_API_KEY is unset; "
+                "returning shared HEPAI_API_KEY for {}",
+                username,
+            )
+        return api_key
         
     
     def get_default_config(self, username: str, user_source: str | None = None) -> Dict[str, Any]:
@@ -129,7 +167,7 @@ class PersonalKeyConfigFetcher:
 
         Args:
             username: 用户标识（邮箱）
-            user_source: 用户来源，"science_user" 使用共享 key
+            user_source: 用户来源，"science_user" / "user_agent" 使用共享 key
         """
         # "openai/gpt-4.1"
         personal_key = self.get_personal_key(username=username, user_source=user_source)

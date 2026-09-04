@@ -8,6 +8,10 @@ from typing import Optional
 from pathlib import Path
 import yaml
 
+from drsai_ui.env_load import load_webui_dotenv
+
+load_webui_dotenv()
+
 from .ui_backend.version import VERSION
 from .ui_backend.version import APP_NAME as UI_APP_NAME
 # from .ui_backend.backend.cli import (
@@ -190,6 +194,16 @@ def ui(
     env_vars["INSIDE_DOCKER"] = "0"
     env_vars["EXTERNAL_WORKSPACE_ROOT"] = appdir
     env_vars["INTERNAL_WORKSPACE_ROOT"] = appdir
+
+    for _key_var in (
+        "SERVICE_MODE",
+        "HEPAI_APP_ADMIN_API_KEY",
+        "HEPAI_API_KEY",
+        "DRSAI_UI_API_KEY_VERIFY_URL",
+    ):
+        _val = os.getenv(_key_var)
+        if _val:
+            env_vars[_key_var] = _val
 
     # If the config file is not provided, check for the default config file
     if not agent_config:

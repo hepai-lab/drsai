@@ -14,8 +14,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 # from fastapi.responses import FileResponse, HTMLResponse
 import uuid
-from dotenv import load_dotenv
-load_dotenv()
+from drsai_ui.env_load import load_webui_dotenv
+load_webui_dotenv()
 
 # from ..initialization import AppInitializer
 from ..deps import get_db
@@ -67,10 +67,9 @@ def get_initializer():
 
 def upload_to_filesystem(file_path: str, user_id: str) -> Dict[str, Any]:
 
-    SERVICE_MODE = os.getenv("SERVICE_MODE", "DEV")    
     client = OpenAI(
         base_url="https://aiapi.ihep.ac.cn/apiv2",
-        api_key= fetcher.get_personal_key(username=user_id) if SERVICE_MODE == "PROD" else os.environ.get("HEPAI_API_KEY")
+        api_key=fetcher.get_personal_key(username=user_id),
     )
 
     file_obj = client.files.create(
@@ -84,12 +83,9 @@ def upload_to_filesystem(file_path: str, user_id: str) -> Dict[str, Any]:
 
 
 def _download_hepai_file_bytes(file_id: str, user_id: str) -> bytes:
-    SERVICE_MODE = os.getenv("SERVICE_MODE", "DEV")
     client = OpenAI(
         base_url="https://aiapi.ihep.ac.cn/apiv2",
-        api_key=fetcher.get_personal_key(username=user_id)
-        if SERVICE_MODE == "PROD"
-        else os.environ.get("HEPAI_API_KEY"),
+        api_key=fetcher.get_personal_key(username=user_id),
     )
 
     resp = client.files.content(file_id)

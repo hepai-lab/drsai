@@ -7,10 +7,41 @@ from ...datamodel import Settings
 from ..deps import get_db
 from .....drsai_adapter.sso.jwt import get_current_user_id
 from ..auth_source import get_user_source
+from ..settings_store import (
+    extract_model_api_key,
+    replace_model_api_key,
+    stored_key_is_shared_env_key,
+    upsert_settings_by_user_id,
+)
 
 from .....drsai_adapter.singleton import personal_key_config_fetcher as fetcher
+from .....drsai_adapter.personal_config_fetcher import uses_shared_api_key
 
 router = APIRouter()
+
+
+def _heal_shared_env_key(db, settings: Settings, user_id: str, user_source: str | None) -> Settings:
+    """Replace a copied process HEPAI_API_KEY with this user's HepAI personal key."""
+    if uses_shared_api_key(user_source):
+        return settings
+    config = settings.config if isinstance(settings.config, dict) else {}
+    model_configs = config.get("model_configs") or ""
+    if not stored_key_is_shared_env_key(model_configs):
+        return settings
+    old_key = extract_model_api_key(model_configs)
+    if not old_key:
+        return settings
+    try:
+        new_key = fetcher.get_personal_key(username=user_id, user_source=user_source)
+    except (ValueError, RuntimeError):
+        return settings
+    if not new_key or new_key == old_key:
+        return settings
+    config = dict(config)
+    config["model_configs"] = replace_model_api_key(model_configs, old_key, new_key)
+    settings.config = config
+    upsert_settings_by_user_id(db, settings)
+    return settings
 
 
 @router.get("/")
@@ -28,11 +59,11 @@ async def get_settings(
     try:
         user_source = get_user_source(db, user_id)
         response = db.get(Settings, filters={"user_id": user_id})
-        # science_user: always regenerate settings to ensure the shared API key
-        if user_source == "science_user":
+        # science_user / user_agent: always regenerate settings to ensure the shared API key
+        if uses_shared_api_key(user_source):
             config = fetcher.get_default_config(username=user_id, user_source=user_source)
             default_settings = Settings(user_id=user_id, config=config)
-            db.upsert(default_settings)
+            upsert_settings_by_user_id(db, default_settings)
             response = db.get(Settings, filters={"user_id": user_id})
         elif not response.status or not response.data:
             # create a default settings
@@ -45,11 +76,11 @@ async def get_settings(
                     status_code=404,
                     detail=f"settings not available for user_id={user_id} (user not found or not SSO user)",
                 ) from e
-            # config = {}
             default_settings = Settings(user_id=user_id, config=config)
-            db.upsert(default_settings)
+            upsert_settings_by_user_id(db, default_settings)
             response = db.get(Settings, filters={"user_id": user_id})
         settings = response.data[0]
+        settings = _heal_shared_env_key(db, settings, user_id, user_source)
         return {"status": True, "data": settings}
     
     except Exception as e:
@@ -89,7 +120,7 @@ async def update_settings(
             settings.config["model_configs"] = new_model_configs
         
     
-    response = db.upsert(settings)
+    response = upsert_settings_by_user_id(db, settings)
     if not response.status:
         raise HTTPException(status_code=400, detail=response.message)
     return {"status": True, "data": response.data}
