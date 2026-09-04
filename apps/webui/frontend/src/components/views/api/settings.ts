@@ -1,4 +1,4 @@
-import { getServerUrl } from "../../utils";
+import { apiFetch, getServerUrl } from "../../utils";
 import { getAuthToken } from "../../../utils/authSession";
 import { GeneralConfig } from "../../store";
 
@@ -19,7 +19,7 @@ export class SettingsAPI {
     }
 
     async getSettings(userId: string): Promise<Record<string, any>> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/settings/?user_id=${userId}`,
             {
                 headers: this.getHeaders(),
@@ -39,7 +39,7 @@ export class SettingsAPI {
         userId: string,
         config: Record<string, any>
     ): Promise<{ config: GeneralConfig }> {
-        const response = await fetch(`${this.getBaseUrl()}/settings/`, {
+        const response = await apiFetch(`${this.getBaseUrl()}/settings/`, {
             method: "PUT",
             headers: this.getHeaders(),
             body: JSON.stringify({

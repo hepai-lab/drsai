@@ -1,4 +1,4 @@
-import { getServerUrl } from "../../utils";
+import { apiFetch, getServerUrl } from "../../utils";
 
 export type AdminUsageOverviewData = {
     usage_events: Array<{
@@ -53,7 +53,7 @@ export class AdminAnalyticsAPI {
         const url = `${this.getBaseUrl()}/admin/analytics/usage-overview?operator_user_id=${encodeURIComponent(
             operatorUserId
         )}`;
-        const response = await fetch(url, { headers: this.getHeaders() });
+        const response = await apiFetch(url, { headers: this.getHeaders() });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
             const msg =

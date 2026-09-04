@@ -13,7 +13,12 @@ from .....drsai_adapter.sso.jwt import (
     REFRESH_TOKEN_EXPIRE_DAYS,
     create_jwt_token,
     decode_jwt_token,
-    get_current_user_id,
+    oauth2_scheme,
+)
+from .....drsai_adapter.sso.hepai_oidc import (
+    clear_oidc_session,
+    get_session_user,
+    revoke_server_tokens,
 )
 from ..auth_cookies import REFRESH_COOKIE_NAME, clear_refresh_cookie, set_refresh_cookie
 from ..auth_source import get_cooper_info, get_display_name
@@ -23,8 +28,31 @@ router = APIRouter()
 
 
 @router.get("/me")
-async def auth_me(user_id: str = Depends(get_current_user_id), db=Depends(get_db)) -> Dict:
-    """Verify Bearer access token and return the authenticated user id, cooper_info and display_name."""
+async def auth_me(
+    request: Request,
+    db=Depends(get_db),
+    token: str | None = Depends(oauth2_scheme),
+) -> Dict:
+    """Return the OIDC session user, or the JWT-authenticated WebUI user."""
+    session_user = get_session_user(request)
+    if session_user:
+        user_id = session_user.get("email") or session_user.get("sub")
+        return {
+            **session_user,
+            "status": True,
+            "data": {
+                "user_id": user_id,
+                "cooper_info": get_cooper_info(db, str(user_id or "")),
+                "display_name": session_user.get("name") or "",
+            },
+        }
+
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    token_data = decode_jwt_token(token)
+    user_id = token_data.user_id
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     cooper_info = get_cooper_info(db, user_id)
     display_name = get_display_name(db, user_id)
     return {
@@ -79,7 +107,10 @@ async def refresh_access_token(request: Request):
 
 @router.post("/logout")
 async def logout(request: Request):
-    """Clear the httpOnly refresh-token cookie so the client cannot silently re-authenticate."""
+    """Clear OIDC session and the httpOnly refresh-token cookie."""
+    sid = clear_oidc_session(request)
+    if sid:
+        await revoke_server_tokens(sid)
     response = JSONResponse(content={"status": True, "data": {}})
     clear_refresh_cookie(response)
     return response

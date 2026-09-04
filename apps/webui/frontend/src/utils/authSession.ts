@@ -1,4 +1,4 @@
-import { getServerUrl } from "../components/utils";
+import { apiFetch, getServerUrl } from "../components/utils";
 
 const TOKEN_KEY = "token";
 const USER_EMAIL_KEY = "user_email";
@@ -80,6 +80,34 @@ export function clearAuthSession(): void {
   }
 }
 
+const DEFAULT_IHEP_LOGOUT_URL = "https://newlogin.ihep.ac.cn/logout/";
+
+/** IHEP UMT logout. The browser must open this URL so the 10-day SSO cookie is sent and cleared. */
+export function buildIhepLogoutUrl(returnTo?: string): string {
+  const dest = returnTo ?? `${window.location.origin}/login?logout=1`;
+  const configured = process.env.GATSBY_OIDC_IDP_LOGOUT_URL?.trim();
+  const base = (configured || DEFAULT_IHEP_LOGOUT_URL).replace(/\/?$/, "/");
+  const url = new URL(base);
+  url.searchParams.set("WebServerURL", dest);
+  return url.toString();
+}
+
+/**
+ * Clear the local/app session, then send the browser to IHEP logout.
+ * Navigate immediately so Gatsby cannot steal the route; fire-and-forget
+ * the API call with keepalive so the refresh cookie is still cleared.
+ */
+export function logoutToIhepSso(): void {
+  clearAuthSession();
+  const dest = buildIhepLogoutUrl();
+  void fetch(`${getServerUrl()}/auth/logout`, {
+    method: "POST",
+    credentials: "include",
+    keepalive: true,
+  }).catch(() => undefined);
+  window.location.replace(dest);
+}
+
 export type AuthVerifyResult =
   | { ok: true; userEmail: string; accessToken: string; displayName?: string }
   | { ok: false };
@@ -87,7 +115,7 @@ export type AuthVerifyResult =
 /** Use httpOnly refresh-token cookie to obtain a new access token (SSO production). */
 export async function refreshAccessToken(): Promise<AuthVerifyResult> {
 try {
-    const response = await fetch(`${getServerUrl()}/auth/refresh`, {
+    const response = await apiFetch(`${getServerUrl()}/auth/refresh`, {
       method: "POST",
       credentials: "include",
     });
@@ -113,7 +141,7 @@ try {
 /** Call the server to clear the httpOnly refresh-token cookie. */
 export async function logoutRequest(): Promise<void> {
   try {
-    await fetch(`${getServerUrl()}/auth/logout`, {
+    await apiFetch(`${getServerUrl()}/auth/logout`, {
       method: "POST",
       credentials: "include",
     });
@@ -123,17 +151,46 @@ export async function logoutRequest(): Promise<void> {
   }
 }
 
-/** Validate Bearer token; refresh via cookie when expired or missing access token. */
+/** Validate OIDC session cookie, then optional local JWT. Do not probe refresh without a token. */
 export async function verifyAuthSession(): Promise<AuthVerifyResult> {
+  try {
+    const sessionResponse = await apiFetch(`${getServerUrl()}/auth/me`, {
+      credentials: "include",
+    });
+    if (sessionResponse.ok) {
+      const payload = await sessionResponse.json();
+      const userEmail =
+        (payload?.email as string | undefined) ||
+        (payload?.sub as string | undefined) ||
+        (payload?.data?.user_id as string | undefined);
+      if (userEmail) {
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(USER_EMAIL_KEY, userEmail);
+        }
+        const token = getAuthToken();
+        return {
+          ok: true,
+          userEmail,
+          accessToken: token || "",
+          displayName:
+            (payload?.name as string | undefined) ||
+            (payload?.data?.display_name as string | undefined) ||
+            "",
+        };
+      }
+    }
+  } catch {
+    // Fall through.
+  }
+
   const token = getAuthToken();
   if (!token) {
-    const refreshed = await refreshAccessToken();
-    return refreshed.ok ? refreshed : { ok: false };
+    return { ok: false };
   }
 
   let meResponse: Response;
   try {
-    meResponse = await fetch(`${getServerUrl()}/auth/me`, {
+    meResponse = await apiFetch(`${getServerUrl()}/auth/me`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },

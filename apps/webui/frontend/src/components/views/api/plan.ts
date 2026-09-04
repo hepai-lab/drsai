@@ -1,4 +1,4 @@
-import { getServerUrl } from "../../utils";
+import { apiFetch, getServerUrl } from "../../utils";
 import { getAuthToken } from "../../../utils/authSession";
 
 export class PlanAPI {
@@ -18,7 +18,7 @@ export class PlanAPI {
     }
 
     async listPlans(userId: string): Promise<any[]> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/plans/?user_id=${userId}`,
             {
                 headers: this.getHeaders(),
@@ -31,7 +31,7 @@ export class PlanAPI {
     }
 
     async getPlan(planId: number, userId: string): Promise<any> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/plans/${planId}?user_id=${userId}`,
             {
                 headers: this.getHeaders(),
@@ -49,7 +49,7 @@ export class PlanAPI {
             user_id: userId,
         };
 
-        const response = await fetch(`${this.getBaseUrl()}/plans/`, {
+        const response = await apiFetch(`${this.getBaseUrl()}/plans/`, {
             method: "POST",
             headers: this.getHeaders(),
             body: JSON.stringify(plan),
@@ -82,7 +82,7 @@ export class PlanAPI {
         };
 
         try {
-            const response = await fetch(
+            const response = await apiFetch(
                 `${this.getBaseUrl()}/plans/${planId}?user_id=${userId}`,
                 {
                     method: "PUT",
@@ -103,7 +103,7 @@ export class PlanAPI {
 
     async deletePlan(planId: number, userId: string): Promise<void> {
         try {
-            const response = await fetch(
+            const response = await apiFetch(
                 `${this.getBaseUrl()}/plans/${planId}?user_id=${userId}`,
                 {
                     method: "DELETE",
@@ -129,7 +129,7 @@ export class PlanAPI {
 
     async learnPlan(sessionId: number, userId: string): Promise<any> {
         try {
-            const response = await fetch(
+            const response = await apiFetch(
                 `${this.getBaseUrl()}/plans/learn_plan`,
                 {
                     method: "POST",

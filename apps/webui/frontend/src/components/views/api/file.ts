@@ -1,4 +1,4 @@
-import { getServerUrl } from "../../utils";
+import { apiFetch, getServerUrl } from "../../utils";
 import { getAuthToken } from "../../../utils/authSession";
 
 export class FileAPI {
@@ -32,7 +32,7 @@ export class FileAPI {
             formData.append("files", file);
         });
 
-        const response = await fetch(url, {
+        const response = await apiFetch(url, {
             method: "POST",
             headers: this.getHeaders(),
             body: formData,
@@ -80,7 +80,7 @@ export class FileAPI {
         }>
     > {
         const url = `${this.getBaseUrl()}/files/${_sessionId}?user_id=${encodeURIComponent(userId)}`;
-        const response = await fetch(url, { method: "GET" });
+        const response = await apiFetch(url, { method: "GET" });
         if (!response.ok) {
             throw new Error(`Failed to list files: ${response.status}`);
         }
@@ -99,7 +99,7 @@ export class FileAPI {
         const url = `${this.getBaseUrl()}/files/item/${encodeURIComponent(
             fileUuid
         )}?user_id=${encodeURIComponent(userId)}`;
-        const response = await fetch(url, { method: "DELETE" });
+        const response = await apiFetch(url, { method: "DELETE" });
         if (!response.ok) {
             let errorMessage = `HTTP error! status: ${response.status}`;
             try {
@@ -152,7 +152,7 @@ export class FileAPI {
         if (fileUrl) body.file_url = fileUrl;
         if (fileBase64) body.file_base64 = fileBase64;
 
-        const response = await fetch(url, {
+        const response = await apiFetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -201,7 +201,7 @@ export class FileAPI {
         if (m.changelog?.trim()) form.append("changelog", m.changelog.trim());
         if (m.source?.trim()) form.append("source", m.source.trim());
         const url = `${this.getBaseUrl()}/files/hepai/upload?user_id=${encodeURIComponent(userId)}`;
-        const response = await fetch(url, { method: "POST", body: form });
+        const response = await apiFetch(url, { method: "POST", body: form });
         const data = await response.json();
         if (!response.ok || !data?.status) {
             throw new Error(data?.detail || data?.message || "上传到 HepAI 失败");
@@ -217,7 +217,7 @@ export class FileAPI {
         const url = `${this.getBaseUrl()}/files/hepai/skill-md/${encodeURIComponent(fileId)}?user_id=${encodeURIComponent(
             userId
         )}`;
-        const response = await fetch(url);
+        const response = await apiFetch(url);
         const data = await response.json();
         if (!response.ok || !data?.status) {
             throw new Error(data?.detail || data?.message || "读取 SKILL.md 失败");
@@ -260,7 +260,7 @@ export class FileAPI {
         if (opts.changelog?.trim()) form.append("changelog", opts.changelog.trim());
         if (opts.source?.trim()) form.append("source", opts.source.trim());
         const url = `${this.getBaseUrl()}/files/hepai/${encodeURIComponent(fileId)}?user_id=${encodeURIComponent(userId)}`;
-        const response = await fetch(url, { method: "PUT", body: form });
+        const response = await apiFetch(url, { method: "PUT", body: form });
         const data = await response.json();
         if (!response.ok || !data?.status) {
             throw new Error(data?.detail || data?.message || "更新 HepAI 文件失败");
@@ -294,7 +294,7 @@ export class FileAPI {
         }>
     > {
         const url = `${this.getBaseUrl()}/files/hepai/list?user_id=${encodeURIComponent(userId)}`;
-        const response = await fetch(url);
+        const response = await apiFetch(url);
         const data = await response.json();
         if (!response.ok || !data?.status) {
             throw new Error(data?.detail || data?.message || "获取 HepAI 文件列表失败");

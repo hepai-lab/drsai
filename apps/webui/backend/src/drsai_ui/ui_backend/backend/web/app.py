@@ -2,10 +2,12 @@
 import os
 import re
 import yaml
-from dotenv import load_dotenv
+
+from drsai_ui.env_load import load_webui_dotenv
+
+load_webui_dotenv()
 
 from .routes import access_compat, admin_analytics, agent_mode, agent_skills, agent_worker, auth, cloud, deer_flow, desktop_auth, docmaster, files, local_login, models, native, plans, releases, runs, sessions, settingsroute, skill_tags, skills, skills_gfs, skills_share, teams, users, validation
-load_dotenv()
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator, Any
@@ -46,7 +48,10 @@ from .routes import (
     docmaster,
     auth,
 )
-from ....drsai_adapter.sso.science_user_router import router as science_user_router
+from ....drsai_adapter.sso.science_user_router import (
+    router as science_user_router,
+    user_agent_router,
+)
 import httpx
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -166,6 +171,16 @@ app = FastAPI(lifespan=lifespan, debug=True)
 
 @app.middleware("http")
 async def ui_path_prefix_redirects(request: Request, call_next):
+    proto = request.headers.get("x-forwarded-proto")
+    if proto:
+        request.scope["scheme"] = proto.split(",")[0].strip()
+    forwarded_host = request.headers.get("x-forwarded-host")
+    if forwarded_host:
+        host = forwarded_host.split(",")[0].strip().encode("latin-1")
+        request.scope["headers"] = [
+            (key, host if key == b"host" else value)
+            for key, value in request.scope["headers"]
+        ]
     prefix = getattr(request.app.state, "ui_path_prefix", "")
     path = request.url.path
     if prefix and path in ("/", prefix):
@@ -178,7 +193,7 @@ async def ui_path_prefix_redirects(request: Request, call_next):
 # 例：IFRAME_ALLOWED_ORIGINS="https://portal.lssf.cas.cn https://other.cas.cn"
 _IFRAME_ALLOWED_ORIGINS = os.getenv(
     "IFRAME_ALLOWED_ORIGINS",
-    "https://user.heps.ihep.ac.cn https://drsaiv2.ihep.ac.cn https://drsai.ihep.ac.cn",
+    "https://user.heps.ihep.ac.cn https://opendrsai.ihep.ac.cn https://drsaiv2.ihep.ac.cn https://drsai.ihep.ac.cn https://user.csns.ihep.ac.cn https://login.csns.ihep.ac.cn",
 )
 
 @app.middleware("http")
@@ -198,6 +213,7 @@ app.add_middleware(
         "http://drsai.ihep.ac.cn",
         "https://drsai.ihep.ac.cn",
         "https://drsaiv2.ihep.ac.cn",
+        "https://opendrsai.ihep.ac.cn",
         "https://aitest.ihep.ac.cn",
      ],
     allow_origin_regex=(
@@ -321,6 +337,18 @@ api.include_router(
     prefix="/auth",
     tags=["auth"],
     responses={401: {"description": "Unauthorized"}},
+)
+
+api.include_router(
+    science_user_router,
+    prefix="/auth/science-user",
+    tags=["science-user"],
+)
+
+api.include_router(
+    user_agent_router,
+    prefix="/auth/user-agent",
+    tags=["user-agent"],
 )
 
 from .routes import mobile
@@ -462,14 +490,34 @@ api.include_router(vnc_router, prefix="/vncapi", tags=["vnc"])
 app.mount("/api", api)
 
 
-# 加载统一认证模块
+# 加载统一认证模块（IHEP SSO 与 HepAI OIDC 共用 SessionMiddleware）
 SERVICE_MODE = os.getenv("SERVICE_MODE", None)
+from ....drsai_adapter.sso.hepai_oidc import oidc_configured
+
+_oidc_enabled = oidc_configured()
+_session_secret = os.getenv("SESSION_SECRET") or os.getenv("SECRET_KEY")
+if SERVICE_MODE == "PROD" or _oidc_enabled:
+    if not _session_secret:
+        if _oidc_enabled:
+            raise ValueError("SESSION_SECRET is not set; required for HepAI OIDC PKCE state")
+        from ....drsai_adapter.sso.ihep_sso_router import oauth_config as _ihep_oauth_config
+        _session_secret = _ihep_oauth_config.meddleware_secret
+    from starlette.middleware.sessions import SessionMiddleware
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=_session_secret,
+        same_site="lax",
+        https_only=os.getenv("SESSION_COOKIE_SECURE", "").lower() in {"1", "true", "yes"},
+        max_age=30 * 24 * 60 * 60,
+    )
+
+if _oidc_enabled:
+    from ....drsai_adapter.sso.hepai_oidc_router import router as hepai_oidc_router
+    app.include_router(hepai_oidc_router, tags=["oidc"])
+
 if SERVICE_MODE == "PROD":
     from ....drsai_adapter.sso.ihep_sso_router import router as ihep_sso_router
-    from ....drsai_adapter.sso.ihep_sso_router import oauth_config
-    from starlette.middleware.sessions import SessionMiddleware
-    app.add_middleware(SessionMiddleware, secret_key=oauth_config.meddleware_secret)
-    app.include_router(ihep_sso_router, prefix="/umt", tags=["umt"]) 
+    app.include_router(ihep_sso_router, prefix="/umt", tags=["umt"])
     # api.include_router(ihep_sso_router, prefix="/umt", tags=["umt"], responses={404: {"description": "Not found"}})
 
 # Error handlers

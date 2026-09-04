@@ -51,6 +51,12 @@ const Provider = ({ children }: any) => {
   const setUser = (user: IUser | null) => {
     if (user?.email) {
       setLocalStorage("user_email", user.email, false);
+    } else {
+      try {
+        window.localStorage.removeItem("user_email");
+      } catch {
+        // ignore
+      }
     }
     setUserState(user);
   };

@@ -32,7 +32,14 @@ IHEP_VERIFY_TOKEN_API = os.getenv(
     "SCIENCE_USER_VERIFY_API",
     "https://newlogin.ihep.ac.cn/api/validateAccessToken",
 )
+# CSNS user_agent 嵌入登录：从 URL 取 access_token，调此接口校验
+CSNS_VERIFY_TOKEN_API = os.getenv(
+    "USER_AGENT_VERIFY_API",
+    "https://login.csns.ihep.ac.cn/api/validatetoken",
+)
+USER_AGENT_DEFAULT_NAME = "iPanda"
 REQUEST_TIMEOUT = 10.0
+user_agent_router = APIRouter()
 
 
 async def _fetch_cas_user(token_id: str) -> dict:
@@ -89,6 +96,128 @@ async def _fetch_cas_user(token_id: str) -> dict:
     return user_dict
 
 
+_CSNS_EMAIL_KEYS = (
+    "email",
+    "EMAIL",
+    "mail",
+    "Mail",
+    "cstnetId",
+    "username",
+    "userName",
+    "loginName",
+    "login",
+    "account",
+    "user_id",
+    "userId",
+    "sub",
+)
+_CSNS_ID_KEYS = ("umtId", "umt_id", "uid", "id")
+
+
+def _csns_token_ok(body: dict) -> bool:
+    """CSNS /api/validatetoken: { result, code: 200, stauts: "success" }."""
+    code = body.get("code")
+    if code not in (200, "200"):
+        return False
+    flag = body.get("stauts") or body.get("status") or body.get("success")
+    if flag is None:
+        return True
+    if isinstance(flag, bool):
+        return flag
+    return str(flag).strip().lower() in {"success", "ok", "true", "1"}
+
+
+def _pick_csns_user_id(obj: object, *, depth: int = 0, allow_bare_id: bool = False) -> str | None:
+    if depth > 5 or obj is None:
+        return None
+    if isinstance(obj, str) and obj.strip():
+        return obj.strip().lower()
+    if isinstance(obj, list):
+        for item in obj[:20]:
+            found = _pick_csns_user_id(item, depth=depth + 1, allow_bare_id=allow_bare_id)
+            if found:
+                return found
+        return None
+    if not isinstance(obj, dict):
+        return None
+    for key in _CSNS_EMAIL_KEYS:
+        value = obj.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+    for nested_key in ("user", "userInfo", "userinfo", "profile", "data", "result"):
+        if nested_key in obj:
+            found = _pick_csns_user_id(
+                obj.get(nested_key), depth=depth + 1, allow_bare_id=False
+            )
+            if found:
+                return found
+    if allow_bare_id:
+        for key in _CSNS_ID_KEYS:
+            value = obj.get(key)
+            if value is not None and str(value).strip() and key != "code":
+                return str(value).strip().lower()
+    return None
+
+
+def _extract_csns_user_id(body: object) -> str | None:
+    """Extract a user identifier from CSNS /api/validatetoken JSON."""
+    if not isinstance(body, dict):
+        return None
+    if not _csns_token_ok(body):
+        return None
+
+    payload = body.get("result")
+    if payload in (None, {}, []):
+        payload = body.get("data")
+    if payload in (None, {}, []):
+        return None
+
+    found = _pick_csns_user_id(payload, allow_bare_id=True)
+    if found:
+        return found
+    return None
+
+
+async def _complete_embed_login(user_id: str, user_source: str) -> JSONResponse:
+    """Issue our JWT, persist user_source, and seed default agents."""
+    access_token = create_jwt_token(
+        data={"sub": user_id},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    refresh_token = create_jwt_token(
+        data={"sub": user_id},
+        expires_delta=timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+    )
+
+    from drsai_ui.ui_backend.backend.web.deps import get_db
+    from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, UserAgents
+    from drsai_ui.agent_factory.agent_mode_cofigs import get_default_agent_mode_config
+    from drsai_ui.ui_backend.backend.web.auth_source import record_auth_source
+
+    db = await get_db()
+    record_auth_source(db, user_id, "sso", user_source=user_source)
+    resp_agent = db.get(AgentModeSettings, filters={"user_id": user_id})
+    if not resp_agent.status or not resp_agent.data:
+        agents_list = get_default_agent_mode_config(user_id, user_source=user_source)
+        db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
+        db.upsert(UserAgents(user_id=user_id, agents=agents_list))
+
+    response = JSONResponse(
+        content={
+            "status": True,
+            "data": {
+                "user_id": user_id,
+                "access_token": access_token.access_token,
+                "agent_name": USER_AGENT_DEFAULT_NAME if user_source == "user_agent" else None,
+            },
+        }
+    )
+
+    from drsai_ui.ui_backend.backend.web.auth_cookies import set_refresh_cookie
+    set_refresh_cookie(response, refresh_token.access_token)
+    return response
+
+
 @router.post("/token")
 async def science_user_token(token_id: str):
     """
@@ -115,44 +244,7 @@ async def science_user_token(token_id: str):
 
     user_id = email.strip().lower()
     logger.info(f"Science user authenticated: {user_id} (tokenId={token_id})")
-
-    access_token = create_jwt_token(
-        data={"sub": user_id},
-        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
-    )
-    refresh_token = create_jwt_token(
-        data={"sub": user_id},
-        expires_delta=timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
-    )
-
-    # Lazy imports to avoid circular deps
-    from drsai_ui.ui_backend.backend.web.deps import get_db
-    from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, UserAgents
-    from drsai_ui.agent_factory.agent_mode_cofigs import get_default_agent_mode_config
-    from drsai_ui.ui_backend.backend.web.auth_source import record_auth_source
-
-    db = await get_db()
-    record_auth_source(db, user_id, "sso", user_source="science_user")
-    resp_agent = db.get(AgentModeSettings, filters={"user_id": user_id})
-    if not resp_agent.status or not resp_agent.data:
-        agents_list = get_default_agent_mode_config(user_id, user_source="science_user")
-        db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
-        db.upsert(UserAgents(user_id=user_id, agents=agents_list))
-
-    response = JSONResponse(
-        content={
-            "status": True,
-            "data": {
-                "user_id": user_id,
-                "access_token": access_token.access_token,
-            },
-        }
-    )
-
-    from drsai_ui.ui_backend.backend.web.auth_cookies import set_refresh_cookie
-    set_refresh_cookie(response, refresh_token.access_token)
-
-    return response
+    return await _complete_embed_login(user_id, "science_user")
 
 
 async def _fetch_ihep_user(username: str, access_token: str) -> dict:
@@ -242,40 +334,81 @@ async def science_user_verify(access_token: str, username: str = ""):
 
     user_id = email.strip().lower()
     logger.info(f"Science user authenticated via IHEP: {user_id}")
+    return await _complete_embed_login(user_id, "science_user")
 
-    access_token_jwt = create_jwt_token(
-        data={"sub": user_id},
-        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
-    )
-    refresh_token = create_jwt_token(
-        data={"sub": user_id},
-        expires_delta=timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
-    )
 
-    from drsai_ui.ui_backend.backend.web.deps import get_db
-    from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, UserAgents
-    from drsai_ui.agent_factory.agent_mode_cofigs import get_default_agent_mode_config
-    from drsai_ui.ui_backend.backend.web.auth_source import record_auth_source
+async def _fetch_csns_user(access_token: str) -> dict:
+    """Validate access_token via CSNS /api/validatetoken and return the JSON body.
 
-    db = await get_db()
-    record_auth_source(db, user_id, "sso", user_source="science_user")
-    resp_agent = db.get(AgentModeSettings, filters={"user_id": user_id})
-    if not resp_agent.status or not resp_agent.data:
-        agents_list = get_default_agent_mode_config(user_id, user_source="science_user")
-        db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
-        db.upsert(UserAgents(user_id=user_id, agents=agents_list))
+    GET https://login.csns.ihep.ac.cn/api/validatetoken?access_token=...
+    Falls back to POST form if GET is not accepted.
+    """
+    logger.info(f"[CSNS] validating access_token via {CSNS_VERIFY_TOKEN_API}")
+    token_params = {"access_token": access_token, "token": access_token}
+    try:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            resp = await client.get(
+                CSNS_VERIFY_TOKEN_API,
+                params=token_params,
+            )
+            if resp.status_code in (404, 405, 415):
+                logger.info(
+                    f"[CSNS] GET status={resp.status_code}, retrying POST form"
+                )
+                resp = await client.post(
+                    CSNS_VERIFY_TOKEN_API,
+                    data=token_params,
+                )
+        logger.info(f"[CSNS] response status={resp.status_code} body={resp.text[:500]}")
+        resp.raise_for_status()
+        body = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            f"[CSNS] HTTP error: status={exc.response.status_code} body={exc.response.text[:500]}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="user_agent_auth_failed",
+        )
+    except Exception as exc:
+        logger.exception(f"[CSNS] request failed: {type(exc).__name__}: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="user_agent_auth_failed",
+        )
 
-    response = JSONResponse(
-        content={
-            "status": True,
-            "data": {
-                "user_id": user_id,
-                "access_token": access_token_jwt.access_token,
-            },
-        }
-    )
+    if not isinstance(body, dict):
+        logger.warning(f"[CSNS] unexpected response type={type(body)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="user_agent_auth_failed",
+        )
+    return body
 
-    from drsai_ui.ui_backend.backend.web.auth_cookies import set_refresh_cookie
-    set_refresh_cookie(response, refresh_token.access_token)
 
-    return response
+@user_agent_router.post("/verify")
+async def user_agent_verify(access_token: str):
+    """
+    Validate a CSNS access_token from the embed URL and return our JWT.
+
+    Query param: access_token
+    Returns: { status, data: { access_token, user_id, agent_name } }
+    """
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="access_token is required",
+        )
+
+    body = await _fetch_csns_user(access_token)
+    user_id = _extract_csns_user_id(body)
+    if not user_id:
+        logger.warning(f"[CSNS] could not extract user from validatetoken: {body}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="user_agent_auth_failed",
+        )
+
+    logger.info(f"user_agent authenticated via CSNS: {user_id}")
+    return await _complete_embed_login(user_id, "user_agent")
+

@@ -19,7 +19,12 @@ export const useWebSocketManager = () => {
       if (baseUrl.startsWith("localhost")) {
         baseUrl = baseUrl.replace("/api", "");
       } else if (baseUrl === "/api") {
-        baseUrl = window.location.host;
+        const apiPort = process.env.GATSBY_DEV_API_PORT || "8086";
+        if (window.location.port && window.location.port !== "80" && window.location.port !== "443") {
+          baseUrl = `${window.location.hostname}:${apiPort}`;
+        } else {
+          baseUrl = window.location.host;
+        }
       } else {
         baseUrl = baseUrl.replace("/api", "").replace(/\/$/, "");
       }
