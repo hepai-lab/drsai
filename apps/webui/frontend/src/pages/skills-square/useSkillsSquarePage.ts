@@ -22,6 +22,7 @@ import { useLocation, useNavigate } from "../../hooks/useRouter";
 import { useLang } from "../../i18n/useLang";
 import { useConfigStore } from "../../hooks/store";
 import { getModelApiKeyFromSettings } from "../../utils/modelApiKey";
+import { apiDatetimeToUtcMs, parseApiDateAsUtc } from "../../utils/apiDatetime";
 import { HEPAI_MAX_ZIP_BYTES, PUBLIC_PAGE_SIZE } from "./constants";
 import { LayoutGrid, Download, Heart } from "lucide-react";
 import { type StatsCardItem } from "./StatsCards";
@@ -307,8 +308,8 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
     return [...searchFiltered].sort((a, b) => {
       if (sortBy === "name") return (a.name || "").localeCompare(b.name || "");
       return (
-        new Date(b.updated_at || 0).getTime() -
-        new Date(a.updated_at || 0).getTime()
+        apiDatetimeToUtcMs(b.updated_at) -
+        apiDatetimeToUtcMs(a.updated_at)
       );
     });
   }, [hepaiRows, search, privateFilter, sortBy, user?.email]);
@@ -716,10 +717,12 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
                 changelog: sanitizeChangelog(row.changelog),
                 profile: row.profile || pub?.profile || "",
                 created_at: row.created_at
-                  ? new Date(row.created_at).toISOString()
+                  ? parseApiDateAsUtc(row.created_at)?.toISOString() ||
+                    new Date().toISOString()
                   : new Date().toISOString(),
                 updated_at: row.updated_at
-                  ? new Date(row.updated_at).toISOString()
+                  ? parseApiDateAsUtc(row.updated_at)?.toISOString() ||
+                    new Date().toISOString()
                   : new Date().toISOString(),
                 downloads: row.downloads ?? pub?.downloads ?? 0,
                 can_edit: !imported,
@@ -751,10 +754,12 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
             changelog: sanitizeChangelog(row.changelog) || detail.changelog,
             profile: row.profile || detail.profile,
             created_at: row.created_at
-              ? new Date(row.created_at).toISOString()
+              ? parseApiDateAsUtc(row.created_at)?.toISOString() ||
+                detail.created_at
               : detail.created_at,
             updated_at: row.updated_at
-              ? new Date(row.updated_at).toISOString()
+              ? parseApiDateAsUtc(row.updated_at)?.toISOString() ||
+                detail.updated_at
               : detail.updated_at,
             downloads: row.downloads ?? detail.downloads,
             can_edit: row.uskills_type !== "imported",

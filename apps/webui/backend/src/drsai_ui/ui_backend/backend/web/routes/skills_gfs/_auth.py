@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException, Query, Request
@@ -150,6 +150,18 @@ def _repair_corrupted_owner(existing, user_id: str) -> bool:
     return False
 
 
+def _dt_iso_utc(value: datetime | None) -> str:
+    """Serialize naive DB timestamps as UTC instants (Z), so the UI is not off by 8h."""
+    if not value:
+        return ""
+    dt = value
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z")
+
+
 def _skillmeta_to_dict(row) -> dict:
     """Convert a SkillMeta row to a flat dict for API responses."""
     return {
@@ -173,8 +185,8 @@ def _skillmeta_to_dict(row) -> dict:
         "agent_ids": row.agent_ids if isinstance(row.agent_ids, list) else [],
         "team_ids": row.team_ids if isinstance(row.team_ids, list) else [],
         "profile": row.profile or "",
-        "created_at": row.created_at.isoformat() if row.created_at else "",
-        "updated_at": row.updated_at.isoformat() if row.updated_at else "",
+        "created_at": _dt_iso_utc(row.created_at),
+        "updated_at": _dt_iso_utc(row.updated_at),
     }
 
 

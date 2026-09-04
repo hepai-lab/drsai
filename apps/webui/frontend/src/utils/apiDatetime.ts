@@ -18,8 +18,36 @@ export function parseApiDateAsUtc(isoLike: string | undefined | null): Date | nu
   if (isoLike == null) return null;
   const s = String(isoLike).trim();
   if (!s) return null;
-  const d = hasExplicitTimezone(s) ? new Date(s) : new Date(`${s}Z`);
+  // SQLite / isoformat may use a space instead of T between date and time.
+  const normalized = s.includes("T") ? s : s.replace(" ", "T");
+  const d = hasExplicitTimezone(normalized)
+    ? new Date(normalized)
+    : new Date(`${normalized}Z`);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Relative time for skill square / detail; naive API stamps are UTC. */
+export function formatApiRelativeTime(
+  isoLike: string | undefined | null,
+  isZh: boolean,
+  nowMs: number = Date.now(),
+): string {
+  const d = parseApiDateAsUtc(isoLike);
+  if (!d) return isZh ? "—" : "—";
+  const diff = nowMs - d.getTime();
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  if (mins < 1) return isZh ? "刚刚" : "just now";
+  if (mins < 60) return isZh ? `${mins} 分钟前` : `${mins}m ago`;
+  if (hours < 24) return isZh ? `${hours} 小时前` : `${hours}h ago`;
+  if (days < 30) return isZh ? `${days} 天前` : `${days}d ago`;
+  return new Intl.DateTimeFormat(isZh ? "zh-CN" : "en-US", {
+    timeZone: DISPLAY_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
 }
 
 export function apiDatetimeToUtcMs(isoLike: string | undefined | null): number {

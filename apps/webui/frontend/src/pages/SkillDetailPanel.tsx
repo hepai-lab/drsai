@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import MarkdownRenderer from "../components/common/markdownrender";
 import type { SkillsPublicDetail } from "../components/views/api";
+import { formatApiDateTimeZhCN, formatApiRelativeTime } from "../utils/apiDatetime";
 import { resolveSkillAssetUrl } from "./skills-square/utils";
 
 export interface SkillDetailPanelProps {
@@ -30,17 +31,8 @@ export interface SkillDetailPanelProps {
 
 type DetailTab = "info" | "description" | "content";
 
-function formatRelativeTime(dateStr: string, isZh: boolean): string {
-  const now = Date.now();
-  const diff = now - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  if (mins < 1) return isZh ? "刚刚" : "just now";
-  if (mins < 60) return isZh ? `${mins} 分钟前` : `${mins}m ago`;
-  if (hours < 24) return isZh ? `${hours} 小时前` : `${hours}h ago`;
-  if (days < 30) return isZh ? `${days} 天前` : `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString(isZh ? "zh-CN" : "en-US");
+function formatDateTitle(dateStr: string): string {
+  return formatApiDateTimeZhCN(dateStr);
 }
 
 function extractToc(body: string): { id: string; level: number; text: string }[] {
@@ -56,16 +48,15 @@ function extractToc(body: string): { id: string; level: number; text: string }[]
   return items;
 }
 
-function sourceLabel(source: string | undefined, isZh: boolean): string {
+function sourceLabel(source: string | undefined, isZh: boolean): string | null {
   if (source === "imported") return isZh ? "收藏" : "Imported";
   if (source === "higraf") return "Higraf";
-  return isZh ? "我的创建" : "My Creation";
+  return null;
 }
 
 function sourceColor(source: string | undefined): string {
   if (source === "imported") return "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300";
   if (source === "higraf") return "bg-cyan-100 text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-300";
-  if (source === "created") return "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300";
   return "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300";
 }
 
@@ -116,7 +107,8 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
   const hasToggleButton = showToggleButton !== undefined;
   const ownerLabel = (skillDetail.owner || "").trim();
   const ownerAvatar = ownerLabel ? ownerLabel.charAt(0).toUpperCase() : "";
-  const skillSource = (skillDetail as any).source as string | undefined || source;
+  const skillSource = source ?? (skillDetail.source === "higraf" ? "higraf" : undefined);
+  const sourceTag = sourceLabel(skillSource, isZh);
   const compatibility = (skillDetail as any).compatibility as string | undefined;
 
   const ActionBtn = ({
@@ -179,9 +171,11 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h1 className="break-words text-xl font-bold text-gray-900 dark:text-white leading-tight">{skillDetail.name}</h1>
-                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0 ${sourceColor(skillSource)}`}>
-                    <Globe className="h-3 w-3" />{sourceLabel(skillSource, isZh)}
-                  </span>
+                  {sourceTag && (
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0 ${sourceColor(skillSource)}`}>
+                      <Globe className="h-3 w-3" />{sourceTag}
+                    </span>
+                  )}
                 </div>
 
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
@@ -203,8 +197,8 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
                     </span>
                   )}
                   {skillDetail.created_at && (
-                    <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400" title={new Date(skillDetail.created_at).toLocaleDateString()}>
-                      <Calendar className="h-3 w-3" />{formatRelativeTime(skillDetail.created_at, isZh)}
+                    <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400" title={formatDateTitle(skillDetail.created_at)}>
+                      <Calendar className="h-3 w-3" />{formatApiRelativeTime(skillDetail.created_at, isZh)}
                     </span>
                   )}
                 </div>
@@ -297,13 +291,13 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
                 {skillDetail.created_at && (
                   <div className="group rounded-xl border border-gray-200/70 bg-gradient-to-b from-gray-50/50 to-white px-4 py-3.5 transition-all duration-200 hover:border-accent/20 hover:shadow-sm dark:border-white/[0.08] dark:from-white/[0.03] dark:to-transparent dark:hover:border-accent/15">
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">{isZh ? "创建时间" : "Created"}</p>
-                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-100" title={new Date(skillDetail.created_at).toLocaleDateString()}>{formatRelativeTime(skillDetail.created_at, isZh)}</p>
+                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-100" title={formatDateTitle(skillDetail.created_at)}>{formatApiRelativeTime(skillDetail.created_at, isZh)}</p>
                   </div>
                 )}
                 {skillDetail.updated_at && (
                   <div className="group rounded-xl border border-gray-200/70 bg-gradient-to-b from-gray-50/50 to-white px-4 py-3.5 transition-all duration-200 hover:border-accent/20 hover:shadow-sm dark:border-white/[0.08] dark:from-white/[0.03] dark:to-transparent dark:hover:border-accent/15">
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">{isZh ? "更新时间" : "Updated"}</p>
-                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-100" title={new Date(skillDetail.updated_at).toLocaleDateString()}>{formatRelativeTime(skillDetail.updated_at, isZh)}</p>
+                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-100" title={formatDateTitle(skillDetail.updated_at)}>{formatApiRelativeTime(skillDetail.updated_at, isZh)}</p>
                   </div>
                 )}
               </div>
