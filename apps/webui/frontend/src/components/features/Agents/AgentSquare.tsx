@@ -170,6 +170,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     config: agent.config,
     mode: agent.mode || "remote",
     api_key: agent.api_key,
+    is_public: Boolean(agent.is_public),
     onRemove: (id?: string) => handleRemoveRemoteAgent(id || agent.id),
     onClick: () => { },
   }), [handleRemoveRemoteAgent]);
@@ -190,6 +191,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       featured: Boolean(agent.featured),
       is_default: Boolean(agent.is_default),
       is_user_default: Boolean(agent.id && agent.id === userDefaultAgentId),
+      is_public: Boolean(agent.is_public),
       onRemove: (agent.mode === "remote" || agent.mode === "custom")
         ? (id?: string) => handleRemoveRemoteAgent(id || agent.id)
         : undefined,
@@ -656,7 +658,8 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
             onStartChat={startWithAgent}
             onEdit={selectedAgent.mode === "custom" ? (a) => handleEditCustomAgent(a) : undefined}
             onRemove={
-              (selectedAgent.mode === "remote" || selectedAgent.mode === "custom")
+              (selectedAgent.mode === "remote" || selectedAgent.mode === "custom") &&
+              selectedAgent.is_public !== true
                 ? (a) => handleRemoveRemoteAgent(a.id)
                 : undefined
             }

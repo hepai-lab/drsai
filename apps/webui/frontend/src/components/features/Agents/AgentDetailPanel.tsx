@@ -220,7 +220,7 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({
                 </button>
               )}
 
-              {(agent.mode === "remote" || agent.mode === "custom") && onRemove && (
+              {(agent.mode === "remote" || agent.mode === "custom") && onRemove && agent.is_public !== true && (
                 <button
                   type="button"
                   onClick={() => onRemove(agent)}

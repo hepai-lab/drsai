@@ -22,6 +22,7 @@ interface AgentCardData {
   featured?: boolean;
   is_default?: boolean;
   is_user_default?: boolean;
+  is_public?: boolean;
 }
 
 interface AgentCardProps {
@@ -90,9 +91,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit, onCardClick }) => 
     onEdit?.(agent.id);
   };
 
-  const showTopActions =
-    ((agent.mode === "remote" || agent.mode === "custom") && agent.onRemove) ||
-    (agent.mode === "custom" && onEdit);
+  const canRemove =
+    (agent.mode === "remote" || agent.mode === "custom") &&
+    Boolean(agent.onRemove) &&
+    agent.is_public !== true;
+
+  const showTopActions = canRemove || (agent.mode === "custom" && onEdit);
 
   const modeLabel =
     agent.mode === "remote"
@@ -161,7 +165,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit, onCardClick }) => 
                 <Pencil className="h-3 w-3" />
               </button>
             )}
-            {(agent.mode === "remote" || agent.mode === "custom") && agent.onRemove && (
+            {canRemove && (
               <button
                 type="button"
                 onClick={handleRemoveClick}
