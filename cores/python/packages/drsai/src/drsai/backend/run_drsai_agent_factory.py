@@ -808,6 +808,10 @@ def create_agent(
         provider_model = normalize_provider_model_name(llm_model, active_base_url)
 
         if client_type == "gemini":
+            _gemini_allow_deferred_oidc = bool(
+                active_user_model is None
+                or active_user_model.provider.name in {"hepai", "hepai-anthropic"}
+            )
             return GeminiNativeChatCompletionClient(
                 model=llm_model,
                 base_url=active_base_url,
@@ -815,6 +819,7 @@ def create_agent(
                 max_tokens=max_tokens,
                 timeout=openai_timeout,
                 vision=entry.vision,
+                allow_deferred_oidc=_gemini_allow_deferred_oidc,
             )
 
         if client_type == "anthropic":
