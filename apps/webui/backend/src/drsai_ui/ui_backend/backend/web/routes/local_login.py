@@ -13,7 +13,6 @@ from ..auth_source import record_auth_source
 from ...datamodel.db import UserAgents, AgentModeSettings
 
 from .....agent_factory.agent_mode_cofigs import (
-    get_agent_mode_config, 
     get_default_agent_mode_config,
     get_user_agents,
     get_agents_mode,

@@ -15,6 +15,51 @@ from ._skillmd import _parse_skill_md, _profile_safe_ext, _read_file_from_zip
 from ..gfs_utils import gfs_put
 
 
+async def _persist_profile_upload(
+    profile: UploadFile | None,
+    owner_id: str,
+    slug: str,
+    cfg: dict,
+) -> str | None:
+    """Save uploaded profile image to GFS; return API path or None."""
+    if profile is None or not profile.filename:
+        return None
+
+    profile_ext = _profile_safe_ext(profile.filename or "")
+    if profile_ext is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Profile image must be png/jpg/jpeg/gif/webp/svg",
+        )
+
+    profile_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=profile_ext)
+    profile_tmp.close()
+    psize = 0
+    try:
+        with open(profile_tmp.name, "wb") as pout:
+            while True:
+                pchunk = await profile.read(1024 * 1024)
+                if not pchunk:
+                    break
+                psize += len(pchunk)
+                if psize > _MAX_PROFILE_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Profile image exceeds {_MAX_PROFILE_BYTES // (1024 * 1024)} MiB limit",
+                    )
+                pout.write(pchunk)
+
+        profile_remote = f"user_skills/{owner_id}/{slug}/profile{profile_ext}"
+        if gfs_put(profile_tmp.name, profile_remote, cfg):
+            return f"/api/skills/{slug}/profile"
+        return None
+    finally:
+        try:
+            os.unlink(profile_tmp.name)
+        except OSError:
+            pass
+
+
 @router.put("/{slug}")
 async def update_skill(
     slug: str,
@@ -61,18 +106,13 @@ async def _update_skill(
     existing: SkillMeta = resp.data[0]
 
     if existing.owner_id and existing.owner_id != user_id and existing.source != "higraf":
-        from ....datamodel.db import Userinfo as _U
-        uresp = db_mgr.get(_U, filters={"user_id": user_id}, return_json=False)
-        if uresp.status and uresp.data:
-            umeta = dict(getattr(uresp.data[0], "meta", None) or {})
-            skill_role = umeta.get("skill_role", "user")
-        else:
-            skill_role = "user"
-        if skill_role != "admin":
+        from ...authz import get_is_platform_admin
+        if not get_is_platform_admin(db_mgr, user_id):
             raise HTTPException(status_code=403, detail="Not the owner of this skill")
 
     cfg = _require_gfs()
     remote_path = _gfs_user_zip_path(slug, existing.owner_id or user_id)
+    owner_id = existing.owner_id or user_id
 
     if file is not None:
         profile_ext = None
@@ -175,6 +215,10 @@ async def _update_skill(
             existing.description = description
         if tags:
             existing.tags = [t.strip() for t in tags.split(",") if t.strip()]
+
+        profile_url = await _persist_profile_upload(profile, owner_id, slug, cfg)
+        if profile_url:
+            existing.profile = profile_url
 
     if description:
         detail_resp = db_mgr.get(SkillDetail, filters={"slug": slug})

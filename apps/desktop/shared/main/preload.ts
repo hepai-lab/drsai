@@ -1599,6 +1599,10 @@ const api: DesktopApi = {
     return () =>
       ipcRenderer.removeListener("desktop:browser-task-event", listener);
   },
+  /** P1: Send renderer FPS health report to main process for adaptive backpressure control. */
+  sendRenderHealthReport: (report: { fps: number; tier: "healthy" | "degraded" | "critical" }): void => {
+    ipcRenderer.send("desktop:render-health", report);
+  },
 };
 
 contextBridge.exposeInMainWorld("openDrSai", api);

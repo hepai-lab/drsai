@@ -1,9 +1,11 @@
 import { Button as AntdButton, Input, message, Select, Switch } from "antd";
-import { FileText, FolderOpen, Image, Package, Upload } from "lucide-react";
+import { FileText, FolderOpen, Image, Package, Upload, X } from "lucide-react";
 import React from "react";
+import publishIllustration from "../../assets/publish-illustration.png";
+import uploadIllustration from "../../assets/upload-illustration.png";
 import { MAX_SKILL_FOLDER_FILES } from "./constants";
 import { ICON_LABEL_KEY_MAP, SKILL_ICON_OPTIONS } from "./icons";
-import { formatBytes, type PackPreviewEntry } from "./utils";
+import { formatBytes, resolveSkillAssetUrl, type PackPreviewEntry } from "./utils";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TFn = (key: any, ...args: any[]) => string;
@@ -41,6 +43,11 @@ export interface SkillPublishFormProps {
   onCancel: () => void;
   onSelectFolder: () => void;
 }
+
+const INPUT_CLS =
+  "rounded-xl [&_.ant-input]:rounded-xl [&_.ant-input]:border-tertiary/40 [&_.ant-input]:bg-background/55 dark:[&_.ant-input]:border-white/10 dark:[&_.ant-input]:bg-white/[0.04]";
+const SELECT_CLS =
+  "w-full [&_.ant-select-selector]:rounded-xl [&_.ant-select-selector]:border-tertiary/40 [&_.ant-select-selector]:bg-background/55 dark:[&_.ant-select-selector]:border-white/10 dark:[&_.ant-select-selector]:bg-white/[0.04]";
 
 type PackTreeRow = {
   path: string;
@@ -84,6 +91,8 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
   onCancel,
   onSelectFolder,
 }) => {
+  const profilePreviewSrc = resolveSkillAssetUrl(publicProfilePreview);
+
   const applyProfileFile = (f: File) => {
     if (f.size > 2 * 1024 * 1024) {
       message.warning(t("skillSquare.profileTooLarge"));
@@ -129,29 +138,32 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
   const hiddenCount = treeRows.length - visibleRows.length;
 
   return (
-    <div className="rounded-2xl border border-border-primary/20 bg-primary shadow-sm dark:border-white/8 dark:bg-white/[0.01]">
-      <div className="sticky top-0 z-10 flex items-center justify-between rounded-t-2xl border-b border-border-primary/20 bg-primary px-6 py-3.5 dark:border-white/8">
-        <div className="flex items-center gap-3">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/12 text-accent dark:bg-accent/16">
-            <Upload className="h-4 w-4" aria-hidden />
-          </span>
-          <div className="text-sm font-semibold text-primary">
-            {editingSkillId
-              ? t("skillSquare.editSkill")
-              : t("skillSquare.publishSkillTitle")}
-          </div>
+    <div
+      className="animate-fade-in flex h-full flex-col overflow-hidden rounded-2xl border border-border-primary/20 bg-primary shadow-sm dark:border-white/8 dark:bg-white/[0.01]"
+    >
+      <div className="sticky top-0 z-10 flex items-center rounded-t-2xl border-b border-border-primary/20 bg-primary px-6 py-3.5 dark:border-white/8">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/12 text-accent dark:bg-accent/16">
+          <Upload className="h-4 w-4" aria-hidden />
+        </span>
+        <div className="ml-3 text-sm font-semibold text-primary">
+          {editingSkillId
+            ? t("skillSquare.editSkill")
+            : t("skillSquare.publishSkillTitle")}
         </div>
       </div>
-      <div className="space-y-4 px-6 py-5">
-        <div>
-          <div className="mb-1.5 text-sm font-medium text-primary">
-            {t("skillSquare.skillFile")}
-            {editingSkillId ? null : <span className="text-red-500"> *</span>}
-            {editingSkillId ? (
-              <span className="ml-1 text-xs font-normal text-secondary">
-                {t("skillSquare.optionalKeepZip")}
-              </span>
-            ) : null}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-8 px-6 py-5 lg:grid-cols-[380px_1fr]">
+        {/* Left column: upload */}
+        <div className="flex min-h-0 flex-col">
+          <div className="mb-1.5 flex items-center justify-between">
+            <div className="text-sm font-medium text-primary">
+              {t("skillSquare.skillFile")}
+              {editingSkillId ? null : <span className="text-red-500"> *</span>}
+              {editingSkillId ? (
+                <span className="ml-1 text-xs font-normal text-secondary">
+                  {t("skillSquare.optionalKeepZip")}
+                </span>
+              ) : null}
+            </div>
           </div>
           <input
             ref={setFolderInputRef}
@@ -176,10 +188,10 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
           />
           <div
             className={[
-              "flex min-h-[140px] flex-col gap-2 rounded-2xl border-2 px-4 py-5 transition-[border-color,background-color,box-shadow]",
+              "group relative flex min-h-[120px] flex-1 flex-col gap-2 rounded-2xl border-2 px-4 py-5 transition-all duration-300 bg-purple-50/30 dark:bg-purple-950/20",
               hepaiPickPreview
-                ? "border-accent/35 bg-accent/[0.06] shadow-sm ring-1 ring-accent/10 dark:border-accent/30 dark:bg-accent/[0.08] dark:ring-accent/15"
-                : "items-center justify-center border-dashed border-border-primary/70 bg-tertiary/20 dark:border-white/12 dark:bg-white/[0.02]",
+                ? "border-purple-300 bg-purple-50/30 shadow-sm dark:border-purple-500/40 dark:bg-purple-950/20"
+                : "border-purple-200 items-center justify-center dark:border-purple-500/40 hover:border-purple-300 dark:hover:border-purple-400/60",
             ].join(" ")}
             onDragOver={(e) => {
               e.preventDefault();
@@ -195,10 +207,25 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
               }
             }}
           >
+            {!hepaiPickPreview && (
+              <div
+                className="pointer-events-none absolute inset-0 rounded-2xl"
+                style={{
+                  backgroundImage: `url(${uploadIllustration})`,
+                  backgroundSize: "40%",
+                  backgroundPosition: "center",
+                  backgroundRepeat: "no-repeat",
+                  opacity: 0.6,
+                }}
+                aria-hidden
+              />
+            )}
             {hepaiPickPreview ? (
               <>
                 <div className="flex items-center gap-3">
-                  <Package className="h-8 w-8 shrink-0 text-accent/90" strokeWidth={1.75} aria-hidden />
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent/10 text-accent shadow-sm ring-1 ring-accent/15 dark:bg-accent/16 dark:ring-accent/20">
+                    <Package className="h-5 w-5" strokeWidth={1.75} aria-hidden />
+                  </div>
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold text-primary" title={hepaiPickPreview.name}>
                       {hepaiPickPreview.name}
@@ -207,61 +234,72 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
                       {formatBytes(hepaiPickPreview.size)}
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    className="ml-auto flex h-7 w-7 items-center justify-center rounded-lg text-secondary/50 transition-colors hover:bg-red-100 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                    onClick={() => onZipPicked(null)}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 </div>
                 {visibleRows.length > 0 ? (
                   <div>
                     <div className="mb-1.5 text-[11px] font-medium text-secondary">
                       {t("skillSquare.folderContents", packPreviewEntries.length)}
                     </div>
-                    <div className="max-h-56 overflow-auto rounded-xl border border-border-primary/25 bg-primary/80 px-2 py-1.5 dark:border-white/10 dark:bg-black/20">
-                    {visibleRows.map((row) => (
-                      <div
-                        key={`${row.isDir ? "d" : "f"}:${row.path}`}
-                        className="flex items-center gap-1.5 py-0.5 text-[12px] leading-5"
-                        style={{ paddingLeft: row.depth * 12 }}
-                      >
-                        {row.isDir ? (
-                          <FolderOpen className="h-3.5 w-3.5 shrink-0 text-secondary/70" aria-hidden />
-                        ) : (
-                          <FileText
-                            className={`h-3.5 w-3.5 shrink-0 ${row.isSkillMd ? "text-accent" : "text-secondary/70"}`}
-                            aria-hidden
-                          />
-                        )}
-                        <span
+                    <div className="max-h-56 overflow-auto rounded-xl border border-border-primary/15 bg-primary/60 px-1.5 py-1.5 dark:border-white/8 dark:bg-black/15">
+                      {visibleRows.map((row, idx) => (
+                        <div
+                          key={`${row.isDir ? "d" : "f"}:${row.path}`}
                           className={[
-                            "min-w-0 truncate",
-                            row.isSkillMd ? "font-medium text-accent" : row.isDir ? "text-secondary" : "text-primary",
+                            "flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] leading-5 transition-colors",
+                            idx % 2 === 0 ? "bg-transparent" : "bg-black/[0.02] dark:bg-white/[0.02]",
+                            "hover:bg-accent/[0.06] dark:hover:bg-accent/[0.08]",
                           ].join(" ")}
-                          title={row.path}
+                          style={{ paddingLeft: row.depth * 12 + 6 }}
                         >
-                          {row.name}
-                        </span>
-                        {!row.isDir && row.size > 0 ? (
-                          <span className="ml-auto shrink-0 tabular-nums text-[11px] text-secondary/70">
-                            {formatBytes(row.size)}
+                          {row.isDir ? (
+                            <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-500/70" aria-hidden />
+                          ) : (
+                            <FileText
+                              className={`h-3.5 w-3.5 shrink-0 ${row.isSkillMd ? "text-accent" : "text-secondary/60"}`}
+                              aria-hidden
+                            />
+                          )}
+                          <span
+                            className={[
+                              "min-w-0 truncate",
+                              row.isSkillMd ? "font-semibold text-accent" : row.isDir ? "font-medium text-secondary" : "text-primary",
+                            ].join(" ")}
+                            title={row.path}
+                          >
+                            {row.name}
                           </span>
-                        ) : null}
-                      </div>
-                    ))}
-                    {hiddenCount > 0 ? (
-                      <p className="px-1 py-1 text-[11px] text-secondary/70">
-                        {t("skillSquare.folderContentsMore", hiddenCount)}
-                      </p>
-                    ) : null}
-                  </div>
+                          {!row.isDir && row.size > 0 ? (
+                            <span className="ml-auto shrink-0 tabular-nums text-[11px] text-secondary/50">
+                              {formatBytes(row.size)}
+                            </span>
+                          ) : null}
+                        </div>
+                      ))}
+                      {hiddenCount > 0 ? (
+                        <p className="px-1.5 py-1 text-[11px] text-secondary/60">
+                          {t("skillSquare.folderContentsMore", hiddenCount)}
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
-                <p className="text-xs leading-relaxed text-secondary">
+                <p className="text-xs leading-relaxed text-secondary/70">
                   {t("skillSquare.replaceHint")}
                 </p>
               </>
             ) : editingSkillId ? (
-              <span className="max-w-md text-center text-xs leading-relaxed text-secondary">
+              <span className="max-w-md text-center text-xs leading-relaxed text-secondary -mt-3">
                 {t("skillSquare.keepZipHint")}
               </span>
             ) : (
-              <span className="max-w-md text-center text-xs leading-relaxed text-secondary">
+              <span className="max-w-md text-center text-xs leading-relaxed text-secondary -mt-3">
                 {t("skillSquare.dropHintLong", MAX_SKILL_FOLDER_FILES)}
               </span>
             )}
@@ -291,224 +329,176 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">
-          <div className="space-y-4">
-            <div>
-              <div className="mb-1.5 text-sm font-medium text-primary">
-                {t("skillSquare.displayName")}{" "}
-                <span className="text-red-500">*</span>
-              </div>
-              <Input
-                placeholder={t("skillSquare.displayNamePlaceholder")}
-                value={publishDisplayName}
-                onChange={(e) => onDisplayNameChange(e.target.value)}
-                className="rounded-xl [&_.ant-input]:rounded-xl [&_.ant-input]:border-tertiary/40 [&_.ant-input]:bg-background/55 dark:[&_.ant-input]:border-white/10 dark:[&_.ant-input]:bg-white/[0.04]"
-              />
-            </div>
-            <div>
-              <div className="mb-1.5 text-sm font-medium text-primary">
-                {t("skillSquare.slugLabel")}
-              </div>
-              <Input
-                placeholder={t("skillSquare.slugPlaceholder")}
-                value={publishSlug}
-                onChange={(e) => onSlugChange(e.target.value)}
-                className="rounded-xl [&_.ant-input]:rounded-xl [&_.ant-input]:border-tertiary/40 [&_.ant-input]:bg-background/55 dark:[&_.ant-input]:border-white/10 dark:[&_.ant-input]:bg-white/[0.04]"
-              />
-              <p className="mt-1 text-xs text-secondary/70">
-                {t("skillSquare.slugHint")}
-              </p>
-            </div>
-            <div>
-              <div className="mb-1.5 text-sm font-medium text-primary">
-                {t("skillSquare.versionLabel")}{" "}
-                <span className="text-red-500">*</span>
-              </div>
-              <Input
-                placeholder={t("skillSquare.versionPlaceholder")}
-                value={publishVersion}
-                onChange={(e) => onVersionChange(e.target.value)}
-                className="rounded-xl [&_.ant-input]:rounded-xl [&_.ant-input]:border-tertiary/40 [&_.ant-input]:bg-background/55 dark:[&_.ant-input]:border-white/10 dark:[&_.ant-input]:bg-white/[0.04]"
-              />
-            </div>
-            {!editingSkillId && (
-              <div className="flex items-center gap-3">
-                <div className="text-sm font-medium text-primary">
-                  {t("skillSquare.publishPrivate")}
-                </div>
-                <Switch
-                  checked={isPublicSkill}
-                  onChange={(v) => onPublicSkillChange(v)}
-                  size="small"
-                />
-                <div className="text-sm font-medium text-primary">
-                  {t("skillSquare.publishPublic")}
-                </div>
-              </div>
-            )}
-            <div>
-              <div className="mb-1.5 text-sm font-medium text-primary">
-                {t("skillSquare.changelogLabel")}
-              </div>
-              <Input.TextArea
-                rows={2}
-                placeholder={t("skillSquare.changelogPlaceholder")}
-                value={publishChangelog}
-                onChange={(e) => onChangelogChange(e.target.value)}
-                className="rounded-xl [&_.ant-input]:rounded-xl [&_.ant-input]:border-tertiary/40 [&_.ant-input]:bg-background/55 dark:[&_.ant-input]:border-white/10 dark:[&_.ant-input]:bg-white/[0.04]"
-              />
-            </div>
-          </div>
-          <div className="space-y-4">
-            {publishIcon === "__profile__" && (
+        {/* Right column: form fields + buttons */}
+        <div className="relative flex min-h-0 flex-col gap-5 overflow-y-auto">
+          <img
+            src={publishIllustration}
+            alt=""
+            className="pointer-events-none absolute bottom-0 right-0 w-40 opacity-25 dark:opacity-15"
+            aria-hidden
+          />
+          <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">
+            <div className="space-y-4">
               <div>
                 <div className="mb-1.5 text-sm font-medium text-primary">
-                  {t("skillSquare.profileLabel")}
+                  {t("skillSquare.displayName")} <span className="text-red-500">*</span>
                 </div>
-                <input
-                  ref={publicProfileInputRef}
-                  type="file"
-                  accept=".png,.jpg,.jpeg,.gif,.webp,.svg"
-                  className="sr-only"
-                  aria-hidden
-                  tabIndex={-1}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0] ?? null;
-                    if (f) applyProfileFile(f);
-                    else onProfileFileChange(null, null);
-                    e.target.value = "";
-                  }}
+                <Input
+                  placeholder={t("skillSquare.displayNamePlaceholder")}
+                  value={publishDisplayName}
+                  onChange={(e) => onDisplayNameChange(e.target.value)}
+                  className={INPUT_CLS}
                 />
-                <div
-                  className={[
-                    "group relative flex aspect-square w-full max-w-[200px] cursor-pointer flex-col items-center justify-center gap-1.5 overflow-hidden rounded-2xl border-2 transition-all duration-200",
-                    publicProfilePreview
-                      ? "border-accent/30 bg-accent/[0.04] shadow-sm"
-                      : "border-dashed border-border-primary/60 bg-tertiary/20 hover:border-accent/35 hover:bg-tertiary/30 dark:border-white/12 dark:bg-white/[0.02] dark:hover:border-accent/30",
-                  ].join(" ")}
-                  onClick={() => publicProfileInputRef.current?.click()}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const f = e.dataTransfer.files?.[0];
-                    if (!f) return;
-                    const ext = f.name.split(".").pop()?.toLowerCase();
-                    if (
-                      ext &&
-                      ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext)
-                    ) {
-                      applyProfileFile(f);
-                    } else {
-                      message.warning(t("skillSquare.profileWrongType"));
-                    }
-                  }}
-                >
-                  {publicProfilePreview ? (
-                    <>
-                      <img
-                        src={publicProfilePreview}
-                        alt="Cover"
-                        className="absolute inset-0 h-full w-full object-cover"
-                      />
-                      <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/30" />
-                      <div className="relative z-10 flex flex-col items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                        <span className="rounded-lg bg-black/50 px-2 py-0.5 text-[11px] text-white backdrop-blur-sm">
-                          {t("skillSquare.changeCover")}
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <Image
-                        className="h-6 w-6 text-secondary/50 transition-colors group-hover:text-accent/60"
-                        strokeWidth={1.5}
-                        aria-hidden
-                      />
-                      <span className="text-[11px] leading-tight text-secondary/60">
-                        {t("skillSquare.selectCover")}
-                      </span>
-                    </>
-                  )}
+              </div>
+              <div>
+                <div className="mb-1.5 text-sm font-medium text-primary">
+                  {t("skillSquare.slugLabel")}
                 </div>
-                {publicProfilePreview && (
+                <Input
+                  placeholder={t("skillSquare.slugPlaceholder")}
+                  value={publishSlug}
+                  onChange={(e) => onSlugChange(e.target.value)}
+                  className={INPUT_CLS}
+                />
+                <p className="mt-1 text-xs text-secondary/70">
+                  {t("skillSquare.slugHint")}
+                </p>
+              </div>
+              <div>
+                <div className="mb-1.5 text-sm font-medium text-primary">
+                  {t("skillSquare.versionLabel")} <span className="text-red-500">*</span>
+                </div>
+                <Input
+                  placeholder={t("skillSquare.versionPlaceholder")}
+                  value={publishVersion}
+                  onChange={(e) => onVersionChange(e.target.value)}
+                  className={INPUT_CLS}
+                />
+              </div>
+            </div>
+            <div className="space-y-4">
+              {!editingSkillId && (
+                <div>
+                  <div className="mb-1.5 text-sm font-medium text-primary">
+                    {t("skillSquare.visibilityLabel")}
+                  </div>
+                  <div className="flex items-center gap-2.5">
+                    <span className={`text-sm font-medium transition-colors ${isPublicSkill ? "text-accent" : "text-secondary"}`}>
+                      {t("skillSquare.publishPublic")}
+                    </span>
+                    <Switch
+                      checked={isPublicSkill}
+                      onChange={(v) => onPublicSkillChange(v)}
+                      size="small"
+                    />
+                  </div>
+                </div>
+              )}
+              <div>
+                <div className="mb-1.5 text-sm font-medium text-primary">
+                  {t("skillSquare.iconLabel")}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {SKILL_ICON_OPTIONS.map((o) => (
+                    <button
+                      key={o.value}
+                      type="button"
+                      className={[
+                        "flex h-8 w-8 items-center justify-center rounded-lg border transition-all duration-200",
+                        publishIcon === o.value
+                          ? "border-accent/50 bg-accent/15 text-accent shadow-sm ring-1 ring-accent/20 dark:border-accent/40 dark:bg-accent/20 dark:ring-accent/25"
+                          : "border-transparent bg-background/40 text-secondary/50 hover:border-border-primary/30 hover:bg-background/70 hover:text-accent/70 dark:hover:border-white/10 dark:hover:bg-white/[0.06]",
+                      ].join(" ")}
+                      onClick={() => onIconChange(o.value)}
+                      title={t(ICON_LABEL_KEY_MAP[o.value])}
+                    >
+                      <o.Icon className="h-4 w-4" strokeWidth={1.5} aria-hidden />
+                    </button>
+                  ))}
                   <button
                     type="button"
-                    className="mt-1.5 text-xs text-accent transition-colors hover:text-accent/80"
-                    onClick={() => onProfileFileChange(null, null)}
+                    className={[
+                      "flex h-8 w-8 items-center justify-center rounded-lg border border-dashed transition-all duration-200",
+                      publishIcon === "__profile__"
+                        ? "border-accent/50 bg-accent/15 text-accent shadow-sm ring-1 ring-accent/20 dark:border-accent/40 dark:bg-accent/20 dark:ring-accent/25"
+                        : "border-border-primary/30 bg-background/50 text-secondary/40 hover:border-accent/30 hover:text-accent/60 dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-accent/20",
+                    ].join(" ")}
+                    onClick={() => publicProfileInputRef.current?.click()}
+                    title={t("skillSquare.customIcon")}
                   >
-                    {t("skillSquare.removeImage")}
+                    <Image className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden />
                   </button>
-                )}
+                  {profilePreviewSrc && (
+                    <button
+                      type="button"
+                      className={[
+                        "flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg border-2 transition-all duration-200",
+                        publishIcon === "__profile__"
+                          ? "border-accent/50 shadow-sm ring-1 ring-accent/20 dark:border-accent/40 dark:ring-accent/25"
+                          : "border-solid border-border-primary/30 hover:border-accent/30 dark:border-white/10 dark:hover:border-accent/20",
+                      ].join(" ")}
+                      onClick={() => onIconChange("__profile__")}
+                      title={t("skillSquare.customIcon")}
+                    >
+                      <img src={profilePreviewSrc} alt="" className="h-full w-full object-cover" />
+                    </button>
+                  )}
+                  <input
+                    ref={publicProfileInputRef}
+                    type="file"
+                    accept=".png,.jpg,.jpeg,.gif,.webp,.svg"
+                    className="sr-only"
+                    aria-hidden
+                    tabIndex={-1}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0] ?? null;
+                      if (f) {
+                        applyProfileFile(f);
+                        onIconChange("__profile__");
+                        message.success(t("skillSquare.imageUploaded"));
+                      }
+                      e.target.value = "";
+                    }}
+                  />
+                </div>
               </div>
-            )}
-            <div>
-              <div className="mb-1.5 text-sm font-medium text-primary">
-                {t("skillSquare.iconLabel")}
+              <div>
+                <div className="mb-1.5 text-sm font-medium text-primary">
+                  {t("skillSquare.tagsLabel") || "标签"}
+                </div>
+                <Select
+                  mode="multiple"
+                  allowClear
+                  maxTagCount="responsive"
+                  placeholder={t("skillSquare.tagsPlaceholder") || "选择标签"}
+                  value={publishTags.length > 0 ? publishTags : undefined}
+                  onChange={(v) => onTagsChange(Array.isArray(v) ? v : [])}
+                  className={SELECT_CLS}
+                  options={availableTags.map((c) => ({ value: c, label: c }))}
+                />
               </div>
-              <Select
-                allowClear
-                placeholder={t("skillSquare.iconPlaceholder")}
-                value={publishIcon || undefined}
-                onChange={(v) => onIconChange(typeof v === "string" ? v : "")}
-                className="w-full [&_.ant-select-selector]:rounded-xl [&_.ant-select-selector]:border-tertiary/40 [&_.ant-select-selector]:bg-background/55 dark:[&_.ant-select-selector]:border-white/10 dark:[&_.ant-select-selector]:bg-white/[0.04]"
-                options={[
-                  ...SKILL_ICON_OPTIONS.map((o) => ({
-                    value: o.value,
-                    label: (
-                      <span className="flex items-center gap-2">
-                        <o.Icon className="h-4 w-4 shrink-0" aria-hidden />
-                        {t(ICON_LABEL_KEY_MAP[o.value])}
-                      </span>
-                    ),
-                  })),
-                  {
-                    value: "__profile__",
-                    label: (
-                      <span className="flex items-center gap-2">
-                        <Image className="h-4 w-4 shrink-0" aria-hidden />
-                        {t("skillSquare.customIcon")}
-                      </span>
-                    ),
-                  },
-                ]}
-              />
-            </div>
-            <div>
-              <div className="mb-1.5 text-sm font-medium text-primary">
-                {t("skillSquare.tagsLabel") || "标签"}
-              </div>
-              <Select
-                mode="multiple"
-                allowClear
-                maxTagCount="responsive"
-                placeholder={t("skillSquare.tagsPlaceholder") || "选择标签"}
-                value={publishTags.length > 0 ? publishTags : undefined}
-                onChange={(v) => onTagsChange(Array.isArray(v) ? v : [])}
-                className="w-full [&_.ant-select-selector]:rounded-xl [&_.ant-select-selector]:border-tertiary/40 [&_.ant-select-selector]:bg-background/55 dark:[&_.ant-select-selector]:border-white/10 dark:[&_.ant-select-selector]:bg-white/[0.04]"
-                options={availableTags.map((c) => ({
-                  value: c,
-                  label: c,
-                }))}
-              />
             </div>
           </div>
-        </div>
-
-        <div className="mt-4 flex items-center gap-3">
-          <AntdButton
-            type="primary"
-            loading={skillUploading}
-            disabled={skillUploading}
-            onClick={onSubmit}
-          >
-            {t("skillSquare.publishBtn")}
-          </AntdButton>
-          <AntdButton disabled={skillUploading} onClick={onCancel}>
-            {t("skillSquare.backBtn")}
-          </AntdButton>
+          <div>
+            <div className="mb-1.5 text-sm font-medium text-primary">
+              {t("skillSquare.changelogLabel")}
+            </div>
+            <Input.TextArea
+              rows={2}
+              placeholder={t("skillSquare.changelogPlaceholder")}
+              value={publishChangelog}
+              onChange={(e) => onChangelogChange(e.target.value)}
+              className={INPUT_CLS}
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <AntdButton type="primary" loading={skillUploading} disabled={skillUploading} onClick={onSubmit}>
+              {t("skillSquare.publishBtn")}
+            </AntdButton>
+            <AntdButton disabled={skillUploading} onClick={onCancel}>
+              {t("skillSquare.backBtn")}
+            </AntdButton>
+          </div>
         </div>
       </div>
     </div>

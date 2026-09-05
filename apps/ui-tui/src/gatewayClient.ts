@@ -49,6 +49,19 @@ const resolvePython = (): string => {
       : resolve(venv, 'bin/python')
     return candidate
   }
+  // Conda environments don't set VIRTUAL_ENV — they set CONDA_PREFIX and
+  // CONDA_DEFAULT_ENV. Without this, a shell activated with `conda activate
+  // drsai_dev` still resolves to bare `python3` (the base env), which is
+  // missing the gateway's dependencies (autogen_core, etc.) and the gateway
+  // crashes at import → "gateway exited (code=1) before ready".
+  const condaPrefix = process.env.CONDA_PREFIX?.trim()
+  const condaEnv = process.env.CONDA_DEFAULT_ENV?.trim()
+  if (condaPrefix && condaEnv && condaEnv !== 'base') {
+    const candidate = process.platform === 'win32'
+      ? resolve(condaPrefix, 'python.exe')
+      : resolve(condaPrefix, 'bin/python')
+    return candidate
+  }
   return process.platform === 'win32' ? 'python' : 'python3'
 }
 

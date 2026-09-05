@@ -344,12 +344,14 @@ export const SessionManager: React.FC = () => {
   );
 
   // 登入后常为 / 无 query，补全默认 menu/view（走 history，不触发 Gatsby page-data）
+  // 使用 window.location.search 而非 React state，避免 SSR hydration 时 state 尚未同步
+  // 导致读取到空字符串，误将已有 query 的 URL 覆盖为默认值
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const params = new URLSearchParams(location.search);
+    const params = new URLSearchParams(window.location.search);
     if (params.has("menu") && params.has("view")) return;
     const next = createSearchWithView(
-      createSearchWithMenu(location.search, DEFAULT_MENU_ID),
+      createSearchWithMenu(window.location.search, DEFAULT_MENU_ID),
       DEFAULT_VIEW_ID
     );
     navigate(next, { replace: true });

@@ -9,10 +9,10 @@ Tab filtering model:
 
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, Query, Request
+from fastapi import HTTPException, Query, Request
 
 from ._constants import logger, router
-from ._auth import _get_db, _require_user_id, _resolve_user_from_apikey, _skillmeta_to_dict
+from ._auth import _get_db, _resolve_user_from_apikey, _skillmeta_to_dict
 
 
 _DEFAULT_PAGE_SIZE = 20
@@ -56,7 +56,6 @@ def _match_tags(item: dict, tags: str) -> bool:
 async def list_skills(
     request: Request,
     type: str = Query("", description="type: public or user"),
-    user_id: str = Query("", description="Required when type=user"),
     source: str = Query("", description="Filter by source: user, higraf"),
     uskills_type: str = Query("", description="Filter user skills: created, imported"),
     page: int = Query(1, ge=1, description="1-based page number"),
@@ -66,23 +65,22 @@ async def list_skills(
     ),
     q: str = Query("", description="Search name / author / slug"),
     tags: str = Query("", description="Filter by tags (comma-separated)"),
-    sort: str = Query("name", description="Sort: name or time"),
+    sort: str = Query("name", description="Sort: name, time, downloads, or collects"),
     visibility: str = Query("", description="Filter by visibility: public, private, team"),
 ) -> dict:
     """List skills.
 
     Query params:
-      type         — public or user
-      user_id       — required when type=user, returns only that user's skills
+      type         — public or user (type=user always returns the authenticated user's skills)
       source       — user, higraf (default: all)
       uskills_type — created, imported (only when source=user)
       tags         — comma-separated, e.g. "lhasso,word"
       visibility   — public, private, team
       q            — search name / author / slug
-      sort         — name (default) or time
+      sort         — name (default), time, downloads, or collects
     """
     return await _list_skills(
-        request, type=type, user_id=user_id,
+        request, type=type,
         source=source, uskills_type=uskills_type,
         page=page, page_size=page_size,
         q=q, tags=tags, sort=sort, visibility=visibility,
@@ -92,7 +90,6 @@ async def list_skills(
 async def _list_skills(
     request: Request,
     type: str = "",
-    user_id: str = "",
     source: str = "",
     uskills_type: str = "",
     page: int = 1,
@@ -104,29 +101,32 @@ async def _list_skills(
 ) -> dict:
     from ....datamodel.db import SkillMeta
 
-    resolved_user_id: str | None = None
-    is_admin = False
-    try:
-        resolved_user_id = await _resolve_user_from_apikey(request)
-    except HTTPException:
-        pass
+    type_clean = (type or "").strip().lower()
+
+    resolved_user_id = await _resolve_user_from_apikey(request)
+
+    # type=public → allow unauthenticated access (public data)
+    if type_clean == "public" and not resolved_user_id:
+        resolved_user_id = ""
+
+    if type_clean != "public" and not resolved_user_id:
+        raise HTTPException(status_code=401, detail="API key required")
 
     db_mgr = await _get_db()
-    if resolved_user_id:
-        from ...authz import get_is_platform_admin
-        is_admin = get_is_platform_admin(db_mgr, resolved_user_id)
+    from ...authz import get_is_platform_admin
+    is_admin = get_is_platform_admin(db_mgr, resolved_user_id) if resolved_user_id else False
 
-    type_clean = (type or "").strip().lower()
     source_clean = (source or "").strip().lower()
     utype_clean = (uskills_type or "").strip().lower()
     vis_clean = (visibility or "").strip().lower()
-    uid_clean = (user_id or "").strip()
 
-    # ── type=user → only return skills owned by user_id ─────────────────────
+    # ── type=user → only return skills owned by the authenticated user ──────
     if type_clean == "user":
-        if not uid_clean:
-            return {"status": True, "data": [], "pagination": {"page": 1, "page_size": page_size, "total": 0, "total_pages": 0, "has_next": False, "has_prev": False}}
         source_clean = "user"
+
+    # ── type=public → default to visibility=public unless explicitly overridden ──
+    if type_clean == "public" and not vis_clean:
+        vis_clean = "public"
 
     filters: dict = {}
     if source_clean and source_clean in ("user", "higraf"):
@@ -141,18 +141,16 @@ async def _list_skills(
     if utype_clean and utype_clean in ("created", "imported"):
         rows = [r for r in rows if getattr(r, "uskills_type", None) == utype_clean]
 
-    # ── type=user → filter by owner_id ─────────────────────────────────────
-    if type_clean == "user" and uid_clean:
-        rows = [r for r in rows if r.owner_id == uid_clean]
-    elif source_clean == "user" and uid_clean:
-        rows = [r for r in rows if r.owner_id == uid_clean]
+    # ── type=user → always filter by authenticated user ─────────────────────
+    if type_clean == "user":
+        rows = [r for r in rows if r.owner_id == resolved_user_id]
 
     items = []
     for row in rows:
         item = _skillmeta_to_dict(row)
-        item["can_edit"] = is_admin or (resolved_user_id is not None and (
+        item["can_edit"] = is_admin or (
             resolved_user_id == row.owner_id or resolved_user_id == row.author
-        ))
+        )
         items.append(item)
 
     q_clean = (q or "").strip()
@@ -162,6 +160,10 @@ async def _list_skills(
 
     if (sort or "").strip().lower() == "time":
         items.sort(key=lambda x: x.get("updated_at") or "", reverse=True)
+    elif (sort or "").strip().lower() == "downloads":
+        items.sort(key=lambda x: int(x.get("downloads") or 0), reverse=True)
+    elif (sort or "").strip().lower() == "collects":
+        items.sort(key=lambda x: int(x.get("collects") or 0), reverse=True)
     else:
         items.sort(key=lambda x: (x.get("name") or "").lower())
 

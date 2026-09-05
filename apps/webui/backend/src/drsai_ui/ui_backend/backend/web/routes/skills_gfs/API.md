@@ -1,338 +1,431 @@
 # Skills API 文档
 
-## 路由架构
+**Base URL:** `https://drsaiv2.ihep.ac.cn/api`
 
-三个 router 挂载在 `/skills` 下，一个在 `/skill-tags` 下：
+**鉴权方式:** 所有接口统一通过 `Authorization` header 传递 API Key：
 
-| Router | 前缀 | 说明 |
-|--------|------|------|
-| `skills.py` | `/skills` | 技能目录 (catalog) |
-| `skills_gfs/` | `/skills` | 主 CRUD（SkillMeta + GFS） |
-| `skills_share.py` | `/skills` | 分享链接 |
-| `skill_tags.py` | `/skill-tags` | 标签管理（管理员） |
+```
+Authorization: Bearer <your_api_key>
+```
 
 ---
 
-## 一、技能目录 (Catalog)
+## 1. 列出全部技能
 
-### 1. GET /skills/catalog — 列出目录技能
+```
+GET /skills?type=public
+```
 
-解析配置目录下所有 `SKILL.md` 的 YAML frontmatter。
+**鉴权：** 需要 API Key
 
-**响应：**
+### 查询参数
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `type` | string | 否 | `public` 或 `user` |
+| `source` | string | 否 | `user` / `higraf` |
+| `uskills_type` | string | 否 | `created` / `imported`（仅 source=user 时有效） |
+| `tags` | string | 否 | 逗号分隔，如 `LHAASO,科研` |
+| `q` | string | 否 | 搜索 name / author / slug |
+| `sort` | string | 否 | `name`（默认）/ `time` |
+| `visibility` | string | 否 | `public` / `private` / `team` |
+| `page` | int | 否 | 页码，1-based，默认 1 |
+| `page_size` | int | 否 | 每页条数，最大 200，默认 20 |
+
+### 示例
+
+```bash
+# 基础调用
+curl -s "https://drsaiv2.ihep.ac.cn/api/skills?type=public" \
+  -H "Authorization: Bearer <your_api_key>" | python -m json.tool
+
+# 分页
+curl -s "https://drsaiv2.ihep.ac.cn/api/skills?type=public&page=2&page_size=5" \
+  -H "Authorization: Bearer <your_api_key>" | python -m json.tool
+
+# 按标签筛选
+curl -s "https://drsaiv2.ihep.ac.cn/api/skills?type=public&tags=LHAASO,科研" \
+  -H "Authorization: Bearer <your_api_key>" | python -m json.tool
+
+# 搜索 + 按时间排序
+curl -s "https://drsaiv2.ihep.ac.cn/api/skills?type=public&q=计算&sort=time" \
+  -H "Authorization: Bearer <your_api_key>" | python -m json.tool
+
+# 按来源过滤
+curl -s "https://drsaiv2.ihep.ac.cn/api/skills?type=public&source=user" \
+  -H "Authorization: Bearer <your_api_key>" | python -m json.tool
+
+# 全参数组合
+curl -s "https://drsaiv2.ihep.ac.cn/api/skills?type=public&source=user&tags=LHAASO&q=skill&sort=time&page=1&page_size=10" \
+  -H "Authorization: Bearer <your_api_key>" | python -m json.tool
+```
+
+### 响应
+
 ```json
 {
   "status": true,
-  "data": [{"slug": "...", "name": "...", "description": "...", "compatibility": "..."}]
+  "data": [
+    {
+      "slug": "ceshi",
+      "name": "测试技能",
+      "icon": "package",
+      "version": "1.0.0",
+      "description": "一个测试技能",
+      "owner": "yqsun@ihep.ac.cn",
+      "owner_id": "yqsun@ihep.ac.cn",
+      "author": "张三",
+      "visibility": "public",
+      "source": "user",
+      "uskills_type": "created",
+      "tags": ["测试", "skill"],
+      "downloads": 0,
+      "profile": "/api/skills/ceshi/profile",
+      "created_at": "2026-08-27T12:00:00",
+      "updated_at": "2026-08-27T12:00:00",
+      "can_edit": true
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "page_size": 20,
+    "total": 1,
+    "total_pages": 1,
+    "has_next": false,
+    "has_prev": false
+  }
 }
 ```
-
-### 2. POST /skills/catalog/upload — 上传目录技能
-
-**Form 参数：**
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| file | File | 是 | .zip 文件，≤32MB，内含单目录 + SKILL.md |
-| slug | string | 否 | 若 zip 根目录无 SKILL.md 则必填 |
-
-**响应：**
-```json
-{"status": true, "message": "上传成功", "data": {"slug": "...", "name": "..."}}
-```
-
-### 3. GET /skills/catalog/{slug} — 获取目录技能详情
-
-**路径参数：** `slug`
-
-**响应：** SkillMeta 字段 + `body`（SKILL.md 正文）
-
-### 4. GET /skills/catalog/{slug}/download — 下载目录技能 ZIP
-
-**响应：** `application/zip` 文件流
 
 ---
 
-## 二、技能 CRUD（GFS 存储）
+## 2. 列出我的技能
 
-### 6. GET /skills — 列出技能（带筛选/分页）
-
-**查询参数：**
-
-| 参数 | 类型 | 默认 | 说明 |
-|------|------|------|------|
-| type | string | - | `public` 或 `user` |
-| user_id | string | - | type=user 时必填，按 owner_id 过滤 |
-| source | string | - | 技能来源：`user` / `higraf` |
-| uskills_type | string | - | 用户技能类型：`created` / `imported` |
-| page | int | 1 | 页码（1-based） |
-| page_size | int | 20 | 每页条数（最大 200） |
-| q | string | - | 搜索 name / author / slug |
-| tags | string | - | 逗号分隔，如 `"lhasso,word"` |
-| sort | string | name | 排序：`name` 或 `time` |
-| visibility | string | - | 可见性：`public` / `private` / `team` |
-
-**响应：**
-```json
-{
-  "status": true,
-  "data": [{...SkillMeta, "can_edit": true}],
-  "pagination": {"page": 1, "page_size": 20, "total": 100, "total_pages": 5, "has_next": true, "has_prev": false}
-}
+```
+GET /skills?type=user
 ```
 
-### 7. GET /skills/{slug} — 获取技能详情
+**鉴权：** 需要 API Key
 
-**路径参数：** `slug`
+> 只能查看当前 API Key 对应用户的技能，无法查看他人。
 
-**响应：** SkillMeta + SkillDetail 合并，包含 `can_edit` 字段。DB 无记录时自动回退到 GFS 读取。
-
-### 8. POST /skills/upload — 上传技能
-
-**认证：** 需要 API Key
-
-**Form 参数：**
+### 查询参数
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| file | UploadFile | 是 | .zip 文件，≤32MB |
-| slug | string | 否 | 技能 slug |
-| display_name | string | 否 | 显示名称 |
-| name | string | 否 | 技能名称 |
-| icon | string | 否 | 图标 emoji |
-| description | string | 否 | 描述 |
-| version | string | 否 | 版本号 |
-| changelog | string | 否 | 更新日志 |
-| tags | string | 否 | 标签，逗号分隔 |
-| visibility | string | 否 | 可见性（默认 public） |
-| source | string | 否 | `"imported"` 则设置 uskills_type=imported |
-| profile | UploadFile | 否 | 封面图，≤2MB，png/jpg/gif/webp/svg |
+| `type` | string | **是** | `user` |
+| `uskills_type` | string | 否 | `created` / `imported` |
+| `tags` | string | 否 | 逗号分隔 |
+| `q` | string | 否 | 搜索 name / author / slug |
+| `sort` | string | 否 | `name` / `time` |
+| `visibility` | string | 否 | `public` / `private` / `team` |
+| `page` | int | 否 | 页码，默认 1 |
+| `page_size` | int | 否 | 每页条数，默认 20 |
 
-**GFS 存储路径：** `user_skills/{user_id}/{slug}.zip`
+### 示例
 
-**响应：**
+```bash
+# 列出我的全部技能
+curl -s "https://drsaiv2.ihep.ac.cn/api/skills?type=user" \
+  -H "Authorization: Bearer <your_api_key>" | python -m json.tool
+
+# 只看我创建的
+curl -s "https://drsaiv2.ihep.ac.cn/api/skills?type=user&uskills_type=created" \
+  -H "Authorization: Bearer <your_api_key>" | python -m json.tool
+
+# 只看我收藏的
+curl -s "https://drsaiv2.ihep.ac.cn/api/skills?type=user&uskills_type=imported" \
+  -H "Authorization: Bearer <your_api_key>" | python -m json.tool
+```
+
+---
+
+## 3. 上传 Skill
+
+```
+POST /skills/upload
+```
+
+**鉴权：** 需要 API Key（owner 或 admin）  
+**Content-Type:** `multipart/form-data`
+
+### 表单参数
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `file` | File | **是** | .zip 文件，≤32MB，内含 SKILL.md |
+| `slug` | string | 否 | 技能 slug，不传则从 SKILL.md 的 name 自动生成 |
+| `display_name` | string | 否 | 显示名称 |
+| `name` | string | 否 | 同 display_name |
+| `icon` | string | 否 | 图标 emoji |
+| `description` | string | 否 | 描述 |
+| `version` | string | 否 | 版本号 |
+| `changelog` | string | 否 | 更新日志 |
+| `tags` | string | 否 | 标签，逗号分隔 |
+| `visibility` | string | 否 | `public`（默认）/ `private` / `team` |
+| `source` | string | 否 | `"imported"` 则标记为收藏技能 |
+| `profile` | File | 否 | 封面图，≤2MB，png/jpg/gif/webp/svg |
+
+### 示例
+
+```bash
+# 基础上传
+curl -X POST "https://drsaiv2.ihep.ac.cn/api/skills/upload" \
+  -H "Authorization: Bearer <your_api_key>" \
+  -F "file=@ceshi.zip"
+
+# 上传 + 指定元数据
+curl -X POST "https://drsaiv2.ihep.ac.cn/api/skills/upload" \
+  -H "Authorization: Bearer <your_api_key>" \
+  -F "file=@ceshi.zip" \
+  -F "slug=ceshi" \
+  -F "display_name=测试技能" \
+  -F "icon=package" \
+  -F "description=一个测试技能" \
+  -F "version=1.0.0" \
+  -F "changelog=初始版本" \
+  -F "tags=测试,skill" \
+  -F "visibility=public" \
+  -F "profile=@cover.png"
+```
+
+### 响应
+
 ```json
 {
   "status": true,
   "message": "Upload successful",
-  "data": {"slug": "...", "name": "...", "uskills_type": "created"}
+  "data": {
+    "slug": "ceshi",
+    "name": "测试技能",
+    "description": "一个测试技能",
+    "version": "1.0.0",
+    "icon": "package",
+    "changelog": "初始版本",
+    "profile": "/api/skills/ceshi/profile",
+    "tags": ["测试", "skill"],
+    "visibility": "public",
+    "uskills_type": "created"
+  }
 }
-```
-
-### 9. PUT /skills/{slug} — 更新技能
-
-**认证：** 需要 API Key（owner 或 admin）
-
-**路径参数：** `slug`
-
-**Form 参数：** 同上传接口，所有字段均为可选。有 `file` 则重新解析 SKILL.md 并上传 GFS，无 `file` 则仅更新 DB 字段。
-
-**响应：**
-```json
-{"status": true, "message": "Skill 'xxx' updated", "data": {...}}
-```
-
-### 10. DELETE /skills/{slug} — 删除技能
-
-**认证：** 需要 API Key（owner 或 admin）
-
-**路径参数：** `slug`
-
-**操作：** 删除 GFS 文件（higraf 或 user_skills 路径）+ DB 中 SkillMeta 和 SkillDetail 记录。
-
-**响应：**
-```json
-{"status": true, "message": "Skill 'xxx' deleted", "data": {"slug": "xxx"}}
-```
-
-### 11. PUT /skills/{slug}/visibility — 切换可见性
-
-**认证：** 需要 API Key（owner 或 admin）
-
-**路径参数：** `slug`
-
-**查询参数：** `visibility` — `public` / `private` / `team`
-
-**限制：** 不能修改 source=higraf 的同步技能
-
-**响应：**
-```json
-{"status": true, "message": "Skill 'xxx' visibility set to 'public'", "data": {"slug": "xxx", "visibility": "public"}}
-```
-
-### 12. GET /skills/{slug}/download — 下载技能 ZIP
-
-**路径参数：** `slug`
-
-**逻辑：** 从 SkillMeta 读取 source 和 owner_id，解析 GFS 路径后下载。异步增加下载计数。
-
-**响应：** `application/zip` 文件流
-
-### 13. GET /skills/{slug}/profile — 获取封面图
-
-**路径参数：** `slug`
-
-**逻辑：** 依次尝试 user_skills → higraf → public_skills，检查所有允许的扩展名。
-
-**响应：** 图片文件
-
-### 14. GET /skills/{slug}/skill-md — 获取 SKILL.md 内容
-
-**路径参数：** `slug`
-
-**响应：**
-```json
-{"status": true, "data": {"content": "# SKILL\n\n..."}}
 ```
 
 ---
 
-## 三、技能分享
+## 4. 更新 Skill
 
-### 15. POST /skills/{slug}/share — 创建分享链接
+```
+PUT /skills/{slug}
+```
 
-**认证：** owner
+**鉴权：** 需要 API Key（owner 或 admin）  
+**Content-Type:** `multipart/form-data`
 
-**路径参数：** `slug`
+> 所有参数均为可选，只传需要更新的字段即可。
 
-**查询参数：** `user_id`（必填）
+### 表单参数
 
-**Form 参数：**
-
-| 参数 | 类型 | 默认 | 说明 |
+| 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| password | string | - | 访问密码（SHA-256 哈希存储） |
-| expires_in_hours | int | 24 | 有效期（1-8760 小时） |
+| `file` | File | 否 | 新的 .zip 文件，≤32MB |
+| `display_name` | string | 否 | 显示名称 |
+| `name` | string | 否 | 同 display_name |
+| `icon` | string | 否 | 图标 emoji |
+| `description` | string | 否 | 描述 |
+| `version` | string | 否 | 版本号 |
+| `changelog` | string | 否 | 更新日志 |
+| `tags` | string | 否 | 标签，逗号分隔 |
+| `visibility` | string | 否 | `public` / `private` / `team` |
+| `profile` | File | 否 | 封面图，≤2MB |
 
-**响应：**
+### 示例
+
+```bash
+# 只更新标签
+curl -X PUT "https://drsaiv2.ihep.ac.cn/api/skills/ceshi" \
+  -H "Authorization: Bearer <your_api_key>" \
+  -F "tags=测试,skill,新标签"
+
+# 更新多个字段
+curl -X PUT "https://drsaiv2.ihep.ac.cn/api/skills/ceshi" \
+  -H "Authorization: Bearer <your_api_key>" \
+  -F "name=新名称" \
+  -F "description=新描述" \
+  -F "visibility=private" \
+  -F "changelog=修复了bug"
+
+# 替换技能文件
+curl -X PUT "https://drsaiv2.ihep.ac.cn/api/skills/ceshi" \
+  -H "Authorization: Bearer <your_api_key>" \
+  -F "file=@ceshi_v2.zip" \
+  -F "changelog=升级到 v2.0"
+```
+
+### 响应
+
 ```json
 {
   "status": true,
-  "data": {"share_id": "...", "has_password": true, "expires_at": "2026-08-26T...", "created_at": "..."}
+  "message": "Skill 'ceshi' updated",
+  "data": {
+    "slug": "ceshi",
+    "name": "新名称",
+    "icon": "package",
+    "version": "1.0.0",
+    "description": "新描述",
+    "owner": "yqsun@ihep.ac.cn",
+    "owner_id": "yqsun@ihep.ac.cn",
+    "visibility": "private",
+    "tags": ["测试", "skill", "新标签"],
+    "updated_at": "2026-08-27T14:00:00"
+  }
 }
 ```
 
-### 16. DELETE /skills/{slug}/share/{share_id} — 撤销分享
+---
 
-**认证：** owner
+## 5. 获取 Skill 详情
 
-**路径参数：** `slug`, `share_id`
-
-**查询参数：** `user_id`（必填）
-
-**响应：**
-```json
-{"status": true, "data": {"share_id": "..."}}
+```
+GET /skills/{slug}
 ```
 
-### 17. GET /skills/{slug}/shares — 列出分享链接
+**鉴权：** 需要 API Key
 
-**认证：** owner
+### 查询参数
 
-**查询参数：** `user_id`（必填）
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `type` | string | 否 | `public` |
 
-**响应：**
+### 示例
+
+```bash
+curl -s "https://drsaiv2.ihep.ac.cn/api/skills/ceshi?type=public" \
+  -H "Authorization: Bearer <your_api_key>" | python -m json.tool
+```
+
+### 响应
+
 ```json
 {
   "status": true,
-  "data": [{"share_id": "...", "has_password": true, "expires_at": "...", "expired": false, "access_count": 5}]
+  "data": {
+    "slug": "ceshi",
+    "name": "测试技能",
+    "icon": "package",
+    "version": "1.0.0",
+    "description": "一个测试技能",
+    "owner": "yqsun@ihep.ac.cn",
+    "owner_id": "yqsun@ihep.ac.cn",
+    "author": "张三",
+    "visibility": "public",
+    "source": "user",
+    "uskills_type": "created",
+    "tags": ["测试", "skill"],
+    "downloads": 0,
+    "profile": "/api/skills/ceshi/profile",
+    "created_at": "2026-08-27T12:00:00",
+    "updated_at": "2026-08-27T12:00:00",
+    "can_edit": true,
+    "body": "# SKILL\n\n技能正文内容...",
+    "changelog": "初始版本",
+    "author_email": null,
+    "author_id": null,
+    "required_tools": [],
+    "detail_raw": null
+  }
 }
 ```
 
-### 18. GET /skills/share/{share_id} — 获取分享技能信息（公开）
+---
 
-**无认证**
+## 6. 删除 Skill
 
-**路径参数：** `share_id`
-
-**响应：** 返回技能元数据。过期则 410。
-
-### 19. POST /skills/share/{share_id}/verify — 验证密码（公开）
-
-**无认证**
-
-**Form 参数：** `password`（string）
-
-**响应：** 
-```json
-{"status": true, "data": {"token": "..."}}
 ```
-返回 HMAC 签名下载 token（有效期 1 小时）。无密码的分享直接返回 token。
+DELETE /skills/{slug}
+```
 
-### 20. GET /skills/share/{share_id}/download — 下载分享技能（公开）
+**鉴权：** 需要 API Key（owner 或 admin）
 
-**查询参数：** `token`（必填，从 /verify 获取）
+### 示例
 
-**响应：** `application/zip` 文件流。异步增加访问计数。
+```bash
+curl -X DELETE "https://drsaiv2.ihep.ac.cn/api/skills/ceshi" \
+  -H "Authorization: Bearer <your_api_key>"
+```
+
+### 响应
+
+```json
+{
+  "status": true,
+  "message": "Skill 'ceshi' deleted",
+  "data": {
+    "slug": "ceshi"
+  }
+}
+```
 
 ---
 
-## 四、标签管理（管理员）
+## 附加接口
 
-### 21. GET /skill-tags/ — 列出所有标签
+### 下载 Skill ZIP
 
-**查询参数：** `operator_user_id`（必填，任意用户）
-
-**响应：**
-```json
-{"status": true, "data": [{"id": 1, "name": "lhasso", "sort_order": 0}]}
+```
+GET /skills/{slug}/download
 ```
 
-### 22. POST /skill-tags/ — 创建标签
+**鉴权：** 需要 API Key
 
-**认证：** 管理员
+```bash
+curl -o ceshi.zip "https://drsaiv2.ihep.ac.cn/api/skills/ceshi/download" \
+  -H "Authorization: Bearer <your_api_key>"
+```
 
-**查询参数：** `operator_user_id`（必填）, `name`（必填）, `sort_order`（默认 0）
+### 切换可见性
 
-**响应：** 返回创建的 SkillTag 对象。重名返回 409。
+```
+PUT /skills/{slug}/visibility?visibility=public
+```
 
-### 23. PUT /skill-tags/{tag_id} — 更新标签
+**鉴权：** 需要 API Key（owner 或 admin）
 
-**认证：** 管理员
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `visibility` | string | **是** | `public` / `private` / `team` |
 
-**路径参数：** `tag_id`
+```bash
+curl -X PUT "https://drsaiv2.ihep.ac.cn/api/skills/ceshi/visibility?visibility=public" \
+  -H "Authorization: Bearer <your_api_key>"
+```
 
-**查询参数：** `operator_user_id`, `name`（可选）, `sort_order`（可选）
+### 获取 SKILL.md 内容
 
-### 24. DELETE /skill-tags/{tag_id} — 删除标签
+```
+GET /skills/{slug}/skill-md
+```
 
-**认证：** 管理员
+**鉴权：** 需要 API Key
 
-**路径参数：** `tag_id`
-
-**查询参数：** `operator_user_id`
+```bash
+curl -s "https://drsaiv2.ihep.ac.cn/api/skills/ceshi/skill-md" \
+  -H "Authorization: Bearer <your_api_key>" | python -m json.tool
+```
 
 ---
 
-## 数据模型
+## 错误码
 
-### SkillMeta（统一技能元数据表）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| slug | string | 唯一标识符，如 `my-skill` |
-| name | string | 显示名称 |
-| icon | string | 图标 emoji |
-| version | string | 版本号 |
-| description | string | 描述 |
-| owner_id | string | 所有者用户 ID |
-| author | string | 作者名 |
-| visibility | string | public / private / team |
-| source | string | user / higraf |
-| source_ref | string | 来源引用 |
-| uskills_type | string\|null | created / imported / null（仅 source=user 时有效） |
-| imported_ref | dict\|null | 收藏引用：`{"origin":"higraf","owner":"...","version":"..."}` |
-| tags | string[] | 标签列表 |
-| download_count | int | 下载次数 |
-| collector_ids | string[] | 收藏者 ID 列表 |
-| profile | string | 封面图 URL |
-
-### GFS 存储布局
-
-```
-higraf/{slug}.zip              — HiGraf 同步技能（只读）
-user_skills/{user_id}/{slug}.zip  — 用户创建/收藏的技能
-```
-
-- **公开技能**：通过 `SkillMeta` 查询，下载时按 owner_id 从 `user_skills/{owner_id}/{slug}.zip` 读取
-- **收藏技能**：`uskills_type=imported`，`imported_ref` 记录来源信息，不重复存储 ZIP
-- **下载计数**：异步更新，不阻塞下载响应
+| 状态码 | 说明 |
+|--------|------|
+| 200 | 成功 |
+| 400 | 参数错误（slug 格式无效、文件类型错误等） |
+| 401 | 未鉴权（缺少或无效 API Key） |
+| 403 | 无权限（不是 owner/admin） |
+| 404 | 技能不存在 |
+| 413 | 文件过大 |
+| 422 | SKILL.md 格式无效 |
+| 500 | 服务器内部错误 |
+| 502 | API Key 验证服务不可用 |

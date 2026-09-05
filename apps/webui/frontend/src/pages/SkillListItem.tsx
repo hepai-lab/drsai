@@ -1,6 +1,7 @@
 import React from "react";
-import { Download, GitBranch } from "lucide-react";
+import { Download, GitBranch, Heart } from "lucide-react";
 import { useLang } from "../i18n/useLang";
+import { resolveSkillAssetUrl } from "./skills-square/utils";
 
 export interface SkillListItemProps {
     slug: string;
@@ -12,6 +13,7 @@ export interface SkillListItemProps {
     owner?: string;
     category?: string;
     downloads?: number;
+    collects?: number;
     source?: string;
     preset?: boolean;
     badges?: React.ReactNode;
@@ -48,7 +50,7 @@ function formatCategory(raw: string | undefined, isZh: boolean): string {
 }
 
 const CARD_CLS =
-    "group flex h-full w-full cursor-pointer flex-col rounded-xl border border-gray-200/80 bg-white p-3.5 text-left shadow-[0_1px_3px_rgba(15,23,42,0.06)] transition-all duration-200 hover:-translate-y-0.5 hover:border-accent/30 hover:shadow-[0_8px_24px_rgba(139,92,246,0.10)] dark:border-white/[0.08] dark:bg-white/[0.03] dark:shadow-none dark:hover:border-accent/25 dark:hover:shadow-[0_8px_24px_rgba(0,0,0,0.35)]";
+    "group relative flex h-full w-full cursor-pointer flex-col overflow-hidden rounded-xl border border-gray-200/60 bg-gradient-to-b from-white via-white to-gray-50/30 p-3.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04),0_0_0_1px_rgba(15,23,42,0.02)] transition-all duration-300 hover:-translate-y-1 hover:border-accent/25 hover:shadow-[0_12px_32px_rgba(139,92,246,0.12),0_4px_8px_rgba(139,92,246,0.06)] dark:border-white/[0.07] dark:bg-gradient-to-b dark:from-white/[0.04] dark:via-white/[0.03] dark:to-white/[0.01] dark:shadow-none dark:hover:border-accent/20 dark:hover:shadow-[0_12px_32px_rgba(0,0,0,0.4),0_0_0_1px_rgba(139,92,246,0.08)]";
 
 const SkillListItem: React.FC<SkillListItemProps> = ({
     slug,
@@ -60,6 +62,7 @@ const SkillListItem: React.FC<SkillListItemProps> = ({
     owner,
     category,
     downloads = 0,
+    collects = 0,
     source,
     preset,
     badges,
@@ -72,6 +75,7 @@ const SkillListItem: React.FC<SkillListItemProps> = ({
     const ownerLabel = (owner || "").trim() || (isPreset ? t("skillSquare.systemOwner") : "");
     const avatarChar = ownerLabel ? ownerLabel.charAt(0) : "";
     const categoryLabel = formatCategory(category, isZh);
+    const profileSrc = resolveSkillAssetUrl(profile);
 
     return (
         <article
@@ -86,35 +90,40 @@ const SkillListItem: React.FC<SkillListItemProps> = ({
             }}
             className={CARD_CLS}
         >
+            {/* Subtle top accent bar — only visible on hover */}
+            <div className="absolute inset-x-0 top-0 h-[3px] rounded-t-xl bg-gradient-to-r from-accent/0 via-accent/40 to-accent/0 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+
             {/* Icon + name */}
-            <div className="flex items-center gap-2.5">
-                {profile ? (
-                    <img
-                        src={profile}
-                        alt=""
-                        loading="lazy"
-                        decoding="async"
-                        className="h-8 w-8 shrink-0 rounded-lg object-cover ring-1 ring-border-primary/20"
-                    />
-                ) : isEmojiIcon(icon) ? (
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-base leading-none dark:bg-accent/16">
-                        {icon}
-                    </div>
-                ) : (
-                    renderSkillIcon(icon, "h-8 w-8 rounded-lg", "h-4 w-4")
-                )}
+            <div className="relative flex items-center gap-2.5">
+                <div className="relative shrink-0">
+                    {profileSrc ? (
+                        <img
+                            src={profileSrc}
+                            alt=""
+                            loading="lazy"
+                            decoding="async"
+                            className="h-9 w-9 rounded-xl object-cover shadow-sm ring-1 ring-border-primary/20 transition-shadow duration-300 group-hover:shadow-md group-hover:ring-accent/30"
+                        />
+                    ) : isEmojiIcon(icon) ? (
+                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-accent/15 to-accent/5 text-base leading-none shadow-sm transition-shadow duration-300 group-hover:shadow-md dark:from-accent/20 dark:to-accent/5">
+                            {icon}
+                        </div>
+                    ) : (
+                        renderSkillIcon(icon, "h-9 w-9 rounded-xl transition-shadow duration-300 group-hover:shadow-md", "h-4.5 w-4.5")
+                    )}
+                </div>
                 <div className="min-w-0 flex-1">
-                    <h3 className="truncate text-[13px] font-semibold leading-tight text-primary" title={name}>
+                    <h3 className="truncate text-[13px] font-semibold leading-tight text-primary transition-colors duration-300 group-hover:text-accent" title={name}>
                         {name}
                     </h3>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                         {isPreset ? (
-                            <span className="inline-flex items-center rounded-full bg-amber-50 px-1.5 py-px text-[9px] font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                            <span className="inline-flex items-center rounded-full bg-amber-50 px-1.5 py-px text-[9px] font-medium text-amber-700 ring-1 ring-amber-200/50 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/20">
                                 {t("skillSquare.presetBadge")}
                             </span>
                         ) : null}
                         {version && version !== "0.0.0" ? (
-                            <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-50 px-1.5 py-px text-[9px] font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                            <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-50 px-1.5 py-px text-[9px] font-medium text-emerald-700 ring-1 ring-emerald-200/50 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/20">
                                 <GitBranch className="h-2.5 w-2.5" />
                                 {version.startsWith("v") ? version : `v${version}`}
                             </span>
@@ -125,27 +134,36 @@ const SkillListItem: React.FC<SkillListItemProps> = ({
             </div>
 
             {/* Description */}
-            <p className="mt-2.5 line-clamp-2 text-[12px] leading-relaxed text-secondary min-h-[2rem]">
+            <p className="relative mt-2.5 line-clamp-2 text-[12px] leading-relaxed text-secondary min-h-[2rem]">
                 {description?.trim() || t("skillSquare.noPreviewContent")}
             </p>
 
+            {/* Subtle divider */}
+            <div className="my-2 h-px w-full bg-gradient-to-r from-transparent via-gray-200/60 to-transparent dark:via-white/[0.06]" />
+
             {/* Footer */}
-            <div className="mt-auto flex items-center justify-between gap-2 pt-2.5">
+            <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-1.5">
                     {avatarChar ? (
-                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[9px] font-bold text-accent dark:bg-accent/25">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent/20 to-accent/10 text-[9px] font-bold text-accent ring-1 ring-accent/20 dark:from-accent/30 dark:to-accent/15">
                             {avatarChar}
                         </span>
                     ) : null}
                     {categoryLabel ? (
-                        <span className="truncate rounded-full bg-tertiary/60 px-2 py-px text-[10px] text-secondary/70 dark:bg-white/[0.06]">
+                        <span className="truncate rounded-full border border-gray-200/50 bg-gray-50/50 px-2 py-px text-[10px] text-secondary/70 dark:border-white/[0.06] dark:bg-white/[0.04]">
                             {categoryLabel}
                         </span>
                     ) : null}
                 </div>
-                <span className="shrink-0 inline-flex items-center gap-1 text-[10px] tabular-nums text-secondary/60">
-                    <Download className="h-2.5 w-2.5" />
-                    {downloads}
+                <span className="shrink-0 inline-flex items-center gap-3 text-[10px] tabular-nums text-secondary/50">
+                    <span className="inline-flex items-center gap-1">
+                        <Download className="h-2.5 w-2.5" />
+                        {downloads}
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                        <Heart className="h-2.5 w-2.5" />
+                        {collects}
+                    </span>
                 </span>
             </div>
         </article>

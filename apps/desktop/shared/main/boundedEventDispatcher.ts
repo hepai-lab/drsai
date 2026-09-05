@@ -45,7 +45,17 @@ export class BoundedEventDispatcher<T> {
     this.#scheduled = false;
     const batch = this.#queue;
     this.#queue = [];
-    for (const event of batch) this.#deliver(event);
+    try {
+      for (const event of batch) this.#deliver(event);
+    } catch (err) {
+      // Render frame disposal or WebContents destruction should not propagate
+      // to the setImmediate callback and crash the main process.
+      if (!/destroy|disposed/i.test(String(err))) {
+        // eslint-disable-next-line no-console
+        console.error("[BoundedEventDispatcher] flush error:", err);
+      }
+      this.close();
+    }
   }
 
   close(options: { flush?: boolean } = {}): void {

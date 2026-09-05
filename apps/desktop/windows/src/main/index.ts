@@ -170,6 +170,7 @@ import { listProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
 import {
   abortAgentRun,
+  handleRenderHealthReport,
   hasActiveAgentRuns,
   recoverAgentRun,
   startAgentRun,
@@ -6492,6 +6493,15 @@ function registerIpc(): void {
   secureHandle("desktop:channel-adapter-auth-revoke", (_event, request: DesktopChannelAdapterAuthRevokeRequest) => revokeChannelAdapterAuth(request));
   secureHandle("desktop:channel-provider-token-configure", (_event, request: DesktopChannelProviderTokenConfigureRequest) => configureChannelProviderToken(request));
   secureHandle("desktop:recover-agent-run", (event, threadId: string) => recoverAgentRun(threadId, event.sender));
+  // P1: Renderer health report → updates backpressure controller for adaptive flush delay
+  ipcMain.on("desktop:render-health", (event: IpcMainEvent, report: unknown) => {
+    if (!isTrustedSender(event as unknown as IpcMainInvokeEvent)) return;
+    const fps = typeof (report as any)?.fps === "number" ? (report as any).fps : 0;
+    const tier = (report as any)?.tier === "healthy" || (report as any)?.tier === "degraded" || (report as any)?.tier === "critical"
+      ? (report as any).tier
+      : "healthy";
+    handleRenderHealthReport(event.sender, fps, tier);
+  });
   secureHandle("desktop:save-api-key", (_event, apiKey: string) => {
     if (process.env.OPENDRSAI_DESKTOP_DEV !== "1") {
       return { ok: false, message: "This build receives service authorization through HepAI OIDC." };

@@ -98,6 +98,7 @@ export interface AuthContext {
   session: AuthSession;
   userId: string;
   accessToken?: string;
+  refreshToken?: string;
   authMode: NonNullable<AuthSession["authMode"]>;
   issuer?: string;
 }
@@ -203,6 +204,7 @@ export async function requireAuthContext(): Promise<AuthContext> {
     session: toPublicSession(refreshed),
     userId: refreshed.user.id || refreshed.user.email,
     accessToken: refreshed.accessToken,
+    refreshToken: refreshed.refreshToken,
     authMode: refreshed.authMode,
     issuer: refreshed.issuer,
   };
@@ -1014,6 +1016,7 @@ export async function refreshAuthContextAfterUnauthorized(): Promise<AuthContext
       session: toPublicSession(refreshed),
       userId: refreshed.user.id || refreshed.user.email,
       accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken,
       authMode: refreshed.authMode,
       issuer: refreshed.issuer,
     };

@@ -23,6 +23,8 @@ export interface OaepPresentationProjection {
   readonly startedPartIds: Set<string>;
   protocolViolations: number;
   readonly unknownDeltaKinds: Map<string, number>;
+  /** Per-part accumulated byte budget for volume control */
+  readonly partByteBudgets: Map<string, number>;
 }
 
 export function createOaepPresentationProjection(
@@ -38,6 +40,7 @@ export function createOaepPresentationProjection(
     startedPartIds: new Set<string>(),
     protocolViolations: 0,
     unknownDeltaKinds: new Map<string, number>(),
+    partByteBudgets: new Map<string, number>(),
   };
 }
 
@@ -128,8 +131,32 @@ export function projectOaepEventForPresentation(
       projection.unknownDeltaKinds.set(deltaKind, (projection.unknownDeltaKinds.get(deltaKind) ?? 0) + 1);
       return output;
     }
+    const rawText = typeof event.data.delta?.text === "string" ? event.data.delta.text : "";
     for (const part of projected.parts) {
       ensurePartStarted(output, projection, event, source, part, base);
+      // Per-part byte budget: track accumulated text and spill to artifact if exceeded
+      if (part.kind === "markdown" || part.kind === "reasoning" || part.kind === "subtask") {
+        const currentBudget = projection.partByteBudgets.get(part.id) ?? 0;
+        const newBudget = currentBudget + rawText.length;
+        projection.partByteBudgets.set(part.id, newBudget);
+        if (newBudget > PART_SPILL_THRESHOLD && part.kind === "markdown") {
+          // Spill: emit part.completed + artifact reference, skip delta
+          output.push({ ...base(`part-spill:${part.id}`), type: "part.completed",
+            part: { ...part, status: "completed" } });
+          const artifactId = `${part.id}:spill`;
+          output.push({
+            ...base(`part-started:${artifactId}`),
+            type: "part.started",
+            part: {
+              id: artifactId, kind: "artifact", status: "completed",
+              artifactId, artifactType: "report", name: "Full output",
+              summary: `Output exceeded ${PART_SPILL_THRESHOLD / 1024}KB, saved as artifact`,
+            },
+          });
+          projection.partByteBudgets.set(part.id, 0);
+          continue;
+        }
+      }
       const delta = presentationDelta(event, item, part);
       if (delta) output.push({ ...base(`part-delta:${part.id}`), type: "part.delta", partId: part.id, delta });
     }
@@ -163,6 +190,8 @@ const SUPPORTED_DELTA_KINDS = new Set([
   "command.output.append",
   "tool.output.append",
   "subtask.summary.append",
+  "subtask.reasoning.append",
+  "subtask.markdown.append",
 ]);
 
 function ensurePartStarted(
@@ -208,7 +237,7 @@ function presentationDelta(
   part: StructuredAssistantPart,
 ): StructuredPartDelta | null {
   const delta = event.data.delta;
-  const text = typeof delta?.text === "string" ? delta.text : "";
+  const text = clampDeltaText(typeof delta?.text === "string" ? delta.text : "");
   if (part.kind === "markdown") return { kind: "markdown.append", text };
   if (part.kind === "reasoning") {
     return {
@@ -219,7 +248,21 @@ function presentationDelta(
     };
   }
   if (part.kind === "progress") return { kind: "progress.update", summary: part.summary, phase: part.phase };
-  if (part.kind === "subtask") return { kind: "subtask.update", summary: part.summary || "", status: part.status };
+  if (part.kind === "subtask") {
+    const deltaKind = typeof event.data.delta?.kind === "string" ? event.data.delta.kind : "";
+    if (deltaKind === "subtask.reasoning.append") {
+      return {
+        kind: "subtask.reasoning.append",
+        segmentId: String(delta?.segment_id || `${item.id}:reasoning`),
+        text,
+        source: event.source.backend,
+      };
+    }
+    if (deltaKind === "subtask.markdown.append") {
+      return { kind: "subtask.markdown.append", text };
+    }
+    return { kind: "subtask.update", summary: clampDeltaText(part.summary || ""), status: part.status };
+  }
   if (part.kind === "notice") return { kind: "notice.update", message: part.message, level: part.level };
   return null;
 }
@@ -237,6 +280,16 @@ function runDurationMs(value: unknown, fallbackStart: number | undefined, fallba
   const completedAt = runTimestamp(value, "completed_at") ?? runTimestamp(value, "updated_at") ?? Date.parse(fallbackEnd);
   if (startedAt === undefined || !Number.isFinite(completedAt) || completedAt <= startedAt) return undefined;
   return completedAt - startedAt;
+}
+
+const DELTA_TEXT_SOFT_LIMIT = 65_536;  // 64KB — single delta text soft limit
+const DELTA_TEXT_HARD_LIMIT = 262_144; // 256KB — hard limit, truncate beyond this
+const PART_SPILL_THRESHOLD = 131_072;  // 128KB — per-part accumulated, spill to artifact
+
+function clampDeltaText(text: string): string {
+  if (text.length <= DELTA_TEXT_HARD_LIMIT) return text;
+  const head = text.slice(0, DELTA_TEXT_HARD_LIMIT);
+  return head + "\n\n<!-- output-truncated -->";
 }
 
 function isOaepItem(value: unknown): value is OaepItem {

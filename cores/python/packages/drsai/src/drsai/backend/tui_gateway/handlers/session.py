@@ -62,6 +62,78 @@ def _resolve_workdir() -> str:
     return str(Path.cwd().resolve())
 
 
+def _load_platform_auth_for_init(cfg: dict):
+    """Load OIDC PlatformAuthContext for session init.
+
+    Returns a PlatformAuthContext if the user is in OIDC mode and has a
+    valid (or refreshable) token, otherwise None.
+
+    This is a lighter version of prompt._load_platform_auth_context —
+    it's called from the RPC thread (not the daemon thread) to bind
+    the context during ``sess.init()`` so the LLM client constructor
+    can resolve the OIDC credential provider.
+    """
+    if cfg.get("auth_mode") != "oidc":
+        return None
+    try:
+        from drsai.backend.auth.token_store import load_auth_session, is_token_expired
+        session = load_auth_session()
+        if not session:
+            return None
+        if is_token_expired(session):
+            # Try refresh — but don't fail init if refresh fails
+            refresh_token = session.get("refresh_token")
+            if not refresh_token:
+                return None
+            try:
+                import os
+                from drsai.backend.auth.oidc_client import OidcClient
+                from drsai.backend.auth.token_store import save_auth_session
+                client = OidcClient(
+                    issuer=session.get("issuer", os.environ.get(
+                        "OPENDRSAI_OIDC_ISSUER",
+                        os.environ.get("HAI_OIDC_ISSUER", "https://ai-dev.ihep.ac.cn/api"),
+                    )),
+                    client_id=session.get("client_id", os.environ.get(
+                        "OPENDRSAI_OIDC_CLIENT_ID", "opendrsai-tui",
+                    )),
+                    scopes=os.environ.get(
+                        "OPENDRSAI_OIDC_SCOPES",
+                        "openid email profile roles groups hai_api offline_access",
+                    ),
+                )
+                tokens = client.refresh_access_token(refresh_token)
+                user_info = session.get("user", {})
+                if tokens.get("id_token"):
+                    try:
+                        user_info = client.validate_id_token(tokens["id_token"])
+                    except Exception:
+                        pass
+                session = save_auth_session(
+                    tokens=tokens,
+                    user_info=user_info,
+                    issuer=session.get("issuer", ""),
+                    client_id=session.get("client_id", ""),
+                )
+            except Exception as exc:
+                logger.warning("OIDC token refresh during init failed: %s", exc)
+                return None
+        access_token = session.get("access_token")
+        if not access_token:
+            return None
+        from drsai.platform_auth import context_from_bearer
+        try:
+            return context_from_bearer(f"Bearer {access_token}", expected_subject="")
+        except Exception as exc:
+            logger.warning("Failed to build PlatformAuthContext: %s", exc)
+            return None
+    except ImportError:
+        return None
+    except Exception:
+        logger.exception("Unexpected error loading platform auth for init")
+        return None
+
+
 def _get_store(user_id: str):
     """Return a fresh CLISessionStore for *user_id*."""
     from drsai.backend.cli.history import CLISessionStore
@@ -86,7 +158,14 @@ def _info_to_dict(info) -> dict:
 
 
 def _ensure_agent_session(session_id: str, user_id: str) -> Any:
-    """Return (creating if needed) the AgentSession for *session_id*."""
+    """Return (creating if needed) the AgentSession for *session_id*.
+
+    When the user is in OIDC auth mode, the platform auth context is loaded
+    and bound via ``platform_auth_scope()`` around ``sess.init()`` so that
+    the LLM client constructor can resolve the OIDC credential provider.
+    The main binding for actual LLM calls happens in
+    :func:`prompt._run_turn_in_background` on the daemon thread.
+    """
     from ..adapter.agent_runner import AgentSession
     from drsai.backend.cli import config as cli_config
 
@@ -116,7 +195,17 @@ def _ensure_agent_session(session_id: str, user_id: str) -> Any:
         cli_cfg=cfg,
         db_manager=_get_db_manager(),
     )
-    sess.init()
+
+    # Bind OIDC platform auth during init so the LLM client constructor
+    # can pick up the OIDC credential provider. The real per-turn binding
+    # happens in _run_turn_in_background (prompt.py) on the daemon thread.
+    _oidc_ctx = _load_platform_auth_for_init(cfg)
+    if _oidc_ctx is not None:
+        from drsai.platform_auth import platform_auth_scope
+        with platform_auth_scope(_oidc_ctx):
+            sess.init()
+    else:
+        sess.init()
 
     # Preserve any transport that was already bound (e.g. via session.subscribe
     # from a WebSocket client) so events are routed to the correct peer.

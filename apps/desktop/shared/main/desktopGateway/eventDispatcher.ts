@@ -125,8 +125,17 @@ export class BoundedEventDispatcher {
         this.close();
         return;
       }
-      this.target.send(this.channel, event);
-      this.metrics.sent += 1;
+      try {
+        this.target.send(this.channel, event);
+        this.metrics.sent += 1;
+      } catch (err) {
+        if (!/destroy|disposed/i.test(String(err))) {
+          // eslint-disable-next-line no-console
+          console.error("[desktopGateway] send error:", err);
+        }
+        this.close();
+        return;
+      }
     }
   }
 

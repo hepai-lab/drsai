@@ -27,6 +27,92 @@ from ..server import _emit, _err, _get_db_manager, _ok, _resolve_user_id, _sessi
 logger = logging.getLogger(__name__)
 
 
+def _load_platform_auth_context():
+    """Load the OIDC platform auth context from the stored session.
+
+    Returns a :class:`PlatformAuthContext` if the user authenticated via
+    OIDC and the token is still valid, or ``None`` if:
+      - No OIDC session exists (user is using API key mode)
+      - The token is expired and cannot be refreshed
+      - An error occurs during loading
+
+    This is called from the daemon thread in ``_run_turn_in_background``
+    because ContextVars do NOT propagate across ``threading.Thread``
+    boundaries — the binding must happen inside the worker thread.
+    """
+    try:
+        from drsai.backend.auth.token_store import load_auth_session, is_token_expired
+        from drsai.backend.cli import config as cli_config
+
+        cfg = cli_config.load_config() if cli_config.CLI_CONFIG_PATH.exists() else {}
+        if cfg.get("auth_mode") != "oidc":
+            return None
+
+        session = load_auth_session()
+        if not session:
+            return None
+
+        # If token is expired, try to refresh it
+        if is_token_expired(session):
+            refresh_token = session.get("refresh_token")
+            if not refresh_token:
+                logger.warning("OIDC token expired, no refresh_token — re-login required")
+                return None
+            try:
+                from drsai.backend.auth.oidc_client import OidcClient
+                import os
+                client = OidcClient(
+                    issuer=session.get("issuer", os.environ.get(
+                        "OPENDRSAI_OIDC_ISSUER",
+                        os.environ.get("HAI_OIDC_ISSUER", "https://ai-dev.ihep.ac.cn/api"),
+                    )),
+                    client_id=session.get("client_id", os.environ.get(
+                        "OPENDRSAI_OIDC_CLIENT_ID", "opendrsai-tui",
+                    )),
+                    scopes=os.environ.get(
+                        "OPENDRSAI_OIDC_SCOPES",
+                        "openid email profile roles groups hai_api offline_access",
+                    ),
+                )
+                tokens = client.refresh_access_token(refresh_token)
+                # Re-save the refreshed session
+                from drsai.backend.auth.token_store import save_auth_session
+                user_info = session.get("user", {})
+                if tokens.get("id_token"):
+                    try:
+                        user_info = client.validate_id_token(tokens["id_token"])
+                    except Exception:
+                        pass
+                session = save_auth_session(
+                    tokens=tokens,
+                    user_info=user_info,
+                    issuer=session.get("issuer", ""),
+                    client_id=session.get("client_id", ""),
+                )
+            except Exception as exc:
+                logger.warning("OIDC token refresh failed: %s", exc)
+                return None
+
+        access_token = session.get("access_token")
+        if not access_token:
+            return None
+
+        # Build PlatformAuthContext from the JWT claims
+        from drsai.platform_auth import context_from_bearer
+        try:
+            return context_from_bearer(f"Bearer {access_token}", expected_subject="")
+        except Exception as exc:
+            logger.warning("Failed to build PlatformAuthContext from stored token: %s", exc)
+            return None
+
+    except ImportError:
+        # auth module not available (e.g. development without OIDC)
+        return None
+    except Exception:
+        logger.exception("Unexpected error loading platform auth context")
+        return None
+
+
 def _run_turn_in_background(
     sess,
     session_id: str,
@@ -63,6 +149,17 @@ def _run_turn_in_background(
     _callbacks.bind_session(session_id)
     _callbacks.bind_thread_session(session_id)
 
+    # ── Bind OIDC platform auth context INSIDE the daemon thread ─────
+    #
+    # When the user authenticated via OIDC (auth_mode == "oidc"), the
+    # access_token is stored encrypted in ~/.drsai/auth/auth.json.
+    # We load it here and bind it to the _platform_auth ContextVar so
+    # that LLMClient._bind_platform_auth() can pick it up when
+    # constructing API calls.  ContextVars do NOT propagate across
+    # raw threading.Thread boundaries, so this MUST be done inside the
+    # daemon thread, not in the caller.
+    _platform_auth_ctx = _load_platform_auth_context()
+
     running_cleared = False
 
     def _clear_running_once() -> None:
@@ -98,11 +195,18 @@ def _run_turn_in_background(
             if event_type == "message.complete" and not running_cleared:
                 _clear_running_once()
 
-        try:
+        # Run the turn with platform_auth_scope bound so the LLM client
+        # can access the OIDC token. If no OIDC session exists, this is
+        # a no-op (context is None → platform_auth_scope not entered).
+        if _platform_auth_ctx is not None:
+            from drsai.platform_auth import platform_auth_scope
+            with platform_auth_scope(_platform_auth_ctx):
+                sess.run_turn(text, _on_event, images=images)
+        else:
             sess.run_turn(text, _on_event, images=images)
-        except Exception as exc:
-            logger.exception("run_turn raised")
-            _emit("error", session_id, {"message": f"{type(exc).__name__}: {exc}"})
+    except Exception as exc:
+        logger.exception("run_turn raised")
+        _emit("error", session_id, {"message": f"{type(exc).__name__}: {exc}"})
     finally:
         # Belt and suspenders: ensure running is cleared even if no
         # message.complete event was emitted (e.g. agent crashed early).

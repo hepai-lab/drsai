@@ -912,7 +912,7 @@ def create_agent(
     # enable_security=False: CLI/Desktop mode (personal use, all tools open)
     # enable_security=True:  server mode (permission tiers + Skill elevation)
     if enable_security:
-        allow_basic_tools = ["run_read"]  # user: read-only (Skill elevation adds more)
+        allow_basic_tools = ["read"]  # user: read-only (Skill elevation adds more)
         only_in_workspace_sec = True
         allow_dangerous = False
     else:
@@ -999,7 +999,7 @@ def create_agent(
         extra_work_dirs=[user_storage_dir],  # Allow access to internal storage
         only_system_message=False,
         allolow_dangrous_cmd=allow_dangerous,  # CLI: from config; server: False
-        allolow_basic_tools=allow_basic_tools,  # CLI: None (full); server: ["run_read"]
+        allolow_basic_tools=allow_basic_tools,  # CLI: None (full); server: ["read"]
         tools=final_tools,                # Extra tools (MCP, knowledge, GFS, etc.)
         sub_agent_config=final_sub_agent_config,
         max_agent_concurrent=cli_cfg.get("max_agent_concurrent", 5),

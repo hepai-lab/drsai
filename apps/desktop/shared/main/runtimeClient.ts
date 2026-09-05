@@ -581,6 +581,7 @@ export function promoteRuntimeAccess(access: RuntimeAccess, runtime: RuntimeIden
 export interface RuntimeExecutionAuth {
   authMode: "password" | "api_key" | "sso" | "oidc" | "offline";
   accessToken?: string;
+  refreshToken?: string;
   userId: string;
 }
 
@@ -983,6 +984,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
           ...(auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {}),
           "X-OpenDrSai-Auth-Mode": auth.authMode,
           "X-OpenDrSai-Principal": auth.userId,
+          ...(auth.refreshToken ? { "X-OpenDrSai-Refresh-Token": auth.refreshToken } : {}),
         } : {}),
       }, body: JSON.stringify({
         prompt,
@@ -1231,6 +1233,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
       ...(auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {}),
       "X-OpenDrSai-Auth-Mode": auth.authMode,
       "X-OpenDrSai-Principal": auth.userId,
+      ...(auth.refreshToken ? { "X-OpenDrSai-Refresh-Token": auth.refreshToken } : {}),
       ...(context?.sessionId ? { "X-OpenDrSai-Session-Id": context.sessionId } : {}),
       ...(context?.runId ? { "X-OpenDrSai-Run-Id": context.runId } : {}),
     };

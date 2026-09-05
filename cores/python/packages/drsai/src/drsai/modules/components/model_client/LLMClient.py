@@ -21,7 +21,10 @@ from drsai.platform_auth import (
     DelegatedModelCredentialProvider,
     OidcModelCredentialProvider,
     get_model_credential_provider,
+    is_token_expired,
+    is_token_expiring_soon,
     static_model_credentials_allowed,
+    try_refresh_platform_auth,
 )
 
 from openai.types.chat import ChatCompletionChunk
@@ -136,14 +139,6 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             kwargs.get("base_url"),
             configured_provider=not self._allow_deferred_oidc,
         )
-        # [DIAG] Temporary diagnostic logging for 401 OIDC signing keys issue
-        import os as _diag_os_init
-        print(f"[DIAG __init__] kwargs['base_url']={kwargs.get('base_url', '<NOT SET>')}", flush=True)
-        print(f"[DIAG __init__] OPENDRSAI_MODEL_BASE_URL env={_diag_os_init.environ.get('OPENDRSAI_MODEL_BASE_URL', '<NOT SET>')}", flush=True)
-        print(f"[DIAG __init__] allow_deferred_oidc={self._allow_deferred_oidc}", flush=True)
-        print(f"[DIAG __init__] credential={type(credential).__name__ if credential else 'None'}", flush=True)
-        if credential:
-            print(f"[DIAG __init__] credential.openai_base_url={credential.openai_base_url}", flush=True)
         if credential:
             kwargs["api_key"] = credential.access_token
             kwargs["base_url"] = credential.openai_base_url
@@ -310,32 +305,36 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
     def _to_config(self) -> HepAIClientConfigurationConfigModel:
         return HepAIClientConfigurationConfigModel(**self._raw_config)
 
-    def _bind_platform_auth(self) -> None:
+    async def _bind_platform_auth(self) -> None:
         if not getattr(self, "_uses_platform_auth", True) and not getattr(self, "_oidc_credential_pending", False):
             return
         credential = get_model_credential_provider()
-        # [DIAG] Temporary diagnostic logging for 401 OIDC signing keys issue
-        import os as _diag_os
-        _diag_env_url = _diag_os.environ.get("OPENDRSAI_MODEL_BASE_URL", "<NOT SET>")
-        print(f"[DIAG _bind_platform_auth] OPENDRSAI_MODEL_BASE_URL={_diag_env_url}", flush=True)
-        print(f"[DIAG _bind_platform_auth] credential={type(credential).__name__ if credential else 'None'}", flush=True)
-        if credential:
-            print(f"[DIAG _bind_platform_auth] credential.openai_base_url={credential.openai_base_url}", flush=True)
-            print(f"[DIAG _bind_platform_auth] credential.access_token[:20]={credential.access_token[:20] if credential.access_token else 'None'}...", flush=True)
         if not credential:
             if getattr(self, "_oidc_credential_pending", False):
-                print(f"[DIAG _bind_platform_auth] FAILED: OIDC credential context unavailable, current base_url={self._client.base_url}", flush=True)
                 raise RuntimeError("OIDC credential context is unavailable for this model request.")
             return
+
+        # ── Token expiry check + proactive refresh ──
+        # Only applies to OIDC platform auth (not static API keys, not delegated).
+        # If the access token is expiring soon, try to refresh it via the OIDC
+        # refresh_token grant.  If the token is already expired and no refresh
+        # is possible, raise token_expired so the caller can surface the error.
+        if isinstance(credential, OidcModelCredentialProvider):
+            if is_token_expiring_soon(credential.access_token):
+                refreshed = await try_refresh_platform_auth()
+                if refreshed is not None:
+                    credential = OidcModelCredentialProvider(refreshed)
+                elif is_token_expired(credential.access_token):
+                    raise ValueError("token_expired: access token has expired and refresh is unavailable.")
+
         self._client.api_key = credential.access_token
         self._client.base_url = credential.openai_base_url
-        print(f"[DIAG _bind_platform_auth] FINAL base_url={self._client.base_url}", flush=True)
         if credential.delegation_headers:
             self._client._custom_headers = credential.delegation_headers
         self._oidc_credential_pending = False
 
     async def create(self, *args: Any, **kwargs: Any):
-        self._bind_platform_auth()
+        await self._bind_platform_auth()
         if self._use_responses_api:
             result = None
             async for item in self.create_stream(*args, **kwargs):
@@ -378,7 +377,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             - `presence_penalty` (float): A value between -2.0 and 2.0 that penalizes new tokens based on whether they appear in the text so far, encouraging the model to talk about new topics.
         """
 
-        self._bind_platform_auth()
+        await self._bind_platform_auth()
 
         if self._use_responses_api:
             responses_emitted = False

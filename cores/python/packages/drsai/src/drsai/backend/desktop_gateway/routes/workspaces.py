@@ -72,7 +72,11 @@ async def workspace_files(
     max_entries: int = Query(default=500, ge=1, le=5000),
 ):
     """Bounded Workspace tree with git status badges (feature 2.3)."""
-    return _workspace_files.list_files(
+    # list_files() calls _git_statuses() which runs `git status` via
+    # subprocess.run (up to 10s timeout) — offload to thread pool so the
+    # event loop is not blocked during the git subprocess execution.
+    return await asyncio.to_thread(
+        _workspace_files.list_files,
         workspace_id,
         path=path,
         depth=depth,
@@ -89,7 +93,11 @@ async def workspace_file(
     max_bytes: int = Query(default=262_144, ge=1, le=1_048_576),
 ):
     """One file's content for the preview pane (feature 4.1)."""
-    return _workspace_files.read_file(workspace_id, path, max_bytes=max_bytes)
+    # read_file() does synchronous file I/O (open + read + sha256) — offload
+    # to thread pool for consistency with the list_files handler above.
+    return await asyncio.to_thread(
+        _workspace_files.read_file, workspace_id, path, max_bytes=max_bytes
+    )
 
 
 @api.get(

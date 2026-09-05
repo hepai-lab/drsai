@@ -152,6 +152,9 @@ export async function getAuthenticatedGatewayRequestHeaders(): Promise<Record<st
         Authorization: `Bearer ${auth.accessToken}`,
         "X-OpenDrSai-Auth-Mode": "oidc",
         "X-OpenDrSai-Principal": auth.userId,
+        ...(auth.refreshToken
+          ? { "X-OpenDrSai-Refresh-Token": auth.refreshToken }
+          : {}),
       };
     }
   } catch {

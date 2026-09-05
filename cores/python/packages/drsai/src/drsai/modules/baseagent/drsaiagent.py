@@ -1754,13 +1754,19 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         supported = bool(getattr(reasoning, "supported", False))
         levels = tuple(getattr(reasoning, "effort_levels", ()) or ())
         param_type = str(getattr(reasoning, "param_type", "none") or "none")
-        if effort and supported and (not levels or effort in levels):
-            if param_type == "deepseek_reasoning_effort":
-                if effort == "none":
+        if effort and supported and (
+            effort in {"off", "none"} or not levels or effort in levels
+        ):
+            if effort in {"off", "none"}:
+                # Normalize the TUI's user-facing off/none values across
+                # provider-specific request protocols.
+                if param_type in {"deepseek_reasoning_effort", "adaptive"}:
                     extra_create_args["thinking"] = {"type": "disabled"}
-                else:
-                    extra_create_args["thinking"] = {"type": "enabled"}
-                    extra_create_args["reasoning_effort"] = effort
+                elif param_type in {"reasoning_effort", "is_r1_model", "zhipu_format", "minimax_format"}:
+                    extra_create_args["reasoning_effort"] = "none"
+            elif param_type == "deepseek_reasoning_effort":
+                extra_create_args["thinking"] = {"type": "enabled"}
+                extra_create_args["reasoning_effort"] = effort
             elif param_type == "adaptive":
                 extra_create_args["thinking"] = {"type": "adaptive"}
                 extra_create_args["output_config"] = {

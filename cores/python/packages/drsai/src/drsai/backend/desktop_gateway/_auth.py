@@ -28,6 +28,7 @@ user key is a local profile name rather than an OIDC subject.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from contextlib import nullcontext
@@ -75,9 +76,16 @@ def install(app) -> None:
         auth_context = None
         if request.headers.get("x-opendrsai-auth-mode") == "oidc":
             try:
-                auth_context = context_from_bearer(
+                # context_from_bearer() performs synchronous JWKS fetch
+                # (urllib.request.urlopen, up to 10s on cold cache) and JWT
+                # signature verification — both block the async event loop.
+                # Offload to the default thread-pool executor so concurrent
+                # requests (e.g. health probes) are not stalled.
+                auth_context = await asyncio.to_thread(
+                    context_from_bearer,
                     request.headers.get("authorization"),
                     request.headers.get("x-opendrsai-principal", ""),
+                    refresh_token=request.headers.get("x-opendrsai-refresh-token", ""),
                 )
             except ValueError as exc:
                 code = str(exc)

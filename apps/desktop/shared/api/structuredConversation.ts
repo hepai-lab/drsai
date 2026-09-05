@@ -117,6 +117,18 @@ export interface SubtaskPart extends StructuredPartBase {
   title: string;
   agentName?: string;
   summary?: string;
+  /** 子代理内部 reasoning segments（折叠展示） */
+  reasoningSegments?: ReasoningSegment[];
+  /** 子代理内部 tool activities（翻页展示） */
+  activities?: StructuredActivityEvent[];
+  /** 子代理中间 markdown 输出（折叠展示） */
+  markdownSummary?: string;
+  /** 子代理状态详情 */
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  /** 子代理层级深度（0=顶层子代理, 1=嵌套子代理） */
+  depth?: number;
 }
 
 export interface NoticePart extends StructuredPartBase {
@@ -208,6 +220,8 @@ export type StructuredPartDelta =
   | { kind: "reasoning.summary"; summary: string }
   | { kind: "progress.update"; summary: string; phase?: string; completed?: number; total?: number }
   | { kind: "subtask.update"; summary: string; status?: StructuredPartStatus }
+  | { kind: "subtask.reasoning.append"; segmentId: string; text: string; source?: string }
+  | { kind: "subtask.markdown.append"; text: string }
   | { kind: "notice.update"; message: string; level?: NoticePart["level"] };
 
 export type StructuredConversationEvent =
@@ -669,6 +683,24 @@ function updatePartWithDelta(part: StructuredAssistantPart, delta: StructuredPar
   if (part.kind === "subtask" && delta.kind === "subtask.update") {
     return { ...part, summary: delta.summary, status: delta.status ?? "running" };
   }
+  if (part.kind === "subtask" && delta.kind === "subtask.reasoning.append") {
+    const segments = part.reasoningSegments ?? [];
+    const index = segments.findIndex((segment) => segment.id === delta.segmentId);
+    const updatedSegments = index === -1
+      ? [...segments, {
+          id: delta.segmentId,
+          text: delta.text,
+          status: "running" as const,
+          ...(delta.source ? { source: delta.source } : {}),
+        }]
+      : segments.map((segment, segmentIndex) => segmentIndex === index
+          ? { ...segment, text: `${segment.text}${delta.text}`, status: "running" as const }
+          : segment);
+    return { ...part, reasoningSegments: updatedSegments, status: "running" };
+  }
+  if (part.kind === "subtask" && delta.kind === "subtask.markdown.append") {
+    return { ...part, markdownSummary: `${part.markdownSummary ?? ""}${delta.text}`, status: "running" };
+  }
   if (part.kind === "notice" && delta.kind === "notice.update") {
     return { ...part, message: delta.message, level: delta.level ?? part.level };
   }
@@ -685,6 +717,8 @@ function isStructuredPartDelta(delta: unknown): delta is StructuredPartDelta {
     case "reasoning.summary": return typeof value.summary === "string";
     case "progress.update": return typeof value.summary === "string";
     case "subtask.update": return typeof value.summary === "string";
+    case "subtask.reasoning.append": return isNonEmptyString(value.segmentId) && typeof value.text === "string";
+    case "subtask.markdown.append": return typeof value.text === "string";
     case "notice.update": return typeof value.message === "string";
     default: return false;
   }
@@ -735,7 +769,7 @@ function appendIssue(state: StructuredTurnState, issue: StructuredProtocolIssue)
   return { ...state, protocolIssues: [...state.protocolIssues, issue] };
 }
 
-function splitLegacyThinkContent(content: string): { text: string; reasoning: string } {
+export function splitLegacyThinkContent(content: string): { text: string; reasoning: string } {
   const normalized = content
     .replace(/&lt;think&gt;/gi, "<think>")
     .replace(/&lt;\/think&gt;/gi, "</think>");
@@ -845,6 +879,18 @@ function sanitizeStructuredPart(part: StructuredAssistantPart): StructuredAssist
       ...base, kind: part.kind, taskId: part.taskId.slice(0, 200), title: part.title.slice(0, 1_000),
       ...(part.agentName ? { agentName: part.agentName.slice(0, 500) } : {}),
       ...(part.summary ? { summary: part.summary.slice(0, 20_000) } : {}),
+      ...(part.reasoningSegments ? { reasoningSegments: part.reasoningSegments.slice(0, 16).map((segment) => ({
+        id: segment.id.slice(0, 200),
+        text: segment.text.slice(0, 40_000),
+        status: segment.status,
+        ...(segment.source ? { source: segment.source.slice(0, 200) } : {}),
+      })) } : {}),
+      ...(part.activities ? { activities: part.activities.slice(0, 50).filter(isStructuredActivityEvent) } : {}),
+      ...(part.markdownSummary ? { markdownSummary: part.markdownSummary.slice(0, 40_000) } : {}),
+      ...(part.startedAt ? { startedAt: part.startedAt.slice(0, 80) } : {}),
+      ...(part.completedAt ? { completedAt: part.completedAt.slice(0, 80) } : {}),
+      ...(Number.isFinite(part.durationMs) ? { durationMs: part.durationMs } : {}),
+      ...(part.depth !== undefined ? { depth: Math.max(0, Math.min(5, Number(part.depth) || 0)) } : {}),
     };
   }
   return {

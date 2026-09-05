@@ -291,14 +291,16 @@ def cmd_models(ctx: SlashContext) -> str:
         reasoning_label = ""
         if reasoning:
             # reasoning might be a ReasoningConfig object, not a dict
-            if hasattr(reasoning, "levels"):
-                levels = getattr(reasoning, "levels", {})
+            if hasattr(reasoning, "effort_levels"):
+                levels = list(getattr(reasoning, "effort_levels", ()) or ())
                 if levels:
-                    reasoning_label = f" [reasoning: {', '.join(levels.keys())}]"
+                    reasoning_label = f" [reasoning: {', '.join(levels)}]"
             elif isinstance(reasoning, dict):
-                levels = reasoning.get("levels", {})
+                levels = reasoning.get("effort_levels", reasoning.get("levels", [])) or []
+                if isinstance(levels, dict):
+                    levels = list(levels.keys())
                 if levels:
-                    reasoning_label = f" [reasoning: {', '.join(levels.keys())}]"
+                    reasoning_label = f" [reasoning: {', '.join(levels)}]"
         lines.append(f"    {alias:<20} — {model_name}{reasoning_label}")
     return "\n".join(lines)
 
@@ -317,36 +319,80 @@ def _model_info(user_id: str, alias: str) -> dict:
     info_lines.append(f"  Name:        {getattr(entry, 'model', '?')}")
     info_lines.append(f"  Token limit: {getattr(entry, 'token_limit', '?')}")
 
-    reasoning = getattr(entry, "reasoning", {})
+    reasoning = getattr(entry, "reasoning", None)
     if reasoning:
+        supported = bool(getattr(reasoning, "supported", False))
+        levels = list(getattr(reasoning, "effort_levels", ()) or ())
+        param_type = getattr(reasoning, "param_type", "none")
         info_lines.append("  Reasoning:")
-        for level, params in reasoning.get("levels", {}).items():
-            budget = params.get("budget", "?")
-            info_lines.append(f"    {level}: budget={budget}")
+        info_lines.append(f"    Supported:   {'yes' if supported else 'no'}")
+        info_lines.append(f"    Effort:      {', '.join(levels) if levels else ('adaptive' if supported else 'none')}")
+        info_lines.append(f"    Param type:  {param_type}")
 
     return {"output": "\n".join(info_lines)}
 
 
 # ── Display ───────────────────────────────────────────────────────────────────
 
+def _current_reasoning_config(ctx: SlashContext):
+    """Return the configured reasoning metadata for the active model."""
+    cfg = get_config_manager(ctx.user_id)
+    llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+    llm_mode_config = load_llm_mode_config(llm_config_path)
+    alias = ctx.session.info().get("model", "")
+    return alias, llm_mode_config.get(alias)
+
+
 def cmd_reasoning(ctx: SlashContext) -> dict:
-    """Toggle or tune the reasoning box."""
-    args = ctx.args.lower()
+    """Show/tune model reasoning effort and toggle its TUI display.
+
+    ``show``/``hide`` only affect presentation.  ``off``/``none`` also
+    update the model request setting so that turning reasoning off is not
+    merely a UI operation.
+    """
+    args = ctx.args.strip().lower()
+    current = ctx.session.get_state_value("reasoning_effort") or "off"
+    alias, entry = _current_reasoning_config(ctx)
+    reasoning = getattr(entry, "reasoning", None) if entry else None
+    supported = bool(getattr(reasoning, "supported", False))
+    levels = list(getattr(reasoning, "effort_levels", ()) or ()) if reasoning else []
 
     if not args:
-        # Show status
-        state = ctx.session.get_state_value("reasoning_effort") or "off"
-        return {"output": f"Reasoning effort: {state}"}
+        available = ", ".join(levels) if levels else ("adaptive" if supported else "none")
+        return {
+            "output": f"Model: {alias}\nReasoning effort: {current}\nAvailable: {available}"
+        }
 
-    if args in ("show", "hide", "off"):
-        # UI-side toggle; gateway doesn't need to change agent state
+    if args in ("show", "hide"):
         return {"output": f"Reasoning display: {args}", "ui_action": f"reasoning.{args}"}
 
-    if args in ("low", "medium", "high", "xhigh"):
-        ctx.session.set_state_value("reasoning_effort", args)
-        return {"output": f"Reasoning effort set to {args}"}
+    # off is the user-facing spelling; none is the wire-compatible value for
+    # the model adapters that expose an explicit disabled state.
+    if args in ("off", "none"):
+        ctx.session.set_state_value("reasoning_effort", "none")
+        return {
+            "output": "Reasoning effort disabled",
+            "ui_action": "reasoning.off",
+        }
 
-    return {"output": "Usage: /reasoning show|hide|off|low|medium|high|xhigh"}
+    if not supported:
+        return {"output": f"Model {alias} does not support reasoning effort"}
+
+    if levels and args not in levels:
+        return {
+            "output": (
+                f"Unsupported reasoning effort '{args}' for {alias}. "
+                f"Available: {', '.join(levels)}"
+            )
+        }
+
+    # Empty effort_levels means the provider uses adaptive effort and accepts
+    # the standard user-facing levels.
+    if args not in {"low", "medium", "high", "xhigh", "max"}:
+        return {"output": "Usage: /reasoning show|hide|off|none|low|medium|high|xhigh|max"}
+
+    ctx.session.set_state_value("reasoning_effort", args)
+    return {"output": f"Reasoning effort set to {args} for {alias}"}
 
 
 def cmd_verbose(ctx: SlashContext) -> dict:
@@ -1691,12 +1737,11 @@ def _model_options(rid, params: dict) -> dict:
             reasoning_levels: list[str] = []
             reasoning = getattr(entry, "reasoning", None)
             if reasoning:
-                if hasattr(reasoning, "levels"):
-                    levels = getattr(reasoning, "levels", {})
-                    reasoning_levels = list(levels.keys()) if levels else []
+                if hasattr(reasoning, "effort_levels"):
+                    reasoning_levels = list(getattr(reasoning, "effort_levels", ()) or ())
                 elif isinstance(reasoning, dict):
-                    levels = reasoning.get("levels", {})
-                    reasoning_levels = list(levels.keys()) if levels else []
+                    levels = reasoning.get("effort_levels", reasoning.get("levels", [])) or []
+                    reasoning_levels = list(levels.keys()) if isinstance(levels, dict) else list(levels)
             models.append({
                 "alias": alias,
                 "model_name": model_name,

@@ -5949,6 +5949,167 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
   to { transform: rotate(360deg); }
 }
 
+/* ── P2: SubtaskContainer — containerized subtask display ── */
+.structured-subtask-container {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--app-panel-border);
+  border-radius: var(--app-inner-radius);
+  background: var(--app-panel-soft);
+  box-shadow: var(--app-shadow-card);
+  overflow: hidden;
+}
+/* hierarchical indentation by depth */
+.structured-subtask-container[data-depth="1"] { margin-left: 16px; border-left: 2px solid var(--app-subtask-accent, #d97706); }
+.structured-subtask-container[data-depth="2"] { margin-left: 32px; border-left:12px solid var(--app-subtask-accent, #d97706); }
+.structured-subtask-container[data-depth="3"] { margin-left: 48px; border-left: 2px solid var(--app-subtask-accent, #d97706); }
+.structured-subtask-container[data-depth="4"] { margin-left: 64px; border-left: 2px solid var(--app-subtask-accent, #d97706); }
+.structured-subtask-container[data-depth="5"] { margin-left: 80px; border-left: 2px solid var(--app-subtask-accent, #d97706); }
+
+.structured-subtask-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  user-select: none;
+  transition: background .12s ease;
+}
+.structured-subtask-header:hover {
+  background: var(--app-hover-bg);
+}
+.structured-subtask-header .structured-subtask-text {
+  min-width: 0;
+  flex: 1;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.structured-subtask-header .structured-subtask-text strong {
+  color: var(--app-text-secondary);
+  font-size: inherit;
+  text-transform: none;
+}
+.structured-subtask-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+  border-radius: var(--app-chip-radius);
+  transition: background .12s ease, color .12s ease;
+}
+.structured-subtask-toggle:hover {
+  background: var(--app-hover-bg);
+  color: var(--app-text-primary);
+}
+
+/* status-aware icon colors for container */
+.structured-subtask-container.completed .structured-subtask-icon { color: var(--app-success-text, #15803d); }
+.structured-subtask-container.error .structured-subtask-icon { color: var(--app-danger-text, #b91c1c); }
+.structured-subtask-container.cancelled .structured-subtask-icon { color: var(--app-text-muted); }
+.structured-subtask-container.running .structured-subtask-icon { color: var(--app-subtask-accent, #d97706); }
+.structured-subtask-icon.spinning { animation: structured-spin 1.1s linear infinite; }
+
+/* internals section (when expanded) */
+.structured-subtask-internals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 10px 10px 10px;
+  border-top: 1px solid var(--app-panel-border);
+}
+.structured-subtask-reasoning,
+.structured-subtask-activities {
+  border-radius: var(--app-chip-radius);
+  font-size: 11px;
+}
+.structured-subtask-reasoning > summary,
+.structured-subtask-activities > summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 3px 6px;
+  color: var(--app-text-muted);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  border-radius: var(--app-chip-radius);
+  transition: background .12s ease;
+}
+.structured-subtask-reasoning > summary:hover,
+.structured-subtask-activities > summary:hover {
+  background: var(--app-hover-bg);
+}
+.structured-subtask-reasoning-segment {
+  padding: 4px 6px;
+  margin: 2px 0;
+  border-left: 2px solid var(--app-subtask-accent, #d97706);
+  background: var(--app-hover-bg);
+  border-radius: 0 var(--app-chip-radius) var(--app-chip-radius) 0;
+}
+.structured-subtask-reasoning-segment > .chat-output {
+  font-size: 11px;
+  color: var(--app-text-muted);
+}
+.structured-subtask-activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 2px;
+}
+.structured-subtask-activity-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  border-radius: var(--app-chip-radius);
+  background: var(--app-hover-bg);
+  font-size: 11px;
+  color: var(--app-text-muted);
+}
+.structured-subtask-activity-item svg {
+  flex: 0 0 auto;
+}
+.structured-subtask-markdown {
+  padding: 4px 6px;
+  margin-top: 2px;
+}
+.structured-subtask-markdown > .chat-output {
+  font-size: 11px;
+  color: var(--app-text-secondary);
+}
+
+/* ── P3: Streaming plaintext fallback & virtualization placeholder ── */
+.chat-streaming-plaintext {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--app-panel-soft);
+  border: 1px solid var(--app-panel-border);
+  border-radius: var(--app-inner-radius);
+  font-family: var(--app-font-mono, ui-monospace, "Cascadia Code", "Source Code Pro", monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--app-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 400px;
+  overflow-y: auto;
+}
+.chat-virtualized-placeholder {
+  background: var(--app-panel-soft);
+  border-radius: var(--app-inner-radius);
+  opacity: 0.3;
+}
+
 .structured-activity-summary {
   display: inline-flex;
   align-items: center;

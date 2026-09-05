@@ -32,6 +32,7 @@ import {
 } from "./networkRecovery";
 import { listRecordedAgentRunEvents, recordAgentRunEvent } from "./agentRunJournal";
 import { BoundedEventDispatcher } from "./boundedEventDispatcher";
+import { BackpressureController } from "./backpressureController";
 import { cancelChatTurn, startChat } from "./chat";
 import { createOaepAgentRunBridge } from "./oaepAgentRunBridge";
 
@@ -60,20 +61,49 @@ type AgentRunLifecycleListener = (event: AgentRunEvent, request: AgentRunRequest
 const activeRuns = new Map<string, ActiveAgentRun>();
 const lifecycleListeners = new Set<AgentRunLifecycleListener>();
 const agentEventDispatchers = new WeakMap<WebContents, BoundedEventDispatcher<AgentRunEvent>>();
+const agentBackpressureControllers = new WeakMap<WebContents, BackpressureController>();
 
 function getAgentEventDispatcher(webContents: WebContents): BoundedEventDispatcher<AgentRunEvent> {
   const existing = agentEventDispatchers.get(webContents);
   if (existing) return existing;
+  // P1: Per-window backpressure controller — adjusts flush delay based on
+  // renderer FPS health reports (healthy=0ms, degraded=100ms, critical=200ms)
+  let controller = agentBackpressureControllers.get(webContents);
+  if (!controller) {
+    controller = new BackpressureController();
+    agentBackpressureControllers.set(webContents, controller);
+  }
   const dispatcher = new BoundedEventDispatcher<AgentRunEvent>({
     capacity: 256,
-    deliver: (event) => { if (!webContents.isDestroyed()) webContents.send("desktop:agent-run-event", event); },
+    deliver: (event) => {
+      try {
+        if (!webContents.isDestroyed()) webContents.send("desktop:agent-run-event", event);
+      } catch (err) {
+        if (!/destroy|disposed/i.test(String(err))) {
+          // eslint-disable-next-line no-console
+          console.error("[agentRuns] deliver error:", err);
+        }
+      }
+    },
     merge: (previous, next) => previous.requestId === next.requestId && previous.type === "chunk" && next.type === "chunk"
       && previous.oaepItemId === next.oaepItemId
       ? { ...next, content: `${previous.content ?? ""}${next.content ?? ""}` }
       : null,
+    schedule: controller.createAdaptiveScheduler(),
   });
   agentEventDispatchers.set(webContents, dispatcher);
   return dispatcher;
+}
+
+/**
+ * P1: Handle renderer health reports and update the backpressure controller.
+ * Called from the main process IPC handler for "desktop:render-health".
+ */
+export function handleRenderHealthReport(webContents: WebContents, fps: number, tier: "healthy" | "degraded" | "critical"): void {
+  const controller = agentBackpressureControllers.get(webContents);
+  if (controller) {
+    controller.update(fps, tier);
+  }
 }
 
 export function hasActiveAgentRuns(): boolean {
@@ -334,6 +364,7 @@ export async function runLegacyAgentCompatibility(
           "X-OpenDrSai-Auth-Mode": authContext.authMode,
           ...(request.workspacePath ? { "X-OpenDrSai-Workspace": encodeURIComponent(request.workspacePath) } : {}),
           ...(authContext.accessToken ? { Authorization: `Bearer ${authContext.accessToken}` } : {}),
+          ...(authContext.refreshToken ? { "X-OpenDrSai-Refresh-Token": authContext.refreshToken } : {}),
           "Idempotency-Key": `desktop-agent-${requestId}`,
         },
         body: JSON.stringify({

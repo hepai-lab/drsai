@@ -89,7 +89,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "reasoning",
         "Toggle or tune the reasoning box",
         "Display",
-        args_hint="show|hide|off|low|medium|high|xhigh",
+        args_hint="show|hide|off|none|low|medium|high|xhigh|max",
         handler="async",
     ),
     CommandDef(

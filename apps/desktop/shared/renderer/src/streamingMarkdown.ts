@@ -140,3 +140,77 @@ function findLastBoundaryInSlice(suffix: string, baseOffset: number, currentBoun
   }
   return lastBoundary;
 }
+
+// ── P3: Large text block virtualization support ──
+
+/** Threshold (bytes) above which a Markdown message is split into virtualized blocks. */
+export const MARKDOWN_BLOCK_THRESHOLD = 32 * 1024; // 32KB
+
+/** Threshold (bytes) above which streaming content is rendered as plain `<pre>` instead of parsed Markdown. */
+export const STREAMING_PLAINTEXT_THRESHOLD = 16 * 1024; // 16KB
+
+export interface MarkdownBlock {
+  /** Block index (0-based). */
+  index: number;
+  /** Raw markdown text for this block (includes trailing newline if present). */
+  text: string;
+  /** Byte length of this block. */
+  length: number;
+}
+
+/**
+ * Splits a markdown string into paragraph-level blocks suitable for virtualization.
+ * Each block ends at a blank-line boundary (double newline) or when it exceeds
+ * `maxBlockSize`. Fenced code blocks are never split mid-fence.
+ *
+ * Returns an array of blocks. For content under `MARKDOWN_BLOCK_THRESHOLD`,
+ * returns a single block containing the entire string.
+ */
+export function splitMarkdownIntoBlocks(
+  markdown: string,
+  maxBlockSize: number = MARKDOWN_BLOCK_THRESHOLD,
+): MarkdownBlock[] {
+  if (!markdown) return [];
+  if (markdown.length < maxBlockSize) {
+    return [{ index: 0, text: markdown, length: markdown.length }];
+  }
+
+  const blocks: MarkdownBlock[] = [];
+  let currentStart = 0;
+  let fence: { marker: "`" | "~"; length: number } | null = null;
+  let lastBoundary = 0;
+  let offset = 0;
+
+  const lines = markdown.split(/(?<=\n)/);
+  for (const line of lines) {
+    const withoutNewline = line.replace(/\r?\n$/, "");
+    const fenceMatch = withoutNewline.match(/^\s*(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const run = fenceMatch[1];
+      const marker = run[0] as "`" | "~";
+      if (!fence) fence = { marker, length: run.length };
+      else if (fence.marker === marker && run.length >= fence.length) fence = null;
+    }
+    offset += line.length;
+    if (!fence && withoutNewline === "" && line.endsWith("\n")) {
+      // Blank-line boundary outside code fence — candidate split point
+      if (offset - currentStart >= maxBlockSize) {
+        // Current segment exceeds threshold — split at this boundary
+        const blockText = markdown.slice(currentStart, offset);
+        blocks.push({ index: blocks.length, text: blockText, length: blockText.length });
+        currentStart = offset;
+        lastBoundary = offset;
+      } else {
+        lastBoundary = offset;
+      }
+    }
+  }
+
+  // Flush remaining content
+  if (currentStart < markdown.length) {
+    const blockText = markdown.slice(currentStart);
+    blocks.push({ index: blocks.length, text: blockText, length: blockText.length });
+  }
+
+  return blocks;
+}

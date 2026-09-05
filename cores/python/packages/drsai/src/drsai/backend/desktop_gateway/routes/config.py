@@ -374,7 +374,10 @@ def _resolve_agent_primary_model(config: DrSaiConfig, agent_name: str | None = N
 @api.get("/v1/config/agents/{agent_id}/models", operation_id="getAgentModelPolicy")
 async def get_agent_model_policy(agent_id: str):
     """Read the persisted local Agent model policy and its effective ref."""
-    _require_local_opendrsai_agent(agent_id)
+    # _require_local_opendrsai_agent() does synchronous file I/O (reads agent
+    # config files, calls list_agent_names which scans configs/agents/*.toml)
+    # — offload to thread pool so the event loop stays responsive.
+    await asyncio.to_thread(_require_local_opendrsai_agent, agent_id)
     try:
         config = await asyncio.to_thread(load_model_provider_config)
         snapshot = await asyncio.to_thread(load_agent_model_policy, agent_id)
@@ -459,7 +462,7 @@ AgentModelSelectionRequest.model_rebuild()
 @api.put("/v1/config/agents/{agent_id}/models", operation_id="putAgentModelPolicy")
 async def put_agent_model_policy(agent_id: str, req: AgentModelPolicyUpdateRequest):
     """Persist one provider-aware policy with optimistic concurrency control."""
-    _require_local_opendrsai_agent(agent_id)
+    await asyncio.to_thread(_require_local_opendrsai_agent, agent_id)
     try:
         if req.primary_model.ref is None:
             raise ValueError("Primary model selection must include a Provider model reference")
@@ -617,7 +620,7 @@ async def get_active_model_config():
 @api.get("/v1/config/agents/{agent_id}/model-capability-status", operation_id="getAgentModelCapabilityStatus")
 async def get_agent_model_capability_status(agent_id: str):
     """Return whether the agent's configured models are valid and available."""
-    _require_local_opendrsai_agent(agent_id)
+    await asyncio.to_thread(_require_local_opendrsai_agent, agent_id)
     try:
         config = await asyncio.to_thread(load_model_provider_config)
         snapshot = await asyncio.to_thread(load_agent_model_policy, agent_id)

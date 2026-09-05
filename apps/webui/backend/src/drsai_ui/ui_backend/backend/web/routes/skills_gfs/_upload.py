@@ -59,8 +59,72 @@ async def _upload_skill(
 ) -> dict:
     from ....datamodel.db import SkillMeta, SkillDetail
 
-    if not file.filename or not file.filename.lower().endswith(".zip"):
-        raise HTTPException(status_code=400, detail="Please upload a .zip file")
+    source_val = (source or "").strip().lower()
+    is_imported = source_val == "imported"
+
+    # ── Import (collect) path: no zip, no GFS — just create a reference record ──
+    if is_imported:
+        slug_clean = (slug or "").strip()
+        canon_slug = _slugify(slug_clean) if slug_clean else slug_clean
+        if not canon_slug:
+            raise HTTPException(status_code=400, detail="Slug is required for import")
+
+        final_name = (display_name or "").strip() or canon_slug
+        final_icon = (icon or "").strip() or "package"
+        final_description = (description or "").strip()
+        final_version = (version or "").strip() or "0.0.0"
+        final_changelog = (changelog or "").strip()
+        final_visibility = (visibility or "").strip().lower()
+        if final_visibility not in ("public", "private", "team"):
+            final_visibility = "private"
+
+        tag_input = (tags or "").strip()
+        final_tags = []
+        if tag_input:
+            final_tags = [t.strip() for t in tag_input.split(",") if t.strip()]
+
+        db_mgr = await _get_db()
+        author_name = get_display_name(db_mgr, user_id) or user_id
+
+        existing_resp = db_mgr.get(SkillMeta, filters={"slug": canon_slug})
+        if existing_resp.status and existing_resp.data:
+            existing = existing_resp.data[0]
+            orig_ids = list(existing.collector_ids or [])
+            existing.source = "user"
+            existing.owner_id = user_id
+            existing.author = author_name
+            existing.visibility = final_visibility
+            existing.uskills_type = "imported"
+            if user_id not in orig_ids:
+                existing.collector_ids = orig_ids + [user_id]
+            db_mgr.upsert(existing)
+        else:
+            db_mgr.upsert(SkillMeta(
+                slug=canon_slug, name=final_name, icon=final_icon,
+                version=final_version,
+                description=final_description,
+                owner_id=user_id, author=author_name,
+                visibility=final_visibility, source="user",
+                uskills_type="imported",
+                tags=final_tags, download_count=0,
+                collector_ids=[user_id],
+            ))
+
+        return {
+            "status": True, "message": "Import successful",
+            "data": {
+                "slug": canon_slug, "name": final_name,
+                "description": final_description,
+                "version": final_version, "icon": final_icon,
+                "changelog": final_changelog or "",
+                "profile": "",
+                "tags": final_tags,
+                "visibility": final_visibility,
+                "uskills_type": "imported",
+            },
+        }
+
+    # ── Normal upload path (zip + GFS) ──
 
     profile_ext = None
     profile_tmp = None
@@ -127,15 +191,8 @@ async def _upload_skill(
             check_resp = db_mgr.get(SkillMeta, filters={"slug": canon_slug})
             existing_owner = check_resp.data[0].owner_id if (check_resp.status and check_resp.data) else ""
             if existing_owner and existing_owner != user_id:
-                from ....datamodel.db import Userinfo
-                resp = db_mgr.get(Userinfo, filters={"user_id": user_id}, return_json=False)
-                if resp.status and resp.data:
-                    u = resp.data[0]
-                    umeta = dict(getattr(u, "meta", None) or {})
-                    skill_role = umeta.get("skill_role", "user")
-                else:
-                    skill_role = "user"
-                if skill_role != "admin":
+                from ...authz import get_is_platform_admin
+                if not get_is_platform_admin(db_mgr, user_id):
                     raise HTTPException(status_code=403, detail="Cannot overwrite another user's skill")
 
         if not gfs_put(tmp_zip.name, remote_path, cfg):
@@ -173,12 +230,8 @@ async def _upload_skill(
         author_name = get_display_name(db_mgr, user_id) or user_id
 
         existing_resp = db_mgr.get(SkillMeta, filters={"slug": canon_slug})
-        # Determine uskills_type from legacy source param or default to "created"
-        source_val = (source or "").strip().lower()
-        if source_val == "imported":
-            utype = "imported"
-        else:
-            utype = "created"
+        # Determine uskills_type — normal uploads are always "created"
+        utype = "created"
 
         if existing_resp.status and existing_resp.data:
             existing = existing_resp.data[0]
@@ -191,9 +244,7 @@ async def _upload_skill(
             existing.visibility = final_visibility
             existing.tags = final_tags
             existing.profile = profile_url or None
-            # Keep existing uskills_type unless explicitly changed
-            if source_val:
-                existing.uskills_type = utype
+            existing.uskills_type = utype
             to_upsert = existing
         else:
             to_upsert = SkillMeta(

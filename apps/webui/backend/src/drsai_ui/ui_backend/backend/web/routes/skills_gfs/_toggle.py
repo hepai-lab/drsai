@@ -37,14 +37,8 @@ async def _toggle_visibility(slug: str, user_id: str, visibility: str) -> dict:
         raise HTTPException(status_code=403, detail="Cannot change visibility of synced skills")
 
     if existing.owner_id and existing.owner_id != user_id:
-        from ....datamodel.db import Userinfo as _U
-        uresp = db_mgr.get(_U, filters={"user_id": user_id}, return_json=False)
-        if uresp.status and uresp.data:
-            umeta = dict(getattr(uresp.data[0], "meta", None) or {})
-            skill_role = umeta.get("skill_role", "user")
-        else:
-            skill_role = "user"
-        if skill_role != "admin":
+        from ...authz import get_is_platform_admin
+        if not get_is_platform_admin(db_mgr, user_id):
             raise HTTPException(status_code=403, detail="Not the owner of this skill")
 
     vis = visibility.strip().lower()

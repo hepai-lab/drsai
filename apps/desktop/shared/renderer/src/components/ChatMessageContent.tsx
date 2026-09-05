@@ -1,4 +1,4 @@
-import { memo, Profiler, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type FC, type ComponentPropsWithoutRef, createContext } from "react";
+import { memo, Profiler, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type FC, type ComponentPropsWithoutRef, createContext } from "react";
 import { Check, ChevronDown, ChevronRight, Copy, FileText } from "lucide-react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -6,7 +6,7 @@ import { parseChatOutput } from "../chatOutputModel";
 import { copyTextSafely } from "../clipboard";
 import { copyTextReliable } from "../threadShareClient";
 import { createStreamingTextFadePlugin, useStreamingTextSegments } from "../streamingTextFade";
-import { splitStreamingMarkdownIncremental, type StreamingMarkdownSplit } from "../streamingMarkdown";
+import { splitStreamingMarkdownIncremental, splitMarkdownIntoBlocks, STREAMING_PLAINTEXT_THRESHOLD, MARKDOWN_BLOCK_THRESHOLD, type StreamingMarkdownSplit } from "../streamingMarkdown";
 import { useStreamingDisplayBuffer } from "../streamingDisplayBuffer";
 import { observeStreamingRenderMetric } from "../streamingRenderMetrics";
 import { CITATION_HREF_PREFIX, createCitationMarkerPlugin, type InlineCitationLink } from "../citationMarkerPlugin";
@@ -236,6 +236,184 @@ const MarkdownRenderer = memo(function MarkdownRenderer({ content, language, onO
   );
 });
 
+// ── P3: VirtualizedMarkdown — renders large markdown in virtualized blocks ──
+// When markdown content exceeds MARKDOWN_BLOCK_THRESHOLD (32KB), it is split
+// into paragraph-level blocks. Only blocks near the viewport are rendered;
+// off-screen blocks use a lightweight placeholder. This prevents React from
+// having to reconcile thousands of DOM nodes for very long messages.
+const PRERENDER_BLOCKS = 5; // blocks above/below viewport to pre-render
+
+const VirtualizedBlock = memo(
+  function VirtualizedBlock({ block, language, onOpenLink, citations, onOpenCitation, artifactLinks, onOpenArtifactLink, onOpenArtifactLinkMenu }: {
+    block: { index: number; text: string; length: number };
+  } & Omit<MarkdownRendererProps, "content" | "streaming">): React.JSX.Element {
+    return (
+      <MarkdownRenderer
+        content={block.text}
+        language={language}
+        onOpenLink={onOpenLink}
+        citations={citations}
+        onOpenCitation={onOpenCitation}
+        artifactLinks={artifactLinks}
+        onOpenArtifactLink={onOpenArtifactLink}
+        onOpenArtifactLinkMenu={onOpenArtifactLinkMenu}
+      />
+    );
+  },
+  (prev, next) => {
+    if (prev.block.text !== next.block.text) return false;
+    if (prev.language !== next.language) return false;
+    return true;
+  },
+);
+
+const VirtualizedMarkdown = memo(function VirtualizedMarkdown({
+  content,
+  language,
+  onOpenLink,
+  citations,
+  onOpenCitation,
+  artifactLinks,
+  onOpenArtifactLink,
+  onOpenArtifactLinkMenu,
+}: Omit<MarkdownRendererProps, "streaming">): React.JSX.Element {
+  const blocks = useMemo(() => splitMarkdownIntoBlocks(content), [content]);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [visibleRange, setVisibleRange] = useState<{ start: number; end: number }>({ start: 0, end: Math.min(blocks.length, PRERENDER_BLOCKS * 2 + 1) });
+
+  // IntersectionObserver to track which blocks are visible
+  useEffect(() => {
+    if (blocks.length <= PRERENDER_BLOCKS * 2 + 1) return; // no virtualization needed
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // Find the first and last visible block indices
+        let minIdx = Infinity, maxIdx = -1;
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const idx = Number((entry.target as HTMLElement).dataset.blockIndex);
+            if (idx < minIdx) minIdx = idx;
+            if (idx > maxIdx) maxIdx = idx;
+          }
+        }
+        if (minIdx === Infinity) return;
+        setVisibleRange({
+          start: Math.max(0, minIdx - PRERENDER_BLOCKS),
+          end: Math.min(blocks.length, maxIdx + PRERENDER_BLOCKS + 1),
+        });
+      },
+      { root: container.closest('.chat-output, .chat-markdown') || null, rootMargin: "200px" },
+    );
+
+    // Observe sentinel elements
+    const sentinels = container.querySelectorAll('[data-block-index]');
+    sentinels.forEach((el) => observer.observe(el));
+
+    return () => observer.disconnect();
+  }, [blocks.length]);
+
+  // If blocks are few enough, render all without virtualization
+  if (blocks.length <= PRERENDER_BLOCKS * 2 + 1) {
+    return (
+      <div ref={containerRef}>
+        {blocks.map((block) => (
+          <VirtualizedBlock
+            key={block.index}
+            block={block}
+            language={language}
+            onOpenLink={onOpenLink}
+            citations={citations}
+            onOpenCitation={onOpenCitation}
+            artifactLinks={artifactLinks}
+            onOpenArtifactLink={onOpenArtifactLink}
+            onOpenArtifactLinkMenu={onOpenArtifactLinkMenu}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // Virtualized rendering: only render blocks within visibleRange, use
+  // lightweight placeholders for off-screen blocks to minimize DOM node count
+  return (
+    <div ref={containerRef}>
+      {blocks.map((block) => {
+        const isVisible = block.index >= visibleRange.start && block.index < visibleRange.end;
+        if (isVisible) {
+          return (
+            <div key={block.index} data-block-index={block.index}>
+              <VirtualizedBlock
+                key={block.index}
+                block={block}
+                language={language}
+                onOpenLink={onOpenLink}
+                citations={citations}
+                onOpenCitation={onOpenCitation}
+                artifactLinks={artifactLinks}
+                onOpenArtifactLink={onOpenArtifactLink}
+                onOpenArtifactLinkMenu={onOpenArtifactLinkMenu}
+              />
+            </div>
+          );
+        }
+        // Placeholder: estimate height based on block length (rough heuristic)
+        const estimatedHeight = Math.max(40, Math.min(2000, block.length * 0.3));
+        return (
+          <div
+            key={block.index}
+            data-block-index={block.index}
+            style={{ height: `${estimatedHeight}px` }}
+            className="chat-virtualized-placeholder"
+            aria-hidden="true"
+          />
+        );
+      })}
+    </div>
+  );
+});
+
+// ── P3: StableMarkdown — memoized renderer for the "stable" split part ──
+// During streaming, `splitStreamingMarkdownIncremental` locks completed blocks
+// into `split.stable`. This part never changes, but the parent re-renders every
+// ~64ms. A custom comparator prevents ReactMarkdown from re-parsing the stable
+// part, saving significant CPU on long messages.
+const StableMarkdown = memo(
+  function StableMarkdown({ content, language, onOpenLink, citations, onOpenCitation, artifactLinks, onOpenArtifactLink, onOpenArtifactLinkMenu }: MarkdownRendererProps): React.JSX.Element {
+    return (
+      <MarkdownRenderer
+        content={content}
+        language={language}
+        onOpenLink={onOpenLink}
+        citations={citations}
+        onOpenCitation={onOpenCitation}
+        artifactLinks={artifactLinks}
+        onOpenArtifactLink={onOpenArtifactLink}
+        onOpenArtifactLinkMenu={onOpenArtifactLinkMenu}
+      />
+    );
+  },
+  (prev, next) => {
+    if (prev.content !== next.content) return false;
+    if (prev.language !== next.language) return false;
+    // Deep-ish comparison for arrays that may get new references but same content
+    if (prev.citations !== next.citations) {
+      const a = prev.citations, b = next.citations;
+      if (!a || !b) return a === b;
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) if (a[i].id !== b[i].id) return false;
+    }
+    if (prev.artifactLinks !== next.artifactLinks) {
+      const a = prev.artifactLinks, b = next.artifactLinks;
+      if (!a || !b) return a === b;
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) if (a[i].id !== b[i].id) return false;
+    }
+    return true;
+  },
+);
+
 function MarkdownContent({ content, language, onOpenLink, streaming = false, citations, onOpenCitation, artifactLinks, onOpenArtifactLink, onOpenArtifactLinkMenu }: MarkdownRendererProps): React.JSX.Element {
   const renderStartedAt = performance.now();
   const displayedContent = useStreamingDisplayBuffer(content, streaming);
@@ -250,12 +428,42 @@ function MarkdownContent({ content, language, onOpenLink, streaming = false, cit
   useLayoutEffect(() => {
     if (streaming) observeStreamingRenderMetric("commit-layout", performance.now() - renderStartedAt);
   }, [displayedContent, streaming]);
+
+  // P3: Streaming degraded rendering — when tail exceeds threshold, render as
+  // plain <pre> to avoid expensive ReactMarkdown re-parsing every 64ms.
+  const tailIsLarge = streaming && split.tail.length > STREAMING_PLAINTEXT_THRESHOLD;
+
+  // P3: Non-streaming virtualization — when final content exceeds block threshold,
+  // use VirtualizedMarkdown to avoid rendering all DOM nodes at once.
+  const shouldVirtualize = !streaming && displayedContent.length > MARKDOWN_BLOCK_THRESHOLD;
+
+  if (shouldVirtualize) {
+    return (
+      <VirtualizedMarkdown
+        content={displayedContent}
+        language={language}
+        onOpenLink={onOpenLink}
+        citations={citations}
+        onOpenCitation={onOpenCitation}
+        artifactLinks={artifactLinks}
+        onOpenArtifactLink={onOpenArtifactLink}
+        onOpenArtifactLinkMenu={onOpenArtifactLinkMenu}
+      />
+    );
+  }
+
   return (
     <Profiler id="streaming-markdown" onRender={(_id, _phase, actualDuration) => {
       if (streaming) observeStreamingRenderMetric("markdown-render", actualDuration);
     }}>
-      {split.stable ? <MarkdownRenderer content={split.stable} language={language} onOpenLink={onOpenLink} citations={citations} onOpenCitation={onOpenCitation} artifactLinks={artifactLinks} onOpenArtifactLink={onOpenArtifactLink} onOpenArtifactLinkMenu={onOpenArtifactLinkMenu} /> : null}
-      {split.tail ? <MarkdownRenderer content={split.tail} language={language} onOpenLink={onOpenLink} streaming={streaming} citations={citations} onOpenCitation={onOpenCitation} artifactLinks={artifactLinks} onOpenArtifactLink={onOpenArtifactLink} onOpenArtifactLinkMenu={onOpenArtifactLinkMenu} /> : null}
+      {split.stable ? <StableMarkdown content={split.stable} language={language} onOpenLink={onOpenLink} citations={citations} onOpenCitation={onOpenCitation} artifactLinks={artifactLinks} onOpenArtifactLink={onOpenArtifactLink} onOpenArtifactLinkMenu={onOpenArtifactLinkMenu} /> : null}
+      {split.tail ? (
+        tailIsLarge ? (
+          <pre className="chat-streaming-plaintext">{split.tail}</pre>
+        ) : (
+          <MarkdownRenderer content={split.tail} language={language} onOpenLink={onOpenLink} streaming={streaming} citations={citations} onOpenCitation={onOpenCitation} artifactLinks={artifactLinks} onOpenArtifactLink={onOpenArtifactLink} onOpenArtifactLinkMenu={onOpenArtifactLinkMenu} />
+        )
+      ) : null}
     </Profiler>
   );
 }

@@ -2287,7 +2287,7 @@ async function runRuntimeBackendChat(
       },
     };
   const executionAuth: RuntimeExecutionAuth | undefined = isPlatformBearerAuth(auth)
-      ? { authMode: "oidc", accessToken: auth.accessToken, userId: auth.userId }
+      ? { authMode: "oidc", accessToken: auth.accessToken, refreshToken: auth.refreshToken, userId: auth.userId }
       : auth.authMode === "offline"
         ? { authMode: "offline", userId: auth.userId }
         : undefined;

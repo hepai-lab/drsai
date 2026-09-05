@@ -1,11 +1,12 @@
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { Spin } from "antd";
 import {
-  Download, Pencil, BookmarkPlus, BookmarkMinus, Check, Share2, Trash2, Lock,
+  Download, Pencil, BookmarkPlus, BookmarkMinus, Check, Share2, Trash2, Lock, Heart,
   Calendar, List, Info, FileText, Globe, GitBranch, Tag, AlignLeft,
 } from "lucide-react";
 import MarkdownRenderer from "../components/common/markdownrender";
 import type { SkillsPublicDetail } from "../components/views/api";
+import { resolveSkillAssetUrl } from "./skills-square/utils";
 
 export interface SkillDetailPanelProps {
   skillDetail: SkillsPublicDetail;
@@ -64,10 +65,11 @@ function sourceLabel(source: string | undefined, isZh: boolean): string {
 function sourceColor(source: string | undefined): string {
   if (source === "imported") return "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300";
   if (source === "higraf") return "bg-cyan-100 text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-300";
-  return "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300";
+  if (source === "created") return "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300";
+  return "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300";
 }
 
-const CARD_CLS = "rounded-2xl border border-gray-200/60 bg-white shadow-sm dark:border-white/[0.06] dark:bg-slate-900";
+const CARD_CLS = "rounded-2xl border border-gray-200/60 bg-white shadow-sm overflow-hidden dark:border-white/[0.06] dark:bg-slate-900";
 
 const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
   skillDetail, loading, onClose, onDownload, renderSkillIcon, t,
@@ -157,16 +159,20 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
   );
 
   const hasOtherActions = !!(onShare || (onEdit && isCollected === undefined) || (hasToggleButton && onTogglePublic) || (source === "created" && onDelete) || (source === "imported" && onUncollect));
+  const profileSrc = resolveSkillAssetUrl(skillDetail.profile);
 
   return (
     <div className="flex flex-col gap-5 max-w-full">
       {/* ═══ TOP CARD: Skill info + actions ═══ */}
-      <div className={`shrink-0 ${CARD_CLS} p-5`}>
+      <div className={`shrink-0 ${CARD_CLS}`}>
+        {/* Subtle gradient accent bar at top */}
+        <div className="h-1 w-full bg-gradient-to-r from-accent/60 via-purple-400/40 to-blue-400/30" />
+        <div className="p-5">
         <div className="flex flex-col md:flex-row md:items-start gap-4">
           {/* Left: icon + name + meta */}
           <div className="flex items-start gap-4 min-w-0 flex-1">
-            {skillDetail.profile ? (
-              <img src={skillDetail.profile} alt={skillDetail.name} className="h-14 w-14 rounded-2xl object-cover shrink-0 shadow-sm ring-1 ring-gray-200/80 dark:ring-white/10" />
+            {profileSrc ? (
+              <img src={profileSrc} alt={skillDetail.name} className="h-14 w-14 rounded-2xl object-cover shrink-0 shadow-sm ring-1 ring-gray-200/80 dark:ring-white/10" />
             ) : (
               renderSkillIcon(skillDetail.icon, "h-14 w-14 rounded-2xl shrink-0", "h-7 w-7")
             )}
@@ -186,6 +192,9 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
                 )}
                 <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
                   <Download className="h-3 w-3" />{skillDetail.downloads ?? 0}
+                </span>
+                <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
+                  <Heart className="h-3 w-3" />{skillDetail.collects ?? 0}
                 </span>
                 {ownerLabel && (
                   <span className="inline-flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
@@ -244,22 +253,23 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
             )}
           </div>
         </div>
+        </div>
       </div>
 
       {/* ═══ BOTTOM CARD: Tabs + content ═══ */}
       <div className={`flex flex-col ${CARD_CLS}`}>
         {/* Tab bar */}
-        <div className="shrink-0 flex items-center border-b border-gray-200/70 px-5 dark:border-white/[0.08]">
+        <div className="shrink-0 flex items-center gap-1 border-b border-gray-200/70 bg-gray-50/30 px-3 dark:border-white/[0.08] dark:bg-white/[0.02]">
           <button type="button" onClick={() => setActiveTab("info")}
-            className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors border-b-2 -mb-[1px] ${activeTab === "info" ? "border-accent text-accent" : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"}`}>
+            className={`flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-medium rounded-t-lg transition-all duration-200 border-b-2 -mb-[1px] ${activeTab === "info" ? "border-accent text-accent bg-white dark:bg-slate-900" : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100/50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-white/[0.04]"}`}>
             <Info className="h-3.5 w-3.5" />{isZh ? "基本信息" : "Info"}
           </button>
           <button type="button" onClick={() => setActiveTab("description")}
-            className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors border-b-2 -mb-[1px] ${activeTab === "description" ? "border-accent text-accent" : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"}`}>
+            className={`flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-medium rounded-t-lg transition-all duration-200 border-b-2 -mb-[1px] ${activeTab === "description" ? "border-accent text-accent bg-white dark:bg-slate-900" : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100/50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-white/[0.04]"}`}>
             <AlignLeft className="h-3.5 w-3.5" />{isZh ? "描述" : "Description"}
           </button>
           <button type="button" onClick={() => setActiveTab("content")}
-            className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors border-b-2 -mb-[1px] ${activeTab === "content" ? "border-accent text-accent" : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"}`}>
+            className={`flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-medium rounded-t-lg transition-all duration-200 border-b-2 -mb-[1px] ${activeTab === "content" ? "border-accent text-accent bg-white dark:bg-slate-900" : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100/50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-white/[0.04]"}`}>
             <FileText className="h-3.5 w-3.5" />{isZh ? "技能内容" : "Skill Content"}
           </button>
         </div>
@@ -271,25 +281,25 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
               {/* Info grid — only fields NOT already shown in the top card */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {compatibility && (
-                  <div className="rounded-lg border border-gray-200/70 px-4 py-3 dark:border-white/[0.08]">
+                  <div className="group rounded-xl border border-gray-200/70 bg-gradient-to-b from-gray-50/50 to-white px-4 py-3.5 transition-all duration-200 hover:border-accent/20 hover:shadow-sm dark:border-white/[0.08] dark:from-white/[0.03] dark:to-transparent dark:hover:border-accent/15">
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">{isZh ? "兼容性" : "Compatibility"}</p>
-                    <p className="text-sm font-medium text-gray-800 dark:text-gray-100">{compatibility}</p>
+                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">{compatibility}</p>
                   </div>
                 )}
-                <div className="rounded-lg border border-gray-200/70 px-4 py-3 dark:border-white/[0.08]">
+                <div className="group rounded-xl border border-gray-200/70 bg-gradient-to-b from-gray-50/50 to-white px-4 py-3.5 transition-all duration-200 hover:border-accent/20 hover:shadow-sm dark:border-white/[0.08] dark:from-white/[0.03] dark:to-transparent dark:hover:border-accent/15">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">{isZh ? "标识符" : "Slug"}</p>
-                  <p className="text-sm font-medium text-gray-800 dark:text-gray-100 font-mono text-[12px]">{skillDetail.slug}</p>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-gray-100 font-mono text-[12px]">{skillDetail.slug}</p>
                 </div>
                 {skillDetail.created_at && (
-                  <div className="rounded-lg border border-gray-200/70 px-4 py-3 dark:border-white/[0.08]">
+                  <div className="group rounded-xl border border-gray-200/70 bg-gradient-to-b from-gray-50/50 to-white px-4 py-3.5 transition-all duration-200 hover:border-accent/20 hover:shadow-sm dark:border-white/[0.08] dark:from-white/[0.03] dark:to-transparent dark:hover:border-accent/15">
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">{isZh ? "创建时间" : "Created"}</p>
-                    <p className="text-sm font-medium text-gray-800 dark:text-gray-100" title={new Date(skillDetail.created_at).toLocaleDateString()}>{formatRelativeTime(skillDetail.created_at, isZh)}</p>
+                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-100" title={new Date(skillDetail.created_at).toLocaleDateString()}>{formatRelativeTime(skillDetail.created_at, isZh)}</p>
                   </div>
                 )}
                 {skillDetail.updated_at && (
-                  <div className="rounded-lg border border-gray-200/70 px-4 py-3 dark:border-white/[0.08]">
+                  <div className="group rounded-xl border border-gray-200/70 bg-gradient-to-b from-gray-50/50 to-white px-4 py-3.5 transition-all duration-200 hover:border-accent/20 hover:shadow-sm dark:border-white/[0.08] dark:from-white/[0.03] dark:to-transparent dark:hover:border-accent/15">
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">{isZh ? "更新时间" : "Updated"}</p>
-                    <p className="text-sm font-medium text-gray-800 dark:text-gray-100" title={new Date(skillDetail.updated_at).toLocaleDateString()}>{formatRelativeTime(skillDetail.updated_at, isZh)}</p>
+                    <p className="text-sm font-semibold text-gray-800 dark:text-gray-100" title={new Date(skillDetail.updated_at).toLocaleDateString()}>{formatRelativeTime(skillDetail.updated_at, isZh)}</p>
                   </div>
                 )}
               </div>
@@ -308,7 +318,7 @@ const SkillDetailPanel: React.FC<SkillDetailPanelProps> = ({
               )}
             </div>
           ) : activeTab === "description" ? (
-            <div>
+            <div className="rounded-xl border border-gray-200/70 bg-gray-50/50 p-6 dark:border-white/[0.06] dark:bg-white/[0.02]">
               {skillDetail.description ? (
                 <p className="text-sm leading-relaxed text-gray-700 dark:text-gray-300">{skillDetail.description}</p>
               ) : (

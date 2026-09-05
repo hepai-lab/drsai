@@ -18,7 +18,7 @@ agent 在 function calling 中无需感知用户身份，调用上看起来就�
 工具命名约定
 ------------
 
-工具名以 ``gfs_`` 前缀，避免与 agent 内置的 ``run_read`` / ``run_write`` 工具冲突。
+工具名以 ``gfs_`` 前缀，避免与 agent 内置的 ``read`` / ``write`` 工具冲突。
 agent 可以同时拥有"本地文件工具"和"GFS 工具"，由 system prompt 引导选择。
 
 路径语义
@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 # 读 / 写文本时的字符上限——避免 agent 一次把超大文件塞进上下文
 MAX_TEXT_PREVIEW_CHARS = 64 * 1024  # 64K chars — 兜底上限
-MAX_OUTPUT_CHARS = 5000  # gfs_read / gfs_ls 最终输出字符上限（与 run_read 一致）
+MAX_OUTPUT_CHARS = 5000  # gfs_read / gfs_ls 最终输出字符上限（与 read 一致）
 
 
 def _format_size(n: int) -> str:
@@ -181,7 +181,7 @@ def _build_tools(
 
         - 二进制文件请改用 gfs_download
         - 超过 32 MB 的对象会被拒绝
-        - 支持 minilimit/maxlimit 按行分页读取（与 run_read 一致）
+        - 支持 minilimit/maxlimit 按行分页读取（与 read 一致）
         - 最终输出截断为 5000 字符
         """
         cli = _client()

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { applyThreadSnapshotPatchBatch } from "./threadSnapshotPatch";
 import { ThreadPatchFrameBatcher } from "./threadPatchFrameBatcher";
+import { startRenderHealthMonitor } from "./renderHealthMonitor";
 import { executeRecoveryActionOnce } from "./recoveryActionCoordinator";
 import { ThreadSnapshotStore } from "./threadSnapshotStore";
 import { ThreadSnapshotCoordinator } from "./threadSnapshotCoordinator";
@@ -981,6 +982,18 @@ function AuthenticatedApp({
       removePatch();
       batcher.dispose();
     };
+  }, []);
+  // P1: Start render health monitor — sends FPS reports to main process
+  // for adaptive backpressure control (healthy=0ms, degraded=100ms, critical=200ms flush delay)
+  useEffect(() => {
+    const stopMonitor = startRenderHealthMonitor((report) => {
+      try {
+        desktopApi.sendRenderHealthReport({ fps: report.fps, tier: report.tier });
+      } catch {
+        // IPC not available — silently ignore (e.g. in tests/mock environment)
+      }
+    });
+    return () => { stopMonitor(); };
   }, []);
   useEffect(() => desktopApi.onThreadCatalogUpdate((event) => {
     if (

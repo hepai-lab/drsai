@@ -1,5 +1,28 @@
 import JSZip from "jszip";
+import { getServerUrl } from "../../components/utils";
 import { HEPAI_MAX_ZIP_BYTES, MAX_SKILL_FOLDER_FILES } from "./constants";
+
+/** Turn API-relative skill asset paths into a browser-loadable URL. */
+export function resolveSkillAssetUrl(
+  url: string | null | undefined,
+): string | null {
+  if (!url?.trim()) return null;
+  const value = url.trim();
+  if (
+    value.startsWith("data:") ||
+    value.startsWith("http://") ||
+    value.startsWith("https://")
+  ) {
+    return value;
+  }
+  if (value.startsWith("/api/")) {
+    return `${getServerUrl()}${value.slice(4)}`;
+  }
+  if (value.startsWith("/")) {
+    return value;
+  }
+  return value;
+}
 
 /** Backend may store literal "undefined" when edit form state was out of sync. */
 export const sanitizeChangelog = (v?: string | null) =>

@@ -55,6 +55,7 @@ def _skillmeta_to_dict(row) -> dict:
         "imported_ref": row.imported_ref if isinstance(row.imported_ref, dict) else None,
         "tags": row.tags if isinstance(row.tags, list) else [],
         "downloads": row.download_count,
+        "collects": len(row.collector_ids) if isinstance(row.collector_ids, list) else 0,
         "collector_ids": row.collector_ids if isinstance(row.collector_ids, list) else [],
         "agent_ids": row.agent_ids if isinstance(row.agent_ids, list) else [],
         "team_ids": row.team_ids if isinstance(row.team_ids, list) else [],

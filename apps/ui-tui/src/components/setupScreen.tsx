@@ -23,7 +23,7 @@ import { theme } from '../theme.js'
 
 import { TextInput } from './textInput.js'
 
-type Provider = 'hepai' | 'anthropic' | 'openai' | 'skip'
+type Provider = 'oidc' | 'hepai' | 'anthropic' | 'openai' | 'skip'
 
 interface ProviderOption {
   key: Provider
@@ -34,9 +34,15 @@ interface ProviderOption {
 
 const PROVIDERS: ProviderOption[] = [
   {
+    key: 'oidc',
+    label: 'OIDC Login',
+    hint: '推荐 — 通过 IHEP HAI 统一身份认证登录',
+    url: 'https://ai-dev.ihep.ac.cn',
+  },
+  {
     key: 'hepai',
     label: 'HepAI',
-    hint: '推荐 — IHEP/CAS 高速访问',
+    hint: 'IHEP/CAS 高速访问（API Key）',
     url: 'https://aiapi.ihep.ac.cn/',
   },
   {
@@ -152,6 +158,10 @@ export function SetupScreen({ gw, configExists, onComplete, onDismiss }: SetupSc
         if (picked.key === 'skip') {
           // Save an empty record so we don't keep nagging across launches.
           void submit('skip', '', '')
+        } else if (picked.key === 'oidc') {
+          // OIDC: save user_id + set auth_mode=oidc, then let onComplete
+          // trigger the auth phase in app.tsx
+          void submitOidc()
         } else {
           setStep('apikey')
         }
@@ -164,6 +174,8 @@ export function SetupScreen({ gw, configExists, onComplete, onDismiss }: SetupSc
         setProvider(picked.key)
         if (picked.key === 'skip') {
           void submit('skip', '', '')
+        } else if (picked.key === 'oidc') {
+          void submitOidc()
         } else {
           setStep('apikey')
         }
@@ -183,6 +195,31 @@ export function SetupScreen({ gw, configExists, onComplete, onDismiss }: SetupSc
       setStep('done')
       // Overlay mode: close panel after brief success display.
       // Boot mode: trigger App re-bootstrap.
+      if (onDismiss) {
+        setTimeout(onDismiss, 500)
+      } else {
+        setTimeout(onComplete, 500)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setErrorMsg(msg)
+      setStep('error')
+    }
+  }
+
+  async function submitOidc() {
+    // Save user_id + set auth_mode=oidc. No API key needed —
+    // the actual OIDC login happens in the AuthScreen phase.
+    setStep('submitting')
+    try {
+      await gw.request('setup.save', {
+        provider: 'skip',
+        user_id: userId || undefined,
+        auth_mode: 'oidc',
+      })
+      setStep('done')
+      // Trigger onComplete → app.tsx will check auth.status and route
+      // to the auth screen since auth_mode=oidc + not authenticated
       if (onDismiss) {
         setTimeout(onDismiss, 500)
       } else {

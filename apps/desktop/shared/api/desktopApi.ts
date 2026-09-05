@@ -6391,4 +6391,6 @@ export interface DesktopApi {
   gfsGetConfig(): Promise<GfsConfigStatus>;
   gfsSaveConfig(request: GfsConfigSaveRequest): Promise<GfsConfigSaveResult>;
   gfsClearConfig(): Promise<GfsConfigClearResult>;
+  /** P1: Send renderer FPS health report to main process for adaptive backpressure control. */
+  sendRenderHealthReport(report: { fps: number; tier: "healthy" | "degraded" | "critical" }): void;
 }

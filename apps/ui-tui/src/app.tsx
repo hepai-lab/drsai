@@ -15,12 +15,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createGatewayEventHandler } from './app/createGatewayEventHandler.js'
 import { FOCUS_IN_INPUT, FOCUS_OUT_INPUT, parseMouseEvent } from './app/focusEvents.js'
 import { parseHistory } from './app/historyParser.js'
+import { stripTodoWriteArtifacts } from './app/todoArtifacts.js'
 import { disableMouseTracking, enableMouseTracking } from './app/terminalControl.js'
 import { TurnController } from './app/turnController.js'
+import { getPartText, type AssistantTurn } from './app/types.js'
 import { $current, $isStreaming, $transcript, setTranscript } from './app/turnStore.js'
-import { $connectionError, $connectionStatus, $copyMode, $lastUsage, $memoryPreview, $remoteHost, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
+import { $connectionError, $connectionStatus, $copyMode, $expandedTurns, $lastUsage, $memoryPreview, $remoteHost, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
 import { AppLayout } from './components/appLayout.js'
 import { SetupScreen } from './components/setupScreen.js'
+import { AuthScreen } from './components/authScreen.js'
+import { SkillsSetupScreen } from './components/skillsSetupScreen.js'
 import type { GatewayClient } from './gatewayClient.js'
 import type { SessionCreateResult, SessionInfo, SessionListResult, SessionResumeResult } from './gatewayTypes.js'
 import { theme } from './theme.js'
@@ -64,6 +68,8 @@ function preprintMemoryBanner(text: string): void {
 type Bootstrap =
   | { phase: 'connecting' }
   | { phase: 'setup'; configExists: boolean }
+  | { phase: 'auth'; authReason: 'first_run' | 'expired' }
+  | { phase: 'skills_setup'; skillsReason: 'first_run' | 'post_auth' }
   | { phase: 'resuming'; session: SessionInfo }
   | { phase: 'ready'; sessionId: string; controller: TurnController }
   | { phase: 'error'; message: string }
@@ -213,6 +219,86 @@ export function App({ gw }: AppProps) {
       return
     }
 
+    // Ctrl+X: expand the most recent collapsed assistant turn.
+    //
+    // When a turn's content exceeds the final-render budget,
+    // ``AssistantBlock`` clips it (keeping the latest rows) and shows
+    // "↑ N earlier lines collapsed (Ctrl+X to expand)".  Pressing
+    // Ctrl+X prints the full content to terminal scrollback via
+    // ``console.log()`` (Ink patches this to coordinate with its
+    // output management).  The content appears below the current
+    // dynamic frame; the user can scroll up to read it.
+    //
+    // Why Ctrl+X instead of Ctrl+E?  Ctrl+E is a standard readline
+    // shortcut (move cursor to end of line) and is intercepted by
+    // VSCode's integrated terminal and other editors.  Ctrl+X is not
+    // intercepted by VSCode, terminal emulators, tmux (prefix is
+    // Ctrl+B), or GNU screen (prefix is Ctrl+A).  In bash readline,
+    // Ctrl+X is only a prefix for two-key sequences (Ctrl+X Ctrl+E),
+    // so a single Ctrl+X does nothing — no conflict.
+    //
+    // The turn ID is tracked in ``$expandedTurns`` to avoid printing
+    // the same content twice.  If the most recent turn wasn't
+    // collapsed (content fit within budget), a status hint is shown.
+    if (key.ctrl && _input === 'x') {
+      const transcript = $transcript.get()
+      // Find the last assistant turn
+      let lastAssistant: AssistantTurn | null = null
+      for (let i = transcript.length - 1; i >= 0; i--) {
+        if (transcript[i].role === 'assistant') {
+          lastAssistant = transcript[i] as AssistantTurn
+          break
+        }
+      }
+      if (!lastAssistant) {
+        $statusLine.set('No assistant turn to expand')
+        setTimeout(() => { if ($statusLine.get() === 'No assistant turn to expand') $statusLine.set('') }, 2000)
+        return
+      }
+
+      const turnId = String(lastAssistant.startedAt)
+      const expanded = $expandedTurns.get()
+      if (expanded.has(turnId)) {
+        $statusLine.set('Already expanded')
+        setTimeout(() => { if ($statusLine.get() === 'Already expanded') $statusLine.set('') }, 2000)
+        return
+      }
+
+      // Print the full content to scrollback via console.log (Ink-patched)
+      console.log(`\x1b[38;2;110;110;110m── expanded turn ──\x1b[0m`)
+      if (lastAssistant.contentParts.length > 0) {
+        for (const part of lastAssistant.contentParts) {
+          if (part.kind === 'text') {
+            const text = stripTodoWriteArtifacts(getPartText(part))
+            if (text) console.log(text)
+          } else {
+            const tool = lastAssistant.tools.find(t => t.id === part.toolId)
+            if (tool) {
+              console.log(`  [tool: ${tool.name}]`)
+              if (tool.result) console.log(`  ${tool.result.split('\n').join('\n  ')}`)
+            }
+          }
+        }
+      } else {
+        // Legacy fallback
+        const text = stripTodoWriteArtifacts(lastAssistant.text)
+        if (text) console.log(text)
+      }
+      console.log(`\x1b[38;2;110;110;110m── end expanded ──\x1b[0m`)
+
+      // Mark as expanded
+      const next = new Set(expanded)
+      next.add(turnId)
+      $expandedTurns.set(next)
+      $statusLine.set('Expanded turn content printed to scrollback')
+      setTimeout(() => {
+        if ($statusLine.get() === 'Expanded turn content printed to scrollback') {
+          $statusLine.set('')
+        }
+      }, 3000)
+      return
+    }
+
     if (key.ctrl && _input === 'c') {
       // Don't interfere with streaming-cancel: composerPane handles
       // Ctrl+C while $isStreaming === true. We only act when idle.
@@ -328,6 +414,9 @@ export function App({ gw }: AppProps) {
     interface SetupSnapshot {
       setup_required?: boolean
       config_exists?: boolean
+      auth_mode?: string
+      auth_authenticated?: boolean
+      skills_selected?: boolean
     }
     let setupStatus: SetupSnapshot | null = null
     const unsubSetup = gw.onEvent('gateway.ready', ev => {
@@ -421,8 +510,40 @@ export function App({ gw }: AppProps) {
     }
 
     // Stash on the App's closure so SetupScreen can trigger it after save.
+    // Post-setup flow: if user chose OIDC auth → auth screen → skills → resolve
+    // If user chose API key → skills → resolve
     setupCompleteHandlerRef.current = async () => {
       try {
+        // Check current auth status to decide next step
+        const authStatus = await gw.request<{
+          auth_mode: string
+          authenticated: boolean
+          token_expired: boolean
+          setup_required: boolean
+        }>('auth.status', {})
+
+        // If user chose OIDC but isn't authenticated yet → show auth screen
+        if (authStatus.auth_mode === 'oidc' && !authStatus.authenticated) {
+          setBoot({ phase: 'auth', authReason: 'first_run' })
+          return
+        }
+
+        // If user hasn't done skills selection yet → show skills screen
+        if (!authStatus.setup_required) {
+          // Check skills_selected from the setup snapshot
+          // We re-check via a fresh auth.status call (which includes skills info
+          // indirectly via cli_config) — but actually we need setup.skills.list
+          // to know if skills_selected. Use the captured setupStatus instead.
+          // For simplicity, always show skills setup on first run.
+          const setupResp = await gw.request<{
+            skills_selected: boolean
+          }>('setup.status', {})
+          if (!setupResp.skills_selected) {
+            setBoot({ phase: 'skills_setup', skillsReason: 'post_auth' })
+            return
+          }
+        }
+
         await resolveSession()
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -446,6 +567,18 @@ export function App({ gw }: AppProps) {
             phase: 'setup',
             configExists: !!captured.config_exists,
           })
+          return
+        }
+
+        // Config exists — check if OIDC token needs refreshing/re-login
+        if (captured?.auth_mode === 'oidc' && !captured?.auth_authenticated) {
+          setBoot({ phase: 'auth', authReason: 'expired' })
+          return
+        }
+
+        // Check if skills selection hasn't been done yet
+        if (captured && !captured.skills_selected) {
+          setBoot({ phase: 'skills_setup', skillsReason: 'first_run' })
           return
         }
 
@@ -479,6 +612,56 @@ export function App({ gw }: AppProps) {
         gw={gw}
         configExists={boot.configExists}
         onComplete={() => {
+          setBoot({ phase: 'connecting' })
+          void setupCompleteHandlerRef.current?.()
+        }}
+      />
+    )
+  }
+  if (boot.phase === 'auth') {
+    return (
+      <AuthScreen
+        gw={gw}
+        onComplete={() => {
+          // After auth, check skills setup
+          void (async () => {
+            try {
+              const setupResp = await gw.request<{ skills_selected: boolean }>('setup.status', {})
+              if (!setupResp.skills_selected) {
+                setBoot({ phase: 'skills_setup', skillsReason: 'post_auth' })
+              } else {
+                setBoot({ phase: 'connecting' })
+                void setupCompleteHandlerRef.current?.()
+              }
+            } catch {
+              setBoot({ phase: 'connecting' })
+              void setupCompleteHandlerRef.current?.()
+            }
+          })()
+        }}
+        onCancel={() => {
+          // Go back to setup
+          setBoot({ phase: 'setup', configExists: true })
+        }}
+      />
+    )
+  }
+  if (boot.phase === 'skills_setup') {
+    return (
+      <SkillsSetupScreen
+        gw={gw}
+        onComplete={() => {
+          setBoot({ phase: 'connecting' })
+          void setupCompleteHandlerRef.current?.()
+        }}
+        onSkip={async () => {
+          // Persist skills_selected=true on the backend so the user
+          // is not bounced back to this screen on next boot.
+          try {
+            await gw.request('setup.skills.install', { skills: [] })
+          } catch {
+            // Best-effort — continue regardless
+          }
           setBoot({ phase: 'connecting' })
           void setupCompleteHandlerRef.current?.()
         }}

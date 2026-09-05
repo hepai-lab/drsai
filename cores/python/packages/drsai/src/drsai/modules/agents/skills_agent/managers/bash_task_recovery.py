@@ -226,7 +226,7 @@ class BashTaskRecovery:
             lines.append(f"✗ **失败任务**: {total_failed} 个")
             lines.append("")
 
-        lines.append(f"使用 `list_bash_tasks()` 查看所有任务详情")
+        lines.append(f"使用 `task_list()` 查看所有任务详情")
 
         return "\n".join(lines)
 

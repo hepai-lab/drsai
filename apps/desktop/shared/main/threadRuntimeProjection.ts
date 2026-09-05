@@ -13,11 +13,12 @@ import {
   attachmentNameFromPath,
   stripAttachmentContextFromUserContent,
 } from "../api/attachmentContextDisplay";
-import type {
-  StructuredActivityEvent,
-  StructuredAssistantPart,
-  StructuredPartStatus,
-  StructuredTurnState,
+import {
+  splitLegacyThinkContent,
+  type StructuredActivityEvent,
+  type StructuredAssistantPart,
+  type StructuredPartStatus,
+  type StructuredTurnState,
 } from "../api/structuredConversation";
 import type { RuntimeConversationItem } from "./runtimeClient";
 import type { OaepItem, OaepRun } from "./runtimeClient";
@@ -363,7 +364,8 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
 } {
   const status = structuredStatus(item.status);
   if (item.type === "message") {
-    const markdown = oaepText(item.content);
+    const rawMarkdown = oaepText(item.content);
+    const markdown = splitLegacyThinkContent(rawMarkdown).text.trim();
     if ((!markdown && !includeEmpty) || item.content.role !== "assistant") return { parts: [], activities: [] };
     if (item.content.phase === "commentary") {
       return { parts: [{ id: item.id, kind: "progress", status, summary: markdown, phase: "commentary" }], activities: [] };

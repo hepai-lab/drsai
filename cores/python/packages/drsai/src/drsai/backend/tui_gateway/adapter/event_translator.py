@@ -14,7 +14,7 @@ Event mapping (matches design doc Section "关键事件翻译表"):
 | TextMessage (user)                   | (skipped)            | UI already showed the prompt |
 | ToolCallRequestEvent                 | tool.start (per call) | args parsed from JSON-string |
 | ToolCallExecutionEvent               | tool.complete (per call) |   |
-| ToolCallSummaryMessage               | tool.complete (fallback) | DrSaiAgent path |
+| ToolCallSummaryMessage               | (archived — see comment below) | DrSaiAgent path |
 | Response                             | message.complete + usage.update | usage.update emitted when tokens captured |
 | TaskResult                           | (turn boundary)      | swept for usage |
 | AgentLogEvent                        | status.update kind=log |   |
@@ -451,41 +451,48 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         return out
 
     # ── Tool call summary (DrSaiAgent path) ──────────────────────────
-    if isinstance(message, ToolCallSummaryMessage):
-        msg_source = getattr(message, "source", "") or ""
-        is_sub = _is_subagent_source(msg_source)
-        # Drain any pending tool calls without explicit ExecutionEvent.
-        content = getattr(message, "content", None)
-        result_str = _safe_str(content)
-        if state.pending_tool_calls:
-            for tool_id, (name, args, started) in list(state.pending_tool_calls.items()):
-                duration_ms = int((time.time() - started) * 1000)
-                payload = {
-                    "tool_id": tool_id,
-                    "name": name,
-                    "args": args,
-                    "result": result_str,
-                    "duration_ms": duration_ms,
-                }
-                if is_sub:
-                    payload["source"] = msg_source
-                    payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
-                out.append(("tool.complete", payload))
-                state.pending_tool_calls.pop(tool_id, None)
-        else:
-            name = getattr(message, "source", "") or "tool"
-            payload = {
-                "tool_id": "",
-                "name": name,
-                "args": {},
-                "result": result_str,
-                "duration_ms": 0,
-            }
-            if is_sub:
-                payload["source"] = msg_source
-                payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
-            out.append(("tool.complete", payload))
-        return out
+    # ARCHIVED: drsai_assistant.py already emits paired ToolCallRequestEvent
+    # + ToolCallExecutionEvent for every tool call, so the summary message is
+    # not a tool-completion signal. Translating it into a tool.complete event
+    # either duplicated the completion (pending_tool_calls already drained by
+    # ToolCallExecutionEvent) or — when no pending calls existed — emitted a
+    # tool.complete with tool_id="" that _normalize_event rejects with
+    # "tool_identity_missing". Drop the message entirely.
+    # if isinstance(message, ToolCallSummaryMessage):
+    #     msg_source = getattr(message, "source", "") or ""
+    #     is_sub = _is_subagent_source(msg_source)
+    #     # Drain any pending tool calls without explicit ExecutionEvent.
+    #     content = getattr(message, "content", None)
+    #     result_str = _safe_str(content)
+    #     if state.pending_tool_calls:
+    #         for tool_id, (name, args, started) in list(state.pending_tool_calls.items()):
+    #             duration_ms = int((time.time() - started) * 1000)
+    #             payload = {
+    #                 "tool_id": tool_id,
+    #                 "name": name,
+    #                 "args": args,
+    #                 "result": result_str,
+    #                 "duration_ms": duration_ms,
+    #             }
+    #             if is_sub:
+    #                 payload["source"] = msg_source
+    #                 payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
+    #             out.append(("tool.complete", payload))
+    #             state.pending_tool_calls.pop(tool_id, None)
+    #     else:
+    #         name = getattr(message, "source", "") or "tool"
+    #         payload = {
+    #             "tool_id": "",
+    #             "name": name,
+    #             "args": {},
+    #             "result": result_str,
+    #             "duration_ms": 0,
+    #         }
+    #         if is_sub:
+    #             payload["source"] = msg_source
+    #             payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
+    #         out.append(("tool.complete", payload))
+    #     return out
 
     # ── TextMessage ──────────────────────────────────────────────────
     if isinstance(message, TextMessage):

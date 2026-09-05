@@ -6683,6 +6683,9 @@ export function installMockDesktopApi(): void {
     onTerminalExit: () => () => undefined,
     onBrowserTaskEvent: (callback) =>
       subscribe(browserTaskListeners, callback),
+    sendRenderHealthReport: () => {
+      // Mock: no-op — backpressure control is only active in production
+    },
   };
 
   window.openDrSai = api;

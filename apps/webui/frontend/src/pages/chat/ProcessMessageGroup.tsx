@@ -3,6 +3,7 @@ import { Message } from "../../components/types/datamodel";
 import { RenderMessage } from "./rendermessage";
 import MarkdownRenderer from "../../components/common/markdownrender";
 import TypewriterMessage from "./TypewriterMessage";
+import ProcessMessageGroupItem from "./ProcessMessageGroupItem";
 import {
   ChevronDown,
   ChevronRight,
@@ -236,94 +237,20 @@ const ProcessMessageGroup: React.FC<ProcessMessageGroupProps> = memo(
             className={`mt-1 ml-1 pl-3 border-l border-secondary/20 space-y-0.5 ${contentScrollClass} ${maximized ? "rounded-md border border-secondary/15 bg-secondary/[0.03] pr-2 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-md" : ""}`}
             style={contentStyle}
           >
-            {items.map(({ idx, msg }, listIdx) => {
-              if (listIdx >= revealCutoff) return null;
-
-              const cfg = msg.config as any;
-              const meta = cfg.metadata;
-
-              if (meta?._is_burst && !meta?._is_final_reply) {
-                const content =
-                  typeof msg.config.content === "string"
-                    ? msg.config.content
-                    : "";
-                const burstKey = `intermediate-burst-${idx}`;
-                if (animatedIntermediateBurstKeys.has(burstKey)) {
-                  return (
-                    <div
-                      key={burstKey}
-                      className="py-1 text-xs leading-relaxed text-secondary/65"
-                    >
-                      <MarkdownRenderer content={content} />
-                    </div>
-                  );
-                }
-                animatedIntermediateBurstKeys.add(burstKey);
-                return (
-                  <div
-                    key={burstKey}
-                    className="py-1 text-xs leading-relaxed text-secondary/65"
-                  >
-                    <TypewriterMessage
-                      content={content}
-                      speed={600}
-                      onComplete={onBurstComplete}
-                    />
-                  </div>
-                );
-              }
-
-              if (meta?._is_streaming_chunk || meta?._sealed_chunk) {
-                const content =
-                  typeof msg.config.content === "string"
-                    ? msg.config.content
-                    : "";
-                return (
-                  <div
-                    key={`pg-chunk-${idx}`}
-                    className="py-1 text-xs leading-relaxed text-secondary/65"
-                  >
-                    <MarkdownRenderer content={content} />
-                  </div>
-                );
-              }
-
-              if (cfg.type === "FilesEvent" || meta?.type === "FilesEvent") {
-                return null;
-              }
-
-              if (cfg.type === "ThoughtEvent" || meta?.type === "ThoughtEvent") {
-                const content =
-                  typeof msg.config.content === "string"
-                    ? msg.config.content
-                    : "";
-                if (!content.trim()) return null;
-                return (
-                  <div
-                    key={`pg-thought-${idx}`}
-                    className={`py-1 text-[11px] leading-relaxed text-secondary/45 ${maximized ? "" : "line-clamp-3"}`}
-                  >
-                    <MarkdownRenderer content={content} />
-                  </div>
-                );
-              }
-
-              return (
-                <RenderMessage
-                  key={`pg-${idx}-${msg.config.version || 0}`}
-                  message={msg.config}
-                  sessionId={msg.session_id}
-                  messageIdx={idx}
-                  runStatus={runStatus}
-                  isCompact={true}
-                  onLogMessageClick={onLogMessageClick}
-                  isLast={false}
-                  isEditable={false}
-                  hidden={false}
-                  forceCollapsed={false}
-                />
-              );
-            })}
+            {items.map(({ idx, msg }, listIdx) => (
+              <ProcessMessageGroupItem
+                key={`pg-item-${idx}`}
+                idx={idx}
+                msg={msg}
+                runStatus={runStatus}
+                maximized={maximized}
+                onLogMessageClick={onLogMessageClick}
+                onBurstComplete={onBurstComplete}
+                animatedBurstKeys={animatedIntermediateBurstKeys}
+                revealCutoff={revealCutoff}
+                listIdx={listIdx}
+              />
+            ))}
           </div>
         )}
       </div>

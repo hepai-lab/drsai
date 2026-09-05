@@ -195,7 +195,7 @@ class DrSaiCLIAssistant(DrSaiAssistant):
 
         # ── 4. Restore reasoning effort ────────────────────────────────────
         effort = state.get("reasoning_effort")
-        if effort and effort in {"off", "low", "medium", "high", "xhigh"}:
+        if effort and effort in {"off", "none", "low", "medium", "high", "xhigh", "max"}:
             self._reasoning_effort = effort
 
         # ── 5. Restore workspace restriction ───────────────────────────────

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Presentations"
+  short_description: "Create, edit, render, and verify PowerPoint decks"
+  default_prompt: "Use $presentations to create an editable PowerPoint deck from my content."

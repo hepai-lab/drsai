@@ -1171,11 +1171,67 @@ const RunView: React.FC<RunViewProps> = ({
       mergedMessages.push(msg);
     }
 
-    const { messages: collapsed } = collapseMessagesForDisplay(mergedMessages);
+    // ── Dedup pass: drop ThoughtEvents and sealed replies whose content is
+    // already shown by a live streaming chunk's _live_thought or content
+    // from the same source.  This prevents the same text from rendering
+    // both inside ProcessMessageGroup (as a ThoughtEvent / sealed chunk)
+    // and outside via StreamingChunkRender — the duplication that caused
+    // excessive re-renders and the webFrameMain disposed error.
+    const liveStreamCoverage = new Map<string, { thoughts: string[]; replies: string[] }>();
+    for (const m of mergedMessages) {
+      const meta = (m.config.metadata || {}) as any;
+      if (!meta._is_streaming_chunk) continue;
+      const src = String(m.config.source || "assistant");
+      if (!liveStreamCoverage.has(src)) liveStreamCoverage.set(src, { thoughts: [], replies: [] });
+      const cov = liveStreamCoverage.get(src)!;
+      if (typeof meta._live_thought === "string" && meta._live_thought.trim()) {
+        cov.thoughts.push(meta._live_thought);
+      }
+      const replyContent = typeof m.config.content === "string" ? m.config.content.trim() : "";
+      if (replyContent) cov.replies.push(replyContent);
+    }
+
+    const dedupedMessages = liveStreamCoverage.size > 0
+      ? mergedMessages.filter((m) => {
+          const cfg = m.config as any;
+          const meta = (cfg.metadata || {}) as any;
+          const src = String(m.config.source || "assistant");
+          const cov = liveStreamCoverage.get(src);
+          if (!cov) return true; // no live stream for this source
+
+          // Drop ThoughtEvents covered by _live_thought
+          if (cfg.type === "ThoughtEvent" || meta?.type === "ThoughtEvent") {
+            const thoughtText = typeof cfg.content === "string" ? cfg.content.trim() : "";
+            if (!thoughtText) return false;
+            const isCovered = cov.thoughts.some(t =>
+              t.includes(thoughtText.slice(0, 80)) ||
+              thoughtText.includes(t.slice(0, 80))
+            );
+            if (isCovered) return false;
+          }
+
+          // Drop sealed chunks covered by the live stream's reply content
+          if (meta?._sealed_from_stream || meta?._is_final_reply) {
+            const replyText = typeof cfg.content === "string" ? cfg.content.trim() : "";
+            if (replyText) {
+              const isReplyCovered = cov.replies.some(r =>
+                r.includes(replyText.slice(0, 80)) ||
+                replyText.includes(r.slice(0, 80))
+              );
+              if (isReplyCovered) return false;
+            }
+          }
+
+          return true;
+        })
+      : mergedMessages;
+
+    const { messages: collapsed } = collapseMessagesForDisplay(dedupedMessages);
     chatRenderLog("localMessages", {
       runId: run.id,
       raw: run.messages.length,
       merged: mergedMessages.length,
+      deduped: dedupedMessages.length,
       collapsed: collapsed.length,
       kinds: collapsed.map((m, i) => ({
         i,
