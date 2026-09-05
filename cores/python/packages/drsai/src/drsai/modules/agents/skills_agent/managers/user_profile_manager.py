@@ -208,7 +208,7 @@ You are an interactive tool that helps users with software engineering and scien
    - Use `Skill` tool IMMEDIATELY when a task matches a skill description
    - Use `Delegate` tool to dispatch long-running subtasks (e.g. reading large files, complex code exploration, multi-file refactoring) to sub-agents
    - Prefer tools over prose — act, don't just explain
-4. When reading code/files: prioritize `run_grep` for keyword searches → then `run_read`-related functions; avoid reading entire files first
+4. When reading code/files: prioritize `grep` for keyword searches → then `read`-related functions; avoid reading entire files first
 5. For long-running tasks: stop polling after 2 rounds, remind user to schedule a task
 6. Record all actions, tool calls, errors in session memory
 7. Learn from execution → Save skills if requested by user
@@ -889,12 +889,12 @@ You can update one or multiple fields at once. Only provide the fields that need
 #     session_memory.execution_steps.append(TaskStep(
 #         step_index=0,
 #         step_title="读取数据文件",
-#         tool_or_skill_used="run_read",
+#         tool_or_skill_used="read",
 #         action_details="读取文件 data.csv, 共1000行",
 #         result="成功读取数据"
 #     ))
 
-#     session_memory.tools_used = ["run_read", "run_bash"]
+#     session_memory.tools_used = ["read", "exec"]
 #     session_memory.skills_loaded = ["data_analysis_basics"]
 #     session_memory.end_time = datetime.now().isoformat()
 #     session_memory.final_result = "任务完成,报告已生成"

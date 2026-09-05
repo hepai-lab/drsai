@@ -34,13 +34,13 @@ DrSaiAssistant 的工具体系采用 **分层注册 + 动态合并 + 统一调�
 │  │ 管理工具     │  │ OS 基础工具  │  │ MCP 工具  │  │ 记忆工具   │ │
 │  │ (ToolSchema)│  │(FunctionTool)│  │(MCP Adapter)│ │(Context)  │ │
 │  ├─────────────┤  ├─────────────┤  ├──────────┤  ├───────────┤ │
-│  │• Skill      │  │• run_read   │  │• mcp-std │  │• memory    │ │
-│  │• Delegate   │  │• run_write  │  │• mcp-sse │  │• retrieve  │ │
-│  │• TodoWrite  │  │• run_edit   │  │          │  │• summry    │ │
-│  │• UpdateUser │  │• run_grep   │  │          │  │• read_idx  │ │
-│  │• SchedTask  │  │• run_bash   │  │          │  │            │ │
-│  │  Manager    │  │• run_glob   │  │          │  │            │ │
-│  │             │  │• run_bash_bg│  │          │  │            │ │
+│  │• Skill      │  │• read   │  │• mcp-std │  │• memory    │ │
+│  │• Delegate   │  │• write  │  │• mcp-sse │  │• retrieve  │ │
+│  │• TodoWrite  │  │• edit   │  │          │  │• summry    │ │
+│  │• UpdateUser │  │• grep   │  │          │  │• read_idx  │ │
+│  │• SchedTask  │  │• exec   │  │          │  │            │ │
+│  │  Manager    │  │• glob   │  │          │  │            │ │
+│  │             │  │• exec_bg│  │          │  │            │ │
 │  │             │  │• run_ps...  │  │          │  │            │ │
 │  └──────┬──────┘  └──────┬──────┘  └────┬─────┘  └─────┬─────┘ │
 │         │                │              │              │        │
@@ -189,20 +189,20 @@ self._all_basic_tools: List[FunctionTool] = [
 
 | 工具名 | 功能 | 安全特性 |
 |--------|------|----------|
-| `run_read` | 读取文件内容（支持行偏移） | 路径检查 |
-| `run_write` | 写入文件 | 路径检查 |
-| `run_edit` | 精确替换文件内容 | 路径检查 |
-| `run_grep` | 正则搜索文件内容 | 路径检查 |
-| `run_glob` | 文件模式匹配 | 路径检查 |
-| `run_bash` | 执行 shell 命令（同步等待） | 危险命令拦截 + 脚本执行检测 |
-| `run_bash_background` | 后台执行 shell 命令 | 同上，异步返回 task_id |
-| `get_bash_task` | 查询后台任务状态 | - |
-| `list_bash_tasks` | 列出所有后台任务 | - |
-| `kill_bash_task` | 终止后台任务 | - |
-| `run_powershell` | 执行 PowerShell 命令 | 同 run_bash（Windows 环境） |
-| `get_powershell_task` | 查询 PS 任务状态 | - |
-| `list_powershell_tasks` | 列出 PS 任务 | - |
-| `kill_powershell_task` | 终止 PS 任务 | - |
+| `read` | 读取文件内容（支持行偏移） | 路径检查 |
+| `write` | 写入文件 | 路径检查 |
+| `edit` | 精确替换文件内容 | 路径检查 |
+| `grep` | 正则搜索文件内容 | 路径检查 |
+| `glob` | 文件模式匹配 | 路径检查 |
+| `exec` | 执行 shell 命令（同步等待） | 危险命令拦截 + 脚本执行检测 |
+| `exec_background` | 后台执行 shell 命令 | 同上，异步返回 task_id |
+| `task_get` | 查询后台任务状态 | - |
+| `task_list` | 列出所有后台任务 | - |
+| `task_kill` | 终止后台任务 | - |
+| `exec` | 执行 PowerShell 命令 | 同 exec（Windows 环境） |
+| `task_get` | 查询 PS 任务状态 | - |
+| `task_list` | 列出 PS 任务 | - |
+| `task_kill` | 终止 PS 任务 | - |
 
 ### 4.3 安全机制
 
@@ -258,7 +258,7 @@ def _detect_powershell() -> Optional[str]:
 ```python
 # drsai_assistant.py:423-437
 # allolow_basic_tools=None: 管理员模式（全部工具可见）
-# allolow_basic_tools=["run_read"]: 用户模式（仅只读工具可见，Skill 可提升更多）
+# allolow_basic_tools=["read"]: 用户模式（仅只读工具可见，Skill 可提升更多）
 
 if allolow_basic_tools is None:
     self._default_visible_tools = list(self._all_basic_tools)
@@ -318,7 +318,7 @@ def _clear_elevated_tools(self):
   },
   {
     "type": "local-function",
-    "config": "def my_func(x): return x * 2  # 通过 run_bash 执行"
+    "config": "def my_func(x): return x * 2  # 通过 exec 执行"
   }
 ]
 ```
@@ -342,14 +342,14 @@ for tool in tools_config:
         user_mcp_tools.extend(sse_mcp_tools)
     else:
         # local-function: 不注册为正式工具，而是拼成提示词
-        # 告诉 LLM 可以通过 run_bash 执行
+        # 告诉 LLM 可以通过 exec 执行
         user_local_tools.append(str(config) + "\n")
 
 # 最终合并到 workbench
 self._workbench._tools = self._tools + user_mcp_tools
 ```
 
-**关键设计**：`local-function` 类型的工具不注册为正式 FunctionTool，而是以提示词形式注入，引导 LLM 通过 `run_bash` 执行。
+**关键设计**：`local-function` 类型的工具不注册为正式 FunctionTool，而是以提示词形式注入，引导 LLM 通过 `exec` 执行。
 
 ### 5.2 工厂传入的 extra_tools
 
@@ -698,7 +698,7 @@ def _get_tools_for_subagent(self, sub_agent_name: str) -> list:
 BUILTIN_SUBAGENTS = {
     "explore": {
         "type": "DrSaiAgent",
-        "tools": ["run_read", "run_glob", "run_grep"],  # 白名单
+        "tools": ["read", "glob", "grep"],  # 白名单
         "disallowed_tools": ["Delegate", "ScheduledTaskManager", "UpdateUserConfig"],
         "role": "leaf",
     },
@@ -804,7 +804,7 @@ assistant = create_agent(extra_tools=[my_custom_tool])
     "type": "DrSaiAgent",
     "description": "Custom agent for ...",
     "prompt": "You are ...",
-    "tools": ["run_read", "run_bash"],
+    "tools": ["read", "exec"],
     "disallowed_tools": ["Delegate"],
     "max_turns": 50
   }
@@ -827,7 +827,7 @@ SKILL.md 格式：
 ---
 name: my-skill
 description: When to use this skill
-required_tools: ["run_bash", "run_write"]  # 需要提升的 OS 工具
+required_tools: ["exec", "write"]  # 需要提升的 OS 工具
 ---
 
 # Skill Instructions

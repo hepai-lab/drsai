@@ -301,14 +301,6 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         vision=False,
     ),
     # ── OpenAI GPT ───────────────────────────────────────────────────
-    "gpt-5.4": ModelEntry(
-        model="openai/gpt-5.4",
-        token_limit=1050000,     # max input tokens (output comes from this pool)
-        max_tokens=64000,      # max output per request
-        client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
-        vision=True,            # GPT-5.x supports image input
-    ),
     "gpt-5.5": ModelEntry(
         model="openai/gpt-5.5",
         token_limit=1050000,     # max input tokens (output comes from this pool)
@@ -317,6 +309,30 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
         vision=True,            # GPT-5.x supports image input
     ),
+    "gpt-5.6-luna": ModelEntry(
+            model="openai/gpt-5.6-luna",
+            token_limit=1050000,     # max input tokens (output comes from this pool)
+            max_tokens=64000,      # max output per request
+            client_type="openai",
+            reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+            vision=True,            # GPT-5.x supports image input
+        ),
+    "gpt-5.6-terra": ModelEntry(
+            model="openai/gpt-5.6-terra",
+            token_limit=1050000,     # max input tokens (output comes from this pool)
+            max_tokens=64000,      # max output per request
+            client_type="openai",
+            reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+            vision=True,            # GPT-5.x supports image input
+        ),
+    "gpt-5.6-sol": ModelEntry(
+                model="openai/gpt-5.6-sol",
+                token_limit=1050000,     # max input tokens (output comes from this pool)
+                max_tokens=64000,      # max output per request
+                client_type="openai",
+                reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+                vision=True,            # GPT-5.x supports image input
+            ),
     # ── GIMINI ────────────────────────────────────────────────────
     "gemini-3.1-pro-preview": ModelEntry(
         model="google/gemini-3.1-pro-preview",
@@ -352,6 +368,14 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
         vision=True,
     ),
+    "kimi-k3": ModelEntry(
+            model="moonshot/kimi-k3",
+            token_limit=200000,
+            max_tokens=64000,
+            client_type="openai",
+            reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
+            vision=True,
+        ),
     # ── MiniMax ──────────────────────────────────────────────────────
     "minimax-m2.7-highspeed": ModelEntry(
         model="minimax/minimax-m2.7-highspeed",
@@ -1168,7 +1192,7 @@ def create_agent(
     # enable_security=False: CLI mode (personal use, all tools open)
     # enable_security=True:  server mode (permission tiers + Skill elevation)
     if enable_security:
-        allow_basic_tools = ["run_read"]  # user: read-only (Skill elevation adds more)
+        allow_basic_tools = ["read"]  # user: read-only (Skill elevation adds more)
         only_in_workspace_sec = True
         allow_dangerous = False
     else:
@@ -1235,7 +1259,7 @@ def create_agent(
         extra_work_dirs=[user_storage_dir],  # Allow access to internal storage
         only_system_message=False,
         allolow_dangrous_cmd=allow_dangerous,  # CLI: from config; server: False
-        allolow_basic_tools=allow_basic_tools,  # CLI: None (full); server: ["run_read"]
+        allolow_basic_tools=allow_basic_tools,  # CLI: None (full); server: ["read"]
         tools=final_tools,                # Extra tools (MCP, knowledge, GFS, etc.)
         sub_agent_config=final_sub_agent_config,
         max_agent_concurrent=cli_cfg.get("max_agent_concurrent", 5),

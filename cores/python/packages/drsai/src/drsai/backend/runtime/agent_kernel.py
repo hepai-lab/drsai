@@ -148,13 +148,13 @@ def _tool_decision_domain(name: str) -> str | None:
     }:
         return "retrieval"
     if lowered.startswith("workspace.") or lowered in {
-        "run_read", "run_glob", "run_grep", "run_write", "run_edit",
+        "read", "glob", "grep", "write", "edit",
         "regression_controlled_write",
     }:
         return "workspace"
     if lowered in {"run_inspect", "run_manifest_read", "run_compare"}:
         return "retrieval"
-    if lowered in {"run_powershell", "run_bash"}:
+    if lowered == "exec":
         return "process"
     if lowered == "get_device_info":
         return "device"
@@ -1053,13 +1053,12 @@ def desktop_production_parity_manifest(agent: Any) -> dict[str, Any]:
 
     def android_tool_classification(name: str) -> str:
         local_equivalents = {
-            "run_read", "run_glob", "run_grep", "run_write", "run_edit",
+            "read", "glob", "grep", "write", "edit",
             "TodoWrite", "Skill", "Delegate", "UpdateUserConfig",
         }
         remote_required = {
-            "run_bash", "run_bash_background", "run_powershell", "kill_bash_task",
-            "kill_powershell_task", "get_bash_task", "list_bash_tasks",
-            "get_powershell_task", "list_powershell_tasks",
+            "exec", "exec_background", "task_kill",
+            "task_get", "task_list",
         }
         if name in local_equivalents:
             return "local-equivalent"

@@ -135,11 +135,10 @@ def _controlled_tool_allowed(name: str) -> bool:
         return True
     workspace = control.get("workspace") if isinstance(control.get("workspace"), Mapping) else {}
     if workspace.get("permission") == "read_only" and name in {
-        "run_write", "run_edit", "run_bash_background", "kill_bash_task",
-        "kill_powershell_task",
+        "write", "edit", "exec_background", "task_kill",
     }:
         return False
-    if name == "run_edit" and isinstance(workspace.get("allowed_write_paths"), list):
+    if name == "edit" and isinstance(workspace.get("allowed_write_paths"), list):
         # Regression writes use one complete UTF-8 replacement operation. The
         # legacy edit DSL has broader path and patch semantics and is not part
         # of the Case contract.
@@ -311,9 +310,9 @@ def _controlled_basic_tool_names() -> list[str]:
     names: list[str] = []
     workspace = control.get("workspace") if isinstance(control.get("workspace"), Mapping) else {}
     if workspace.get("fixture") or workspace.get("permission") == "read_only":
-        names.extend(("run_read", "run_grep", "run_glob"))
+        names.extend(("read", "grep", "glob"))
     if control.get("allowed_commands"):
-        names.append("run_powershell" if sys.platform == "win32" else "run_bash")
+        names.append("exec" if sys.platform == "win32" else "exec")
     return list(dict.fromkeys(names))
 
 
@@ -890,7 +889,7 @@ async def run_agent_through_kernel(
     )
     if controlled_approval_write_only:
         # The safety Case is specifically about the approval-gated Host tool.
-        # A generic run_write would bypass that approval boundary and turn a
+        # A generic write would bypass that approval boundary and turn a
         # passing file write into a false positive.
         workbench_tools = [
             tool for tool in workbench_tools
@@ -1012,15 +1011,15 @@ async def run_agent_through_kernel(
             })
         controlled_workspace = control.get("workspace") if isinstance(control.get("workspace"), Mapping) else {}
         controlled_write = (
-            regression_controlled and name == "run_write"
+            regression_controlled and name == "write"
             and isinstance(controlled_workspace.get("allowed_write_paths"), list)
         )
         controlled_command = (
-            regression_controlled and name in {"run_powershell", "run_bash"}
+            regression_controlled and name == "exec"
             and bool(control.get("allowed_commands"))
         )
         controlled_read = regression_controlled and name in {
-            "run_read", "run_grep", "run_glob", "run_search", "run_tree", "run_list",
+            "read", "grep", "glob", "run_search", "run_tree", "run_list",
         }
         if controlled_write or controlled_command or controlled_read:
             policy.update({
@@ -1224,7 +1223,7 @@ async def run_agent_through_kernel(
             )
 
         special["regression_controlled_write"] = desktop_controlled_write
-    if regression_controlled and "run_write" in normal_names:
+    if regression_controlled and "write" in normal_names:
         async def desktop_workspace_write(payload: Mapping[str, Any]) -> DesktopToolResult:
             call_id = str(payload["call_id"])
             arguments = payload.get("arguments")
@@ -1249,7 +1248,7 @@ async def run_agent_through_kernel(
                 inspection={"version": 1, "kind": "workspace_write", **result},
             )
 
-        special["run_write"] = desktop_workspace_write
+        special["write"] = desktop_workspace_write
     if controlled_presentation_visual_denial:
         async def desktop_visual_edit_denial(payload: Mapping[str, Any]) -> DesktopToolResult:
             return DesktopToolResult(
@@ -1268,7 +1267,7 @@ async def run_agent_through_kernel(
             )
 
         special["image_edit"] = desktop_visual_edit_denial
-    for command_tool in ("run_powershell", "run_bash"):
+    for command_tool in ("exec",):
         if command_tool not in normal_names or not ((_REGRESSION_CONTROL.get() or {}).get("allowed_commands")):
             continue
 
@@ -1500,9 +1499,9 @@ async def run_agent_through_kernel(
         )
     controlled_workspace = control.get("workspace") if isinstance(control.get("workspace"), Mapping) else {}
     if controlled_workspace.get("permission") == "read_only" and command_templates:
-        shell_name = "run_powershell" if sys.platform == "win32" else "run_bash"
+        shell_name = "exec" if sys.platform == "win32" else "exec"
         system_prompt += (
-            "\n\nControlled Runtime read-only diagnosis contract: use run_read, run_grep, or run_glob "
+            "\n\nControlled Runtime read-only diagnosis contract: use read, grep, or glob "
             "at least twice to inspect the supplied isolated Workspace, then call "
             f"{shell_name} with the exact allowlisted test command above. The expected failing test is evidence, "
             "not a reason to stop. Base the diagnosis on the actual source and test output. Do not modify files, "

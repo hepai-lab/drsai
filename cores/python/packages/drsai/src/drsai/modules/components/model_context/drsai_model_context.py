@@ -187,9 +187,9 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
 
         # Layer 1: Tool result clearing config
         self._tool_clear_whitelist: set[str] = tool_clear_whitelist or {
-            "run_bash", "run_read", "run_write", "run_edit",
-            "run_grep", "run_glob", "run_powershell",
-            "get_bash_task", "get_powershell_task",
+            "exec", "read", "write", "edit",
+            "grep", "glob", "exec",
+            "task_get", "task_get",
         }
         self._keep_recent_tool_results: int = keep_recent_tool_results
         self._min_content_length_to_clear: int = min_content_length_to_clear

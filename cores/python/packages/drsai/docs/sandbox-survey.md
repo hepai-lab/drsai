@@ -1,6 +1,6 @@
 # AI Agent 轻量级沙盒方案调研报告
 
-> **调研背景**: DrSaiAssistant 当前通过 `run_bash` / `run_powershell` 等闭包函数直接在 TUI 后端进程中执行 shell 命令，存在安全隐患和环境破坏风险。本报告调研可替代的沙盒化执行方案。
+> **调研背景**: DrSaiAssistant 当前通过 `exec` / `exec` 等闭包函数直接在 TUI 后端进程中执行 shell 命令，存在安全隐患和环境破坏风险。本报告调研可替代的沙盒化执行方案。
 >
 > **调研日期**: 2026-07-23
 > **调研方法**: 浏览器自动化访问各方案官网/文档/GitHub 仓库
@@ -24,7 +24,7 @@
 
 ### 1.1 现状
 
-DrSaiAssistant 的 OS 工具层 (`get_operator_funcs()`) 中的 `run_bash` 等函数直接通过 `asyncio.create_subprocess_shell()` 在**当前进程**中创建子进程执行命令：
+DrSaiAssistant 的 OS 工具层 (`get_operator_funcs()`) 中的 `exec` 等函数直接通过 `asyncio.create_subprocess_shell()` 在**当前进程**中创建子进程执行命令：
 
 ```python
 # operater_funs.py:659-661
@@ -370,8 +370,8 @@ output = container.logs().decode()
 ```
                     ┌─────────────────────────────────────┐
                     │       DrSaiAssistant                 │
-                    │  (run_bash, run_bash_background,     │
-                    │   run_powershell, ...)               │
+                    │  (exec, exec_background,     │
+                    │   exec, ...)               │
                     └──────────────┬──────────────────────┘
                                    │
                                    ▼
@@ -426,7 +426,7 @@ output = container.logs().decode()
 
 | 阶段 | 目标 | 工作量 | 优先级 |
 |------|------|--------|--------|
-| **Phase 1** | Docker SDK 后端 — 替换 `run_bash` 内核 | 2-3 天 | P0 |
+| **Phase 1** | Docker SDK 后端 — 替换 `exec` 内核 | 2-3 天 | P0 |
 | **Phase 2** | Warm Pool + 环境持久化 — 缓解启动开销 | 1-2 天 | P1 |
 | **Phase 3** | gVisor runtime 支持 — 安全模式切换 | 0.5 天 | P1 |
 | **Phase 4** | E2B 云沙盒后端 — 无 Docker 时的回退 | 2-3 天 | P2 |
@@ -691,9 +691,9 @@ class SandboxWarmPool:
 ### 8.4 与 DrSaiAssistant 集成方案
 
 ```python
-# operater_funs.py 中 run_bash 的改造方向
+# operater_funs.py 中 exec 的改造方向
 
-async def run_bash(cmd: str, timeout: float = 60) -> str:
+async def exec(cmd: str, timeout: float = 60) -> str:
     """Execute a bash command in sandbox."""
 
     # 如果沙盒启用，走沙盒路径
@@ -707,7 +707,7 @@ async def run_bash(cmd: str, timeout: float = 60) -> str:
             return f"Error (sandbox): {e}"
 
     # 回退到直接执行（向后兼容）
-    # ... 原有 run_bash 逻辑 ...
+    # ... 原有 exec 逻辑 ...
 ```
 
 ### 8.5 向后兼容策略
@@ -732,7 +732,7 @@ class DrSaiAssistant(DrSaiAgent):
 
 **关键设计原则:**
 - `sandbox_config.enabled=False` 或未配置时，行为完全不变（直接执行）
-- `sandbox_config.enabled=True` 时，`run_bash` 等工具内部走沙盒路径
+- `sandbox_config.enabled=True` 时，`exec` 等工具内部走沙盒路径
 - 不改变工具的对外接口（LLM 调用方式不变）
 - 支持 per-session 沙盒隔离（每个会话独立容器）
 

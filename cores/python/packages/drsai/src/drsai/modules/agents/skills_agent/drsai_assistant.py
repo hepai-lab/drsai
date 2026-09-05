@@ -113,16 +113,14 @@ from drsai.backend.runtime.agent_kernel import DEFAULT_MAX_PARALLEL_TOOL_CALLS, 
 
 
 _DESKTOP_READ_ONLY_TOOLS = {
-    "run_read", "run_grep", "run_glob", "get_bash_task", "list_bash_tasks",
-    "get_powershell_task", "list_powershell_tasks", "Skill",
+    "read", "grep", "glob", "task_get", "task_list", "Skill",
     "retrieve_from_memory", "read_session_memory_by_index", "web_search", "web_fetch",
     "regression_list_suites", "regression_list_cases", "regression_get_case",
     "regression_preflight", "regression_history", "regression_get", "regression_events",
 }
-_DESKTOP_LOCAL_WRITE_TOOLS = {"run_write", "run_edit", "TodoWrite", "UpdateUserConfig"}
+_DESKTOP_LOCAL_WRITE_TOOLS = {"write", "edit", "TodoWrite", "UpdateUserConfig"}
 _DESKTOP_CONDITIONAL_TOOLS = {
-    "run_bash", "run_bash_background", "run_powershell", "kill_bash_task",
-    "kill_powershell_task",
+    "exec", "exec_background", "task_kill",
     "regression_start", "regression_cancel",
 }
 _DESKTOP_REQUIRED_APPROVAL_TOOLS = {"Delegate", "ScheduledTaskManager"}
@@ -250,7 +248,7 @@ BUILTIN_SUBAGENTS: Dict[str, Dict[str, Any]] = {
             "NEVER use Write, Edit, Bash, or any tool that modifies files or executes commands. "
             "Return a clear, structured summary of your findings."
         ),
-        "tools": ["run_read", "run_glob", "run_grep"],
+        "tools": ["read", "glob", "grep"],
         "disallowed_tools": ["Delegate", "ScheduledTaskManager", "UpdateUserConfig"],
         "max_turns": 200,
         "timeout": 3600,
@@ -266,7 +264,7 @@ BUILTIN_SUBAGENTS: Dict[str, Dict[str, Any]] = {
     #         "You can READ files but NEVER modify them. "
     #         "Structure your output with clear, numbered steps."
     #     ),
-    #     "tools": ["run_read", "run_glob", "run_grep"],
+    #     "tools": ["read", "glob", "grep"],
     #     "disallowed_tools": ["Delegate", "ScheduledTaskManager", "UpdateUserConfig"],
     #     "mode": "multi",
     #     "max_turns": 10,
@@ -297,10 +295,10 @@ _DEFAULT_DISALLOWED_FOR_SUBAGENTS: set = {
 }
 
 _READONLY_DISALLOWED_TOOLS: set = _DEFAULT_DISALLOWED_FOR_SUBAGENTS | {
-    "run_write",
-    "run_edit",
-    "run_bash",
-    "run_bash_background",
+    "write",
+    "edit",
+    "exec",
+    "exec_background",
 }
 
 
@@ -1033,8 +1031,8 @@ class DrSaiAssistant(DrSaiAgent):
                     f'  }}\n'
                     f'}}\n'
                     f"```\n\n"
-                    f"**请立即使用 `run_write` 工具修正上述配置文件，然后继续回答用户的问题。**\n"
-                    f"**Please use the `run_write` tool to fix the config file above, then proceed to answer the user's request.**"
+                    f"**请立即使用 `write` 工具修正上述配置文件，然后继续回答用户的问题。**\n"
+                    f"**Please use the `write` tool to fix the config file above, then proceed to answer the user's request.**"
                 )
 
         return warnings
@@ -1318,7 +1316,7 @@ class DrSaiAssistant(DrSaiAgent):
 
         # 生成本地工具提示
         if user_local_tools:
-            user_local_tools_prompt = "The info about the user's local function is as follows. When needed, you can execute it on the command line using `run_bash` tool\n\n"
+            user_local_tools_prompt = "The info about the user's local function is as follows. When needed, you can execute it on the command line using `exec` tool\n\n"
             user_local_tools_prompt += "\n".join(user_local_tools)
         else:
             user_local_tools_prompt = ""
