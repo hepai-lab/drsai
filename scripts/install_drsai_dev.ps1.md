@@ -1,10 +1,10 @@
-# install_drsai_dev.ps1 — 实时开发安装脚本 (Windows PowerShell)
+# install_drsai_dev_tui.ps1 — 实时开发安装脚本 (Windows PowerShell)
 
 把**本地仓库**的源码直接安装到 `~/.drsai`（即 `%USERPROFILE%\.drsai`），用于实时测试更新；运行时依赖（portable Python / Node）仍在线下载。
 
-## 与 `install_drsai.ps1` 的区别
+## 与 `install_drsai_tui.ps1` 的区别
 
-| | `install_drsai.ps1` | `install_drsai_dev.ps1` |
+| | `install_drsai_tui.ps1` | `install_drsai_dev_tui.ps1` |
 |---|---|---|
 | 源码来源 | 在线下载 `drsai.zip` | 从本地仓库 robocopy 拷贝 |
 | 拷贝范围 | 整个仓库 | 仅 `apps/ui-tui`、`cores`、`skills/skills` |
@@ -16,19 +16,19 @@
 
 ```powershell
 # 首次安装到 ~\.drsai (即 %USERPROFILE%\.drsai)
-.\scripts\install_drsai_dev.ps1
+.\scripts\install_drsai_dev_tui.ps1
 
 # 自定义安装目录
-.\scripts\install_drsai_dev.ps1 -InstallDir "C:\drsai_dev"
+.\scripts\install_drsai_dev_tui.ps1 -InstallDir "C:\drsai_dev"
 
 # 覆盖已有安装
-.\scripts\install_drsai_dev.ps1 -Force
+.\scripts\install_drsai_dev_tui.ps1 -Force
 
 # 改完代码后同步到安装目录（重新拷贝源码 + 重建 TUI）
-.\scripts\install_drsai_dev.ps1 -Sync
+.\scripts\install_drsai_dev_tui.ps1 -Sync
 
 # 只同步源码，不重建 TUI
-.\scripts\install_drsai_dev.ps1 -Sync -NoRebuild
+.\scripts\install_drsai_dev_tui.ps1 -Sync -NoRebuild
 ```
 
 ## 选项
@@ -64,7 +64,7 @@
 
 1. 首次安装：
    ```powershell
-   .\scripts\install_drsai_dev.ps1
+   .\scripts\install_drsai_dev_tui.ps1
    # 安装完成后，打开一个新的 PowerShell 窗口
    ```
 
@@ -75,7 +75,7 @@
 
 3. 在仓库里修改代码后，同步到安装目录：
    ```powershell
-   .\scripts\install_drsai_dev.ps1 -Sync
+   .\scripts\install_drsai_dev_tui.ps1 -Sync
    ```
    - **Python 代码**：后端是 editable 安装（`pip install -e`），`-Sync` 拷贝后立即生效，无需重装。
    - **TUI 代码**：`-Sync` 会重新 `pnpm build` 生成 `dist/entry.mjs`。

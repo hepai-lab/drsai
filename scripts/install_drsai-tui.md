@@ -6,8 +6,8 @@
 
 | 脚本 | 平台 | 用途 |
 |------|------|------|
-| `install_drsai.sh` | Linux (x64/arm64) + macOS (x64/arm64) | Bash 安装脚本，兼容 macOS 自带 bash 3.2 |
-| `install_drsai.ps1` | Windows 10 1803+ (x64) | PowerShell 5.1+ 安装脚本 |
+| `install_drsai_tui.sh` | Linux (x64/arm64) + macOS (x64/arm64) | Bash 安装脚本，兼容 macOS 自带 bash 3.2 |
+| `install_drsai_tui.ps1` | Windows 10 1803+ (x64) | PowerShell 5.1+ 安装脚本 |
 
 ## 快速使用
 
@@ -15,37 +15,37 @@
 
 ```bash
 # 一行安装 (推荐)
-curl -fsSL <ihepbox_url>/install_drsai.sh | bash
+curl -fsSL <ihepbox_url>/install_drsai_tui.sh | bash
 
 # 下载后运行
-curl -fsSL <ihepbox_url>/install_drsai.sh -o install_drsai.sh
-bash install_drsai.sh
+curl -fsSL <ihepbox_url>/install_drsai_tui.sh -o install_drsai_tui.sh
+bash install_drsai_tui.sh
 
 # 指定安装目录
-bash install_drsai.sh --install-dir /opt/drsai
+bash install_drsai_tui.sh --install-dir /opt/drsai
 
 # 强制覆盖已有安装
-bash install_drsai.sh --force
+bash install_drsai_tui.sh --force
 
 # 查看帮助
-bash install_drsai.sh --help
+bash install_drsai_tui.sh --help
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
 # 一行安装
-iwr -UseBasicParsing <ihepbox_url>/install_drsai.ps1 | iex
+iwr -UseBasicParsing <ihepbox_url>/install_drsai_tui.ps1 | iex
 
 # 下载后运行
-iwr -UseBasicParsing <ihepbox_url>/install_drsai.ps1 -OutFile install_drsai.ps1
-.\install_drsai.ps1
+iwr -UseBasicParsing <ihepbox_url>/install_drsai_tui.ps1 -OutFile install_drsai_tui.ps1
+.\install_drsai_tui.ps1
 
 # 指定安装目录
-.\install_drsai.ps1 -InstallDir "C:\drsai"
+.\install_drsai_tui.ps1 -InstallDir "C:\drsai"
 
 # 强制覆盖
-.\install_drsai.ps1 -Force
+.\install_drsai_tui.ps1 -Force
 ```
 
 ## 安装后
@@ -98,7 +98,7 @@ opendrsai
 
 ```bash
 export DRSAI_HOME="$INSTALL_DIR"                          # 安装根目录
-export DRSAI_UI_TUI_DIR="$INSTALL_DIR/packages/src/.../apps/ui-tui"
+export DRSAI_UI_TUI_DIR="$INSTALL_DIR/packages/.../apps/ui-tui"
 export DRSAI_PYTHON="$INSTALL_DIR/packages/venv/bin/python"  # ★ 关键：TUI 用此 Python 启动 gateway
 export DRSAI_PYTHON_SRC_ROOT="$SRC_ROOT/cores/python/packages/drsai/src"
 export VIRTUAL_ENV="$INSTALL_DIR/packages/venv"
@@ -128,7 +128,7 @@ export PATH="$INSTALL_DIR/packages/node/bin:$PATH"
 2. 安装目录选择    → 默认 ~/.drsai，检测 ≥2GB 磁盘空间
 3. 已有安装检测    → 检测 bin/opendrsai 是否已存在，提示覆盖
 4. 下载文件        → 从 ihepbox 下载 3 个压缩包
-5. 解压            → Python → packages/python/，Node → packages/node/，源码 → packages/src/
+5. 解压            → Python → packages/python/，Node → packages/node/，源码 → packages/
 6. Python 环境配置 → 创建 venv，pip install -e 安装后端 (跳过 TUI 构建)
 7. Node 环境配置   → npm install -g pnpm 到本地 node 目录
 8. 构建 TUI        → cd apps/ui-tui && pnpm install (3次重试) && pnpm build
@@ -144,7 +144,7 @@ export PATH="$INSTALL_DIR/packages/node/bin:$PATH"
 
 脚本顶部有统一的配置区，**修改 ihepbox 链接只需改这一处**：
 
-### Bash (`install_drsai.sh`)
+### Bash (`install_drsai_tui.sh`)
 
 ```bash
 IHEPBOX="https://ihepbox.ihep.ac.cn/ihepbox/index.php/s"
@@ -167,7 +167,7 @@ SRC_URL="${IHEPBOX}/hv9iGTJHvuQbRxE/download"
 #   windows-x64  → ${IHEPBOX}/SwjEFncFIEqOXYK/download
 ```
 
-### PowerShell (`install_drsai.ps1`)
+### PowerShell (`install_drsai_tui.ps1`)
 
 ```powershell
 $IHEPBOX = "https://ihepbox.ihep.ac.cn/ihepbox/index.php/s"
@@ -194,8 +194,8 @@ $NODE_URL   = "$IHEPBOX/SwjEFncFIEqOXYK/download"     # Node (windows-x64)
 | `node-v22.22.3-darwin-x64.tar.xz` | nodejs.org | ~25MB | `qwrMnqbzusemhUi` |
 | `node-v22.22.3-darwin-arm64.tar.xz` | nodejs.org | ~25MB | `70RiQ8Hzn0ZjjlO` |
 | `node-v22.22.3-win-x64.zip` | nodejs.org | ~30MB | `SwjEFncFIEqOXYK` |
-| `install_drsai.sh` | 本项目 scripts/ | ~17KB | (自定) |
-| `install_drsai.ps1` | 本项目 scripts/ | ~19KB | (自定) |
+| `install_drsai_tui.sh` | 本项目 scripts/ | ~17KB | (自定) |
+| `install_drsai_tui.ps1` | 本项目 scripts/ | ~19KB | (自定) |
 
 ## 源码包 `drsai.zip` 要求
 
@@ -224,7 +224,7 @@ $NODE_URL   = "$IHEPBOX/SwjEFncFIEqOXYK/download"     # Node (windows-x64)
 | 变量 | 说明 |
 |------|------|
 | `DRSAI_HOME` | 安装根目录 (默认 `~/.drsai`) |
-| `DRSAI_UI_TUI_DIR` | TUI 前端目录 (指向 `packages/src/.../apps/ui-tui`) |
+| `DRSAI_UI_TUI_DIR` | TUI 前端目录 (指向 `packages/.../apps/ui-tui`) |
 | `DRSAI_PYTHON` | venv 中的 Python 可执行文件路径 (**必须设置**，否则 TUI 会用系统 python3 启动 gateway 子进程，导致 ImportError) |
 | `DRSAI_PYTHON_SRC_ROOT` | drsai 源码包路径 (用于 PYTHONPATH，指向 `cores/python/packages/drsai/src`) |
 | `VIRTUAL_ENV` | venv 目录路径 (备用 Python 解析，某些工具会检查此变量) |
@@ -241,7 +241,7 @@ opendrsai
 
 ## 命令行参数
 
-### Bash (`install_drsai.sh`)
+### Bash (`install_drsai_tui.sh`)
 
 | 参数 | 说明 |
 |------|------|
@@ -249,7 +249,7 @@ opendrsai
 | `--force` | 强制覆盖已有安装（不提示） |
 | `-h, --help` | 显示帮助 |
 
-### PowerShell (`install_drsai.ps1`)
+### PowerShell (`install_drsai_tui.ps1`)
 
 | 参数 | 说明 |
 |------|------|
@@ -294,7 +294,7 @@ opendrsai
 
 4. **检查 PYTHONPATH**：TUI 会设置 `PYTHONPATH` 指向源码目录。验证路径是否存在：
    ```bash
-   ls ~/.drsai/packages/src/*/cores/python/packages/drsai/src/drsai/__init__.py
+   ls ~/.drsai/packages/*/cores/python/packages/drsai/src/drsai/__init__.py
    ```
 
 ### TUI 依赖安装失败
@@ -303,7 +303,7 @@ opendrsai
 
 ```bash
 # 手动进入 TUI 目录重试
-cd ~/.drsai/packages/src/*/apps/ui-tui
+cd ~/.drsai/packages/*/apps/ui-tui
 export PATH="$HOME/.drsai/packages/node/bin:$PATH"
 pnpm install   # 或 npm install
 pnpm build
@@ -325,7 +325,7 @@ curl -fsSL "<url>" -o /dev/null -w "%{http_code}"
 df -h ~
 
 # 指定其他目录
-bash install_drsai.sh --install-dir /data/drsai
+bash install_drsai_tui.sh --install-dir /data/drsai
 ```
 
 ### 验证安装
@@ -341,7 +341,7 @@ bash install_drsai.sh --install-dir /data/drsai
 ~/.drsai/packages/venv/bin/python -c "import drsai; print(drsai.__version__)"
 
 # 检查 TUI bundle
-ls -la ~/.drsai/packages/src/*/apps/ui-tui/dist/entry.mjs
+ls -la ~/.drsai/packages/*/apps/ui-tui/dist/entry.mjs
 ```
 
 ## 版本信息
