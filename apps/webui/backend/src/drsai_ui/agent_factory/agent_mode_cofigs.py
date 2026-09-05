@@ -69,21 +69,38 @@ def get_science_default_agent_name() -> str | None:
     return name or None
 
 
+def get_user_agent_default_agent_name() -> str:
+    """user_agent（CSNS）嵌入登录后默认展示的智能体名称。"""
+    raw = os.getenv("DRUSER_AGENT_DEFAULT_AGENT_NAME")
+    if raw is None:
+        return "iPanda"
+    return raw.strip() or "iPanda"
+
+
 def find_agent_by_name(agents: List[Dict[str, Any]], name: str | None) -> Dict[str, Any] | None:
-    target = (name or "").strip()
+    target = (name or "").strip().lower()
     if not target:
         return None
     return next(
-        (agent for agent in agents if str(agent.get("name") or "").strip() == target),
+        (
+            agent
+            for agent in agents
+            if (value := str(agent.get("name") or "").strip().lower())
+            and (value == target or value.endswith(target) or target in value)
+        ),
         None,
     )
 
 
-def get_platform_agent_policy() -> Dict[str, Any]:
+def get_platform_agent_policy(user_source: str | None = None) -> Dict[str, Any]:
+    source = (user_source or "").strip()
+    science_name = get_science_default_agent_name()
+    if source == "user_agent":
+        science_name = get_user_agent_default_agent_name()
     return {
         "auto_load_default_agent": get_platform_auto_load_default_agent(),
         "default_agent_name": get_platform_default_agent_name(),
-        "science_default_agent_name": get_science_default_agent_name(),
+        "science_default_agent_name": science_name,
     }
 
 
@@ -92,6 +109,7 @@ def _resolve_platform_api_key(
     *,
     user_id: str | None = None,
     is_refresh: bool = False,
+    user_source: str | None = None,
 ) -> str:
     """Prefer caller Bearer; on DDF refresh without Bearer use user's HepAI key; else admin env."""
     apikey = ""
@@ -105,7 +123,9 @@ def _resolve_platform_api_key(
                 personal_key_config_fetcher as fetcher,
             )
 
-            personal = fetcher.get_personal_key(username=user_id).strip()
+            personal = fetcher.get_personal_key(
+                username=user_id, user_source=user_source
+            ).strip()
             if personal:
                 return personal
         except Exception as exc:
@@ -278,7 +298,7 @@ async def get_agents_mode(
     return {"status": True, "data": payload}
     
 
-async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db: DatabaseManager = None) -> Dict:
+async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db: DatabaseManager = None, user_source: str | None = None) -> Dict:
     '''
     获取后端的mode种类设置
     '''
@@ -308,7 +328,7 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
                     return {"status": True, "data": agents_old}
 
         apikey = _resolve_platform_api_key(
-            authorization, user_id=user_id, is_refresh=is_refresh
+            authorization, user_id=user_id, is_refresh=is_refresh, user_source=user_source
         )
         if not apikey:
             return {"status": True, "data": agents_old}
@@ -487,7 +507,13 @@ async def get_user_agents(
     )
 
     # 获取用户的DDF智能体
-    agents = await get_ddf_agents(user_id = user_id, authorization = authorization, is_refresh = is_refresh, db=db)
+    agents = await get_ddf_agents(
+        user_id=user_id,
+        authorization=authorization,
+        is_refresh=is_refresh,
+        db=db,
+        user_source=user_source,
+    )
     agents = agents["data"]
     for agent in agents:
         if not agent.get("config"):

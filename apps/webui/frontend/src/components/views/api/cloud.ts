@@ -1,4 +1,4 @@
-import { getServerUrl } from "../../utils";
+import { apiFetch, getServerUrl } from "../../utils";
 
 export interface CloudFileEntry {
   name: string;
@@ -34,7 +34,7 @@ export class CloudAPI {
   }
 
   async provision(userId: string): Promise<{ endpoint: string; buckets: Array<{ bucket_name: string; access_key: string; secret_key: string }> }> {
-    const res = await fetch(`${this.getBaseUrl()}/cloud/provision`, {
+    const res = await apiFetch(`${this.getBaseUrl()}/cloud/provision`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify({ user_id: userId }),
@@ -46,7 +46,7 @@ export class CloudAPI {
 
   async checkStatus(userId?: string): Promise<CloudStatus> {
     const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    const res = await fetch(`${this.getBaseUrl()}/cloud/status${qs}`, { headers: this.getHeaders() });
+    const res = await apiFetch(`${this.getBaseUrl()}/cloud/status${qs}`, { headers: this.getHeaders() });
     const data = await res.json();
     if (!data.status) throw new Error(data.message || "检查连接状态失败");
     return data.data;
@@ -57,7 +57,7 @@ export class CloudAPI {
    * immediately and see fresh state. */
   async refreshSync(userId?: string): Promise<{ synced: boolean; counts?: Record<string, number>; lastSyncTime?: string }> {
     const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    const res = await fetch(`${this.getBaseUrl()}/cloud/refresh${qs}`, {
+    const res = await apiFetch(`${this.getBaseUrl()}/cloud/refresh${qs}`, {
       method: 'POST',
       headers: this.getHeaders(),
     });
@@ -71,7 +71,7 @@ export class CloudAPI {
     if (subPath) qs.set('path', subPath);
     if (userId) qs.set('user_id', userId);
     const qstr = qs.toString() ? `?${qs.toString()}` : '';
-    const res = await fetch(`${this.getBaseUrl()}/cloud/files${qstr}`, { headers: this.getHeaders() });
+    const res = await apiFetch(`${this.getBaseUrl()}/cloud/files${qstr}`, { headers: this.getHeaders() });
     const data = await res.json();
     if (!data.status) throw new Error(data.message || "获取文件列表失败");
     return data.data;
@@ -79,14 +79,14 @@ export class CloudAPI {
 
   async listTemplates(userId?: string): Promise<CloudTemplateEntry[]> {
     const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    const res = await fetch(`${this.getBaseUrl()}/cloud/templates${qs}`, { headers: this.getHeaders() });
+    const res = await apiFetch(`${this.getBaseUrl()}/cloud/templates${qs}`, { headers: this.getHeaders() });
     const data = await res.json();
     if (!data.status) throw new Error(data.message || "获取模板列表失败");
     return data.data;
   }
 
   async sendToAgent(params: { filePaths: string[]; sessionId: string }): Promise<void> {
-    const res = await fetch(`${this.getBaseUrl()}/cloud/send-to-agent`, {
+    const res = await apiFetch(`${this.getBaseUrl()}/cloud/send-to-agent`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(params),
@@ -96,7 +96,7 @@ export class CloudAPI {
   }
 
   async applyTemplate(params: { templatePath: string; sessionId: string }): Promise<{ content: string }> {
-    const res = await fetch(`${this.getBaseUrl()}/cloud/apply-template`, {
+    const res = await apiFetch(`${this.getBaseUrl()}/cloud/apply-template`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(params),
@@ -107,7 +107,7 @@ export class CloudAPI {
   }
 
   async getFileUrl(filePath: string): Promise<{ url: string }> {
-    const res = await fetch(`${this.getBaseUrl()}/cloud/file-url`, {
+    const res = await apiFetch(`${this.getBaseUrl()}/cloud/file-url`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify({ path: filePath }),
@@ -130,7 +130,7 @@ export class CloudAPI {
   /** 在 GFS 上新建空文件夹 */
   async createFolder(parentPath: string, name: string, userId?: string): Promise<{ path: string; name: string }> {
     const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    const res = await fetch(`${this.getBaseUrl()}/cloud/folder${qs}`, {
+    const res = await apiFetch(`${this.getBaseUrl()}/cloud/folder${qs}`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify({ parentPath, name }),
@@ -143,7 +143,7 @@ export class CloudAPI {
   /** 重命名 GFS 文件或文件夹 */
   async renameFile(oldPath: string, newName: string, userId?: string): Promise<{ renamed: string; to: string }> {
     const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    const res = await fetch(`${this.getBaseUrl()}/cloud/rename${qs}`, {
+    const res = await apiFetch(`${this.getBaseUrl()}/cloud/rename${qs}`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify({ oldPath, newName }),
@@ -156,7 +156,7 @@ export class CloudAPI {
   /** 移动 GFS 文件/文件夹到目标目录（拖拽） */
   async moveFile(sourcePath: string, targetDir: string, userId?: string): Promise<{ moved: boolean; renamed: string; to: string }> {
     const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
-    const res = await fetch(`${this.getBaseUrl()}/cloud/move${qs}`, {
+    const res = await apiFetch(`${this.getBaseUrl()}/cloud/move${qs}`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify({ sourcePath, targetDir }),
@@ -168,7 +168,7 @@ export class CloudAPI {
 
   /** 把多个 GFS 文件拉到 DocMaster workspace，返回本地绝对路径 */
   async pullToWorkspace(paths: string[], userId: string): Promise<{ files: { remote: string; local: string; name: string }[]; errors: { path: string; error: string }[] }> {
-    const res = await fetch(`${this.getBaseUrl()}/cloud/pull-to-workspace`, {
+    const res = await apiFetch(`${this.getBaseUrl()}/cloud/pull-to-workspace`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify({ paths, user_id: userId }),
@@ -185,7 +185,7 @@ export class CloudAPI {
     const qs = new URLSearchParams();
     if (userId) qs.set("user_id", userId);
     if (destDir) qs.set("dest_dir", destDir);
-    const res = await fetch(`${this.getBaseUrl()}/cloud/upload?${qs.toString()}`, {
+    const res = await apiFetch(`${this.getBaseUrl()}/cloud/upload?${qs.toString()}`, {
       method: 'POST',
       body: formData,
       // Don't set Content-Type — browser will set multipart boundary
@@ -200,7 +200,7 @@ export class CloudAPI {
     const qs = new URLSearchParams({ path: remotePath });
     if (opts.userId) qs.set("user_id", opts.userId);
     if (opts.recursive) qs.set("recursive", "true");
-    const res = await fetch(`${this.getBaseUrl()}/cloud/files?${qs.toString()}`, {
+    const res = await apiFetch(`${this.getBaseUrl()}/cloud/files?${qs.toString()}`, {
       method: 'DELETE',
       headers: this.getHeaders(),
     });

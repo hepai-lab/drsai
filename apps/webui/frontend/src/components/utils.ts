@@ -1,6 +1,11 @@
 import { RcFile } from "antd/es/upload";
 import { IStatus } from "./types/app";
 
+/** Same-origin fetch so OIDC Session cookies are sent (and CORS credentials if cross-origin). */
+export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  return fetch(input, { ...init, credentials: init.credentials ?? "include" });
+}
+
 export const getServerUrl = () => {
   // 1. 显式配置优先：GATSBY_API_URL 覆盖一切（HTTPS 页面自动升级 http→https，避免 mixed content）
   if (process.env.GATSBY_API_URL) {
@@ -11,21 +16,9 @@ export const getServerUrl = () => {
     return url;
   }
 
-  // 2. DEV mode:
-  //    - Direct access on a development port (for example localhost:4290)
-  //      connects to the backend port on the same host.
-  //    - Access through a standard HTTP(S) reverse proxy uses same-origin
-  //      /api, so deployments do not need to hard-code their public domain.
-  if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
-    if (
-      !window.location.port ||
-      window.location.port === "80" ||
-      window.location.port === "443"
-    ) {
-      return "/api";
-    }
-    const port = process.env.GATSBY_DEV_API_PORT || "4291";
-    return `${window.location.protocol}//${window.location.hostname}:${port}/api`;
+  // 2. 浏览器同源 /api：Gatsby develop 把 /api 代理到后端，OIDC Session Cookie 才能带上。
+  if (typeof window !== "undefined") {
+    return "/api";
   }
 
   // 3. PROD：前端由后端同源托管，走相对路径

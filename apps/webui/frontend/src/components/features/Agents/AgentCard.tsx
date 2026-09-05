@@ -23,11 +23,13 @@ interface AgentCardData {
   featured?: boolean;
   is_default?: boolean;
   is_user_default?: boolean;
+  is_public?: boolean;
 }
 
 interface AgentCardProps {
   agent: AgentCardData;
   onEdit?: (id?: string) => void;
+  onCardClick?: (agent: AgentCardData) => void;
 }
 
 const DEFAULT_AVATAR =
@@ -54,9 +56,17 @@ const pushRecentAgent = (agentId?: string) => {
   }
 };
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit, onCardClick }) => {
   const { setAgentId, setMode } = useModeConfigStore();
   const { t, lang } = useLang();
+
+  const handleCardClick = () => {
+    if (onCardClick) {
+      onCardClick(agent);
+    } else {
+      handleTryClick();
+    }
+  };
 
   const handleTryClick = async () => {
     setAgentId(agent.id || "");
@@ -82,9 +92,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
     onEdit?.(agent.id);
   };
 
-  const showTopActions =
-    ((agent.mode === "remote" || agent.mode === "custom") && agent.onRemove) ||
-    (agent.mode === "custom" && onEdit);
+  const canRemove =
+    (agent.mode === "remote" || agent.mode === "custom") &&
+    Boolean(agent.onRemove) &&
+    agent.is_public !== true;
+
+  const showTopActions = canRemove || (agent.mode === "custom" && onEdit);
 
   const modeLabel =
     agent.mode === "remote"
@@ -115,13 +128,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
   return (
     <div
       className={CARD_CLS}
-      onClick={handleTryClick}
+      onClick={handleCardClick}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          handleTryClick();
+          handleCardClick();
         }
       }}
     >
@@ -153,7 +166,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
                 <Pencil className="h-3 w-3" />
               </button>
             )}
-            {(agent.mode === "remote" || agent.mode === "custom") && agent.onRemove && (
+            {canRemove && (
               <button
                 type="button"
                 onClick={handleRemoveClick}

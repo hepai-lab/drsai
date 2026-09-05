@@ -3,7 +3,7 @@ import string
 from datetime import timedelta, datetime, UTC
 from typing import Union, Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt, ExpiredSignatureError
 from pydantic import BaseModel
@@ -86,7 +86,15 @@ def decode_jwt_token(token: str) -> AccessTokenData:
         raise illegal_token_exception
 
 
-def get_current_user_id(token: str | None = Depends(oauth2_scheme)) -> str:
+def get_current_user_id(
+    request: Request,
+    token: str | None = Depends(oauth2_scheme),
+) -> str:
+    from .hepai_oidc import get_session_user, session_user_id
+
+    oidc_user = session_user_id(get_session_user(request))
+    if oidc_user:
+        return oidc_user
     if not token:
         raise illegal_token_exception
     data = decode_jwt_token(token)

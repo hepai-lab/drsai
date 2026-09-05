@@ -1,4 +1,4 @@
-import { getServerUrl } from "../../utils";
+import { apiFetch, getServerUrl } from "../../utils";
 import { getAuthToken } from "../../../utils/authSession";
 
 export class Agent {
@@ -21,7 +21,7 @@ export class Agent {
     async getAgentList(userId: string): Promise<any[]> {
         // console.log("Fetching agent list for user:", userId);
         // console.log("Using base URL:", this.getBaseUrl());
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/agentmode/?user_id=${userId}`,
             {
                 headers: this.getHeaders(),
@@ -47,7 +47,7 @@ export class Agent {
     async updateAgentList(
         userId: string,
         id: string): Promise<any[]> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/agentmode/?user_id=${userId}&id=${id}`,
             {
                 method: "PUT",
@@ -76,7 +76,7 @@ export class Agent {
     async deleteMainAgent(
         userId: string,
         id: string) {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/agentmode/?user_id=${userId}&id=${id}`,
             {
                 method: "DELETE",
@@ -87,7 +87,7 @@ export class Agent {
 
     // save agent config
     async saveAgentConfig(agentConfig: any): Promise<any> {
-        const response = await fetch(`${this.getBaseUrl()}/agentmode/`, {
+        const response = await apiFetch(`${this.getBaseUrl()}/agentmode/`, {
             method: "POST",
             headers: this.getHeaders(),
             body: JSON.stringify(agentConfig),
@@ -100,7 +100,7 @@ export class Agent {
 
     // get agent config by user_id and mode
     async getAgentConfig(userId: string, mode: string): Promise<any> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/agentmode/config/?user_id=${userId}&mode=${mode}`,
             {
                 headers: this.getHeaders(),

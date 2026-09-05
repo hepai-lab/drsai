@@ -3,6 +3,7 @@ import { Agent } from '../../../types/common';
 import { useModeConfigStore } from '../../../store/modeConfig';
 import { getFirstRecentAgentId } from '../../../utils/recentAgentsStorage';
 import {
+  agentNameMatches,
   pickAgentForSessionStart,
   pickPreferredAgentFromList,
   shouldRefreshAgentCatalog,
@@ -145,7 +146,7 @@ export const useAgentManager = (userEmail: string | undefined) => {
             if (!matched && urlAgentName) {
               const candidates = res.map((a) => a.name);
               console.log("[agentLink] useAgentManager: looking for", urlAgentName, "in", candidates);
-              matched = res.find((a) => (a.name || "").trim() === urlAgentName.trim());
+              matched = res.find((a) => agentNameMatches(a.name, urlAgentName));
             }
             console.log("[agentLink] useAgentManager: matched =", matched?.name || matched?.id || "NONE");
             if (matched) {

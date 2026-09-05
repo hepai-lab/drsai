@@ -114,7 +114,7 @@ export const SSOLogin: React.FC = () => {
   // 如果已经登录，RouteGuard 会自动重定向到主页
 
   const handleLogin = () => {
-    window.location.href = "/umt/login";
+    window.location.href = "/umt/oidc-login";
   };
 
   const handleLocalLogin = (e: React.FormEvent) => {

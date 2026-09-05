@@ -85,6 +85,21 @@ export class AuthAPI {
         }
         return data.data as { access_token: string; user_id: string };
     }
+
+    /** CSNS user_agent 嵌入登录：用路径中的 access_token 换取本系统 JWT */
+    async userAgentVerify(accessToken: string): Promise<{ access_token: string; user_id: string; agent_name?: string | null }> {
+        const params = new URLSearchParams({ access_token: accessToken });
+        const response = await fetch(`${this.getBaseUrl()}/auth/user-agent/verify?${params.toString()}`, {
+            method: "POST",
+            headers: this.getHeaders(),
+            credentials: "include",
+        });
+        const data = await response.json();
+        if (!response.ok || !data.status) {
+            throw new Error(data.detail || data.message || `user_agent_auth_failed`);
+        }
+        return data.data as { access_token: string; user_id: string; agent_name?: string | null };
+    }
 }
 
 export const authAPI = new AuthAPI();

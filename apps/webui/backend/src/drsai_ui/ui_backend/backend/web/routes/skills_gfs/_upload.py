@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from fastapi import Depends, File, Form, HTTPException, Query, Request, UploadFile
 
 from ._constants import _MAX_PROFILE_BYTES, _MAX_UPLOAD_BYTES, router, logger
-from ._auth import _get_db, _resolve_user_from_apikey
+from ._auth import _get_db, _normalize_uid, _resolve_user_from_apikey
 from ._gfs import _ensure_cache_zip, _gfs_user_zip_path, _require_gfs
 from ._skillmd import _parse_skill_md, _profile_safe_ext, _read_file_from_zip, _slugify
 from ..gfs_utils import gfs_ls, gfs_put
@@ -31,6 +31,8 @@ async def upload_skill(
     tags: str | None = Form(None),
     visibility: str | None = Form(None),
     source: str | None = Form(None),
+    owner: str | None = Form(None),
+    owner_id: str | None = Form(None),
     profile: UploadFile | None = File(None),
 ) -> dict:
     """Upload a skill ZIP. Auth required."""
@@ -44,7 +46,7 @@ async def upload_skill(
 
     return await _upload_skill(
         file, auth_user_id, slug, display_name or name, icon, description,
-        version, changelog, profile, tags, visibility, source,
+        version, changelog, profile, tags, visibility, source, owner, owner_id,
     )
 
 
@@ -56,6 +58,8 @@ async def _upload_skill(
     tags: str | None = None,
     visibility: str | None = None,
     source: str | None = None,
+    owner: str | None = None,
+    owner_id: str | None = None,
 ) -> dict:
     from ....datamodel.db import SkillMeta, SkillDetail
 
@@ -84,30 +88,51 @@ async def _upload_skill(
             final_tags = [t.strip() for t in tag_input.split(",") if t.strip()]
 
         db_mgr = await _get_db()
-        author_name = get_display_name(db_mgr, user_id) or user_id
+        orig_owner_id = (owner_id or "").strip()
+        orig_author = (owner or "").strip()
 
         existing_resp = db_mgr.get(SkillMeta, filters={"slug": canon_slug})
         if existing_resp.status and existing_resp.data:
             existing = existing_resp.data[0]
             orig_ids = list(existing.collector_ids or [])
-            existing.source = "user"
-            existing.owner_id = user_id
-            existing.author = author_name
-            existing.visibility = final_visibility
-            existing.uskills_type = "imported"
-            if user_id not in orig_ids:
+            # Repair owner if a prior collect bug overwrote it with the collector.
+            if orig_owner_id and _normalize_uid(existing.owner_id) == _normalize_uid(user_id):
+                existing.owner_id = orig_owner_id
+                if orig_author:
+                    existing.author = orig_author
+            if user_id not in orig_ids and not any(
+                _normalize_uid(x) == _normalize_uid(user_id) for x in orig_ids
+            ):
                 existing.collector_ids = orig_ids + [user_id]
+            # Remember original owner for uncollect / repair of dirty data
+            ref = dict(existing.imported_ref) if isinstance(existing.imported_ref, dict) else {}
+            ref["origin"] = ref.get("origin") or "public"
+            if orig_owner_id:
+                ref["owner_id"] = orig_owner_id
+            elif _normalize_uid(existing.owner_id) != _normalize_uid(user_id):
+                ref["owner_id"] = existing.owner_id
+            if orig_author:
+                ref["owner"] = orig_author
+            elif existing.author and not ref.get("owner"):
+                ref["owner"] = existing.author
+            existing.imported_ref = ref
             db_mgr.upsert(existing)
         else:
             db_mgr.upsert(SkillMeta(
                 slug=canon_slug, name=final_name, icon=final_icon,
                 version=final_version,
                 description=final_description,
-                owner_id=user_id, author=author_name,
-                visibility=final_visibility, source="user",
+                owner_id=orig_owner_id or "unknown",
+                author=orig_author or orig_owner_id or "unknown",
+                visibility="public", source="user",
                 uskills_type="imported",
                 tags=final_tags, download_count=0,
                 collector_ids=[user_id],
+                imported_ref={
+                    "origin": "public",
+                    "owner_id": orig_owner_id or None,
+                    "owner": orig_author or None,
+                } if (orig_owner_id or orig_author) else None,
             ))
 
         return {

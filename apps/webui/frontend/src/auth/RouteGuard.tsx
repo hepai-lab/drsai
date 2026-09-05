@@ -6,9 +6,31 @@ import { authAPI } from "../components/views/api";
 import ScienceUserErrorPage from "./ScienceUserErrorPage";
 
 const PUBLIC_ROUTES = ["/welcome", "/login", "/auth", "/share"];
-const PUBLIC_ROUTE_PREFIXES = ["/share/skill"];
+const PUBLIC_ROUTE_PREFIXES = ["/share/skill", "/auth/login", "/auth/oidc", "/umt/oidc-login"];
 
 const normalizePath = (path: string) => path.replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";
+
+function consumePendingSearch(): string {
+    try {
+        const match = document.cookie.match(/(?:^|;\s*)drsai_pending_search=([^;]*)/);
+        const raw = match ? decodeURIComponent(match[1]) : "";
+        if (!raw) {
+            return "";
+        }
+        document.cookie = "drsai_pending_search=; path=/; max-age=0; SameSite=Lax";
+        const pending = new URLSearchParams(raw.startsWith("?") ? raw.slice(1) : raw);
+        let extra = "";
+        for (const key of ["share_agent", "agentId", "agentName"]) {
+            const value = pending.get(key);
+            if (value) {
+                extra += `&${key}=${encodeURIComponent(value)}`;
+            }
+        }
+        return extra;
+    } catch {
+        return "";
+    }
+}
 
 interface RouteGuardProps {
     children: React.ReactNode;
@@ -30,8 +52,37 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
             // Science user iframe embed:
             //   统一认证: ?user_source=science_user&access_token=<ihep_token>
             //   院平台:   ?user_source=science_user&tokenId=<cas_token>
+            // CSNS user_agent embed:
+            //   ?user_source=user_agent&access_token=<csns_token>
             // 在所有其他守卫逻辑之前处理，避免跳转到登录页
-            if (searchParams.get("user_source") === "science_user") {
+            const userSource = (searchParams.get("user_source") || "").trim();
+            if (userSource === "user_agent") {
+                const accessToken =
+                    searchParams.get("access_token") || searchParams.get("token");
+                if (!accessToken) {
+                    if (!cancelled) setScienceAuthError("missingToken");
+                    return;
+                }
+                try {
+                    const result = await authAPI.userAgentVerify(accessToken);
+                    if (cancelled) return;
+                    saveAuthSession(result.access_token, result.user_id);
+                    localStorage.removeItem("drsai-mode-config");
+                    localStorage.removeItem("drsai.recentAgents");
+                    setUser({ name: result.user_id, email: result.user_id });
+                    const agentName = result.agent_name || "iPanda";
+                    window.location.replace(
+                        `/?menu=current_session&view=chat&share_agent=true&agentName=${encodeURIComponent(agentName)}`
+                    );
+                } catch (err: any) {
+                    if (cancelled) return;
+                    const isNetwork = err instanceof TypeError || String(err?.message).includes("fetch");
+                    setScienceAuthError(isNetwork ? "networkError" : "invalidToken");
+                }
+                return;
+            }
+
+            if (userSource === "science_user") {
                 const accessToken = searchParams.get("access_token");
                 const username = searchParams.get("username");
                 const tokenId = searchParams.get("tokenId");
@@ -85,8 +136,8 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
                 (prefix) => normalizedPath.startsWith(prefix)
             );
 
-            // 用户主动退出后带 ?logout=1，跳过 verifyAuthSession 避免
-            // refreshAccessToken 自动重新登录（httpOnly cookie 可能未清除）。
+            // 用户主动退出后带 ?logout=1，跳过 verifyAuthSession，避免
+            // 残留 cookie 把人静默送回应用。
             const isLogout = searchParams.get("logout") === "1";
 
             if (isPublicRoute) {
@@ -105,7 +156,6 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
             }
 
             if (isLogout) {
-                // 退出后从 /umt/logout 跳回公开欢迎页
                 if (!cancelled) {
                     navigate("/welcome", { replace: true });
                 }
@@ -119,6 +169,11 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
 
             if (session.ok) {
                 setUser({ email: session.userEmail, name: session.displayName || session.userEmail });
+                const extra = consumePendingSearch();
+                if (extra && !searchParams.get("agentId") && !searchParams.get("share_agent")) {
+                    navigate(`/?menu=current_session&view=chat${extra}`, { replace: true });
+                    return;
+                }
                 setChecked(true);
                 return;
             }
@@ -148,9 +203,10 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
         return <ScienceUserErrorPage errorType={scienceAuthError} />;
     }
 
-    // science_user 验证中：显示全屏 loading，等待跳转
+    // science_user / user_agent 验证中：显示全屏 loading，等待跳转
     const searchParams = new URLSearchParams(location.search);
-    if (searchParams.get("user_source") === "science_user") {
+    const embedSource = (searchParams.get("user_source") || "").trim();
+    if (embedSource === "science_user" || embedSource === "user_agent") {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950">
                 <div className="flex flex-col items-center gap-3">

@@ -20,9 +20,9 @@ class Settings(BaseSettings):
     # server walks up from the package to find skills/skills.
     AGENT_SKILLS_CATALOG_DIR: str | None = None
 
-    # ── Skills GFS (unified — public + user share one bucket) ─────────────────
-    # Single bucket 20294-skills-square with two folder prefixes:
-    #   public_skills/{slug}.zip   and   user_skills/{user_id}/{source}/{slug}.zip
+    # ── Skills GFS (unified — public + user + higraf share one bucket) ──────
+    # Single bucket 20294-skills-square with folder prefixes:
+    #   user_skills/{user_id}/{slug}.zip   and   higraf/{slug}.zip
     GFS_SKILLS_AK: str = ""
     GFS_SKILLS_SK: str = ""
     GFS_SKILLS_BUCKET: str = "20294-skills-square"

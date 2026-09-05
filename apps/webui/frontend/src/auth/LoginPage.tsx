@@ -63,7 +63,7 @@ const LoginPage: React.FC = () => {
 
     const doSSO = () => {
         setSsoLoading(true);
-        window.location.href = `/umt/login`;
+        window.location.href = `/umt/oidc-login`;
     };
 
     const doLogin = async () => {

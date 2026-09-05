@@ -27,6 +27,7 @@ export type SkillsPublicItem = {
     imported_ref?: { origin: string; owner?: string | null; version?: string } | null;
     tags?: string[];
     academicGroupId?: string;
+    is_collected?: boolean;
 };
 
 export type SkillsPublicDetail = SkillsPublicItem & {
@@ -58,6 +59,8 @@ export type SkillsUserItem = {
     downloads: number;
     collects: number;
     tags?: string[];
+    collector_ids?: string[];
+    is_collected?: boolean;
 };
 
 export type SkillsUserDetail = SkillsUserItem & {
@@ -205,6 +208,23 @@ const params = new URLSearchParams({ type: "public", page: String(page), page_si
         };
     }
 
+    /** Get aggregated skill statistics (total count, public count, downloads, collects). */
+    async getStats(apiKey?: string): Promise<{
+        total_skills: number;
+        public_skills: number;
+        total_downloads: number;
+        total_collects: number;
+    }> {
+        const headers: HeadersInit = this.getHeaders();
+        if (apiKey) {
+            (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
+        }
+        const response = await fetch(`${this.getBaseUrl()}/skills/stats`, { headers });
+        const data = await response.json();
+        if (!data.status) throw new Error(data.message || "Failed to get skill stats");
+        return data.data;
+    }
+
     /** List all public skills (follows pagination until exhausted). */
     async listPublicSkills(apiKey?: string): Promise<SkillsPublicItem[]> {
         const pageSize = 100;
@@ -342,7 +362,8 @@ const params = new URLSearchParams({ type: "public", page: String(page), page_si
     /** Toggle a user skill's public visibility. */
     async toggleSkillVisibility(slug: string, userId: string, publicVal: boolean, apiKey?: string): Promise<{ slug: string; public: boolean }> {
         const headers: HeadersInit = this.getHeaders();
-        const qs = `type=user&user_id=${encodeURIComponent(userId)}&public=${publicVal}`;
+        const visibility = publicVal ? "public" : "private";
+        const qs = `type=user&user_id=${encodeURIComponent(userId)}&visibility=${encodeURIComponent(visibility)}`;
         if (apiKey) {
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }
@@ -352,9 +373,16 @@ const params = new URLSearchParams({ type: "public", page: String(page), page_si
         );
         const data = await response.json();
         if (!response.ok || !data?.status) {
-            throw new Error(data?.detail || data?.message || "Toggle visibility failed");
+            const detail = data?.detail;
+            const msg = typeof detail === "string"
+                ? detail
+                : Array.isArray(detail)
+                  ? detail.map((d: { msg?: string }) => d.msg).filter(Boolean).join("; ")
+                  : data?.message || "Toggle visibility failed";
+            throw new Error(msg);
         }
-        return data.data;
+        const vis = data.data?.visibility as string | undefined;
+        return { slug, public: vis ? vis === "public" : publicVal };
     }
 
     /** Download a public skill as ZIP. */
@@ -391,6 +419,7 @@ const params = new URLSearchParams({ type: "public", page: String(page), page_si
             version?: string;
             tags?: string;
             owner?: string;
+            owner_id?: string;
             origin?: string;
             changelog?: string;
         } | string,
@@ -407,6 +436,7 @@ const params = new URLSearchParams({ type: "public", page: String(page), page_si
             version: fields.version,
             tags: fields.tags,
             owner: fields.owner,
+            owner_id: fields.owner_id,
             origin: fields.origin,
             changelog: fields.changelog,
         }, apiKey);
@@ -419,14 +449,37 @@ const params = new URLSearchParams({ type: "public", page: String(page), page_si
         if (apiKey) {
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }
-        const qs = `type=user`;
+        const qs = `type=user&page_size=200`;
         const url = `${this.getBaseUrl()}/skills?${qs}`;
         const response = await fetch(url, { headers });
         const data = await response.json();
         if (!response.ok || !data?.status) {
             throw new Error(data?.detail || data?.message || "获取用户技能列表失败");
         }
-        return Array.isArray(data.data) ? data.data : [];
+        const rows = Array.isArray(data.data) ? data.data : [];
+        return rows.map((r: Record<string, unknown>): SkillsUserItem => ({
+            slug: String(r.slug || ""),
+            name: String(r.name || r.slug || ""),
+            description: String(r.description || ""),
+            icon: String(r.icon || "package"),
+            version: String(r.version || "0.0.0"),
+            owner: String(r.owner || r.author || ""),
+            owner_id: r.owner_id ? String(r.owner_id) : undefined,
+            source: (r.source === "higraf" ? "higraf" : "user"),
+            uskills_type: (r.uskills_type === "imported" ? "imported" : r.uskills_type === "created" ? "created" : null),
+            public: r.visibility === "public",
+            unlisted: r.visibility === "private",
+            created_at: String(r.created_at || ""),
+            updated_at: String(r.updated_at || ""),
+            download_url: "",
+            profile: String(r.profile || ""),
+            changelog: "",
+            downloads: Number(r.downloads || 0),
+            collects: Number(r.collects || 0),
+            tags: Array.isArray(r.tags) ? r.tags.map(String) : undefined,
+            collector_ids: Array.isArray(r.collector_ids) ? r.collector_ids.map(String) : [],
+            is_collected: Boolean(r.is_collected),
+        }));
     }
 
     async uploadUserSkill(
@@ -442,6 +495,7 @@ const params = new URLSearchParams({ type: "public", page: String(page), page_si
             source?: string;
             tags?: string;
             owner?: string;
+            owner_id?: string;
             origin?: string;
             profile?: File;
         },
@@ -459,6 +513,7 @@ const params = new URLSearchParams({ type: "public", page: String(page), page_si
         if (m.source?.trim()) form.append("source", m.source.trim());
         if (m.tags?.trim()) form.append("tags", m.tags.trim());
         if (m.owner?.trim()) form.append("owner", m.owner.trim());
+        if (m.owner_id?.trim()) form.append("owner_id", m.owner_id.trim());
         if (m.origin?.trim()) form.append("origin", m.origin.trim());
         if (m.profile) form.append("profile", m.profile);
         const headers: HeadersInit = {};
@@ -544,9 +599,14 @@ const params = new URLSearchParams({ type: "public", page: String(page), page_si
         };
     }
 
-    async deleteUserSkill(slug: string, userId: string, apiKey?: string): Promise<void> {
+    async deleteUserSkill(
+        slug: string,
+        userId: string,
+        apiKey?: string,
+        intent: "delete" | "uncollect" = "delete",
+    ): Promise<void> {
         const headers: HeadersInit = {};
-        const qs = `type=user`;
+        const qs = `type=user&intent=${encodeURIComponent(intent)}`;
         if (apiKey) {
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
         }

@@ -1,5 +1,5 @@
 import { Session, SessionRuns } from "../../types/datamodel";
-import { getServerUrl } from "../../utils";
+import { apiFetch, getServerUrl } from "../../utils";
 import { getAuthToken } from "../../../utils/authSession";
 
 export class SessionAPI {
@@ -19,7 +19,7 @@ export class SessionAPI {
     }
 
     async listSessions(userId: string): Promise<Session[]> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/sessions/?user_id=${userId}`,
             {
                 headers: this.getHeaders(),
@@ -32,7 +32,7 @@ export class SessionAPI {
     }
 
     async getSession(sessionId: number, userId: string): Promise<Session> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/sessions/${sessionId}?user_id=${userId}`,
             {
                 headers: this.getHeaders(),
@@ -53,7 +53,7 @@ export class SessionAPI {
             user_id: userId,
         };
 
-        const response = await fetch(`${this.getBaseUrl()}/sessions/`, {
+        const response = await apiFetch(`${this.getBaseUrl()}/sessions/`, {
             method: "POST",
             headers: this.getHeaders(),
             body: JSON.stringify(session),
@@ -77,7 +77,7 @@ export class SessionAPI {
             user_id: userId,
         };
 
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/sessions/${sessionId}?user_id=${userId}`,
             {
                 method: "PUT",
@@ -95,7 +95,7 @@ export class SessionAPI {
         sessionId: number,
         userId: string
     ): Promise<SessionRuns> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/sessions/${sessionId}/runs?user_id=${userId}`,
             {
                 headers: this.getHeaders(),
@@ -111,7 +111,7 @@ export class SessionAPI {
         runId: string,
         runData: Partial<any>,
     ): Promise<Session> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/runs/${runId}`,
             {
                 method: "PUT",
@@ -126,7 +126,7 @@ export class SessionAPI {
     }
 
     async deleteSession(sessionId: number, userId: string): Promise<void> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/sessions/${sessionId}?user_id=${userId}`,
             {
                 method: "DELETE",
@@ -147,7 +147,7 @@ export class SessionAPI {
             user_id: userId,
             enabled: String(enabled),
         });
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/sessions/${sessionId}/share?${params.toString()}`,
             {
                 method: "POST",
@@ -164,7 +164,7 @@ export class SessionAPI {
         session: Session;
         runs: SessionRuns["runs"];
     }> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/sessions/shared/${encodeURIComponent(shareToken)}`,
             { headers: this.getHeaders() }
         );
@@ -185,7 +185,7 @@ export class SessionAPI {
         sessionId: number,
         userId: string
     ): Promise<any[]> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/sessions/${sessionId}/messages?user_id=${userId}`,
             {
                 headers: this.getHeaders(),

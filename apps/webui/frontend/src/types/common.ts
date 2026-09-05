@@ -36,4 +36,5 @@ export interface Agent {
     type?: AgentType;
     examples?: AgentExample[];
     announcements?: (string | LocalizedExample)[];
+    is_public?: boolean;
 }

@@ -82,30 +82,30 @@ const AgentStatsCards: React.FC<AgentStatsCardsProps> = ({ items }) => {
                 </div>
               )}
             </div>
-            <div className="relative mt-2.5 flex items-center gap-1 text-[11px]">
-              {isUp && (
-                <ArrowUp className="h-3 w-3 text-green-500" />
-              )}
-              {isDown && (
-                <ArrowDown className="h-3 w-3 text-red-500" />
-              )}
-              <span
-                className={
-                  isUp
-                    ? "font-medium text-green-600 dark:text-green-400"
-                    : isDown
-                      ? "font-medium text-red-600 dark:text-red-400"
-                      : "text-secondary"
-                }
-              >
-                {absChange}%
-              </span>
-              {(item.changeLabel || isUp || isDown) && (
-                <span className="text-secondary/60">
-                  {item.changeLabel || "较上月"}
+            {item.change !== 0 && (
+              <div className="relative mt-2.5 flex items-center gap-1 text-[11px]">
+                {isUp && (
+                  <ArrowUp className="h-3 w-3 text-green-500" />
+                )}
+                {isDown && (
+                  <ArrowDown className="h-3 w-3 text-red-500" />
+                )}
+                <span
+                  className={
+                    isUp
+                      ? "font-medium text-green-600 dark:text-green-400"
+                      : "font-medium text-red-600 dark:text-red-400"
+                  }
+                >
+                  {absChange}%
                 </span>
-              )}
-            </div>
+                {item.changeLabel && (
+                  <span className="text-secondary/60">
+                    {item.changeLabel}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         );
       })}

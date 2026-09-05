@@ -7,6 +7,10 @@ from typing import Optional
 from pathlib import Path
 import logging
 
+from drsai_ui.env_load import load_webui_dotenv
+
+load_webui_dotenv()
+
 from ..version import VERSION
 from ..version import APP_NAME as UI_APP_NAME
 from .._docker import (
@@ -129,6 +133,16 @@ def ui(
         _val = os.getenv(_gfs_var)
         if _val:
             env_vars[_gfs_var] = _val
+
+    for _key_var in (
+        "SERVICE_MODE",
+        "HEPAI_APP_ADMIN_API_KEY",
+        "HEPAI_API_KEY",
+        "DRSAI_UI_API_KEY_VERIFY_URL",
+    ):
+        _val = os.getenv(_key_var)
+        if _val:
+            env_vars[_key_var] = _val
 
     # If the config file is not provided, check for the default config file
     if not config:

@@ -874,7 +874,7 @@ async def install_skills_for_agent(
                     continue
 
             elif source == "user":
-                # 用户私有技能：现在统一从 GFS public_skills/ 下载
+                # 用户私有技能：从 GFS 下载（通过 SkillMeta 解析路径）
                 try:
                     from .skills_gfs._download import _gfs_download_public_skill_bytes
                     zip_bytes = await _gfs_download_public_skill_bytes(slug)

@@ -467,6 +467,31 @@ const isPptFile = (file: MessageFileItem): boolean => {
   return PPT_EXTENSIONS.has(getExtension(file.name || ""));
 };
 
+/**
+ * pptx-preview 1.0.7 calls Object.keys() on p:defaultTextStyle.
+ * python-pptx omits this optional OOXML element, which crashes the viewer.
+ * Patch the in-memory zip only — the saved file is left unchanged.
+ */
+async function ensurePptxDefaultTextStyle(arrayBuffer: ArrayBuffer): Promise<ArrayBuffer> {
+  try {
+    const JSZip = (await import("jszip")).default;
+    const zip = await JSZip.loadAsync(arrayBuffer);
+    const xmlFile = zip.file("ppt/presentation.xml");
+    if (!xmlFile) return arrayBuffer;
+    const xml = await xmlFile.async("string");
+    if (/<p:defaultTextStyle[\s/>]/.test(xml) || !xml.includes("</p:presentation>")) {
+      return arrayBuffer;
+    }
+    zip.file(
+      "ppt/presentation.xml",
+      xml.replace("</p:presentation>", "  <p:defaultTextStyle/>\n</p:presentation>"),
+    );
+    return zip.generateAsync({ type: "arraybuffer" });
+  } catch {
+    return arrayBuffer;
+  }
+}
+
 const isMarkdownFile = (file: MessageFileItem): boolean => {
   const ext = getExtension(file.name || "");
   return ext === "md" || ext === "markdown";
@@ -644,7 +669,8 @@ const FilePreviewPage = React.forwardRef<FilePreviewPageHandle, FilePreviewPageP
         const width = 960;
         const height = Math.round((width * 9) / 16);
         const previewer = init(container, { width, height, mode: "scroll" });
-        await previewer.preview(arrayBuffer);
+        const previewBuffer = await ensurePptxDefaultTextStyle(arrayBuffer);
+        await previewer.preview(previewBuffer);
         // pptx-preview sets height/overflow as inline styles — override after render
         const wrapper = container.querySelector('.pptx-preview-wrapper') as HTMLElement | null;
         if (wrapper) {

@@ -9,7 +9,7 @@ from fastapi import HTTPException
 
 from ...config import settings
 from ._constants import SkillType
-from ..gfs_utils import gfs_get, gfs_ls, gfs_put, gfs_read_text
+from ..gfs_utils import gfs_get, gfs_ls, gfs_put
 from ._skillmd import _parse_skill_md
 from ._cache import _ensure_cache_zip, _read_cached_skill_md
 
@@ -66,16 +66,10 @@ def _gfs_zip_path(slug: str, owner_id: str = "", source: str = "user") -> str:
     return _gfs_user_zip_path(slug, "")
 
 
-def _gfs_meta_path(slug: str) -> str:
-    return f"public_skills/{slug}/meta.json"
-
-
 def _gfs_profile_dir(slug: str, source: str = "user", owner_id: str = "") -> str:
     if source == "higraf":
         return f"higraf/{slug}"
-    if owner_id:
-        return f"user_skills/{owner_id}/{slug}"
-    return f"public_skills/{slug}"
+    return f"user_skills/{owner_id}/{slug}" if owner_id else f"user_skills/{slug}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -114,14 +108,3 @@ async def _increment_download_count(slug: str) -> None:
     row.download_count = int(row.download_count or 0) + 1
     db_mgr.upsert(row)
 
-
-def _gfs_read_meta_json(slug: str, cfg: dict) -> dict:
-    import json
-    path = _gfs_meta_path(slug)
-    text = gfs_read_text(path, cfg)
-    if not text:
-        return {}
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return {}

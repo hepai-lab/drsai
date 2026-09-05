@@ -1,4 +1,4 @@
-import { getServerUrl } from "../../utils";
+import { apiFetch, getServerUrl } from "../../utils";
 import { getAuthToken } from "../../../utils/authSession";
 
 export type ManagedUser = {
@@ -67,7 +67,7 @@ export class UserAPI {
         const urls = [`${base}/users/access?${q}`, `${base}/orgs/access?${q}`];
         let lastError = "access";
         for (const url of urls) {
-            const response = await fetch(url, { headers: this.getHeaders() });
+            const response = await apiFetch(url, { headers: this.getHeaders() });
             const data = await response.json().catch(() => ({}));
             if (response.ok && data.status && data.data) {
                 return {
@@ -83,7 +83,7 @@ export class UserAPI {
     }
 
     async listUsers(operatorUserId: string): Promise<ManagedUser[]> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/users/?operator_user_id=${encodeURIComponent(operatorUserId)}`,
             { headers: this.getHeaders() }
         );
@@ -95,7 +95,7 @@ export class UserAPI {
     }
 
     async setAdmin(operatorUserId: string, userId: string, isAdmin: boolean): Promise<void> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/users/${encodeURIComponent(userId)}/admin?operator_user_id=${encodeURIComponent(operatorUserId)}&is_admin=${String(isAdmin)}`,
             {
                 method: "PUT",
@@ -114,7 +114,7 @@ export class UserAPI {
         if (token) {
             (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
         }
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/auth/me`,
             { headers, credentials: "include" }
         );

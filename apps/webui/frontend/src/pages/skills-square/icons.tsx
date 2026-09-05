@@ -1,11 +1,23 @@
 import {
+  BookOpen,
   Bot,
+  Camera,
   Code,
+  Database,
   FileText,
+  Globe,
   Image,
+  MessageSquare,
+  Music,
   Package,
+  Palette,
+  Search,
+  Settings,
+  Shield,
   Sparkles,
+  Video,
   Wrench,
+  Zap,
 } from "lucide-react";
 import React from "react";
 
@@ -20,23 +32,39 @@ export const SKILL_ICON_OPTIONS: {
   { value: "sparkles", label: "Sparkles", Icon: Sparkles },
   { value: "bot", label: "Agent", Icon: Bot },
   { value: "file-text", label: "Document", Icon: FileText },
+  { value: "search", label: "Search", Icon: Search },
+  { value: "database", label: "Database", Icon: Database },
+  { value: "globe", label: "Globe", Icon: Globe },
+  { value: "palette", label: "Palette", Icon: Palette },
+  { value: "camera", label: "Camera", Icon: Camera },
+  { value: "music", label: "Music", Icon: Music },
+  { value: "video", label: "Video", Icon: Video },
+  { value: "book-open", label: "Book", Icon: BookOpen },
+  { value: "message-square", label: "Chat", Icon: MessageSquare },
+  { value: "settings", label: "Settings", Icon: Settings },
+  { value: "shield", label: "Shield", Icon: Shield },
+  { value: "zap", label: "Zap", Icon: Zap },
 ];
 
-export const ICON_LABEL_KEY_MAP: Record<
-  string,
-  | "skillSquare.iconPackage"
-  | "skillSquare.iconWrench"
-  | "skillSquare.iconCode"
-  | "skillSquare.iconSparkles"
-  | "skillSquare.iconBot"
-  | "skillSquare.iconFileText"
-> = {
+export const ICON_LABEL_KEY_MAP: Record<string, string> = {
   package: "skillSquare.iconPackage",
   wrench: "skillSquare.iconWrench",
   code: "skillSquare.iconCode",
   sparkles: "skillSquare.iconSparkles",
   bot: "skillSquare.iconBot",
   "file-text": "skillSquare.iconFileText",
+  search: "skillSquare.iconSearch",
+  database: "skillSquare.iconDatabase",
+  globe: "skillSquare.iconGlobe",
+  palette: "skillSquare.iconPalette",
+  camera: "skillSquare.iconCamera",
+  music: "skillSquare.iconMusic",
+  video: "skillSquare.iconVideo",
+  "book-open": "skillSquare.iconBookOpen",
+  "message-square": "skillSquare.iconMessageSquare",
+  settings: "skillSquare.iconSettings",
+  shield: "skillSquare.iconShield",
+  zap: "skillSquare.iconZap",
 };
 
 /** Resolve icon to a React node: URL → <img>, "__profile__" → Image, otherwise → Lucide icon component. */

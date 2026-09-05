@@ -15,7 +15,7 @@ require("dotenv").config({
 
 const BACKEND_URL = process.env.GATSBY_API_URL
   ? process.env.GATSBY_API_URL.replace(/\/api$/, "")
-  : "http://localhost:4291";
+  : "http://localhost:8086";
 
 const config: GatsbyConfig = {
   pathPrefix: "",

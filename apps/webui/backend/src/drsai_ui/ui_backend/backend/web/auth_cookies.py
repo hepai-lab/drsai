@@ -19,21 +19,24 @@ def refresh_cookie_max_age() -> int:
 
 
 def set_refresh_cookie(response, token: str) -> None:
+    # iframe 嵌入（CSNS 等第三方站点）需要 SameSite=None; Secure，否则 refresh cookie 写不进去
+    secure = _cookie_secure()
     response.set_cookie(
         key=REFRESH_COOKIE_NAME,
         value=token,
         httponly=True,
         path="/",
-        samesite="lax",
-        secure=_cookie_secure(),
+        samesite="none" if secure else "lax",
+        secure=secure,
         max_age=refresh_cookie_max_age(),
     )
 
 
 def clear_refresh_cookie(response) -> None:
+    secure = _cookie_secure()
     response.delete_cookie(
         key=REFRESH_COOKIE_NAME,
         path="/",
-        secure=_cookie_secure(),
-        samesite="lax",
+        secure=secure,
+        samesite="none" if secure else "lax",
     )

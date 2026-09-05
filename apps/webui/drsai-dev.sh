@@ -17,10 +17,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
 FRONTEND_DIR="$PROJECT_ROOT/frontend"
 
+REPO_ROOT="$(cd "$PROJECT_ROOT/../.." && pwd)"
+VENV_DIR="${DRSAI_VENV_DIR:-$REPO_ROOT/.venv}"
 CONDA_ENV="${DRSAI_CONDA_ENV:-drsai}"
 BACKEND_HOST="${DRSAI_BACKEND_HOST:-0.0.0.0}"
-BACKEND_PORT="${DRSAI_BACKEND_PORT:-4291}"
-FRONTEND_PORT="${DRSAI_FRONTEND_PORT:-4290}"
+BACKEND_PORT="${DRSAI_BACKEND_PORT:-8086}"
+FRONTEND_PORT="${DRSAI_FRONTEND_PORT:-8001}"
+BACKEND_APPDIR="${DRSAI_APPDIR:-$HOME/.drsai_ui_${BACKEND_PORT}}"
 
 PM2_BACKEND="${DRSAI_PM2_BACKEND:-drsai-dev-backend}"
 PM2_FRONTEND="${DRSAI_PM2_FRONTEND:-drsai-dev-frontend}"
@@ -60,6 +63,14 @@ ensure_conda() {
     || die "conda 环境 '$CONDA_ENV' 不存在（conda env list 查看）"
   command -v drsai-ui &>/dev/null \
     || die "激活 '$CONDA_ENV' 后仍找不到 drsai-ui（drsai_ui 是否已 editable 安装？）"
+}
+
+# Prefer repo .venv (this workspace) so start matches the previous pm2 ecosystem config.
+ensure_backend_bin() {
+  if [[ -x "$VENV_DIR/bin/drsai-ui" ]]; then
+    return 0
+  fi
+  ensure_conda
 }
 
 ensure_node() {
@@ -113,23 +124,29 @@ pm2_up() {
 }
 
 start_backend() {
-  ensure_pm2; ensure_backend_env; ensure_conda
-  info "后端 → $BACKEND_HOST:$BACKEND_PORT (reload 开)"
+  ensure_pm2; ensure_backend_env; ensure_backend_bin
+  local drsai_ui="drsai-ui"
+  local prefix=""
+  if [[ -x "$VENV_DIR/bin/drsai-ui" ]]; then
+    drsai_ui="$VENV_DIR/bin/drsai-ui"
+    prefix="export VIRTUAL_ENV='$VENV_DIR'; export PATH='$VENV_DIR/bin:'\"\${PATH}\";"
+  fi
+  info "后端 → $BACKEND_HOST:$BACKEND_PORT (reload 开, appdir $BACKEND_APPDIR)"
+  mkdir -p "$BACKEND_APPDIR"
   # 在 pm2 子进程内 source .env 并 exec，确保后端及 reload worker 都读到密钥/配置
   pm2_up "$PM2_BACKEND" \
     pm2 start -n "$PM2_BACKEND" --cwd "$PROJECT_ROOT" \
-      bash -- -lc "source '$PROJECT_ROOT/.env'; exec drsai-ui ui --host $BACKEND_HOST --port $BACKEND_PORT --reload"
+      bash -- -lc "$prefix set -a; [ -f '$PROJECT_ROOT/.env' ] && . '$PROJECT_ROOT/.env'; set +a; exec '$drsai_ui' ui --host $BACKEND_HOST --port $BACKEND_PORT --reload --appdir '$BACKEND_APPDIR' --database-uri 'sqlite:////$BACKEND_APPDIR/drsai_ui.db'"
   ok "后端已启动"
 }
 
 start_frontend() {
   ensure_pm2; ensure_node; ensure_frontend_env; ensure_frontend_deps
-  info "前端 → 端口 $FRONTEND_PORT (Gatsby HMR)"
+  info "前端 → 端口 $FRONTEND_PORT (Gatsby HMR, API → :$BACKEND_PORT)"
+  # Keep GATSBY_API_URL set-but-empty so dotenv does not load a production URL.
   pm2_up "$PM2_FRONTEND" \
     pm2 start -n "$PM2_FRONTEND" --cwd "$FRONTEND_DIR" \
-      --env GATSBY_DEV_PORT="$FRONTEND_PORT" \
-      yarn -- dev
-  pm2 set "$PM2_FRONTEND:GATSBY_DEV_PORT" "$FRONTEND_PORT" >/dev/null 2>&1 || true
+      bash -- -lc "export NVM_DIR='${NVM_DIR}'; [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"; export GATSBY_API_URL=''; export GATSBY_DEV_API_PORT='$BACKEND_PORT'; export GATSBY_DEV_PORT='$FRONTEND_PORT'; export NODE_OPTIONS=--max-old-space-size=32768; exec yarn run dev"
   ok "前端已启动"
 }
 
@@ -280,7 +297,7 @@ ${C_BLD}drsai-dev.sh${C_RST} — DrSai 开发环境管理 (pm2)
 
   默认账号: ${ADMIN_USER}/${ADMIN_PASS}（管理员）、dev/dev123456（开发者）
   端口可覆盖: DRSAI_BACKEND_PORT(=$BACKEND_PORT) DRSAI_FRONTEND_PORT(=$FRONTEND_PORT)
-            DRSAI_CONDA_ENV(=$CONDA_ENV)
+            DRSAI_APPDIR(=$BACKEND_APPDIR) DRSAI_CONDA_ENV(=$CONDA_ENV)
 EOF
 }
 

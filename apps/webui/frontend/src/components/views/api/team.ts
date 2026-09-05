@@ -1,5 +1,5 @@
 import { Team, AgentConfig } from "../../types/datamodel";
-import { getServerUrl } from "../../utils";
+import { apiFetch, getServerUrl } from "../../utils";
 import { getAuthToken } from "../../../utils/authSession";
 
 export class TeamAPI {
@@ -19,7 +19,7 @@ export class TeamAPI {
     }
 
     async listTeams(userId: string): Promise<Team[]> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/teams/?user_id=${userId}`,
             {
                 headers: this.getHeaders(),
@@ -32,7 +32,7 @@ export class TeamAPI {
     }
 
     async getTeam(teamId: number, userId: string): Promise<Team> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/teams/${teamId}?user_id=${userId}`,
             {
                 headers: this.getHeaders(),
@@ -50,7 +50,7 @@ export class TeamAPI {
             user_id: userId,
         };
 
-        const response = await fetch(`${this.getBaseUrl()}/teams/`, {
+        const response = await apiFetch(`${this.getBaseUrl()}/teams/`, {
             method: "POST",
             headers: this.getHeaders(),
             body: JSON.stringify(team),
@@ -62,7 +62,7 @@ export class TeamAPI {
     }
 
     async deleteTeam(teamId: number, userId: string): Promise<void> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/teams/${teamId}?user_id=${userId}`,
             {
                 method: "DELETE",
@@ -76,7 +76,7 @@ export class TeamAPI {
 
     // Team-Agent Link Management
     async linkAgent(teamId: number, agentId: number): Promise<void> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/teams/${teamId}/agents/${agentId}`,
             {
                 method: "POST",
@@ -93,7 +93,7 @@ export class TeamAPI {
         agentId: number,
         sequenceId: number
     ): Promise<void> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/teams/${teamId}/agents/${agentId}/${sequenceId}`,
             {
                 method: "POST",
@@ -108,7 +108,7 @@ export class TeamAPI {
     }
 
     async unlinkAgent(teamId: number, agentId: number): Promise<void> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/teams/${teamId}/agents/${agentId}`,
             {
                 method: "DELETE",
@@ -121,7 +121,7 @@ export class TeamAPI {
     }
 
     async getTeamAgents(teamId: number): Promise<AgentConfig[]> {
-        const response = await fetch(
+        const response = await apiFetch(
             `${this.getBaseUrl()}/teams/${teamId}/agents`,
             {
                 headers: this.getHeaders(),

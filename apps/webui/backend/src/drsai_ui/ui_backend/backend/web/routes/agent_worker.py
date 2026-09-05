@@ -554,12 +554,13 @@ async def get_user_default_agent(user_id: str, db=Depends(get_db)) -> Dict:
             stored = getattr(resp.data[0], "default_agent_id", None)
 
         resolved = _resolve_default_agent_id(user_id, db, stored)
+        user_source = get_user_source(db, user_id)
         return {
             "status": True,
             "data": {
                 "default_agent_id": resolved,
                 "stored_default_agent_id": stored,
-                **get_platform_agent_policy(),
+                **get_platform_agent_policy(user_source=user_source),
             },
         }
     except Exception as e:
