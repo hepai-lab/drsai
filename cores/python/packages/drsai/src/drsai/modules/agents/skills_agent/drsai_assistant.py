@@ -401,13 +401,13 @@ class DrSaiAssistant(DrSaiAgent):
         sub_agent_config: Dict = {},
         max_agent_concurrent: int = 10,
         # task loop and memory
-        max_turn_count: int = 1_000,
+        max_turn_count: int | None = 1_000,
         # Tool-loop safety ceilings. Defaults preserve desktop behavior; raise
         # for non-desktop surfaces (worker/console) that need longer loops or
         # higher parallelism. Actual loop bound = min(max_turn_count, max_tool_rounds_ceiling).
-        max_tool_rounds_ceiling: int = DEFAULT_MAX_TOOL_ROUNDS,
-        max_parallel_tool_calls_ceiling: int = DEFAULT_MAX_PARALLEL_TOOL_CALLS,
-        max_inline_tool_output_chars: int = MAX_INLINE_TOOL_OUTPUT_CHARS,
+        max_tool_rounds_ceiling: int | None = DEFAULT_MAX_TOOL_ROUNDS,
+        max_parallel_tool_calls_ceiling: int | None = DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+        max_inline_tool_output_chars: int | None = MAX_INLINE_TOOL_OUTPUT_CHARS,
         token_limit: int = 50000,
         rag_flow_url: Optional[str] = None,
         rag_flow_token: Optional[str] = None,
@@ -676,8 +676,12 @@ class DrSaiAssistant(DrSaiAgent):
         self._tool_loop_policy = normalize_tool_loop_policy({
             "schema_version": 1,
             "policy_version": "p9-tool-loop-v1",
-            "max_tool_rounds": min(max_turn_count, max_tool_rounds_ceiling),
-            "max_parallel_tool_calls": min(max_agent_concurrent, max_parallel_tool_calls_ceiling),
+            "max_tool_rounds": (
+                min(max_turn_count, max_tool_rounds_ceiling)
+                if max_tool_rounds_ceiling is not None else max_turn_count
+            ),
+            # ``max_agent_concurrent`` controls Delegate scheduling only.
+            "max_parallel_tool_calls": max_parallel_tool_calls_ceiling,
         },
             max_rounds_ceiling=max_tool_rounds_ceiling,
             max_parallel_ceiling=max_parallel_tool_calls_ceiling,
@@ -1804,7 +1808,7 @@ class DrSaiAssistant(DrSaiAgent):
 
             turn_count = 0
             llm_retry_count = 0  # Track retries across the current turn
-            while turn_count < self._max_turn_count:
+            while self._max_turn_count is None or turn_count < self._max_turn_count:
 
                 # Sanitize messages to handle orphaned tool results / missing stubs
                 # This prevents tool_call_id mismatches after model switches
@@ -2010,7 +2014,7 @@ class DrSaiAssistant(DrSaiAgent):
 
                 turn_count += 1
                 max_tool_rounds = getattr(self, "_tool_loop_policy", normalize_tool_loop_policy())["max_tool_rounds"]
-                if turn_count >= min(self._max_turn_count, max_tool_rounds):
+                if max_tool_rounds is not None and turn_count >= max_tool_rounds:
                     yield Response(
                         chat_message=TextMessage(
                             content="\n\n(●'◡'●)抱歉，已达最大的任务循环次数，触发了保护措施，请重新调整您的询问方式或者更具体的告诉您的助手应该怎么做。",
