@@ -34,13 +34,230 @@ import { useStore } from '@nanostores/react'
 import { Box, Static, Text } from 'ink'
 
 import { stripTodoWriteArtifacts } from '../app/todoArtifacts.js'
-import { getPartText, type AssistantTurn, type Turn } from '../app/types.js'
+import { getPartText, type AssistantTurn, type ContentPart, type ToolCall, type Turn } from '../app/types.js'
+import { softWrapWide } from '../app/stringWidth.js'
 import { $transcript, $transcriptGeneration } from '../app/turnStore.js'
+import { $toolDetail } from '../app/uiStore.js'
+import { $terminalSize } from '../hooks/terminalSizeStore.js'
 import { theme } from '../theme.js'
 
-import { MarkdownRenderer } from './markdownRenderer.js'
+import { MarkdownRenderer, stripThinkBlocks } from './markdownRenderer.js'
 import { StreamingAssistant } from './streamingAssistant.js'
 import { ToolCallLine } from './toolCallLine.js'
+
+// ── Final-render height clipping ───────────────────────────────────
+//
+// During streaming, ``StreamingAssistant`` clips content to ~55% of
+// terminal rows to prevent Ink's fullscreen branch. But at finalization,
+// the turn moves to ``<Static>`` which writes ALL contentParts to stdout
+// at full height — a massive synchronous write that can freeze the
+// terminal for very long turns (500+ lines).
+//
+// This module applies similar height clipping at final render time:
+//   - Budget: ``max(rows * 2, 50)`` — generous enough for normal
+//     responses, but caps pathological cases.
+//   - Truncation direction: show latest (bottom), hide oldest (top).
+//   - Shows "↑ N earlier lines collapsed (Ctrl+X to expand)" marker.
+//   - Ctrl+X prints the full content to scrollback via ``console.log()``.
+//
+// Non-reactive store reads (``.get()``) are intentional here: <Static>
+// items are rendered once and never re-rendered, so we want the
+// terminal size at commit time, not a live subscription.
+
+const FINAL_RENDER_BUDGET_MULT = 2
+const MIN_FINAL_RENDER_BUDGET = 50
+
+/** Count the visual rows of ``text`` when wrapped at ``cols`` columns. */
+function countTextVisualRows(text: string, cols: number): number {
+  if (!text) return 0
+  let count = 0
+  for (const ll of text.split('\n')) {
+    count += softWrapWide(ll, cols).length
+  }
+  return count
+}
+
+/**
+ * Estimate the visual height (in terminal rows) of a single content part
+ * in a completed turn. Text parts use width-aware row counting; tool parts
+ * use the same heuristic as ``StreamingAssistant.estimatePartHeight``.
+ */
+function estimateCompletedPartHeight(
+  part: ContentPart,
+  tools: ToolCall[],
+  cols: number,
+  toolDetail: 'compact' | 'expanded',
+): number {
+  if (part.kind === 'text') {
+    const cleanText = stripTodoWriteArtifacts(stripThinkBlocks(getPartText(part)))
+    const rows = countTextVisualRows(cleanText, cols)
+    return rows + 1  // +1 for the marginTop on the wrapping <Box>
+  }
+  // Tool part
+  const tool = tools.find(t => t.id === part.toolId)
+  if (!tool) return 1
+  if (toolDetail === 'compact') return 1
+  // Expanded: header (1) + arg lines + result preview lines
+  const argCount = Object.keys(tool.args).length
+  const resultLines = tool.result
+    ? Math.min(tool.result.split('\n').filter(l => l.trim()).length, 5)
+    : 0
+  return 1 + Math.min(argCount, 3) + (resultLines > 0 ? 1 + resultLines : 0)
+}
+
+/**
+ * Clip a text segment to its last ``maxRows`` visual rows. Used when a
+ * single text part is taller than the entire budget — we keep only its
+ * tail so the latest text is visible.
+ */
+function clipTextSegment(text: string, maxRows: number, cols: number): {
+  clipped: string
+  hiddenLines: number
+} {
+  if (!text) return { clipped: '', hiddenLines: 0 }
+  const visualLines: string[] = []
+  for (const ll of text.split('\n')) {
+    visualLines.push(...softWrapWide(ll, cols))
+  }
+  if (visualLines.length <= maxRows) {
+    return { clipped: text, hiddenLines: 0 }
+  }
+  const kept = visualLines.slice(visualLines.length - maxRows)
+  return {
+    clipped: kept.join('\n'),
+    hiddenLines: visualLines.length - maxRows,
+  }
+}
+
+/**
+ * Build the visible slice of content parts for a completed turn,
+ * clipping from the top (oldest) to fit within ``budget`` rows.
+ *
+ * **Final conclusion preservation**: The last text ContentPart is the
+ * LLM's final conclusion text. It is ALWAYS shown in full, even if it
+ * alone exceeds the budget. Earlier content (tool outputs, intermediate
+ * text) is clipped to make room.
+ *
+ * This mirrors the backend's distinction: at ``drsai_assistant.py:1746``,
+ * the final ``Response`` with a ``TextMessage`` is yielded when
+ * ``model_result.content`` is a pure string — marking the turn's
+ * conclusion. In the TUI, this final text arrives via ``message.delta``
+ * events during streaming and becomes the last text ContentPart at
+ * ``message.complete``. By always preserving it, the user can always see
+ * the model's answer without expanding.
+ *
+ * Returns the visible parts, the count of hidden rows, and
+ * ``firstPartMaxRows`` for intra-part clipping of the first visible
+ * text part (if it didn't fully fit and is NOT the protected last text
+ * part).
+ */
+function clipCompletedContent(
+  parts: ContentPart[],
+  tools: ToolCall[],
+  budget: number,
+  cols: number,
+  toolDetail: 'compact' | 'expanded',
+): { visible: ContentPart[]; hiddenRows: number; firstPartMaxRows: number } {
+  if (parts.length === 0) return { visible: [], hiddenRows: 0, firstPartMaxRows: 0 }
+
+  const heights = parts.map(p => estimateCompletedPartHeight(p, tools, cols, toolDetail))
+  const totalHeight = heights.reduce((a, b) => a + b, 0)
+
+  if (totalHeight <= budget) {
+    return { visible: parts, hiddenRows: 0, firstPartMaxRows: 0 }
+  }
+
+  // ── Find the last text ContentPart (the LLM's final conclusion) ──
+  let lastTextIdx = -1
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (parts[i].kind === 'text') {
+      lastTextIdx = i
+      break
+    }
+  }
+
+  // ── No text part at all: fall back to end-to-start clipping ──────
+  if (lastTextIdx < 0) {
+    let used = 0
+    let cutIndex = parts.length
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const h = heights[i]
+      if (used + h > budget) {
+        cutIndex = i + 1
+        break
+      }
+      used += h
+      cutIndex = i
+    }
+    if (cutIndex >= parts.length) {
+      cutIndex = parts.length - 1
+      used = 0
+    }
+    const visible = parts.slice(cutIndex)
+    let firstPartMaxRows = 0
+    if (visible.length > 0 && visible[0].kind === 'text') {
+      const remaining = budget - used
+      const firstHeight = heights[cutIndex]
+      if (firstHeight > remaining) {
+        const textRows = Math.max(0, remaining - 1)  // -1 for marginTop
+        firstPartMaxRows = Math.max(3, textRows)
+      }
+    }
+    const fullHidden = heights.slice(0, cutIndex).reduce((a, b) => a + b, 0)
+    const partialHidden = firstPartMaxRows > 0
+      ? heights[cutIndex] - firstPartMaxRows
+      : 0
+    return { visible, hiddenRows: fullHidden + partialHidden, firstPartMaxRows }
+  }
+
+  // ── Reserve the last text part (and anything after it) in full ──
+  // The last text part is the LLM's conclusion; it is always shown
+  // without intra-part clipping. Any tool parts after it (rare: e.g.
+  // error after text) are also reserved.
+  let reservedHeight = 0
+  for (let i = lastTextIdx; i < parts.length; i++) {
+    reservedHeight += heights[i]
+  }
+  const remainingBudget = Math.max(0, budget - reservedHeight)
+
+  // Walk backward from the part before the last text part, fitting
+  // earlier content into whatever budget remains.
+  let used = 0
+  let cutIndex = lastTextIdx
+  for (let i = lastTextIdx - 1; i >= 0; i--) {
+    const h = heights[i]
+    if (used + h > remainingBudget) {
+      cutIndex = i + 1
+      break
+    }
+    used += h
+    cutIndex = i
+  }
+
+  const visible = parts.slice(cutIndex)
+
+  // If the first visible part is a text part that partially fits AND
+  // is NOT the protected last text part, apply intra-part clipping.
+  let firstPartMaxRows = 0
+  if (cutIndex < lastTextIdx && visible.length > 0 && visible[0].kind === 'text') {
+    const remaining = remainingBudget - used
+    const firstHeight = heights[cutIndex]
+    if (firstHeight > remaining) {
+      const textRows = Math.max(0, remaining - 1)  // -1 for marginTop
+      firstPartMaxRows = Math.max(3, textRows)
+    }
+  }
+  // If cutIndex === lastTextIdx, the first visible part IS the
+  // protected last text part — show it in full (firstPartMaxRows = 0).
+
+  const fullHidden = heights.slice(0, cutIndex).reduce((a, b) => a + b, 0)
+  const partialHidden = firstPartMaxRows > 0
+    ? heights[cutIndex] - firstPartMaxRows
+    : 0
+  const totalHidden = fullHidden + partialHidden
+
+  return { visible, hiddenRows: totalHidden, firstPartMaxRows }
+}
 
 function UserBlock({ text }: { text: string }) {
   return (
@@ -52,23 +269,56 @@ function UserBlock({ text }: { text: string }) {
 }
 
 function AssistantBlock({ turn }: { turn: AssistantTurn }) {
+  // Non-reactive reads: <Static> items are rendered once and never
+  // re-rendered, so we want the values at commit time.
+  const toolDetail = $toolDetail.get()
+  const { cols: termCols, rows: termRows } = $terminalSize.get()
+  const effectiveCols = Math.max(20, termCols - 4)
+  const budget = Math.max(termRows * FINAL_RENDER_BUDGET_MULT, MIN_FINAL_RENDER_BUDGET)
+
   // If we have ordered contentParts, render text segments and tool calls
   // in their real interleaving order. Each text segment is rendered
   // with MarkdownRenderer (completed turns use Markdown; streaming
   // turns in StreamingAssistant use plain <Text> for performance).
   if (turn.contentParts.length > 0) {
+    // Apply height clipping to prevent terminal freeze on very long turns.
+    // Same strategy as StreamingAssistant: show latest (bottom), hide oldest (top).
+    const clipResult = clipCompletedContent(
+      turn.contentParts, turn.tools, budget, effectiveCols, toolDetail,
+    )
+    const visibleParts = clipResult.visible
+    const hiddenRows = clipResult.hiddenRows
+    const firstPartMaxRows = clipResult.firstPartMaxRows
+
     return (
       <Box flexDirection="column" marginTop={1}>
         <Text color={theme.primary} bold>● assistant</Text>
-        {turn.contentParts.map(part => {
+        {hiddenRows > 0 && (
+          <Box>
+            <Text color={theme.muted} dimColor>
+              {`  ↑ ${hiddenRows} earlier line${hiddenRows > 1 ? 's' : ''} collapsed (Ctrl+X to expand)`}
+            </Text>
+          </Box>
+        )}
+        {visibleParts.map((part, idx) => {
           if (part.kind === 'tool') {
             const tool = turn.tools.find(t => t.id === part.toolId)
             if (!tool) return null
             return <ToolCallLine key={part.id} tool={tool} />
           }
           // Text part
-          const cleanText = stripTodoWriteArtifacts(getPartText(part))
+          let cleanText = stripTodoWriteArtifacts(getPartText(part))
           if (!cleanText) return null
+
+          // If this is the first visible part and it needs intra-part
+          // clipping (single text segment taller than remaining budget),
+          // clip to show only the latest rows.
+          if (idx === 0 && firstPartMaxRows > 0) {
+            const clipped = clipTextSegment(cleanText, firstPartMaxRows, effectiveCols)
+            cleanText = clipped.clipped
+            if (!cleanText) return null
+          }
+
           return (
             <Box key={part.id}>
               <MarkdownRenderer text={cleanText} color={theme.assistant} />
@@ -92,15 +342,28 @@ function AssistantBlock({ turn }: { turn: AssistantTurn }) {
 
   // Legacy fallback: no contentParts (e.g. history-loaded turns).
   // Render tools first, then text — the old behaviour.
+  // Apply text clipping for the same reason as above.
+  const legacyCleanText = stripTodoWriteArtifacts(turn.text)
+  const legacyToolRows = turn.tools.length
+  const legacyTextBudget = Math.max(3, budget - legacyToolRows)
+  const legacyClip = clipTextSegment(legacyCleanText, legacyTextBudget, effectiveCols)
+
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text color={theme.primary} bold>● assistant</Text>
       {turn.tools.map(t => (
         <ToolCallLine key={t.id} tool={t} />
       ))}
-      {stripTodoWriteArtifacts(turn.text) && (
+      {legacyClip.hiddenLines > 0 && (
         <Box>
-          <MarkdownRenderer text={stripTodoWriteArtifacts(turn.text)} color={theme.assistant} />
+          <Text color={theme.muted} dimColor>
+            {`  ↑ ${legacyClip.hiddenLines} earlier line${legacyClip.hiddenLines > 1 ? 's' : ''} collapsed (Ctrl+X to expand)`}
+          </Text>
+        </Box>
+      )}
+      {legacyClip.clipped && (
+        <Box>
+          <MarkdownRenderer text={legacyClip.clipped} color={theme.assistant} />
         </Box>
       )}
       {turn.status === 'error' && (

@@ -402,7 +402,7 @@ if __name__ == "__main__":
     memory_manager.add_execution_step(
         step_index=0,
         step_title="读取数据",
-        tool_or_skill_used="run_read",
+        tool_or_skill_used="read",
         action_details="读取文件test.csv",
         result="成功读取1000行数据"
     )

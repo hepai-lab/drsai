@@ -45,14 +45,14 @@
 
 import { useStore } from '@nanostores/react'
 import { Box, Text } from 'ink'
-import { useEffect, useState } from 'react'
-
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { stripTodoWriteArtifacts } from '../app/todoArtifacts.js'
 import { getPartText, getReasoningText, type ContentPart, type TextContentPart, type ToolCall } from '../app/types.js'
 import { clearHeightCache, getCachedHeight, setCachedHeight } from '../app/heightCache.js'
 import { softWrapWide } from '../app/stringWidth.js'
 import { $current } from '../app/turnStore.js'
 import { $showReasoning, $terminalFocused, $toolDetail, $composerInputHeight } from '../app/uiStore.js'
+import { guardStreamingFrame } from '../app/inkInstanceRef.js'
 import { useTerminalSize } from '../hooks/terminalSizeStore.js'
 import { theme } from '../theme.js'
 
@@ -96,11 +96,14 @@ const MIN_STREAM_ROWS = 3
 // occupy. Keeping this well below 1.0 provides a hard ceiling that
 // prevents Ink's fullscreen branch (lastOutputHeight >= stdout.rows)
 // from firing even when the RESERVED_ROWS estimate is too optimistic.
-// At 0.55, a 24-row terminal gets a max budget of ~13 rows for
-// streaming content, leaving ~11 rows for StatusBar + Composer +
-// headers/margins — more than enough, and the frame can never reach
-// 24 rows to trigger fullscreen.
-const MAX_FRAME_FRACTION = 0.55
+//
+// At 0.45, a 24-row terminal gets a max budget of ~10 rows for
+// streaming content, leaving ~14 rows for StatusBar + Composer +
+// headers/margins. This is conservative but prevents the total
+// dynamic frame from reaching stdout.rows on any terminal size ≥ 16
+// rows. The guardStreamingFrame() safety net catches any edge cases
+// where the budget estimate is still off.
+const MAX_FRAME_FRACTION = 0.45
 
 /**
  * Spinner + elapsed-seconds hook. ``active`` gates the timers so an
@@ -182,8 +185,20 @@ function estimatePartHeight(
     // lazily joins chunks and caches the result in part.text.
     const cleanText = stripTodoWriteArtifacts(stripThinkBlocks(getPartText(part)))
     const rows = countVisualRows(cleanText, cols)
-    setCachedHeight(part.id, part.chunks.length, cols, rows)
-    return rows
+    // Add 1 row for the marginTop={1} on the <Box> that wraps each text
+    // part in the render output. Without this, the clip budget
+    // underestimates the actual yoga height by 1 row per visible text
+    // part. With multiple text parts (common during sub-agent output
+    // where main-agent text + sub-agent text are separate parts), the
+    // cumulative underestimate can push the total dynamic frame height
+    // to or beyond stdout.rows, triggering Ink's fullscreen branch
+    // (clearTerminal + fullStaticOutput + output), which corrupts
+    // log-update's previousLineCount via log.sync(). This causes
+    // eraseLines() to erase the wrong number of lines on subsequent
+    // renders, leaving duplicate output residue at the top.
+    const total = rows + 1  // +1 for marginTop
+    setCachedHeight(part.id, part.chunks.length, cols, total)
+    return total
   }
   // Tool part — find the referenced tool
   const tool = tools.find(t => t.id === part.toolId)
@@ -301,12 +316,18 @@ function clipContentParts(
   // If the first visible part is a text part that didn't fully fit,
   // calculate how many rows of it we CAN show (the remainder of the
   // budget). This enables intra-part text clipping (keep the tail).
+  // Note: firstHeight includes +1 for marginTop, so the text rows
+  // we can show = remaining - 1 (marginTop overhead).
   let firstPartMaxRows = 0
   if (visible.length > 0 && visible[0].kind === 'text') {
     const remaining = budget - used
     const firstHeight = heights[cutIndex]
     if (firstHeight > remaining) {
-      firstPartMaxRows = Math.max(MIN_STREAM_ROWS, remaining)
+      // Subtract 1 from remaining for the marginTop that estimatePartHeight
+      // added. This ensures the actual rendered height (textRows + 1 marginTop)
+      // fits within `remaining`.
+      const textRows = remaining - 1  // -1 for marginTop
+      firstPartMaxRows = Math.max(MIN_STREAM_ROWS, textRows)
     }
   }
 
@@ -374,17 +395,27 @@ export function StreamingAssistant() {
   //     (reported via $composerInputHeight), so the budget shrinks
   //     when the user types more lines — preventing the total dynamic
   //     frame from reaching stdout.rows.
+  //   - 1 row for the root <Box marginTop={1}> wrapper (not previously
+  //     accounted for — this omission allowed the total dynamic frame
+  //     to reach stdout.rows when multiple text parts were visible,
+  //     triggering Ink's fullscreen branch during sub-agent output).
   //   - 1 row for the "● assistant" header
   //   - reasoning block height (if shown)
   //   - 1 row for the "↑ N earlier lines" marker (if we end up clipping)
-  //   - 1 row SAFETY MARGIN to guarantee the total dynamic frame stays
-  //     STRICTLY below stdout.rows.
+  //   - 2 rows SAFETY MARGIN (was 1) to guarantee the total dynamic
+  //     frame stays STRICTLY below stdout.rows. The extra row accounts
+  //     for the StatusBar's variable height (2-6 rows depending on
+  //     narrow/wide layout and statusLine visibility) which
+  //     RESERVED_BASE_ROWS may underestimate.
   //
   // Then apply MAX_FRAME_FRACTION as a hard ceiling: the streaming
-  // content area may never exceed 55% of terminal rows. This prevents
+  // content area may never exceed 45% of terminal rows. This prevents
   // the total dynamic frame (StreamingAssistant + StatusBar + Composer)
   // from reaching stdout.rows and triggering Ink's fullscreen branch,
   // even when RESERVED_ROWS underestimates the real overhead.
+  // The guardStreamingFrame() call in useLayoutEffect + flushBuffers()
+  // provides an additional safety net that catches any remaining edge
+  // cases by unconditionally resetting lastOutputHeight to 0.
   const effectiveCols = Math.max(20, cols - 4)
   const effectiveRows = rows > 0 ? rows : 24
   const reservedRows = composerInputHeight + RESERVED_BASE_ROWS
@@ -392,7 +423,7 @@ export function StreamingAssistant() {
   const reasoningRows = reasoningText
     ? 1 /* marginTop */ + 1 /* header */ + countVisualRows(reasoningText, Math.max(10, effectiveCols - 2)) + 1 /* footer */
     : 0
-  const rawBudget = effectiveRows - reservedRows - 1 /* header */ - reasoningRows - 1 /* marker */ - 1 /* safety */
+  const rawBudget = effectiveRows - reservedRows - 1 /* root marginTop */ - 1 /* header */ - reasoningRows - 1 /* marker */ - 2 /* safety */
   const maxBudget = Math.floor(effectiveRows * MAX_FRAME_FRACTION)
   const budget = Math.max(
     MIN_STREAM_ROWS,
@@ -408,6 +439,25 @@ export function StreamingAssistant() {
     cur.status === 'streaming' &&
     !hasStreamContent
   const pulse = useThinkingPulse(showThinking && termFocused, cur?.startedAt ?? Date.now())
+
+  // ── Proactive fullscreen-branch guard ────────────────────────────
+  // Reset Ink's lastOutputHeight to 0 on EVERY render of this component.
+  // This prevents Ink's fullscreen branch (lastOutputHeight >= stdout.rows)
+  // from firing, which would clearTerminal + re-emit fullStaticOutput +
+  // corrupt log-update's previousLineCount via log.sync().
+  //
+  // useLayoutEffect fires synchronously during React commit, BEFORE Ink's
+  // onRender is triggered by the yoga layout pass. This ensures
+  // lastOutputHeight is 0 when onRender checks the fullscreen condition.
+  // Combined with the guardStreamingFrame() call in flushBuffers(), this
+  // covers ALL re-render paths:
+  //   - Streaming flushes (createGatewayEventHandler.ts flushBuffers)
+  //   - Spinner ticks (useThinkingPulse setInterval)
+  //   - Store changes ($composerInputHeight, $showReasoning, etc.)
+  //   - Terminal resize (useTerminalSize)
+  useLayoutEffect(() => {
+    guardStreamingFrame()
+  })
 
   if (!cur) return null
 
@@ -463,7 +513,7 @@ export function StreamingAssistant() {
       {hasContentParts && hiddenRows > 0 && (
         <Box>
           <Text color={theme.muted} dimColor>
-            {`  ↑ ${hiddenRows} earlier line${hiddenRows > 1 ? 's' : ''} (will appear in scrollback when turn ends)`}
+            {`  ↑ ${hiddenRows} earlier line${hiddenRows > 1 ? 's' : ''} (latest content shown)`}
           </Text>
         </Box>
       )}
@@ -504,7 +554,7 @@ export function StreamingAssistant() {
           {legacyHidden > 0 && (
             <Box>
               <Text color={theme.muted} dimColor>
-                {`  ↑ ${legacyHidden} earlier line${legacyHidden > 1 ? 's' : ''} (will appear in scrollback when turn ends)`}
+                {`  ↑ ${legacyHidden} earlier line${legacyHidden > 1 ? 's' : ''} (latest content shown)`}
               </Text>
             </Box>
           )}

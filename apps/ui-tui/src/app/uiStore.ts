@@ -129,14 +129,6 @@ export interface UsageInfo {
 export const $lastUsage = atom<UsageInfo | null>(null)
 
 /**
- * Streaming token estimate — a rough character-based estimate of
- * completion tokens during streaming, before real usage data arrives.
- * Updated on each `message.delta` and reset when `usage.update` or
- * `message.complete` arrives.
- */
-export const $streamingTokenEstimate = atom<number>(0)
-
-/**
  * "Copy mode" — when true the TUI temporarily disables mouse tracking so
  * the user can select / copy text in the terminal with the mouse.
  *
@@ -152,6 +144,20 @@ export const $streamingTokenEstimate = atom<number>(0)
  * mode they are in.
  */
 export const $copyMode = atom<boolean>(false)
+
+/**
+ * Set of assistant turn IDs (``startedAt`` as string) that have been
+ * expanded via Ctrl+X. Used to avoid printing the same turn's full
+ * content to scrollback twice.
+ *
+ * When a turn is finalized with content exceeding the final-render
+ * budget, ``AssistantBlock`` clips it and shows an
+ * "↑ N earlier lines collapsed (Ctrl+X to expand)" marker. Ctrl+X
+ * (handled in <App>) prints the full content to terminal scrollback
+ * via ``console.log()`` and adds the turn ID here so subsequent
+ * presses don't re-print.
+ */
+export const $expandedTurns = atom<Set<string>>(new Set())
 
 /**
  * Current visual height (in terminal rows) of the composer's TextInput

@@ -44,6 +44,15 @@ DEFAULT_CONFIG: dict = {
     "anthropic_base_url":    None,
     "openai_api_key":        None,
     "openai_base_url":       None,
+    # ── OIDC authentication ──────────────────────────────────────────────
+    # auth_mode: "none" | "oidc" | "apikey" — tracks how the user authenticates
+    "auth_mode": "none",
+    # ── Skills selection (first-run) ──────────────────────────────────────
+    # skills_selected: True after user has completed the skills selection step
+    "skills_selected": False,
+    # enabled_skills: list of skill IDs the user chose to install
+    # (empty = none installed; None = not yet prompted)
+    "enabled_skills": None,
 }
 
 # Config keys that hold sensitive values — always masked when displayed.

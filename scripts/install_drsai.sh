@@ -205,19 +205,14 @@ detect_system_deps() {
 
 # ==============================================================================
 #  2. INSTALL DIRECTORY SELECTION (>=2GB)
+#  Checks $OPENDRSAI env var for existing installation, then lets user
+#  choose default path or enter a custom one. Auto-creates directory.
+#  On error (mkdir fail or insufficient space), re-prompts.
 # ==============================================================================
 select_install_dir() {
     section "Install Directory"
 
-    if [ -z "$INSTALL_DIR" ]; then
-        INSTALL_DIR="$DEFAULT_INSTALL_DIR"
-    fi
-    info "Default install dir: $INSTALL_DIR"
-
-    mkdir -p "$(dirname "$INSTALL_DIR")" 2>/dev/null || true
-
-    local check_dir avail_bytes avail_gb
-    check_dir="$(dirname "$INSTALL_DIR")"
+    local avail_bytes avail_gb
 
     check_disk_space() {
         local dir="$1"
@@ -230,16 +225,78 @@ select_install_dir() {
         avail_gb=$(awk "BEGIN {printf \"%.1f\", ${avail_bytes:-0} / 1073741824}")
     }
 
-    check_disk_space "$check_dir"
+    # Step 1: Check OPENDRSAI environment variable for existing installation
+    if [ -n "${OPENDRSAI:-}" ]; then
+        info "Found OPENDRSAI environment variable: $OPENDRSAI"
+        local existing_launcher="$OPENDRSAI/bin/opendrsai"
+        if [ -e "$existing_launcher" ]; then
+            warn "Found existing installation at: $OPENDRSAI"
+            prompt_yes_no "  Remove existing installation? (bin/ and packages/ will be deleted; configs and data are preserved)"
+            if [ "$REPLY" = "y" ]; then
+                info "Removing existing installation at $OPENDRSAI..."
+                rm -rf "$OPENDRSAI/bin" 2>/dev/null || true
+                rm -rf "$OPENDRSAI/packages/venv" "$OPENDRSAI/packages/src" "$OPENDRSAI/packages/.download" 2>/dev/null || true
+                ok "Existing installation removed"
+            else
+                info "Keeping existing installation at $OPENDRSAI"
+            fi
+        else
+            info "No existing installation found at $OPENDRSAI"
+        fi
+    fi
 
-    while [ "${avail_bytes:-0}" -lt "$REQUIRED_SPACE_BYTES" ] 2>/dev/null; do
-        warn "Insufficient disk space: ${avail_gb}GB < ${REQUIRED_SPACE_GB}GB"
-        printf "Enter a different install directory (or press Enter to cancel): " >&2
-        tty_read user_dir
-        [ -n "$user_dir" ] || die "Installation cancelled by user"
-        INSTALL_DIR="$user_dir"
-        mkdir -p "$INSTALL_DIR"
+    # Step 2: Let user choose install path (or use --install-dir if provided)
+    while true; do
+        if [ -n "$INSTALL_DIR" ]; then
+            # --install-dir was provided via command line, use it directly
+            info "Install dir (from --install-dir): $INSTALL_DIR"
+        else
+            echo
+            printf "  ${C_B}Choose install directory:${C_RST}\n"
+            printf "  ${C_C}1)${C_RST} Default: %s\n" "$DEFAULT_INSTALL_DIR"
+            printf "  ${C_C}2)${C_RST} Enter a custom path\n"
+            printf "  Select option [1]: " >&2
+            tty_read choice
+            [ -z "$choice" ] && choice="1"
+
+            case "$choice" in
+                1)
+                    INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+                    ;;
+                2)
+                    printf "  Enter install path: " >&2
+                    tty_read custom_dir
+                    if [ -z "$custom_dir" ]; then
+                        warn "Empty path, please try again"
+                        continue
+                    fi
+                    INSTALL_DIR="$custom_dir"
+                    ;;
+                *)
+                    warn "Invalid option: $choice, please try again"
+                    continue
+                    ;;
+            esac
+        fi
+
+        # Step 3: Create directory if it doesn't exist
+        if ! mkdir -p "$INSTALL_DIR" 2>/dev/null; then
+            warn "Failed to create directory: $INSTALL_DIR"
+            INSTALL_DIR=""
+            continue
+        fi
+
+        # Step 4: Check disk space
         check_disk_space "$INSTALL_DIR"
+
+        if [ "${avail_bytes:-0}" -lt "$REQUIRED_SPACE_BYTES" ] 2>/dev/null; then
+            warn "Insufficient disk space: ${avail_gb}GB < ${REQUIRED_SPACE_GB}GB"
+            INSTALL_DIR=""
+            continue
+        fi
+
+        # Success
+        break
     done
 
     ok "Available space: ${avail_gb}GB (>= ${REQUIRED_SPACE_GB}GB)"
@@ -616,110 +673,6 @@ build_tui() {
 }
 
 # ==============================================================================
-#  8b. INSTALL PRE-BUILT SKILLS (multi-select)
-# ==============================================================================
-install_skills() {
-    section "Skill Selection"
-
-    local skills_src="$SRC_ROOT/skills/skills"
-    if [ ! -d "$skills_src" ]; then
-        info "No pre-built skills directory found (skills/skills/), skipping"
-        return 0
-    fi
-
-    # Discover available skills (directories with SKILL.md)
-    local skill_names=()
-    local skill_descs=()
-    local skill_dir
-
-    while IFS= read -r skill_dir; do
-        local sname sdesc
-        sname="$(basename "$skill_dir")"
-        local md="$skill_dir/SKILL.md"
-        if [ -f "$md" ]; then
-            sdesc=$(grep -m1 '^description:' "$md" | sed 's/^description:[[:space:]]*//')
-            [ -z "$sdesc" ] && sdesc="(no description)"
-        else
-            sdesc="(no SKILL.md)"
-        fi
-        skill_names+=("$sname")
-        skill_descs+=("$sdesc")
-    done < <(find "$skills_src" -maxdepth 1 -mindepth 1 -type d | sort)
-
-    local count=${#skill_names[@]}
-    if [ "$count" -eq 0 ]; then
-        info "No skills found in $skills_src, skipping"
-        return 0
-    fi
-
-    # Display the menu
-    echo
-    printf "  ${C_B}Available pre-built skills${C_RST} — select which to install:\n"
-    echo  "  (Enter numbers separated by spaces, 'all' for all, or Enter to skip)"
-    echo
-    for i in $(seq 0 $((count - 1))); do
-        printf "  ${C_C}[%d]${C_RST} %-20s ${C_GRAY}%s${C_RST}\n" \
-            "$((i + 1))" "${skill_names[$i]}" "${skill_descs[$i]}"
-    done
-    echo
-
-    # Read selection
-    printf "  Select skills: " >&2
-    if [ -e /dev/tty ]; then
-        read -r selection < /dev/tty
-    else
-        read -r selection
-    fi
-
-    # Parse selection
-    local selected=()
-    if [ -z "$selection" ]; then
-        info "No skills selected, skipping"
-        return 0
-    fi
-
-    if [ "$(echo "$selection" | tr '[:upper:]' '[:lower:]')" = "all" ]; then
-        selected=("${skill_names[@]}")
-    else
-        for tok in $selection; do
-            if [[ "$tok" =~ ^[0-9]+$ ]] && [ "$tok" -ge 1 ] && [ "$tok" -le "$count" ]; then
-                selected+=("${skill_names[$((tok - 1))]}")
-            else
-                warn "Invalid selection: $tok (ignored)"
-            fi
-        done
-    fi
-
-    if [ ${#selected[@]} -eq 0 ]; then
-        info "No skills selected"
-        return 0
-    fi
-
-    # Determine user skills directory
-    # Default: $INSTALL_DIR/workspace/runs/<user_id>/configs/skills/
-    local user_id="${USER:-$(whoami 2>/dev/null || echo 'default')}"
-    local user_skills_dir="$INSTALL_DIR/workspace/runs/$user_id/configs/skills"
-    mkdir -p "$user_skills_dir"
-
-    # Copy selected skills
-    local installed=0
-    for sname in "${selected[@]}"; do
-        local src_skill="$skills_src/$sname"
-        local dst_skill="$user_skills_dir/$sname"
-        if [ -d "$src_skill" ]; then
-            rm -rf "$dst_skill" 2>/dev/null || true
-            cp -r "$src_skill" "$dst_skill"
-            ok "Installed skill: $sname → $user_skills_dir/"
-            installed=$((installed + 1))
-        else
-            warn "Skill not found: $sname"
-        fi
-    done
-
-    ok "Total skills installed: $installed → $user_skills_dir/"
-}
-
-# ==============================================================================
 #  9. CREATE LAUNCHER
 # ==============================================================================
 create_launcher() {
@@ -852,7 +805,6 @@ main() {
     setup_python
     setup_node
     build_tui
-    install_skills
     create_launcher
     add_to_shell_rc
     verify

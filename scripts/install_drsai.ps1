@@ -156,24 +156,83 @@ function Detect-SystemDeps {
 
 # ==============================================================================
 #  2. INSTALL DIRECTORY SELECTION (>=2GB)
+#  Checks $OPENDRSAI env var for existing installation, then lets user
+#  choose default path or enter a custom one. Auto-creates directory.
+#  On error (mkdir fail or insufficient space), re-prompts.
 # ==============================================================================
 function Select-InstallDir {
     Write-Section "Install Directory"
 
-    if ([string]::IsNullOrWhiteSpace($InstallDir)) {
-        $script:InstallDir = $DEFAULT_INSTALL_DIR
+    # Step 1: Check OPENDRSAI environment variable for existing installation
+    if (-not [string]::IsNullOrWhiteSpace($env:OPENDRSAI)) {
+        Write-Info "Found OPENDRSAI environment variable: $env:OPENDRSAI"
+        $existingLauncher = Join-Path $env:OPENDRSAI "bin\opendrsai.cmd"
+        if (Test-Path $existingLauncher) {
+            Write-Warn "Found existing installation at: $env:OPENDRSAI"
+            $response = Read-Host "  Remove existing installation? (bin/ and packages/ will be deleted; configs and data are preserved) [y/N]"
+            if ($response -match "^[yY]") {
+                Write-Info "Removing existing installation at $env:OPENDRSAI..."
+                $binPath = Join-Path $env:OPENDRSAI "bin"
+                $pkgPath = Join-Path $env:OPENDRSAI "packages"
+                if (Test-Path $binPath) { Remove-Item -Path $binPath -Recurse -Force -ErrorAction SilentlyContinue }
+                if (Test-Path $pkgPath) { Remove-Item -Path $pkgPath -Recurse -Force -ErrorAction SilentlyContinue }
+                Write-Ok "Existing installation removed"
+            } else {
+                Write-Info "Keeping existing installation at $env:OPENDRSAI"
+            }
+        } else {
+            Write-Info "No existing installation found at $env:OPENDRSAI"
+        }
     }
-    Write-Info "Default install dir: $script:InstallDir"
 
-    $parent = Split-Path $script:InstallDir -Parent
-    if ($parent -and !(Test-Path $parent)) {
-        New-Item -ItemType Directory -Path $parent -Force | Out-Null
-    }
+    # Step 2: Let user choose install path (or use -InstallDir if provided)
+    while ($true) {
+        if (-not [string]::IsNullOrWhiteSpace($InstallDir)) {
+            # -InstallDir was provided via command line, use it directly
+            $script:InstallDir = $InstallDir
+            Write-Info "Install dir (from -InstallDir): $($script:InstallDir)"
+        } else {
+            Write-Host ""
+            Write-Host "  Choose install directory:" -ForegroundColor White
+            Write-Host "  [1] Default: $DEFAULT_INSTALL_DIR"
+            Write-Host "  [2] Enter a custom path"
+            $choice = Read-Host "  Select option [1]"
+            if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "1" }
 
-    $checkDir = if (Test-Path $script:InstallDir) { $script:InstallDir } else { $parent }
-    if (!$checkDir) { $checkDir = $env:USERPROFILE }
+            switch ($choice.Trim()) {
+                "1" {
+                    $script:InstallDir = $DEFAULT_INSTALL_DIR
+                }
+                "2" {
+                    $customDir = Read-Host "  Enter install path"
+                    if ([string]::IsNullOrWhiteSpace($customDir)) {
+                        Write-Warn "Empty path, please try again"
+                        continue
+                    }
+                    $script:InstallDir = $customDir.Trim()
+                }
+                default {
+                    Write-Warn "Invalid option: $choice, please try again"
+                    continue
+                }
+            }
+        }
 
-    do {
+        # Step 3: Create directory if it doesn't exist
+        try {
+            if (!(Test-Path $script:InstallDir)) {
+                New-Item -ItemType Directory -Path $script:InstallDir -Force | Out-Null
+            }
+        } catch {
+            Write-Warn "Failed to create directory: $($script:InstallDir) - $_"
+            $InstallDir = ""
+            $script:InstallDir = ""
+            continue
+        }
+
+        # Step 4: Check disk space
+        $checkDir = $script:InstallDir
+        if (!(Test-Path $checkDir)) { $checkDir = $env:USERPROFILE }
         $drive = (Get-Item $checkDir).PSDrive.Name
         $driveInfo = Get-PSDrive -Name $drive -ErrorAction SilentlyContinue
         if (!$driveInfo) {
@@ -183,17 +242,16 @@ function Select-InstallDir {
         }
         $availGB = [math]::Round($availBytes / 1GB, 1)
 
-        if ($availBytes -ge $REQUIRED_SPACE_BYTES) {
-            break
+        if ($availBytes -lt $REQUIRED_SPACE_BYTES) {
+            Write-Warn "Insufficient disk space: ${availGB}GB < ${REQUIRED_SPACE_GB}GB"
+            $InstallDir = ""
+            $script:InstallDir = ""
+            continue
         }
 
-        Write-Warn "Insufficient disk space: ${availGB}GB < ${REQUIRED_SPACE_GB}GB"
-        $userDir = Read-Host "Enter a different install directory (or press Enter to cancel)"
-        if ([string]::IsNullOrWhiteSpace($userDir)) { Die "Installation cancelled by user" }
-        $script:InstallDir = $userDir
-        New-Item -ItemType Directory -Path $script:InstallDir -Force | Out-Null
-        $checkDir = $script:InstallDir
-    } while ($true)
+        # Success
+        break
+    }
 
     Write-Ok "Available space: ${availGB}GB (>= ${REQUIRED_SPACE_GB}GB)"
     Write-Ok "Install directory: $script:InstallDir"
@@ -601,110 +659,6 @@ function Build-Tui {
 }
 
 # ==============================================================================
-#  8b. INSTALL PRE-BUILT SKILLS (multi-select)
-# ==============================================================================
-function Install-Skills {
-    Write-Section "Skill Selection"
-
-    $skillsSrc = Join-Path $script:SrcRoot "skills\skills"
-    if (!(Test-Path $skillsSrc)) {
-        Write-Info "No pre-built skills directory found (skills\skills\), skipping"
-        return
-    }
-
-    # Discover available skills (directories with SKILL.md)
-    $skillDirs = Get-ChildItem -Path $skillsSrc -Directory | Sort-Object Name
-    if ($skillDirs.Count -eq 0) {
-        Write-Info "No skills found in $skillsSrc, skipping"
-        return
-    }
-
-    # Build skill list with descriptions
-    $skills = @()
-    foreach ($d in $skillDirs) {
-        $md = Join-Path $d.FullName "SKILL.md"
-        $desc = "(no SKILL.md)"
-        if (Test-Path $md) {
-            $firstLines = Get-Content $md -TotalCount 5 -ErrorAction SilentlyContinue
-            $descLine = $firstLines | Where-Object { $_ -match '^description:' } | Select-Object -First 1
-            if ($descLine) {
-                $desc = ($descLine -replace '^description:\s*', '')
-            }
-        }
-        $skills += [PSCustomObject]@{
-            Name = $d.Name
-            Desc = $desc
-            Path = $d.FullName
-        }
-    }
-
-    # Display the menu
-    Write-Host ""
-    Write-Host "  Available pre-built skills — select which to install:" -ForegroundColor White
-    Write-Host "  (Enter numbers separated by spaces, 'all' for all, or Enter to skip)"
-    Write-Host ""
-    for ($i = 0; $i -lt $skills.Count; $i++) {
-        $num = "{0,3}" -f ($i + 1)
-        $name = $skills[$i].Name.PadRight(22)
-        Write-Host "  [$($i + 1)] $name $($skills[$i].Desc)" -ForegroundColor Gray
-    }
-    Write-Host ""
-
-    # Read selection
-    $selection = Read-Host "  Select skills"
-
-    if ([string]::IsNullOrWhiteSpace($selection)) {
-        Write-Info "No skills selected, skipping"
-        return
-    }
-
-    # Parse selection
-    $selectedNames = @()
-    if ($selection.Trim().ToLower() -eq "all") {
-        foreach ($s in $skills) { $selectedNames += $s.Name }
-    } else {
-        $tokens = $selection.Trim() -split '\s+'
-        foreach ($tok in $tokens) {
-            $idx = 0
-            if ([int]::TryParse($tok, [ref]$idx) -and $idx -ge 1 -and $idx -le $skills.Count) {
-                $selectedNames += $skills[$idx - 1].Name
-            } else {
-                Write-Warn "Invalid selection: $tok (ignored)"
-            }
-        }
-    }
-
-    if ($selectedNames.Count -eq 0) {
-        Write-Info "No skills selected"
-        return
-    }
-
-    # Determine user skills directory
-    # Default: $InstallDir\workspace\runs\<user_id>\configs\skills\
-    $userId = $env:USERNAME
-    if (!$userId) { $userId = "default" }
-    $userSkillsDir = Join-Path $script:InstallDir "workspace\runs\$userId\configs\skills"
-    New-Item -ItemType Directory -Path $userSkillsDir -Force | Out-Null
-
-    # Copy selected skills
-    $installed = 0
-    foreach ($sname in $selectedNames) {
-        $srcSkill = Join-Path $skillsSrc $sname
-        $dstSkill = Join-Path $userSkillsDir $sname
-        if (Test-Path $srcSkill) {
-            if (Test-Path $dstSkill) { Remove-Item -Path $dstSkill -Recurse -Force }
-            Copy-Item -Path $srcSkill -Destination $dstSkill -Recurse -Force
-            Write-Ok "Installed skill: $sname -> $userSkillsDir\"
-            $installed++
-        } else {
-            Write-Warn "Skill not found: $sname"
-        }
-    }
-
-    Write-Ok "Total skills installed: $installed -> $userSkillsDir\"
-}
-
-# ==============================================================================
 #  9. CREATE LAUNCHER
 # ==============================================================================
 function Create-Launcher {
@@ -821,7 +775,6 @@ try {
     Setup-Python
     Setup-Node
     Build-Tui
-    Install-Skills
     Create-Launcher
     Verify-Install
 } catch {

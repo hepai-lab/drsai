@@ -670,6 +670,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   Ctrl+P / Ctrl+N - Previous / next command history
   ↑/↓             - Move cursor between lines (multi-line input)
   Ctrl+T          - Toggle tool details (compact/expanded)
+  Ctrl+X          - Expand last collapsed turn (print full content)
   Ctrl+Y          - Toggle copy mode (mouse selection)
   Ctrl+C (2x)     - Exit TUI
   Ctrl+D          - Exit TUI

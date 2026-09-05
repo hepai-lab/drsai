@@ -123,3 +123,45 @@ export function clearInkFullStaticOutput(): void {
     // best-effort
   }
 }
+
+/**
+ * Proactively prevent Ink's fullscreen branch from firing during
+ * streaming.
+ *
+ * ``resetInkLastOutputHeight()`` sets ``lastOutputHeight = 0`` which
+ * guarantees ``lastOutputHeight < stdout.rows`` on the next ``onRender``
+ * call, preventing the fullscreen branch entirely.
+ *
+ * This should be called BEFORE every streaming flush (before
+ * ``updateCurrent()`` triggers a React re-render → Ink ``onRender``).
+ * Without it, if the previous streaming frame was tall (close to
+ * ``stdout.rows``), the next ``onRender`` sees the OLD tall
+ * ``lastOutputHeight`` and triggers:
+ *
+ *   1. ``clearTerminal`` — wipes the visible screen
+ *   2. ``fullStaticOutput + output`` — re-emits ALL committed turns +
+ *      current frame, pushing existing terminal content UP and creating
+ *      large blank gaps
+ *   3. ``log.sync()`` — sets ``previousLineCount`` WITHOUT writing to
+ *      terminal, corrupting log-update's line tracker. Subsequent
+ *      ``eraseLines(previousLineCount)`` erases the wrong number of
+ *      rows, leaving cumulative blank rows that grow on every flush.
+ *
+ * The StreamingAssistant height-clipping tries to keep the frame below
+ * ``stdout.rows``, but the budget estimation can be off by 1-3 rows
+ * (StatusBar height varies between 2-6 rows depending on layout width
+ * and statusLine visibility; composerInputHeight has a race condition
+ * with TextInput's async ``useEffect``). This proactive reset is the
+ * safety net that catches those estimation errors.
+ */
+export function guardStreamingFrame(): void {
+  const inst = _instance
+  if (!inst) return
+  try {
+    // Reset lastOutputHeight to 0 so Ink's fullscreen branch condition
+    // (lastOutputHeight >= stdout.rows) never evaluates to true.
+    inst.lastOutputHeight = 0
+  } catch {
+    // best-effort
+  }
+}

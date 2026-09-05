@@ -307,7 +307,7 @@ def get_operator_funcs(
 
         return None
 
-    # Mutable current directory state (persists across run_bash calls)
+    # Mutable current directory state (persists across exec calls)
     _cwd = [WORKDIR]
 
     # Background tasks storage - load from persistent storage on initialization
@@ -316,7 +316,7 @@ def get_operator_funcs(
     # Clean up old completed tasks (older than 7 days)
     task_persistence.cleanup_old_tasks(max_age_days=7)
 
-    async def run_read(path: str, minilimit: int = None, maxlimit: int = -1, timeout: float = 30.0) -> str:
+    async def read(path: str, minilimit: int = None, maxlimit: int = -1, timeout: float = 30.0) -> str:
         """
         Read file contents.
         """
@@ -335,7 +335,7 @@ def get_operator_funcs(
             return f"Error: {e}"
 
 
-    async def run_write(path: str, content: str, timeout: float = 30.0) -> str:
+    async def write(path: str, content: str, timeout: float = 30.0) -> str:
         """
         Write content to file.
         """
@@ -358,7 +358,7 @@ def get_operator_funcs(
             return f"Error: {e}"
 
 
-    async def run_edit(path: str, old_text: str, new_text: str, timeout: float = 30.0) -> str:
+    async def edit(path: str, old_text: str, new_text: str, timeout: float = 30.0) -> str:
         """
         Replace exact text in file.
         """
@@ -406,147 +406,265 @@ def get_operator_funcs(
             return f"Error: {e}"
 
 
-    async def run_grep(
+    async def grep(
         pattern: str,
         path: str = None,
         glob: str = None,
-        output_mode: str = "files_with_matches",
-        context_before: int = 0,
-        context_after: int = 0,
-        show_line_numbers: bool = True,
+        mode: str = "files",
+        context: int = 0,
         case_insensitive: bool = False,
-        file_type: str = None,
-        max_results: int = 250
+        max_results: int = 100,
     ) -> str:
-        """
-        Search for pattern in file contents using grep/ripgrep.
+        """Search files for a regular expression.
+
+        Use this to locate symbols, text, or references before reading files.
+        By default it returns matching file paths. Set ``mode`` to ``content``
+        for matching lines or ``count`` for per-file match counts.
 
         Args:
-            pattern: Regular expression pattern to search for
-            path: File or directory to search (defaults to workspace root)
-            glob: Glob pattern to filter files (e.g. "*.py", "*.{js,ts}")
-            output_mode: Output format - "content" (matching lines),
-                        "files_with_matches" (file paths), "count" (match counts)
-            context_before: Number of lines before each match
-            context_after: Number of lines after each match
-            show_line_numbers: Show line numbers in output
-            case_insensitive: Case insensitive search
-            file_type: File type filter (e.g. "py", "js")
-            max_results: Maximum results to return
-
-        Returns:
-            Search results as string
+            pattern: Regular expression to search for.
+            path: File or directory to search; defaults to the workspace root.
+            glob: Optional comma-separated file patterns, such as ``*.py``.
+            mode: ``files``, ``content``, or ``count``.
+            context: Number of context lines before and after each match.
+            case_insensitive: Match without regard to letter case.
+            max_results: Maximum number of returned lines or entries.
         """
         try:
-            # Use ripgrep if available, fallback to grep, then Python re fallback
-            rg_available = False
-            grep_available = False
+            mode_map = {
+                "files": "files_with_matches",
+                "content": "content",
+                "count": "count",
+            }
+            if mode not in mode_map:
+                return "Error: mode must be one of: files, content, count"
+            output_mode = mode_map[mode]
+            context_before = max(0, context)
+            context_after = max(0, context)
+            show_line_numbers = mode == "content"
 
-            # Check for ripgrep
-            _hide_kwargs = _win_subprocess_hide_kwargs()
-            rg_check = await asyncio.create_subprocess_exec(
-                shutil.which("rg") or "rg",
-                "--version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                **_hide_kwargs,
-            )
-            await rg_check.communicate()
-            rg_available = rg_check.returncode == 0
-
-            # Check for grep (only on non-Windows platforms)
-            if not rg_available and platform.system() != "Windows":
-                grep_check = await asyncio.create_subprocess_exec(
-                    "grep", "--version",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                await grep_check.communicate()
-                grep_available = grep_check.returncode == 0
-
+            # Resolve search path once — safe_path may raise ValueError if
+            # the path escapes the workspace; that propagates as a clean error.
             search_path = str(safe_path(path)) if path else str(WORKDIR)
+            _hide_kwargs = _win_subprocess_hide_kwargs()
 
+            # ── Tool availability checks (each guarded so a missing binary
+            #    sets the flag to False instead of raising FileNotFoundError) ──
+
+            rg_bin = shutil.which("rg")          # None if not installed
+            rg_available = False
+            if rg_bin:
+                try:
+                    rg_check = await asyncio.create_subprocess_exec(
+                        rg_bin, "--version",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        **_hide_kwargs,
+                    )
+                    await rg_check.communicate()
+                    rg_available = rg_check.returncode == 0
+                except Exception:
+                    rg_available = False
+
+            grep_available = False
+            if not rg_available and platform.system() != "Windows":
+                grep_bin = shutil.which("grep")
+                if grep_bin:
+                    try:
+                        grep_check = await asyncio.create_subprocess_exec(
+                            grep_bin, "--version",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        await grep_check.communicate()
+                        grep_available = grep_check.returncode == 0
+                    except Exception:
+                        grep_available = False
+
+            output = None  # set by whichever provider succeeds
+
+            # ── 1. ripgrep ──────────────────────────────────────────────
             if rg_available:
-                cmd = ["rg", "--hidden", "--max-columns", "500"]
+                try:
+                    cmd = [rg_bin, "--hidden", "--max-columns", "500"]
 
-                # Output mode
-                if output_mode == "files_with_matches":
-                    cmd.append("-l")
-                elif output_mode == "count":
-                    cmd.append("-c")
+                    # Output mode
+                    if output_mode == "files_with_matches":
+                        cmd.append("-l")
+                    elif output_mode == "count":
+                        cmd.append("-c")
 
-                # Options
-                if case_insensitive:
-                    cmd.append("-i")
-                if show_line_numbers and output_mode == "content":
-                    cmd.append("-n")
+                    # Options
+                    if case_insensitive:
+                        cmd.append("-i")
+                    if show_line_numbers and output_mode == "content":
+                        cmd.append("-n")
 
-                # Context
-                if context_before > 0 and output_mode == "content":
-                    cmd.extend(["-B", str(context_before)])
-                if context_after > 0 and output_mode == "content":
-                    cmd.extend(["-A", str(context_after)])
+                    # Context
+                    if context_before > 0 and output_mode == "content":
+                        cmd.extend(["-B", str(context_before)])
+                    if context_after > 0 and output_mode == "content":
+                        cmd.extend(["-A", str(context_after)])
 
-                # File type
-                if file_type:
-                    cmd.extend(["--type", file_type])
+                    # Glob pattern
+                    if glob:
+                        for pattern_item in glob.split(","):
+                            cmd.extend(["--glob", pattern_item.strip()])
 
-                # Glob pattern
-                if glob:
-                    for pattern_item in glob.split(","):
-                        cmd.extend(["--glob", pattern_item.strip()])
+                    # Pattern + search path
+                    cmd.append(pattern)
+                    cmd.append(search_path)
 
-                # Pattern
-                cmd.append(pattern)
-                cmd.append(search_path)
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        **_hide_kwargs,
+                    )
 
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    **_hide_kwargs,
-                )
+                    async with asyncio.timeout(30):
+                        stdout, stderr = await proc.communicate()
+                        # errors='replace' prevents UnicodeDecodeError when
+                        # rg outputs bytes in a non-UTF-8 encoding (e.g. GBK
+                        # on Chinese Windows with --max-columns truncation).
+                        output = stdout.decode('utf-8', errors='replace')
 
-                async with asyncio.timeout(30):
-                    stdout, stderr = await proc.communicate()
-                    output = stdout.decode('utf-8')
+                except Exception:
+                    # rg failed (e.g. invalid regex, timeout, encoding) —
+                    # fall through to the next provider instead of crashing.
+                    output = None
 
-            elif grep_available:
-                # Fallback to grep (Unix only)
-                cmd = ["grep", "-r"]
-                if case_insensitive:
-                    cmd.append("-i")
-                if show_line_numbers:
-                    cmd.append("-n")
-                if output_mode == "files_with_matches":
-                    cmd.append("-l")
-                elif output_mode == "count":
-                    cmd.append("-c")
+            # ── 2. PowerShell Select-String (Windows / is_powershell) ────
+            #   Self-contained: uses _detect_powershell() + EncodedCommand
+            #   for reliable CJK handling on legacy Windows PowerShell 5.x.
+            #   CJK patterns are passed via base64-encoded UTF-16LE, which
+            #   avoids all ANSI code-page garbling that plagues -Command.
+            if output is None and is_powershell:
+                try:
+                    ps_path = _detect_powershell()
+                    if ps_path:
+                        # Escape single quotes for PS single-quoted strings
+                        esc_pattern = pattern.replace("'", "''")
+                        esc_path = search_path.replace("'", "''")
 
-                if context_before > 0:
-                    cmd.extend(["-B", str(context_before)])
-                if context_after > 0:
-                    cmd.extend(["-A", str(context_after)])
+                        # Build file filter for Get-ChildItem
+                        file_filter = "*"
+                        if glob:
+                            file_filter = glob.split(",")[0].strip()
+                        esc_filter = file_filter.replace("'", "''")
 
-                # Include pattern for file filtering
-                if glob:
-                    cmd.extend(["--include", glob])
+                        # Select-String is case-insensitive by default
+                        case_flag = "" if case_insensitive else "-CaseSensitive"
 
-                cmd.extend([pattern, search_path])
+                        # Context (Select-String -Context takes "before,after")
+                        context_flag = ""
+                        if output_mode == "content" and (context_before > 0 or context_after > 0):
+                            context_flag = f"-Context {context_before},{context_after}"
 
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
+                        # Output formatting
+                        if output_mode == "files_with_matches":
+                            fmt = "$results | Select-Object -ExpandProperty Path | Sort-Object -Unique"
+                        elif output_mode == "count":
+                            fmt = ("$results | Group-Object Path | "
+                                   "ForEach-Object { Write-Output ($_.Name + ':' + $_.Count) }")
+                        else:  # content
+                            if show_line_numbers:
+                                fmt = ("$results | ForEach-Object { "
+                                       "Write-Output ($_.Path + ':' + $_.LineNumber + ':' + $_.Line) }")
+                            else:
+                                fmt = ("$results | ForEach-Object { "
+                                       "Write-Output ($_.Path + ':' + $_.Line) }")
 
-                async with asyncio.timeout(30):
-                    stdout, stderr = await proc.communicate()
-                    output = stdout.decode('utf-8')
+                        script = (
+                            "$ErrorActionPreference = 'Continue'\n"
+                            "try { [Console]::OutputEncoding = "
+                            "[System.Text.UTF8Encoding]::new() } catch {}\n"
+                            "try { $OutputEncoding = "
+                            "[System.Text.UTF8Encoding]::new() } catch {}\n"
+                            "$env:PYTHONIOENCODING = 'utf-8'\n"
+                            "$env:PYTHONUTF8 = '1'\n"
+                            f"$results = Get-ChildItem -Path '{esc_path}' "
+                            f"-Recurse -File -Filter '{esc_filter}' | "
+                            f"Select-String -Pattern '{esc_pattern}' "
+                            f"{case_flag} {context_flag} -Encoding UTF8\n"
+                            f"{fmt}\n"
+                        )
 
-            else:
-                # Python re fallback (cross-platform, no external tools needed)
-                # Run in executor to avoid blocking the asyncio event loop
+                        # Build PS args (EncodedCommand for legacy PS 5.x)
+                        base = ["-NoLogo", "-NoProfile", "-NonInteractive"]
+                        low = ps_path.lower()
+                        is_legacy_ps = (
+                            platform.system() == "Windows"
+                            and (low.endswith("\\powershell.exe")
+                                 or low.endswith("/powershell.exe")
+                                 or low == "powershell.exe"
+                                 or low == "powershell")
+                        )
+                        if is_legacy_ps:
+                            encoded = base64.b64encode(
+                                script.encode("utf-16-le")
+                            ).decode("ascii")
+                            ps_cmd_args = base + [
+                                "-ExecutionPolicy", "Bypass",
+                                "-EncodedCommand", encoded,
+                            ]
+                        else:
+                            ps_cmd_args = base + ["-Command", script]
+
+                        proc = await asyncio.create_subprocess_exec(
+                            ps_path, *ps_cmd_args,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                            stdin=asyncio.subprocess.DEVNULL,
+                            **_hide_kwargs,
+                        )
+
+                        async with asyncio.timeout(30):
+                            stdout, stderr = await proc.communicate()
+                            output = stdout.decode('utf-8', errors='replace')
+
+                except Exception:
+                    output = None
+
+            # ── 3. GNU grep (Unix only) ─────────────────────────────────
+            if output is None and grep_available:
+                try:
+                    cmd = [shutil.which("grep"), "-r"]
+                    if case_insensitive:
+                        cmd.append("-i")
+                    if show_line_numbers:
+                        cmd.append("-n")
+                    if output_mode == "files_with_matches":
+                        cmd.append("-l")
+                    elif output_mode == "count":
+                        cmd.append("-c")
+
+                    if context_before > 0:
+                        cmd.extend(["-B", str(context_before)])
+                    if context_after > 0:
+                        cmd.extend(["-A", str(context_after)])
+
+                    if glob:
+                        cmd.extend(["--include", glob])
+
+                    cmd.extend([pattern, search_path])
+
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+
+                    async with asyncio.timeout(30):
+                        stdout, stderr = await proc.communicate()
+                        output = stdout.decode('utf-8', errors='replace')
+
+                except Exception:
+                    output = None
+
+            # ── 4. Python re fallback (always available) ────────────────
+            if output is None:
+
                 def _pygrep_sync():
                     import re as re_lib
                     import fnmatch
@@ -562,10 +680,7 @@ def get_operator_funcs(
                     for fpath in base.rglob("*"):
                         if not fpath.is_file():
                             continue
-                        if file_type and fpath.suffix.lstrip(".") != file_type:
-                            continue
                         if glob:
-                            # fnmatch matches shell-style globs against filenames only
                             matched = False
                             for pattern_item in glob.split(","):
                                 if fnmatch.fnmatch(fpath.name, pattern_item.strip()):
@@ -607,8 +722,6 @@ def get_operator_funcs(
                     return "\n".join(results) if results else ""
 
                 output = await asyncio.get_event_loop().run_in_executor(None, _pygrep_sync)
-                if not output:
-                    return "No matches found"
 
             if not output:
                 return "No matches found"
@@ -626,34 +739,34 @@ def get_operator_funcs(
         except Exception as e:
             return f"Error: {e}"
 
-    async def run_bash(
-        cmd: str,
+    async def bash_exec(
+        command: str,
         timeout: float = 60,
     ) -> str:
-        """Execute a bash command asynchronously and wait for completion.
+        """Execute a Bash command asynchronously and wait for completion.
 
         **IMPORTANT: This is the default and preferred function for most shell commands.**
         timeout: Timeout in seconds (max: 120).
 
         Example workflow:
-            1. Try: run_bash("npm test")  # Try synchronous first
-            2. If timeout → Use: run_bash_background("npm test", timeout=300)
+            1. Try: exec("npm test")  # Try synchronous first
+            2. If timeout → Use: exec_background("npm test", timeout=300)
         """
 
         # Check dangerous patterns. If matched, prompt the UI user for a
         # single-shot approval before falling back to a hard block.
         # (Was previously a hard "return Error" — that meant the agent
         # never even got the chance to ask the user.)
-        if not _dangerous_allowed[0] and _DANGEROUS_RE.search(cmd):
-            if not await _request_dangerous_approval(cmd, "dangerous"):
+        if not _dangerous_allowed[0] and _DANGEROUS_RE.search(command):
+            if not await _request_dangerous_approval(command, "dangerous"):
                 return (
                     "Error: Dangerous command denied by user. "
                     "Use /dangerous on to authorize for the rest of the session."
                 )
 
         # Same for script-execution patterns.
-        if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(cmd):
-            if not await _request_dangerous_approval(cmd, "script"):
+        if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(command):
+            if not await _request_dangerous_approval(command, "script"):
                 return (
                     "Error: Script execution denied by user. "
                     "Use /dangerous on to authorize for the rest of the session."
@@ -661,7 +774,7 @@ def get_operator_funcs(
 
         # Check absolute paths referenced in command
         if _only_in_workspace[0]:
-            path_err = _check_cmd_paths(cmd)
+            path_err = _check_cmd_paths(command)
             if path_err:
                 return path_err
 
@@ -677,7 +790,7 @@ def get_operator_funcs(
         }
         try:
              # Append a sentinel so we can capture the resulting directory
-            wrapped = f'{cmd}\necho "__DRSAI_CWD__:$(pwd)"'
+            wrapped = f'{command}\necho "__DRSAI_CWD__:$(pwd)"'
             # Create new process group for proper cleanup
             proc = await asyncio.create_subprocess_shell(
                 wrapped,
@@ -749,33 +862,33 @@ def get_operator_funcs(
             return f"Error: {e}"
             
 
-    async def run_bash_background(
-        cmd: str,
+    async def bash_exec_background(
+        command: str,
         timeout: float = 500.0,
         wait_time: float = 10.0,
     ) -> Union[str, Dict[str, Any]]:
         """Execute shell command with smart background mode for LONG-RUNNING tasks.
 
         **⚠️ WARNING: Use this function ONLY when:**
-        1. run_bash() returned a timeout error, OR
+        1. exec() returned a timeout error, OR
         2. You know the command will take > 2 minutes (e.g., long builds, extensive tests)
-        **For most commands, use run_bash() first!**
+        **For most commands, use exec() first!**
         Important Notes:
             - Background tasks persist in storage and can be queried across sessions
             - Don't use sleep commands after launching background tasks
-            - Use get_bash_task(task_id) to check status and retrieve output
+            - Use task_get(task_id) to check status and retrieve output
         """
         # Check dangerous patterns. If matched, ask the user before falling
-        # back to a hard block (see run_bash for context).
-        if not _dangerous_allowed[0] and _DANGEROUS_RE.search(cmd):
-            if not await _request_dangerous_approval(cmd, "dangerous"):
+        # back to a hard block (see exec for context).
+        if not _dangerous_allowed[0] and _DANGEROUS_RE.search(command):
+            if not await _request_dangerous_approval(command, "dangerous"):
                 return (
                     "Error: Dangerous command denied by user. "
                     "Use /dangerous on to authorize for the rest of the session."
                 )
 
-        if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(cmd):
-            if not await _request_dangerous_approval(cmd, "script"):
+        if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(command):
+            if not await _request_dangerous_approval(command, "script"):
                 return (
                     "Error: Script execution denied by user. "
                     "Use /dangerous on to authorize for the rest of the session."
@@ -783,7 +896,7 @@ def get_operator_funcs(
 
         # Check absolute paths referenced in command
         if _only_in_workspace[0]:
-            path_err = _check_cmd_paths(cmd)
+            path_err = _check_cmd_paths(command)
             if path_err:
                 return path_err
 
@@ -792,14 +905,14 @@ def get_operator_funcs(
         wait_time = min(max(1.0, wait_time), timeout)  # wait_time should not exceed timeout
 
         # Append a sentinel so we can capture the resulting directory
-        wrapped = f'{cmd}\necho "__DRSAI_CWD__:$(pwd)"'
+        wrapped = f'{command}\necho "__DRSAI_CWD__:$(pwd)"'
 
         # Create task ID with short UUID (first 8 characters)
         task_id = f"bash_task_{uuid.uuid4().hex[:8]}"
 
         task_info = {
             "task_id": task_id,
-            "command": cmd,
+            "command": command,
             "status": "running",
             "output": None,
             "error": None,
@@ -913,23 +1026,23 @@ def get_operator_funcs(
             return f"Error: {error_msg}"
         else:
             # Task still running - return task info for background querying
-            cmd_preview = cmd[:50] + "..." if len(cmd) > 50 else cmd
+            cmd_preview = command[:50] + "..." if len(command) > 50 else command
             return {
                 "task_id": task_id,
                 "status": "running",
                 "command": cmd_preview,
                 "timeout": timeout,
-                "message": f"Task '{task_id}' is still running after {wait_time}s.\nUse get_bash_task('{task_id}') to check status and retrieve output.",
+                "message": f"Task '{task_id}' is still running after {wait_time}s.\nUse task_get('{task_id}') to check status and retrieve output.",
                 "pid": task_info.get("pid"),
                 "pgid": task_info.get("pgid"),
             }
 
-    async def get_bash_task(task_id: str) -> Dict[str, Any]:
+    async def bash_get_task(task_id: str) -> Dict[str, Any]:
         """
         Get status and output of a background bash task.
 
         Args:
-            task_id: Task ID returned by run_bash with run_in_background=True
+            task_id: Task ID returned by exec with run_in_background=True
 
         Note:
             If a query is still running after being executed once, it should not be executed again. Instead, users should be prompted to actively query again later, or a scheduled task can be set.
@@ -966,7 +1079,7 @@ def get_operator_funcs(
         return result
 
 
-    async def list_bash_tasks() -> str:
+    async def bash_list_tasks() -> str:
         """
         List all bash background tasks.
 
@@ -987,7 +1100,7 @@ def get_operator_funcs(
         return "\n".join(lines)
 
 
-    async def kill_bash_task(task_id: str, force: bool = False) -> str:
+    async def bash_kill_task(task_id: str, force: bool = False) -> str:
         """
         Kill a running background bash task and its entire process group.
 
@@ -1043,7 +1156,7 @@ def get_operator_funcs(
             return f"Error killing task {task_id}: {e}"
 
 
-    async def run_glob(
+    async def glob(
         pattern: str,
         search_path: str = None,
         max_results: int = 100
@@ -1223,7 +1336,7 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
         except Exception:
             pass
 
-    async def run_powershell(
+    async def powershell_exec(
         command: str,
         timeout: int = 200,
         run_in_background: bool = False,
@@ -1231,7 +1344,7 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
         """
         Execute PowerShell command in workspace directory.
 
-        The working directory persists across calls, similar to run_bash.
+        The working directory persists across calls, similar to exec.
         Supports both PowerShell Core (pwsh) and Windows PowerShell.
 
         Args:
@@ -1254,9 +1367,9 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
         # Check if PowerShell is available
         ps_path = _detect_powershell()
         if not ps_path:
-            return "Error: PowerShell not found. Please install PowerShell Core (pwsh) or use run_bash for Unix commands."
+            return "Error: PowerShell not found. Please install PowerShell Core (pwsh) or use exec for Unix commands."
 
-        # Check dangerous patterns. Same approval flow as run_bash.
+        # Check dangerous patterns. Same approval flow as exec.
         if not _dangerous_allowed[0] and _DANGEROUS_RE.search(command):
             if not await _request_dangerous_approval(command, "dangerous"):
                 return (
@@ -1352,7 +1465,7 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
                 "status": "running",
                 "command": cmd_preview,
                 "timeout": timeout,
-                "message": f"Task '{task_id}' is running.\nUse get_powershell_task('{task_id}') to check status and retrieve output.",
+                "message": f"Task '{task_id}' is running.\nUse task_get('{task_id}') to check status and retrieve output.",
             }
 
         # Foreground execution
@@ -1391,12 +1504,12 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
             return f"Error: {e}"
 
 
-    async def get_powershell_task(task_id: str) -> Dict[str, Any]:
+    async def powershell_get_task(task_id: str) -> Dict[str, Any]:
         """
         Get status and output of a background PowerShell task.
 
         Args:
-            task_id: Task ID returned by run_powershell with run_in_background=True
+            task_id: Task ID returned by exec with run_in_background=True
 
         Note:
             If a query is still running after being executed once, it should not be executed again. Instead, users should be prompted to actively query again later, or a scheduled task can be set.
@@ -1431,7 +1544,7 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
         return result
 
 
-    async def list_powershell_tasks() -> str:
+    async def powershell_list_tasks() -> str:
         """
         List all PowerShell background tasks.
 
@@ -1452,7 +1565,7 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
         return "\n".join(lines)
 
 
-    async def kill_powershell_task(task_id: str) -> str:
+    async def powershell_kill_task(task_id: str) -> str:
         """
         Kill a running background PowerShell task and its process tree.
 
@@ -1520,17 +1633,35 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
             "dangerous_allowed": _dangerous_allowed[0],
         }
 
+    # Model-facing names are intentionally concise and shell-neutral.
+    # Keep implementation names distinct because Bash and PowerShell expose
+    # different task stores, while both use the same public task API.
+    read.__name__ = "read"
+    write.__name__ = "write"
+    edit.__name__ = "edit"
+    grep.__name__ = "grep"
+    glob.__name__ = "glob"
+    bash_exec.__name__ = "exec"
+    bash_exec_background.__name__ = "exec_background"
+    bash_get_task.__name__ = "task_get"
+    bash_list_tasks.__name__ = "task_list"
+    bash_kill_task.__name__ = "task_kill"
+    powershell_exec.__name__ = "exec"
+    powershell_get_task.__name__ = "task_get"
+    powershell_list_tasks.__name__ = "task_list"
+    powershell_kill_task.__name__ = "task_kill"
+
     if is_powershell:
         return [
-            run_read,
-            run_write,
-            run_edit,
-            run_grep,
-            run_glob,
-            run_powershell,
-            get_powershell_task,
-            list_powershell_tasks,
-            kill_powershell_task,
+            read,
+            write,
+            edit,
+            grep,
+            glob,
+            powershell_exec,
+            powershell_get_task,
+            powershell_list_tasks,
+            powershell_kill_task,
             # toggles (not agent tools — for CLI use only)
             set_workspace_restriction,
             get_workspace_status,
@@ -1539,16 +1670,16 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
             ]
     else:
         return [
-            run_bash,
-            run_bash_background,
-            run_read,
-            run_write,
-            run_edit,
-            run_grep,
-            run_glob,
-            get_bash_task,
-            list_bash_tasks,
-            kill_bash_task,
+            bash_exec,
+            bash_exec_background,
+            read,
+            write,
+            edit,
+            grep,
+            glob,
+            bash_get_task,
+            bash_list_tasks,
+            bash_kill_task,
             # toggles (not agent tools — for CLI use only)
             set_workspace_restriction,
             get_workspace_status,

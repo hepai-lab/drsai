@@ -17,7 +17,7 @@
 import type { GatewayClient } from '../gatewayClient.js'
 
 import { $isStreaming, $current, appendTurn, setCurrent } from './turnStore.js'
-import { $memoryPreview } from './uiStore.js'
+import { $composerInputHeight, $memoryPreview } from './uiStore.js'
 import { newAssistantTurn } from './types.js'
 import { clearHeightCache } from './heightCache.js'
 import { cancelPendingInkThrottles, resetInkLastOutputHeight, clearInkFullStaticOutput } from './inkInstanceRef.js'
@@ -51,6 +51,30 @@ export class TurnController {
     if (!trimmed) return
     if ($isStreaming.get()) return
 
+    // ── Ink state reset (mirror of finalize) ────────────────────────
+    // Before transitioning from idle → streaming, cancel any pending
+    // throttled render trailing calls and reset lastOutputHeight.
+    //
+    // Without this, when the user submits a multi-line question:
+    //   1. The idle frame was tall (StatusBar + multi-line ComposerPane).
+    //      Ink's lastOutputHeight and previousLineCount reflect that
+    //      tall frame.
+    //   2. submit() adds a UserBlock to <Static> and triggers
+    //      onImmediateRender (non-throttled). Ink writes the UserBlock
+    //      to scrollback, then erases `previousLineCount` lines UP from
+    //      the cursor — erasing INTO the just-written UserBlock.
+    //   3. A pending trailing throttle call from the last idle render
+    //      fires AFTER the new short streaming frame is written,
+    //      overwriting it with the old tall idle output — causing text
+    //      overlap and blank space.
+    //
+    // This is especially visible on PowerShell/conhost where the
+    // erase+rewrite cycle is non-atomic: the user sees the UserBlock
+    // get pushed up with large blank gaps below it.
+    cancelPendingInkThrottles()
+    resetInkLastOutputHeight()
+    clearInkFullStaticOutput()
+
     // Clear the memory preview banner — user has seen it and is now
     // starting a new interaction.
     $memoryPreview.set('')
@@ -59,6 +83,16 @@ export class TurnController {
     appendTurn({ role: 'user', text: opts.displayText?.trim() || trimmed, ts: Date.now() })
     setCurrent(newAssistantTurn())
     clearHeightCache()  // reset height cache for the new streaming turn
+
+    // Reset composer input height to 1 (default). The TextInput's
+    // onHeightChange fires asynchronously via useEffect AFTER the
+    // first re-render — so $composerInputHeight may still reflect
+    // the multi-line input height during the critical first streaming
+    // render. This causes StreamingAssistant's RESERVED_ROWS to be
+    // too large (composerInputHeight + 6 instead of 1 + 6), creating
+    // phantom reserved space → large blank gap below the UserBlock.
+    $composerInputHeight.set(1)
+
     $isStreaming.set(true)
 
     // Fire and forget: the RPC just kicks off the turn on the gateway side.
@@ -154,6 +188,11 @@ export class TurnController {
       setCurrent(null)
     }
     $isStreaming.set(false)
+    // Reset composer input height to 1 (single line) for the next turn.
+    // If the user's input was multi-line, $composerInputHeight would still
+    // be elevated from the previous turn, causing the streaming frame to
+    // be clipped more than necessary in the next turn.
+    $composerInputHeight.set(1)
     // No manual scroll-to-bottom: with <Static> in TranscriptPane the
     // terminal's native scroll position is the source of truth, and a
     // freshly written turn naturally appears at the bottom.

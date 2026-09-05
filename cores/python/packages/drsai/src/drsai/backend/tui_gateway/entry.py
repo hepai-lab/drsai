@@ -167,9 +167,21 @@ def setup_status() -> dict:
 
     Returns a dict shipped in ``gateway.ready`` so the UI can show an
     "unconfigured" banner / refuse to run prompts when nothing is ready.
+
+    Fields:
+        config_exists:      cli_config.json exists
+        has_api_key:        any static API key configured (env or config)
+        setup_required:     True if neither OIDC session nor API key
+        auth_mode:          "oidc" | "apikey" | "none"
+        auth_authenticated: True if OIDC session is valid (not expired)
+        skills_selected:    True if user completed skills selection step
     """
     has_api_key = False
     config_path_exists = False
+    auth_mode = "none"
+    auth_authenticated = False
+    skills_selected = False
+
     try:
         from drsai.backend.cli import config as cli_config
         config_path_exists = cli_config.CLI_CONFIG_PATH.exists()
@@ -182,12 +194,31 @@ def setup_status() -> dict:
             os.environ.get("ANTHROPIC_API_KEY"),
             os.environ.get("OPENAI_API_KEY"),
         ])
+        auth_mode = cfg.get("auth_mode", "none")
+        skills_selected = bool(cfg.get("skills_selected", False))
     except Exception:
         logger.exception("setup status probe failed")
+
+    # Check OIDC session validity
+    if auth_mode == "oidc":
+        try:
+            from drsai.backend.auth.token_store import load_auth_session, is_token_expired
+            session = load_auth_session()
+            if session and not is_token_expired(session):
+                auth_authenticated = True
+        except Exception:
+            logger.warning("OIDC session check failed", exc_info=True)
+
+    # setup_required: no valid OIDC session AND no API key
+    setup_required = (not auth_authenticated) and (not has_api_key)
+
     return {
         "config_exists": config_path_exists,
         "has_api_key": has_api_key,
-        "setup_required": (not config_path_exists) or (not has_api_key),
+        "auth_mode": auth_mode,
+        "auth_authenticated": auth_authenticated,
+        "skills_selected": skills_selected,
+        "setup_required": setup_required,
     }
 
 

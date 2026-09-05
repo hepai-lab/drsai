@@ -457,11 +457,45 @@ class AgentSession:
             except Exception:
                 logger.exception("on_event finalize raised")
 
-        # Persist updated state after each turn so a crash doesn't lose progress.
-        try:
-            await self._async_save_state()
-        except Exception:
-            logger.exception("post-turn save_state failed")
+            # ── P0: Persist state inside finally block ──────────────
+            # Previously, _async_save_state() was AFTER the try/except/finally
+            # construct. When the turn was interrupted (CancelledError re-raised
+            # from the except block), the CancelledError propagated past the
+            # finally block and _async_save_state() was NEVER executed —
+            # causing the current turn's state (tool results, session settings,
+            # model_context changes) to be LOST on interrupt/cancel.
+            #
+            # Fix: Move _async_save_state() inside the finally block and wrap
+            # it with asyncio.shield() so that:
+            #   1. It runs even when CancelledError is propagating (Python
+            #      guarantees the finally block executes on exception exit).
+            #   2. asyncio.shield() protects the save coroutine from being
+            #      cancelled by a *second* task.cancel() call that might
+            #      arrive while the finally block is mid-execution (e.g., a
+            #      double-interrupt or a process-level shutdown signal).
+            #
+            # The shield creates an inner task that continues running even if
+            # the outer task's shield wrapper receives CancelledError. We catch
+            # CancelledError explicitly (it's a BaseException, not caught by
+            # `except Exception`) and log the situation without re-raising.
+            #
+            # On normal completion (no cancel), the shield is transparent —
+            # the coroutine runs and returns normally.
+            try:
+                await asyncio.shield(self._async_save_state())
+            except asyncio.CancelledError:
+                # The shield wrapper was cancelled (e.g., double-interrupt),
+                # but the inner _async_save_state() task continues running on
+                # the event loop and will complete. We must not re-raise
+                # here — the finally block must finish cleanly so that the
+                # outer CancelledError (if any) propagates to the caller
+                # without being masked by a save failure.
+                logger.warning(
+                    "post-turn save_state was shield-cancelled; "
+                    "the inner task continues in the background"
+                )
+            except Exception:
+                logger.exception("post-turn save_state failed")
 
         return status
 
