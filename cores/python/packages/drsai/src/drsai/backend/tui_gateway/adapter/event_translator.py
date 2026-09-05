@@ -9,7 +9,7 @@ Event mapping (matches design doc Section "关键事件翻译表"):
 
 | autogen                              | gateway              | notes |
 |--------------------------------------|----------------------|-------|
-| ModelClientStreamingChunkEvent       | message.delta        | source.startswith("sub:") → subagent.thinking |
+| ModelClientStreamingChunkEvent       | message.delta        | source.startswith("sub:") → subagent.markdown |
 | TextMessage (assistant)              | message.complete or skip if streamed | metadata.internal="yes" skips |
 | TextMessage (user)                   | (skipped)            | UI already showed the prompt |
 | ToolCallRequestEvent                 | tool.start (per call) | args parsed from JSON-string |
@@ -354,7 +354,15 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         if source:
             state.streamed_sources.add(source)
         if _is_subagent_source(source):
-            out.append(("subagent.thinking", {"text": content, "source": source}))
+            # Streaming chunks from a subagent are visible answer content,
+            # not hidden reasoning. Keep them separate so the structured
+            # projector can render the child output inside its SubtaskPart
+            # instead of placing it in the parent markdown stream.
+            out.append(("subagent.markdown", {
+                "text": content,
+                "source": source,
+                "subagent_id": source[4:],
+            }))
             return out
         state.streamed_visible = True
         out.append(("message.delta", {"text": content}))
@@ -369,7 +377,12 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         if text.strip():
             state.last_reasoning = text
         if _is_subagent_source(source):
-            out.append(("subagent.thinking", {"text": text, "source": source}))
+            out.append(("subagent.thinking", {
+                "text": text,
+                "source": source,
+                "segment_id": f"{source}:reasoning",
+                "subagent_id": source[4:],
+            }))
         else:
             out.append(("thinking.delta", {"text": text}))
         return out
@@ -512,17 +525,24 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
 
         out.extend(("citation.added", payload) for payload in extract_citation_payloads(metadata, state))
 
+        # Subagent final text must be handled before the generic streamed
+        # duplicate guard. Its chunks belong to the child SubtaskPart and the
+        # terminal event is still needed to close that part, even when the
+        # child emitted streaming content first.
+        text = getattr(message, "content", "") or ""
+        if _is_subagent_source(source):
+            out.append(("subagent.complete", {
+                "text": text,
+                "source": source,
+                "subagent_id": source[4:],
+            }))
+            return out
+
         # Skip if we've already streamed this turn's visible content — the
         # final TextMessage is just a duplicate from the assistant.
         if state.streamed_visible and (
             not state.streamed_sources or source in state.streamed_sources
         ):
-            return out
-
-        # Subagent final text
-        text = getattr(message, "content", "") or ""
-        if _is_subagent_source(source):
-            out.append(("subagent.complete", {"text": text, "source": source}))
             return out
 
         if not text:
@@ -542,10 +562,17 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
             chat_src = getattr(chat, "source", "") or ""
             metadata = getattr(chat, "metadata", None) or {}
             out.extend(("citation.added", payload) for payload in extract_citation_payloads(metadata, state))
-            if (
+            if _is_subagent_source(chat_src):
+                # Response.chat_message is the terminal child result. It must
+                # close the child task, never become parent markdown.
+                out.append(("subagent.complete", {
+                    "text": getattr(chat, "content", "") or "",
+                    "source": chat_src,
+                    "subagent_id": chat_src[4:],
+                }))
+            elif (
                 chat_src.lower() != "user"
                 and metadata.get("internal") != "yes"
-                and not _is_subagent_source(chat_src)
             ):
                 text = getattr(chat, "content", "") or ""
                 if text and not state.streamed_visible:

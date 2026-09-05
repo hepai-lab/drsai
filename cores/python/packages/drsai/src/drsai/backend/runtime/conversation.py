@@ -142,7 +142,7 @@ class StructuredConversationProjector:
             }
             self.activities[activity_id] = activity
             events.append(self._event("activity.updated", source, activity=activity))
-        elif event_type in {"subagent.thinking", "subagent.complete", "subagent.completed"}:
+        elif event_type in {"subagent.thinking", "subagent.markdown", "subagent.complete", "subagent.completed"}:
             events.extend(self._subtask(event_type, payload, source))
         elif event_type == "progress.update":
             events.extend(self._progress(payload, source))
@@ -279,7 +279,11 @@ class StructuredConversationProjector:
         return self._event("activity.updated", source, activity=activity)
 
     def _subtask(self, event_type: str, payload: dict[str, Any], source: str) -> list[dict[str, Any]]:
-        source_id = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", source).strip("-") or "subtask"
+        # Prefer an explicit child identity when supplied. Source is a
+        # display/transport label and is not unique for parallel invocations
+        # of the same skills_agent.
+        raw_task_id = str(payload.get("subagent_id") or payload.get("task_id") or source)
+        source_id = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", raw_task_id).strip("-") or "subtask"
         part_id = f"{self.turn_id}:subtask:{source_id}"
         part = self.parts.get(part_id)
         events: list[dict[str, Any]] = []
@@ -295,6 +299,24 @@ class StructuredConversationProjector:
             self.parts[part_id] = part
             events.append(self._event("part.started", source, part=dict(part)))
         summary = str(payload.get("text") or payload.get("summary") or "")
+        if event_type == "subagent.markdown":
+            events.append(self._event(
+                "part.delta", source, partId=part_id,
+                delta={"kind": "subtask.markdown.append", "text": summary},
+            ))
+            return events
+        if event_type == "subagent.thinking":
+            segment_id = str(payload.get("segment_id") or f"{part_id}:reasoning")
+            events.append(self._event(
+                "part.delta", source, partId=part_id,
+                delta={
+                    "kind": "subtask.reasoning.append",
+                    "segmentId": segment_id,
+                    "text": summary,
+                    "source": source,
+                },
+            ))
+            return events
         # Normalize "subagent.completed" → "subagent.complete" for the
         # comparison below.  The kernel emits "subagent.completed" (with the
         # -ed suffix) but the projector's contract uses "subagent.complete".

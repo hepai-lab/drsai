@@ -699,6 +699,8 @@ function updatePartWithDelta(part: StructuredAssistantPart, delta: StructuredPar
     return { ...part, reasoningSegments: updatedSegments, status: "running" };
   }
   if (part.kind === "subtask" && delta.kind === "subtask.markdown.append") {
+    // Child markdown is already normalized by the gateway. Keep it in the
+    // child-only field so it can never leak into the parent answer parts.
     return { ...part, markdownSummary: `${part.markdownSummary ?? ""}${delta.text}`, status: "running" };
   }
   if (part.kind === "notice" && delta.kind === "notice.update") {

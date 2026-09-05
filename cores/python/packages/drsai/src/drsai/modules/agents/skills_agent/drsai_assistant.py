@@ -3523,12 +3523,22 @@ class DrSaiAssistant(DrSaiAgent):
         next parent-agent LLM call.
         """
         safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub_agent_name).strip('_') or 'subagent'
-        if hasattr(message, 'source'):
-            src = message.source or ""
+        # Response is a wrapper: its visible chat message owns the source
+        # consumed by the gateway translator. Tag both the wrapper (when
+        # possible) and the nested chat message so a subagent final answer
+        # cannot leak into the parent assistant markdown stream.
+        targets = [message]
+        chat_message = getattr(message, "chat_message", None)
+        if chat_message is not None:
+            targets.append(chat_message)
+        for target in targets:
+            if not hasattr(target, "source"):
+                continue
+            src = getattr(target, "source", "") or ""
             if not src:
-                message.source = f"sub:{safe_name}"
+                target.source = f"sub:{safe_name}"
             elif not src.startswith("sub:"):
-                message.source = f"sub:{safe_name}/{src}"
+                target.source = f"sub:{safe_name}/{src}"
         return message
 
     async def _safe_close_subagent(self, subagent, sub_agent_name: str) -> None:

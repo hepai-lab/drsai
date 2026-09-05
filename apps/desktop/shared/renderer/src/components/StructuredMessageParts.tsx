@@ -357,7 +357,9 @@ const SubtaskContainer = memo(function SubtaskContainer({
         <SubtaskIcon size={14} className={iconClass} aria-hidden="true" />
         <span className="structured-subtask-text">
           <strong>{part.title}</strong>
-          {part.summary ? ` · ${part.summary}` : ""}
+          {/* The final child markdown is rendered in the expandable body;
+              do not repeat the same text in the header summary. */}
+          {!part.markdownSummary && part.summary ? ` · ${part.summary}` : ""}
         </span>
         {part.agentName ? <span className="structured-subtask-agent">{part.agentName}</span> : null}
         {hasInternals ? (
