@@ -1,10 +1,10 @@
-# install_drsai_dev.sh — 实时开发安装脚本
+# install_drsai_dev_tui.sh — 实时开发安装脚本
 
 把**本地仓库**的源码直接安装到 `~/.drsai`，用于实时测试更新；运行时依赖（portable Python / Node）仍在线下载。
 
-## 与 `install_drsai.sh` 的区别
+## 与 `install_drsai_tui.sh` 的区别
 
-| | `install_drsai.sh` | `install_drsai_dev.sh` |
+| | `install_drsai_tui.sh` | `install_drsai_dev_tui.sh` |
 |---|---|---|
 | 源码来源 | 在线下载 `drsai.zip` | 从本地仓库 rsync 拷贝 |
 | 拷贝范围 | 整个仓库 | 仅 `apps/ui-tui`、`cores`、`skills/skills` |
@@ -16,19 +16,19 @@
 
 ```bash
 # 首次安装到 ~/.drsai
-bash scripts/install_drsai_dev.sh
+bash scripts/install_drsai_dev_tui.sh
 
 # 自定义安装目录
-bash scripts/install_drsai_dev.sh --install-dir /tmp/drsai_dev
+bash scripts/install_drsai_dev_tui.sh --install-dir /tmp/drsai_dev
 
 # 覆盖已有安装
-bash scripts/install_drsai_dev.sh --force
+bash scripts/install_drsai_dev_tui.sh --force
 
 # 改完代码后同步到安装目录（重新拷贝源码 + 重建 TUI）
-bash scripts/install_drsai_dev.sh --sync
+bash scripts/install_drsai_dev_tui.sh --sync
 
 # 只同步源码，不重建 TUI
-bash scripts/install_drsai_dev.sh --sync --no-rebuild
+bash scripts/install_drsai_dev_tui.sh --sync --no-rebuild
 ```
 
 ## 选项
@@ -60,7 +60,7 @@ bash scripts/install_drsai_dev.sh --sync --no-rebuild
 
 1. 首次安装：
    ```bash
-   bash scripts/install_drsai_dev.sh
+   bash scripts/install_drsai_dev_tui.sh
    source ~/.bashrc   # 或 ~/.zshrc
    ```
 
@@ -71,7 +71,7 @@ bash scripts/install_drsai_dev.sh --sync --no-rebuild
 
 3. 在仓库里修改代码后，同步到安装目录：
    ```bash
-   bash scripts/install_drsai_dev.sh --sync
+   bash scripts/install_drsai_dev_tui.sh --sync
    ```
    - **Python 代码**：后端是 editable 安装，`--sync` 拷贝后立即生效，无需重装。
    - **TUI 代码**：`--sync` 会重新 `pnpm build` 生成 `dist/entry.mjs`。

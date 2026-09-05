@@ -401,7 +401,7 @@ class DrSaiAssistant(DrSaiAgent):
         sub_agent_config: Dict = {},
         max_agent_concurrent: int = 10,
         # task loop and memory
-        max_turn_count: int = 500,
+        max_turn_count: int = 1_000,
         # Tool-loop safety ceilings. Defaults preserve desktop behavior; raise
         # for non-desktop surfaces (worker/console) that need longer loops or
         # higher parallelism. Actual loop bound = min(max_turn_count, max_tool_rounds_ceiling).
