@@ -711,8 +711,8 @@ def normalize_tool_loop_policy(
     ``max_rounds_ceiling`` / ``max_parallel_ceiling`` for non-desktop surfaces
     (e.g. worker / console) that need longer tool loops or higher parallelism.
     """
-    rounds_ceiling = max_rounds_ceiling if isinstance(max_rounds_ceiling, int) and max_rounds_ceiling >= 1 else DEFAULT_MAX_TOOL_ROUNDS
-    parallel_ceiling = max_parallel_ceiling if isinstance(max_parallel_ceiling, int) and max_parallel_ceiling >= 1 else DEFAULT_MAX_PARALLEL_TOOL_CALLS
+    rounds_ceiling = max_rounds_ceiling if max_rounds_ceiling is None or (isinstance(max_rounds_ceiling, int) and max_rounds_ceiling >= 1) else DEFAULT_MAX_TOOL_ROUNDS
+    parallel_ceiling = max_parallel_ceiling if max_parallel_ceiling is None or (isinstance(max_parallel_ceiling, int) and max_parallel_ceiling >= 1) else DEFAULT_MAX_PARALLEL_TOOL_CALLS
     source = dict(raw or {})
     if source and source.get("schema_version") != TOOL_LOOP_POLICY_SCHEMA_VERSION:
         raise ValueError("tool_loop_policy_schema_unsupported")
@@ -720,9 +720,19 @@ def normalize_tool_loop_policy(
         raise ValueError("tool_loop_policy_version_unsupported")
     max_rounds = source.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)
     max_parallel = source.get("max_parallel_tool_calls", DEFAULT_MAX_PARALLEL_TOOL_CALLS)
-    if isinstance(max_rounds, bool) or not isinstance(max_rounds, int) or not 1 <= max_rounds <= rounds_ceiling:
+    if max_rounds is not None and (
+        isinstance(max_rounds, bool)
+        or not isinstance(max_rounds, int)
+        or max_rounds < 1
+        or (rounds_ceiling is not None and max_rounds > rounds_ceiling)
+    ):
         raise ValueError("tool_loop_max_rounds_invalid")
-    if isinstance(max_parallel, bool) or not isinstance(max_parallel, int) or not 1 <= max_parallel <= parallel_ceiling:
+    if max_parallel is not None and (
+        isinstance(max_parallel, bool)
+        or not isinstance(max_parallel, int)
+        or max_parallel < 1
+        or (parallel_ceiling is not None and max_parallel > parallel_ceiling)
+    ):
         raise ValueError("tool_loop_max_parallel_invalid")
     policy = {
         "schema_version": TOOL_LOOP_POLICY_SCHEMA_VERSION,
@@ -752,8 +762,15 @@ def validate_tool_call_batch(
     """
     if not calls:
         raise ValueError("tool_call_batch_empty")
-    if len(calls) > max_parallel_tool_calls:
-        raise ValueError("tool_call_parallel_limit")
+    if max_parallel_tool_calls is not None:
+        if (
+            isinstance(max_parallel_tool_calls, bool)
+            or not isinstance(max_parallel_tool_calls, int)
+            or max_parallel_tool_calls < 1
+        ):
+            raise ValueError("tool_loop_max_parallel_invalid")
+        if len(calls) > max_parallel_tool_calls:
+            raise ValueError("tool_call_parallel_limit")
     seen: set[str] = set()
     records: list[dict[str, Any]] = []
     for raw in calls:
