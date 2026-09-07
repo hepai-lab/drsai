@@ -156,7 +156,9 @@ export const useTaskActions = ({
         // Prefer correct semantics:
         // - If the run is awaiting input, always send input_response (even after reconnect).
         // - Otherwise, fall back to "continue" only when we had to reconnect mid-flight.
-        const isAwaitingInput = currentRun?.status === "awaiting_input";
+        const isAwaitingInput =
+          currentRun?.status === "awaiting_input" ||
+          currentRun?.status === "ready";
 
         if (needsReconnect && !isAwaitingInput) {
           let currentSettings = settingsConfig;
@@ -176,6 +178,7 @@ export const useTaskActions = ({
             ((currentSettings as unknown) as Record<string, unknown>) || {};
           const continueMessage = {
             type: "continue",
+            stream_protocol: 2,
             task: responseString,
             metadata: {
               team_config: teamConfig,
@@ -227,6 +230,7 @@ export const useTaskActions = ({
             ...current,
             status: "active" as BaseRunStatus,
             input_request: undefined,
+            agent_working: { phase: "model" },
           };
         });
       } catch (error) {
@@ -330,7 +334,10 @@ export const useTaskActions = ({
     if (!currentRun) return;
 
     try {
-      if (currentRun.status === "awaiting_input") {
+      if (
+        currentRun.status === "awaiting_input" ||
+        currentRun.status === "ready"
+      ) {
         return;
       }
 
@@ -467,6 +474,7 @@ export const useTaskActions = ({
             : baseSettingsConfig;
         const messageToSend = {
           type: "start",
+          stream_protocol: 2,
           task: JSON.stringify(taskJson),
           metadata: {
             files: processedFiles,
@@ -482,6 +490,16 @@ export const useTaskActions = ({
         console.debug("[skill debug][useTaskActions] outbound start payload", {
           attachedSkills: attachedSkills?.map((s) => ({ id: s.id, source: s.source })) ?? [],
           metadata: messageToSend.metadata,
+        });
+
+        setCurrentRun((current: Run | null) => {
+          if (!current) return null;
+          return {
+            ...current,
+            status: "active" as BaseRunStatus,
+            input_request: undefined,
+            agent_working: { phase: "orchestrator" },
+          };
         });
 
         socket.send(JSON.stringify(messageToSend));

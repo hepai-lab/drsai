@@ -206,7 +206,9 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
       setRelevantPlans([]);
 
       const shouldSearch = !(
-        runStatus === "connected" || runStatus === "awaiting_input"
+        runStatus === "connected" ||
+        runStatus === "ready" ||
+        runStatus === "awaiting_input"
       );
       if (shouldSearch) {
         searchPlans(newText);

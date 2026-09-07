@@ -10,6 +10,9 @@ import {
   InputRequestMessage,
   TeamResult,
   FilesEvent,
+  IncomingWebSocketMessage,
+  isDefaultContinuationPrompt,
+  isStreamV2Event,
 } from "../../../components/types/datamodel";
 import { createMessage } from "../../../utils/chatHelpers";
 import {
@@ -17,6 +20,13 @@ import {
   sealStreamMessage,
   splitAgentVisibleContent,
 } from "../chatMessagePipeline";
+import {
+  ChatStreamState,
+  LegacyStreamAdapter,
+  createChatStreamState,
+  materializeStreamMessages,
+  reduceStreamEvent,
+} from "../chatStreamReducer";
 
 /** Project raw model stream into reply + thought planes.
  *  Open <think> (no close yet) → thought streaming, reply empty.
@@ -53,6 +63,30 @@ function isLiveStreamDraft(m: { config: any }): boolean {
   return false;
 }
 
+/** Tool/log events that should seal the current bubble and start a new one. */
+function isToolInterruptMessage(m: { config: any }): boolean {
+  const cfg = m.config as any;
+  const meta = (cfg.metadata || {}) as Record<string, unknown>;
+  return (
+    meta.type === "log" ||
+    cfg.content_type === "log" ||
+    cfg.type === "AgentLogEvent" ||
+    meta.type === "AgentLogEvent" ||
+    cfg.type === "ToolCallSummaryMessage" ||
+    meta.type === "ToolCallSummaryMessage" ||
+    cfg.type === "ToolCallRequestEvent" ||
+    cfg.type === "ToolCallExecutionEvent" ||
+    cfg.content_type === "tools" ||
+    meta.content_type === "tools"
+  );
+}
+
+function wrapThink(thought: string, reply: string): string {
+  const t = (thought || "").trim();
+  const r = (reply || "").trim();
+  return t ? `<think>${t}</think>\n\n${r}` : r;
+}
+
 interface UseWebSocketProps {
   session: { id?: number } | null;
   getSessionSocket: (
@@ -75,9 +109,11 @@ export const useChatWebSocket = ({
   const activeSocketRef = React.useRef<WebSocket | null>(null);
   const inputTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const streamingMessageRef = React.useRef<{ source: string; content: string } | null>(null);
+  const streamStateRef = React.useRef<ChatStreamState | null>(null);
+  const legacyAdapterRef = React.useRef<LegacyStreamAdapter | null>(null);
 
   const handleWebSocketMessageRef = React.useRef<
-    (wsMessage: WebSocketMessage) => void
+    (wsMessage: IncomingWebSocketMessage) => void
   >(() => {});
 
   // Batched WS message queue: coalesces bursts of chunks (and other events)
@@ -86,7 +122,7 @@ export const useChatWebSocket = ({
   // chunks in the same batch. This way when the terminal event promotes the
   // last chunk to _is_final_reply, the promotion is applied in the same render
   // that first paints those chunks — no visible "inside-box then outside" flash.
-  const wsMessageQueueRef = React.useRef<WebSocketMessage[]>([]);
+  const wsMessageQueueRef = React.useRef<IncomingWebSocketMessage[]>([]);
   const wsFlushScheduledRef = React.useRef(false);
   const WS_FLUSH_DELAY_MS = 60;
   const flushWsQueue = React.useCallback(() => {
@@ -102,16 +138,17 @@ export const useChatWebSocket = ({
       handleWebSocketMessageRef.current(msg);
     }
   }, []);
-  const enqueueWsMessage = React.useCallback((msg: WebSocketMessage) => {
+  const enqueueWsMessage = React.useCallback((msg: IncomingWebSocketMessage) => {
+    const legacyData = (msg as WebSocketMessage).data as any;
     chatRenderLog("ws:enqueue", {
       type: msg.type,
-      source: (msg.data as any)?.source,
+      source: isStreamV2Event(msg) ? msg.source : legacyData?.source,
       preview:
-        typeof (msg.data as any)?.content === "string"
-          ? String((msg.data as any).content).replace(/\s+/g, " ").trim().slice(0, 80)
+        typeof legacyData?.content === "string"
+          ? String(legacyData.content).replace(/\s+/g, " ").trim().slice(0, 80)
           : undefined,
-      start_flag: (msg.data as any)?.metadata?.start_flag,
-      msgType: (msg.data as any)?.type,
+      start_flag: legacyData?.metadata?.start_flag,
+      msgType: legacyData?.type,
     });
     wsMessageQueueRef.current.push(msg);
     if (!wsFlushScheduledRef.current) {
@@ -121,10 +158,105 @@ export const useChatWebSocket = ({
   }, [flushWsQueue]);
 
   const handleWebSocketMessage = React.useCallback(
-    (wsMessage: WebSocketMessage) => {
+    (wsMessage: IncomingWebSocketMessage) => {
       setCurrentRun((current: Run | null) => {
         if (!current || !session?.id) {
           return current;
+        }
+
+        let streamEvents = isStreamV2Event(wsMessage) ? [wsMessage] : [];
+        if (!streamEvents.length) {
+          const source = ((wsMessage as WebSocketMessage).data as any)?.source;
+          const isAssistantStream =
+            source !== "user" &&
+            source !== "user_proxy" &&
+            source !== "system" &&
+            (wsMessage.type === "message_chunk" ||
+              wsMessage.type === "message_thinking" ||
+              wsMessage.type === "message");
+          if (isAssistantStream) {
+            if (
+              !legacyAdapterRef.current ||
+              streamStateRef.current?.runId !== current.id
+            ) {
+              legacyAdapterRef.current = new LegacyStreamAdapter(current.id);
+            }
+            streamEvents = legacyAdapterRef.current.adapt(
+              wsMessage as WebSocketMessage
+            );
+          }
+        }
+        if (streamEvents.length) {
+          let state =
+            streamStateRef.current?.runId === current.id
+              ? streamStateRef.current
+              : createChatStreamState(current.id);
+          let nextStatus = current.status;
+          let nextInputRequest = current.input_request;
+          let nextAgentWorking = current.agent_working ?? null;
+          for (const event of streamEvents) {
+            state = reduceStreamEvent(state, event);
+            if (event.event === "agent.working") {
+              nextStatus = "active";
+              nextAgentWorking = {
+                phase: event.working?.phase || "model",
+                detail: event.working?.detail,
+              };
+              nextInputRequest = undefined;
+            } else if (
+              event.event === "message.started" ||
+              event.event === "message.delta" ||
+              event.event === "message.snapshot"
+            ) {
+              // Visible stream tokens replace the waiting indicator.
+              nextAgentWorking = null;
+              if (nextStatus === "ready") nextStatus = "active";
+            } else if (event.event === "message.completed") {
+              nextAgentWorking = null;
+              // Answer is on screen; unlock the composer before turn.ready.
+              // Further agent.working / message.started will flip back to active.
+              nextStatus = "ready";
+            } else if (event.event === "turn.ready") {
+              nextStatus = "ready";
+              nextInputRequest = undefined;
+              nextAgentWorking = null;
+            } else if (event.event === "interaction.required") {
+              const interactionType =
+                event.interaction?.interaction_type === "approval"
+                  ? "approval"
+                  : "text_input";
+              nextStatus = "awaiting_input";
+              nextInputRequest = {
+                input_type: interactionType,
+                prompt: event.interaction?.prompt,
+              };
+              nextAgentWorking = null;
+            }
+          }
+          streamStateRef.current = state;
+          if (state.needsResume && activeSocketRef.current?.readyState === WebSocket.OPEN) {
+            queueMicrotask(() => {
+              activeSocketRef.current?.send(
+                JSON.stringify({
+                  type: "stream.resume",
+                  stream_protocol: 2,
+                  resume_after_seq: state.lastSeq,
+                })
+              );
+            });
+          }
+          return {
+            ...current,
+            status: nextStatus,
+            input_request: nextInputRequest,
+            agent_working: nextAgentWorking,
+            messages: materializeStreamMessages(
+              current.messages,
+              state,
+              session.id,
+              userEmail
+            ),
+          };
         }
 
         let updatedRun: Run | null = null;
@@ -140,9 +272,13 @@ export const useChatWebSocket = ({
               setActiveSocket(null);
               activeSocketRef.current = null;
             }
-            // Transition any non-terminal state to stopped on error:
-            // active/pausing/paused = streaming, awaiting_input = waiting for user
-            const nonTerminal = new Set(["active", "awaiting_input", "pausing", "paused"]);
+            const nonTerminal = new Set([
+              "active",
+              "ready",
+              "awaiting_input",
+              "pausing",
+              "paused",
+            ]);
             if (nonTerminal.has(current.status)) {
               return {
                 ...current,
@@ -166,122 +302,125 @@ export const useChatWebSocket = ({
             const messageData = wsMessage.data as AgentMessageConfig;
             const chunkSourceKey = messageData.source || "assistant";
 
-            // Prefer promoting the live stream draft over discarding it when the
-            // arriving TextMessage is empty or much shorter (common before tools).
             let bestDraft: (typeof current.messages)[0] | null = null;
+            let bestDraftIdx = -1;
             let bestDraftLen = 0;
             let lastDraft: (typeof current.messages)[0] | null = null;
-            for (const m of current.messages) {
+            let lastDraftIdx = -1;
+            for (let i = 0; i < current.messages.length; i++) {
+              const m = current.messages[i];
               if (m.config.source !== chunkSourceKey) continue;
               if (!isLiveStreamDraft(m)) continue;
               lastDraft = m;
-              const len =
-                typeof m.config.content === "string" ? m.config.content.trim().length : 0;
-              if (len > bestDraftLen) {
+              lastDraftIdx = i;
+              const rawLen =
+                typeof (m.config.metadata as any)?._stream_raw === "string"
+                  ? String((m.config.metadata as any)._stream_raw).length
+                  : typeof m.config.content === "string"
+                  ? m.config.content.trim().length
+                  : 0;
+              if (rawLen >= bestDraftLen) {
                 bestDraft = m;
-                bestDraftLen = len;
+                bestDraftIdx = i;
+                bestDraftLen = rawLen;
               }
             }
-            // Reasoning models stream everything inside <think>, so the draft's
-            // visible content can be empty — still carry its thought onto the
-            // final message so the ThinkBubble persists instead of vanishing.
-            const draftForThought = bestDraft ?? lastDraft;
+            const draftForPromote = bestDraft ?? lastDraft;
+            const draftIdxForPromote =
+              bestDraftIdx >= 0 ? bestDraftIdx : lastDraftIdx;
             const draftLiveThought =
-              typeof (draftForThought?.config.metadata as any)?._live_thought ===
+              typeof (draftForPromote?.config.metadata as any)?._live_thought ===
               "string"
                 ? String(
-                    (draftForThought!.config.metadata as any)._live_thought
+                    (draftForPromote!.config.metadata as any)._live_thought
                   ).trim()
                 : "";
 
-            // Content-plane split: reply visible, thought stays attached as <think>
-            // ABOVE the reply so ThinkBubble never remounts below the answer.
-            // Carry over the stream draft's live thought when the TextMessage body
-            // has reply-only (ThoughtEvent often arrives after the draft is dropped).
-            let finalContent =
-              typeof messageData.content === "string" ? messageData.content : messageData.content;
-            if (typeof finalContent === "string") {
-              const split = splitAgentVisibleContent(finalContent);
-              const thought = split.thought || draftLiveThought;
-              finalContent = thought
-                ? `<think>${thought}</think>\n\n${split.reply}`
-                : split.reply;
+            let incomingBody =
+              typeof messageData.content === "string" ? messageData.content : "";
+            let incomingThought = draftLiveThought;
+            if (typeof incomingBody === "string") {
+              const split = splitAgentVisibleContent(incomingBody);
+              incomingThought = split.thought || draftLiveThought;
+              incomingBody = wrapThink(incomingThought, split.reply);
             }
-            const finalMessageData =
-              typeof messageData.content === "string"
-                ? ({ ...messageData, content: finalContent } as AgentMessageConfig)
-                : messageData;
 
-            const newMessage = createMessage(
-              finalMessageData,
+            const promoteDraftInPlace = (
+              draft: (typeof current.messages)[0],
+              idx: number
+            ) => {
+              const existingMeta = (draft.config.metadata || {}) as any;
+              const prevRaw =
+                typeof existingMeta._stream_raw === "string"
+                  ? String(existingMeta._stream_raw)
+                  : typeof draft.config.content === "string"
+                  ? draft.config.content
+                  : "";
+              const mergedRaw =
+                incomingBody.length >= prevRaw.length ? incomingBody : prevRaw;
+              const projected = projectStreamContent(mergedRaw);
+              const thought = projected.thought || incomingThought;
+              const messages = [...current.messages];
+              messages[idx] = {
+                ...draft,
+                config: {
+                  ...draft.config,
+                  content: projected.reply,
+                  type: (draft.config as any).type || "TextMessage",
+                  metadata: {
+                    ...existingMeta,
+                    _stream_draft: true,
+                    _stream_raw: mergedRaw,
+                    _live_thought: thought || undefined,
+                    _thought_done: projected.thoughtDone ? "yes" : "no",
+                    _canonical_text: true,
+                    start_flag: existingMeta.start_flag || "yes",
+                  },
+                },
+              } as unknown as typeof draft;
+              chatRenderLog("ws:message:promote", {
+                source: chunkSourceKey,
+                prevLen: prevRaw.length,
+                mergedLen: mergedRaw.length,
+                incomingLen: incomingBody.length,
+              });
+              return { ...current, messages };
+            };
+
+            // Empty canonical: keep the live draft as-is (do not unmount).
+            if (!incomingBody.trim() && !incomingThought) {
+              return current;
+            }
+
+            if (draftForPromote && draftIdxForPromote >= 0) {
+              return promoteDraftInPlace(draftForPromote, draftIdxForPromote);
+            }
+
+            const created = createMessage(
+              {
+                ...messageData,
+                content: incomingBody,
+              } as AgentMessageConfig,
               current.id,
               session.id,
               userEmail
             );
-
-            const taggedFinalMessage = {
-              ...newMessage,
-              config: {
-                ...newMessage.config,
-                metadata: {
-                  ...(newMessage.config.metadata || {}),
-                  _is_final_reply: true,
-                },
-              } as any,
-            };
-
-            const newLen =
-              typeof finalContent === "string" ? finalContent.trim().length : 0;
-
-            const withoutDrafts = current.messages.filter((m) => {
-              if (m.config.source !== chunkSourceKey) return true;
-              return !isLiveStreamDraft(m);
-            });
-
-            chatRenderLog("ws:message", {
-              source: chunkSourceKey,
-              newLen,
-              bestDraftLen,
-              draftThought: draftLiveThought.slice(0, 48),
-              droppedDrafts: current.messages.length - withoutDrafts.length,
-              preview:
-                typeof finalContent === "string"
-                  ? finalContent.replace(/\s+/g, " ").trim().slice(0, 96)
-                  : typeof finalContent,
-            });
-            streamingMessageRef.current = null;
-
-            // Empty final: keep sealed draft content if any.
-            if (newLen === 0) {
-              updatedRun = {
-                ...current,
-                messages:
-                  bestDraft && bestDraftLen > 0
-                    ? [...withoutDrafts, sealStreamMessage(bestDraft)]
-                    : withoutDrafts,
-              };
-              return updatedRun;
-            }
-
-            // Weak/short final after a long draft: keep the draft text too.
-            if (bestDraft && bestDraftLen > Math.max(newLen * 2, 40) && newLen < 80) {
-              updatedRun = {
-                ...current,
-                messages: [
-                  ...withoutDrafts,
-                  sealStreamMessage(bestDraft),
-                  taggedFinalMessage,
-                ],
-              };
-              return updatedRun;
-            }
-
-            updatedRun = {
+            return {
               ...current,
-              messages: [...withoutDrafts, taggedFinalMessage],
+              messages: [
+                ...current.messages,
+                {
+                  ...created,
+                  config: {
+                    ...created.config,
+                    metadata: {
+                      ...(created.config.metadata || {}),
+                      _is_final_reply: true,
+                    },
+                  } as any,
+                },
+              ],
             };
-
-            return updatedRun;
           case "message_task":
             if (!wsMessage.data) return current;
             const taskData = wsMessage.data as any;
@@ -354,13 +493,16 @@ export const useChatWebSocket = ({
               -1
             );
 
-            // Branch 1 — append to the existing draft. This also covers tokens
-            // that wrongly carry start_flag mid-burst (treating them as a new
-            // burst used to reset the bubble to the last few lines). A start
-            // flag only opens a new bubble when another event interrupted the
-            // tail (draft no longer last).
+            // Append to the live draft unless this is a real new burst after
+            // a tool/log interrupt. Mid-burst start_flag (reasoning models,
+            // TextMessage races) must never reset `_stream_raw`.
             const lastIdx = current.messages.length - 1;
-            if (draftIdx >= 0 && (draftIdx === lastIdx || !isStartChunk)) {
+            const lastIsToolInterrupt =
+              lastIdx >= 0 && isToolInterruptMessage(current.messages[lastIdx]);
+            const startNewBurst =
+              isStartChunk && lastIsToolInterrupt && draftIdx !== lastIdx;
+
+            if (draftIdx >= 0 && !startNewBurst) {
               const existing = current.messages[draftIdx];
               const existingMeta = (existing.config.metadata || {}) as any;
               const prevRaw =
@@ -369,8 +511,12 @@ export const useChatWebSocket = ({
                   : typeof existing.config.content === "string"
                   ? (existing.config.content as string)
                   : "";
+              const combinedRaw = prevRaw + incomingRaw;
+              if (combinedRaw === prevRaw) {
+                return current;
+              }
               const payload = buildDraft(
-                prevRaw + incomingRaw,
+                combinedRaw,
                 existingMeta.start_flag || "yes"
               );
               const messages = [...current.messages];
@@ -393,8 +539,8 @@ export const useChatWebSocket = ({
               return updatedRun;
             }
 
-            // Branch 2 — open a new draft bubble. Seal any prior live drafts
-            // from this source into normal bubbles first (drop empty ones).
+            // New burst after tools (or first token). Seal prior live drafts
+            // from this source into durable bubbles first (drop empty ones).
             const sealed = current.messages
               .map((m) => {
                 if (m.config.source !== chunkSource || !isLiveStreamDraft(m)) {
@@ -780,7 +926,27 @@ export const useChatWebSocket = ({
             };
             return updatedRun;
           }
-          case "input_request":
+          case "input_request": {
+            // Legacy frame. Default continuation prompts map to turn.ready;
+            // only real blocking interactions keep awaiting_input.
+            const sealedMessages = current.messages.map((m) =>
+              isLiveStreamDraft(m) ? sealStreamMessage(m) : m
+            );
+            if (
+              isDefaultContinuationPrompt(
+                wsMessage.prompt,
+                wsMessage.input_type || "text_input"
+              )
+            ) {
+              return {
+                ...current,
+                status: "ready" as BaseRunStatus,
+                input_request: undefined,
+                agent_working: null,
+                messages: sealedMessages,
+              };
+            }
+
             let input_request: InputRequest;
             switch (wsMessage.input_type) {
               case "approval":
@@ -793,22 +959,30 @@ export const useChatWebSocket = ({
               case "text_input":
               case null:
               default:
-                input_request = { input_type: "text_input" };
+                input_request = {
+                  input_type: "text_input",
+                  prompt: wsMessage.prompt,
+                };
                 break;
             }
 
-            // Don't touch messages. The tail streaming chunk stays at the tail
-            // and continues to render OUTSIDE the process box (see isSingleSegment:
-            // "chunk at tail" = final reply). No promotion needed.
-            updatedRun = {
+            return {
               ...current,
               status: "awaiting_input",
               input_request: input_request,
+              agent_working: null,
+              messages: sealedMessages,
             };
-
-            return updatedRun;
+          }
 
           case "system":
+            // Do not let a stale awaiting_input system frame override turn.ready.
+            if (
+              current.status === "ready" &&
+              wsMessage.status === "awaiting_input"
+            ) {
+              return current;
+            }
             updatedRun = {
               ...current,
               status: wsMessage.status as BaseRunStatus,
@@ -824,7 +998,7 @@ export const useChatWebSocket = ({
             // Internal restart on the same run_id. Closing the socket here is
             // what made "close tab → reopen → send" immediately show cancelled.
             if (
-              wsMessage.status === "cancelled" &&
+              (wsMessage.status as string | undefined) === "cancelled" &&
               restartReason === "Restarted by client"
             ) {
               return current;
@@ -852,11 +1026,16 @@ export const useChatWebSocket = ({
               activeSocketRef.current = null;
             }
 
-            // Don't touch messages — tail chunk stays at tail and renders outside
-            // via isSingleSegment's tail-chunk rule.
+            // Seal remaining live drafts on terminal status so history reload
+            // and copy actions see a normal TextMessage.
+            const sealedOnComplete = current.messages.map((m) =>
+              isLiveStreamDraft(m) ? sealStreamMessage(m) : m
+            );
             updatedRun = {
               ...current,
               status,
+              agent_working: null,
+              messages: sealedOnComplete,
               team_result:
                 wsMessage.data && isTeamResult(wsMessage.data)
                   ? wsMessage.data
@@ -925,9 +1104,13 @@ export const useChatWebSocket = ({
           if (activeSocketRef.current !== socket) {
             return current;
           }
-          // Transition any non-terminal state to stopped on disconnect:
-          // active/pausing/paused = streaming, awaiting_input = waiting for user
-          const nonTerminal = new Set(["active", "awaiting_input", "pausing", "paused"]);
+          const nonTerminal = new Set([
+            "active",
+            "ready",
+            "awaiting_input",
+            "pausing",
+            "paused",
+          ]);
           if (nonTerminal.has(current.status)) {
             const updatedRun = {
               ...current,
@@ -954,9 +1137,21 @@ export const useChatWebSocket = ({
       };
 
       socket.onopen = () => {
-        if (activeSocketRef.current === socket) {
-          // Socket reconnected — no-op; runTask's readyState polling will see OPEN
-        }
+        if (activeSocketRef.current !== socket) return;
+        // Only resume after a real gap. Fresh sockets start at seq 0 and
+        // negotiate protocol via the subsequent start/continue payload.
+        const lastSeq =
+          streamStateRef.current?.runId === runId
+            ? streamStateRef.current.lastSeq
+            : 0;
+        if (lastSeq <= 0) return;
+        socket.send(
+          JSON.stringify({
+            type: "stream.resume",
+            stream_protocol: 2,
+            resume_after_seq: lastSeq,
+          })
+        );
       };
 
       socket.onerror = (error) => {

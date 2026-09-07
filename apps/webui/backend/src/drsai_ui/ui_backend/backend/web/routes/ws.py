@@ -193,6 +193,12 @@ async def run_websocket(
                 if message.get("type") == "start" or message.get("type") == "continue":
                     # Handle start message
                     logger.info(f"Received start request for run {run_id}")
+                    ws_manager.set_stream_protocol(
+                        run_id, message.get("stream_protocol")
+                    )
+                    resume_after = message.get("resume_after_seq")
+                    if isinstance(resume_after, int) and resume_after >= 0:
+                        await ws_manager.replay_stream_events(run_id, resume_after)
                     task: str = message.get("task")
                     start_metadata: dict = message.get("metadata") or {}
                     team_config = start_metadata.pop("team_config")
@@ -309,6 +315,23 @@ async def run_websocket(
                 elif message.get("type") == "ping":
                     await websocket.send_json(
                         {"type": "pong", "timestamp": datetime.utcnow().isoformat()}
+                    )
+
+                elif message.get("type") == "stream.resume":
+                    selected = ws_manager.set_stream_protocol(
+                        run_id, message.get("stream_protocol")
+                    )
+                    resume_after = message.get("resume_after_seq", 0)
+                    await ws_manager.replay_stream_events(
+                        run_id,
+                        resume_after if isinstance(resume_after, int) else 0,
+                    )
+                    await websocket.send_json(
+                        {
+                            "type": "stream.ready",
+                            "protocol_version": selected,
+                            "run_id": str(run_id),
+                        }
                     )
 
                 elif message.get("type") == "input_response":

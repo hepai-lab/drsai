@@ -29,6 +29,11 @@ from autogen_core import CancellationToken
 from fastapi import WebSocket, WebSocketDisconnect
 from pathlib import Path
 from .content_plane import split_agent_visible_content
+from ..stream_protocol import (
+    PROTOCOL_VERSION,
+    StreamProjector,
+    is_default_continuation_prompt,
+)
 from ....types import CheckpointEvent
 from ...database import DatabaseManager
 from ...datamodel import (
@@ -48,6 +53,17 @@ from ..model_resolve import settings_config_from_input_response
 from autogen_agentchat.messages import ThoughtEvent, UserInputRequestedEvent
 
 logger = logging.getLogger(__name__)
+
+_USER_SOURCES = frozenset({"user", "user_proxy"})
+_PROCESS_MESSAGE_TYPES = frozenset(
+    {
+        "ToolCallRequestEvent",
+        "ToolCallExecutionEvent",
+        "ToolCallSummaryMessage",
+        "AgentLogEvent",
+        "ThoughtEvent",
+    }
+)
 
 
 class WebSocketManager:
@@ -84,6 +100,9 @@ class WebSocketManager:
         # "cancelled" completion to the current websocket.
         self._stream_gen: Dict[int, int] = {}
         self._start_locks: Dict[int, asyncio.Lock] = {}
+        self._send_locks: Dict[int, asyncio.Lock] = {}
+        self._stream_protocol_versions: Dict[int, int] = {}
+        self._stream_projectors: Dict[int, StreamProjector] = {}
         self._cancellation_tokens: Dict[int, CancellationToken] = {}
         # Runs that are terminal (stopped/error) and should not accept further streaming/input.
         # IMPORTANT: do NOT treat transient websocket disconnect as "closed run".
@@ -110,6 +129,27 @@ class WebSocketManager:
             usage="",
             duration=0,
         ).model_dump()
+
+    def set_stream_protocol(self, run_id: int, version: int | None) -> int:
+        """Select the negotiated protocol without affecting legacy clients."""
+        selected = PROTOCOL_VERSION if version == PROTOCOL_VERSION else 1
+        self._stream_protocol_versions[run_id] = selected
+        if selected == PROTOCOL_VERSION:
+            self._stream_projectors.setdefault(run_id, StreamProjector(run_id))
+        return selected
+
+    def _uses_stream_v2(self, run_id: int) -> bool:
+        return self._stream_protocol_versions.get(run_id, 1) == PROTOCOL_VERSION
+
+    def _stream_projector(self, run_id: int) -> StreamProjector:
+        return self._stream_projectors.setdefault(run_id, StreamProjector(run_id))
+
+    async def replay_stream_events(self, run_id: int, last_seq: int) -> None:
+        projector = self._stream_projectors.get(run_id)
+        if projector is None:
+            return
+        for event in projector.replay_after(max(0, last_seq)):
+            await self._send_message(run_id, event)
 
     def _get_stop_message(self, reason: str) -> dict[str, Any]:
         return TeamResult(
@@ -143,28 +183,38 @@ class WebSocketManager:
                 },
             )
 
-            # If the run was waiting for user input, re-send the pending input_request
-            # so the frontend can recover after a transient websocket reconnect.
+            # If the run was waiting for user input, re-send the pending
+            # interaction so the frontend can recover after a reconnect.
             try:
                 run = await self._get_run(run_id)
                 if run and getattr(run, "status", None) == RunStatus.AWAITING_INPUT:
                     pending = getattr(run, "input_request", None)
-                    if isinstance(pending, dict) and pending.get("prompt"):
-                        await self._send_message(
-                            run_id,
-                            {
-                                "type": "system",
-                                "status": RunStatus.AWAITING_INPUT,
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            },
-                        )
-                        await self._send_input_request(
+                    if isinstance(pending, dict) and (
+                        pending.get("prompt") is not None
+                        or pending.get("kind") == "turn_ready"
+                    ):
+                        kind = pending.get("kind")
+                        if not (
+                            kind == "turn_ready" and self._uses_stream_v2(run_id)
+                        ):
+                            await self._send_message(
+                                run_id,
+                                {
+                                    "type": "system",
+                                    "status": RunStatus.AWAITING_INPUT,
+                                    "timestamp": datetime.now(
+                                        timezone.utc
+                                    ).isoformat(),
+                                },
+                            )
+                        await self._emit_user_input_wait(
                             run_id,
                             prompt=pending.get("prompt") or "",
                             input_type=pending.get("input_type") or "text_input",
+                            kind=kind,
                         )
             except Exception as e:
-                logger.warning(f"Failed to replay input_request for run {run_id}: {e}")
+                logger.warning(f"Failed to replay input wait for run {run_id}: {e}")
 
             return True
         except Exception as e:
@@ -242,6 +292,8 @@ class WebSocketManager:
             cancellation_token = CancellationToken()
             self._cancellation_tokens[run_id] = cancellation_token
         final_result = None
+        if self._uses_stream_v2(run_id):
+            self._stream_projector(run_id).begin_turn()
 
         try:
             # Update run with task and status
@@ -423,6 +475,7 @@ class WebSocketManager:
             logger.info(
                 f"[STREAM_LOOP] run={run_id} starting message stream loop"
             )
+            await self._emit_agent_working(run_id, phase="orchestrator")
             async for message in team_manager.run_stream(
                 task=task,
                 team_config=team_config,
@@ -462,6 +515,91 @@ class WebSocketManager:
                         run.state = compress_state(state_dict)
                         self.db_manager.upsert(run)
                     continue
+
+                # Protocol v2 owns the complete lifecycle of chat text. Tool,
+                # file and run-control events continue through the legacy
+                # formatter during the compatibility window.
+                if self._uses_stream_v2(run_id):
+                    projector = self._stream_projector(run_id)
+                    if isinstance(message, ModelClientStreamingChunkEvent):
+                        for event in projector.ingest_chunk(
+                            message.source or "assistant",
+                            message.content or "",
+                        ):
+                            await self._send_message(run_id, event)
+                        continue
+
+                    if isinstance(message, ThoughtEvent):
+                        thought_events = projector.ingest_thought(
+                            message.source or "assistant",
+                            message.content or "",
+                        )
+                        for event in thought_events:
+                            await self._send_message(run_id, event)
+                        if (
+                            thought_events
+                            and thought_events[-1].get("status") == "completed"
+                        ):
+                            await self._save_reasoning_summary(
+                                run_id,
+                                thought_events[-1]["message_id"],
+                                message.content or "",
+                            )
+                        # Reasoning is represented by the completed message
+                        # snapshot; do not persist a second chat row.
+                        continue
+
+                    if isinstance(message, TextMessage):
+                        metadata = dict(message.metadata or {})
+                        is_internal = metadata.get("internal") == "yes"
+                        if is_internal and metadata.get("is_save") != "yes":
+                            continue
+                        reasoning = str(
+                            metadata.get("_peeled_thought")
+                            or metadata.get("reasoning_summary")
+                            or ""
+                        )
+                        events = projector.complete(
+                            message.source or "assistant",
+                            message.content or "",
+                            reasoning=reasoning,
+                        )
+                        if not events:
+                            continue
+                        for event in events:
+                            await self._send_message(run_id, event)
+                        message_id = events[-1]["message_id"]
+                        persisted = message.model_copy(
+                            update={
+                                "metadata": {
+                                    **metadata,
+                                    "message_id": message_id,
+                                    "stream_protocol": str(PROTOCOL_VERSION),
+                                    "stream_status": "completed",
+                                    "turn_plane": "final",
+                                }
+                            }
+                        )
+                        await self._save_message(run_id, persisted)
+                        continue
+
+                    if isinstance(
+                        message,
+                        (
+                            ToolCallRequestEvent,
+                            AgentLogEvent,
+                            ToolCallExecutionEvent,
+                            ToolCallSummaryMessage,
+                        ),
+                    ):
+                        for event in projector.interrupt():
+                            await self._send_message(run_id, event)
+                            await self._persist_interrupted_v2_snapshot(run_id, event)
+                        await self._emit_agent_working(
+                            run_id,
+                            phase="tool",
+                            detail=type(message).__name__,
+                        )
                 
                 # ── Clear chunk buffer when complete TextMessage arrives ──
                 # Must run BEFORE the internal-message skip, because internal
@@ -769,6 +907,41 @@ class WebSocketManager:
                 self._cancellation_tokens.pop(run_id, None)
                 self._team_managers.pop(run_id, None)
 
+    async def _persist_interrupted_v2_snapshot(
+        self, run_id: int, event: dict[str, Any]
+    ) -> None:
+        """Seal a v2 hop as its own chat row before tool/log events.
+
+        Live clients already have this bubble from ``message.completed``.
+        Persistence must keep it too, otherwise history collapse dumps the
+        first think+narration into 处理过程 above the next hop.
+        """
+        snapshot = event.get("snapshot") or {}
+        content = str(snapshot.get("content") or "")
+        reasoning = str(snapshot.get("reasoning") or "")
+        if not content.strip() and not reasoning.strip():
+            return
+        metadata: dict[str, Any] = {
+            "internal": "no",
+            "is_save": "yes",
+            "message_id": event.get("message_id"),
+            "stream_id": event.get("stream_id") or "",
+            "stream_protocol": str(PROTOCOL_VERSION),
+            "stream_status": "interrupted",
+            "turn_plane": "process",
+        }
+        if reasoning.strip():
+            metadata["reasoning_summary"] = reasoning[:2000]
+            metadata["_peeled_thought"] = reasoning[:2000]
+        await self._save_message(
+            run_id,
+            TextMessage(
+                source=event.get("source") or "assistant",
+                content=content,
+                metadata=metadata,
+            ),
+        )
+
     async def _save_message(
         self, run_id: int, message: Union[AgentEvent | ChatMessage, LLMCallEventMessage]
     ) -> None:
@@ -790,24 +963,49 @@ class WebSocketManager:
                 if isinstance(message.content, str) and message.content.strip():
                     split = split_agent_visible_content(message.content)
                     if split.reply != message.content:
-                        if not split.reply.strip():
+                        md = dict(message.metadata or {})
+                        is_v2_hop = str(md.get("stream_protocol") or "") == str(
+                            PROTOCOL_VERSION
+                        ) or md.get("stream_status") in (
+                            "interrupted",
+                            "completed",
+                            "streaming",
+                        )
+                        if not split.reply.strip() and not is_v2_hop:
                             return
                         message = message.model_copy(
                             update={
                                 "content": split.reply,
                                 "metadata": {
-                                    **(message.metadata or {}),
+                                    **md,
                                     **(
-                                        {"_peeled_thought": split.thought[:2000]}
+                                        {
+                                            "_peeled_thought": split.thought[:2000],
+                                            "reasoning_summary": md.get(
+                                                "reasoning_summary"
+                                            )
+                                            or split.thought[:2000],
+                                        }
                                         if split.thought
                                         else {}
                                     ),
                                 },
                             }
                         )
+                message_metadata = getattr(message, "metadata", None) or {}
+                protocol_message_id = (
+                    message_metadata.get("message_id")
+                    if isinstance(message_metadata, dict)
+                    else None
+                )
                 new_content = getattr(message, "content", None)
                 new_source = getattr(message, "source", "")
-                if new_content and isinstance(new_content, str) and len(new_content) > 20:
+                if (
+                    not protocol_message_id
+                    and new_content
+                    and isinstance(new_content, str)
+                    and len(new_content) > 20
+                ):
                     try:
                         existing = self.db_manager.get(
                             Message, filters={"run_id": run_id}, return_json=False
@@ -824,8 +1022,17 @@ class WebSocketManager:
                     except Exception:
                         pass
 
+            message = self._with_turn_plane(message)
+
             if should_save:
+                metadata = getattr(message, "metadata", None) or {}
+                message_id = (
+                    metadata.get("message_id")
+                    if isinstance(metadata, dict)
+                    else None
+                )
                 db_message = Message(
+                    **({"uuid": message_id} if message_id else {}),
                     created_at=datetime.now(),
                     session_id=run.session_id,
                     run_id=run_id,
@@ -833,6 +1040,112 @@ class WebSocketManager:
                     user_id=run.user_id,
                 )
                 self.db_manager.upsert(db_message)
+
+    @staticmethod
+    def _with_turn_plane(message: Any) -> Any:
+        """Stamp ReAct rows as process and completed assistant text as candidate final."""
+        metadata = getattr(message, "metadata", None)
+        if not isinstance(metadata, dict):
+            return message
+        if metadata.get("turn_plane") in {"process", "final"}:
+            return message
+        source = str(getattr(message, "source", "") or "")
+        if source in _USER_SOURCES:
+            return message
+        type_name = type(message).__name__
+        content_type = metadata.get("content_type")
+        meta_type = metadata.get("type")
+        if type_name in {"FilesEvent"} or meta_type == "FilesEvent":
+            return message
+        plane: str | None = None
+        if metadata.get("stream_status") == "interrupted":
+            plane = "process"
+        elif (
+            type_name in _PROCESS_MESSAGE_TYPES
+            or meta_type in _PROCESS_MESSAGE_TYPES
+            or content_type in {"tools", "log"}
+        ):
+            plane = "process"
+        elif metadata.get("stream_status") == "completed" and type_name == "TextMessage":
+            plane = "final"
+        if not plane:
+            return message
+        return message.model_copy(update={"metadata": {**metadata, "turn_plane": plane}})
+
+    async def _stamp_turn_planes(self, run_id: int, final_message_id: str) -> None:
+        """Freeze the last completed assistant hop as final; everything else in the turn is process."""
+        try:
+            existing = self.db_manager.get(
+                Message,
+                filters={"run_id": run_id},
+                return_json=False,
+            )
+            if not existing.status or not existing.data:
+                return
+            rows = sorted(
+                list(existing.data),
+                key=lambda row: getattr(row, "id", 0) or 0,
+            )
+            last_user_idx = -1
+            for index, row in enumerate(rows):
+                config = dict(getattr(row, "config", {}) or {})
+                if str(config.get("source") or "") in _USER_SOURCES:
+                    last_user_idx = index
+            for row in rows[last_user_idx + 1 :]:
+                config = dict(getattr(row, "config", {}) or {})
+                metadata = dict(config.get("metadata") or {})
+                source = str(config.get("source") or "")
+                if source in _USER_SOURCES:
+                    continue
+                if config.get("type") == "FilesEvent" or metadata.get("type") == "FilesEvent":
+                    continue
+                message_id = str(getattr(row, "uuid", "") or metadata.get("message_id") or "")
+                plane = "final" if message_id == final_message_id else "process"
+                if metadata.get("turn_plane") == plane:
+                    if plane != "final" or metadata.get("is_turn_final") == "yes":
+                        continue
+                metadata["turn_plane"] = plane
+                if plane == "final":
+                    metadata["is_turn_final"] = "yes"
+                else:
+                    metadata.pop("is_turn_final", None)
+                config["metadata"] = metadata
+                row.config = config
+                self.db_manager.upsert(row)
+        except Exception as exc:
+            logger.warning(
+                "Failed to stamp turn planes run=%s final=%s: %s",
+                run_id,
+                final_message_id,
+                exc,
+            )
+
+    async def _save_reasoning_summary(
+        self, run_id: int, message_id: str, reasoning: str
+    ) -> None:
+        """Attach an allowed, bounded reasoning summary to an existing row."""
+        try:
+            existing = self.db_manager.get(
+                Message,
+                filters={"run_id": run_id, "uuid": message_id},
+                return_json=False,
+            )
+            if not existing.status or not existing.data:
+                return
+            row = existing.data[0]
+            config = dict(getattr(row, "config", {}) or {})
+            metadata = dict(config.get("metadata") or {})
+            metadata["reasoning_summary"] = reasoning[:2000]
+            config["metadata"] = metadata
+            row.config = config
+            self.db_manager.upsert(row)
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist reasoning summary run=%s message=%s: %s",
+                run_id,
+                message_id,
+                exc,
+            )
 
     async def _update_run(
         self,
@@ -882,19 +1195,44 @@ class WebSocketManager:
                 if self._is_paused(run_id):
                     await self.resume_run(run_id)
 
-                await self._send_input_request(
+                kind = (
+                    "turn_ready"
+                    if is_default_continuation_prompt(prompt, input_type)
+                    else "blocking"
+                )
+                await self._emit_user_input_wait(
                     run_id,
                     prompt=prompt,
                     input_type=input_type,
+                    kind=kind,
                 )
-                # Transition to AWAITING_INPUT
-                await self._update_run_status(run_id, RunStatus.AWAITING_INPUT)
 
-                # Store input_request in the Run object
+                # Backend still blocks on the input queue. For v2 turn.ready we
+                # persist AWAITING_INPUT silently so the UI stays on ``ready``
+                # instead of flashing "waiting for input".
                 run = await self._get_run(run_id)
                 if run:
-                    run.input_request = {"prompt": prompt, "input_type": input_type}
+                    run.status = RunStatus.AWAITING_INPUT
+                    input_request: dict[str, Any] = {
+                        "prompt": prompt,
+                        "input_type": input_type,
+                        "kind": kind,
+                    }
+                    if kind == "turn_ready" and self._uses_stream_v2(run_id):
+                        final_message_id = self._stream_projector(
+                            run_id
+                        ).resolve_final_message_id()
+                        if final_message_id:
+                            input_request["final_message_id"] = final_message_id
+                    run.input_request = input_request
                     self.db_manager.upsert(run)
+                self._run_states[run_id] = RunStatus.AWAITING_INPUT
+                if not (
+                    kind == "turn_ready" and self._uses_stream_v2(run_id)
+                ):
+                    await self._update_run_status(
+                        run_id, RunStatus.AWAITING_INPUT, force=True
+                    )
 
                 if run_id not in self._input_responses:
                     raise ValueError(f"No input queue for run {run_id}")
@@ -926,6 +1264,7 @@ class WebSocketManager:
                     await self.resume_run(run_id)
                 else:
                     await self._update_run_status(run_id, RunStatus.ACTIVE)
+                await self._emit_agent_working(run_id, phase="model")
                 return response
 
             except Exception as e:
@@ -1125,6 +1464,81 @@ class WebSocketManager:
                 except Exception as e:
                     logger.warning(f"Failed to close TeamManager on disconnect (run {run_id}): {e}")
 
+    async def _emit_agent_working(
+        self,
+        run_id: int,
+        *,
+        phase: str = "model",
+        detail: str = "",
+    ) -> None:
+        """Tell v2 clients the backend is waiting on the agent."""
+        if not self._uses_stream_v2(run_id):
+            return
+        await self._send_message(
+            run_id,
+            self._stream_projector(run_id).emit_agent_working(
+                phase=phase,
+                detail=detail,
+            ),
+        )
+
+    async def _emit_user_input_wait(
+        self,
+        run_id: int,
+        *,
+        prompt: str,
+        input_type: str,
+        kind: str | None = None,
+    ) -> None:
+        """Emit the protocol-appropriate wait signal for user input.
+
+        Protocol v2:
+          - default text continuation → ``turn.ready``
+          - approval / explicit prompts → ``interaction.required``
+        Legacy clients still receive ``input_request`` only for blocking waits;
+        default continuations stay silent on legacy frames so the UI does not
+        flash "waiting for input" after a normal answer.
+        """
+        resolved_kind = kind or (
+            "turn_ready"
+            if is_default_continuation_prompt(prompt, input_type)
+            else "blocking"
+        )
+        if self._uses_stream_v2(run_id):
+            projector = self._stream_projector(run_id)
+            if resolved_kind == "turn_ready":
+                ready = projector.emit_turn_ready(
+                    prompt=prompt,
+                    input_type=input_type,
+                )
+                await self._send_message(run_id, ready)
+                final_message_id = ready.get("final_message_id")
+                if isinstance(final_message_id, str) and final_message_id:
+                    await self._stamp_turn_planes(run_id, final_message_id)
+            else:
+                await self._send_message(
+                    run_id,
+                    projector.emit_interaction_required(
+                        prompt=prompt,
+                        input_type=input_type,
+                    ),
+                )
+                # Dual-emit legacy approval frame during the compatibility window.
+                await self._send_input_request(
+                    run_id,
+                    prompt=prompt,
+                    input_type=input_type,
+                )
+            return
+
+        # Legacy clients keep the historical input_request for all waits so
+        # input_response routing continues to work.
+        await self._send_input_request(
+            run_id,
+            prompt=prompt,
+            input_type=input_type,
+        )
+
     async def _send_input_request(
         self,
         run_id: int,
@@ -1132,7 +1546,7 @@ class WebSocketManager:
         prompt: str,
         input_type: str,
     ) -> None:
-        """Emit input_request to the frontend."""
+        """Emit legacy input_request to the frontend."""
         payload = {
             "type": "input_request",
             "input_type": input_type,
@@ -1151,8 +1565,11 @@ class WebSocketManager:
         """
         try:
             if run_id in self._connections:
-                websocket = self._connections[run_id]
-                await websocket.send_json(message)
+                lock = self._send_locks.setdefault(run_id, asyncio.Lock())
+                async with lock:
+                    websocket = self._connections.get(run_id)
+                    if websocket is not None:
+                        await websocket.send_json(message)
             else:
                 logger.warning(
                     f"Attempted to send message without active websocket for run {run_id}"

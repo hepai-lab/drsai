@@ -155,6 +155,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         // const status = sessionRunStatuses[s.id];
         const isActive = [
           "active",
+          "ready",
           "awaiting_input",
           "pausing",
           "paused",

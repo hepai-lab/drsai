@@ -1,12 +1,17 @@
 import React, { useRef, useEffect, useState, useCallback, memo } from "react";
 import { Message } from "../../components/types/datamodel";
-import { RenderMessage } from "./rendermessage";
+import {
+  RenderMessage,
+  RenderToolCallSummaryCard,
+  extractToolLabel,
+  isHiddenProcessToolName,
+} from "./rendermessage";
 import MarkdownRenderer from "../../components/common/markdownrender";
 import TypewriterMessage from "./TypewriterMessage";
+import { streamMessageId } from "./chatStreamReducer";
 import {
   ChevronDown,
   ChevronRight,
-  Sparkles,
   Maximize2,
   Minimize2,
 } from "lucide-react";
@@ -23,6 +28,41 @@ interface ProcessMessageGroupProps {
 }
 
 const SCROLL_PARENT_SELECTOR = ".question-nav-scroll";
+
+function cfgMeta(msg: Message): { cfg: any; meta: Record<string, unknown> } {
+  const cfg = msg.config as any;
+  return { cfg, meta: (cfg.metadata || {}) as Record<string, unknown> };
+}
+
+function isToolsCallLog(msg: Message): boolean {
+  const { cfg, meta } = cfgMeta(msg);
+  return meta.content_type === "tools" || cfg.content_type === "tools";
+}
+
+function isToolSummaryMsg(msg: Message): boolean {
+  const { cfg, meta } = cfgMeta(msg);
+  return (
+    cfg.type === "ToolCallSummaryMessage" ||
+    meta.type === "ToolCallSummaryMessage"
+  );
+}
+
+function messageText(msg: Message): string {
+  return typeof msg.config.content === "string" ? msg.config.content : "";
+}
+
+function toolLabelOf(msg: Message): string {
+  const { cfg } = cfgMeta(msg);
+  const title = typeof cfg.title === "string" ? cfg.title : "";
+  return extractToolLabel(title || messageText(msg));
+}
+
+function toolResultText(log: Message, result: Message): string {
+  const fromResult = messageText(result).trim();
+  if (fromResult) return fromResult;
+  const summary = cfgMeta(log).meta.tool_call_summary;
+  return typeof summary === "string" ? summary.trim() : "";
+}
 
 function measureFillHeight(root: HTMLElement): number {
   const scrollParent = root.closest(
@@ -45,16 +85,26 @@ const ProcessMessageGroup: React.FC<ProcessMessageGroupProps> = memo(
       runStatus === "connected" ||
       runStatus === "pausing" ||
       runStatus === "resuming";
-    const [collapsed, setCollapsed] = useState(!isRunning);
+    const [collapsed, setCollapsed] = useState(false);
     const [maximized, setMaximized] = useState(false);
     const [fillHeight, setFillHeight] = useState<number | null>(null);
     const [revealTick, setRevealTick] = useState(0);
     const rootRef = useRef<HTMLDivElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const prevRunningRef = useRef(isRunning);
+    /** Inner-box only: follow latest process steps until the user scrolls inside. */
+    const followBottomRef = useRef(true);
+    const programmaticScrollRef = useRef(false);
 
     const onBurstComplete = useCallback(() => {
       setRevealTick((t) => t + 1);
+    }, []);
+
+    const handleProcessScroll = useCallback(() => {
+      const el = containerRef.current;
+      if (!el || programmaticScrollRef.current) return;
+      const distanceFromBottom =
+        el.scrollHeight - el.scrollTop - el.clientHeight;
+      followBottomRef.current = distanceFromBottom <= 32;
     }, []);
 
     const updateFillHeight = useCallback(() => {
@@ -64,16 +114,6 @@ const ProcessMessageGroup: React.FC<ProcessMessageGroupProps> = memo(
       }
       setFillHeight(measureFillHeight(rootRef.current));
     }, [maximized]);
-
-    useEffect(() => {
-      if (!prevRunningRef.current && isRunning) {
-        setCollapsed(false);
-      } else if (prevRunningRef.current && !isRunning) {
-        setCollapsed(true);
-        setMaximized(false);
-      }
-      prevRunningRef.current = isRunning;
-    }, [isRunning]);
 
     useEffect(() => {
       updateFillHeight();
@@ -101,18 +141,52 @@ const ProcessMessageGroup: React.FC<ProcessMessageGroupProps> = memo(
       };
     }, [maximized, updateFillHeight, collapsed]);
 
+    // Keep inner follow independent of the thread. Never let wheel/touch
+    // inside this box scroll or lock `.question-nav-scroll`.
     useEffect(() => {
-      if (!collapsed && !maximized) {
-        const el = containerRef.current;
-        if (el) el.scrollTop = el.scrollHeight;
-      }
-    }, [items, collapsed, maximized, revealTick]);
+      const el = containerRef.current;
+      if (!el || collapsed) return;
+
+      const onWheel = (event: WheelEvent) => {
+        event.stopPropagation();
+        const overflowing = el.scrollHeight > el.clientHeight + 1;
+        const atTop = el.scrollTop <= 0;
+        const distanceFromBottom =
+          el.scrollHeight - el.scrollTop - el.clientHeight;
+        const atBottom = distanceFromBottom <= 1;
+
+        if (!overflowing || (atTop && event.deltaY < 0) || (atBottom && event.deltaY > 0)) {
+          event.preventDefault();
+        }
+
+        if (event.deltaY < 0) {
+          followBottomRef.current = false;
+        } else if (distanceFromBottom <= 32) {
+          followBottomRef.current = true;
+        }
+      };
+
+      const stopThreadScroll = (event: Event) => {
+        event.stopPropagation();
+      };
+
+      el.addEventListener("wheel", onWheel, { passive: false });
+      el.addEventListener("touchmove", stopThreadScroll, { passive: true });
+      return () => {
+        el.removeEventListener("wheel", onWheel);
+        el.removeEventListener("touchmove", stopThreadScroll);
+      };
+    }, [collapsed, maximized, fillHeight]);
 
     useEffect(() => {
-      if (!collapsed && maximized) {
-        const el = containerRef.current;
-        if (el) el.scrollTop = el.scrollHeight;
-      }
+      if (collapsed) return;
+      const el = containerRef.current;
+      if (!el || !followBottomRef.current) return;
+      programmaticScrollRef.current = true;
+      el.scrollTop = el.scrollHeight;
+      requestAnimationFrame(() => {
+        programmaticScrollRef.current = false;
+      });
     }, [items, collapsed, maximized, revealTick, fillHeight]);
 
     if (items.length === 0) return null;
@@ -134,7 +208,10 @@ const ProcessMessageGroup: React.FC<ProcessMessageGroupProps> = memo(
 
     const handleToggleCollapsed = () => {
       setCollapsed((c) => {
-        if (c) return false;
+        if (c) {
+          followBottomRef.current = true;
+          return false;
+        }
         setMaximized(false);
         return true;
       });
@@ -142,6 +219,7 @@ const ProcessMessageGroup: React.FC<ProcessMessageGroupProps> = memo(
 
     const handleToggleMaximized = () => {
       if (collapsed) {
+        followBottomRef.current = true;
         setCollapsed(false);
         setMaximized(true);
         return;
@@ -150,8 +228,8 @@ const ProcessMessageGroup: React.FC<ProcessMessageGroupProps> = memo(
     };
 
     const contentScrollClass = maximized
-      ? "overflow-y-auto scroll-smooth min-h-0"
-      : "overflow-y-auto scroll-smooth max-h-72";
+      ? "overflow-y-auto overscroll-y-contain min-h-0"
+      : "overflow-y-auto overscroll-y-contain max-h-72";
 
     const contentStyle: React.CSSProperties | undefined = maximized
       ? { height: fillHeight ?? 288, maxHeight: fillHeight ?? 288 }
@@ -162,30 +240,18 @@ const ProcessMessageGroup: React.FC<ProcessMessageGroupProps> = memo(
         ref={rootRef}
         className={`relative mb-3 w-full ${maximized ? "min-h-0" : ""}`}
       >
-        <div
-          className="flex items-center gap-0.5 px-1 py-0.5 rounded-lg transition-colors hover:bg-secondary/[0.06]"
-        >
+        <div className="flex items-center rounded-lg transition-colors hover:bg-secondary/[0.06]">
           <button
             type="button"
             onClick={handleToggleCollapsed}
-            className="group flex flex-1 min-w-0 items-center gap-2 px-1 py-1 rounded-md text-left transition-colors hover:bg-secondary/10"
+            className="group flex flex-1 min-w-0 items-center gap-1.5 py-0.5 rounded-md text-left text-xs font-normal text-secondary/50 transition-colors hover:bg-secondary/10"
           >
             {collapsed ? (
-              <ChevronRight
-                className="w-3.5 h-3.5 text-secondary/50 shrink-0"
-                aria-hidden
-              />
+              <ChevronRight size={16} className="shrink-0 text-secondary/45" aria-hidden />
             ) : (
-              <ChevronDown
-                className="w-3.5 h-3.5 text-secondary/50 shrink-0"
-                aria-hidden
-              />
+              <ChevronDown size={16} className="shrink-0 text-secondary/45" aria-hidden />
             )}
-            <Sparkles
-              className="w-3.5 h-3.5 text-secondary/40 shrink-0"
-              aria-hidden
-            />
-            <span className="text-xs font-medium text-secondary/70">
+            <span>
               处理过程
             </span>
             <span className="text-[11px] text-secondary/40 tabular-nums">
@@ -233,7 +299,8 @@ const ProcessMessageGroup: React.FC<ProcessMessageGroupProps> = memo(
         {!collapsed && (
           <div
             ref={containerRef}
-            className={`mt-1 ml-1 pl-3 border-l border-secondary/20 space-y-0.5 ${contentScrollClass} ${maximized ? "rounded-md border border-secondary/15 bg-secondary/[0.03] pr-2 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-md" : ""}`}
+            onScroll={handleProcessScroll}
+            className={`mt-1 pl-5 border-l border-secondary/20 space-y-0.5 ${contentScrollClass} ${maximized ? "rounded-md border border-secondary/15 bg-secondary/[0.03] pr-2 [&_img]:max-w-full [&_img]:h-auto [&_img]:rounded-md" : ""}`}
             style={contentStyle}
           >
             {items.map(({ idx, msg }, listIdx) => {
@@ -280,7 +347,7 @@ const ProcessMessageGroup: React.FC<ProcessMessageGroupProps> = memo(
                     : "";
                 return (
                   <div
-                    key={`pg-chunk-${idx}`}
+                    key={`pg-chunk-${streamMessageId(msg) || msg.id || idx}`}
                     className="py-1 text-xs leading-relaxed text-secondary/65"
                   >
                     <MarkdownRenderer content={content} />
@@ -300,7 +367,7 @@ const ProcessMessageGroup: React.FC<ProcessMessageGroupProps> = memo(
                 if (!content.trim()) return null;
                 return (
                   <div
-                    key={`pg-thought-${idx}`}
+                    key={`pg-thought-${streamMessageId(msg) || msg.id || idx}`}
                     className={`py-1 text-[11px] leading-relaxed text-secondary/45 ${maximized ? "" : "line-clamp-3"}`}
                   >
                     <MarkdownRenderer content={content} />
@@ -308,9 +375,39 @@ const ProcessMessageGroup: React.FC<ProcessMessageGroupProps> = memo(
                 );
               }
 
+              if (
+                listIdx + 1 < revealCutoff &&
+                isToolsCallLog(msg) &&
+                isToolSummaryMsg(items[listIdx + 1].msg)
+              ) {
+                if (isHiddenProcessToolName(toolLabelOf(msg))) return null;
+                const result = items[listIdx + 1];
+                return (
+                  <div
+                    key={`pg-tool-${streamMessageId(msg) || msg.id || idx}`}
+                    className="py-0.5"
+                  >
+                    <RenderToolCallSummaryCard
+                      content={toolResultText(msg, result.msg)}
+                      label={toolLabelOf(msg)}
+                      defaultCollapsed={true}
+                      compact={true}
+                    />
+                  </div>
+                );
+              }
+
+              if (isToolSummaryMsg(msg) && listIdx > 0 && isToolsCallLog(items[listIdx - 1].msg)) {
+                return null;
+              }
+
+              if (isToolsCallLog(msg) && isHiddenProcessToolName(toolLabelOf(msg))) {
+                return null;
+              }
+
               return (
                 <RenderMessage
-                  key={`pg-${idx}-${msg.config.version || 0}`}
+                  key={`pg-${streamMessageId(msg) || msg.id || idx}`}
                   message={msg.config}
                   sessionId={msg.session_id}
                   messageIdx={idx}
