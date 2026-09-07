@@ -548,6 +548,14 @@ const dict = {
   "operation.fetching":      { zh: "拉取中…",        en: "Fetching…" },
   "operation.selected":      { zh: "已选 %1",        en: "%1 selected" },
   "operation.openMount":     { zh: "挂载文件",       en: "Mount Files" },
+  "cloud.upload":            { zh: "上传文件",       en: "Upload files" },
+  "cloud.uploading":         { zh: "上传中…",        en: "Uploading…" },
+  "cloud.newFolder":         { zh: "新建文件夹",     en: "New folder" },
+  "cloud.refresh":           { zh: "刷新",           en: "Refresh" },
+  "cloud.refreshing":        { zh: "同步中…",        en: "Syncing…" },
+  "cloud.emptyTitle":        { zh: "还没有文件",     en: "No files yet" },
+  "cloud.emptyDesc":         { zh: "这是你的个人文件空间。上传文件或新建文件夹后会出现在这里，也可在对话中使用。", en: "This is your personal file space. Upload files or create folders — they'll show up here and can be used in chat." },
+  "cloud.toolbarHint":       { zh: "个人文件空间，上传后可在对话中使用", en: "Personal files — upload to use in chat" },
 
   // ===== Science User Auth (iframe embed) =====
   "scienceAuth.verifying":        { zh: "正在验证身份，请稍候...", en: "Verifying identity, please wait..." },
