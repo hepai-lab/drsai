@@ -283,6 +283,7 @@ const params = new URLSearchParams({ type: "public", page: String(page), page_si
         if (meta?.changelog?.trim()) form.append("changelog", meta.changelog.trim());
         if (meta?.tags?.trim()) form.append("tags", meta.tags.trim());
         if (meta?.profile) form.append("profile", meta.profile);
+        form.append("visibility", "public");
         const headers: HeadersInit = {};
         if (apiKey) {
             (headers as Record<string, string>)["Authorization"] = `Bearer ${apiKey}`;
@@ -498,6 +499,7 @@ const params = new URLSearchParams({ type: "public", page: String(page), page_si
             owner_id?: string;
             origin?: string;
             profile?: File;
+            visibility?: "public" | "private" | "team";
         },
         apiKey?: string,
     ): Promise<{ slug: string }> {
@@ -516,6 +518,7 @@ const params = new URLSearchParams({ type: "public", page: String(page), page_si
         if (m.owner_id?.trim()) form.append("owner_id", m.owner_id.trim());
         if (m.origin?.trim()) form.append("origin", m.origin.trim());
         if (m.profile) form.append("profile", m.profile);
+        form.append("visibility", m.visibility || "private");
         const headers: HeadersInit = {};
         const qs = `type=user`;
         if (apiKey) {

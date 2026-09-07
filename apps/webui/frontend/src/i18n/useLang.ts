@@ -582,6 +582,7 @@ const dict = {
   "skillSquare.selectFolder":      { zh: "选择文件夹",            en: "Select Folder" },
   "skillSquare.selectZip":         { zh: "选择 zip 文件",        en: "Select Zip File" },
   "skillSquare.replaceZip":        { zh: "替换 zip 文件",        en: "Replace Zip File" },
+  "skillSquare.removeZip":         { zh: "移除已选文件",          en: "Remove selected file" },
   "skillSquare.displayName":       { zh: "名称",              en: "Display Name" },
   "skillSquare.displayNamePlaceholder": { zh: "Skill 显示名称",  en: "Skill Display Name" },
   "skillSquare.slugLabel":         { zh: "Slug（目录名）",       en: "Slug (directory name)" },

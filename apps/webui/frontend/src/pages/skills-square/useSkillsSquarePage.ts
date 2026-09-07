@@ -981,6 +981,7 @@ export function useSkillsSquarePage(skillsSubTab?: string) {
               version: publishVersion.trim() || "1.0.0",
               changelog: publishChangelog.trim() || undefined,
               source: "created",
+              visibility: "private",
               profile: publicProfileFile || undefined,
               tags:
                 publishTags.length > 0

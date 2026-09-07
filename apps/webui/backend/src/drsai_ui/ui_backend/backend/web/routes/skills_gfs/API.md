@@ -162,7 +162,7 @@ POST /skills/upload
 | `version` | string | 否 | 版本号 |
 | `changelog` | string | 否 | 更新日志 |
 | `tags` | string | 否 | 标签，逗号分隔 |
-| `visibility` | string | 否 | `public`（默认）/ `private` / `team` |
+| `visibility` | string | 否 | `public` / `private`（默认）/ `team`。未传且 `type≠public` 时为私有，不会进入公开市场 |
 | `source` | string | 否 | `"imported"` 则标记为收藏技能 |
 | `profile` | File | 否 | 封面图，≤2MB，png/jpg/gif/webp/svg |
 
