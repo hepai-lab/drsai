@@ -572,14 +572,22 @@ setup_node() {
             ok "Using pnpm: $(pnpm -v 2>&1)"
             PNPM_BIN="$pnpm_bin"
         elif [ -n "$npm_bin" ]; then
-            info "Installing pnpm via npm..."
-            "$npm_bin" install -g pnpm 2>/dev/null || true
-            pnpm_bin=$(command -v pnpm 2>/dev/null)
-            if [ -n "$pnpm_bin" ]; then
-                ok "pnpm installed: $(pnpm -v 2>&1)"
-                PNPM_BIN="$pnpm_bin"
+            # Do not use npm -g here: on shared machines it commonly fails with
+            # EACCES, and npm's global bin directory may not be on PATH. Install
+            # into the DrSai directory and use the resulting absolute path.
+            local pnpm_prefix="$INSTALL_DIR/packages/node"
+            local local_pnpm="$pnpm_prefix/bin/pnpm"
+            info "Installing pnpm via npm (local prefix: $pnpm_prefix)..."
+            mkdir -p "$pnpm_prefix"
+            if "$npm_bin" install -g --prefix "$pnpm_prefix" --no-package-lock --no-fund --no-audit pnpm; then
+                if [ -x "$local_pnpm" ]; then
+                    ok "pnpm installed: $("$local_pnpm" -v 2>&1)"
+                    PNPM_BIN="$local_pnpm"
+                else
+                    warn "npm completed but pnpm was not created at $local_pnpm"
+                fi
             else
-                warn "pnpm install failed — will use npm to build TUI"
+                warn "npm install pnpm failed — will use npm to build TUI"
             fi
         else
             warn "No pnpm or npm found — will try npm to build TUI"
@@ -628,21 +636,32 @@ build_tui() {
         export PATH="$NODE_DIR/bin:$PATH"
     fi
 
-    local pnpm_bin="$NODE_DIR/bin/pnpm"
-    local npm_bin="$NODE_DIR/bin/npm"
+    local pnpm_bin="${PNPM_BIN:-}"
+    local npm_bin=""
 
     if [ "$USE_SYSTEM_NODE" -eq 1 ]; then
-        # Check NODE_DIR/bin first (DrSai portable), then system PATH
-        if [ -x "$NODE_DIR/bin/pnpm" ]; then
+        # Keep the absolute path selected by setup_node. A failed command -v
+        # inside an assignment is fatal under `set -e`, so make lookup
+        # explicitly non-fatal and validate both tools before using them.
+        if [ -n "${PNPM_BIN:-}" ] && [ -x "$PNPM_BIN" ]; then
+            pnpm_bin="$PNPM_BIN"
+        elif [ -x "$NODE_DIR/bin/pnpm" ]; then
             pnpm_bin="$NODE_DIR/bin/pnpm"
         else
-            pnpm_bin="$(command -v pnpm 2>/dev/null)"
+            pnpm_bin="$(command -v pnpm 2>/dev/null || true)"
         fi
         if [ -x "$NODE_DIR/bin/npm" ]; then
             npm_bin="$NODE_DIR/bin/npm"
         else
-            npm_bin="$(command -v npm 2>/dev/null)"
+            npm_bin="$(command -v npm 2>/dev/null || true)"
         fi
+    else
+        [ -x "$NODE_DIR/bin/npm" ] && npm_bin="$NODE_DIR/bin/npm"
+        [ -z "$pnpm_bin" ] && [ -x "$NODE_DIR/bin/pnpm" ] && pnpm_bin="$NODE_DIR/bin/pnpm"
+    fi
+
+    if [ -z "$pnpm_bin" ] && [ -z "$npm_bin" ]; then
+        die "Neither pnpm nor npm is available for TUI build"
     fi
 
     cd "$tui_dir"
