@@ -10,6 +10,7 @@ import { CompletionDeliveryTracker } from "./completionDeliveryTracker";
 import { verifyResultProvenance } from "../../api/resultProvenance";
 import {
   Bot,
+  BookOpen,
   Bug,
   ChevronLeft,
   Folder,
@@ -107,6 +108,7 @@ import { MobilePairingDialog } from "./components/MobilePairingDialog";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { FeedbackAdminDialog } from "./components/FeedbackAdminDialog";
 import { TerminalPanel } from "./components/TerminalPanel";
+import { KnowledgeBasePanel } from "./components/KnowledgeBasePanel";
 import { DebugPanel } from "./components/DebugPanel";
 import { RunInspectorPanel } from "./components/RunInspectorPanel";
 import { AppDecisionDialogHost, requestAppDecision, showAppNotice } from "./components/AppDecisionDialog";
@@ -163,6 +165,7 @@ const navIcons: Record<NavId, LucideIcon> = {
   skills_square: Lightbulb,
   plugins: Plug,
   library: Library,
+  knowledge_base: BookOpen,
   approval_center: ShieldCheck,
   profile: Settings,
   usage_analytics: History,
@@ -3125,6 +3128,11 @@ function AuthenticatedApp({
       />
     ) : activeNav === MENU_IDS.usageAnalytics ? (
       <ProviderAnalyticsView language={language} />
+    ) : activeNav === MENU_IDS.knowledgeBase ? (
+      <KnowledgeBasePanel
+        agentId={selectedChatAgentId ?? ""}
+        language={language}
+      />
     ) : activeNav === MENU_IDS.library ? (
       <GfsView language={language} />
     ) : activeNav === MENU_IDS.profile ? (
