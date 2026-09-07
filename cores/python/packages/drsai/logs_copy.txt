@@ -1,0 +1,17 @@
+Error occurred in handler for 'desktop:recover-chat-run': RemoteProtocolError: Not Found
+    at parseRemoteProtocolError (D:\work\projects\drsai\apps\desktop\windows\out\main\index.js:4435:10)
+    at LocalRuntimeClient.request (D:\work\projects\drsai\apps\desktop\windows\out\main\index.js:5362:13)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async LocalRuntimeClient.requestJson (D:\work\projects\drsai\apps\desktop\windows\out\main\index.js:5340:22)
+    at async Promise.all (index 0)
+    at async withCurrentRecoveryClient (D:\work\projects\drsai\apps\desktop\windows\out\main\index.js:21605:16)
+    at async recoverChatRun (D:\work\projects\drsai\apps\desktop\windows\out\main\index.js:21630:49)
+    at async D:\work\projects\drsai\apps\desktop\windows\out\main\index.js:89675:23
+    at async Session.<anonymous> (node:electron/js2c/browser_init:2:112762) {
+  status: 404,
+  code: 'http_404',
+  correlationId: 'bd88ad78-40d2-4a39-a9f6-3d37105d0474',
+  retryable: false,
+  detail: { approvalId: undefined },
+  envelope: undefined
+}

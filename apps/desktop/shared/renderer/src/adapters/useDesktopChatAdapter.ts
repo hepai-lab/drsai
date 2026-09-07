@@ -239,6 +239,23 @@ export function useDesktopChatAdapter({
     });
   }
 
+  /**
+   * Terminal events must synchronously drain this turn's queued deltas. A
+   * shared RAF may otherwise run after terminal cleanup and lose the final
+   * reasoning/answer fragment. The reducer still enforces sealed-state
+   * monotonicity, so duplicate terminal events remain harmless.
+   */
+  function takePendingStructuredEvents(requestId: string): StructuredConversationEvent[] {
+    const events = pendingStructuredEventsByRequest.current[requestId] ?? [];
+    delete pendingStructuredEventsByRequest.current[requestId];
+    if (!Object.keys(pendingStructuredEventsByRequest.current).length
+        && structuredFlushFrameRef.current !== null) {
+      window.cancelAnimationFrame(structuredFlushFrameRef.current);
+      structuredFlushFrameRef.current = null;
+    }
+    return events;
+  }
+
   function restoreActiveStructuredTurns(snapshotMessages: UiMessage[]): void {
     let latestActiveRequestId: string | null = null;
     const settleUnrecoverableTurn = (requestId: string, turnId: string): void => {
@@ -940,9 +957,24 @@ export function useDesktopChatAdapter({
           })),
         ));
       }
+      const hadStructuredAuthority = structuredRequests.current.has(event.requestId);
       structuredRequests.current.add(event.requestId);
       delete pendingDeltasByRequest.current[event.requestId];
       const structuredEvent = event.structuredEvent;
+      // The first valid structured event permanently owns this turn. Clear
+      // legacy text immediately so a reasoning delta can never flash as the
+      // answer while the structured reducer is waiting for the next frame.
+      if (!hadStructuredAuthority) {
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        setMessages((current) => updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+          ...message,
+          content: "",
+          reasoningContent: "",
+          error: false,
+          replyFailed: false,
+          structuredTurn: message.structuredTurn ?? createStructuredTurnState(event.requestId),
+        })));
+      }
       appendStructuredProtocolLog(structuredEvent);
       if (structuredEvent.type === "activity.updated") {
         appendStructuredActivityLog(structuredEvent.activity);
@@ -957,8 +989,7 @@ export function useDesktopChatAdapter({
         }
         return;
       }
-      const pendingStructuredEvents = pendingStructuredEventsByRequest.current[event.requestId] ?? [];
-      delete pendingStructuredEventsByRequest.current[event.requestId];
+      const pendingStructuredEvents = takePendingStructuredEvents(event.requestId);
       applyStructuredEventBatch(event.requestId, [...pendingStructuredEvents, structuredEvent]);
       if (structuredEvent.type === "turn.error") {
         const friendly = describeUserFacingError({
@@ -987,9 +1018,9 @@ export function useDesktopChatAdapter({
           }
           onChatComplete(structuredEvent.type === "turn.completed");
         }
-        structuredRequests.current.delete(event.requestId);
-        delete streamingAssistantByRequest.current[event.requestId];
-        delete lastSequenceByRequest.current[event.requestId];
+        // Keep the sealed turn addressable until the following transport
+        // `done`/`aborted` event. This lets a late terminal reconciliation
+        // update the already-rendered message without reopening the turn.
         delete pendingDeltasByRequest.current[event.requestId];
       }
       return;
@@ -1081,7 +1112,13 @@ export function useDesktopChatAdapter({
     }
     if (event.type === "done" || event.type === "aborted") {
       if (completedStructuredRequests.current.delete(event.requestId)) {
+        // The structured terminal event already sealed and rendered the turn;
+        // this transport sentinel only releases per-request bookkeeping.
+        structuredRequests.current.delete(event.requestId);
+        delete streamingAssistantByRequest.current[event.requestId];
         delete lastSequenceByRequest.current[event.requestId];
+        delete pendingDeltasByRequest.current[event.requestId];
+        delete pendingStructuredEventsByRequest.current[event.requestId];
         return;
       }
       if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
@@ -2976,7 +3013,8 @@ function applyLocalStructuredEvent(state: StructuredTurnState, event: LocalStruc
 
 function readStructuredMarkdown(state: StructuredTurnState): string {
   return state.parts
-    .filter((part): part is Extract<StructuredAssistantPart, { kind: "markdown" }> => part.kind === "markdown")
+    .filter((part): part is Extract<StructuredAssistantPart, { kind: "markdown" }> =>
+      part.kind === "markdown" && (part.channel ?? "answer") === "answer" && part.final === true)
     .map((part) => part.markdown)
     .join("\n\n");
 }

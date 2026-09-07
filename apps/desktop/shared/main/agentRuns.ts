@@ -65,7 +65,10 @@ const agentBackpressureControllers = new WeakMap<WebContents, BackpressureContro
 
 function getAgentEventDispatcher(webContents: WebContents): BoundedEventDispatcher<AgentRunEvent> {
   const existing = agentEventDispatchers.get(webContents);
-  if (existing) return existing;
+  // A renderer reload can dispose the current frame without destroying the
+  // WebContents object. The old dispatcher is permanently closed after the
+  // first send failure, so it must not be reused after recovery.
+  if (existing && !existing.closed) return existing;
   // P1: Per-window backpressure controller — adjusts flush delay based on
   // renderer FPS health reports (healthy=0ms, degraded=100ms, critical=200ms)
   let controller = agentBackpressureControllers.get(webContents);
@@ -76,13 +79,13 @@ function getAgentEventDispatcher(webContents: WebContents): BoundedEventDispatch
   const dispatcher = new BoundedEventDispatcher<AgentRunEvent>({
     capacity: 256,
     deliver: (event) => {
-      try {
-        if (!webContents.isDestroyed()) webContents.send("desktop:agent-run-event", event);
-      } catch (err) {
-        if (!/destroy|disposed/i.test(String(err))) {
-          // eslint-disable-next-line no-console
-          console.error("[agentRuns] deliver error:", err);
-        }
+      // Do not swallow renderer/frame disposal errors here. A WebContents can
+      // remain alive while its current render frame is being replaced; in that
+      // state isDestroyed() is false but send() throws. Let flush() observe the
+      // exception and close this dispatcher, otherwise every later event keeps
+      // hitting the disposed frame and Electron logs the same error forever.
+      if (!webContents.isDestroyed()) {
+        webContents.send("desktop:agent-run-event", event);
       }
     },
     merge: (previous, next) => previous.requestId === next.requestId && previous.type === "chunk" && next.type === "chunk"
@@ -90,6 +93,7 @@ function getAgentEventDispatcher(webContents: WebContents): BoundedEventDispatch
       ? { ...next, content: `${previous.content ?? ""}${next.content ?? ""}` }
       : null,
     schedule: controller.createAdaptiveScheduler(),
+    shouldClose: () => webContents.isDestroyed(),
   });
   agentEventDispatchers.set(webContents, dispatcher);
   return dispatcher;
@@ -108,6 +112,32 @@ export function handleRenderHealthReport(webContents: WebContents, fps: number, 
 
 export function hasActiveAgentRuns(): boolean {
   return activeRuns.size > 0;
+}
+
+/**
+ * Drop the cached event dispatcher for a WebContents whose renderer frame is
+ * about to be replaced.  Closing here stops BoundedEventDispatcher from
+ * spamming "Render frame was disposed" during the reload gap.  Active Runs
+ * keep running; the next emit() after the new frame attaches creates a fresh
+ * dispatcher.
+ */
+export function disposeAgentEventDispatcher(webContents: WebContents): void {
+  agentEventDispatchers.get(webContents)?.close();
+  agentEventDispatchers.delete(webContents);
+  agentBackpressureControllers.delete(webContents);
+}
+
+/**
+ * Same as disposeAgentEventDispatcher plus releasing run records whose owner
+ * WebContents is permanently destroyed.  Runs are not cancelled; they are
+ * recoverable on the next window.
+ */
+export function disposeAllAgentRunsForTarget(webContents: WebContents): void {
+  disposeAgentEventDispatcher(webContents);
+  for (const [requestId, active] of [...activeRuns]) {
+    if (active.webContents !== webContents) continue;
+    activeRuns.delete(requestId);
+  }
 }
 
 export function subscribeAgentRunLifecycle(listener: AgentRunLifecycleListener): () => void {

@@ -275,6 +275,9 @@ class StructuredConversationProjector:
             activity["output"] = payload["result"]
         if payload.get("duration_ms") is not None:
             activity["durationMs"] = payload["duration_ms"]
+        child_id = payload.get("subagent_id")
+        if child_id:
+            activity["subtaskId"] = str(child_id)
         self.activities[activity["id"]] = activity
         return self._event("activity.updated", source, activity=activity)
 
@@ -323,6 +326,11 @@ class StructuredConversationProjector:
         is_complete = event_type in {"subagent.complete", "subagent.completed"}
         status_override = str(payload.get("status") or "").lower()
         if is_complete:
+            # The streamed child answer is already stored in markdownSummary.
+            # Use terminal text only as a fallback, avoiding duplicate full
+            # child output when the final message repeats streamed chunks.
+            if summary and not part.get("markdownSummary"):
+                part["markdownSummary"] = summary
             part["summary"] = summary
             if status_override in {"error", "failed"}:
                 part["status"] = "error"

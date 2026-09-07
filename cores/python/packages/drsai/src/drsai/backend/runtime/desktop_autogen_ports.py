@@ -212,7 +212,7 @@ class AutogenDesktopModelPort:
             raise ValueError("desktop_model_messages_invalid")
         attempt = 0
         tool_choice = payload.get("tool_choice")
-        extra_create_args: dict[str, Any] = {}
+        extra_create_args = _desktop_reasoning_create_args(self._model_client)
         def tool_name(tool: Any) -> str:
             schema = getattr(tool, "schema", tool)
             if isinstance(schema, Mapping):
@@ -340,6 +340,23 @@ class AutogenDesktopModelPort:
             finish_reason=completed.finish_reason,
             reasoning_summary=str(completed.thought or ""),
         )
+
+
+def _desktop_reasoning_create_args(model_client: Any) -> dict[str, Any]:
+    """Translate the cached Agent effort knob into the provider wire args.
+
+    Desktop reuses one Agent across turns.  The manager updates
+    ``_reasoning_effort`` immediately before each turn, so read it here rather
+    than copying a value into the model client at construction time.  The
+    client adapters normalize ``reasoning_effort`` for Responses and Chat
+    Completions, while Anthropic clients consume the equivalent ``thinking``
+    argument when configured by the model policy.
+    """
+    agent = getattr(model_client, "_desktop_agent", None)
+    effort = getattr(agent, "_reasoning_effort", None)
+    if effort in (None, "", "off"):
+        return {}
+    return {"reasoning_effort": str(effort)}
 
 
 SpecialToolPort = Callable[[Mapping[str, Any]], Awaitable[DesktopToolResult]]

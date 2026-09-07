@@ -165,11 +165,13 @@ import {
   startUpdateScheduler,
   subscribeUpdateStatus,
 } from "./updates";
-import { cancelChatTurn, hasActiveChats, recoverChatRun, respondChatInput, startChat } from "./chat";
+import { cancelChatTurn, disposeAllChatForTarget, disposeChatEventDispatcher, handleChatRenderHealthReport, hasActiveChats, recoverChatRun, respondChatInput, startChat } from "./chat";
 import { listProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
 import {
   abortAgentRun,
+  disposeAgentEventDispatcher,
+  disposeAllAgentRunsForTarget,
   handleRenderHealthReport,
   hasActiveAgentRuns,
   recoverAgentRun,
@@ -3161,6 +3163,24 @@ function createWindow(): void {
       url: mainWindow?.webContents.getURL(),
     });
     void startDeferredStartupTasks();
+  });
+  // A renderer reload (Ctrl+R, HMR, crash recovery) disposes the current
+  // render frame while keeping the WebContents wrapper alive.  The frame-
+  // disposal signal is the earliest reliable point where sends to the old
+  // frame start throwing "Render frame was disposed"; close the cached
+  // dispatchers here so no queued event attempts a send during the reload
+  // gap.  Active Runs/Chats keep running in the main process and recover
+  // through the OAEP subscription on the new frame.
+  mainWindow.webContents.on("did-start-loading", () => {
+    disposeChatEventDispatcher(mainWindow!.webContents);
+    disposeAgentEventDispatcher(mainWindow!.webContents);
+  });
+  // When the WebContents itself is permanently destroyed (window close, app
+  // quit), release turn records and stop subscriptions.  Backend Runs are
+  // NOT cancelled — they remain recoverable through the outbox on restart.
+  mainWindow.webContents.once("destroyed", () => {
+    disposeAllChatForTarget(mainWindow!.webContents);
+    disposeAllAgentRunsForTarget(mainWindow!.webContents);
   });
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     void recordCrashIncident({ process_type: "renderer", reason: details.reason, exit_code: details.exitCode });
@@ -6501,6 +6521,7 @@ function registerIpc(): void {
       ? (report as any).tier
       : "healthy";
     handleRenderHealthReport(event.sender, fps, tier);
+    handleChatRenderHealthReport(event.sender, fps, tier);
   });
   secureHandle("desktop:save-api-key", (_event, apiKey: string) => {
     if (process.env.OPENDRSAI_DESKTOP_DEV !== "1") {

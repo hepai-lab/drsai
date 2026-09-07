@@ -75,6 +75,22 @@ async def run_execute(run_id: str, request: RunExecuteRequest, raw_request: Requ
     auth = _auth.auth_context(raw_request)
     correlation_id = _auth.correlation_id(raw_request)
     metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    # Accept the renderer/runtime spellings, with explicit request fields
+    # taking precedence over legacy metadata.  This keeps configuration
+    # request-scoped instead of relying on a cached Agent instance.
+    model_alias = request.model_alias or request.model or None
+    requested_reasoning_effort = (
+        request.reasoning_effort
+        if request.reasoning_effort is not None
+        else metadata.get("reasoning_effort")
+    )
+    if requested_reasoning_effort is not None:
+        requested_reasoning_effort = str(requested_reasoning_effort)
+    requested_plan_mode = (
+        request.plan_mode
+        if request.plan_mode is not None
+        else bool(metadata.get("plan_mode"))
+    )
 
     with _errors.http_errors(not_found="Unknown Run", invalid=422):
         # Resolve the Run and bind its input synchronously: both can fail for
@@ -91,7 +107,7 @@ async def run_execute(run_id: str, request: RunExecuteRequest, raw_request: Requ
                 else "runtime"
             ),
             source_message_id=(request.source_message_id or metadata.get("source_message_id")) or None,
-            model=request.model_alias or None,
+            model=model_alias,
         )
 
     async def execute() -> dict[str, Any]:
@@ -105,8 +121,9 @@ async def run_execute(run_id: str, request: RunExecuteRequest, raw_request: Requ
                     run_id,
                     request.prompt,
                     correlation_id,
-                    model_override=request.model_alias or None,
-                    plan_mode=bool(metadata.get("plan_mode")),
+                    model_override=model_alias,
+                    reasoning_effort=requested_reasoning_effort,
+                    plan_mode=requested_plan_mode,
                 )
             diag_log(f"[DIAG] runs.py execute(): run_id={run_id} detached task COMPLETED")
             return result

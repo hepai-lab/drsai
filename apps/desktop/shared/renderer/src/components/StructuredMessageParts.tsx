@@ -145,7 +145,11 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     if (selected.length) inlineArtifactsByMarkdown.set(markdownPart.id, selected);
     for (const artifact of selected) embeddedArtifactIds.add(artifact.id);
   }
-  const resultParts = turn.parts.filter((part) => part.kind === "markdown" || part.kind === "citation" || (part.kind === "artifact" && !embeddedArtifactIds.has(part.id)));
+  const resultParts = turn.parts.filter((part) =>
+    (part.kind === "markdown" && turn.status === "completed" && part.final === true && (part.channel ?? "answer") === "answer")
+    || part.kind === "citation"
+    || (part.kind === "artifact" && !embeddedArtifactIds.has(part.id)),
+  );
   // The model writes `[E1]` so the support check can tell which passage each
   // sentence rests on. The reader has no use for the number, so the marker is
   // shown as the document it stands for. Order is the marker order the runtime
@@ -293,10 +297,10 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
         {processOpen ? <div className="structured-process-content" data-testid="structured-process-content">
           <RetrievalStageSummary turn={turn} language={language} />
           {processPresentation.completionSummary ? <div className="structured-process-overview"><CheckCircle2 size={15} aria-hidden="true" /><span>{processPresentation.completionSummary}</span></div> : null}
-          <CompactProgressSection groups={processPresentation.progressGroups} language={language} />
           <StructuredProcessTimeline
             reasoningParts={reasoningParts}
-            activities={turn.activities}
+            progressParts={progressParts}
+            activities={turn.activities.filter((activity) => !activity.subtaskId)}
             language={language}
             resourceStates={resourceStates}
             onOpenResource={onOpenResource}
@@ -639,6 +643,7 @@ function ReasoningDisclosure({
 
 function StructuredProcessTimeline({
   reasoningParts,
+  progressParts,
   activities,
   language,
   resourceStates,
@@ -647,6 +652,7 @@ function StructuredProcessTimeline({
   renderPart,
 }: {
   reasoningParts: Array<Extract<StructuredAssistantPart, { kind: "reasoning" }>>;
+  progressParts: Array<Extract<StructuredAssistantPart, { kind: "progress" }>>;
   activities: StructuredActivityEvent[];
   language: "en" | "zh";
   resourceStates?: Readonly<Record<string, "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported">>;
@@ -656,42 +662,46 @@ function StructuredProcessTimeline({
 }): React.JSX.Element | null {
   const [page, setPage] = useState(0);
   const [open, setOpen] = useState(running);
-  const entries = useMemo(() => buildProcessTimeline(reasoningParts, activities), [reasoningParts, activities]);
+  const entries = useMemo(() => buildProcessTimeline(reasoningParts, progressParts, activities), [reasoningParts, progressParts, activities]);
   const window = boundedProcessWindow(entries.length, page, PROCESS_ACTIVITY_WINDOW_SIZE);
   useEffect(() => setPage((current) => boundedProcessWindow(entries.length, current, PROCESS_ACTIVITY_WINDOW_SIZE).page), [entries.length]);
-  useEffect(() => setOpen(running), [running]);
   if (!entries.length) return null;
-  return <details className="structured-process-timeline" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-    <summary><strong>{language === "zh" ? "执行时间线" : "Execution timeline"}</strong><small>{language === "zh" ? `${entries.length} 个步骤` : `${entries.length} steps`}</small><ChevronDown size={14} aria-hidden="true" /></summary>
-    {open ? <div className="structured-timeline-window" data-timeline-window-start={window.start} data-timeline-window-end={window.end}>
-      {entries.slice(window.start, window.end).map((entry) => entry.type === "reasoning"
-        ? <div key={entry.id} className="structured-timeline-item reasoning"><span className="structured-timeline-marker">💭</span>{renderPart(entry.part)}</div>
-        : <div key={entry.id} className={`structured-timeline-item activity ${entry.activity.status}`}><span className="structured-timeline-marker"><ActivityStatusIcon status={entry.activity.status} /></span><ActivityTimelineItem activity={entry.activity} language={language} resourceStates={resourceStates} onOpenResource={onOpenResource} /></div>)}
+  return <div className="structured-process-timeline" aria-label={language === "zh" ? "执行时间线" : "Execution timeline"}>
+    <div className="structured-timeline-window" data-timeline-window-start={window.start} data-timeline-window-end={window.end}>
+      {entries.slice(window.start, window.end).map((entry) => {
+        if (entry.type === "reasoning") return <div key={entry.id} className="structured-timeline-item reasoning"><span className="structured-timeline-marker">💭</span>{renderPart(entry.part)}</div>;
+        if (entry.type === "progress") return <div key={entry.id} className={`structured-timeline-item progress ${entry.part.status}`}><span className="structured-timeline-marker"><ActivityStatusIcon status={entry.part.status} /></span>{renderPart(entry.part)}</div>;
+        return <div key={entry.id} className={`structured-timeline-item activity ${entry.activity.status}`}><span className="structured-timeline-marker"><ActivityStatusIcon status={entry.activity.status} /></span><ActivityTimelineItem activity={entry.activity} language={language} resourceStates={resourceStates} onOpenResource={onOpenResource} /></div>;
+      })}
       <ProcessWindowNavigation window={window} total={entries.length} language={language} onPage={setPage} />
-    </div> : null}
-  </details>;
+    </div>
+  </div>;
 }
 
 type ProcessTimelineEntry =
-  | { type: "reasoning"; id: string; timestamp: number; order: number; part: Extract<StructuredAssistantPart, { kind: "reasoning" }> }
-  | { type: "activity"; id: string; timestamp: number; order: number; activity: StructuredActivityEvent };
+  | { type: "reasoning"; id: string; sequence: number; part: Extract<StructuredAssistantPart, { kind: "reasoning" }> }
+  | { type: "progress"; id: string; sequence: number; part: Extract<StructuredAssistantPart, { kind: "progress" }> }
+  | { type: "activity"; id: string; sequence: number; activity: StructuredActivityEvent };
 
 function buildProcessTimeline(
   reasoningParts: Array<Extract<StructuredAssistantPart, { kind: "reasoning" }>>,
+  progressParts: Array<Extract<StructuredAssistantPart, { kind: "progress" }>>,
   activities: StructuredActivityEvent[],
 ): ProcessTimelineEntry[] {
   const entries: ProcessTimelineEntry[] = [];
   reasoningParts.forEach((part, index) => {
-    const segment = part.segments.find((item) => item.startedAt || item.completedAt);
-    const raw = segment?.startedAt || segment?.completedAt;
-    const timestamp = raw ? Date.parse(raw) : NaN;
-    entries.push({ type: "reasoning", id: `reasoning:${part.id}`, timestamp: Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER, order: index, part });
+    const sequence = part.sequence ?? Number.MAX_SAFE_INTEGER - 100000 + index;
+    entries.push({ type: "reasoning", id: `reasoning:${part.id}`, sequence, part });
+  });
+  progressParts.forEach((part, index) => {
+    const sequence = part.sequence ?? Number.MAX_SAFE_INTEGER - 50000 + index;
+    entries.push({ type: "progress", id: `progress:${part.id}`, sequence, part });
   });
   activities.forEach((activity, index) => {
-    const timestamp = Date.parse(activity.timestamp);
-    entries.push({ type: "activity", id: `activity:${activity.id}`, timestamp: Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER, order: reasoningParts.length + index, activity });
+    const sequence = activity.sequence ?? Number.MAX_SAFE_INTEGER - 10000 + index;
+    entries.push({ type: "activity", id: `activity:${activity.id}`, sequence, activity });
   });
-  return entries.sort((a, b) => a.timestamp - b.timestamp || a.order - b.order);
+  return entries.sort((a, b) => a.sequence - b.sequence);
 }
 
 function ActivityTimelineItem({

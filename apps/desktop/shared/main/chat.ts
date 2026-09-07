@@ -6,6 +6,7 @@ import { pipeline } from "stream/promises";
 import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, ChatTurnCancelResult, ChatTurnIdentity, MaterialRoleItem, OaepInputResource, RuntimeModelRef } from "../api/desktopApi";
 import { LEGACY_MY_DRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
 import { normalizeRuntimeErrorEnvelope } from "../api/errorEnvelope";
+import { RemoteProtocolError } from "../api/remoteSshProtocol";
 import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, type AuthContext } from "./auth";
 import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToDdfChatInput, respondToPlatformChatInput, resolvePlatformBearerToken, stopPlatformChat } from "./agents";
 import { getMyDrSaiAgentModelPolicy, listConfiguredAgents } from "./myDrSaiConfig";
@@ -35,7 +36,7 @@ import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCirc
 import { createFailureEscalation, getFailureRecovery } from "./failureRecovery";
 import { startGateway } from "./gateway";
 import { resolveGatewayPort } from "./gatewayEnvironment";
-import { acquireRuntimeClientLease, bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, retainRuntimeClient, type OaepEvent, type OaepItem, type RuntimeClient, type RuntimeExecutionAuth, type RuntimeGoal } from "./runtimeClient";
+import { acquireRuntimeClientLease, bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, retainRuntimeClient, type OaepEvent, type OaepItem, type RuntimeAgentRun, type RuntimeClient, type RuntimeExecutionAuth, type RuntimeGoal, type RuntimeIdentity } from "./runtimeClient";
 import { sessionPayloadHash, sessionSyncState } from "./sessionSyncState";
 import { isUncertainRunCreateFailure, recoverRunCreation } from "./messageDelivery";
 import {
@@ -49,6 +50,7 @@ import {
 } from "./networkRecovery";
 import { desktopDiagnostics, type DiagnosticOperationHandle } from "./diagnostics";
 import { BoundedEventDispatcher } from "./boundedEventDispatcher";
+import { BackpressureController } from "./backpressureController";
 import { listRecordedChatRunEvents, recordChatRunEvent } from "./chatRunJournal";
 import { codexContinuationAction } from "./codexSessionResumePolicy";
 import { selectCurrentUserInput } from "./chatInput";
@@ -64,21 +66,35 @@ import {
 
 export interface ChatEventTarget {
   send(channel: string, ...args: unknown[]): void;
+  /** When true the renderer frame is gone; the dispatcher must stop sending. */
+  isDestroyed?(): boolean;
 }
 
 const chatEventDispatchers = new WeakMap<ChatEventTarget, BoundedEventDispatcher<ChatEvent>>();
+const chatBackpressureControllers = new WeakMap<ChatEventTarget, BackpressureController>();
 
 function getChatEventDispatcher(target: ChatEventTarget): BoundedEventDispatcher<ChatEvent> {
   const existing = chatEventDispatchers.get(target);
-  if (existing) return existing;
+  // A reload may dispose a frame while the WebContents wrapper survives. Do
+  // not reuse a dispatcher that was closed after the old frame disappeared.
+  if (existing && !existing.closed) return existing;
+  // Backpressure controller adjusts flush delay based on renderer FPS reports
+  // (healthy=0ms, degraded=100ms, critical=200ms). Without this the chat
+  // dispatcher used setImmediate and flooded the renderer with events.
+  let controller = chatBackpressureControllers.get(target);
+  if (!controller) {
+    controller = new BackpressureController();
+    chatBackpressureControllers.set(target, controller);
+  }
   const dispatcher = new BoundedEventDispatcher<ChatEvent>({
     capacity: 256,
     deliver: (event) => {
-      try {
-        target.send("desktop:chat-event", event);
-      } catch {
-        // Renderer may have OOMed/disposed; drop the batch instead of crashing main.
-      }
+      // Do NOT swallow errors here. If target.send() throws (frame disposed),
+      // the error propagates to flush() which calls close() and permanently
+      // stops the dispatcher. The previous try/catch swallowed the error so
+      // flush() never saw it and close() was never called -- the dispatcher
+      // stayed open and spammed "Render frame was disposed" errors forever.
+      target.send("desktop:chat-event", event);
     },
     merge: (previous, next) => {
       if (previous.requestId !== next.requestId || previous.type !== next.type) return null;
@@ -110,6 +126,8 @@ function getChatEventDispatcher(target: ChatEventTarget): BoundedEventDispatcher
       }
       return null;
     },
+    schedule: controller.createAdaptiveScheduler(),
+    shouldClose: () => target.isDestroyed?.() ?? false,
   });
   chatEventDispatchers.set(target, dispatcher);
   return dispatcher;
@@ -189,8 +207,57 @@ const structuredTerminalRequests = new Set<string>();
 const chatEventSequences = new Map<string, number>();
 const chatDiagnosticOperations = new Map<string, Promise<DiagnosticOperationHandle>>();
 
+/**
+ * Handle renderer health reports for the chat event dispatcher's backpressure
+ * controller. Called from the main process IPC handler for "desktop:render-health".
+ * Updates the chat backpressure controller so flush delay adapts to renderer FPS.
+ */
+export function handleChatRenderHealthReport(
+  target: ChatEventTarget,
+  fps: number,
+  tier: "healthy" | "degraded" | "critical",
+): void {
+  const controller = chatBackpressureControllers.get(target);
+  if (controller) {
+    controller.update(fps, tier);
+  }
+}
+
 export function hasActiveChats(): boolean {
   return chatTurns.size > 0;
+}
+
+/**
+ * Drop the cached event dispatcher for a target whose renderer frame is about
+ * to be replaced.  The frame-disposal signal (did-start-loading) is the
+ * earliest reliable point where the old frame can no longer receive sends;
+ * closing here stops BoundedEventDispatcher from spamming "Render frame was
+ * disposed" during the reload gap.  Active chat turns keep running and the
+ * OAEP subscription keeps buffering; the next emit() after recovery creates a
+ * fresh dispatcher bound to the new frame.
+ */
+export function disposeChatEventDispatcher(target: ChatEventTarget): void {
+  chatEventDispatchers.get(target)?.close();
+  chatEventDispatchers.delete(target);
+  chatBackpressureControllers.delete(target);
+}
+
+/**
+ * Same as disposeChatEventDispatcher plus stopping turn subscriptions.  Used
+ * when the owning WebContents is permanently destroyed (not merely reloaded):
+ * the renderer is never coming back, so turn records, event sequences and the
+ * OAEP listener are released.  Backend Runs are not cancelled — they are
+ * recoverable through the outbox / recovery flow on the next window.
+ */
+export function disposeAllChatForTarget(target: ChatEventTarget): void {
+  disposeChatEventDispatcher(target);
+  for (const [requestId, turn] of [...chatTurns]) {
+    if (turn.eventTarget !== target) continue;
+    turn.subscription?.stop();
+    chatTurns.delete(requestId);
+    chatEventSequences.delete(requestId);
+    chatDiagnosticOperations.delete(requestId);
+  }
 }
 
 export function startChat(webContents: ChatEventTarget, request: unknown): string {
@@ -439,10 +506,42 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
     ).catch(() => undefined);
   };
   try {
-    const [authoritativeRun, runtimeIdentity] = await withCurrentRecoveryClient((current) => Promise.all([
-      current.getAgentRun(thread!.lastRunId!),
-      current.getRuntime(),
-    ]));
+    let authoritativeRun: RuntimeAgentRun;
+    let runtimeIdentity: RuntimeIdentity;
+    try {
+      [authoritativeRun, runtimeIdentity] = await withCurrentRecoveryClient((current) => Promise.all([
+        current.getAgentRun(thread!.lastRunId!),
+        current.getRuntime(),
+      ]));
+    } catch (error) {
+      // The Run no longer exists on the backend (e.g. Runtime restarted and
+      // its run store was lost). Fall back to locally recorded events and
+      // seal the thread as errored instead of propagating an unhandled 404.
+      if (error instanceof RemoteProtocolError && error.status === 404) {
+        await completeRecoveredOutbox();
+        await updateThread({ id: thread.id, status: "error" });
+        const recorded = await listRecordedChatRunEvents(thread.lastRunId);
+        const recovered: ChatEvent[] = recorded.map((event, index) => ({ ...event, requestId, sessionId, seq: index + 1 }));
+        const journalHasTerminal = recorded.some((event) => event.type === "done" || event.type === "error" || event.type === "aborted");
+        if (!journalHasTerminal) {
+          recovered.push({
+            requestId, sessionId, runId: thread.lastRunId, seq: recovered.length + 1, type: "error",
+            error: "This run was not found on the Runtime after a restart. Received content was preserved; you can send the request again.",
+            errorEnvelope: {
+              code: "run_not_found",
+              category: "runtime",
+              retryable: false,
+              user_message_key: "errors.runtime.run_not_found",
+              recovery_actions: ["continue", "redo", "abandon"],
+              diagnostic_reference: `run:${thread.lastRunId}`,
+              redacted_details: {},
+            },
+          });
+        }
+        return recovered;
+      }
+      throw error;
+    }
     const recoveryDecision = decideRuntimeRestartRecovery(authoritativeRun, runtimeIdentity);
     // A non-terminal Run owned by an older Runtime instance no longer has an
     // execution task behind it. Seal it as interrupted before presenting user
@@ -478,6 +577,7 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
       emitRuntimeOaepEvent(
         eventTarget, requestId, sessionId, thread.lastRunId!, event, target,
         recoveredSubscription ? presentationItemForOaepEvent(recoveredSubscription.state, event) : undefined,
+        recoveredSubscription?.state.items.values(),
       );
       if (["event.run.completed", "event.run.failed", "event.run.cancelled"].includes(event.type)) {
         recoveredSubscription?.stop();
@@ -1985,6 +2085,7 @@ async function runRuntimeBackendChat(
       emitRuntimeOaepEvent(
         webContents, requestId, displaySessionId, activeRuntimeRunId, event, liveProjectionTarget,
         presentationItemForOaepEvent(state, event),
+        state.items.values(),
       );
       if (liveProjectionTarget.approvalId) {
         const responseTarget = chatTurns.get(requestId)?.runtime;
@@ -2409,7 +2510,30 @@ const ATTACHMENT_DISK_RESERVE_BYTES = 64 * 1024 * 1024;
 function emitRuntimeOaepEvent(
   webContents: ChatEventTarget, requestId: string, sessionId: string, runId: string,
   event: OaepEvent, target: RuntimeProjectionTarget, currentItem?: OaepItem,
+  authoritativeItems?: Iterable<OaepItem>,
 ): void {
+  // A run terminal is not itself a complete assistant message. Reconcile the
+  // canonical Session Item snapshots first so a dropped/spilled delta cannot
+  // become the final visible answer. part.completed replaces the streamed
+  // draft in the reducer, so this is idempotent and does not duplicate text.
+  if (["event.run.completed", "event.run.failed", "event.run.cancelled"].includes(event.type)) {
+    for (const item of authoritativeItems ?? []) {
+      if (item.run_id !== runId || item.type !== "message" || item.content.role !== "assistant") continue;
+      const synthetic: OaepEvent = {
+        ...event,
+        event_id: `${event.event_id}:final-item:${item.id}`,
+        type: ["event.run.failed", "event.run.cancelled"].includes(event.type)
+          ? event.type.replace("event.run.", "event.item.") as OaepEvent["type"]
+          : "event.item.completed",
+        item_id: item.id,
+        dedupe_key: `${event.dedupe_key}:final-item:${item.id}`,
+        data: { ...event.data, item },
+      } as OaepEvent;
+      for (const mapped of mapRuntimeOaepEvent(requestId, sessionId, runId, synthetic, target, item)) {
+        emit(webContents, mapped);
+      }
+    }
+  }
   for (const mapped of mapRuntimeOaepEvent(requestId, sessionId, runId, event, target, currentItem)) {
     emit(webContents, mapped);
   }

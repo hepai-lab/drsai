@@ -1567,6 +1567,14 @@ async def run_agent_through_kernel(
         return DesktopApprovalResult(str(payload["approval_id"]), str(payload["call_id"]), decision)
 
     checkpoint = AgentKernelCheckpointPort(agent)
+    # Bind the Agent to its model client for this Run so the model port can
+    # resolve turn-scoped knobs (reasoning effort) at request time. The Agent
+    # is cached per (user, session), so binding by attribute is idempotent for
+    # later turns reusing the same pair.
+    try:
+        agent._model_client._desktop_agent = agent
+    except Exception:  # pragma: no cover - exotic client wrappers
+        pass
     model = AutogenDesktopModelPort(
         agent._model_client, all_tools,
         assistant_name=str(getattr(agent, "name", "OpenDrSai")),

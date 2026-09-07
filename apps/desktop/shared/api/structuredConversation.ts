@@ -8,10 +8,16 @@ export type StructuredTurnStatus = "pending" | "running" | "completed" | "error"
 interface StructuredPartBase {
   id: string;
   status: StructuredPartStatus;
+  /** Sequence of the first event that introduced this part. */
+  sequence?: number;
 }
 
 export interface MarkdownPart extends StructuredPartBase {
   kind: "markdown";
+  /** answer is user-facing final output; process is intermediate output. */
+  channel?: "process" | "answer";
+  /** Set only after the backend/reconciler has sealed the final answer. */
+  final?: boolean;
   markdown: string;
   citationIds?: string[];
   resourceRef?: OaepResourceRef;
@@ -21,6 +27,8 @@ export interface MarkdownPart extends StructuredPartBase {
 
 export interface ReasoningSegment {
   id: string;
+  /** Structured event order for stable interleaving with activities. */
+  sequence?: number;
   text: string;
   status: StructuredPartStatus;
   source?: string;
@@ -151,6 +159,10 @@ export type StructuredAssistantPart =
 
 interface ActivityEventBase {
   id: string;
+  /** Structured event order for stable interleaving with reasoning. */
+  sequence?: number;
+  /** Stable child identity when the activity belongs to a subagent. */
+  subtaskId?: string;
   /** Present only when this activity is projected from a durable OAEP Item. */
   oaepItemId?: string;
   turnId: string;
@@ -266,6 +278,8 @@ export interface StructuredTurnState {
   lastSequence: number;
   seenDedupeKeys: string[];
   protocolIssues: StructuredProtocolIssue[];
+  /** Terminal state is monotonic; late deltas must not reopen the turn. */
+  sealed?: boolean;
   meta?: StructuredTurnMeta;
   error?: { message: string; code?: string; debugRef?: string };
 }
@@ -394,7 +408,10 @@ export function migrateLegacyMessageToStructuredTurn(message: LegacyConversation
     version: STRUCTURED_CONVERSATION_VERSION,
     turnId,
     status: message.error ? "error" : message.streaming ? "running" : "completed",
-    parts: dedupeParts(parts),
+    sealed: !message.streaming,
+    parts: dedupeParts(parts).map((part) => part.kind === "markdown"
+      ? { ...part, channel: "answer" as const, final: !message.streaming && !message.error }
+      : part),
     activities,
     lastSequence: 0,
     seenDedupeKeys: [],
@@ -444,6 +461,7 @@ export function sanitizeStructuredTurnState(raw: unknown): StructuredTurnState |
     lastSequence,
     seenDedupeKeys,
     protocolIssues,
+    ...(value.sealed === true ? { sealed: true } : {}),
     ...(value.meta ? { meta: sanitizeStructuredMeta(value.meta) } : {}),
     ...(value.error && typeof value.error.message === "string"
       ? {
@@ -467,6 +485,7 @@ export function createStructuredTurnState(turnId: string): StructuredTurnState {
     lastSequence: 0,
     seenDedupeKeys: [],
     protocolIssues: [],
+    sealed: false,
   };
 }
 
@@ -509,6 +528,7 @@ export function applyStructuredConversationEvent(
       sequence: event.sequence,
     });
   }
+  if (state.sealed) return state;
   if (state.seenDedupeKeys.includes(event.dedupeKey) || event.sequence <= state.lastSequence) return state;
 
   let next: StructuredTurnState = {
@@ -534,19 +554,40 @@ export function applyStructuredConversationEvent(
     case "turn.resumed":
       return { ...next, status: "running", meta: { ...next.meta, queuePosition: undefined, waitingReason: undefined } };
     case "part.started":
-      return startPart(next, event.part, event.sequence);
+      return startPartWithRelatedActivities(next, event.part, event.sequence);
     case "part.delta":
       return applyPartDelta(next, event.partId, event.delta, event.sequence);
     case "part.completed":
       return completePart(next, event.part, event.sequence);
-    case "activity.updated":
-      return { ...next, activities: upsertById(next.activities, event.activity) };
+    case "activity.updated": {
+      const activity = event.activity;
+      let updatedParts = next.parts;
+      if (activity.subtaskId) {
+        updatedParts = next.parts.map((part) => {
+          if (part.kind !== "subtask" || part.taskId !== activity.subtaskId) return part;
+          return {
+            ...part,
+            activities: upsertById(part.activities ?? [], { ...activity, sequence: event.sequence }),
+          };
+        });
+      }
+      return { ...next, activities: upsertById(next.activities, { ...activity, sequence: event.sequence }), parts: updatedParts };
+    }
     case "turn.completed":
-      return { ...next, status: "completed", meta: { ...next.meta, ...event.meta } };
+      return {
+        ...next,
+        status: "completed",
+        sealed: true,
+        parts: next.parts.map((part) => part.kind === "markdown" && (part.channel ?? "answer") === "answer"
+          ? { ...part, final: true }
+          : part),
+        meta: { ...next.meta, ...event.meta },
+      };
     case "turn.cancelled":
       return {
         ...next,
         status: "cancelled",
+        sealed: true,
         parts: next.parts.map((part) => part.status === "running" || part.status === "pending"
           ? { ...part, status: "cancelled" }
           : part),
@@ -555,6 +596,7 @@ export function applyStructuredConversationEvent(
       return {
         ...next,
         status: "error",
+        sealed: true,
         error: {
           message: event.message,
           ...(event.code ? { code: event.code } : {}),
@@ -613,12 +655,41 @@ export function isStructuredAssistantPart(part: unknown): part is StructuredAssi
 }
 
 function startPart(state: StructuredTurnState, part: StructuredAssistantPart, _sequence: number): StructuredTurnState {
-  return { ...state, parts: upsertById(state.parts, part) };
+  return { ...state, parts: upsertById(state.parts, { ...part, sequence: part.sequence ?? _sequence }) };
+}
+
+function startPartWithRelatedActivities(state: StructuredTurnState, part: StructuredAssistantPart, sequence: number): StructuredTurnState {
+  const next = startPart(state, part, sequence);
+  if (part.kind !== "subtask") return next;
+  const related = next.activities.filter((activity) => activity.subtaskId === part.taskId);
+  if (!related.length) return next;
+  return {
+    ...next,
+    parts: next.parts.map((item) => item.kind === "subtask" && item.id === part.id
+      ? { ...item, activities: related }
+      : item),
+  };
 }
 
 function completePart(state: StructuredTurnState, part: StructuredAssistantPart, _sequence: number): StructuredTurnState {
+  const existing = state.parts.find((item) => item.id === part.id);
   const status = part.status === "pending" || part.status === "running" ? "completed" : part.status;
-  return { ...state, parts: upsertById(state.parts, { ...part, status }) };
+  if (!existing || existing.kind !== part.kind) {
+    return { ...state, parts: upsertById(state.parts, { ...part, status, sequence: part.sequence ?? _sequence }) };
+  }
+  if (existing.kind === "subtask" && part.kind === "subtask") {
+    const merged: SubtaskPart = {
+      ...existing,
+      ...part,
+      status,
+      reasoningSegments: part.reasoningSegments ?? existing.reasoningSegments,
+      activities: part.activities ?? existing.activities,
+      markdownSummary: part.markdownSummary ?? existing.markdownSummary,
+    };
+    return { ...state, parts: upsertById(state.parts, merged) };
+  }
+  const merged = { ...existing, ...part, status } as StructuredAssistantPart;
+  return { ...state, parts: upsertById(state.parts, merged) };
 }
 
 function applyPartDelta(
@@ -632,7 +703,7 @@ function applyPartDelta(
     return appendIssue(state, { code: "missing_part", message: `Part ${partId} was not started.`, sequence });
   }
   const part = state.parts[partIndex];
-  const updated = updatePartWithDelta(part, delta);
+  const updated = updatePartWithDelta(part, delta, sequence);
   if (!updated) {
     return appendIssue(state, {
       code: "invalid_delta",
@@ -646,9 +717,9 @@ function applyPartDelta(
   };
 }
 
-function updatePartWithDelta(part: StructuredAssistantPart, delta: StructuredPartDelta): StructuredAssistantPart | null {
+function updatePartWithDelta(part: StructuredAssistantPart, delta: StructuredPartDelta, sequence: number): StructuredAssistantPart | null {
   if (part.kind === "markdown" && delta.kind === "markdown.append") {
-    return { ...part, markdown: `${part.markdown}${delta.text}`, status: "running" };
+    return { ...part, channel: part.channel ?? "answer", markdown: `${part.markdown}${delta.text}`, status: "running", final: false };
   }
   if (part.kind === "markdown" && delta.kind === "markdown.citations") {
     return { ...part, citationIds: dedupeStrings([...(part.citationIds ?? []), ...delta.citationIds]) };
@@ -658,6 +729,7 @@ function updatePartWithDelta(part: StructuredAssistantPart, delta: StructuredPar
     const segments = index === -1
       ? [...part.segments, {
           id: delta.segmentId,
+          sequence,
           text: delta.text,
           status: "running" as const,
           ...(delta.source ? { source: delta.source } : {}),
@@ -689,6 +761,7 @@ function updatePartWithDelta(part: StructuredAssistantPart, delta: StructuredPar
     const updatedSegments = index === -1
       ? [...segments, {
           id: delta.segmentId,
+          sequence,
           text: delta.text,
           status: "running" as const,
           ...(delta.source ? { source: delta.source } : {}),
@@ -811,6 +884,8 @@ function sanitizeStructuredPart(part: StructuredAssistantPart): StructuredAssist
   if (part.kind === "markdown") return {
     ...base,
     kind: part.kind,
+    ...(part.channel ? { channel: part.channel } : {}),
+    ...(part.final ? { final: true } : {}),
     markdown: part.markdown.slice(0, 200_000),
     ...(part.citationIds ? { citationIds: sanitizeRelationIds(part.citationIds) } : {}),
   };
@@ -883,6 +958,7 @@ function sanitizeStructuredPart(part: StructuredAssistantPart): StructuredAssist
       ...(part.summary ? { summary: part.summary.slice(0, 20_000) } : {}),
       ...(part.reasoningSegments ? { reasoningSegments: part.reasoningSegments.slice(0, 16).map((segment) => ({
         id: segment.id.slice(0, 200),
+        ...(Number.isSafeInteger(segment.sequence) ? { sequence: segment.sequence } : {}),
         text: segment.text.slice(0, 40_000),
         status: segment.status,
         ...(segment.source ? { source: segment.source.slice(0, 200) } : {}),
@@ -904,9 +980,12 @@ function sanitizeStructuredPart(part: StructuredAssistantPart): StructuredAssist
 
 function sanitizeStructuredActivity(activity: StructuredActivityEvent): StructuredActivityEvent {
   const base = {
-    id: activity.id.slice(0, 200), turnId: activity.turnId.slice(0, 200),
+    id: activity.id.slice(0, 200),
+    ...(Number.isSafeInteger(activity.sequence) ? { sequence: activity.sequence } : {}),
+    turnId: activity.turnId.slice(0, 200),
     timestamp: activity.timestamp.slice(0, 80), source: activity.source.slice(0, 200),
     status: activity.status, title: activity.title.slice(0, 1_000),
+    ...(activity.subtaskId ? { subtaskId: activity.subtaskId.slice(0, 200) } : {}),
   };
   if (activity.kind === "tool") return {
     ...base, kind: activity.kind, toolName: activity.toolName.slice(0, 300), callId: activity.callId.slice(0, 200),

@@ -193,6 +193,7 @@ class DesktopAgentBackend:
             work_dir=str(context.workspace_path),
             workspace_id=context.workspace_id,
             cancellation_token=cancellation,
+            reasoning_effort=definition.reasoning_effort,
             plan_mode=context.plan_mode,
         )
         if self._runner is not None:

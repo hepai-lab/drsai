@@ -63,8 +63,14 @@ class StubBackend:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
         self.hold = False
+        self.calls: list[dict[str, Any]] = []
 
     async def execute(self, context, definition, prompt, services) -> dict[str, Any]:
+        self.calls.append({
+            "context": context,
+            "definition": definition,
+            "prompt": prompt,
+        })
         services.emit(context, "agent.started", {"backend": self.backend_id})
         self.started.set()
         if self.hold:
@@ -364,6 +370,54 @@ def test_execute_returns_202_without_the_answer(client, session) -> None:
     assert payload["accepted"] is True
     assert "Hello, world" not in json.dumps(payload)
     assert payload["events"].endswith("/oaep-events/stream")
+
+
+def test_execute_forwards_explicit_model_reasoning_and_plan_fields(client, session, backend) -> None:
+    run = client.post(
+        f"/v1/sessions/{session['session_id']}/runs", json={"idempotency_key": "k-options-explicit"},
+    ).json()
+    response = client.post(
+        f"/v1/runs/{run['run_id']}/execute",
+        json={
+            "prompt": "hi",
+            "model_alias": "deepseek-v4-pro",
+            "reasoning_effort": "high",
+            "plan_mode": True,
+            "metadata": {
+                "model": "ignored-model",
+                "reasoning_effort": "low",
+                "plan_mode": False,
+            },
+        },
+        params={"wait": True},
+    )
+    assert response.status_code == 200, response.text
+    assert len(backend.calls) == 1
+    definition = backend.calls[0]["definition"]
+    assert definition.model == "deepseek-v4-pro"
+    assert definition.reasoning_effort == "high"
+    assert backend.calls[0]["context"].plan_mode is True
+
+
+def test_execute_accepts_reasoning_and_plan_from_metadata(client, session, backend) -> None:
+    run = client.post(
+        f"/v1/sessions/{session['session_id']}/runs", json={"idempotency_key": "k-options-metadata"},
+    ).json()
+    response = client.post(
+        f"/v1/runs/{run['run_id']}/execute",
+        json={
+            "prompt": "hi",
+            "model": "deepseek-v4-pro",
+            "metadata": {"reasoning_effort": "max", "plan_mode": True},
+        },
+        params={"wait": True},
+    )
+    assert response.status_code == 200, response.text
+    assert len(backend.calls) == 1
+    definition = backend.calls[0]["definition"]
+    assert definition.model == "deepseek-v4-pro"
+    assert definition.reasoning_effort == "max"
+    assert backend.calls[0]["context"].plan_mode is True
 
 
 def test_the_answer_arrives_on_the_session_stream(client, session) -> None:

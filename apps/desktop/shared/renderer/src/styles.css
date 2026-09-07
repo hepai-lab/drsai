@@ -5644,7 +5644,38 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
 .structured-process > summary::-webkit-details-marker { display: none; }
 .structured-process > summary svg { flex: 0 0 auto; transition: transform 140ms ease; }
 .structured-process[open] > summary svg { transform: rotate(180deg); }
-.structured-process-content { display: grid; gap: 10px; padding: 10px 12px 14px; border-top: 1px solid var(--app-panel-border); }
+.structured-process-content {
+  display: block;
+  max-height: min(60vh, 640px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  contain: content;
+  padding: 10px 12px 14px;
+  border-top: 1px solid var(--app-panel-border);
+}
+/* The process disclosure owns the only scroll viewport. Do not create a
+   second nested scrollbar for the interleaved stream. */
+.structured-process-timeline {
+  min-width: 0;
+}
+.structured-process-timeline .structured-timeline-window {
+  min-width: 0;
+  overflow: visible;
+  padding-right: 4px;
+}
+.structured-process-timeline .structured-timeline-item {
+  min-width: 0;
+}
+.structured-process-timeline .structured-timeline-item > .structured-reasoning {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.structured-process-timeline .structured-reasoning .chat-reasoning-content {
+  max-height: none;
+  overflow: visible;
+}
 .structured-process-section { display: grid; gap: 6px; }
 .structured-process-overview { display: flex; align-items: center; gap: 7px; color: var(--app-text-secondary); font-size: 12px; }
 .structured-process-overview svg { flex: 0 0 auto; color: var(--app-success-text, #15803d); }
@@ -6031,6 +6062,26 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
 .structured-subtask-activities {
   border-radius: var(--app-chip-radius);
   font-size: 11px;
+  min-width: 0;
+}
+.structured-subtask-reasoning-window,
+.structured-subtask-activity-list {
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.structured-subtask-reasoning-window {
+  display: grid;
+  gap: 3px;
+  padding-right: 3px;
+}
+.structured-subtask-reasoning-window > .structured-subtask-reasoning-segment {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.structured-subtask-activity-list {
+  padding-right: 3px;
 }
 .structured-subtask-reasoning > summary,
 .structured-subtask-activities > summary {
@@ -6080,8 +6131,13 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
   flex: 0 0 auto;
 }
 .structured-subtask-markdown {
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 4px 6px;
   margin-top: 2px;
+  overflow-wrap: anywhere;
 }
 .structured-subtask-markdown > .chat-output {
   font-size: 11px;

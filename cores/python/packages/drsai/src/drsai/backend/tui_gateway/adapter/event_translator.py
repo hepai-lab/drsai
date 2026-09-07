@@ -421,6 +421,7 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
             }
             if is_sub:
                 payload["source"] = msg_source
+                payload["subagent_id"] = msg_source[4:]
                 payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
             out.append(("tool.start", payload))
         return out
@@ -459,6 +460,7 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
                 payload["inspection"] = dict(decoded_result["_inspection"])
             if is_sub:
                 payload["source"] = msg_source
+                payload["subagent_id"] = msg_source[4:]
                 payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
             out.append(("tool.complete", payload))
         return out

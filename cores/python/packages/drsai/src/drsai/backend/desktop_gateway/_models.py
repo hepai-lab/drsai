@@ -55,6 +55,11 @@ class RunCreateRequest(BaseModel):
 class RunExecuteRequest(BaseModel):
     prompt: str
     model_alias: str | None = None
+    # ``model`` is the Runtime client's spelling.  Keep both names accepted
+    # while the Desktop surface is migrated to the canonical model_alias name.
+    model: str | None = None
     user_id: str | None = None
     source_message_id: str | None = None
+    reasoning_effort: str | None = None
+    plan_mode: bool | None = None
     metadata: dict[str, Any] | None = None

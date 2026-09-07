@@ -174,6 +174,7 @@ class DesktopAgentManager:
         work_dir: str | None = None,
         workspace_id: str | None = None,
         cancellation_token: Any = None,
+        reasoning_effort: str | None = None,
         plan_mode: bool = False,
     ):
         """Drive one turn, yielding raw autogen events.
@@ -204,6 +205,13 @@ class DesktopAgentManager:
                 agent.inject_system_prompt(
                     prefix=PLAN_MODE_SYSTEM_PROMPT if plan_mode else ""
                 )
+            # Reasoning is applied per turn because the Agent is cached per
+            # session.  Never let a previous turn's effort leak into a later
+            # turn when the setting is cleared.
+            if hasattr(agent, "_reasoning_effort"):
+                agent._reasoning_effort = reasoning_effort
+            elif reasoning_effort is not None:
+                logger.debug("Agent does not expose _reasoning_effort; ignoring requested effort")
             await self._set_status(session_id, uid, RunStatus.ACTIVE)
             # The Workspace binding is turn-scoped: one long-lived Agent serves
             # many Runs, and a leaked workspace path would let a later Run write
