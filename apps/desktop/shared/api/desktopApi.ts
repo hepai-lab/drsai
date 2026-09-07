@@ -5950,6 +5950,8 @@ export interface DesktopApi {
   testKnowledgeBase(knowledgeId: string): Promise<{ ok: boolean; knowledge_id: string; type: string; status?: string; dataset_count?: number }>;
   searchKnowledgeBase(knowledgeId: string, query: string): Promise<{ knowledge_id: string; query: string; evidence: KnowledgeSearchEvidence[] }>;
   listKnowledgeBases(): Promise<KnowledgeBaseResource[]>;
+  discoverRagflowDatasets(credential: string): Promise<{ datasets: Array<{ id: string; name: string; chunk_count: number; document_count: number; status: string }> }>;
+  rediscoverRagflowDatasets(): Promise<{ datasets: Array<{ id: string; name: string; chunk_count: number; document_count: number; status: string }> }>;
   listPerceptors(): Promise<PerceptorResource[]>;
   getWebSearchProviderPolicy(): Promise<WebSearchProviderPolicy>;
   updateWebSearchProviderPolicy(mode: WebSearchProviderMode): Promise<WebSearchProviderPolicy>;
@@ -5959,6 +5961,9 @@ export interface DesktopApi {
   deletePerceptor(perceptorId: string): Promise<{ status: string; perceptor_id: string }>;
   createKnowledgeBase(request: SaveKnowledgeBaseRequest): Promise<KnowledgeBaseResource>;
   deleteKnowledgeBase(knowledgeId: string): Promise<{ status: string }>;
+  listKnowledgeBaseFiles(knowledgeId: string): Promise<{ knowledge_id: string; data: Array<{ document_id: string; source: string; title: string; status: string; detail: string; chunk_count: number; sha256: string; mtime: number; size: number }> }>;
+  checkKnowledgeBaseStale(knowledgeId: string): Promise<{ knowledge_id: string; stale: boolean; changed: Array<{ source: string }>; added: Array<{ source: string }>; removed: Array<{ source: string }>; error?: string }>;
+  refreshKnowledgeBaseIfStale(knowledgeId: string): Promise<{ knowledge_id: string; stale?: boolean; status?: string }>;
   getMyDrSaiAgentModelCapabilityStatus(agentId?: string): Promise<AgentModelCapabilityStatus>;
   updateMyDrSaiAgentModelPolicy(agentId: string, policy: AgentModelPolicy): Promise<MyDrSaiAgentModelPolicy>;
   migrateMyDrSaiAgentModelPolicy(agentId: string, legacyModel: string, expectedRevision?: string): Promise<MyDrSaiAgentModelPolicy>;

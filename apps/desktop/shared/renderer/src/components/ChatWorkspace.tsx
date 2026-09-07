@@ -108,6 +108,7 @@ import { ThreadActivityBubble } from "./ThreadActivityBubble";
 import { StructuredMessageParts, type InteractionResponse } from "./StructuredMessageParts";
 import { getReasoningChatText, getVisibleChatText, stripAgentToolDebugText } from "../chatOutputModel";
 import { createSmoothFollowOutputController } from "../smoothFollowOutput";
+import { KnowledgeBaseSelector } from "./KnowledgeBaseSelector";
 import { VoiceCaptureBar } from "./voice/VoiceCaptureBar";
 import { VoiceReviewBar } from "./voice/VoiceReviewBar";
 import {
@@ -4209,6 +4210,10 @@ function ChatWorkspaceImpl({
                   </span>
                 </div>
               )}
+              <KnowledgeBaseSelector
+                agentId={selectedAgentId ?? ""}
+                language={language}
+              />
               <div className="composer-meta-item composer-configuration" data-meta-menu="configuration">
                 <button
                   className="composer-meta-chip composer-meta-button composer-configuration-trigger"

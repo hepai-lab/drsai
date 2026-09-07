@@ -197,6 +197,7 @@ import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, d
   savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, // V2: trimmed — testMyDrSaiModelProvider,
   testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../shared/main/myDrSaiConfig";
 import { getWebSearchProviderPolicy, updateWebSearchProviderPolicy } from "../../../shared/main/myDrSaiConfig";
+import { checkKnowledgeBaseStale, discoverRagflowDatasets, listKnowledgeBaseFiles, rediscoverRagflowDatasets, refreshKnowledgeBaseIfStale } from "../../../shared/main/myDrSaiConfig";
 import {
   assertExecutionAllowed,
   getDesktopExecutionPolicy,
@@ -5774,6 +5775,11 @@ function registerIpc(): void {
   secureHandle("desktop:delete-perceptor", (_event, perceptorId) => deletePerceptor(perceptorId));
   secureHandle("desktop:create-knowledge-base", (_event, request: Parameters<typeof createKnowledgeBase>[0]) => createKnowledgeBase(request));
   secureHandle("desktop:delete-knowledge-base", (_event, knowledgeId: string) => deleteKnowledgeBase(knowledgeId));
+  secureHandle("desktop:list-knowledge-base-files", (_event, knowledgeId: string) => listKnowledgeBaseFiles(knowledgeId));
+  secureHandle("desktop:check-knowledge-base-stale", (_event, knowledgeId: string) => checkKnowledgeBaseStale(knowledgeId));
+  secureHandle("desktop:refresh-knowledge-base-if-stale", (_event, knowledgeId: string) => refreshKnowledgeBaseIfStale(knowledgeId));
+  secureHandle("desktop:discover-ragflow-datasets", (_event, credential: string) => discoverRagflowDatasets(credential));
+  secureHandle("desktop:rediscover-ragflow-datasets", () => rediscoverRagflowDatasets());
   secureHandle("desktop:get-my-drsai-agent-model-capability-status", (_event, agentId?: string) => getMyDrSaiAgentModelCapabilityStatus(agentId));
   secureHandle("desktop:update-my-drsai-agent-model-policy", (_event, agentId: string, policy: unknown) => updateMyDrSaiAgentModelPolicy(agentId, policy));
   secureHandle("desktop:migrate-my-drsai-agent-model-policy", (_event, agentId: string, legacyModel: string, expectedRevision?: string) => migrateMyDrSaiAgentModelPolicy(agentId, legacyModel, expectedRevision));

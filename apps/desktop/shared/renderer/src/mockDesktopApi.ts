@@ -2441,6 +2441,11 @@ export function installMockDesktopApi(): void {
     createKnowledgeBase: async (request) => ({ ...request, status: "not_indexed" }),
     deleteKnowledgeBase: async () => ({ status: "ok" }),
     getMyDrSaiAgentModelCapabilityStatus: async (agentId = "opendrsai") => ({ agent_id: agentId, capabilities: [] }),
+    discoverRagflowDatasets: async (credential) => ({ datasets: [{ id: "ds-1", name: "Mock Dataset", chunk_count: 100, document_count: 5, status: "ready" }] }),
+    rediscoverRagflowDatasets: async () => ({ datasets: [] }),
+    listKnowledgeBaseFiles: async (knowledgeId) => ({ knowledge_id: knowledgeId, data: [] }),
+    checkKnowledgeBaseStale: async (knowledgeId) => ({ knowledge_id: knowledgeId, stale: false, changed: [], added: [], removed: [] }),
+    refreshKnowledgeBaseIfStale: async (knowledgeId) => ({ knowledge_id: knowledgeId, stale: false, status: "unchanged" }),
     updateMyDrSaiAgentModelPolicy: async (agentId, policy) => ({ ...policy, agent_id: agentId, effective_ref: policy.primary_model.ref, revision: `sha256:${"b".repeat(64)}`, valid: true }),
     migrateMyDrSaiAgentModelPolicy: async (agentId, legacyModel) => ({ agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: legacyModel } }, image_understanding_model: null, image_generation_model: null, text_to_speech_model: null, realtime_voice_model: null, speech_to_text_model: null, effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: legacyModel }, revision: `sha256:${"c".repeat(64)}`, valid: true, migrated: true }),
     updateMyDrSaiConfig: async (request): Promise<MyDrSaiConfig> => {

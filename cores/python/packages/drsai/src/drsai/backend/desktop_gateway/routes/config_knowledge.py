@@ -39,12 +39,15 @@ from drsai.config import (
     delete_knowledge_resource,
     get_knowledge_resource,
     index_local_files,
+    knowledge_corpus_state,
     knowledge_resource_payload,
     knowledge_status,
     list_agent_names,
+
     list_knowledge_resources,
     load_agent_runtime_policy,
     put_knowledge_resource,
+
     resolve_credential,
     search_local_knowledge,
     store_credential,
@@ -80,11 +83,39 @@ class KnowledgeSearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=8000)
     top_k: int = Field(default=6, ge=1, le=50)
     score_threshold: float = Field(default=0.0, ge=0, le=1)
+    keyword: bool = Field(default=True, description="Enable keyword search (RAGFlow hybrid)")
+    rerank_id: str = Field(default="hepai/bge-reranker-v2-m3___OpenAI-API@OpenAI-API-Compatible", description="Rerank model for RAGFlow")
+    cross_languages: list[str] = Field(default=["English", "Chinese"], description="Cross-language retrieval for RAGFlow")
 
 
 # =============================================================================
 # Knowledge-config helpers  (adapted from gateway_legacy.py L10533-L10559)
 # =============================================================================
+
+def _resolve_ragflow_token(config_dir: Path, resource: KnowledgeResource) -> str | None:
+    config = dict(resource.config or {})
+    credential_ref = config.get("credential_ref") or ""
+    try:
+        token = resolve_credential(str(credential_ref)) if credential_ref else None
+    except Exception:
+        token = None
+    if token:
+        return token
+    base_url = config.get("base_url")
+    if not base_url:
+        return None
+    for candidate in list_knowledge_resources(config_dir):
+        if candidate.knowledge_id == resource.knowledge_id or candidate.type != "ragflow" or candidate.config.get("base_url") != base_url:
+            continue
+        reference = candidate.config.get("credential_ref") or ""
+        if reference:
+            try:
+                token = resolve_credential(str(reference))
+            except Exception:
+                token = None
+            if token:
+                return token
+    return None
 
 def _knowledge_agent_references(knowledge_id: str) -> list[dict[str, str]]:
     """List agents whose runtime policy references *knowledge_id*."""
@@ -320,3 +351,104 @@ async def search_knowledge_base(knowledge_id: str, req: KnowledgeSearchRequest, 
 
 def router() -> APIRouter:
     return api
+@api.get("/v1/config/knowledge-bases/{knowledge_id}/files", operation_id="listKnowledgeBaseFiles")
+async def list_knowledge_base_files(knowledge_id: str, user_id: str | None = Query(default=None)):
+    """Return the list of documents indexed in a local-files Knowledge Base."""
+    config_dir = _get_config_dir(user_id)
+    try:
+        resource = await asyncio.to_thread(get_knowledge_resource, config_dir, knowledge_id)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if resource.type != "local-files":
+        raise HTTPException(status_code=400, detail="Only local-files Knowledge Bases support document listing")
+    try:
+        state = await asyncio.to_thread(knowledge_corpus_state, config_dir, resource)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"knowledge_id": knowledge_id, "data": state.get("documents", [])}
+
+
+@api.get("/v1/config/knowledge-bases/{knowledge_id}/stale", operation_id="checkKnowledgeBaseStale")
+async def check_knowledge_base_stale(knowledge_id: str, user_id: str | None = Query(default=None)):
+    """Check whether a local-files Knowledge Base has out-of-date indexing."""
+    config_dir = _get_config_dir(user_id)
+    try:
+        resource = await asyncio.to_thread(get_knowledge_resource, config_dir, knowledge_id)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if resource.type != "local-files":
+        raise HTTPException(status_code=400, detail="Only local-files Knowledge Bases support stale checks")
+    try:
+        state = await asyncio.to_thread(knowledge_corpus_state, config_dir, resource)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "knowledge_id": knowledge_id,
+        "stale": not state.get("corpus_complete", False),
+        "changed": [],
+        "added": [],
+        "removed": [],
+        "documents": state.get("documents", []),
+    }
+
+
+@api.post("/v1/config/knowledge-bases/{knowledge_id}/refresh-if-stale", operation_id="refreshKnowledgeBaseIfStale")
+async def refresh_knowledge_base_if_stale(knowledge_id: str, user_id: str | None = Query(default=None)):
+    """Re-index a local-files Knowledge Base only if it is stale."""
+    config_dir = _get_config_dir(user_id)
+    try:
+        resource = await asyncio.to_thread(get_knowledge_resource, config_dir, knowledge_id)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if resource.type != "local-files":
+        raise HTTPException(status_code=400, detail="Only local-files Knowledge Bases support refresh")
+    try:
+        state = await asyncio.to_thread(knowledge_corpus_state, config_dir, resource)
+    except ModelProviderConfigError:
+        pass
+    else:
+        if state.get("corpus_complete", False):
+            return {"knowledge_id": knowledge_id, "stale": False, "status": "unchanged"}
+    result = await asyncio.to_thread(index_local_files, config_dir, resource)
+    return {"knowledge_id": knowledge_id, "stale": False, "status": result.get("status", "ready")}
+
+
+@api.get("/v1/config/knowledge-bases/ragflow/discover", operation_id="rediscoverRagflowDatasets")
+async def rediscover_ragflow_datasets(user_id: str | None = Query(default=None)):
+    """Discover new RAGFlow datasets from all configured RAGFlow KB credentials."""
+    config_dir = _get_config_dir(user_id)
+    resources = await asyncio.to_thread(list_knowledge_resources, config_dir)
+    ragflow_resources = [r for r in resources if r.type == "ragflow"]
+    if not ragflow_resources:
+        return {"datasets": []}
+    all_datasets: list[dict[str, object]] = []
+    seen_ids: set[str] = set()
+    for resource in ragflow_resources:
+        config = dict(resource.config or {})
+        token = _resolve_ragflow_token(config_dir, resource)
+        if not token:
+            continue
+        base_url = config.get("base_url", "")
+        if not base_url:
+            continue
+        try:
+            from drsai.modules.components.memory.ragflow_memory import RAGFlowMemoryManager
+            mgr = RAGFlowMemoryManager(str(base_url), token)
+            datasets = await mgr.list_datasets()
+            for row in datasets if isinstance(datasets, list) else []:
+                if not isinstance(row, Mapping):
+                    continue
+                ds_id = str(row.get("id") or "")
+                if ds_id in seen_ids:
+                    continue
+                seen_ids.add(ds_id)
+                all_datasets.append({
+                    "id": ds_id,
+                    "name": str(row.get("name") or row.get("title") or ""),
+                    "chunk_count": int(row.get("chunk_count") or 0),
+                    "document_count": int(row.get("document_count") or 0),
+                    "status": str(row.get("status") or ""),
+                })
+        except Exception:
+            continue
+    return {"datasets": all_datasets}
