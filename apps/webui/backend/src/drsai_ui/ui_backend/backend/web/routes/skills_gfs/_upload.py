@@ -16,6 +16,22 @@ from ._skillmd import _parse_skill_md, _profile_safe_ext, _read_file_from_zip, _
 from ..gfs_utils import gfs_ls, gfs_put
 from ...auth_source import get_display_name
 
+_VISIBILITY_VALUES = frozenset({"public", "private", "team"})
+
+
+def _resolve_visibility(visibility: str | None, type_hint: str | None = None) -> str:
+    """Public marketplace is opt-in. Missing/invalid visibility stays private.
+
+    `type=public` on the upload URL still maps to public so existing public
+    publish clients that omit the form field keep working.
+    """
+    vis = (visibility or "").strip().lower()
+    if vis in _VISIBILITY_VALUES:
+        return vis
+    if (type_hint or "").strip().lower() == "public":
+        return "public"
+    return "private"
+
 
 @router.post("/upload")
 async def upload_skill(
@@ -34,10 +50,13 @@ async def upload_skill(
     owner: str | None = Form(None),
     owner_id: str | None = Form(None),
     profile: UploadFile | None = File(None),
+    type: str | None = Query(None, description="public or user"),
 ) -> dict:
     """Upload a skill ZIP. Auth required."""
-    logger.info("[publish] upload_skill called slug=%s display_name=%s file=%s",
-                slug, display_name or name, file.filename if file else None)
+    logger.info(
+        "[publish] upload_skill called slug=%s display_name=%s file=%s visibility=%s type=%s",
+        slug, display_name or name, file.filename if file else None, visibility, type,
+    )
 
     auth_user_id = await _resolve_user_from_apikey(request)
     if not auth_user_id:
@@ -47,6 +66,7 @@ async def upload_skill(
     return await _upload_skill(
         file, auth_user_id, slug, display_name or name, icon, description,
         version, changelog, profile, tags, visibility, source, owner, owner_id,
+        type_hint=type,
     )
 
 
@@ -60,6 +80,7 @@ async def _upload_skill(
     source: str | None = None,
     owner: str | None = None,
     owner_id: str | None = None,
+    type_hint: str | None = None,
 ) -> dict:
     from ....datamodel.db import SkillMeta, SkillDetail
 
@@ -78,9 +99,7 @@ async def _upload_skill(
         final_description = (description or "").strip()
         final_version = (version or "").strip() or "0.0.0"
         final_changelog = (changelog or "").strip()
-        final_visibility = (visibility or "").strip().lower()
-        if final_visibility not in ("public", "private", "team"):
-            final_visibility = "private"
+        final_visibility = _resolve_visibility(visibility, type_hint)
 
         tag_input = (tags or "").strip()
         final_tags = []
@@ -243,11 +262,12 @@ async def _upload_skill(
         if not final_tags:
             final_tags = parsed.get("tags", [])
 
-        final_visibility = (visibility or "").strip().lower()
-        if final_visibility not in ("public", "private", "team"):
-            final_visibility = "public"
+        final_visibility = _resolve_visibility(visibility, type_hint)
 
-        _ensure_cache_zip("public", canon_slug, tmp_zip.name)
+        if final_visibility == "public":
+            _ensure_cache_zip("public", canon_slug, tmp_zip.name)
+        else:
+            _ensure_cache_zip("user", canon_slug, tmp_zip.name, user_id)
 
         db_mgr = await _get_db()
 

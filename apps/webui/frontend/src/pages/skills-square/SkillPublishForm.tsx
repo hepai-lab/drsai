@@ -12,8 +12,7 @@ import {
   Pencil,
   Star,
   Tags,
-  Upload,
-  X
+  Trash2,
 } from "lucide-react";
 import React from "react";
 import publishIllustration from "../../assets/publish-illustration.png";
@@ -117,7 +116,7 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
     reader.readAsDataURL(f);
   };
 
-  const PREVIEW_LIMIT = 80;
+  const PREVIEW_LIMIT = 200;
   const treeRows = React.useMemo(() => {
     if (!packPreviewEntries.length) return [];
     const dirs = new Set<string>();
@@ -169,9 +168,15 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
         className="animate-fade-in flex h-full flex-col overflow-hidden rounded-2xl border border-border-primary/20 bg-primary shadow-sm dark:border-white/8 dark:bg-white/[0.01]"
       >
         <div className="sticky top-0 z-10 flex items-center rounded-t-2xl border-b border-border-primary/20 bg-primary px-6 py-3.5 dark:border-white/8">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/12 text-accent dark:bg-accent/16">
-            <Upload className="h-4 w-4" aria-hidden />
-          </span>
+          <button
+            type="button"
+            disabled={skillUploading}
+            onClick={onCancel}
+            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-secondary transition-colors hover:bg-tertiary/40 hover:text-primary disabled:opacity-50"
+          >
+            <ArrowLeft className="h-4 w-4" aria-hidden />
+            {t("skillSquare.backBtn")}
+          </button>
           <div className="ml-3 text-sm font-semibold text-primary">
             {editingSkillId
               ? t("skillSquare.editSkill")
@@ -271,8 +276,8 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
                 </div>
               )}
               {hepaiPickPreview ? (
-                <>
-                  <div className="flex items-center gap-3">
+                <div className="flex min-h-0 flex-1 flex-col gap-2">
+                  <div className="flex shrink-0 items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent/10 text-accent shadow-sm ring-1 ring-accent/15 dark:bg-accent/16 dark:ring-accent/20">
                       <Package className="h-5 w-5" strokeWidth={1.75} aria-hidden />
                     </div>
@@ -286,18 +291,20 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
                     </div>
                     <button
                       type="button"
-                      className="ml-auto flex h-7 w-7 items-center justify-center rounded-lg text-secondary/50 transition-colors hover:bg-red-100 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                      className="ml-auto flex h-8 w-8 items-center justify-center rounded-lg text-secondary/70 transition-colors hover:bg-red-50 hover:text-red-500 dark:text-secondary/55 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                       onClick={() => onZipPicked(null)}
+                      title={t("skillSquare.removeZip")}
+                      aria-label={t("skillSquare.removeZip")}
                     >
-                      <X className="h-3.5 w-3.5" />
+                      <Trash2 className="h-4 w-4" strokeWidth={1.75} aria-hidden />
                     </button>
                   </div>
                   {visibleRows.length > 0 ? (
-                    <div>
-                      <div className="mb-1.5 text-[11px] font-medium text-secondary">
+                    <div className="flex min-h-0 flex-1 flex-col">
+                      <div className="mb-1.5 shrink-0 text-[11px] font-medium text-secondary">
                         {t("skillSquare.folderContents", packPreviewEntries.length)}
                       </div>
-                      <div className="max-h-56 overflow-auto rounded-xl border border-border-primary/15 bg-primary/60 px-1.5 py-1.5 dark:border-white/8 dark:bg-black/15">
+                      <div className="min-h-[280px] flex-1 overflow-auto rounded-xl border border-border-primary/15 bg-primary/60 px-1.5 py-1.5 dark:border-white/8 dark:bg-black/15">
                         {visibleRows.map((row, idx) => (
                           <div
                             key={`${row.isDir ? "d" : "f"}:${row.path}`}
@@ -340,10 +347,10 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
                       </div>
                     </div>
                   ) : null}
-                  <p className="text-xs leading-relaxed text-secondary/70">
+                  <p className="shrink-0 text-xs leading-relaxed text-secondary/70">
                     {t("skillSquare.replaceHint")}
                   </p>
-                </>
+                </div>
               ) : editingSkillId ? (
                 <span className="absolute top-12 left-0 right-0 z-10 mx-auto max-w-md text-center text-xs leading-relaxed text-secondary">
                   {t("skillSquare.keepZipHint")}
@@ -367,7 +374,7 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
                   onClick={() => hepaiZipInputRef.current?.click()}
                 >
                   <Package className="h-4 w-4" aria-hidden />
-                  {editingSkillId
+                  {hepaiPickPreview || editingSkillId
                     ? t("skillSquare.replaceZip")
                     : t("skillSquare.selectZip")}
                 </button>
@@ -534,9 +541,6 @@ const SkillPublishForm: React.FC<SkillPublishFormProps> = ({
             <div className="flex items-center gap-3">
               <AntdButton type="primary" loading={skillUploading} disabled={skillUploading} onClick={onSubmit} icon={<Check className="h-4 w-4" aria-hidden />}>
                 {t("skillSquare.publishBtn")}
-              </AntdButton>
-              <AntdButton disabled={skillUploading} onClick={onCancel} icon={<ArrowLeft className="h-4 w-4" aria-hidden />}>
-                {t("skillSquare.backBtn")}
               </AntdButton>
             </div>
           </div>
