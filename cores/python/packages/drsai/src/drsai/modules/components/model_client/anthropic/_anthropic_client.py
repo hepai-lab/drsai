@@ -117,7 +117,50 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
 
     async def create(self, *args: Any, **kwargs: Any):
         self._bind_platform_auth()
-        return await super().create(*args, **kwargs)
+        # anthropic SDK ≥ 1.0 removed ``temperature``, ``top_p``, and
+        # ``top_k`` from the typed signature of ``AsyncMessages.create()``.
+        # The parent ``create()`` unconditionally adds ``temperature`` to
+        # request_args (and ``top_p``/``top_k`` when present), causing
+        # ``TypeError: AsyncMessages.create() got an unexpected keyword
+        # argument 'temperature'``.  We wrap the SDK's messages.create to
+        # redirect these removed params into ``extra_body`` (which the SDK
+        # merges into the HTTP body without strict validation).
+        _SDK_REMOVED_PARAMS = ("temperature", "top_p", "top_k")
+        original_messages_create = self._client.messages.create
+
+        def _param_redirect_create(*a: Any, **kw: Any) -> Any:
+            redirect: Dict[str, Any] = {}
+            for p in _SDK_REMOVED_PARAMS:
+                if p in kw:
+                    redirect[p] = kw.pop(p)
+            if redirect:
+                # Only pass temperature when thinking is NOT active
+                _thinking = kw.get("thinking")
+                _thinking_active = (
+                    isinstance(_thinking, Mapping)
+                    and _thinking.get("type") not in (None, "disabled")
+                )
+                if _thinking_active:
+                    redirect.pop("temperature", None)
+                if redirect:
+                    kw.setdefault("extra_body", {})
+                    if isinstance(kw["extra_body"], dict):
+                        kw["extra_body"].update(redirect)
+                    else:
+                        kw["extra_body"] = redirect
+            return original_messages_create(*a, **kw)
+
+        try:
+            object.__setattr__(self._client.messages, "create", _param_redirect_create)
+        except (AttributeError, TypeError):
+            self._client.messages.create = _param_redirect_create  # type: ignore
+        try:
+            return await super().create(*args, **kwargs)
+        finally:
+            try:
+                object.__setattr__(self._client.messages, "create", original_messages_create)
+            except (AttributeError, TypeError):
+                self._client.messages.create = original_messages_create  # type: ignore
 
     def _sanitize_anthropic_message(self, message: MessageParam) -> MessageParam:
         """Remove/repair empty Anthropic text blocks before sending.
@@ -249,11 +292,13 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
             raise ValueError("Model does not support function calling")
 
         # Set up the request
+        # NOTE: anthropic SDK ≥ 1.0 removed ``temperature``, ``top_p``, and
+        # ``top_k`` from the typed signature of ``AsyncMessages.create()``.
+        # They are routed via ``extra_body`` below instead.
         request_args: Dict[str, Any] = {
             "model": create_args["model"],
             "messages": anthropic_messages,
             "max_tokens": create_args.get("max_tokens", 4096),
-            "temperature": create_args.get("temperature", 1.0),
             "stream": True,
         }
 
@@ -275,9 +320,46 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
             request_args["tools"] = self._last_used_tools
 
         # Optional parameters
-        for param in ["top_p", "top_k", "stop_sequences", "metadata", "thinking", "output_config"]:
+        # NOTE: anthropic SDK ≥ 1.0 removed ``temperature``, ``top_p``, and
+        # ``top_k`` from the typed signature.  We route them via extra_body
+        # instead.  ``thinking`` and ``output_config`` are still typed kwargs.
+        _SDK_REMOVED_PARAMS = {"temperature", "top_p", "top_k"}
+        for param in ["temperature", "top_p", "top_k", "stop_sequences", "metadata", "thinking", "output_config"]:
             if param in create_args:
                 request_args[param] = create_args[param]
+
+        # ── temperature / top_p / top_k routing (anthropic SDK ≥ 1.0) ──
+        # The SDK removed these from the typed kwargs of
+        # ``AsyncMessages.create()``.  When extended thinking is active the
+        # API mandates temperature=1.0, so we omit it entirely.  Otherwise,
+        # pass removed params through ``extra_body`` which the SDK merges
+        # into the HTTP request body without strict validation.
+        _thinking_active = False
+        _thinking_cfg = request_args.get("thinking")
+        if isinstance(_thinking_cfg, Mapping):
+            _t = _thinking_cfg.get("type")
+            if _t and _t != "disabled":
+                _thinking_active = True
+
+        # Pop removed params from request_args and route via extra_body
+        _extra_body: Dict[str, Any] = {}
+        for _param in _SDK_REMOVED_PARAMS:
+            if _param in request_args:
+                _val = request_args.pop(_param)
+                if _param == "temperature":
+                    # Skip temperature when thinking is active (API requires 1.0)
+                    if _thinking_active or _val is None:
+                        continue
+                    _extra_body["temperature"] = _val
+                else:
+                    if _val is not None:
+                        _extra_body[_param] = _val
+        if _extra_body:
+            request_args.setdefault("extra_body", {})
+            if isinstance(request_args["extra_body"], dict):
+                request_args["extra_body"].update(_extra_body)
+            else:
+                request_args["extra_body"] = _extra_body
 
         # Prompt cache: Anthropic / Bedrock require cache_control to be attached
         # to a content block (system text or message content), NOT at the top
@@ -589,10 +671,17 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         # the SDK adds/removes typed parameters.
         sdk_kwargs: Dict[str, Any] = {}
         extra_body: Dict[str, Any] = {}
+        # NOTE: ``temperature`` was removed from the SDK's typed signature in
+        # anthropic ≥ 1.0.  It should already arrive via request_args["extra_body"]
+        # (set by create_stream_tmp), so we deliberately do NOT list it here.
         _SDK_KWARGS = {
             "max_tokens", "messages", "model", "metadata", "stop_sequences",
-            "system", "temperature", "thinking", "tool_choice", "tools",
-            "top_k", "top_p", "service_tier",
+            "system", "thinking", "tool_choice", "tools",
+            "service_tier",
+            # NOTE: ``temperature``, ``top_p``, ``top_k`` were removed from
+            # the SDK's typed signature in anthropic ≥ 1.0.  They arrive via
+            # request_args["extra_body"] (set by create_stream_tmp), so we
+            # deliberately do NOT list them here.
             # NOTE: ``cache_control`` is intentionally routed through
             # extra_body. Top-level cache_control is silently ignored by
             # Bedrock; _apply_cache_control_to_last_block has already moved
@@ -600,6 +689,11 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         }
         for key, val in request_args.items():
             if val is None or key == "stream":
+                continue
+            if key == "extra_body":
+                # Merge nested extra_body dict into our outbound extra_body
+                if isinstance(val, dict):
+                    extra_body.update(val)
                 continue
             if key in _SDK_KWARGS:
                 sdk_kwargs[key] = val
