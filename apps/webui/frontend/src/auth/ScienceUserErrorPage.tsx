@@ -32,11 +32,11 @@ const ScienceUserErrorPage: React.FC<Props> = ({ errorType = "invalidToken" }) =
                     </svg>
                 </div>
 
-                <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-3">
+                <h1 className="text-xl font-bold text-slate-900 dark:text-white mb-3">
                     {t("scienceAuth.error.title")}
                 </h1>
 
-                <p className="text-sm text-gray-600 dark:text-slate-400 mb-8 leading-relaxed">
+                <p className="text-sm text-slate-600 dark:text-slate-400 mb-8 leading-relaxed">
                     {t(msgKey)}
                 </p>
 
@@ -44,14 +44,14 @@ const ScienceUserErrorPage: React.FC<Props> = ({ errorType = "invalidToken" }) =
                     <button
                         type="button"
                         onClick={() => window.location.reload()}
-                        className="px-5 py-2 text-sm font-semibold text-white bg-gradient-to-br from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 rounded-lg transition-all shadow shadow-blue-500/30"
+                        className="px-5 py-2 text-sm font-semibold text-white hover:text-white bg-gradient-to-br from-blue-600 to-cyan-600 hover:from-[#1d4ed8] hover:to-[#0e7490] rounded-lg transition-all shadow shadow-blue-500/30"
                     >
                         {t("scienceAuth.error.retry")}
                     </button>
                     <button
                         type="button"
                         onClick={() => window.location.href = "mailto:support@ihep.ac.cn"}
-                        className="px-5 py-2 text-sm font-semibold text-gray-700 dark:text-slate-300 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 rounded-lg transition-all"
+                        className="px-5 py-2 text-sm font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 hover:text-slate-900 dark:hover:bg-slate-700 dark:hover:text-white rounded-lg transition-all"
                     >
                         {t("scienceAuth.error.contact")}
                     </button>
