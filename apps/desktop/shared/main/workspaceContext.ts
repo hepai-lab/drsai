@@ -4,6 +4,7 @@ import { open, readdir, readFile, realpath, stat } from "fs/promises";
 import { createHash } from "crypto";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import { inflateRawSync } from "zlib";
+import { basenameWithCanonicalExtension, resolveCanonicalExtension } from "./fileExtension";
 import type {
   MaterialConsistencyAnalysisRequest,
   MaterialConsistencyAnalysisResult,
@@ -241,7 +242,7 @@ export async function listWorkspaceFiles(
         path: absolutePath,
         relativePath,
         type: entry.isDirectory() ? "directory" : "file",
-        extension: entry.isFile() ? extname(entry.name).toLowerCase() : undefined,
+        extension: entry.isFile() ? resolveCanonicalExtension(entry.name) : undefined,
         size: fileSize,
         modifiedAt: fileStat?.mtime.toISOString(),
         gitStatus: gitStatuses.get(relativePath) ?? "clean",
@@ -948,7 +949,7 @@ export async function previewWorkspaceFile(
 
   const maxBytes = clampInt(request.maxBytes, 8_000, 500_000, DEFAULT_PREVIEW_BYTES);
   const mode = request.mode ?? "auto";
-  const extension = extname(target).toLowerCase();
+  const extension = resolveCanonicalExtension(target);
   const relativePath = normalizeRel(relative(workspacePath, target));
   const name = basename(target);
   const kind = classifyPreviewKind(target, fileStat.size);
@@ -1035,13 +1036,22 @@ export async function previewWorkspaceFile(
   if (
     kind === "office"
   ) {
-    const officeText = await extractOfficeText(target, extension, Math.min(fileStat.size, maxBytes));
+    const officeText = await extractOfficeText(target, extension, Math.min(fileStat.size, Math.max(maxBytes, 2_000_000)));
+    const slideImages = extension === ".pptx"
+      ? await loadPptxSlideImages(target, workspacePath)
+      : undefined;
     return {
       ...base,
       content: officeText || undefined,
-      message: officeText
-        ? "Extracted a basic text preview from the Office document."
-        : getMetadataOnlyMessage(kind),
+      ...(slideImages?.length ? { slideImages } : {}),
+      dataUrl: undefined,
+      message: slideImages?.length
+        ? (officeText
+          ? "Showing rendered slide previews with extracted Office text."
+          : "Showing rendered slide previews for this presentation.")
+        : officeText
+          ? "Extracted a basic text preview from the Office document."
+          : getMetadataOnlyMessage(kind),
     };
   }
 
@@ -1599,7 +1609,7 @@ function ensureInside(workspacePath: string, target: string): void {
 }
 
 function classifyPreviewKind(filePath: string, size: number): WorkspacePreviewKind {
-  const extension = extname(filePath).toLowerCase();
+  const extension = resolveCanonicalExtension(filePath);
   if (extension in IMAGE_MIME) return "image";
   if (extension in MEDIA_MIME) return "media";
   if (extension === ".pdf") return "pdf";
@@ -1864,6 +1874,56 @@ async function extractOfficeText(
   return text.slice(0, bytes);
 }
 
+async function loadPptxSlideImages(
+  pptxPath: string,
+  workspacePath: string,
+): Promise<Array<{ label: string; dataUrl: string }>> {
+  const leaf = basenameWithCanonicalExtension(pptxPath);
+  const stem = leaf.replace(/\.pptx$/i, "");
+  const baseStem = stem.replace(/ \(\d+\)$/u, "");
+  const candidates = [
+    join(dirname(pptxPath), `${stem}-render`),
+    join(dirname(pptxPath), `${baseStem}-render`),
+    join(dirname(pptxPath), "render"),
+    join(workspacePath, "artifacts", `${stem}-render`),
+    join(workspacePath, "artifacts", `${baseStem}-render`),
+    join(workspacePath, "tmp", "presentation-render"),
+    join(workspacePath, "tmp", "presentation-render-verify"),
+  ];
+  const seen = new Set<string>();
+  const images: Array<{ label: string; dataUrl: string }> = [];
+  for (const directory of candidates) {
+    if (!existsSync(directory) || seen.has(directory)) continue;
+    seen.add(directory);
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    const pngs = entries
+      .filter((entry) => entry.isFile() && /\.png$/i.test(entry.name))
+      .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" }))
+      .slice(0, 12);
+    for (const [index, entry] of pngs.entries()) {
+      const absolute = join(directory, entry.name);
+      try {
+        const fileStat = await stat(absolute);
+        if (fileStat.size <= 0 || fileStat.size > 2_500_000) continue;
+        const buffer = await readFile(absolute);
+        images.push({
+          label: `Slide ${index + 1}`,
+          dataUrl: `data:image/png;base64,${buffer.toString("base64")}`,
+        });
+      } catch {
+        // Skip unreadable renders; text extraction may still succeed.
+      }
+    }
+    if (images.length > 0) break;
+  }
+  return images;
+}
+
 type ZipEntry = {
   name: string;
   data: Buffer;
@@ -2102,7 +2162,7 @@ function convertGatewayFileNode(
     path: absolutePath,
     relativePath: entry.path,
     type: isDir ? "directory" : "file",
-    extension: !isDir ? extname(entry.name).toLowerCase() : undefined,
+    extension: !isDir ? resolveCanonicalExtension(entry.name) : undefined,
     size: entry.size,
     modifiedAt: entry.modified_at,
     gitStatus: (entry.git_status as WorkspaceFileGitStatus | undefined) ?? undefined,
@@ -2133,6 +2193,9 @@ export function convertGatewayFilePreview(
   const absolutePath = join(workspacePath, response.path);
   const name = basename(response.path);
   const kind = classifyPreviewKind(response.path, response.size);
+  // Gateway only returns raw bytes for Office/PDF; the ZIP/base64 payload is not
+  // a useful Files preview. Leave content empty so callers can enrich locally.
+  const officeOrPdf = kind === "office" || kind === "pdf";
   return {
     workspacePath,
     path: absolutePath,
@@ -2141,11 +2204,14 @@ export function convertGatewayFilePreview(
     kind,
     mime: response.mime,
     size: response.size,
-    modifiedAt: response.modified_at,
+    modifiedAt: typeof response.modified_at === "number"
+      ? new Date(response.modified_at * 1000).toISOString()
+      : String(response.modified_at),
     truncated: response.truncated,
-    fileHash: response.sha256,
+    fileHash: response.sha256.startsWith("sha256:") ? response.sha256 : `sha256:${response.sha256}`,
     content: response.content,
-    dataUrl: response.data_url,
+    dataUrl: officeOrPdf ? undefined : response.data_url,
+    ...(officeOrPdf && !response.content ? { message: getMetadataOnlyMessage(kind) } : {}),
   };
 }
 
@@ -2187,6 +2253,12 @@ export async function previewWorkspaceFileViaGateway(
   const workspaceId = request.workspaceId;
   if (!workspaceId) throw new Error("workspaceId is required for gateway file preview");
 
+  // Office/PDF need local ZIP/PDF extractors and sibling slide PNGs. The gateway
+  // /file route only returns raw bytes, so skip the round-trip entirely.
+  if (prefersLocalRichPreview(request.path)) {
+    return previewWorkspaceFile(request);
+  }
+
   const params = new URLSearchParams();
   params.set("path", request.path);
   params.set("max_bytes", String(clampInt(request.maxBytes, 8_000, 500_000, DEFAULT_PREVIEW_BYTES)));
@@ -2195,5 +2267,23 @@ export async function previewWorkspaceFileViaGateway(
     workspaceId,
     `/file?${params.toString()}`,
   );
-  return convertGatewayFilePreview(response, request.workspacePath);
+  const preview = convertGatewayFilePreview(response, request.workspacePath);
+  if ((preview.kind === "office" || preview.kind === "pdf") && !preview.content) {
+    try {
+      return await previewWorkspaceFile({
+        ...request,
+        path: preview.path,
+      });
+    } catch {
+      return preview;
+    }
+  }
+  return preview;
+}
+
+/** True when Files should use the local extractor instead of gateway /file. */
+export function prefersLocalRichPreview(filePath: string | undefined): boolean {
+  if (!filePath) return false;
+  const extension = resolveCanonicalExtension(filePath);
+  return OFFICE_EXTENSIONS.has(extension) || extension === ".pdf";
 }

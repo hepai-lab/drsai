@@ -39,7 +39,7 @@ import {
   type AgentFileTraceEvent,
 } from "./AgentFileActivityPanel";
 import { ArtifactsPanel } from "./ArtifactsPanel";
-import { findWorkspaceNodeByArtifactPath, normalizeWorkspaceArtifactPath } from "./artifactWorkspaceLink";
+import { findWorkspaceNodeByArtifactPath } from "./artifactWorkspaceLink";
 import { ContextBasket } from "./ContextBasket";
 import {
   ContextSnapshotPanel,
@@ -211,12 +211,12 @@ export function FilesContextPanel({
   }, [refresh]);
 
   useEffect(() => {
-    if (!focusPath || selectedNode?.path === focusPath || selectedNode?.relativePath === normalizeWorkspaceArtifactPath(focusPath)) return;
+    if (!focusPath) return;
     const target = findWorkspaceNodeByArtifactPath(nodes, focusPath);
     if (target) {
       focusRefreshPathRef.current = null;
       setUnavailableFocusPath(null);
-      void selectNode(target);
+      if (selectedNode?.path !== target.path) void selectNode(target);
       return;
     }
     // Artifact events can arrive before the filesystem watcher refreshes the
@@ -225,9 +225,19 @@ export function FilesContextPanel({
     if (focusRefreshPathRef.current !== focusPath) {
       focusRefreshPathRef.current = focusPath;
       setUnavailableFocusPath(null);
-      void refresh().then(() => setUnavailableFocusPath(focusPath));
+      void refresh().then(() => {
+        setUnavailableFocusPath(focusPath);
+        // Avoid leaving an unrelated prior selection (e.g. a JSON draft) while
+        // the requested PPTX/result card cannot be resolved.
+        setSelectedNode((current) => {
+          if (!current) return current;
+          if (findWorkspaceNodeByArtifactPath([current], focusPath)) return current;
+          return null;
+        });
+        setPreview(null);
+      });
     }
-  }, [focusPath, nodes, refresh, selectedNode?.path, selectedNode?.relativePath]);
+  }, [focusPath, nodes, refresh, selectedNode?.path]);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -348,6 +358,7 @@ export function FilesContextPanel({
         maxBytes: 220_000,
       });
       if (previewRequestPathRef.current !== node.path) return;
+      setError(null);
       setPreview(nextPreview);
       setPreviewState("idle");
     } catch (caught) {
@@ -469,6 +480,7 @@ export function FilesContextPanel({
         mode,
       });
       if (previewRequestPathRef.current !== selectedNode.path) return;
+      setError(null);
       setPreview(nextPreview);
       setPreviewState("idle");
     } catch (caught) {
@@ -1190,7 +1202,7 @@ function WorkspaceCheckpointPanel({
   const zh = language === "zh";
   const entryLabel = (path: string): string => {
     if (/\.provenance\.json$/i.test(path)) return zh ? "来源记录" : "source record";
-    if (/\.pptx$/i.test(path)) return zh ? "演示文稿" : "presentation";
+    if (/\.pptx/i.test(path)) return zh ? "演示文稿" : "presentation";
     return path.split(/[\\/]/).pop() || path;
   };
   const versions = checkpoints.filter((checkpoint) => checkpoint.automatic && checkpoint.versionGroupId);

@@ -675,6 +675,15 @@ $PlatformPortalUrl = if ($IsProductionLaunch) { "https://ai.ihep.ac.cn" } else {
 $PlatformApiBaseUrl = "https://aiapi.ihep.ac.cn/apiv2"
 $env:OPENDRSAI_PLATFORM_BASE_URL = $PlatformPortalUrl
 $env:OPENDRSAI_PLATFORM_API_BASE_URL = $PlatformApiBaseUrl
+# Skills Square APIs are on WebUI hosts (not HepAI portal used for OIDC):
+# test → drsaiv2 ; production → opendrsai.
+$env:OPENDRSAI_SKILLS_API_BASE_URL = if ($env:OPENDRSAI_SKILLS_API_BASE_URL) {
+    $env:OPENDRSAI_SKILLS_API_BASE_URL
+} elseif ($IsProductionLaunch) {
+    "https://opendrsai.ihep.ac.cn"
+} else {
+    "https://drsaiv2.ihep.ac.cn"
+}
 # OPENDRSAI_MODEL_BASE_URL must NOT override to the production aiapi server.
 # The OIDC token is issued by $PlatformPortalUrl/api (e.g. ai-dev.ihep.ac.cn).
 # Sending a dev OIDC token to the production aiapi.ihep.ac.cn server causes
@@ -769,6 +778,7 @@ Write-Host "  Surface:     workbench (desktop_gateway)" -ForegroundColor Green
 Write-Host "  Gateway:     http://127.0.0.1:$GatewayPort" -ForegroundColor Green
 Write-Host "  State home:  $env:DRSAI_DESKTOP_GATEWAY_HOME" -ForegroundColor Green
 Write-Host "  Platform:    $(if ($IsProductionLaunch) { 'WebUI prod portal + HepAI aiapi (DDF)' } else { 'WebUI test: ai-dev OIDC + HepAI aiapi (DDF)' })" -ForegroundColor Green
+Write-Host "  Skills API:  $($env:OPENDRSAI_SKILLS_API_BASE_URL)" -ForegroundColor Green
 Write-Host "  Skills:      $BuiltInSkillsDir" -ForegroundColor Green
 Write-Host "  Pip index:   $($env:PIP_INDEX_URL)" -ForegroundColor Green
 Write-Host "  Desktop app: $DesktopDir" -ForegroundColor Green
