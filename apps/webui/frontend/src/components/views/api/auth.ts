@@ -86,9 +86,15 @@ export class AuthAPI {
         return data.data as { access_token: string; user_id: string };
     }
 
-    /** CSNS user_agent 嵌入登录：用路径中的 access_token 换取本系统 JWT */
-    async userAgentVerify(accessToken: string): Promise<{ access_token: string; user_id: string; agent_name?: string | null }> {
+    /** CSNS user_agent 嵌入登录：校验 access_token，用 URL 上的 email 登录 */
+    async userAgentVerify(
+        accessToken: string,
+        email: string = "",
+    ): Promise<{ access_token: string; user_id: string; agent_name?: string | null }> {
         const params = new URLSearchParams({ access_token: accessToken });
+        if (email.trim()) {
+            params.set("email", email.trim());
+        }
         const response = await fetch(`${this.getBaseUrl()}/auth/user-agent/verify?${params.toString()}`, {
             method: "POST",
             headers: this.getHeaders(),

@@ -53,18 +53,23 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
             //   统一认证: ?user_source=science_user&access_token=<ihep_token>
             //   院平台:   ?user_source=science_user&tokenId=<cas_token>
             // CSNS user_agent embed:
-            //   ?user_source=user_agent&access_token=<csns_token>
+            //   ?user_source=user_agent&access_token=<csns_token>&email=<cstnetId>
             // 在所有其他守卫逻辑之前处理，避免跳转到登录页
             const userSource = (searchParams.get("user_source") || "").trim();
             if (userSource === "user_agent") {
                 const accessToken =
                     searchParams.get("access_token") || searchParams.get("token");
+                const email =
+                    searchParams.get("email") ||
+                    searchParams.get("cstnetId") ||
+                    searchParams.get("username") ||
+                    "";
                 if (!accessToken) {
                     if (!cancelled) setScienceAuthError("missingToken");
                     return;
                 }
                 try {
-                    const result = await authAPI.userAgentVerify(accessToken);
+                    const result = await authAPI.userAgentVerify(accessToken, email);
                     if (cancelled) return;
                     saveAuthSession(result.access_token, result.user_id);
                     localStorage.removeItem("drsai-mode-config");

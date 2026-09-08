@@ -4,6 +4,9 @@ Science user authentication via CAS token validation.
 
 Flow: external system embeds our app in an iframe and passes ?tokenId=xxx&user_source=science_user.
 We validate tokenId against the CAS API; on success we issue a JWT and redirect to /auth.
+
+CSNS user_agent embed: ?user_source=user_agent&access_token=...&email=...
+Validate access_token via CSNS /api/validatetoken, then log in as the URL email.
 """
 
 import os
@@ -176,6 +179,28 @@ def _extract_csns_user_id(body: object) -> str | None:
     if found:
         return found
     return None
+
+
+def _normalize_embed_user(value: str | None) -> str | None:
+    """Normalize CSNS embed identity from the URL (email / cstnetId / username)."""
+    if not isinstance(value, str):
+        return None
+    user = value.strip().lower()
+    return user or None
+
+
+def _resolve_user_agent_id(body: object, email: str = "") -> str | None:
+    """After CSNS token validation succeeds, pick the login user_id.
+
+    Prefer the identity CSNS puts on the embed URL (`email`), then fall back to
+    whatever /api/validatetoken returns.
+    """
+    if not isinstance(body, dict) or not _csns_token_ok(body):
+        return None
+    query_user = _normalize_embed_user(email)
+    if query_user:
+        return query_user
+    return _extract_csns_user_id(body)
 
 
 async def _complete_embed_login(user_id: str, user_source: str) -> JSONResponse:
@@ -387,11 +412,11 @@ async def _fetch_csns_user(access_token: str) -> dict:
 
 
 @user_agent_router.post("/verify")
-async def user_agent_verify(access_token: str):
+async def user_agent_verify(access_token: str, email: str = ""):
     """
     Validate a CSNS access_token from the embed URL and return our JWT.
 
-    Query param: access_token
+    Query params: access_token, email (optional; CSNS now puts identity on the URL)
     Returns: { status, data: { access_token, user_id, agent_name } }
     """
     if not access_token:
@@ -401,9 +426,12 @@ async def user_agent_verify(access_token: str):
         )
 
     body = await _fetch_csns_user(access_token)
-    user_id = _extract_csns_user_id(body)
+    user_id = _resolve_user_agent_id(body, email=email)
     if not user_id:
-        logger.warning(f"[CSNS] could not extract user from validatetoken: {body}")
+        logger.warning(
+            f"[CSNS] token ok={_csns_token_ok(body) if isinstance(body, dict) else False} "
+            f"but no email on URL and no user in validatetoken: {body}"
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="user_agent_auth_failed",
