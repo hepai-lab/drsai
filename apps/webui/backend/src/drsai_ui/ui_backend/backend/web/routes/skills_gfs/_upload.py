@@ -60,8 +60,8 @@ async def upload_skill(
 
     auth_user_id = await _resolve_user_from_apikey(request)
     if not auth_user_id:
-        logger.warning("[publish] upload_skill: no valid API key")
-        raise HTTPException(status_code=401, detail="API key required for upload")
+        logger.warning("[publish] upload_skill: not authenticated")
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     return await _upload_skill(
         file, auth_user_id, slug, display_name or name, icon, description,
