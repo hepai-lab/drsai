@@ -95,6 +95,8 @@ export interface SkillsSquarePanelProps {
   language: AppLanguage;
   userId?: string;
   userEmail?: string;
+  /** Optional thread for post-install skill reload. */
+  threadId?: string;
   /** Optional initial square surface (defaults to public). */
   initialMode?: SquareMode;
   /** Admin can manage skill tags. */
@@ -324,6 +326,7 @@ export function SkillsSquarePanel(props: SkillsSquarePanelProps): JSX.Element {
     language,
     userId,
     userEmail,
+    threadId,
     initialMode = "public",
     isAdmin = false,
   } = props;
@@ -718,26 +721,27 @@ export function SkillsSquarePanel(props: SkillsSquarePanelProps): JSX.Element {
     setDetail(null);
   };
 
-  const handleDownload = async (skill: { slug: string; name?: string }) => {
+  const handleInstallLocal = async (skill: { slug: string; name?: string }) => {
     setBusySlug(skill.slug);
     try {
-      const result = await desktopApi.downloadSkillsSquare({ slug: skill.slug });
-      const binary = atob(result.base64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-      const blob = new Blob([bytes], { type: "application/zip" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = result.fileName || `${skill.slug}.zip`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const result = await desktopApi.installSkillsSquare({
+        slug: skill.slug,
+        name: skill.name,
+        userId,
+        threadId,
+      });
+      setRows((prev) =>
+        prev.map((r) => (r.slug === skill.slug ? { ...r, installed: true } : r)),
+      );
+      setDetail((d) => (d && d.slug === skill.slug ? { ...d, installed: true } : d));
       showToast(
         "success",
-        zh ? `已开始下载「${skill.name || skill.slug}」` : `Download started for '${skill.name || skill.slug}'`,
+        zh
+          ? `已安装到本地「${result.name}」（${result.files} 个文件），可在「本地技能」查看`
+          : `Installed locally as '${result.name}' (${result.files} files). See Local skills.`,
       );
     } catch (e) {
-      showToast("error", `${zh ? "下载失败" : "Download failed"}: ${errMsg(e)}`);
+      showToast("error", `${zh ? "安装失败" : "Install failed"}: ${errMsg(e)}`);
     } finally {
       setBusySlug(null);
     }
@@ -1600,7 +1604,7 @@ export function SkillsSquarePanel(props: SkillsSquarePanelProps): JSX.Element {
               operatorSubject={operatorSubject}
               onTabChange={setDetailTab}
               onClose={closeDetail}
-              onDownload={() => detail && void handleDownload(detail)}
+              onInstall={() => detail && void handleInstallLocal(detail)}
               onCollect={() => detail && void handleCollect(detail)}
               onUncollect={() =>
                 detail && void handleDeleteOrUncollect(detail.slug, detail.name, "uncollect")
@@ -1860,7 +1864,7 @@ function DetailView(props: {
   operatorSubject?: string;
   onTabChange: (tab: DetailTab) => void;
   onClose: () => void;
-  onDownload: () => void;
+  onInstall: () => void;
   onCollect: () => void;
   onUncollect: () => void;
   onDelete: () => void;
@@ -1870,7 +1874,7 @@ function DetailView(props: {
 }): JSX.Element {
   const {
     zh, loading, detail, detailTab, busy, mode, operatorEmail, operatorSubject,
-    onTabChange, onClose, onDownload, onCollect, onUncollect, onDelete,
+    onTabChange, onClose, onInstall, onCollect, onUncollect, onDelete,
     onToggleVisibility, onEdit, onShare,
   } = props;
 
@@ -1943,19 +1947,6 @@ function DetailView(props: {
             : "My creation";
 
   const secondaryActions: JSX.Element[] = [];
-  secondaryActions.push(
-    <button
-      key="download"
-      type="button"
-      className="skills-online-detail-action-btn"
-      disabled={busy || restricted}
-      onClick={onDownload}
-      title={zh ? "下载 ZIP 到本地文件" : "Download ZIP to disk"}
-    >
-      <Download size={14} />
-      {zh ? "下载 ZIP" : "Download ZIP"}
-    </button>,
-  );
   // WebUI: public-tab collect only for non-owners (onImport: isPublicTab && !isOwner).
   const showPublicCollect = mode === "public" && !isSkillOwner(detail, operatorEmail, operatorSubject);
   if (showPublicCollect) {
@@ -2119,11 +2110,22 @@ function DetailView(props: {
 
           <div className="skills-online-detail-actions">
             {detail.installed ? (
-              <span className="skills-online-detail-cta is-done" title={zh ? "已在本地技能中" : "Present in local skills"}>
+              <span className="skills-online-detail-cta is-done" title={zh ? "已在本地 skills 目录" : "Present in local skills directory"}>
                 <Check size={14} />
                 {zh ? "本地已有" : "Local"}
               </span>
-            ) : null}
+            ) : (
+              <button
+                type="button"
+                className="skills-online-detail-cta"
+                disabled={busy || restricted}
+                onClick={onInstall}
+                title={zh ? "安装到本地 skills 扫描目录" : "Install into local skills scan directory"}
+              >
+                <Package size={14} />
+                {zh ? "安装到本地" : "Install local"}
+              </button>
+            )}
             {secondaryActions.length > 0 ? (
               <div className="skills-online-detail-secondary">{secondaryActions}</div>
             ) : null}
@@ -2139,8 +2141,8 @@ function DetailView(props: {
               </p>
               <p className="skills-online-restricted-desc">
                 {zh
-                  ? "你可以查看简介与版本信息；加入对应学术组后才能下载或查看完整内容。"
-                  : "You can view the overview and version info. Join the academic group to download or view full content."}
+                  ? "你可以查看简介与版本信息；加入对应学术组后才能安装或查看完整内容。"
+                  : "You can view the overview and version info. Join the academic group to install or view full content."}
               </p>
             </div>
           </div>

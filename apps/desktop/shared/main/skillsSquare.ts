@@ -27,6 +27,7 @@ import { resolveGatewayPort } from "./gatewayEnvironment";
 import { DRSAI_HOME } from "./paths";
 import { getActivePlatformConfig } from "./platformConfig";
 import { writeZipBufferAndInstall, sanitizeInstallName } from "./skillArchive";
+import { installSkill, reloadSkills } from "./gatewayManagedResources";
 
 /** WebUI Skills Square hosts (not HepAI ai / ai-dev portal). */
 export const SKILLS_SQUARE_TEST_API_ROOT = "https://drsaiv2.ihep.ac.cn";
@@ -178,7 +179,7 @@ const ACADEMIC_GROUP_TAGS = new Set(["lhaaso"]);
 
 const LIST_TIMEOUT_MS = 15_000;
 const SKILL_MD_TIMEOUT_MS = 30_000;
-const DOWNLOAD_UPLOAD_TIMEOUT_MS = 60_000;
+const DOWNLOAD_UPLOAD_TIMEOUT_MS = 120_000;
 
 // ── Auth / base URL ─────────────────────────────────────────────────────────
 
@@ -1572,46 +1573,58 @@ export async function installSkillsSquare(
   const installName = sanitizeInstallName(request.name?.trim() || slug);
   const uid = await resolveSkillsUserId(request.userId);
 
-  // Primary: download ZIP → writeZipBufferAndInstall
+  let mdInstalled: { status: string; name: string; path: string; files: number } | null = null;
+  let mdErrMsg = "";
+  let zipErrMsg = "";
+
+  // Prefer SKILL.md → local gateway first (fast path into the scan directory).
+  try {
+    const md = await getSkillsSquareSkillMd({ slug });
+    if (!md.content?.trim()) {
+      throw new Error(`Skill '${slug}' has no SKILL.md content.`);
+    }
+    const result = await installSkill({
+      name: installName,
+      content: md.content,
+      source: "public_square",
+      userId: uid,
+    });
+    try {
+      await reloadSkills(request.threadId, uid);
+    } catch {
+      // Disk install succeeded; next chat turn can pick it up.
+    }
+    mdInstalled = {
+      status: result.status ?? "ok",
+      name: result.name ?? installName,
+      path: result.path ?? "",
+      files: 1,
+    };
+  } catch (mdErr) {
+    mdErrMsg = mdErr instanceof Error ? mdErr.message : String(mdErr);
+  }
+
+  // Full ZIP package (scripts / assets). Short enrichment window when SKILL.md
+  // already landed; longer only as last resort when SKILL.md failed.
+  const zipTimeoutMs = mdInstalled ? 45_000 : DOWNLOAD_UPLOAD_TIMEOUT_MS;
   try {
     const zipBuffer = await platformFetchBuffer(
       `/api/skills/${encodeURIComponent(slug)}/download`,
-      { auth, timeoutMs: DOWNLOAD_UPLOAD_TIMEOUT_MS },
+      { auth, timeoutMs: zipTimeoutMs },
     );
     return await writeZipBufferAndInstall(zipBuffer, installName, {
       userId: uid,
       threadId: request.threadId,
     });
   } catch (zipErr) {
-    // Fallback: skill-md → gateway POST /v1/skills/install
-    try {
-      const md = await getSkillsSquareSkillMd({ slug });
-      if (!md.content) {
-        throw new Error(`Skill '${slug}' has no SKILL.md content.`);
-      }
-      const qs = uid ? `?user_id=${encodeURIComponent(uid)}` : "";
-      const result = await gatewayFetch<{
-        status?: string;
-        name?: string;
-        path?: string;
-        installed_files?: string[];
-      }>("POST", `/v1/skills/install${qs}`, {
-        name: installName,
-        content: md.content,
-        source: "public_square",
-      });
-      return {
-        status: result.status ?? "ok",
-        name: result.name ?? installName,
-        path: result.path ?? "",
-        files: Array.isArray(result.installed_files) ? result.installed_files.length : 1,
-      };
-    } catch (mdErr) {
-      const zipMsg = zipErr instanceof Error ? zipErr.message : String(zipErr);
-      const mdMsg = mdErr instanceof Error ? mdErr.message : String(mdErr);
-      throw new Error(`Install failed (zip: ${zipMsg}; skill-md: ${mdMsg})`);
-    }
+    zipErrMsg = zipErr instanceof Error ? zipErr.message : String(zipErr);
   }
+
+  if (mdInstalled) return mdInstalled;
+
+  throw new Error(
+    `Install failed (skill-md: ${mdErrMsg || "n/a"}; zip: ${zipErrMsg || "n/a"})`,
+  );
 }
 
 /** Download public skill ZIP (WebUI parity) — returns bytes for renderer save. */

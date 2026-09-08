@@ -45,7 +45,6 @@ import {
   Volume2,
   Wrench,
   X,
-  Zap,
 } from "lucide-react";
 import drsaiLogo from "../assets/drsai.png";
 import { OpenAiBrandIcon } from "./OpenAiBrandIcon";
@@ -82,7 +81,6 @@ import type {
   WorkspaceInstructionSummary,
   WorkspaceFilePreview,
   WorkspaceProject,
-  GatewaySkill,
 } from "@shared/desktopApi";
 import type { ChatAttachment, InteractionOption } from "@shared/desktopApi";
 import type { RunReproducibilityLevel } from "@shared/runInspection";
@@ -263,6 +261,7 @@ export interface ChatSubmitOptions {
   model?: string;
   replaceFromMessageId?: string;
   runtimeMode?: ChatRuntimeMode | null;
+  /** @deprecated Desktop no longer sets this; reserved for future @skill. */
   skillName?: string | null;
   text?: string;
   thinkingEffort?: ThinkingEffort;
@@ -628,13 +627,9 @@ function ChatWorkspaceImpl({
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>(defaultThinkingEffort);
   const [taskInteractionMode, setTaskInteractionMode] = useState<"normal" | "plan">("normal");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [metaMenuOpen, setMetaMenuOpen] = useState<"configuration" | "skill" | null>(null);
+  const [metaMenuOpen, setMetaMenuOpen] = useState<"configuration" | null>(null);
   const [configurationSection, setConfigurationSection] = useState<"model" | "thinking" | "task" | null>(null);
   const [configurationSubmenuPosition, setConfigurationSubmenuPosition] = useState({ top: 0, left: 0, maxHeight: 220 });
-  const [installedSkills, setInstalledSkills] = useState<GatewaySkill[]>([]);
-  const [skillsLoading, setSkillsLoading] = useState(false);
-  const [skillsLoadError, setSkillsLoadError] = useState<string | null>(null);
-  const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
   const [introMenuOpen, setIntroMenuOpen] = useState<"workspace" | "agent" | null>(null);
   const [introSearchQuery, setIntroSearchQuery] = useState("");
   const [forkQueueAgentSelections, setForkQueueAgentSelections] = useState<Record<number, string>>({});
@@ -1224,9 +1219,6 @@ function ChatWorkspaceImpl({
       setThinkingEffort(supportedThinkingEfforts.includes("high") ? "high" : supportedThinkingEfforts[0]);
     }
   }, [supportedThinkingEfforts, thinkingEffort]);
-  useEffect(() => {
-    if (!isLocalOpenDrSaiAgent) setSelectedSkillName(null);
-  }, [isLocalOpenDrSaiAgent]);
   const showThinkingEffort = supportedThinkingEfforts.length > 0;
   useEffect(() => {
     if (!showThinkingEffort && configurationSection === "thinking") {
@@ -2149,7 +2141,6 @@ function ChatWorkspaceImpl({
     }
     applyComposerText(user.content);
     setPendingReplaceFromMessageId(user.id);
-    setSelectedSkillName(user.skillName?.trim() || null);
     setAttachments(user.attachments?.length
       ? user.attachments.map((attachment) => ({
           ...attachment,
@@ -2167,7 +2158,6 @@ function ChatWorkspaceImpl({
     }
     applyComposerText(user.content);
     setPendingReplaceFromMessageId(user.id);
-    setSelectedSkillName(user.skillName?.trim() || null);
     setAttachments(user.attachments?.length
       ? user.attachments.map((attachment) => ({
           ...attachment,
@@ -2199,9 +2189,6 @@ function ChatWorkspaceImpl({
         model: selectedModelName,
         replaceFromMessageId: user.id,
         runtimeMode: currentRuntimeMode,
-        skillName: isLocalOpenDrSaiAgent
-          ? (user.skillName?.trim() || selectedSkillName)
-          : null,
         text: user.content,
         thinkingEffort: !isLocalOpenDrSaiAgent || thinkingEffortSupported ? thinkingEffort : undefined,
       },
@@ -2246,7 +2233,6 @@ function ChatWorkspaceImpl({
         planMode: isLocalOpenDrSaiAgent && taskInteractionMode === "plan",
         model: selectedModelName,
         runtimeMode: currentRuntimeMode,
-        skillName: isLocalOpenDrSaiAgent ? selectedSkillName : null,
         thinkingEffort: !isLocalOpenDrSaiAgent || thinkingEffortSupported ? thinkingEffort : undefined,
         ...(!isVoiceSubmission ? { text: textDraft } : {}),
         ...(pendingReplaceFromMessageId ? { replaceFromMessageId: pendingReplaceFromMessageId } : {}),
@@ -2264,7 +2250,6 @@ function ChatWorkspaceImpl({
       if (!isVoiceSubmission) applyComposerText("");
       setAttachments([]);
       onClearExternalAttachments?.();
-      setSelectedSkillName(null);
       setPendingReplaceFromMessageId(null);
       editResendBackupRef.current = null;
       if (isVoiceSubmission) dispatchVoiceTurn({ type: "response_started" });
@@ -2723,10 +2708,9 @@ function ChatWorkspaceImpl({
     textareaRef.current?.focus();
   }
 
-  function toggleMetaMenu(menu: "configuration" | "skill"): void {
+  function toggleMetaMenu(menu: "configuration"): void {
     setMetaMenuOpen((current) => {
       const next = current === menu ? null : menu;
-      if (next === "skill") void loadInstalledSkillsForPicker();
       setConfigurationSection(null);
       return next;
     });
@@ -2755,79 +2739,8 @@ function ChatWorkspaceImpl({
     setConfigurationSubmenuPosition({ top, left, maxHeight });
   }
 
-  async function loadInstalledSkillsForPicker(): Promise<void> {
-    if (!hasDesktopApi() || typeof desktopApi.listInstalledSkills !== "function") {
-      setInstalledSkills([]);
-      setSkillsLoadError(zh ? "当前环境不支持读取 Skills。" : "Skills are unavailable in this environment.");
-      return;
-    }
-    setSkillsLoading(true);
-    setSkillsLoadError(null);
-    try {
-      const skills = await desktopApi.listInstalledSkills();
-      let rows = Array.isArray(skills) ? skills : [];
-      // Hide skills disabled for the local OpenDrSai agent (TC-LEFT-071).
-      if (typeof desktopApi.getMyDrSaiAgentSkillPolicy === "function") {
-        try {
-          const policy = await desktopApi.getMyDrSaiAgentSkillPolicy("opendrsai");
-          const disabled = new Set(policy.disabled ?? []);
-          const enabled = new Set(policy.enabled ?? []);
-          rows = rows.filter((skill) => {
-            const name = skill.name?.trim();
-            const dir = skill.path?.replace(/[\\/]+$/, "").split(/[\\/]/).pop()?.trim();
-            const keys = [name, dir].filter(Boolean) as string[];
-            if (keys.some((k) => disabled.has(k))) return false;
-            if (policy.mode === "explicit") return keys.some((k) => enabled.has(k));
-            return true;
-          });
-        } catch {
-          // If policy fails, show all installed skills rather than blocking the picker.
-        }
-      }
-      setInstalledSkills(rows);
-    } catch (error) {
-      setInstalledSkills([]);
-      setSkillsLoadError(userFacingFailureMessage(error, language, "operation"));
-    }
-    setSkillsLoading(false);
-  }
-
-  function stripSkillPrefixFromInput(value: string, skillName?: string | null): string {
-    const specific = skillName?.trim()
-      ? zh
-        ? new RegExp(`^用\\s+${escapeRegExp(skillName.trim())}\\s*`)
-        : new RegExp(`^Use\\s+${escapeRegExp(skillName.trim())}\\s+skill\\s+to\\s*`, "i")
-      : null;
-    if (specific?.test(value)) return value.replace(specific, "");
-    const generic = zh
-      ? /^(用\s+)[A-Za-z0-9_\-]+(\s+|$)/
-      : /^(Use\s+)[A-Za-z0-9_\-]+(\s+skill\s+to\s+)/i;
-    return generic.test(value) ? value.replace(generic, "") : value;
-  }
-
-  function applySkillToComposer(skillName: string): void {
-    if (!isLocalOpenDrSaiAgent) return;
-    const cleaned = stripSkillPrefixFromInput(input, selectedSkillName).replace(/^\s+/, "");
-    if (cleaned !== input) applyComposerText(cleaned);
-    setSelectedSkillName(skillName);
-    setMetaMenuOpen(null);
-    textareaRef.current?.focus();
-  }
-
-  function clearSelectedSkill(): void {
-    const cleaned = stripSkillPrefixFromInput(input, selectedSkillName);
-    if (cleaned !== input) applyComposerText(cleaned);
-    setSelectedSkillName(null);
-    textareaRef.current?.focus();
-  }
-
   function selectAgent(agentId: string): void {
     onSelectAgent?.(agentId);
-    // Composer skill injection only works for local OpenDrSai.
-    const nextIsLocal = agentOptions.some(
-      (agent) => agent.id === agentId && agent.source === "local" && agent.id !== "my-codex",
-    );
-    if (!nextIsLocal) setSelectedSkillName(null);
     setMetaMenuOpen(null);
     setIntroMenuOpen(null);
     textareaRef.current?.focus();
@@ -4125,22 +4038,6 @@ function ChatWorkspaceImpl({
                 />
               ) : (
                 <div className="composer-editor">
-                  {selectedSkillName ? (
-                    <div className="composer-skill-tags" aria-label={zh ? "已选技能" : "Selected skill"}>
-                      <span className="composer-skill-tag" data-testid="composer-skill-tag">
-                        <Zap size={12} aria-hidden="true" />
-                        <span className="composer-skill-tag-label">{selectedSkillName}</span>
-                        <button
-                          type="button"
-                          aria-label={zh ? `移除技能 ${selectedSkillName}` : `Remove skill ${selectedSkillName}`}
-                          title={zh ? "移除技能" : "Remove skill"}
-                          onClick={clearSelectedSkill}
-                        >
-                          <X size={12} />
-                        </button>
-                      </span>
-                    </div>
-                  ) : null}
                   <textarea
                     data-testid="composer-input"
                     ref={textareaRef}
@@ -4335,52 +4232,6 @@ function ChatWorkspaceImpl({
                     </div> : null}
                   </div>
                 ) : null}
-              </div>
-              <div className="composer-meta-item" data-meta-menu="skill">
-                <button
-                  className={`composer-meta-chip composer-meta-button${selectedSkillName ? " active" : ""}`}
-                  type="button"
-                  aria-expanded={metaMenuOpen === "skill"}
-                  disabled={!isLocalOpenDrSaiAgent || showStop}
-                  onClick={() => toggleMetaMenu("skill")}
-                  title={
-                    !isLocalOpenDrSaiAgent
-                      ? (zh ? "技能芯片仅对本地 OpenDrSai 生效" : "Skill chip works only with local OpenDrSai")
-                      : (zh ? "选择本地技能" : "Pick a local skill")
-                  }
-                >
-                  <Zap size={14} />
-                  {zh ? "技能" : "Skill"}
-                  <ChevronDown size={13} />
-                </button>
-                {metaMenuOpen === "skill" && isLocalOpenDrSaiAgent && (
-                  <div className="composer-meta-menu wide skill-picker" role="listbox" aria-label={zh ? "本地技能" : "Local skills"}>
-                    {skillsLoading ? (
-                      <p className="composer-meta-menu-empty">{zh ? "正在加载 Skills…" : "Loading skills…"}</p>
-                    ) : skillsLoadError ? (
-                      <p className="composer-meta-menu-empty">{skillsLoadError}</p>
-                    ) : installedSkills.length ? (
-                      installedSkills.map((skill) => (
-                        <button
-                          key={skill.path || skill.name}
-                          type="button"
-                          role="option"
-                          className={skill.name === selectedSkillName ? "active" : ""}
-                          onClick={() => applySkillToComposer(skill.name)}
-                        >
-                          <span>{skill.name}</span>
-                          <small>{skill.description || skill.category || (zh ? "用户技能" : "User skill")}</small>
-                        </button>
-                      ))
-                    ) : (
-                      <p className="composer-meta-menu-empty">
-                        {zh
-                          ? "没有已启用的本地技能。可到左侧「本地技能」新建或启用。"
-                          : "No enabled local skills. Create or enable one under Local skills."}
-                      </p>
-                    )}
-                  </div>
-                )}
               </div>
               <div className="composer-actions composer-actions-meta">
                 {composerText.trim() && !showStop ? (
@@ -5253,10 +5104,6 @@ function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isImageFileName(name: string): boolean {

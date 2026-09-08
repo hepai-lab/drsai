@@ -29,9 +29,8 @@ import { SkillsSquarePanel } from "./SkillsSquarePanel";
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type SkillsTopTab = "local" | "online";
-type LocalEnableFilter = "all" | "enabled" | "disabled";
 
-/** Local OpenDrSai agent skill policy is the runtime gate for enable/disable. */
+/** Used only when uninstall hits skill_in_use (policy still references the skill). */
 const LOCAL_SKILLS_AGENT_ID = "opendrsai";
 
 type ManagerView =
@@ -191,17 +190,13 @@ export function SkillsManager({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [importingFolder, setImportingFolder] = useState(false);
+  const [importingZip, setImportingZip] = useState(false);
   const [actionToast, setActionToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const actionToastTimerRef = useRef<number | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
   const [localSearch, setLocalSearch] = useState("");
   const [localSearchExpanded, setLocalSearchExpanded] = useState(false);
   const [localCategory, setLocalCategory] = useState("");
-  const [localEnableFilter, setLocalEnableFilter] = useState<LocalEnableFilter>("all");
-  /** Local OpenDrSai skill policy — source of truth for enable/disable (not preview enabled_ids). */
-  const [skillPolicy, setSkillPolicy] = useState<AgentSkillPolicy | null>(null);
-  const [enablementReady, setEnablementReady] = useState(false);
-  const [togglingSkillId, setTogglingSkillId] = useState<string | null>(null);
 
   useEffect(() => () => {
     if (actionToastTimerRef.current !== null) {
@@ -220,23 +215,6 @@ export function SkillsManager({
     }, 2600);
   }
 
-  async function refreshEnablement(): Promise<void> {
-    if (typeof desktopApi.getMyDrSaiAgentSkillPolicy !== "function") {
-      setSkillPolicy(null);
-      setEnablementReady(false);
-      return;
-    }
-    try {
-      const policy = await desktopApi.getMyDrSaiAgentSkillPolicy(LOCAL_SKILLS_AGENT_ID);
-      setSkillPolicy(policy);
-      setEnablementReady(true);
-    } catch {
-      // Policy is best-effort; list still works without badges/toggles.
-      setSkillPolicy(null);
-      setEnablementReady(false);
-    }
-  }
-
   useEffect(() => {
     if (topTab !== "local") return;
     let cancelled = false;
@@ -249,7 +227,6 @@ export function SkillsManager({
         const data = await desktopApi.listInstalledSkills({ userId });
         if (cancelled) return;
         setSkills(sortInstalled(data ?? []));
-        await refreshEnablement();
       } catch (err) {
         if (cancelled) return;
         setLoadError(err instanceof Error ? err.message : String(err));
@@ -271,7 +248,6 @@ export function SkillsManager({
       await ensureGatewayReady();
       const data = await desktopApi.listInstalledSkills({ userId });
       setSkills(sortInstalled(data ?? []));
-      await refreshEnablement();
       if (options?.notify) {
         showActionToast("success", zh ? "列表已刷新" : "List refreshed");
       }
@@ -283,81 +259,6 @@ export function SkillsManager({
       }
     } finally {
       if (!options?.silent) setLoading(false);
-    }
-  }
-
-  function skillPolicyKeys(skill: GatewaySkill): string[] {
-    return [skill.name?.trim(), skillDirName(skill)].filter((k): k is string => Boolean(k));
-  }
-
-  function isSkillEnabled(skill: GatewaySkill): boolean {
-    if (!enablementReady || !skillPolicy) return true;
-    const keys = skillPolicyKeys(skill);
-    const disabled = new Set(skillPolicy.disabled ?? []);
-    if (keys.some((k) => disabled.has(k))) return false;
-    if (skillPolicy.mode === "explicit") {
-      const enabled = new Set(skillPolicy.enabled ?? []);
-      return keys.some((k) => enabled.has(k));
-    }
-    // inherit / all_enabled: installed skills are on unless listed in disabled
-    return true;
-  }
-
-  async function handleToggleEnabled(skill: GatewaySkill, nextEnabled: boolean): Promise<void> {
-    const skillId = skill.name?.trim() || skillDirName(skill);
-    if (!skillId || typeof desktopApi.getMyDrSaiAgentSkillPolicy !== "function") {
-      showActionToast(
-        "error",
-        zh ? "当前环境不支持启停技能。" : "Enable/disable is unavailable in this environment.",
-      );
-      return;
-    }
-    setTogglingSkillId(skillId);
-    setBusy(true);
-    try {
-      const policy = await desktopApi.getMyDrSaiAgentSkillPolicy(LOCAL_SKILLS_AGENT_ID);
-      const keys = new Set(skillPolicyKeys(skill));
-      const disabled = new Set(policy.disabled ?? []);
-      const enabled = new Set(policy.enabled ?? []);
-      if (nextEnabled) {
-        for (const key of keys) disabled.delete(key);
-        if (policy.mode === "explicit") {
-          for (const key of keys) enabled.add(key);
-        }
-      } else {
-        for (const key of keys) {
-          disabled.add(key);
-          enabled.delete(key);
-        }
-      }
-      const nextPolicy = await desktopApi.updateMyDrSaiAgentSkillPolicy(LOCAL_SKILLS_AGENT_ID, {
-        ...policy,
-        enabled: [...enabled],
-        disabled: [...disabled],
-        expected_revision: policy.revision,
-      });
-      setSkillPolicy(nextPolicy);
-      setEnablementReady(true);
-      try {
-        await desktopApi.reloadSkills({ threadId: activeThreadId, userId });
-      } catch {
-        // Disk/policy already updated; next chat turn will pick it up.
-      }
-      showActionToast(
-        "success",
-        nextEnabled
-          ? (zh ? `「${skill.name}」已启用，已对当前对话生效` : `'${skill.name}' enabled for the current chat`)
-          : (zh ? `「${skill.name}」已停用，当前对话不会再调用` : `'${skill.name}' disabled; current chat will not use it`),
-      );
-    } catch (err) {
-      showActionToast(
-        "error",
-        `${zh ? "更新失败" : "Update failed"}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      await refreshEnablement();
-    } finally {
-      setTogglingSkillId(null);
-      setBusy(false);
     }
   }
 
@@ -378,8 +279,8 @@ export function SkillsManager({
       showActionToast(
         "success",
         zh
-          ? `已导入「${result.name}」（${result.files} 个文件）`
-          : `Imported '${result.name}' (${result.files} files)`,
+          ? `已导入「${result.name}」到本地 skills 目录（${result.files} 个文件）`
+          : `Imported '${result.name}' into local skills (${result.files} files)`,
       );
     } catch (err) {
       showActionToast(
@@ -391,18 +292,38 @@ export function SkillsManager({
     }
   }
 
-  async function handleReload(): Promise<void> {
-    setBusy(true);
+  async function handleImportZip(): Promise<void> {
+    if (typeof desktopApi.pickFiles !== "function" || typeof desktopApi.installSkillZip !== "function") {
+      showActionToast("error", zh ? "当前环境不支持压缩包导入。" : "ZIP import is unavailable in this environment.");
+      return;
+    }
+    setImportingZip(true);
     try {
-      await desktopApi.reloadSkills({ threadId: activeThreadId, userId });
-      showActionToast("success", zh ? "已对当前对话生效" : "Applied to the current chat");
+      const picked = await desktopApi.pickFiles();
+      if (picked.canceled || !picked.paths[0]) return;
+      const zipPath = picked.paths.find((p: string) => /\.zip$/i.test(p)) || picked.paths[0];
+      if (!/\.zip$/i.test(zipPath)) {
+        showActionToast("error", zh ? "请选择 .zip 压缩包。" : "Please choose a .zip archive.");
+        return;
+      }
+      const result = await desktopApi.installSkillZip({
+        zipPath,
+        threadId: activeThreadId,
+      });
+      await loadSkills({ silent: true });
+      showActionToast(
+        "success",
+        zh
+          ? `已从压缩包安装「${result.name}」（${result.files} 个文件）`
+          : `Installed '${result.name}' from ZIP (${result.files} files)`,
+      );
     } catch (err) {
       showActionToast(
         "error",
-        `${zh ? "生效失败" : "Apply failed"}: ${err instanceof Error ? err.message : String(err)}`,
+        `${zh ? "压缩包导入失败" : "ZIP import failed"}: ${err instanceof Error ? err.message : String(err)}`,
       );
     } finally {
-      setBusy(false);
+      setImportingZip(false);
     }
   }
 
@@ -470,8 +391,8 @@ export function SkillsManager({
         await desktopApi.reloadSkills({ threadId: activeThreadId });
       } catch (reloadErr) {
         reloadNote = zh
-          ? `（已写入磁盘，但对当前对话生效失败：${reloadErr instanceof Error ? reloadErr.message : String(reloadErr)}。可点「立即生效」或新开对话后再用。）`
-          : ` (Saved to disk, but apply to chat failed: ${reloadErr instanceof Error ? reloadErr.message : String(reloadErr)}. Tap Apply or start a new chat.)`;
+          ? `（已写入磁盘，但对当前对话刷新失败：${reloadErr instanceof Error ? reloadErr.message : String(reloadErr)}。新开对话或下一轮扫描后可用。）`
+          : ` (Saved to disk, but chat reload failed: ${reloadErr instanceof Error ? reloadErr.message : String(reloadErr)}. Start a new chat or wait for the next scan.)`;
       }
       await loadSkills();
       setEditorDirty(false);
@@ -528,7 +449,6 @@ export function SkillsManager({
         prev.filter((s) => (s.path || s.name) !== (skill.path || skill.name) && skillDirName(s) !== installId),
       );
       showActionToast("success", zh ? `「${skill.name}」已删除` : `'${skill.name}' deleted`);
-      await refreshEnablement();
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
       const inUse = /skill_in_use|referenced by one or more Agents/i.test(raw);
@@ -540,11 +460,11 @@ export function SkillsManager({
           tone: "danger",
           title: zh ? "技能仍被智能体引用" : "Skill is still referenced",
           description: zh
-            ? `智能体「${agentHint}」的技能策略里仍列出了「${skill.name}」（启用或停用列表）。删除前需要先清除这些引用。`
-            : `Agent '${agentHint}' still lists '${skill.name}' in its skill policy (enabled or disabled). Clear those references before deleting.`,
+            ? `智能体「${agentHint}」仍引用「${skill.name}」。删除前需要先清除这些引用。`
+            : `Agent '${agentHint}' still references '${skill.name}'. Clear those references before deleting.`,
           impact: zh
-            ? "确认后会从该智能体策略中移除引用，再永久删除技能目录。"
-            : "Confirm to remove the policy references, then permanently delete the skill folder.",
+            ? "确认后会清除引用，再永久删除技能目录。"
+            : "Confirm to clear references, then permanently delete the skill folder.",
           confirmLabel: zh ? "清除引用并删除" : "Clear references and delete",
         });
         if (approved) {
@@ -557,8 +477,8 @@ export function SkillsManager({
             showActionToast(
               "error",
               zh
-                ? `无法清除引用：${clearErr instanceof Error ? clearErr.message : String(clearErr)}。也可到设置 → 智能体 → 技能 中手动移除。`
-                : `Could not clear references: ${clearErr instanceof Error ? clearErr.message : String(clearErr)}. Or remove it under Settings → Agent → Skills.`,
+                ? `无法清除引用：${clearErr instanceof Error ? clearErr.message : String(clearErr)}。`
+                : `Could not clear references: ${clearErr instanceof Error ? clearErr.message : String(clearErr)}.`,
             );
             return;
           }
@@ -566,8 +486,8 @@ export function SkillsManager({
         showActionToast(
           "error",
           zh
-            ? `无法删除「${skill.name}」：智能体 ${agentHint} 仍引用该技能。可到设置 → 智能体 → 技能 中移除引用后再删。`
-            : `Cannot delete '${skill.name}': agent ${agentHint} still references it. Remove it under Settings → Agent → Skills, then delete.`,
+            ? `无法删除「${skill.name}」：智能体 ${agentHint} 仍引用该技能。`
+            : `Cannot delete '${skill.name}': agent ${agentHint} still references it.`,
         );
         return;
       }
@@ -638,34 +558,23 @@ export function SkillsManager({
     const q = localSearch.trim().toLowerCase();
     return skills.filter((skill) => {
       if (localCategory && skill.category?.trim() !== localCategory) return false;
-      if (enablementReady) {
-        const on = isSkillEnabled(skill);
-        if (localEnableFilter === "enabled" && !on) return false;
-        if (localEnableFilter === "disabled" && on) return false;
-      }
       if (!q) return true;
       const hay = `${skill.name} ${skill.description ?? ""} ${skillDirName(skill)}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [skills, localSearch, localCategory, localEnableFilter, enablementReady, skillPolicy]);
+  }, [skills, localSearch, localCategory]);
 
   const localStats = useMemo(() => {
     const totalBytes = skills.reduce((sum, s) => sum + (s.size ?? 0), 0);
-    let enabledCount = 0;
-    let disabledCount = 0;
-    if (enablementReady) {
-      for (const skill of skills) {
-        if (isSkillEnabled(skill)) enabledCount += 1;
-        else disabledCount += 1;
-      }
-    }
     return {
       total: skills.length,
-      enabledCount,
-      disabledCount,
       sizeLabel: totalBytes > 0 ? formatBytes(totalBytes) : "—",
     };
-  }, [skills, enablementReady, skillPolicy]);
+  }, [skills]);
+
+  const localSubtitle = zh
+    ? "与后端扫描目录一致：装进本地即可被对话按需调用。新建、导入文件夹或压缩包。"
+    : "Mirrors the backend scan directory. Installed skills are available on demand. Create or import a folder/ZIP.";
 
   // ── Online (WebUI Skills Square) ─────────────────────────────────────────────
 
@@ -677,14 +586,15 @@ export function SkillsManager({
           title={zh ? "在线技能" : "Online skills"}
           subtitle={
             zh
-              ? "浏览、收藏与发布技能。"
-              : "Browse, collect, and publish skills."
+              ? "浏览、收藏与发布；安装到本地后才会进入扫描目录并参与对话。"
+              : "Browse, collect, and publish. Install locally to enter the scan directory and chat."
           }
         />
         <SkillsSquarePanel
           language={language}
           userId={userId}
           userEmail={userEmail}
+          threadId={activeThreadId}
           isAdmin={
             session.user?.role === "admin" ||
             (Array.isArray(session.user?.roles) && session.user.roles.includes("admin"))
@@ -702,11 +612,7 @@ export function SkillsManager({
         <SkillsHeader
           zh={zh}
           title={zh ? "本地技能" : "Local skills"}
-          subtitle={
-            zh
-              ? "对话可用的技能。可在此新建 / 导入，与在线技能广场相互独立。"
-              : "Skills available to chat. Create or import here; independent from the online square."
-          }
+          subtitle={localSubtitle}
         />
         <div className="skills-page-content">
           <p className="skills-loading">{zh ? "正在连接网关并加载 Skills…" : "Connecting to gateway and loading Skills…"}</p>
@@ -721,11 +627,7 @@ export function SkillsManager({
         <SkillsHeader
           zh={zh}
           title={zh ? "本地技能" : "Local skills"}
-          subtitle={
-            zh
-              ? "对话可用的技能。可在此新建 / 导入，与在线技能广场相互独立。"
-              : "Skills available to chat. Create or import here; independent from the online square."
-          }
+          subtitle={localSubtitle}
         />
         <div className="skills-page-content">
           <div className="skills-empty-state skills-online-empty">
@@ -751,11 +653,7 @@ export function SkillsManager({
         <SkillsHeader
           zh={zh}
           title={zh ? "本地技能" : "Local skills"}
-          subtitle={
-            zh
-              ? "对话可用的技能。可在此新建 / 导入，与在线技能广场相互独立。"
-              : "Skills available to chat. Create or import here; independent from the online square."
-          }
+          subtitle={localSubtitle}
         />
 
         <div className="skills-page-content skills-local">
@@ -763,12 +661,6 @@ export function SkillsManager({
             {(
               [
                 [zh ? "本地技能" : "Local skills", String(localStats.total)],
-                ...(enablementReady
-                  ? [
-                      [zh ? "已启用" : "Enabled", String(localStats.enabledCount)],
-                      [zh ? "已停用" : "Disabled", String(localStats.disabledCount)],
-                    ] as const
-                  : []),
                 [zh ? "占用空间" : "Disk size", localStats.sizeLabel],
               ] as const
             ).map(([title, value]) => (
@@ -784,32 +676,11 @@ export function SkillsManager({
               <div className="skills-online-cat-tabs" role="group" aria-label={zh ? "筛选" : "Filters"}>
                 <button
                   type="button"
-                  className={`skills-online-cat-tab${!localCategory && localEnableFilter === "all" ? " active" : ""}`}
-                  onClick={() => {
-                    setLocalCategory("");
-                    setLocalEnableFilter("all");
-                  }}
+                  className={`skills-online-cat-tab${!localCategory ? " active" : ""}`}
+                  onClick={() => setLocalCategory("")}
                 >
                   {zh ? "全部" : "All"}
                 </button>
-                {enablementReady ? (
-                  <>
-                    <button
-                      type="button"
-                      className={`skills-online-cat-tab${localEnableFilter === "enabled" ? " active" : ""}`}
-                      onClick={() => setLocalEnableFilter((f) => (f === "enabled" ? "all" : "enabled"))}
-                    >
-                      {zh ? "已启用" : "Enabled"}
-                    </button>
-                    <button
-                      type="button"
-                      className={`skills-online-cat-tab${localEnableFilter === "disabled" ? " active" : ""}`}
-                      onClick={() => setLocalEnableFilter((f) => (f === "disabled" ? "all" : "disabled"))}
-                    >
-                      {zh ? "已停用" : "Disabled"}
-                    </button>
-                  </>
-                ) : null}
                 {localCategories.map((cat) => (
                   <button
                     key={cat}
@@ -836,11 +707,21 @@ export function SkillsManager({
                   type="button"
                   className="skills-btn ghost skills-local-filter-cta"
                   onClick={() => { void handleImportFolder(); }}
-                  disabled={importingFolder}
-                  title={zh ? "从文件夹导入（复制到 skills 目录）" : "Import folder into skills directory"}
+                  disabled={importingFolder || importingZip}
+                  title={zh ? "从文件夹导入到 skills 目录" : "Import folder into skills directory"}
                 >
                   {importingFolder ? <Loader2 size={14} className="spin" /> : <FolderInput size={14} />}
-                  {importingFolder ? (zh ? "导入中" : "Importing") : (zh ? "导入" : "Import")}
+                  {importingFolder ? (zh ? "导入中" : "Importing") : (zh ? "导入文件夹" : "Import folder")}
+                </button>
+                <button
+                  type="button"
+                  className="skills-btn ghost skills-local-filter-cta"
+                  onClick={() => { void handleImportZip(); }}
+                  disabled={importingFolder || importingZip}
+                  title={zh ? "从 ZIP 安装到 skills 目录" : "Install ZIP into skills directory"}
+                >
+                  {importingZip ? <Loader2 size={14} className="spin" /> : <Package size={14} />}
+                  {importingZip ? (zh ? "安装中" : "Installing") : (zh ? "导入压缩包" : "Import ZIP")}
                 </button>
                 {localSearchExpanded ? (
                   <div className="skills-online-search">
@@ -883,16 +764,6 @@ export function SkillsManager({
                 >
                   <RefreshCw size={15} className={loading ? "spin" : ""} />
                 </button>
-                <button
-                  type="button"
-                  className="skills-online-icon-btn"
-                  onClick={() => { void handleReload(); }}
-                  disabled={busy}
-                  title={zh ? "立即对当前对话生效" : "Apply to the current chat"}
-                  aria-label={zh ? "立即生效" : "Apply now"}
-                >
-                  <Zap size={15} />
-                </button>
               </div>
             </div>
           </div>
@@ -907,7 +778,7 @@ export function SkillsManager({
                   {zh ? "尚未安装任何 Skill" : "No skills installed yet"}
                 </p>
                 <p className="skills-online-empty-desc">
-                  {zh ? "本地目录为空。请使用「导入」或「新建」。" : "No local skills yet. Use Import or New."}
+                  {zh ? "本地目录为空。请使用「导入文件夹」「导入压缩包」或「新建」。" : "No local skills yet. Use Import folder, Import ZIP, or New."}
                 </p>
               </div>
             ) : filteredLocalSkills.length === 0 ? (
@@ -927,9 +798,6 @@ export function SkillsManager({
                 {filteredLocalSkills.map((skill) => {
                   const dirName = skillDirName(skill);
                   const showDir = Boolean(dirName && dirName !== skill.name);
-                  const enabled = isSkillEnabled(skill);
-                  const toggleId = skill.name?.trim() || dirName;
-                  const toggling = togglingSkillId === toggleId;
                   const metaParts = [
                     skill.size != null ? formatBytes(skill.size) : "",
                     skill.mtime != null ? formatDate(skill.mtime) : "",
@@ -937,7 +805,7 @@ export function SkillsManager({
                   return (
                     <article
                       key={skill.path || `${dirName}:${skill.name}`}
-                      className={`skills-online-card is-clickable skills-local-card${!enabled && enablementReady ? " is-disabled" : ""}`}
+                      className="skills-online-card is-clickable skills-local-card"
                       role="button"
                       tabIndex={0}
                       onClick={() => {
@@ -961,11 +829,6 @@ export function SkillsManager({
                             {skill.name}
                           </h3>
                           <div className="skills-online-card-badges">
-                            {enablementReady ? (
-                              <span className={`skills-online-version-pill${enabled ? " is-enabled" : " is-disabled-pill"}`}>
-                                {enabled ? (zh ? "已启用" : "Enabled") : (zh ? "已停用" : "Disabled")}
-                              </span>
-                            ) : null}
                             {skill.category ? (
                               <span className="skills-online-tag-pill">{skill.category}</span>
                             ) : (
@@ -989,28 +852,6 @@ export function SkillsManager({
 
                       <div className="skills-online-card-foot">
                         <div className="skills-online-card-foot-left">
-                          {enablementReady ? (
-                            <label
-                              className="skills-local-enable-switch"
-                              title={enabled ? (zh ? "停用（对话不再调用）" : "Disable (chat will not use it)") : (zh ? "启用" : "Enable")}
-                              onClick={(e) => { e.stopPropagation(); }}
-                              onMouseDown={(e) => { e.stopPropagation(); }}
-                              onKeyDown={(e) => { e.stopPropagation(); }}
-                            >
-                              <span className="skills-local-enable-label">
-                                {toggling ? (zh ? "…" : "…") : enabled ? (zh ? "开" : "On") : (zh ? "关" : "Off")}
-                              </span>
-                              <input
-                                type="checkbox"
-                                checked={enabled}
-                                disabled={busy || toggling}
-                                onChange={(e) => {
-                                  void handleToggleEnabled(skill, e.target.checked);
-                                }}
-                              />
-                              <span className="skills-local-enable-track" aria-hidden />
-                            </label>
-                          ) : null}
                           {metaParts.length > 0 ? (
                             <span className="skills-online-downloads">
                               {metaParts.join(" · ")}
@@ -1061,7 +902,6 @@ export function SkillsManager({
 
   if (view.kind === "detail") {
     const { skill, content } = view;
-    const enabled = isSkillEnabled(skill);
     return (
       <SkillsPageShell toast={actionToast}>
         <SkillsHeader zh={zh} title={zh ? "本地技能" : "Local skills"} />
@@ -1084,11 +924,6 @@ export function SkillsManager({
                       <span className="skills-online-detail-source is-public">
                         {zh ? "本地" : "Local"}
                       </span>
-                      {enablementReady ? (
-                        <span className={`skills-online-version-pill${enabled ? " is-enabled" : " is-disabled-pill"}`}>
-                          {enabled ? (zh ? "已启用" : "Enabled") : (zh ? "已停用" : "Disabled")}
-                        </span>
-                      ) : null}
                     </div>
                     <div className="skills-online-detail-submeta">
                       {skill.category ? <span>{skill.category}</span> : null}
@@ -1103,16 +938,6 @@ export function SkillsManager({
                   </div>
                 </div>
                 <div className="skills-online-detail-actions">
-                  {enablementReady ? (
-                    <button
-                      type="button"
-                      className={`skills-online-detail-action-btn${enabled ? "" : " is-done"}`}
-                      disabled={busy}
-                      onClick={() => { void handleToggleEnabled(skill, !enabled); }}
-                    >
-                      {enabled ? (zh ? "停用" : "Disable") : (zh ? "启用" : "Enable")}
-                    </button>
-                  ) : null}
                   <button
                     type="button"
                     className="skills-online-detail-cta"

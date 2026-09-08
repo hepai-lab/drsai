@@ -554,9 +554,8 @@ export function useDesktopChatAdapter({
     attachments: ChatAttachment[] = [],
     options?: ChatSubmitOptions,
   ): Promise<boolean> {
-    // Skill selection is a composer chip + metadata.selected_skill_id.
-    // The gateway injects SKILL.md for local OpenDrSai; do not rewrite the
-    // user-visible message text with "用 <skill> …".
+    // Skills are loaded from the local scan directory on demand by the agent.
+    // Desktop no longer forces a per-turn selected_skill_id via composer chip.
     const skillName = options?.skillName?.trim() || undefined;
     const text = (options?.text ?? input).trim();
     if (!text) return false;
