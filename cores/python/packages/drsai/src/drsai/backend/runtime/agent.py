@@ -98,6 +98,7 @@ class RuntimeRunContext:
     input_parts: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     model_override_requested: bool = False
     plan_mode: bool = False
+    selected_skill_id: str | None = None
 
     def __post_init__(self) -> None:
         backend_runtime_id = self.agent_backend_runtime_id or self.runtime_id
@@ -1110,6 +1111,7 @@ class RuntimeAgentService:
         input_resources_override: tuple[Mapping[str, Any], ...] | None = None,
         input_parts_override: tuple[Mapping[str, Any], ...] | None = None,
         plan_mode: bool = False,
+        selected_skill_id: str | None = None,
     ) -> dict[str, Any]:
         if self._closed:
             raise RuntimeExecutionError("agent_backend_service_closed", "Agent Backend service is closed.")
@@ -1136,6 +1138,7 @@ class RuntimeAgentService:
             correlation_id=correlation_id,
             model_override_requested=bool(model_override),
             plan_mode=plan_mode,
+            selected_skill_id=selected_skill_id,
         )
         if input_resources_override is not None:
             context = replace(context, input_resources=tuple(input_resources_override))
@@ -1690,6 +1693,7 @@ class RuntimeAgentService:
         correlation_id: str | None = None,
         model_override_requested: bool = False,
         plan_mode: bool = False,
+        selected_skill_id: str | None = None,
     ) -> RuntimeRunContext:
         record = self.workspaces.get_workspace(str(run["workspace_id"]), include_closed=True)
         if record is None or not getattr(record, "open", False):
@@ -1721,6 +1725,9 @@ class RuntimeAgentService:
             ) if parent is None else parent.input_parts,
             model_override_requested=model_override_requested if parent is None else parent.model_override_requested,
             plan_mode=plan_mode if parent is None else parent.plan_mode,
+            selected_skill_id=(
+                selected_skill_id if parent is None else parent.selected_skill_id
+            ),
         )
 
     async def _run_subagent(self, parent: RuntimeRunContext, call: Mapping[str, Any]) -> Mapping[str, Any]:

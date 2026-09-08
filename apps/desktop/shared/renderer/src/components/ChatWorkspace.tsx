@@ -43,9 +43,9 @@ import {
   Telescope,
   Trash2,
   Volume2,
+  Wrench,
   X,
-  // Temporarily unused while composer Skills picker is hidden — keep for later reuse.
-  // Zap,
+  Zap,
 } from "lucide-react";
 import drsaiLogo from "../assets/drsai.png";
 import { OpenAiBrandIcon } from "./OpenAiBrandIcon";
@@ -158,6 +158,8 @@ export type UiMessage = ChatMessage & {
   firstDeltaAt?: number;
   /** Files/folders attached when the user sent this message (shown as chips in the bubble). */
   attachments?: ChatAttachment[];
+  /** Composer-selected skill for this turn (chip above the bubble; not message text). */
+  skillName?: string;
   recoveryActions?: UserFacingRecoveryAction[];
   inputRequest?: {
     requestId: string;
@@ -1222,6 +1224,9 @@ function ChatWorkspaceImpl({
       setThinkingEffort(supportedThinkingEfforts.includes("high") ? "high" : supportedThinkingEfforts[0]);
     }
   }, [supportedThinkingEfforts, thinkingEffort]);
+  useEffect(() => {
+    if (!isLocalOpenDrSaiAgent) setSelectedSkillName(null);
+  }, [isLocalOpenDrSaiAgent]);
   const showThinkingEffort = supportedThinkingEfforts.length > 0;
   useEffect(() => {
     if (!showThinkingEffort && configurationSection === "thinking") {
@@ -2144,6 +2149,7 @@ function ChatWorkspaceImpl({
     }
     applyComposerText(user.content);
     setPendingReplaceFromMessageId(user.id);
+    setSelectedSkillName(user.skillName?.trim() || null);
     setAttachments(user.attachments?.length
       ? user.attachments.map((attachment) => ({
           ...attachment,
@@ -2161,6 +2167,7 @@ function ChatWorkspaceImpl({
     }
     applyComposerText(user.content);
     setPendingReplaceFromMessageId(user.id);
+    setSelectedSkillName(user.skillName?.trim() || null);
     setAttachments(user.attachments?.length
       ? user.attachments.map((attachment) => ({
           ...attachment,
@@ -2192,7 +2199,9 @@ function ChatWorkspaceImpl({
         model: selectedModelName,
         replaceFromMessageId: user.id,
         runtimeMode: currentRuntimeMode,
-        skillName: selectedSkillName,
+        skillName: isLocalOpenDrSaiAgent
+          ? (user.skillName?.trim() || selectedSkillName)
+          : null,
         text: user.content,
         thinkingEffort: !isLocalOpenDrSaiAgent || thinkingEffortSupported ? thinkingEffort : undefined,
       },
@@ -2237,7 +2246,7 @@ function ChatWorkspaceImpl({
         planMode: isLocalOpenDrSaiAgent && taskInteractionMode === "plan",
         model: selectedModelName,
         runtimeMode: currentRuntimeMode,
-        skillName: selectedSkillName,
+        skillName: isLocalOpenDrSaiAgent ? selectedSkillName : null,
         thinkingEffort: !isLocalOpenDrSaiAgent || thinkingEffortSupported ? thinkingEffort : undefined,
         ...(!isVoiceSubmission ? { text: textDraft } : {}),
         ...(pendingReplaceFromMessageId ? { replaceFromMessageId: pendingReplaceFromMessageId } : {}),
@@ -2756,13 +2765,31 @@ function ChatWorkspaceImpl({
     setSkillsLoadError(null);
     try {
       const skills = await desktopApi.listInstalledSkills();
-      setInstalledSkills(Array.isArray(skills) ? skills : []);
+      let rows = Array.isArray(skills) ? skills : [];
+      // Hide skills disabled for the local OpenDrSai agent (TC-LEFT-071).
+      if (typeof desktopApi.getMyDrSaiAgentSkillPolicy === "function") {
+        try {
+          const policy = await desktopApi.getMyDrSaiAgentSkillPolicy("opendrsai");
+          const disabled = new Set(policy.disabled ?? []);
+          const enabled = new Set(policy.enabled ?? []);
+          rows = rows.filter((skill) => {
+            const name = skill.name?.trim();
+            const dir = skill.path?.replace(/[\\/]+$/, "").split(/[\\/]/).pop()?.trim();
+            const keys = [name, dir].filter(Boolean) as string[];
+            if (keys.some((k) => disabled.has(k))) return false;
+            if (policy.mode === "explicit") return keys.some((k) => enabled.has(k));
+            return true;
+          });
+        } catch {
+          // If policy fails, show all installed skills rather than blocking the picker.
+        }
+      }
+      setInstalledSkills(rows);
     } catch (error) {
       setInstalledSkills([]);
       setSkillsLoadError(userFacingFailureMessage(error, language, "operation"));
-    } finally {
-      setSkillsLoading(false);
     }
+    setSkillsLoading(false);
   }
 
   function stripSkillPrefixFromInput(value: string, skillName?: string | null): string {
@@ -2779,6 +2806,7 @@ function ChatWorkspaceImpl({
   }
 
   function applySkillToComposer(skillName: string): void {
+    if (!isLocalOpenDrSaiAgent) return;
     const cleaned = stripSkillPrefixFromInput(input, selectedSkillName).replace(/^\s+/, "");
     if (cleaned !== input) applyComposerText(cleaned);
     setSelectedSkillName(skillName);
@@ -2795,6 +2823,11 @@ function ChatWorkspaceImpl({
 
   function selectAgent(agentId: string): void {
     onSelectAgent?.(agentId);
+    // Composer skill injection only works for local OpenDrSai.
+    const nextIsLocal = agentOptions.some(
+      (agent) => agent.id === agentId && agent.source === "local" && agent.id !== "my-codex",
+    );
+    if (!nextIsLocal) setSelectedSkillName(null);
     setMetaMenuOpen(null);
     setIntroMenuOpen(null);
     textareaRef.current?.focus();
@@ -3051,6 +3084,13 @@ function ChatWorkspaceImpl({
       setConversationResourceNotice(describeConversationResourceState(resolved));
       return { request, resolved };
     } catch (error) {
+      // Desktop V2 does not wire /v1/owop yet. Prefer a local workspace path
+      // over the generic "operation failed" toast when the artifact already
+      // has a Files-openable path.
+      if (part.path) {
+        setConversationResourceNotice(null);
+        return null;
+      }
       setConversationResourceNotice(userFacingFailureMessage(error, language, "operation"));
       return null;
     }
@@ -3059,20 +3099,26 @@ function ChatWorkspaceImpl({
   async function previewConversationResourcePart(
     part: ArtifactPart | CitationPart,
     version: "current" | "observed" = "current",
-  ): Promise<void> {
+  ): Promise<boolean> {
     const outcome = await resolveConversationResourcePart(part);
-    if (!outcome) return;
+    if (!outcome) return false;
     const { request, resolved } = outcome;
-    if (["deleted", "offline", "unsupported"].includes(resolved.state)) return;
+    if (["deleted", "offline", "unsupported"].includes(resolved.state)) return false;
     try {
       const preview = await desktopApi.previewConversationResource({ ...request, version });
       onOpenConversationResourcePreview?.(preview, resolved.logicalPath ?? resolved.path);
       setToolsOpen(false);
+      return true;
     } catch (error) {
       // A local non-inline format can still be selected in Files even when the
       // Runtime does not provide an extracted preview.
-      if (resolved.logicalPath ?? resolved.path) onOpenWorkspaceArtifact?.(resolved.logicalPath ?? resolved.path!);
-      else setConversationResourceNotice(userFacingFailureMessage(error, language, "operation"));
+      const localPath = resolved.logicalPath ?? resolved.path ?? part.path;
+      if (localPath) {
+        onOpenWorkspaceArtifact?.(localPath);
+        return true;
+      }
+      setConversationResourceNotice(userFacingFailureMessage(error, language, "operation"));
+      return false;
     }
   }
 
@@ -3082,7 +3128,9 @@ function ChatWorkspaceImpl({
       return;
     }
     if (conversationResourceRequest(part)) {
-      void previewConversationResourcePart(part);
+      void previewConversationResourcePart(part).then((opened) => {
+        if (!opened && part.path) onOpenWorkspaceArtifact?.(part.path);
+      });
       return;
     }
     if (part.path) onOpenWorkspaceArtifact?.(part.path);
@@ -3097,7 +3145,14 @@ function ChatWorkspaceImpl({
         .then((result) => setConversationResourceDownload((current) => current?.operationId === operationId
           ? { ...current, phase: result.canceled ? "cancelled" : "completed", transferredBytes: result.size ?? current.transferredBytes, percent: result.canceled ? current.percent : 100 }
           : current))
-        .catch(() => setConversationResourceDownload((current) => current?.operationId === operationId ? { ...current, phase: "failed" } : current));
+        .catch(() => {
+          if (part.path && workspacePath) {
+            void desktopApi.saveWorkspaceFileAs({ workspacePath, path: part.path, suggestedName: part.name });
+            setConversationResourceDownload((current) => current?.operationId === operationId ? { ...current, phase: "completed" } : current);
+            return;
+          }
+          setConversationResourceDownload((current) => current?.operationId === operationId ? { ...current, phase: "failed" } : current);
+        });
       return;
     }
     if (!part.path || !workspacePath || part.downloadable !== true) return;
@@ -3308,10 +3363,18 @@ function ChatWorkspaceImpl({
           <VirtualizedMessage
             key={message.id}
             message={message}
-            className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatches.includes(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""} ${message.structuredTurn?.turnId === highlightedTurnId ? "structured-turn-focus" : ""}`}
+            className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatches.includes(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""} ${message.structuredTurn?.turnId === highlightedTurnId ? "structured-turn-focus" : ""}${message.role === "user" && message.skillName ? " has-skill" : ""}`}
             pinned={message.streaming === true || visibleMessages.length - messageIndex <= 12}
             scrollRootRef={messageListRef}
           >
+            {message.role === "user" && message.skillName ? (
+              <div className="message-skill-badges" aria-label={zh ? "已选技能" : "Selected skill"}>
+                <span className="message-skill-badge" title={message.skillName}>
+                  <Wrench size={12} aria-hidden="true" />
+                  <span className="message-skill-badge-name">{message.skillName}</span>
+                </span>
+              </div>
+            ) : null}
             {message.role === "user" || !message.structuredTurn ? <strong className="message-author">{message.role === "user" ? "You" : "OpenDrSai"}</strong> : null}
             <div className="message-body">
               {message.role === "user" && message.attachments?.length ? (
@@ -4062,7 +4125,6 @@ function ChatWorkspaceImpl({
                 />
               ) : (
                 <div className="composer-editor">
-                  {/* Temporarily hide composer Skills picker — keep for later reuse.
                   {selectedSkillName ? (
                     <div className="composer-skill-tags" aria-label={zh ? "已选技能" : "Selected skill"}>
                       <span className="composer-skill-tag" data-testid="composer-skill-tag">
@@ -4079,7 +4141,6 @@ function ChatWorkspaceImpl({
                       </span>
                     </div>
                   ) : null}
-                  */}
                   <textarea
                     data-testid="composer-input"
                     ref={textareaRef}
@@ -4275,21 +4336,25 @@ function ChatWorkspaceImpl({
                   </div>
                 ) : null}
               </div>
-              {/* Temporarily hide composer Skills picker — keep for later reuse.
               <div className="composer-meta-item" data-meta-menu="skill">
                 <button
                   className={`composer-meta-chip composer-meta-button${selectedSkillName ? " active" : ""}`}
                   type="button"
                   aria-expanded={metaMenuOpen === "skill"}
+                  disabled={!isLocalOpenDrSaiAgent || showStop}
                   onClick={() => toggleMetaMenu("skill")}
-                  title={zh ? "从 Skills 管理中选择技能" : "Pick a skill from Skills manager"}
+                  title={
+                    !isLocalOpenDrSaiAgent
+                      ? (zh ? "技能芯片仅对本地 OpenDrSai 生效" : "Skill chip works only with local OpenDrSai")
+                      : (zh ? "选择本地技能" : "Pick a local skill")
+                  }
                 >
                   <Zap size={14} />
                   {zh ? "技能" : "Skill"}
                   <ChevronDown size={13} />
                 </button>
-                {metaMenuOpen === "skill" && (
-                  <div className="composer-meta-menu wide" role="listbox" aria-label={zh ? "已安装技能" : "Installed skills"}>
+                {metaMenuOpen === "skill" && isLocalOpenDrSaiAgent && (
+                  <div className="composer-meta-menu wide skill-picker" role="listbox" aria-label={zh ? "本地技能" : "Local skills"}>
                     {skillsLoading ? (
                       <p className="composer-meta-menu-empty">{zh ? "正在加载 Skills…" : "Loading skills…"}</p>
                     ) : skillsLoadError ? (
@@ -4310,14 +4375,13 @@ function ChatWorkspaceImpl({
                     ) : (
                       <p className="composer-meta-menu-empty">
                         {zh
-                          ? "还没有已安装技能。可到左侧 Skills 管理中新建。"
-                          : "No installed skills yet. Create one in Skills manager."}
+                          ? "没有已启用的本地技能。可到左侧「本地技能」新建或启用。"
+                          : "No enabled local skills. Create or enable one under Local skills."}
                       </p>
                     )}
                   </div>
                 )}
               </div>
-              */}
               <div className="composer-actions composer-actions-meta">
                 {composerText.trim() && !showStop ? (
                   <button

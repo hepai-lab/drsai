@@ -42,6 +42,7 @@ from loguru import logger
 # longer executes it. Delegate/subagents are handled directly by
 # DrSaiAssistant._process_model_result / _execute_subagent, same as the TUI.
 from drsai.backend.run_drsai_agent_factory import DEFAULT_CONFIG_NAME, PLAN_MODE_SYSTEM_PROMPT, create_agent
+from drsai.backend.runtime.agent import RuntimeExecutionError
 from drsai.modules.managers.database import DatabaseManager
 from drsai.modules.managers.datamodel.db import RunStatus, Thread
 from drsai.modules.managers.datamodel.types import Response as DBResponse
@@ -67,6 +68,177 @@ def _database() -> DatabaseManager:
             raise RuntimeError(f"Database initialization failed: {response.message}")
         _db_manager = manager
     return _db_manager
+
+
+def resolve_loaded_skill_name(skills: Mapping[str, Any], requested: str) -> str | None:
+    """Match composer skill id to a loaded SkillLoader key (name or folder)."""
+    wanted = (requested or "").strip()
+    if not wanted or not isinstance(skills, Mapping):
+        return None
+    if wanted in skills:
+        return wanted
+    lower = wanted.lower()
+    for name in skills:
+        if isinstance(name, str) and name.lower() == lower:
+            return name
+    for name, skill in skills.items():
+        if not isinstance(skill, Mapping):
+            continue
+        skill_dir = skill.get("dir")
+        dir_name = getattr(skill_dir, "name", None) or ""
+        if dir_name == wanted or str(dir_name).lower() == lower:
+            return str(name)
+        skill_name = skill.get("name")
+        if isinstance(skill_name, str) and skill_name.lower() == lower:
+            return str(name)
+    return None
+
+
+def build_selected_skill_suffix(skill_name: str, skill_content: str) -> str:
+    """Turn-scoped system suffix that forces the Agent to follow a selected skill."""
+    return (
+        f"CRITICAL — Composer skill selection for this turn.\n"
+        f"The user explicitly selected skill `{skill_name}`. "
+        "You MUST follow this skill's workflow and constraints to complete the request. "
+        "Do not answer from general knowledge when the skill defines scripts, steps, or formats. "
+        "If the skill lists scripts or resources, use those paths.\n\n"
+        f"<skill-loaded name=\"{skill_name}\">\n{skill_content}\n</skill-loaded>"
+    )
+
+
+def build_selected_skill_task_prefix(skill_name: str) -> str:
+    """User-message prefix so the selected skill stays salient in the turn context."""
+    return (
+        f"[Selected skill: {skill_name}] "
+        f"Follow the <skill-loaded name=\"{skill_name}\"> instructions in your system prompt "
+        "for this turn. Do not skip that skill's required steps.\n\n"
+    )
+
+
+def annotate_task_with_selected_skill(task: Any, skill_name: str) -> Any:
+    """Prepend a selected-skill reminder onto the Agent task (does not change UI text)."""
+    prefix = build_selected_skill_task_prefix(skill_name)
+    if isinstance(task, str):
+        return prefix + task
+    content = getattr(task, "content", None)
+    if isinstance(content, str):
+        try:
+            task.content = prefix + content
+        except Exception:  # pragma: no cover - immutable message types
+            return task
+        return task
+    if isinstance(task, (list, tuple)) and task:
+        last = task[-1]
+        content = getattr(last, "content", None)
+        if isinstance(content, str):
+            try:
+                last.content = prefix + content
+            except Exception:  # pragma: no cover
+                return task
+        return task
+    return task
+
+
+def _disk_skills_loader_for_agent(agent: Any) -> Any | None:
+    """Load installed skills from disk without Agent skill-policy filtering."""
+    profile = getattr(agent, "_user_profile_manager", None)
+    skills_dir = getattr(profile, "skills_dir", None) if profile is not None else None
+    if skills_dir is None:
+        return None
+    path = Path(skills_dir)
+    if not path.exists() or not any(path.glob("*/SKILL.md")):
+        return None
+    from drsai.modules.components.skills.skill_loader import SkillLoader
+
+    return SkillLoader(skills_dir=str(path))
+
+
+def apply_selected_skill_to_agent(agent: Any, selected_skill_id: str | None) -> str:
+    """Load and inject a composer-selected skill for this turn.
+
+    Returns the injected system suffix (empty when none selected).
+    Raises RuntimeExecutionError when a selection cannot be resolved.
+
+    Composer selection is a thread override: even if the Agent skill policy
+    hides the skill from the Skill tool catalog, a chip-selected skill must
+    still load from the user's installed skills directory.
+    """
+    requested = (selected_skill_id or "").strip()
+    if not requested:
+        setattr(agent, "_selected_skill_for_turn", None)
+        setattr(agent, "_selected_skill_required_tools", [])
+        return ""
+
+    if hasattr(agent, "update_user_skills"):
+        try:
+            agent.update_user_skills()
+        except Exception as exc:  # pragma: no cover - best effort reload
+            logger.warning(f"update_user_skills failed before selected skill apply: {exc}")
+
+    loader = getattr(agent, "_cached_skills_loader", None)
+    skills = getattr(loader, "skills", None) if loader is not None else None
+    resolved = resolve_loaded_skill_name(skills or {}, requested)
+    content_loader = loader
+
+    # Thread override: policy may have filtered the skill out of the cached
+    # loader; still resolve it from the installed skills directory on disk.
+    if not resolved:
+        disk_loader = _disk_skills_loader_for_agent(agent)
+        disk_skills = getattr(disk_loader, "skills", None) if disk_loader is not None else None
+        resolved = resolve_loaded_skill_name(disk_skills or {}, requested)
+        if resolved and disk_loader is not None:
+            content_loader = disk_loader
+            # Keep Skill("name") usable this turn even when policy hid it.
+            if loader is not None and isinstance(getattr(loader, "skills", None), dict):
+                skill_meta = disk_skills.get(resolved) if isinstance(disk_skills, Mapping) else None
+                if skill_meta is not None:
+                    loader.skills[resolved] = skill_meta
+            elif disk_loader is not None:
+                agent._cached_skills_loader = disk_loader
+                loader = disk_loader
+            logger.info(
+                "Composer skill '{}' resolved via disk override (policy catalog missed it)",
+                resolved,
+            )
+
+    if not resolved or content_loader is None:
+        available: list[str] = []
+        if isinstance(skills, Mapping):
+            available = sorted(str(name) for name in skills.keys())
+        disk_loader = _disk_skills_loader_for_agent(agent)
+        disk_skills = getattr(disk_loader, "skills", None) if disk_loader is not None else None
+        if isinstance(disk_skills, Mapping):
+            available = sorted(set(available) | {str(name) for name in disk_skills.keys()})
+        raise RuntimeExecutionError(
+            "thread_skill_unavailable",
+            f"Selected skill '{requested}' is not available for this Agent.",
+            detail={"skill_id": requested, "available": available},
+        )
+
+    content = content_loader.get_skill_content(resolved)
+    if not content:
+        raise RuntimeExecutionError(
+            "thread_skill_unavailable",
+            f"Selected skill '{requested}' has no SKILL.md content.",
+            detail={"skill_id": requested, "resolved": resolved},
+        )
+
+    setattr(agent, "_selected_skill_for_turn", resolved)
+    skill_meta = None
+    if isinstance(getattr(content_loader, "skills", None), Mapping):
+        skill_meta = content_loader.skills.get(resolved)
+    required_tools: list[str] = []
+    if isinstance(skill_meta, Mapping):
+        raw_tools = skill_meta.get("required_tools") or []
+        if isinstance(raw_tools, list):
+            required_tools = [str(item) for item in raw_tools if str(item).strip()]
+    setattr(agent, "_selected_skill_required_tools", required_tools)
+    logger.info(
+        "Composer skill applied for turn: skill={} required_tools={}",
+        resolved,
+        required_tools,
+    )
+    return build_selected_skill_suffix(resolved, content)
 
 
 class DesktopAgentManager:
@@ -176,6 +348,7 @@ class DesktopAgentManager:
         cancellation_token: Any = None,
         reasoning_effort: str | None = None,
         plan_mode: bool = False,
+        selected_skill_id: str | None = None,
     ):
         """Drive one turn, yielding raw autogen events.
 
@@ -187,8 +360,6 @@ class DesktopAgentManager:
         key = self._key(uid, session_id)
         lock = await self._lock_for(key)
         if lock.locked():
-            from drsai.backend.runtime.agent import RuntimeExecutionError
-
             raise RuntimeExecutionError(
                 "session_busy",
                 "This session is already running a turn. Wait for it to finish or stop it.",
@@ -198,12 +369,13 @@ class DesktopAgentManager:
             agent = await self.get_or_create(
                 session_id, uid, model_alias=model_alias, work_dir=work_dir,
             )
-            # Apply plan mode: set or clear PLAN_MODE_SYSTEM_PROMPT as the
-            # injected prefix.  Called every turn so a prior plan-mode turn
-            # does not leak into a normal turn (the Agent is cached per key).
+            # Apply plan mode + composer skill selection every turn so a prior
+            # turn cannot leak into a normal turn (the Agent is cached per key).
+            skill_suffix = apply_selected_skill_to_agent(agent, selected_skill_id)
             if hasattr(agent, "inject_system_prompt"):
                 agent.inject_system_prompt(
-                    prefix=PLAN_MODE_SYSTEM_PROMPT if plan_mode else ""
+                    prefix=PLAN_MODE_SYSTEM_PROMPT if plan_mode else "",
+                    suffix=skill_suffix,
                 )
             # Reasoning is applied per turn because the Agent is cached per
             # session.  Never let a previous turn's effort leak into a later
@@ -212,6 +384,10 @@ class DesktopAgentManager:
                 agent._reasoning_effort = reasoning_effort
             elif reasoning_effort is not None:
                 logger.debug("Agent does not expose _reasoning_effort; ignoring requested effort")
+            turn_task = task
+            selected_name = getattr(agent, "_selected_skill_for_turn", None)
+            if selected_name:
+                turn_task = annotate_task_with_selected_skill(task, str(selected_name))
             await self._set_status(session_id, uid, RunStatus.ACTIVE)
             # The Workspace binding is turn-scoped: one long-lived Agent serves
             # many Runs, and a leaked workspace path would let a later Run write
@@ -224,9 +400,11 @@ class DesktopAgentManager:
                 agent._runtime_workspace_path = Path(work_dir).resolve()
             agent._runtime_workspace_id = workspace_id
             try:
-                async for event in agent.run_stream(task=task, cancellation_token=cancellation_token):
+                async for event in agent.run_stream(task=turn_task, cancellation_token=cancellation_token):
                     yield event
             finally:
+                setattr(agent, "_selected_skill_for_turn", None)
+                setattr(agent, "_selected_skill_required_tools", [])
                 if had_path:
                     agent._runtime_workspace_path = previous_path
                 elif hasattr(agent, "_runtime_workspace_path"):

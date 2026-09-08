@@ -318,6 +318,7 @@ export function WorkspaceShell({
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(true);
+  const [skillsNavOpen, setSkillsNavOpen] = useState(true);
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
   const [sidebarScrolled, setSidebarScrolled] = useState(false);
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
@@ -420,14 +421,27 @@ export function WorkspaceShell({
   ];
   const agentItems = sidebarComponents.square
     ? getEnabledNavItems(navSections, "agents").filter((item) => {
-        if (item.id === MENU_IDS.skillsSquare) return false;
         if (item.id === MENU_IDS.agentSquare) return sidebarComponents.agents;
+        if (
+          item.id === MENU_IDS.skillsLocal ||
+          item.id === MENU_IDS.skillsOnline ||
+          item.id === MENU_IDS.skillsSquare
+        ) {
+          return sidebarComponents.skills;
+        }
         return true;
       })
     : [];
+  const squareAgentItems = agentItems.filter((item) => item.id === MENU_IDS.agentSquare);
+  const skillsNavItems = agentItems.filter(
+    (item) => item.id === MENU_IDS.skillsLocal || item.id === MENU_IDS.skillsOnline,
+  );
+  const skillsNavActive =
+    activeNav === MENU_IDS.skillsLocal ||
+    activeNav === MENU_IDS.skillsOnline ||
+    activeNav === MENU_IDS.skillsSquare;
   const agentSectionLabel = navSections.find((section) => section.id === "agents")?.label ?? (zh ? "广场" : "Square");
   const libraryItem = getEnabledNavItems(navSections, "chat").find((item) => item.id === MENU_IDS.library);
-  const skillsItem = getEnabledNavItems(navSections, "agents").find((item) => item.id === MENU_IDS.skillsSquare);
   const workspaceItems = getEnabledNavItems(navSections, "workspace");
   const workspaceDetails = workspaces.find((workspace) => workspace.id === workspaceDetailsId) ?? null;
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0] ?? null;
@@ -456,6 +470,10 @@ export function WorkspaceShell({
       return next;
     });
   }, [activeWorkspaceId]);
+
+  useEffect(() => {
+    if (skillsNavActive) setSkillsNavOpen(true);
+  }, [skillsNavActive]);
 
   async function refreshWorktrees(): Promise<void> {
     if (!activeWorkspace?.path) {
@@ -2509,15 +2527,6 @@ export function WorkspaceShell({
                 onClick={() => onNavChange(MENU_IDS.library)}
               />
             ) : null}
-            {skillsItem ? (
-              <SidebarButton
-                active={activeNav === MENU_IDS.skillsSquare}
-                icon={navIcons[MENU_IDS.skillsSquare]}
-                label={skillsItem.label}
-                navId={MENU_IDS.skillsSquare}
-                onClick={() => onNavChange(MENU_IDS.skillsSquare)}
-              />
-            ) : null}
           </div>
 
           {agentItems.length > 0 && (
@@ -2543,7 +2552,7 @@ export function WorkspaceShell({
               </div>
               {agentsOpen && (
                 <div className="sidebar-nested-list">
-                  {agentItems.map(({ id, label }) => {
+                  {squareAgentItems.map(({ id, label }) => {
                     const Icon = navIcons[id];
                     return (
                       <SidebarButton
@@ -2556,6 +2565,53 @@ export function WorkspaceShell({
                       />
                     );
                   })}
+                  {skillsNavItems.length > 0 ? (
+                    <div className="sidebar-skills-group">
+                      <button
+                        type="button"
+                        className={`sidebar-button nested sidebar-skills-parent${skillsNavActive ? " is-skills-active" : ""}`}
+                        aria-expanded={skillsNavOpen}
+                        onClick={() => {
+                          if (!skillsNavActive) {
+                            setSkillsNavOpen(true);
+                            onNavChange(MENU_IDS.skillsOnline);
+                            return;
+                          }
+                          setSkillsNavOpen((open) => !open);
+                        }}
+                        title={zh ? "技能" : "Skills"}
+                        aria-label={zh ? "技能" : "Skills"}
+                      >
+                        {(() => {
+                          const Icon = navIcons[MENU_IDS.skillsSquare] || navIcons[MENU_IDS.skillsOnline];
+                          return <Icon size={16} />;
+                        })()}
+                        <span>{zh ? "技能" : "Skills"}</span>
+                        <ChevronDown size={14} className={`sidebar-skills-chevron${skillsNavOpen ? " is-open" : ""}`} />
+                      </button>
+                      {skillsNavOpen ? (
+                        <div className="sidebar-skills-sublist">
+                          {skillsNavItems.map(({ id, label }) => {
+                            const Icon = navIcons[id];
+                            return (
+                              <SidebarButton
+                                key={id}
+                                active={id === activeNav || (id === MENU_IDS.skillsOnline && activeNav === MENU_IDS.skillsSquare)}
+                                icon={Icon}
+                                label={label}
+                                nested
+                                subnested
+                                onClick={() => {
+                                  setSkillsNavOpen(true);
+                                  onNavChange(id);
+                                }}
+                              />
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -3823,6 +3879,7 @@ function SidebarButton({
   label,
   navId,
   nested,
+  subnested,
   onClick,
 }: {
   active?: boolean;
@@ -3830,12 +3887,13 @@ function SidebarButton({
   label: string;
   navId?: NavId;
   nested?: boolean;
+  subnested?: boolean;
   onClick: () => void;
 }): React.JSX.Element {
   return (
     <button
       type="button"
-      className={`sidebar-button ${nested ? "nested" : ""} ${active ? "active" : ""}`}
+      className={`sidebar-button ${nested ? "nested" : ""} ${subnested ? "subnested" : ""} ${active ? "active" : ""}`}
       data-nav-id={navId}
       onClick={onClick}
       title={label}

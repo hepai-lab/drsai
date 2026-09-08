@@ -95,6 +95,21 @@ export function describeUserFacingError(error: unknown, language: "zh" | "en"): 
       }),
     };
   }
+  if (envelope.code === "thread_skill_unavailable" || envelope.code === "thread_skill_invalid") {
+    return {
+      title: language === "zh" ? "所选技能无法用于本轮对话" : "Selected skill cannot be used for this turn",
+      action: language === "zh"
+        ? "请确认技能已安装并在「本地技能」中启用，且当前使用本地 OpenDrSai Agent，然后重新选择技能发送。"
+        : "Confirm the skill is installed and enabled under Local skills, use the local OpenDrSai Agent, then reselect the skill and send again.",
+      retryable: false,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
   if (envelope.code === "image_understanding_failed") {
     return {
       title: language === "zh" ? "图像理解失败" : "Image understanding failed",

@@ -163,6 +163,8 @@ const navIcons: Record<NavId, LucideIcon> = {
   saved_plan: FileText,
   results: PackageOpen,
   skills_square: Lightbulb,
+  skills_local: Folder,
+  skills_online: Globe2,
   plugins: Plug,
   library: Library,
   knowledge_base: BookOpen,
@@ -793,7 +795,7 @@ function AuthenticatedApp({
     onForkThreadCreated: handleForkThreadCreated,
     onOpenSkillsSquare: (target) => {
       setSkillSquareCommandTarget(target ?? null);
-      setActiveNav(MENU_IDS.skillsSquare);
+      setActiveNav(MENU_IDS.skillsOnline);
     },
     onSelectAgent: handleChatAgentSelect,
     onSelectModel: handleChatModelSelect,
@@ -3067,11 +3069,21 @@ function AuthenticatedApp({
           }}
         />
       </section>
-    ) : activeNav === MENU_IDS.skillsSquare ? (
+    ) : activeNav === MENU_IDS.skillsLocal ||
+      activeNav === MENU_IDS.skillsOnline ||
+      activeNav === MENU_IDS.skillsSquare ? (
       <section className="skills-square-panel skills-manager-panel">
         <SkillsManager
           activeThreadId={activeThreadId}
           language={language}
+          topTab={
+            activeNav === MENU_IDS.skillsLocal
+              ? "local"
+              : "online"
+          }
+          onTopTabChange={(tab) => {
+            navigateTo(tab === "local" ? MENU_IDS.skillsLocal : MENU_IDS.skillsOnline);
+          }}
         />
       </section>
     ) : activeNav === MENU_IDS.myAgents ? (
@@ -3604,7 +3616,7 @@ function AuthenticatedApp({
       navigateTo(MENU_IDS.currentSession);
     } else {
       setSkillSquareCommandTarget({ query: task.targetId || task.title, source: "slash_command" });
-      navigateTo(MENU_IDS.skillsSquare);
+      navigateTo(MENU_IDS.skillsOnline);
     }
     setAwaySummary(null);
   }

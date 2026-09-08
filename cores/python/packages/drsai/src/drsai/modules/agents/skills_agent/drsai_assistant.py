@@ -1729,6 +1729,10 @@ class DrSaiAssistant(DrSaiAgent):
         """
         # ── Entry security check: clear residual elevated tools from previous turn ──
         self._clear_elevated_tools()
+        selected_skill = getattr(self, "_selected_skill_for_turn", None)
+        selected_required = getattr(self, "_selected_skill_required_tools", None) or []
+        if selected_skill and selected_required:
+            self._elevate_tools_for_skill(list(selected_required), str(selected_skill))
 
         # monitor the pause event
         if self.is_paused:

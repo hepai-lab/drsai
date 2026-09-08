@@ -195,6 +195,7 @@ class DesktopAgentBackend:
             cancellation_token=cancellation,
             reasoning_effort=definition.reasoning_effort,
             plan_mode=context.plan_mode,
+            selected_skill_id=context.selected_skill_id,
         )
         if self._runner is not None:
             return self._runner(task, **kwargs)

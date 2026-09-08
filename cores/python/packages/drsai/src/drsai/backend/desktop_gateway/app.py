@@ -35,6 +35,7 @@ from .routes import (
     runs,
     runtime,
     sessions,
+    skills_square,
     workspaces,
 )
 
@@ -59,6 +60,7 @@ ROUTERS = (
     agent_backends.router,
     identity.router,
     gfs.router,
+    skills_square.router,
 )
 
 
@@ -70,6 +72,8 @@ async def lifespan(app: FastAPI):
     # so we always bootstrap.
     import asyncio
     import logging
+    import json
+    from pathlib import Path
 
     from drsai.config import ensure_desktop_runtime_config
 
@@ -86,7 +90,92 @@ async def lifespan(app: FastAPI):
             "Desktop Runtime configuration bootstrap failed: {}", type(exc).__name__,
         )
 
+    async def _run_subprocess_selftest() -> None:
+        # Keep this off the startup critical path: Office COM probes can hang
+        # under endpoint security and must never delay /health readiness.
+        home = Path(os.environ.get("DRSAI_HOME") or Path.home() / ".drsai")
+        probe_path = home / "logs" / "subprocess-selftest.json"
+
+        def _probe() -> dict:
+            import subprocess
+            import sys
+            import time
+
+            result: dict = {
+                "pid": os.getpid(),
+                "executable": sys.executable,
+                "platform": sys.platform,
+                "ts": time.time(),
+                "tests": {},
+            }
+            if sys.platform != "win32":
+                return result
+            ps = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+            create_no_window = 0x08000000
+            for name, args in [
+                ("powershell_createprocess", [ps, "-NoProfile", "-Command", "echo ok"]),
+                ("cmd_createprocess", ["cmd.exe", "/d", "/c", "echo ok"]),
+                ("python_createprocess", [sys.executable, "-c", "print(123)"]),
+            ]:
+                try:
+                    completed = subprocess.run(
+                        args,
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                        creationflags=create_no_window,
+                    )
+                    result["tests"][name] = {
+                        "ok": completed.returncode == 0,
+                        "returncode": completed.returncode,
+                        "stdout": (completed.stdout or "")[:200],
+                        "stderr": (completed.stderr or "")[:200],
+                    }
+                except Exception as exc:
+                    result["tests"][name] = {
+                        "ok": False,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+            try:
+                from drsai.modules.agents.skills_agent.managers.operater_funs import (
+                    _run_via_wmi_file_capture,
+                )
+
+                code, out, err = _run_via_wmi_file_capture(
+                    ps, ["-NoProfile", "-Command", "echo wmi-ok"], cwd=None, timeout=20,
+                )
+                result["tests"]["powershell_wmi"] = {
+                    "ok": code == 0 and "wmi-ok" in out,
+                    "returncode": code,
+                    "stdout": out[:200],
+                    "stderr": err[:200],
+                }
+            except Exception as exc:
+                result["tests"]["powershell_wmi"] = {
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            probe_path.parent.mkdir(parents=True, exist_ok=True)
+            probe_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+            return result
+
+        try:
+            probe = await asyncio.to_thread(_probe)
+            logger.info(
+                "subprocess selftest written to logs/subprocess-selftest.json tests={}",
+                probe.get("tests"),
+            )
+        except Exception as exc:
+            logger.warning("subprocess selftest skipped: {}: {}", type(exc).__name__, exc)
+
+    selftest_task = asyncio.create_task(_run_subprocess_selftest())
+
     yield
+    selftest_task.cancel()
+    try:
+        await selftest_task
+    except asyncio.CancelledError:
+        pass
     service = _state.agent_service()
     for backend in service.backends.values():
         await backend.close()

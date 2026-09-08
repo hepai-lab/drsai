@@ -30,10 +30,14 @@ import {
   type WebContents,
 } from "electron";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
-import { hostname } from "os";
+import { hostname, tmpdir } from "os";
 import { isIP } from "net";
 import { pathToFileURL } from "url";
 import { is } from "@electron-toolkit/utils";
+import {
+  basenameWithCanonicalExtension,
+  resolveCanonicalExtension,
+} from "../../../shared/main/fileExtension";
 import {
   MAIN_WINDOW_STATE_VERSION,
   loadMainWindowState,
@@ -192,9 +196,9 @@ import {
   getWorktreeMigrationDiagnostics,
   prepareForkWorktree,
 } from "./forkWorktrees";
-import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, // V2: trimmed — diagnoseMyDrSaiModelConnection, saveMyDrSaiModelProvider, testMyDrSaiModelProvider
-  discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, // V2: trimmed — saveMyDrSaiModelProvider,
-  savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, // V2: trimmed — testMyDrSaiModelProvider,
+import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, // V2: trimmed �� diagnoseMyDrSaiModelConnection, saveMyDrSaiModelProvider, testMyDrSaiModelProvider
+  discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, // V2: trimmed �� saveMyDrSaiModelProvider,
+  savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, // V2: trimmed �� testMyDrSaiModelProvider,
   testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../shared/main/myDrSaiConfig";
 import { getWebSearchProviderPolicy, updateWebSearchProviderPolicy } from "../../../shared/main/myDrSaiConfig";
 import { checkKnowledgeBaseStale, discoverRagflowDatasets, listKnowledgeBaseFiles, rediscoverRagflowDatasets, refreshKnowledgeBaseIfStale } from "../../../shared/main/myDrSaiConfig";
@@ -231,13 +235,31 @@ import {
   reloadSkills,
 } from "./skills";
 import {
-  listPublicSkillsSquare,
-  installPublicSkillSquare,
-} from "../../../shared/main/skillsSquare";
-import {
   importSkillFromFolderPath,
   installSkillFromZipPath,
 } from "../../../shared/main/skillArchive";
+import {
+  getSkillsSquareStatus,
+  listSkillsSquare,
+  getSkillsSquareDetail,
+  getSkillsSquareSkillMd,
+  getSkillsSquareStats,
+  listSkillsSquareTags,
+  createSkillsSquareTag,
+  updateSkillsSquareTag,
+  deleteSkillsSquareTag,
+  installSkillsSquare,
+  downloadSkillsSquare,
+  uploadSkillsSquare,
+  updateSkillsSquare,
+  deleteSkillsSquare,
+  toggleSkillsSquareVisibility,
+  collectSkillsSquare,
+  createSkillsSquareShare,
+  listSkillsSquareShares,
+  revokeSkillsSquareShare,
+} from "../../../shared/main/skillsSquare";
+// skillsSquare: HepAI OIDC only (Bearer + Principal email); no API key
 import {
   gfsList,
   gfsStat,
@@ -384,7 +406,7 @@ import {
   getRemoteGatewayAccess,
   resolveRemoteWorkspaceTarget,
   prepareRemoteForkWorktree,
-  // V2: trimmed — getRemoteWorkspaceGitDiff,
+  // V2: trimmed �� getRemoteWorkspaceGitDiff,
   executeRemoteWorkspaceMutation,
   listRemoteWorkspaceCheckpoints,
   createRemoteWorkspaceCheckpoint,
@@ -392,7 +414,7 @@ import {
   restoreRemoteWorkspaceCheckpoint,
   acceptRemoteWorkspaceCheckpoint,
   summarizeRemoteWorkspaceFolder,
-  // V2: trimmed — getRemoteWorkspaceGitFileAtRef,
+  // V2: trimmed �� getRemoteWorkspaceGitFileAtRef,
   getRemoteWorkspaceRootForPath,
   getRemoteThreadSnapshot,
   searchThreadMessagesWithRemoteFallback,
@@ -433,7 +455,7 @@ import {
 import { getIdeContext } from "../../../shared/main/ideContext";
 import {
   getWorkspaceContextOverview,
-  // V2: trimmed — getWorkspaceGitFileAtRef,
+  // V2: trimmed �� getWorkspaceGitFileAtRef,
   getWorkspaceGitDiff,
   listWorkspaceFiles,
   listWorkspaceFilesViaGateway,
@@ -442,6 +464,7 @@ import {
   queryMaterials,
   previewWorkspaceFile,
   previewWorkspaceFileViaGateway,
+  prefersLocalRichPreview,
   revertWorkspaceHunk,
   revertWorkspaceFile,
   stageWorkspaceFile,
@@ -608,9 +631,9 @@ import type {
   WorkspaceFileWriteRequest,
   WorkspaceFileWriteResult,
   WorkspaceFileTreeRequest,
-  // V2: trimmed — WorkspaceGitDiffRequest,
+  // V2: trimmed �� WorkspaceGitDiffRequest,
   WorkspaceFolderSummaryRequest,
-  // V2: trimmed — WorkspaceGitFileAtRefRequest,
+  // V2: trimmed �� WorkspaceGitFileAtRefRequest,
   DesktopWorkflowRunPrepareRequest,
   InteractiveDebugBreakpointRequest,
   InteractiveDebugControlRequest,
@@ -618,7 +641,7 @@ import type {
   InteractiveDebugStartRequest,
   UpdateMyDrSaiConfigRequest,
   UpdateMyDrSaiModelConnectionRequest,
-  // V2: trimmed — SaveMyDrSaiModelProviderRequest,
+  // V2: trimmed �� SaveMyDrSaiModelProviderRequest,
 } from "../shared/desktopApi";
 import {
   evaluateExecutionPermission,
@@ -683,7 +706,7 @@ async function applyRuntimeWorkspaceCatalogEvent(
   });
   // Live catalog events for Desktop-created chats must update the existing
   // thread-* row. They must never insert a second sidebar entry keyed by
-  // session_id — that row is owned by the chat send pipeline.
+  // session_id �� that row is owned by the chat send pipeline.
   if (!shouldMaterializeCatalogThread({ mode: "live", sourceChannel, ownerThreadId })) return;
   const result = await upsertThreadFromRuntimeCatalog({
     id: ownerThreadId ?? session.session_id,
@@ -2554,7 +2577,7 @@ async function execGit(
   });
 }
 
-// V2: trimmed — requestWorkspaceMutationApproval was only called by trimmed git handlers
+// V2: trimmed �� requestWorkspaceMutationApproval was only called by trimmed git handlers
 // async function requestWorkspaceMutationApproval(
 //   action: WorkspaceMutationAction,
 //   request: unknown,
@@ -2871,7 +2894,7 @@ function getWorkspaceMutationActionKind(
     : "workspace.revert";
 }
 
-// V2: trimmed — only called by commented-out getWorkspaceMutationDetail
+// V2: trimmed �� only called by commented-out getWorkspaceMutationDetail
 // function getWorkspaceMutationTitle(action: WorkspaceMutationAction): string {
 //   return {
 //     "stage-file": "Stage workspace file",
@@ -2881,7 +2904,7 @@ function getWorkspaceMutationActionKind(
 //   }[action];
 // }
 
-// V2: trimmed — only called by commented-out requestWorkspaceMutationApproval
+// V2: trimmed �� only called by commented-out requestWorkspaceMutationApproval
 // function getWorkspaceMutationDetail(
 //   action: WorkspaceMutationAction,
 //   request: unknown,
@@ -2892,7 +2915,7 @@ function getWorkspaceMutationActionKind(
 //   return `${getWorkspaceMutationTitle(action)}: ${path}${suffix}`;
 // }
 
-// V2: trimmed — only called by commented-out requestWorkspaceMutationApproval
+// V2: trimmed �� only called by commented-out requestWorkspaceMutationApproval
 // function getWorkspaceMutationIdempotencyKey(
 //   action: WorkspaceMutationAction,
 //   request: unknown,
@@ -2928,7 +2951,7 @@ function getStringProperty(request: unknown, key: string): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-// V2: trimmed — only called by commented-out requestWorkspaceMutationApproval
+// V2: trimmed �� only called by commented-out requestWorkspaceMutationApproval
 // function createQueuedWorkspaceMutationResult(
 //   action: WorkspaceMutationAction,
 //   request: unknown,
@@ -4094,10 +4117,35 @@ async function isAllowedOpenPath(rawPath: unknown): Promise<boolean> {
   });
 }
 
+function isTransientWorkspacePreviewError(error: unknown): boolean {
+  if (!error) return false;
+  const name = error instanceof Error ? error.name : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    name === "TimeoutError" ||
+    name === "AbortError" ||
+    /timeout|aborted|ECONNRESET|ECONNREFUSED|ETIMEDOUT|fetch failed/i.test(message)
+  );
+}
+
+/** Copy mangled names like `Deck.pptx（介绍）` to a temp `Deck.pptx` so the OS can associate. */
+async function resolveOpenPathForShell(rawPath: string): Promise<string> {
+  const canonical = resolveCanonicalExtension(rawPath);
+  const direct = extname(rawPath).toLowerCase();
+  if (!canonical || canonical === direct || !existsSync(rawPath)) return rawPath;
+  const safeName = basenameWithCanonicalExtension(rawPath);
+  const digest = createHash("sha1").update(rawPath).digest("hex").slice(0, 10);
+  const stagingDir = join(tmpdir(), "opendrsai-open", digest);
+  await mkdir(stagingDir, { recursive: true });
+  const staged = join(stagingDir, safeName);
+  await copyFile(rawPath, staged);
+  return staged;
+}
+
 async function resolveLegacyLocalWorkspaceLabel(rawPath: unknown): Promise<string | null> {
   if (typeof rawPath !== "string" || /[\r\n\0]/.test(rawPath)) return null;
   const requestedPath = rawPath.trim();
-  if (requestedPath !== "Local workspace" && requestedPath !== "本地工作区") {
+  if (requestedPath !== "Local workspace" && requestedPath !== "���ع�����") {
     return requestedPath || null;
   }
   const workspaces = await listWorkspaces();
@@ -4330,7 +4378,7 @@ function serializeDecisionCsv(rows: string[][]): string {
 }
 
 function isDecisionAnomaly(value: string): boolean {
-  return /^(?:true|1|yes|y|anomaly|异常)$/i.test(value.trim());
+  return /^(?:true|1|yes|y|anomaly|�쳣)$/i.test(value.trim());
 }
 
 async function applyAnomalyDecision(request: DesktopAnomalyDecisionApplyRequest): Promise<DesktopAnomalyDecisionApplyResult> {
@@ -4348,7 +4396,7 @@ async function applyAnomalyDecision(request: DesktopAnomalyDecisionApplyRequest)
   if (rows.length < 2) throw new Error("The source CSV does not contain any data rows.");
   const headers = rows[0].map((value) => value.trim());
   const anomalyIndex = headers.findIndex((value) => value.toLowerCase() === request.anomalyColumn.trim().toLowerCase());
-  if (anomalyIndex < 0) throw new Error(`The anomaly column “${request.anomalyColumn}” was not found.`);
+  if (anomalyIndex < 0) throw new Error(`The anomaly column ��${request.anomalyColumn}�� was not found.`);
   const dataRows = rows.slice(1);
   const anomalyRows = dataRows.filter((row) => isDecisionAnomaly(row[anomalyIndex] || ""));
   const normalRows = dataRows.filter((row) => !isDecisionAnomaly(row[anomalyIndex] || ""));
@@ -4356,12 +4404,12 @@ async function applyAnomalyDecision(request: DesktopAnomalyDecisionApplyRequest)
   const base = basename(preview.path, extname(preview.path));
   const outputDirectory = dirname(preview.path);
   const outputSpecs = request.decision === "keep"
-    ? [{ role: "kept_all" as const, path: join(outputDirectory, `${base}-保留全部.csv`), rows: dataRows }]
+    ? [{ role: "kept_all" as const, path: join(outputDirectory, `${base}-����ȫ��.csv`), rows: dataRows }]
     : request.decision === "exclude"
-      ? [{ role: "excluded_anomalies" as const, path: join(outputDirectory, `${base}-排除异常.csv`), rows: normalRows }]
+      ? [{ role: "excluded_anomalies" as const, path: join(outputDirectory, `${base}-�ų��쳣.csv`), rows: normalRows }]
       : [
-          { role: "kept_all" as const, path: join(outputDirectory, `${base}-保留全部.csv`), rows: dataRows },
-          { role: "excluded_anomalies" as const, path: join(outputDirectory, `${base}-排除异常.csv`), rows: normalRows },
+          { role: "kept_all" as const, path: join(outputDirectory, `${base}-����ȫ��.csv`), rows: dataRows },
+          { role: "excluded_anomalies" as const, path: join(outputDirectory, `${base}-�ų��쳣.csv`), rows: normalRows },
         ];
   const outputs: DesktopAnomalyDecisionApplyResult["outputs"] = [];
   for (const output of outputSpecs) {
@@ -4377,11 +4425,11 @@ async function applyAnomalyDecision(request: DesktopAnomalyDecisionApplyRequest)
   }
   const decidedAt = new Date().toISOString();
   const resultSummary = request.decision === "keep"
-    ? `已采用“保留异常”：输出 ${dataRows.length} 行，其中异常 ${anomalyRows.length} 行。`
+    ? `�Ѳ��á������쳣������� ${dataRows.length} �У������쳣 ${anomalyRows.length} �С�`
     : request.decision === "exclude"
-      ? `已采用“排除异常”：输出 ${normalRows.length} 行，异常 0 行；原始数据未改动。`
-      : `已采用“两种都做”：分别输出保留版 ${dataRows.length} 行和排除版 ${normalRows.length} 行；原始数据未改动。`;
-  const receiptPath = join(outputDirectory, `${base}-异常处理决定.json`);
+      ? `�Ѳ��á��ų��쳣������� ${normalRows.length} �У��쳣 0 �У�ԭʼ����δ�Ķ���`
+      : `�Ѳ��á����ֶ��������ֱ���������� ${dataRows.length} �к��ų��� ${normalRows.length} �У�ԭʼ����δ�Ķ���`;
+  const receiptPath = join(outputDirectory, `${base}-�쳣��������.json`);
   const result: DesktopAnomalyDecisionApplyResult = {
     sourcePath: preview.path,
     anomalyColumn: request.anomalyColumn.trim(),
@@ -4418,12 +4466,12 @@ const PICKED_FILE_INSPECTION_TIMEOUT_MS = 15_000;
 type PickedFileInspection = Pick<PickedFileDescriptor, "status" | "message" | "diagnosticCode" | "processingMode" | "recoveryAction" | "sensitiveDataDetected" | "sensitiveKinds" | "sensitiveValueCount" | "privacyNotice">;
 
 async function inspectPickedFile(path: string, category: PickedFileDescriptor["category"], extension: string): Promise<PickedFileInspection> {
-  // Non-categorized files (ZIP, archives, code, etc.) are allowed — the agent
+  // Non-categorized files (ZIP, archives, code, etc.) are allowed �� the agent
   // reads file contents through its own file-reading tools, so we only pass
   // the file path/metadata and do not need to parse the content here.
   if (category === "other") return {
     status: "ready", processingMode: "full",
-    message: "文件已加入任务；智能体将通过自己的工具读取文件内容。",
+    message: "�ļ��Ѽ������������彫ͨ���Լ��Ĺ��߶�ȡ�ļ����ݡ�",
   };
   const handle = await openFile(path, "r");
   try {
@@ -4441,13 +4489,13 @@ async function inspectPickedFile(path: string, category: PickedFileDescriptor["c
             : true;
     if ([".docx", ".xlsx", ".pptx"].includes(extension) && head.subarray(0, 4).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0]))) return {
       status: "unreadable", diagnosticCode: "password_protected", processingMode: "blocked",
-      message: "这个 Office 文件可能受密码保护，当前无法读取内容。",
-      recoveryAction: "请在 Office 中解除密码保护并另存一份副本，再重新导入。",
+      message: "��� Office �ļ����������뱣������ǰ�޷���ȡ���ݡ�",
+      recoveryAction: "���� Office �н�����뱣��������һ�ݸ����������µ��롣",
     };
     if (!signatureValid) return {
       status: "unreadable", diagnosticCode: "corrupt_file", processingMode: "blocked",
-      message: "文件内容与扩展名不一致，可能已损坏或下载不完整。",
-      recoveryAction: "请重新下载或用原应用打开并另存一份副本，然后重新导入。",
+      message: "�ļ���������չ����һ�£��������𻵻����ز�������",
+      recoveryAction: "���������ػ���ԭӦ�ô򿪲�����һ�ݸ�����Ȼ�����µ��롣",
     };
     if (extension === ".pdf" && info.size > 0) {
       const tailBytes = Math.min(info.size, 128 * 1024);
@@ -4455,8 +4503,8 @@ async function inspectPickedFile(path: string, category: PickedFileDescriptor["c
       await handle.read(tail, 0, tailBytes, Math.max(0, info.size - tailBytes));
       if (/\/Encrypt\b/.test(tail.toString("latin1"))) return {
         status: "unreadable", diagnosticCode: "password_protected", processingMode: "blocked",
-        message: "这个 PDF 受密码保护，当前无法安全读取内容。",
-        recoveryAction: "请在 PDF 阅读器中输入密码后另存为不加密副本，再重新导入。",
+        message: "��� PDF �����뱣������ǰ�޷���ȫ��ȡ���ݡ�",
+        recoveryAction: "���� PDF �Ķ������������������Ϊ�����ܸ����������µ��롣",
       };
     }
     let privacy: Partial<PickedFileInspection> = {};
@@ -4470,17 +4518,17 @@ async function inspectPickedFile(path: string, category: PickedFileDescriptor["c
           sensitiveDataDetected: true,
           sensitiveKinds: [...new Set(matches.map((match) => match.kind))],
           sensitiveValueCount: matches.length,
-          privacyNotice: `已在本地检测到 ${matches.length} 处敏感信息；原值不会显示在附件摘要中，分享前会要求确认并遮蔽。`,
+          privacyNotice: `���ڱ��ؼ�⵽ ${matches.length} ��������Ϣ��ԭֵ������ʾ�ڸ���ժҪ�У�����ǰ��Ҫ��ȷ�ϲ��ڱΡ�`,
         };
       }
     }
     if (info.size >= LARGE_PICKED_FILE_BYTES) return {
       status: "ready", diagnosticCode: "large_file", processingMode: "bounded",
-      message: "大文件已就绪；为保持应用流畅，将先读取有代表性的内容，而不是一次加载全部数据。",
-      recoveryAction: "可直接继续；如需逐页或全量分析，建议拆分文件后重新导入。",
+      message: "���ļ��Ѿ�����Ϊ����Ӧ�����������ȶ�ȡ�д����Ե����ݣ�������һ�μ���ȫ�����ݡ�",
+      recoveryAction: "��ֱ�Ӽ�����������ҳ��ȫ���������������ļ������µ��롣",
       ...privacy,
     };
-    return { status: "ready", processingMode: "full", message: "文件已读取并可加入任务。", ...privacy };
+    return { status: "ready", processingMode: "full", message: "�ļ��Ѷ�ȡ���ɼ�������", ...privacy };
   } finally {
     await handle.close();
   }
@@ -4494,8 +4542,8 @@ async function inspectPickedFileWithTimeout(path: string, category: PickedFileDe
       new Promise<PickedFileInspection>((resolveTimeout) => {
         timer = setTimeout(() => resolveTimeout({
           status: "unreadable", diagnosticCode: "inspection_timeout", processingMode: "blocked",
-          message: "文件检查超过 15 秒，已停止等待，应用可以继续使用。",
-          recoveryAction: "请确认磁盘或网络位置可访问，将文件复制到本地后重试。",
+          message: "�ļ���鳬�� 15 �룬��ֹͣ�ȴ���Ӧ�ÿ��Լ���ʹ�á�",
+          recoveryAction: "��ȷ�ϴ��̻�����λ�ÿɷ��ʣ����ļ����Ƶ����غ����ԡ�",
         }), PICKED_FILE_INSPECTION_TIMEOUT_MS);
       }),
     ]);
@@ -4523,7 +4571,7 @@ async function describePickedFiles(paths: string[], canceled: boolean): Promise<
     const base = { path, name: basename(path), extension, category };
     try {
       const info = await statFile(path);
-      if (!info.isFile()) return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "所选项目不是文件。", recoveryAction: "请选择一个可读取的本地文件。" };
+      if (!info.isFile()) return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "��ѡ��Ŀ�����ļ���", recoveryAction: "��ѡ��һ���ɶ�ȡ�ı����ļ���" };
       const inspected = { ...base, sizeBytes: info.size, ...(await inspectPickedFileWithTimeout(path, category, extension)) };
       if (inspected.status !== "ready" || category !== "image") {
         return inspected;
@@ -4543,7 +4591,7 @@ async function describePickedFiles(paths: string[], canceled: boolean): Promise<
         return inspected;
       }
     } catch {
-      return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "文件无法读取或已经被移动；其他已选文件仍可使用。", recoveryAction: "请检查文件权限和位置，或复制到本地后重新导入。" };
+      return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "�ļ��޷���ȡ���Ѿ����ƶ���������ѡ�ļ��Կ�ʹ�á�", recoveryAction: "�����ļ�Ȩ�޺�λ�ã����Ƶ����غ����µ��롣" };
     }
   }));
   return { canceled, paths, files };
@@ -4955,7 +5003,8 @@ function registerIpc(): void {
       return "Path is not registered as an OpenDrSai or workspace path.";
     }
     if (process.env.OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN === "1") return "";
-    return shell.openPath(rawPath);
+    const openTarget = await resolveOpenPathForShell(rawPath);
+    return shell.openPath(openTarget);
   });
   secureHandle("desktop:edit-command", (event, rawCommand: string) => {
     const command = rawCommand === "undo" || rawCommand === "redo" || rawCommand === "cut" ||
@@ -5193,7 +5242,7 @@ function registerIpc(): void {
         );
       } catch (error) {
         if (!isLocalRuntimeUnavailableError(error)) throw error;
-        // gateway unavailable — fall through to local fs
+        // gateway unavailable �� fall through to local fs
       }
     }
     return (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown"
@@ -5207,6 +5256,14 @@ function registerIpc(): void {
     return remoteRoot ? summarizeRemoteWorkspaceFolder(request as WorkspaceFolderSummaryRequest, remoteRoot) : summarizeWorkspaceFolder(request);
   });
   secureHandle("desktop:workspace-file-preview", async (_event, request: WorkspaceFilePreviewRequest) => {
+    // Office/PDF previews need local extractors (and sibling slide PNGs). Avoid
+    // gateway /file entirely so a slow Runtime cannot AbortError the IPC call.
+    if (
+      prefersLocalRichPreview(request?.path)
+      && (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) === "local_or_unknown"
+    ) {
+      return previewWorkspaceFile(request);
+    }
     // V2: route through gateway when workspaceId is available
     if (request?.workspaceId) {
       try {
@@ -5216,8 +5273,8 @@ function registerIpc(): void {
           async ({ client }) => previewWorkspaceFileViaGateway(client, request),
         );
       } catch (error) {
-        if (!isLocalRuntimeUnavailableError(error)) throw error;
-        // gateway unavailable — fall through to local fs
+        if (!isLocalRuntimeUnavailableError(error) && !isTransientWorkspacePreviewError(error)) throw error;
+        // gateway unavailable / timed out — fall through to local fs
       }
     }
     return (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown"
@@ -5291,7 +5348,7 @@ function registerIpc(): void {
       phase: "analyzing",
       activeStage: "analyzing",
       progress: 1,
-      message: "正在启动管理者版 PPT 生成任务。",
+      message: "�������������߰� PPT ��������",
     };
     run.lastProgress = startedProgress;
     run.backgroundSync = upsertBackgroundTaskForManagerPresentation(request, startedProgress);
@@ -5326,8 +5383,8 @@ function registerIpc(): void {
     try {
       const versionGroupId = `presentation-${requestId}`;
       const changeReason = request.audience === "technical_experts"
-        ? "根据演示型 PDF 生成技术专家版 PPT"
-        : "根据演示型 PDF 生成管理者版 PPT";
+        ? "������ʾ�� PDF ���ɼ���ר�Ұ� PPT"
+        : "������ʾ�� PDF ���ɹ����߰� PPT";
       const presentationResult = await generateManagerPresentation(request, (progress) => {
         run.lastProgress = progress;
         recordManagerPresentationProgress(request, progress);
@@ -5367,7 +5424,7 @@ function registerIpc(): void {
         onOutputPlanned: async (outputPath, manifestPath) => {
           await createWorkspaceCheckpoint({
             workspacePath: request.workspacePath,
-            label: `生成前 · ${basename(outputPath)}`,
+            label: `����ǰ �� ${basename(outputPath)}`,
             kind: "artifact_version",
             runId: requestId,
             automatic: true,
@@ -5388,7 +5445,7 @@ function registerIpc(): void {
       });
       await createWorkspaceCheckpoint({
         workspacePath: request.workspacePath,
-        label: `生成后 · ${basename(presentationResult.outputPath)}`,
+        label: `���ɺ� �� ${basename(presentationResult.outputPath)}`,
         kind: "artifact_version",
         runId: requestId,
         automatic: true,
@@ -5462,7 +5519,7 @@ function registerIpc(): void {
       phase: "pausing",
       activeStage: progress?.activeStage,
       progress: progress?.progress ?? 0,
-      message: "正在到达安全暂停点…",
+      message: "���ڵ��ﰲȫ��ͣ�㡭",
       outputPath: progress?.outputPath,
     } satisfies ManagerPresentationProgressEvent);
     run.activeOperationController?.abort();
@@ -5489,7 +5546,7 @@ function registerIpc(): void {
         activeStage,
         scope: "regenerate_required",
         requirements: run ? [...run.requirements] : [],
-        message: "任务已经结束；要应用这项要求，需要重新生成 PPT。",
+        message: "�����Ѿ�������ҪӦ������Ҫ����Ҫ�������� PPT��",
       };
     }
     const text = typeof update?.text === "string"
@@ -5507,8 +5564,8 @@ function registerIpc(): void {
         scope: "regenerate_required",
         requirements: [...run.requirements],
         message: text
-          ? "当前成果已进入验收或已经结束；要应用这项要求，需要重新执行规划和生成阶段。"
-          : "请输入要补充的要求。",
+          ? "��ǰ�ɹ��ѽ������ջ��Ѿ�������ҪӦ������Ҫ����Ҫ����ִ�й滮�����ɽ׶Ρ�"
+          : "������Ҫ�����Ҫ��",
       };
     }
     if (!run.requirements.includes(text)) run.requirements = [...run.requirements, text].slice(-5);
@@ -5520,7 +5577,7 @@ function registerIpc(): void {
       activeStage,
       scope: "current_unfinished_stages",
       requirements: [...run.requirements],
-      message: "已应用到当前任务尚未完成的规划、生成和验收阶段。",
+      message: "��Ӧ�õ���ǰ������δ��ɵĹ滮�����ɺ����ս׶Ρ�",
     };
   });
   secureHandle("desktop:manager-presentation-recovery", async (_event, request: ManagerPresentationRecoveryRequest) => {
@@ -5551,7 +5608,7 @@ function registerIpc(): void {
     }
     return resolveManagerPresentationRecovery(request);
   });
-  // V2: trimmed — gateway has no git diff/stage/revert routes (only list/open/files/file)
+  // V2: trimmed �� gateway has no git diff/stage/revert routes (only list/open/files/file)
   // secureHandle("desktop:workspace-git-diff", async (_event, request: WorkspaceGitDiffRequest) =>
   //   (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? getRemoteWorkspaceGitDiff(request) : getWorkspaceGitDiff(request),
   // );
@@ -5667,7 +5724,7 @@ function registerIpc(): void {
   secureHandle("desktop:preview-my-drsai-model-connection", (_event, request: UpdateMyDrSaiModelConnectionRequest) =>
     previewMyDrSaiModelConnection(request),
   );
-  // V2: trimmed — gateway has no model provider config routes (catalog only)
+  // V2: trimmed �� gateway has no model provider config routes (catalog only)
   // secureHandle("desktop:diagnose-my-drsai-model-connection", (_event, online?: boolean) =>
   //   diagnoseMyDrSaiModelConnection(online),
   // );
@@ -5909,12 +5966,6 @@ function registerIpc(): void {
     const r = (request ?? {}) as { threadId?: string; userId?: string };
     return reloadSkills(r.threadId, r.userId);
   });
-  secureHandle("desktop:list-public-skills-square", (_event, request) =>
-    listPublicSkillsSquare((request as Parameters<typeof listPublicSkillsSquare>[0]) ?? {}),
-  );
-  secureHandle("desktop:install-public-skill-square", (_event, request) =>
-    installPublicSkillSquare(request as Parameters<typeof installPublicSkillSquare>[0]),
-  );
   secureHandle("desktop:import-skill-folder", (_event, request) =>
     importSkillFromFolderPath(
       (request as { folderPath: string }).folderPath,
@@ -5926,6 +5977,63 @@ function registerIpc(): void {
       (request as { zipPath: string }).zipPath,
       request as Parameters<typeof installSkillFromZipPath>[1],
     ),
+  );
+
+  // Skills Square (WebUI marketplace)
+  secureHandle("desktop:get-skills-square-status", () => getSkillsSquareStatus());
+  secureHandle("desktop:list-skills-square", (_event, request) =>
+    listSkillsSquare(request as Parameters<typeof listSkillsSquare>[0]),
+  );
+  secureHandle("desktop:get-skills-square-detail", (_event, request) =>
+    getSkillsSquareDetail(request as { slug: string; userEmail?: string }),
+  );
+  secureHandle("desktop:get-skills-square-skill-md", (_event, request) =>
+    getSkillsSquareSkillMd(request as { slug: string }),
+  );
+  secureHandle("desktop:get-skills-square-stats", () => getSkillsSquareStats());
+  secureHandle("desktop:list-skills-square-tags", (_event, request) =>
+    listSkillsSquareTags(request as Parameters<typeof listSkillsSquareTags>[0]),
+  );
+  secureHandle("desktop:create-skills-square-tag", (_event, request) =>
+    createSkillsSquareTag(request as Parameters<typeof createSkillsSquareTag>[0]),
+  );
+  secureHandle("desktop:update-skills-square-tag", (_event, request) =>
+    updateSkillsSquareTag(request as Parameters<typeof updateSkillsSquareTag>[0]),
+  );
+  secureHandle("desktop:delete-skills-square-tag", (_event, request) =>
+    deleteSkillsSquareTag(request as Parameters<typeof deleteSkillsSquareTag>[0]),
+  );
+  secureHandle("desktop:install-skills-square", (_event, request) =>
+    installSkillsSquare(request as Parameters<typeof installSkillsSquare>[0]),
+  );
+  secureHandle("desktop:download-skills-square", (_event, request) =>
+    downloadSkillsSquare(request as Parameters<typeof downloadSkillsSquare>[0]),
+  );
+  secureHandle("desktop:upload-skills-square", (_event, request) =>
+    uploadSkillsSquare(request as Parameters<typeof uploadSkillsSquare>[0]),
+  );
+  secureHandle("desktop:update-skills-square", (_event, request) =>
+    updateSkillsSquare(request as Parameters<typeof updateSkillsSquare>[0]),
+  );
+  secureHandle("desktop:delete-skills-square", (_event, request) =>
+    deleteSkillsSquare(request as Parameters<typeof deleteSkillsSquare>[0]),
+  );
+  secureHandle("desktop:toggle-skills-square-visibility", (_event, request) =>
+    toggleSkillsSquareVisibility(
+      request as Parameters<typeof toggleSkillsSquareVisibility>[0],
+    ),
+  );
+  secureHandle("desktop:collect-skills-square", (_event, request) =>
+    collectSkillsSquare(request as Parameters<typeof collectSkillsSquare>[0]),
+  );
+  secureHandle("desktop:create-skills-square-share", (_event, request) =>
+    createSkillsSquareShare(request as Parameters<typeof createSkillsSquareShare>[0]),
+  );
+  secureHandle("desktop:list-skills-square-shares", (_event, request) =>
+    listSkillsSquareShares(request as Parameters<typeof listSkillsSquareShares>[0]),
+  );
+  secureHandle("desktop:revoke-skills-square-share", (_event, request) =>
+    revokeSkillsSquareShare(request as Parameters<typeof revokeSkillsSquareShare>[0]),
   );
 
   // GFS cloud storage

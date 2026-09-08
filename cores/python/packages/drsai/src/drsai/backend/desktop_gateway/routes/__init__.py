@@ -20,10 +20,11 @@ from . import models  # noqa: F401  (3.2 model selection + /v1/models)
 from . import runs  # noqa: F401  (3.1 chat write path)
 from . import runtime  # noqa: F401  (1 handshake)
 from . import sessions  # noqa: F401  (2.1 2.2 3.1 3.3)
+from . import skills_square  # noqa: F401  (/v1/skills-square/* WebUI marketplace proxy)
 from . import workspaces  # noqa: F401  (2.3 2.5 4.1)
 
 __all__ = [
     "runtime", "workspaces", "sessions", "runs", "models", "audio", "config",
     "config_agents", "config_providers", "config_tools", "config_knowledge", "capabilities", "agent_backends",
-    "identity", "gfs",
+    "identity", "gfs", "skills_square",
 ]
