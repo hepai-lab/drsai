@@ -1036,9 +1036,22 @@ export async function previewWorkspaceFile(
     kind === "office"
   ) {
     const officeText = await extractOfficeText(target, extension, Math.min(fileStat.size, maxBytes));
+    // Include raw bytes for in-browser rich rendering (docx-preview / JSZip).
+    // Cap at 10 MB to avoid IPC serialization issues.
+    const MAX_OFFICE_RAW_BYTES = 10_000_000;
+    let dataUrl: string | undefined;
+    if (fileStat.size <= MAX_OFFICE_RAW_BYTES) {
+      try {
+        const rawBuffer = await readFile(target);
+        dataUrl = `data:${base.mime};base64,${rawBuffer.toString("base64")}`;
+      } catch {
+        // If raw read fails, continue with text-only preview.
+      }
+    }
     return {
       ...base,
       content: officeText || undefined,
+      dataUrl,
       message: officeText
         ? "Extracted a basic text preview from the Office document."
         : getMetadataOnlyMessage(kind),
@@ -1603,8 +1616,8 @@ function classifyPreviewKind(filePath: string, size: number): WorkspacePreviewKi
   if (extension in IMAGE_MIME) return "image";
   if (extension in MEDIA_MIME) return "media";
   if (extension === ".pdf") return "pdf";
-  if (size > 2_000_000) return "large";
   if (OFFICE_EXTENSIONS.has(extension)) return "office";
+  if (size > 2_000_000) return "large";
   if (extension === ".ipynb") return "notebook";
   if (extension === ".md" || extension === ".mdx") return "markdown";
   if (extension === ".html" || extension === ".htm") return "html";

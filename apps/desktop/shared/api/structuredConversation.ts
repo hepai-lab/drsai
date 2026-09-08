@@ -269,12 +269,52 @@ export interface StructuredTurnMeta {
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | Record<string, unknown>;
 }
 
+export type StructuredProcessTimelineEntry =
+  | {
+      id: string;
+      kind: "reasoning";
+      sequence: number;
+      partId: string;
+      segmentId: string;
+      text: string;
+      status: StructuredPartStatus;
+    }
+  | {
+      id: string;
+      kind: "markdown";
+      sequence: number;
+      partId: string;
+      text: string;
+      status: StructuredPartStatus;
+      /** Live answer text is process feedback only and disappears after terminal completion. */
+      transient: boolean;
+    }
+  | {
+      id: string;
+      kind: "progress";
+      sequence: number;
+      partId: string;
+      summary: string;
+      status: StructuredPartStatus;
+      phase?: string;
+      completed?: number;
+      total?: number;
+    }
+  | {
+      id: string;
+      kind: "activity";
+      sequence: number;
+      activityId: string;
+    };
+
 export interface StructuredTurnState {
   version: typeof STRUCTURED_CONVERSATION_VERSION;
   turnId: string;
   status: StructuredTurnStatus;
   parts: StructuredAssistantPart[];
   activities: StructuredActivityEvent[];
+  /** Append-ordered presentation records preserve delta boundaries lost by aggregate parts. */
+  processTimeline?: StructuredProcessTimelineEntry[];
   lastSequence: number;
   seenDedupeKeys: string[];
   protocolIssues: StructuredProtocolIssue[];
@@ -413,6 +453,7 @@ export function migrateLegacyMessageToStructuredTurn(message: LegacyConversation
       ? { ...part, channel: "answer" as const, final: !message.streaming && !message.error }
       : part),
     activities,
+    processTimeline: [],
     lastSequence: 0,
     seenDedupeKeys: [],
     protocolIssues: [],
@@ -430,6 +471,9 @@ export function sanitizeStructuredTurnState(raw: unknown): StructuredTurnState |
     : [];
   const activities = Array.isArray(value.activities)
     ? value.activities.slice(-200).filter(isStructuredActivityEvent).map(sanitizeStructuredActivity)
+    : [];
+  const processTimeline = Array.isArray(value.processTimeline)
+    ? value.processTimeline.slice(-500).flatMap(sanitizeProcessTimelineEntry)
     : [];
   const lastSequence = Number.isSafeInteger(value.lastSequence) && Number(value.lastSequence) >= 0
     ? Number(value.lastSequence)
@@ -458,6 +502,7 @@ export function sanitizeStructuredTurnState(raw: unknown): StructuredTurnState |
     status: value.status as StructuredTurnStatus,
     parts,
     activities,
+    processTimeline,
     lastSequence,
     seenDedupeKeys,
     protocolIssues,
@@ -482,6 +527,7 @@ export function createStructuredTurnState(turnId: string): StructuredTurnState {
     status: "pending",
     parts: [],
     activities: [],
+    processTimeline: [],
     lastSequence: 0,
     seenDedupeKeys: [],
     protocolIssues: [],
@@ -571,16 +617,23 @@ export function applyStructuredConversationEvent(
           };
         });
       }
-      return { ...next, activities: upsertById(next.activities, { ...activity, sequence: event.sequence }), parts: updatedParts };
+      const processTimeline = activity.subtaskId
+        ? (next.processTimeline ?? [])
+        : upsertProcessTimelineActivity(next.processTimeline ?? [], activity.id, event.sequence);
+      return {
+        ...next,
+        activities: upsertById(next.activities, { ...activity, sequence: event.sequence }),
+        parts: updatedParts,
+        processTimeline,
+      };
     }
     case "turn.completed":
       return {
         ...next,
         status: "completed",
         sealed: true,
-        parts: next.parts.map((part) => part.kind === "markdown" && (part.channel ?? "answer") === "answer"
-          ? { ...part, final: true }
-          : part),
+        // Final-answer authority belongs to part.completed / the backend. A
+        // terminal turn event must never promote unclassified process text.
         meta: { ...next.meta, ...event.meta },
       };
     case "turn.cancelled":
@@ -714,12 +767,55 @@ function applyPartDelta(
   return {
     ...state,
     parts: state.parts.map((item, index) => index === partIndex ? updated : item),
+    processTimeline: appendProcessTimelineDelta(state.processTimeline, part, delta, sequence),
   };
+}
+
+function appendProcessTimelineDelta(
+  timeline: StructuredProcessTimelineEntry[],
+  part: StructuredAssistantPart,
+  delta: StructuredPartDelta,
+  sequence: number,
+): StructuredProcessTimelineEntry[] {
+  if (part.kind === "reasoning" && delta.kind === "reasoning.append") {
+    const previous = timeline.at(-1);
+    if (previous?.kind === "reasoning" && previous.partId === part.id && previous.segmentId === delta.segmentId && previous.text.length < 16_384) {
+      return [...timeline.slice(0, -1), { ...previous, text: `${previous.text}${delta.text}` }];
+    }
+    const id = `reasoning:${part.id}:${sequence}`;
+    return [...timeline, { id, kind: "reasoning", sequence, partId: part.id, segmentId: delta.segmentId, text: delta.text, status: "running" }].slice(-500);
+  }
+  if (part.kind === "markdown" && delta.kind === "markdown.append") {
+    const transient = (part.channel ?? "process") === "answer";
+    const previous = timeline.at(-1);
+    if (previous?.kind === "markdown" && previous.partId === part.id && previous.transient === transient && previous.text.length < 16_384) {
+      return [...timeline.slice(0, -1), { ...previous, text: `${previous.text}${delta.text}` }];
+    }
+    const id = `markdown:${part.id}:${sequence}`;
+    return [...timeline, { id, kind: "markdown", sequence, partId: part.id, text: delta.text, status: "running", transient }].slice(-500);
+  }
+  if (part.kind === "progress" && delta.kind === "progress.update") {
+    return [...timeline, { id: `progress:${part.id}:${sequence}`, kind: "progress", sequence, partId: part.id, summary: delta.summary, status: "running", ...(delta.phase ? { phase: delta.phase } : {}), ...(delta.completed !== undefined ? { completed: delta.completed } : {}), ...(delta.total !== undefined ? { total: delta.total } : {}) }].slice(-500);
+  }
+  return timeline;
+}
+
+function upsertProcessTimelineActivity(
+  timeline: StructuredProcessTimelineEntry[],
+  activityId: string,
+  sequence: number,
+): StructuredProcessTimelineEntry[] {
+  const id = `activity:${activityId}`;
+  const existing = timeline.find((entry) => entry.id === id);
+  if (existing) return timeline.map((entry) => entry.id === id ? { ...entry, sequence } : entry);
+  return [...timeline, { id, kind: "activity", sequence, activityId }].slice(-500);
 }
 
 function updatePartWithDelta(part: StructuredAssistantPart, delta: StructuredPartDelta, sequence: number): StructuredAssistantPart | null {
   if (part.kind === "markdown" && delta.kind === "markdown.append") {
-    return { ...part, channel: part.channel ?? "answer", markdown: `${part.markdown}${delta.text}`, status: "running", final: false };
+    // Missing channel is deliberately process-only. Only an explicitly sealed
+    // answer part may enter the Result layer.
+    return { ...part, channel: part.channel ?? "process", markdown: `${part.markdown}${delta.text}`, status: "running", final: false };
   }
   if (part.kind === "markdown" && delta.kind === "markdown.citations") {
     return { ...part, citationIds: dedupeStrings([...(part.citationIds ?? []), ...delta.citationIds]) };
@@ -879,8 +975,28 @@ function dedupeParts(parts: StructuredAssistantPart[]): StructuredAssistantPart[
   });
 }
 
+function sanitizeProcessTimelineEntry(entry: unknown): StructuredProcessTimelineEntry[] {
+  if (!entry || typeof entry !== "object") return [];
+  const value = entry as Record<string, unknown>;
+  if (!isNonEmptyString(value.id) || !Number.isSafeInteger(value.sequence) || Number(value.sequence) <= 0 || !isNonEmptyString(value.partId ?? value.activityId)) return [];
+  const base = { id: String(value.id).slice(0, 300), sequence: Number(value.sequence) };
+  if (value.kind === "reasoning" && isNonEmptyString(value.partId) && isNonEmptyString(value.segmentId) && typeof value.text === "string" && isPartStatus(value.status)) {
+    return [{ ...base, kind: "reasoning", partId: value.partId.slice(0, 200), segmentId: value.segmentId.slice(0, 200), text: value.text.slice(0, 16_384), status: value.status }];
+  }
+  if (value.kind === "markdown" && isNonEmptyString(value.partId) && typeof value.text === "string" && isPartStatus(value.status)) {
+    return [{ ...base, kind: "markdown", partId: value.partId.slice(0, 200), text: value.text.slice(0, 16_384), status: value.status, transient: value.transient === true }];
+  }
+  if (value.kind === "progress" && isNonEmptyString(value.partId) && typeof value.summary === "string" && isPartStatus(value.status)) {
+    return [{ ...base, kind: "progress", partId: value.partId.slice(0, 200), summary: value.summary.slice(0, 10_000), status: value.status, ...(typeof value.phase === "string" ? { phase: value.phase.slice(0, 200) } : {}), ...(Number.isFinite(value.completed) ? { completed: Number(value.completed) } : {}), ...(Number.isFinite(value.total) ? { total: Number(value.total) } : {}) }];
+  }
+  if (value.kind === "activity" && isNonEmptyString(value.activityId)) {
+    return [{ ...base, kind: "activity", activityId: value.activityId.slice(0, 200) }];
+  }
+  return [];
+}
+
 function sanitizeStructuredPart(part: StructuredAssistantPart): StructuredAssistantPart {
-  const base = { id: part.id.slice(0, 200), status: part.status };
+  const base = { id: part.id.slice(0, 200), status: part.status, ...(Number.isSafeInteger(part.sequence) ? { sequence: part.sequence } : {}) };
   if (part.kind === "markdown") return {
     ...base,
     kind: part.kind,

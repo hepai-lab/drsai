@@ -170,7 +170,7 @@ export class ConversationResourceHostRouter {
     if (encoded) {
       const bytes = strictBase64(encoded);
       if (kind === "image") preview.dataUrl = `data:${mime};base64,${encoded}`;
-      else if (["text", "markdown", "json"].includes(kind)) preview.content = new TextDecoder().decode(bytes);
+      else if (["text", "markdown", "json", "office"].includes(kind)) preview.content = new TextDecoder().decode(bytes);
     }
     if (!preview.content && !preview.dataUrl) preview.message = "This resource has no safe inline representation.";
     return preview;

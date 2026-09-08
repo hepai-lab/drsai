@@ -15,6 +15,7 @@ import type {
   ChatToolTimelineEvent,
   ChatMessagePart,
   UpdateThreadRequest,
+  ThinkingEffort,
 } from "../api/desktopApi";
 import { LEGACY_MY_DRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
 import {
@@ -49,6 +50,8 @@ const MAX_TITLE_CHARS = 120;
 const MAX_WORKSPACE_PATH_CHARS = 2048;
 const MAX_AGENT_ID_CHARS = 160;
 const MAX_AGENT_NAME_CHARS = 160;
+const MAX_MODEL_CHARS = 240;
+const THINKING_EFFORTS = new Set(["none", "low", "medium", "high", "xhigh", "max"]);
 const MAX_FORK_SUMMARY_CHARS = 500;
 const MAX_FORK_LIFECYCLE_MESSAGE_CHARS = 1200;
 const MAX_FORK_QUEUE_MESSAGE_CHARS = 800;
@@ -194,6 +197,9 @@ export async function createThread(rawRequest: unknown): Promise<DesktopThread> 
       workspacePath: request.workspacePath,
       boundAgentId: request.boundAgentId,
       boundAgentName: request.boundAgentName,
+      model: request.model,
+      reasoningEffort: request.reasoningEffort,
+      planMode: request.planMode,
       fork: request.fork,
       execution: request.execution,
       createdAt: now,
@@ -238,6 +244,9 @@ export async function updateThread(rawRequest: unknown): Promise<DesktopThread> 
       workspacePath: request.workspacePath ?? existing?.workspacePath,
       boundAgentId: request.boundAgentId ?? existing?.boundAgentId,
       boundAgentName: request.boundAgentName ?? existing?.boundAgentName,
+      model: request.model ?? existing?.model,
+      reasoningEffort: request.reasoningEffort ?? existing?.reasoningEffort,
+      planMode: request.planMode ?? existing?.planMode,
       fork: request.fork ?? existing?.fork,
       execution: request.execution ?? existing?.execution,
       createdAt: existing?.createdAt || now,
@@ -407,6 +416,9 @@ export async function upsertThreadFromRun(input: {
   workspacePath?: string;
   boundAgentId?: string;
   boundAgentName?: string;
+  model?: string;
+  reasoningEffort?: ThinkingEffort;
+  planMode?: boolean;
   lastRunId?: string;
   lastRequestId?: string;
   runtimeSessionId?: string;
@@ -896,6 +908,9 @@ function validateCreateThreadRequest(rawRequest: unknown): CreateThreadRequest {
     workspacePath: sanitizeWorkspacePath(request.workspacePath),
     boundAgentId: sanitizeOptionalAgentText(request.boundAgentId, MAX_AGENT_ID_CHARS, "Thread agent id is invalid."),
     boundAgentName: sanitizeOptionalAgentText(request.boundAgentName, MAX_AGENT_NAME_CHARS, "Thread agent name is invalid."),
+    model: sanitizeOptionalAgentText(request.model, MAX_MODEL_CHARS, "Thread model is invalid."),
+    reasoningEffort: normalizeThinkingEffort(request.reasoningEffort),
+    planMode: typeof request.planMode === "boolean" ? request.planMode : undefined,
     fork: sanitizeForkMetadata(request.fork),
     execution: sanitizeExecutionBinding(request.execution),
   };
@@ -925,6 +940,9 @@ function validateUpdateThreadRequest(rawRequest: unknown): UpdateThreadRequest {
     workspacePath: sanitizeWorkspacePath(request.workspacePath),
     boundAgentId: sanitizeOptionalAgentText(request.boundAgentId, MAX_AGENT_ID_CHARS, "Thread agent id is invalid."),
     boundAgentName: sanitizeOptionalAgentText(request.boundAgentName, MAX_AGENT_NAME_CHARS, "Thread agent name is invalid."),
+    model: sanitizeOptionalAgentText(request.model, MAX_MODEL_CHARS, "Thread model is invalid."),
+    reasoningEffort: normalizeThinkingEffort(request.reasoningEffort),
+    planMode: typeof request.planMode === "boolean" ? request.planMode : undefined,
     fork: sanitizeForkMetadata(request.fork),
     execution: sanitizeExecutionBinding(request.execution),
     lastRunId: sanitizeOptionalId(request.lastRunId, "Thread run id is invalid."),
@@ -1183,6 +1201,10 @@ function sanitizeWorkspacePath(path: unknown): string | undefined {
     throw new Error("Thread workspace path is invalid.");
   }
   return path.trim() || undefined;
+}
+
+export function normalizeThinkingEffort(value: unknown): DesktopThread["reasoningEffort"] {
+  return typeof value === "string" && THINKING_EFFORTS.has(value) ? value as DesktopThread["reasoningEffort"] : undefined;
 }
 
 function sanitizeOptionalAgentText(value: unknown, maxChars: number, message: string): string | undefined {

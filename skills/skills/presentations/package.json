@@ -1,0 +1,15 @@
+{
+  "name": "opendrsai-skill-presentations",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenDrSai presentations skill — PowerPoint deck creation, rendering, and verification.",
+  "dependencies": {
+    "@oai/artifact-tool": "file:vendor/@oai/artifact-tool",
+    "sharp": ">=0.33.0",
+    "skia-canvas": "^3.0.6"
+  },
+  "optionalDependencies": {
+    "lucide": ">=0.300.0"
+  }
+}

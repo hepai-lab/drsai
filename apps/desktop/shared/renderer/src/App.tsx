@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { applyThreadSnapshotPatchBatch } from "./threadSnapshotPatch";
 import { ThreadPatchFrameBatcher } from "./threadPatchFrameBatcher";
 import { startRenderHealthMonitor } from "./renderHealthMonitor";
@@ -11,14 +11,12 @@ import { verifyResultProvenance } from "../../api/resultProvenance";
 import {
   Bot,
   BookOpen,
-  Bug,
   ChevronLeft,
   Folder,
   FileText,
   Globe2,
   History,
   Library,
-  ListTree,
   PackageOpen,
   Lightbulb,
   MessageSquare,
@@ -26,7 +24,6 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
-  Terminal as TerminalIcon,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -61,7 +58,6 @@ import type {
   DesktopIdeContextSnapshot,
   DesktopMcpContextResult,
   DesktopThread,
-  DesktopWorktreeSummary,
   ExperimentReleaseGateState,
   InstallProgress,
   AgentModelSelection,
@@ -97,7 +93,6 @@ import { AgentRunWorkspace } from "./components/AgentRunWorkspace";
 import { ApprovalCenterView } from "./components/ApprovalCenterView";
 import { ChannelsView } from "./components/ChannelsView";
 import { ChatWorkspace, type ThinkingEffort } from "./components/ChatWorkspace";
-import { PreviewBrowserPanel } from "./components/PreviewBrowserPanel";
 import { ProviderAnalyticsView } from "./components/ProviderAnalyticsView";
 import { SettingsPanel, type SettingsPane } from "./components/SettingsPanel";
 import { BackgroundTaskQueue } from "./components/SkillSquareView";
@@ -107,10 +102,7 @@ import { TaskCenterView } from "./components/TaskCenterView";
 import { MobilePairingDialog } from "./components/MobilePairingDialog";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { FeedbackAdminDialog } from "./components/FeedbackAdminDialog";
-import { TerminalPanel } from "./components/TerminalPanel";
 import { KnowledgeBasePanel } from "./components/KnowledgeBasePanel";
-import { DebugPanel } from "./components/DebugPanel";
-import { RunInspectorPanel } from "./components/RunInspectorPanel";
 import { AppDecisionDialogHost, requestAppDecision, showAppNotice } from "./components/AppDecisionDialog";
 import { FilesContextPanel } from "./components/files/FilesContextPanel";
 import { CitationSourcePanel } from "./components/files/CitationSourcePanel";
@@ -182,12 +174,7 @@ interface TerminalCommandProposal {
 }
 
 const rightTabIcons: Record<RightTab, LucideIcon> = {
-  run: ListTree,
   files: FileText,
-  templates: Sparkles,
-  browser: Globe2,
-  terminal: TerminalIcon,
-  debug: Bug,
 };
 
 const WORKSPACE_SORT_STORAGE_KEY = "opendrsai.workspaceSortMode";
@@ -233,11 +220,7 @@ interface SidebarComponentVisibility {
   skills: boolean;
 }
 interface RightSidebarComponentVisibility {
-  run: boolean;
   files: boolean;
-  browser: boolean;
-  terminal: boolean;
-  debug: boolean;
 }
 interface AwaySummary {
   startedAt: string;
@@ -483,7 +466,7 @@ function AuthenticatedApp({
         ...(detail.createExperiment === true && experimentReleaseGate.enabled ? { createExperiment: true } : {}),
         ...(typeof detail.focusedItemId === "string" ? { focusedItemId: detail.focusedItemId } : {}),
       });
-      setActiveRightTab("run");
+      setActiveRightTab("files");
       setRightPanelCollapsed(false);
     }
     window.addEventListener("opendrsai:open-run-inspection", openRunInspection);
@@ -497,6 +480,7 @@ function AuthenticatedApp({
   const [selectedChatAgentName, setSelectedChatAgentName] = useState("OpenDrSai");
   const [selectedChatModel, setSelectedChatModel] = useState<string | null>(null);
   const [defaultThinkingEffort, setDefaultThinkingEffort] = useState<ThinkingEffort>(() => loadThinkingEffort());
+  const [defaultPlanMode, setDefaultPlanMode] = useState<"normal" | "plan">("normal");
   const [agentConfigurations, setAgentConfigurations] = useState<Record<string, AgentConfigurationPreference>>(() => loadAgentConfigurations());
   const [restoreLastSession, setRestoreLastSession] = useState(() => loadBooleanSetting(RESTORE_SESSION_STORAGE_KEY, true));
   const [restoreLastWorkspace, setRestoreLastWorkspace] = useState(() => loadBooleanSetting(RESTORE_WORKSPACE_STORAGE_KEY, true));
@@ -552,14 +536,8 @@ function AuthenticatedApp({
   const navSections = getNavSections(language);
   const navItems = getNavItems(language);
   const rightTabs = useMemo(
-    () => getRightTabs(language).filter(({ id }) =>
-      id === "templates" ? false
-        : id === "browser" && platformDescriptor?.capabilities.features.browser !== true ? false
-        : id === "debug" && platformDescriptor?.capabilities.features.debugger !== true ? false
-        : id === "terminal" && platformDescriptor?.capabilities.features.terminal !== true ? false
-        : rightSidebarComponents[id],
-    ),
-    [language, platformDescriptor, rightSidebarComponents],
+    () => getRightTabs(language).filter(({ id }) => rightSidebarComponents[id]),
+    [language, rightSidebarComponents],
   );
   const firstVisibleRightTab = rightTabs[0]?.id;
   const title =
@@ -828,7 +806,7 @@ function AuthenticatedApp({
         ...(workflow?.workflowRunId ? { workflowRunId: workflow.workflowRunId } : {}),
         ...(workflow?.workflowStepId ? { workflowStepId: workflow.workflowStepId } : {}),
       });
-      setActiveRightTab("terminal");
+      setActiveRightTab("files");
       setRightPanelCollapsed(false);
     }, 0);
   }, []);
@@ -1808,11 +1786,20 @@ function AuthenticatedApp({
       if (boundAgent) {
         setSelectedChatAgentId(boundAgent.id);
         setSelectedChatAgentName(boundAgent.name);
-        setSelectedChatModel(boundAgent.id === myDrSaiAgentModelPolicy?.agent_id
-          ? myDrSaiAgentModelPolicy?.effective_ref?.model_id ?? boundAgent.model ?? boundAgent.models?.[0] ?? null
-          : boundAgent.model || boundAgent.models?.[0] || null);
+        // Restore model from thread config first, then fall back to agent defaults
+        setSelectedChatModel(thread.model
+          || (boundAgent.id === myDrSaiAgentModelPolicy?.agent_id
+            ? myDrSaiAgentModelPolicy?.effective_ref?.model_id ?? boundAgent.model ?? boundAgent.models?.[0] ?? null
+            : boundAgent.model || boundAgent.models?.[0] || null));
         setSelectedChatExamples(boundAgent.examples);
       }
+    }
+    // Restore reasoning effort and plan mode from thread config
+    if (thread?.reasoningEffort) {
+      setDefaultThinkingEffort(thread.reasoningEffort);
+    }
+    if (thread?.planMode !== undefined) {
+      setDefaultPlanMode(thread.planMode ? "plan" : "normal");
     }
     if (thread?.workspacePath) {
       const nextWorkspace = workspaces.find(
@@ -1843,6 +1830,9 @@ function AuthenticatedApp({
       kind: "agent_run",
       title: language === "zh" ? "新智能体任务" : "New agent task",
       workspacePath: effectiveWorkspacePath,
+      model: selectedChatModel ?? undefined,
+      reasoningEffort: defaultThinkingEffort,
+      planMode: defaultPlanMode === "plan",
     });
     setActiveThreadId(thread.id);
     setThreads((current) =>
@@ -1943,7 +1933,7 @@ function AuthenticatedApp({
     await executeRecoveryActionOnce(recoveryActionInFlightRef.current, key, async () => {
       if (action === "diagnostics") {
         setDebugViewRequest((current) => ({ view: "activity", nonce: (current?.nonce ?? 0) + 1 }));
-        setActiveRightTab("debug"); setRightPanelCollapsed(false); return;
+        setActiveRightTab("files"); setRightPanelCollapsed(false); return;
       }
       if (action === "abandon") {
         chat.dismissRecoveryActions(assistantMessageId);
@@ -2008,27 +1998,6 @@ function AuthenticatedApp({
     setDefaultThinkingEffort(configuration?.thinkingEffort || loadThinkingEffort());
     setSelectedChatExamples(agent.examples);
     persistWorkspaceAgentPreference(activeWorkspaceId, agent.id);
-  }
-
-  async function handleNewWorktreeChat(worktree: DesktopWorktreeSummary): Promise<void> {
-    if (!worktree.workspaceId) throw new Error("Worktree execution Workspace is not registered.");
-    setRightPanelCollapsed(true);
-    const thread = await desktopApi.createThread({
-      kind: "chat",
-      title: `${language === "zh" ? "Worktree 会话" : "Worktree session"}: ${worktree.branch}`,
-      workspacePath: worktree.canonicalPath,
-      boundAgentId: selectedChatAgentId || undefined,
-      boundAgentName: selectedChatAgentName || undefined,
-      execution: {
-        sourceWorkspaceId: worktree.sourceWorkspaceId,
-        workspaceId: worktree.workspaceId,
-        worktreeId: worktree.worktreeId,
-        canonicalPath: worktree.canonicalPath,
-      },
-    });
-    setThreads((current) => sortThreadsForSidebar([thread, ...current.filter((item) => item.id !== thread.id)]));
-    setActiveThreadId(thread.id);
-    navigateTo(MENU_IDS.currentSession);
   }
 
   function handleOpenWorkspaceResults(workspaceId: string): void {
@@ -2530,7 +2499,7 @@ function AuthenticatedApp({
 
   const openPreviewBrowser = useCallback((url?: string): void => {
     if (url) setBrowserPanelUrl(url);
-    setActiveRightTab("browser");
+    setActiveRightTab("files");
     setRightPanelCollapsed(false);
   }, []);
 
@@ -2872,6 +2841,7 @@ function AuthenticatedApp({
           messages={chat.messages}
           currentRuntimeMode={chat.currentRuntimeMode}
           defaultThinkingEffort={defaultThinkingEffort}
+          defaultPlanMode={defaultPlanMode}
           selectedAgentId={selectedChatAgentId ?? undefined}
           selectedAgentName={selectedChatAgentName}
           selectedModelName={selectedChatModel ?? undefined}
@@ -2906,8 +2876,8 @@ function AuthenticatedApp({
           onOpenExternal={(url) => desktopApi.openExternal(url)}
           onOpenDebug={platformDescriptor?.capabilities.features.debugger !== true ? undefined : (runId, view = "activity") => {
             setDebugViewRequest((current) => ({ view, nonce: (current?.nonce ?? 0) + 1, ...(runId ? { runId } : {}) }));
-            setRightSidebarComponents((current) => current.debug ? current : { ...current, debug: true });
-            setActiveRightTab("debug");
+            setRightSidebarComponents((current) => current);
+            setActiveRightTab("files");
             setRightPanelCollapsed(false);
           }}
           onOpenAgentSettings={() => {
@@ -2921,7 +2891,7 @@ function AuthenticatedApp({
               runId,
               ...(itemId ? { focusedItemId: itemId } : {}),
             });
-            setActiveRightTab("run");
+            setActiveRightTab("files");
             setRightPanelCollapsed(false);
           }}
           onCreateRunExperiment={platformDescriptor?.capabilities.features.runtime !== true || !experimentReleaseGate.enabled ? undefined : (runId, itemId) => {
@@ -2932,7 +2902,7 @@ function AuthenticatedApp({
               createExperiment: true,
               ...(itemId ? { focusedItemId: itemId } : {}),
             });
-            setActiveRightTab("run");
+            setActiveRightTab("files");
             setRightPanelCollapsed(false);
           }}
           onRetryMessage={async (assistantMessageId, mode) => {
@@ -3037,7 +3007,7 @@ function AuthenticatedApp({
               getComparablePath(workspace.path) === getComparablePath(sourceWorkspacePath),
             )?.id || effectiveRuntimeWorkspaceId;
             setRunInspectionRequest({ workspacePath: sourceWorkspacePath, workspaceId: sourceWorkspaceId, runId });
-            setActiveRightTab("run");
+            setActiveRightTab("files");
             setRightPanelCollapsed(false);
           }}
           onContinueQuestion={(question) => {
@@ -3129,10 +3099,14 @@ function AuthenticatedApp({
     ) : activeNav === MENU_IDS.usageAnalytics ? (
       <ProviderAnalyticsView language={language} />
     ) : activeNav === MENU_IDS.knowledgeBase ? (
-      <KnowledgeBasePanel
-        agentId={selectedChatAgentId ?? ""}
-        language={language}
-      />
+      selectedChatAgentId ? (
+        <KnowledgeBasePanel
+          agentId={selectedChatAgentId}
+          language={language}
+        />
+      ) : (
+        <div className="empty-state">{language === "zh" ? "正在准备 Agent…" : "Preparing Agent…"}</div>
+      )
     ) : activeNav === MENU_IDS.library ? (
       <GfsView language={language} />
     ) : activeNav === MENU_IDS.profile ? (
@@ -3222,7 +3196,7 @@ function AuthenticatedApp({
         onOpenMobilePairing={() => setMobilePairingOpen(true)}
         mobilePairingRefreshToken={mobilePairingRefreshToken}
         onOpenBrowserPanel={() => {
-          setActiveRightTab("browser");
+          setActiveRightTab("files");
           setRightPanelCollapsed(false);
         }}
         onOpenPath={(path) => void desktopApi.openPath(path)}
@@ -3321,94 +3295,14 @@ function AuthenticatedApp({
         language={language}
         onClose={() => setCitationSource(null)}
       />
-    ) : activeRightTab === "run" ? (
-      <RunInspectorPanel
-        language={language}
-        request={runInspectionRequest}
-        focusedItemId={runInspectionRequest?.focusedItemId}
-        onOpenRun={(runId, focusedItemId) => setRunInspectionRequest((current) => current ? {
-          workspacePath: current.workspacePath,
-          ...(current.workspaceId ? { workspaceId: current.workspaceId } : {}),
-          runId,
-          ...(focusedItemId ? { focusedItemId } : {}),
-        } : current)}
-        onOpenDebug={platformDescriptor?.capabilities.features.debugger !== true ? undefined : () => {
-          setDebugViewRequest((current) => ({ view: "activity", nonce: (current?.nonce ?? 0) + 1 }));
-          setActiveRightTab("debug");
-        }}
-      />
-    ) : activeRightTab === "debug" ? (
-      <DebugPanel
-        language={language}
-        requestedView={debugViewRequest}
-        onSelectTurn={(turnId) => setStructuredTurnFocus((current) => ({ turnId, nonce: (current?.nonce ?? 0) + 1 }))}
-        onPrepareRerun={(runId) => {
-          const turnIndex = chat.messages.findIndex((message) => message.structuredTurn?.turnId === runId);
-          const searchFrom = turnIndex >= 0 ? turnIndex - 1 : chat.messages.length - 1;
-          let originalInput = "";
-          for (let index = searchFrom; index >= 0; index -= 1) {
-            const message = chat.messages[index];
-            if (message?.role === "user" && message.content.trim()) { originalInput = message.content; break; }
-          }
-          if (!originalInput) return false;
-          chat.setInput(originalInput);
-          navigateTo(MENU_IDS.currentSession);
-          setRightPanelCollapsed(true);
-          return true;
-        }}
-      />
-    ) : activeRightTab === "terminal" && platformDescriptor?.capabilities.terminal !== false ? (
-      <TerminalPanel
-        cwd={effectiveWorkspacePath}
-        workspaceId={effectiveRuntimeWorkspaceId}
-        remoteHostAlias={activeWorkspace.remote?.hostAlias}
-        language={language}
-        onCommandResult={(attachment) => {
-          setBrowserAttachments((current) => [attachment, ...current].slice(0, 6));
-        }}
-        proposedCommand={terminalCommandProposal}
-        onSendOutputToAgent={(text) => {
-          setTerminalAgentTask(`Analyze this terminal output:\n\n${text}`);
-          navigateTo(MENU_IDS.myAgents);
-        }}
-      />
-    ) : activeRightTab === "terminal" ? (
-      <div className="placeholder-view" role="status">
-        <TerminalIcon size={28} />
-        <h2>{language === "zh" ? "此平台未启用终端" : "Terminal is unavailable on this platform"}</h2>
-      </div>
-    ) : activeRightTab === "browser" ? (
-      <PreviewBrowserPanel
-        initialUrl={browserPanelUrl}
-        language={language}
-        onAttachContext={(attachment) =>
-          setBrowserAttachments((current) => [...current, attachment])
-        }
-        onClose={() => setActiveRightTab("files")}
-      />
-    ) : activeRightTab === "files" ? (
+    ) : (
       <FilesContextPanel
-        basket={workspaceContextAttachments}
-        fileTraceEvents={workspaceFileTraceEvents}
         language={language}
-        scopeId={activeThreadId}
         workspaceId={effectiveRuntimeWorkspaceId}
         workspacePath={filesWorkspacePath}
-        workspaceTrusted={workspaceTrusted}
         focusPath={filesPanelFocusPath}
         resourcePreview={filesPanelResourcePreview}
-        onBasketChange={setActiveThreadWorkspaceContextAttachments}
-        onFileTraceChange={setActiveThreadFileTraceEvents}
-        onInsertPath={(path) => {
-          const current = chat.input.trimEnd();
-          chat.setInput(current ? `${current}\n\n${path}` : path);
-        }}
-        onPrepareTask={(task) => {
-          chat.setInput(task);
-        }}
       />
-    ) : (
-      <SidePlaceholder language={language} tab={activeRightTab} />
     );
 
   const getPreviewContent = useCallback((preview: WorkspaceFilePreview): string => {
@@ -3721,12 +3615,7 @@ function AuthenticatedApp({
       onLanguageChange={setLanguage}
       onLoadForkConflictContent={loadForkConflictContent}
       onLoadMoreWorkspaceThreads={loadMoreWorkspaceThreads}
-      onListWorktrees={(request) => desktopApi.listWorktrees(request)}
-      onListWorktreeEvents={(request) => desktopApi.listWorktreeEvents(request)}
-      onGetWorktreeMigrationDiagnostics={(request) => desktopApi.getWorktreeMigrationDiagnostics(request)}
-      onGetWorktreeDiff={(request) => desktopApi.getWorkspaceGitDiff(request)}
       onCreateWorkspaceSession={handleNewWorkspaceChat}
-      onCreateWorktreeSession={handleNewWorktreeChat}
       onLogout={() => {
         void handleLogout();
       }}
@@ -4130,21 +4019,13 @@ function loadSidebarComponents(): SidebarComponentVisibility {
 
 function loadRightSidebarComponents(): RightSidebarComponentVisibility {
   const defaults: RightSidebarComponentVisibility = {
-    run: true,
     files: true,
-    browser: true,
-    terminal: true,
-    debug: false,
   };
   try {
     const value = JSON.parse(window.localStorage.getItem(RIGHT_SIDEBAR_COMPONENTS_STORAGE_KEY) ?? "null") as Partial<RightSidebarComponentVisibility> | null;
     if (!value || typeof value !== "object") return defaults;
     return {
-      run: typeof value.run === "boolean" ? value.run : defaults.run,
       files: typeof value.files === "boolean" ? value.files : defaults.files,
-      browser: typeof value.browser === "boolean" ? value.browser : defaults.browser,
-      terminal: typeof value.terminal === "boolean" ? value.terminal : defaults.terminal,
-      debug: typeof value.debug === "boolean" ? value.debug : defaults.debug,
     };
   } catch {
     return defaults;
@@ -4195,7 +4076,7 @@ function persistWorkspaceAgentPreference(workspaceId: string, agentId: string): 
 
 function loadThinkingEffort(): ThinkingEffort {
   const value = window.localStorage.getItem(THINKING_EFFORT_STORAGE_KEY);
-  return value === "none" || value === "low" || value === "high" || value === "xhigh" || value === "max" ? value : "medium";
+  return value === "none" || value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max" ? value : "none";
 }
 
 function loadAgentConfigurations(): Record<string, AgentConfigurationPreference> {
@@ -6919,26 +6800,6 @@ function localizeInstallMessage(
   };
   if (/^Installer exited with code/.test(message)) return "安装器异常退出。";
   return known[message] ?? message;
-}
-
-function SidePlaceholder({
-  language,
-  tab,
-}: {
-  language: AppLanguage;
-  tab: RightTab;
-}): React.JSX.Element {
-  return (
-    <div className="side-placeholder">
-      <FileText size={20} />
-      <strong>{tab}</strong>
-      <span>
-        {language === "zh"
-          ? "该面板功能正在准备中。"
-          : "Reserved for shared WebUI panel content."}
-      </span>
-    </div>
-  );
 }
 
 function removeExternalAttachment(

@@ -580,6 +580,84 @@ class ResourceService:
             "modified_at": host_version.modified_at,
         })}
 
+    # ------------------------------------------------------------------ #
+    # Preview helpers
+    # ------------------------------------------------------------------ #
+    _OFFICE_MIME_PREFIXES = (
+        "application/vnd.openxmlformats-officedocument",
+        "application/vnd.ms-excel",
+        "application/vnd.ms-powerpoint",
+        "application/msword",
+    )
+
+    @classmethod
+    def _preview_kind(cls, mime_type: str) -> str:
+        """Classify a MIME type into a preview *kind* understood by the
+        Electron renderer.
+
+        Returns one of ``"text"``, ``"markdown"``, ``"json"``, ``"office"``
+        or ``"binary"``.
+        """
+        if mime_type == "text/markdown":
+            return "markdown"
+        if mime_type == "application/json":
+            return "json"
+        if mime_type.startswith("text/"):
+            return "text"
+        if any(mime_type.startswith(prefix) for prefix in cls._OFFICE_MIME_PREFIXES):
+            return "office"
+        return "binary"
+
+    @staticmethod
+    def _extract_office_text(raw_bytes: bytes, mime_type: str, max_bytes: int) -> str:
+        """Extract plain text from a ZIP-based Office document (.docx/.pptx/.xlsx).
+
+        The implementation mirrors the Electron-side ``extractOfficeText``
+        helper: open the ZIP, select the relevant XML parts, strip tags.
+        Returns up to *max_bytes* characters, or an empty string on failure.
+        """
+        import io
+        import re
+        import zipfile
+
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
+        except Exception:
+            return ""
+        names = zf.namelist()
+
+        if "word/document.xml" in names or any(n.startswith("word/") for n in names):
+            # .docx
+            xml_names = [n for n in names if re.match(
+                r"word/(document|footnotes|endnotes|comments|header\d*|footer\d*)\.xml$", n)]
+        elif any(n.startswith("ppt/slides/") for n in names):
+            # .pptx
+            xml_names = [n for n in names if re.match(r"ppt/slides/slide\d+\.xml$", n)]
+        elif "xl/sharedStrings.xml" in names or any(n.startswith("xl/worksheets/") for n in names):
+            # .xlsx
+            xml_names = [n for n in names if n == "xl/sharedStrings.xml"
+                         or re.match(r"xl/worksheets/sheet\d+\.xml$", n)]
+        else:
+            return ""
+
+        tag_re = re.compile(r"<[^>]+>")
+        entity_map = {"&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'"}
+        parts: list[str] = []
+        for name in xml_names:
+            try:
+                xml_bytes = zf.read(name)
+            except Exception:
+                continue
+            text = xml_bytes.decode("utf-8", errors="replace")
+            text = tag_re.sub(" ", text)
+            for entity, char in entity_map.items():
+                text = text.replace(entity, char)
+            text = " ".join(text.split())
+            parts.append(text)
+        result = "\n".join(parts).strip()
+        result = re.sub(r"\n{3,}", "\n\n", result)
+        return result[:max_bytes]
+
     def _capabilities(
         self,
         context: ResourceAccessContext,
@@ -757,14 +835,33 @@ class ResourceService:
             capabilities = self._capabilities(context, row)
             if not capabilities["preview"] or version["size"] > max_bytes:
                 raise ResourceServiceError("preview_unsupported")
-            kind = "text" if str(version["mime_type"] or "").startswith("text/") else "binary"
+            mime_type = str(version["mime_type"] or "")
+            kind = self._preview_kind(mime_type)
             if kind not in accept_kinds:
                 raise ResourceServiceError("preview_unsupported")
             read = self.read(context, key, version_id=version_id, offset=0, length=max(1, int(version["size"])), purpose="preview")
-            result = {
-                "kind": kind, "version_id": version_id, "mime_type": version["mime_type"],
-                "content_base64": read["content_base64"], "digest": version["digest"],
-            }
+            # For office documents, extract text from the ZIP-based XML
+            # content instead of returning raw binary bytes.
+            if kind == "office":
+                import base64
+                raw_bytes = base64.b64decode(read["content_base64"])
+                office_text = self._extract_office_text(raw_bytes, mime_type, max_bytes)
+                if office_text:
+                    result = {
+                        "kind": "office", "version_id": version_id, "mime_type": mime_type,
+                        "content_base64": base64.b64encode(office_text.encode("utf-8")).decode("ascii"),
+                        "digest": version["digest"],
+                    }
+                else:
+                    result = {
+                        "kind": "office", "version_id": version_id, "mime_type": mime_type,
+                        "content_base64": "", "digest": version["digest"],
+                    }
+            else:
+                result = {
+                    "kind": kind, "version_id": version_id, "mime_type": mime_type,
+                    "content_base64": read["content_base64"], "digest": version["digest"],
+                }
             self._audit(context, "preview", key, "ok", version_id=version_id)
             return result
         except ResourceServiceError as exc:

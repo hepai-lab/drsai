@@ -60,14 +60,12 @@ _STATUS_BY_CODE = {
 def resolve_stt_operation(model: str | None = None) -> ResolvedAgentOperation:
     """Build the STT binding from the same config the chat Agent uses."""
     from drsai.backend.cli.config import load_config
-    from drsai.backend.run_drsai_agent_factory import (
-        _DEFAULT_OPENAI_BASE_URL,
-        _resolve,
-    )
+    from drsai.backend.run_drsai_agent_factory import _resolve
+    from drsai.config.defaults import DEFAULT_OPENAI_BASE_URL
 
     cli_cfg = load_config()
     base_url = _resolve(
-        cli_cfg, "openai_base_url", "OPENAI_BASE_URL", default=_DEFAULT_OPENAI_BASE_URL,
+        cli_cfg, "openai_base_url", "OPENAI_BASE_URL", default=DEFAULT_OPENAI_BASE_URL,
     )
     api_key = _resolve(cli_cfg, "openai_api_key", "OPENAI_API_KEY", "HEPAI_API_KEY")
     signed_in = get_platform_auth() is not None

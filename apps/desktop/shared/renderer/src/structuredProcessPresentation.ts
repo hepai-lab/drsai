@@ -27,6 +27,7 @@ export interface ProcessActivityGroup {
   fileNames: string[];
   fileResources: Array<{ name: string; resourceRef: OaepResourceRef }>;
   itemIds: string[];
+  toolName?: string;
 }
 
 export interface ProcessProgressGroup {
@@ -145,6 +146,7 @@ function aggregateActivities(
         ? [{ name: fileName(activity.path), resourceRef: activity.resourceRef }]
         : [],
       itemIds: activity.oaepItemId ? [activity.oaepItemId] : [],
+      ...(activity.kind === "tool" ? { toolName: activity.toolName } : {}),
     });
   }
   return groups;

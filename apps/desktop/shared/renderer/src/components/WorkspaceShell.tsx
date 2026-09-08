@@ -11,8 +11,6 @@ import {
   FileText,
   FolderCode,
   FolderPlus,
-  GitBranch,
-  GitMerge,
   HelpCircle,
   Info,
   Keyboard,
@@ -46,12 +44,6 @@ import type {
   DesktopThreadContentSearchResult,
   DesktopThreadForkMetadata,
   DesktopThreadMessageSnapshot,
-  DesktopWorktreeListRequest,
-  DesktopWorktreeEventRequest,
-  DesktopWorktreeEventBatch,
-  DesktopWorktreeMigrationDiagnostic,
-  DesktopWorktreeSummary,
-  WorkspaceGitDiffResult,
   WorkspaceProject,
 } from "@shared/desktopApi";
 import drsaiLogo from "../assets/drsai.png";
@@ -90,7 +82,6 @@ import {
   type ForkConflictDraftHunk,
   type ForkConflictSemanticPreview,
 } from "./forkConflictAnalysis";
-import { buildWorktreeReview, getWorktreeActions, getWorktreeListMode, getWorktreeVisualState } from "./worktreePresentation";
 
 export interface WorkspaceThread {
   id: string;
@@ -185,12 +176,7 @@ interface WorkspaceShellProps {
   ) => Promise<ForkConflictContentPreviewResult>;
   onLoadMoreWorkspaceThreads: () => void | Promise<void>;
   onNavChange: (id: NavId) => void;
-  onListWorktrees: (request: DesktopWorktreeListRequest) => Promise<DesktopWorktreeSummary[]>;
-  onListWorktreeEvents: (request: DesktopWorktreeEventRequest) => Promise<DesktopWorktreeEventBatch>;
-  onGetWorktreeMigrationDiagnostics: (request: DesktopWorktreeListRequest) => Promise<DesktopWorktreeMigrationDiagnostic[]>;
-  onGetWorktreeDiff: (request: { workspacePath: string; workspaceId?: string; maxChars?: number }) => Promise<WorkspaceGitDiffResult>;
   onCreateWorkspaceSession: (workspace: WorkspaceProject) => void | Promise<void>;
-  onCreateWorktreeSession: (worktree: DesktopWorktreeSummary) => void | Promise<void>;
   onNewChat: () => void;
   onOpenWorkspaceResults: (workspaceId: string) => void;
   onOpenWorkspacePath: (path: string) => void | Promise<void>;
@@ -283,12 +269,7 @@ export function WorkspaceShell({
   onOpenFeedbackAdmin,
   onLoadForkConflictContent,
   onLoadMoreWorkspaceThreads,
-  onListWorktrees,
-  onListWorktreeEvents,
-  onGetWorktreeMigrationDiagnostics,
-  onGetWorktreeDiff,
   onCreateWorkspaceSession,
-  onCreateWorktreeSession,
   onNavChange,
   onNewChat,
   onOpenWorkspaceResults,
@@ -324,17 +305,6 @@ export function WorkspaceShell({
     () => new Set(activeWorkspaceId ? [activeWorkspaceId] : []),
   );
   const [showAllWorkspaceThreads, setShowAllWorkspaceThreads] = useState<Set<string>>(() => new Set());
-  const [worktreeOpen, setWorktreeOpen] = useState(false);
-  const [worktrees, setWorktrees] = useState<DesktopWorktreeSummary[]>([]);
-  const [worktreesLoading, setWorktreesLoading] = useState(false);
-  const [worktreesError, setWorktreesError] = useState<string | null>(null);
-  const [worktreesDegraded, setWorktreesDegraded] = useState<DesktopWorktreeEventBatch["degraded"] | null>(null);
-  const [worktreeMigrationDiagnostics, setWorktreeMigrationDiagnostics] = useState<DesktopWorktreeMigrationDiagnostic[]>([]);
-  const [reviewWorktreeId, setReviewWorktreeId] = useState<string | null>(null);
-  const [reviewDiff, setReviewDiff] = useState<WorkspaceGitDiffResult | null>(null);
-  const [reviewLoading, setReviewLoading] = useState(false);
-  const [reviewError, setReviewError] = useState<string | null>(null);
-  const worktreeEventCursor = useRef(0);
   const [workspaceDetailsId, setWorkspaceDetailsId] = useState<string | null>(null);
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
   const [workspaceDescriptionDraft, setWorkspaceDescriptionDraft] = useState("");
@@ -427,6 +397,7 @@ export function WorkspaceShell({
     : [];
   const agentSectionLabel = navSections.find((section) => section.id === "agents")?.label ?? (zh ? "广场" : "Square");
   const libraryItem = getEnabledNavItems(navSections, "chat").find((item) => item.id === MENU_IDS.library);
+  const knowledgeBaseItem = getEnabledNavItems(navSections, "chat").find((item) => item.id === MENU_IDS.knowledgeBase);
   const skillsItem = getEnabledNavItems(navSections, "agents").find((item) => item.id === MENU_IDS.skillsSquare);
   const workspaceItems = getEnabledNavItems(navSections, "workspace");
   const workspaceDetails = workspaces.find((workspace) => workspace.id === workspaceDetailsId) ?? null;
@@ -457,119 +428,11 @@ export function WorkspaceShell({
     });
   }, [activeWorkspaceId]);
 
-  async function refreshWorktrees(): Promise<void> {
-    if (!activeWorkspace?.path) {
-      setWorktrees([]);
-      setWorktreesDegraded(null);
-      return;
-    }
-    setWorktreesLoading(true);
-    setWorktreesError(null);
-    try {
-      const request = {
-        workspacePath: activeWorkspace.path,
-        ...(activeWorkspace.id ? { workspaceId: activeWorkspace.id } : {}),
-      };
-      setWorktrees(await onListWorktrees(request));
-      setWorktreesDegraded(null);
-      setWorktreeMigrationDiagnostics(await onGetWorktreeMigrationDiagnostics(request));
-    } catch (error) {
-      // Preserve the last successful Runtime projection while the managed
-      // Gateway recovers. Clearing it turns a transient health miss into an
-      // apparent data-loss event in the UI.
-      setWorktreesError(userFacingFailureMessage(error, language, "operation"));
-    } finally {
-      setWorktreesLoading(false);
-    }
-  }
-
-  async function openWorktreeReview(worktree: DesktopWorktreeSummary): Promise<void> {
-    setReviewWorktreeId(worktree.worktreeId);
-    setReviewDiff(null);
-    setReviewError(null);
-    setReviewLoading(true);
-    try {
-      setReviewDiff(await onGetWorktreeDiff({
-        workspacePath: worktree.canonicalPath,
-        workspaceId: worktree.workspaceId || undefined,
-        maxChars: 120_000,
-      }));
-    } catch (error) {
-      setReviewError(userFacingFailureMessage(error, language, "operation"));
-    } finally {
-      setReviewLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!worktreeOpen) return;
-    worktreeEventCursor.current = 0;
-    void refreshWorktrees();
-  // Opening the Worktree view or changing its authoritative Workspace is the
-  // refresh boundary. Keeping this dormant while the view is closed prevents
-  // a read-only sidebar feature from starting the Runtime during app startup.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeWorkspace?.id, activeWorkspace?.path, worktreeOpen]);
-
-  useEffect(() => {
-    if (!worktreeOpen || !activeWorkspace?.path) return;
-    let disposed = false;
-    let reading = false;
-    let consecutiveFailures = 0;
-    let retryAfter = 0;
-    const recordFailure = (): void => {
-      consecutiveFailures += 1;
-      retryAfter = Date.now() + Math.min(60_000, 5_000 * (2 ** Math.min(4, consecutiveFailures - 1)));
-    };
-    const readEvents = async (): Promise<void> => {
-      if (disposed || reading || document.visibilityState !== "visible" || Date.now() < retryAfter) return;
-      reading = true;
-      try {
-        const batch = await onListWorktreeEvents({
-          workspacePath: activeWorkspace.path,
-          ...(activeWorkspace.id ? { workspaceId: activeWorkspace.id } : {}),
-          afterSequence: worktreeEventCursor.current,
-        });
-        if (disposed) return;
-        worktreeEventCursor.current = Math.max(worktreeEventCursor.current, batch.nextSequence);
-        if (batch.degraded) {
-          setWorktreesDegraded(batch.degraded);
-          recordFailure();
-          return;
-        }
-        consecutiveFailures = 0;
-        retryAfter = 0;
-        setWorktreesDegraded(null);
-        if (batch.events.length > 0) await refreshWorktrees();
-      } catch {
-        // Keep the last Runtime projection visible; the next generation retries.
-        recordFailure();
-      } finally {
-        reading = false;
-      }
-    };
-    void readEvents();
-    const timer = window.setInterval(() => void readEvents(), 5_000);
-    const handleVisibilityChange = (): void => {
-      if (document.visibilityState === "visible") void readEvents();
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  // Event cursors are reset only when the Worktree view opens or its
-  // authoritative Workspace changes.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeWorkspace?.id, activeWorkspace?.path, worktreeOpen]);
   const isRightPanelExpanded = rightPanelExpanded && !rightPanelCollapsed;
   const rightPanelExpandLabel = isRightPanelExpanded
     ? zh ? "还原聊天视图" : "Restore chat view"
     : zh ? "展开上下文环境" : "Expand context environment";
-  const rightPanelClassName = `right-panel context-right-panel ${
-    activeRightTab === "browser" ? "browser-right-panel" : ""
-  }`;
+  const rightPanelClassName = `right-panel context-right-panel`;
   const searchableThreadIds = useMemo(
     () => searchableThreads.map((thread) => thread.id),
     [searchableThreads],
@@ -684,8 +547,7 @@ export function WorkspaceShell({
         else if (command === "toggleRightPanel") onToggleRightPanel();
         else if (command === "modelPicker") window.dispatchEvent(new Event("drsai:open-model-picker"));
         else if (command === "debug") {
-          if (!rightPanelCollapsed && activeRightTab === "debug") onToggleRightPanel();
-          else { if (rightPanelCollapsed) onToggleRightPanel(); onRightTabChange("debug"); }
+          onToggleRightPanel();
         }
         else if (command === "settings") onNavChange(MENU_IDS.profile);
         else if (command === "reload") window.location.reload();
@@ -760,7 +622,6 @@ export function WorkspaceShell({
   function openDebugPanelFromMenu(): void {
     closeWorkbenchMenu();
     if (rightPanelCollapsed) onToggleRightPanel();
-    onRightTabChange("debug");
   }
 
   function resetLayoutFromMenu(): void {
@@ -913,17 +774,6 @@ export function WorkspaceShell({
     setWorkspaceSavePending(false);
     setWorkspaceSaveError(null);
     setWorkspaceDeleteConfirm(false);
-  }
-
-  function openWorkspaceWorktrees(workspace: WorkspaceProject): void {
-    if (workspace.id !== activeWorkspaceId) onWorkspaceChange(workspace.id);
-    setReviewWorktreeId(null);
-    setReviewDiff(null);
-    setReviewError(null);
-    setWorktreeOpen(true);
-    closeWorkspaceDetails();
-    onRightTabChange("files");
-    if (rightPanelCollapsed) onToggleRightPanel();
   }
 
   async function saveWorkspaceDetails(): Promise<void> {
@@ -2160,98 +2010,6 @@ export function WorkspaceShell({
     );
   }
 
-  function renderWorktreePanel(): React.JSX.Element {
-    return (
-      <section className="worktree-context-panel" data-testid="runtime-worktree-list" aria-label={zh ? "隔离工作区" : "Isolated Workspaces"}>
-        <header className="worktree-context-header">
-          <div>
-            <GitBranch size={16} />
-            <span>
-              <strong>{zh ? "隔离工作区" : "Isolated Workspaces"}</strong>
-              <small>{activeWorkspace?.name || activeWorkspaceName}</small>
-            </span>
-          </div>
-          <button type="button" aria-label={zh ? "刷新隔离工作区" : "Refresh isolated workspaces"} onClick={() => void refreshWorktrees()} disabled={worktreesLoading}>
-            <RefreshCw size={14} className={worktreesLoading ? "spin" : undefined} />
-          </button>
-        </header>
-        <div className="worktree-context-body">
-          {getWorktreeListMode(worktrees.length, worktreesLoading, worktreesError) === "offline" ? <small className="worktree-error">{worktreesError}</small> : null}
-          {worktreesDegraded ? (
-            <small className="worktree-warning" data-testid="worktree-degraded-status" title={worktreesDegraded.code} role="status">
-              {zh ? "本地 Runtime 暂不可用，隔离工作区状态已暂停刷新。" : "Local Runtime is unavailable; isolated workspace refresh is paused."}
-            </small>
-          ) : null}
-          {worktreeMigrationDiagnostics.filter((item) => item.status === "pending").map((item) => (
-            <small className="worktree-error" key={`migration-${item.threadId}`} title={item.code}>
-              {zh ? "旧 Fork 等待迁移" : "Legacy Fork migration pending"}: {item.message}
-            </small>
-          ))}
-          {getWorktreeListMode(worktrees.length, worktreesLoading, worktreesError) === "empty" ? (
-            <div className="worktree-empty-state">
-              <GitBranch size={18} />
-              <span>{zh ? "当前工作区没有隔离工作区" : "No isolated workspaces for this Workspace"}</span>
-            </div>
-          ) : null}
-          <div className="worktree-list">
-            {worktrees.map((worktree) => {
-              const linkedThread = searchableThreads.find((thread) => thread.fork?.worktreeId === worktree.worktreeId);
-              const { canMerge, canRemove } = getWorktreeActions(worktree, Boolean(linkedThread));
-              return (
-                <div className={`worktree-row state-${getWorktreeVisualState(worktree)}`} key={worktree.worktreeId}>
-                  <button type="button" className="worktree-main" onClick={() => void onOpenWorkspacePath(worktree.canonicalPath)} title={worktree.canonicalPath}>
-                    <span className="worktree-branch">{worktree.branch}</span>
-                    <span className="worktree-meta">
-                      {worktree.status} · {worktree.location}
-                      {worktree.dirty ? ` · ${zh ? "未提交" : "dirty"}` : ""}
-                      {typeof worktree.ahead === "number" ? ` · ↑${worktree.ahead}` : ""}
-                      {typeof worktree.behind === "number" ? ` ↓${worktree.behind}` : ""}
-                      {worktree.activity.total ? ` · ${worktree.activity.total} ${zh ? "个活动资源" : "active"}` : ""}
-                    </span>
-                  </button>
-                  <div className="worktree-actions">
-                    <button type="button" title={zh ? "查看变更" : "Review changes"} onClick={() => void openWorktreeReview(worktree)}><Search size={13} /></button>
-                    {worktree.workspaceId && worktree.status !== "removed" ? (
-                      <button type="button" title={zh ? "在此隔离工作区新建会话" : "New session in this isolated workspace"} onClick={() => void onCreateWorktreeSession(worktree)}><MessageSquarePlus size={13} /></button>
-                    ) : null}
-                    {canMerge ? (
-                      <button type="button" title={zh ? "申请合并" : "Request merge"} onClick={() => void onRequestForkLifecycle(linkedThread!.id, "merge_back")}><GitMerge size={13} /></button>
-                    ) : null}
-                    {canRemove ? (
-                      <button type="button" title={zh ? "申请归档并清理" : "Request archive and cleanup"} onClick={() => void onRequestForkLifecycle(linkedThread!.id, "discard")}><Trash2 size={13} /></button>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {reviewWorktreeId ? (() => {
-            const worktree = worktrees.find((item) => item.worktreeId === reviewWorktreeId);
-            if (!worktree) return null;
-            const linkedThread = searchableThreads.find((thread) => thread.fork?.worktreeId === worktree.worktreeId);
-            const review = buildWorktreeReview(worktree, linkedThread?.fork, reviewDiff || undefined);
-            return (
-              <section className="worktree-review-panel" data-testid="worktree-review-panel" aria-label="Worktree Review">
-                <header><strong>{zh ? "变更审查" : "Worktree Review"}</strong><button type="button" onClick={() => setReviewWorktreeId(null)} aria-label={zh ? "关闭审查" : "Close Review"}><X size={13} /></button></header>
-                <dl>
-                  <div><dt>{zh ? "分支" : "Branch"}</dt><dd>{review.branch}</dd></div>
-                  <div><dt>{zh ? "提交" : "Commits"}</dt><dd title={review.commitRange}>{review.commitRange}</dd></div>
-                  <div><dt>{zh ? "冲突" : "Conflicts"}</dt><dd className={review.conflict.active ? "is-blocked" : "is-ready"}>{review.conflict.active ? (review.conflict.detail || "present") : "none"}</dd></div>
-                  <div><dt>{zh ? "测试结果" : "Tests"}</dt><dd>{review.tests.status}: {review.tests.detail}</dd></div>
-                  <div><dt>{zh ? "合并就绪" : "Merge readiness"}</dt><dd className={`is-${review.readiness.status}`}>{review.readiness.status}</dd></div>
-                </dl>
-                {review.readiness.reasons.length ? <ul>{review.readiness.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : null}
-                {reviewLoading ? <small>{zh ? "正在读取 Runtime diff…" : "Loading Runtime diff…"}</small> : null}
-                {reviewError ? <small className="worktree-error">{reviewError}</small> : null}
-                {!reviewLoading && !reviewError ? <pre>{review.diff || (zh ? "没有 diff" : "No diff")}{review.diffTruncated ? "\n… truncated" : ""}</pre> : null}
-              </section>
-            );
-          })() : null}
-        </div>
-      </section>
-    );
-  }
-
   return (
     <div
       className={`app-shell platform-${platformId} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
@@ -2507,6 +2265,15 @@ export function WorkspaceShell({
                 label={libraryItem.label}
                 navId={MENU_IDS.library}
                 onClick={() => onNavChange(MENU_IDS.library)}
+              />
+            ) : null}
+            {knowledgeBaseItem ? (
+              <SidebarButton
+                active={activeNav === MENU_IDS.knowledgeBase}
+                icon={navIcons[MENU_IDS.knowledgeBase]}
+                label={knowledgeBaseItem.label}
+                navId={MENU_IDS.knowledgeBase}
+                onClick={() => onNavChange(MENU_IDS.knowledgeBase)}
               />
             ) : null}
             {skillsItem ? (
@@ -2794,22 +2561,7 @@ export function WorkspaceShell({
                   {isRightPanelExpanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
                 </button>
               </div>
-              {openRightTabs.includes(activeRightTab) ? activeRightTab === "files" ? (
-                <div className="files-worktree-context">
-                  <div className="files-worktree-switcher" role="tablist" aria-label={zh ? "文件面板视图" : "Files panel view"}>
-                    <button type="button" role="tab" aria-selected={!worktreeOpen} className={!worktreeOpen ? "active" : ""} onClick={() => setWorktreeOpen(false)}>
-                      <FolderCode size={13} />
-                      <span>{zh ? "文件" : "Files"}</span>
-                    </button>
-                    <button type="button" role="tab" aria-selected={worktreeOpen} className={worktreeOpen ? "active" : ""} onClick={() => setWorktreeOpen(true)}>
-                      <GitBranch size={13} />
-                      <span>{zh ? "隔离工作区" : "Worktrees"}</span>
-                      {worktrees.length > 0 ? <small>{worktrees.length}</small> : null}
-                    </button>
-                  </div>
-                  {worktreeOpen ? renderWorktreePanel() : rightPanel}
-                </div>
-              ) : rightPanel : (
+              {openRightTabs.includes(activeRightTab) ? rightPanel : (
                 <button
                   type="button"
                   className="right-tabs-empty"
@@ -3775,11 +3527,6 @@ export function WorkspaceShell({
               >
                 <PackageOpen size={14} />
                 {zh ? "查看成果" : "View Results"}
-              </button>
-              <button type="button" onClick={() => openWorkspaceWorktrees(workspaceDetails)}>
-                <GitBranch size={14} />
-                {zh ? "隔离工作区" : "Isolated Workspaces"}
-                {workspaceDetails.id === activeWorkspaceId && worktrees.length > 0 ? <small>{worktrees.length}</small> : null}
               </button>
               <button type="button" onClick={() => onOpenWorkspacePath(workspaceDetails.path)}>
                 {zh ? "打开文件夹" : "Open Folder"}

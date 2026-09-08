@@ -24,6 +24,9 @@ class WorkspaceOpenRequest(BaseModel):
 class SessionCreateRequest(BaseModel):
     workspace_id: str
     title: str = "New session"
+    model: str | None = None
+    reasoning_effort: str | None = None
+    plan_mode: bool | None = None
 
 
 class SessionUpdateRequest(BaseModel):
@@ -32,6 +35,9 @@ class SessionUpdateRequest(BaseModel):
     title: str | None = None
     archived: bool | None = None
     lifecycle: Literal["active", "archived", "removed"] | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
+    plan_mode: bool | None = None
 
 
 class RunCreateRequest(BaseModel):

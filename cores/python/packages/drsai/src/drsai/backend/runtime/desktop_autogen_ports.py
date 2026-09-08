@@ -342,20 +342,56 @@ class AutogenDesktopModelPort:
         )
 
 
+def _is_anthropic_client(model_client: Any) -> bool:
+    """Return True if *model_client* is an Anthropic-based chat client."""
+    return any(
+        getattr(cls, "__name__", "") == "AnthropicChatCompletionClient"
+        for cls in type(model_client).__mro__
+    )
+
+
 def _desktop_reasoning_create_args(model_client: Any) -> dict[str, Any]:
     """Translate the cached Agent effort knob into the provider wire args.
 
     Desktop reuses one Agent across turns.  The manager updates
     ``_reasoning_effort`` immediately before each turn, so read it here rather
-    than copying a value into the model client at construction time.  The
-    client adapters normalize ``reasoning_effort`` for Responses and Chat
-    Completions, while Anthropic clients consume the equivalent ``thinking``
-    argument when configured by the model policy.
+    than copying a value into the model client at construction time.
+
+    * OpenAI clients (HepAIChatCompletionClient) accept ``reasoning_effort``
+      in ``extra_create_args`` and normalize it for Responses / Chat
+      Completions internally.
+    * Anthropic clients (HepAIAnthropicChatCompletionClient) ignore
+      ``reasoning_effort`` silently; they need the ``thinking`` parameter
+      instead.
+
+    Passing ``thinking`` to an OpenAI client raises
+    ``ValueError: Extra create args are invalid: {'thinking'}`` because
+    ``thinking`` is not in the autogen ``create_kwargs`` set.
     """
     agent = getattr(model_client, "_desktop_agent", None)
     effort = getattr(agent, "_reasoning_effort", None)
     if effort in (None, "", "off"):
         return {}
+
+    model_info = getattr(model_client, "model_info", None) or getattr(model_client, "_model_info", {})
+    reasoning = model_info.get("reasoning_config") if isinstance(model_info, Mapping) else None
+    param_type = str(getattr(reasoning, "param_type", "none") or "none")
+
+    if _is_anthropic_client(model_client) and param_type in {"deepseek_reasoning_effort", "adaptive"}:
+        # Anthropic-style: use `thinking` parameter
+        if effort in {"off", "none"}:
+            return {"thinking": {"type": "disabled"}}
+        if param_type == "adaptive":
+            return {
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": "max" if effort == "xhigh" else effort},
+            }
+        # deepseek_reasoning_effort
+        return {"thinking": {"type": "enabled"}, "reasoning_effort": str(effort)}
+
+    # OpenAI-style: use `reasoning_effort` parameter
+    if effort in {"off", "none"}:
+        return {"reasoning_effort": "none"}
     return {"reasoning_effort": str(effort)}
 
 

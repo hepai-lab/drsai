@@ -223,7 +223,7 @@ function emptyStreamingPart(
   _event: OaepEvent,
   _source: string,
 ): StructuredAssistantPart {
-  if (part.kind === "markdown") return { ...part, status: "running", markdown: "" };
+  if (part.kind === "markdown") return { ...part, status: "running", markdown: "", final: false };
   if (part.kind === "reasoning") return { ...part, status: "running", segments: [] };
   if (part.kind === "progress") return { ...part, status: "running", summary: "" };
   if (part.kind === "subtask") return { ...part, status: "running", summary: "" };

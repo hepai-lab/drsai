@@ -7,6 +7,7 @@ the monolithic legacy module.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from pathlib import Path
@@ -50,6 +51,125 @@ def _get_available_skills_dirs() -> list[Path]:
 
     root = resolve_builtin_skills_dir(search_from=(Path(__file__), Path.cwd()))
     return [root] if root is not None else []
+
+
+def _get_deleted_skills_path(user_id: str | None = None) -> Path:
+    """Return the persistent tombstone file for user-deleted bundled skills."""
+    return _get_skills_dir(user_id).parent / "skills_deleted.json"
+
+
+def _load_deleted_skills(user_id: str | None = None) -> set[str]:
+    path = _get_deleted_skills_path(user_id)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return {str(item) for item in value if isinstance(item, str)} if isinstance(value, list) else set()
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+def _save_deleted_skills(names: set[str], user_id: str | None = None) -> None:
+    path = _get_deleted_skills_path(user_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(sorted(names), ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _is_symlink_or_junction(path: Path) -> bool:
+    """Return True if *path* is a symbolic link, junction, or reparse point.
+
+    Uses ``Path.is_symlink()`` which on Windows detects both POSIX symlinks
+    and NTFS junctions.  A ``stat(follow_symlinks=False)`` cross-check is
+    done for robustness on older Python runtimes.
+    """
+    try:
+        if path.is_symlink():
+            return True
+        # On some Windows/Python combos, junctions slip through is_symlink().
+        # Check the reparse-point attribute via os.lstat.
+        import os
+        import stat as stat_mod
+        st = os.lstat(str(path))
+        # FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+        if stat_mod.S_ISLNK(st.st_mode) or (getattr(st, "st_reparse_tag", 0) != 0):
+            return True
+    except OSError:
+        pass
+    return False
+
+
+# Directories that are build artifacts or caches — never copied into
+# the installed skill tree.  Note: node_modules IS copied because some
+# skills (e.g. presentations) bundle vendored packages via npm file:
+# links and the user's machine may not have npm available to regenerate
+# them.  Symlinks/junctions within node_modules are resolved by the
+# realpath logic in _copy_physical_tree.
+_SKIP_DIRS = frozenset({
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".pytest_cache",
+    ".mypy_cache",
+    "__MACOSX",
+    ".DS_Store",
+})
+
+# File suffixes to skip.
+_SKIP_FILE_SUFFIXES = (".pyc", ".pyo")
+
+
+def _copy_physical_tree(src: Path, dst: Path) -> None:
+    """Recursively copy *src* into *dst* as physical files/directories.
+
+    Build artifacts and package-manager caches (``node_modules``, ``.git``,
+    ``__pycache__``, etc.) are skipped entirely — they are regenerated at
+    the destination by the skill's setup script.
+
+    Symbolic links / junctions are **resolved and followed** rather than
+    rejected, so a vendored package linked via npm's ``file:`` protocol
+    is materialised as real files at the destination.
+    """
+    if _is_symlink_or_junction(src):
+        resolved = src.resolve()
+        if not resolved.exists():
+            return  # broken symlink — skip silently
+        if resolved.is_dir():
+            _copy_physical_tree(resolved, dst)
+        elif resolved.is_file():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(resolved), str(dst))
+        return
+
+    if not src.is_dir():
+        raise ValueError(f"Source is not a directory: {src}")
+
+    dst.mkdir(parents=True, exist_ok=True)
+
+    for entry in sorted(src.iterdir()):
+        if entry.name in _SKIP_DIRS:
+            continue
+        if any(entry.name.endswith(suffix) for suffix in _SKIP_FILE_SUFFIXES):
+            continue
+
+        src_entry = entry
+        dst_entry = dst / entry.name
+
+        if _is_symlink_or_junction(src_entry):
+            resolved = src_entry.resolve()
+            if not resolved.exists():
+                continue  # broken symlink — skip silently
+            if resolved.is_dir():
+                _copy_physical_tree(resolved, dst_entry)
+            elif resolved.is_file():
+                shutil.copy2(str(resolved), str(dst_entry))
+            continue
+
+        if src_entry.is_dir():
+            _copy_physical_tree(src_entry, dst_entry)
+        elif src_entry.is_file():
+            shutil.copy2(str(src_entry), str(dst_entry))
+        # Skip special files (sockets, devices, FIFOs) silently.
 
 
 def _resolve_bundled_skill_root(name: str, source: str | None = None) -> Path | None:
@@ -231,7 +351,7 @@ def register_skills_routes(app: FastAPI) -> None:
                 deduped.append(item)
         return {"object": "list", "data": sorted(deduped, key=lambda s: (s["category"], s["name"]))}
 
-    @app.get("/v1/skills/{skill_path:path}")
+    @app.get("/v1/skills/{skill_path:path}", operation_id="getSkillContent")
     async def get_skill_content(skill_path: str):
         path = Path(skill_path)
         if not path.is_absolute():
@@ -270,13 +390,17 @@ def register_skills_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail="content must not be empty")
 
         if bundled_skill_dir is not None:
-            shutil.copytree(
-                bundled_skill_dir,
-                skill_dir,
-                dirs_exist_ok=True,
-                copy_function=shutil.copy2,
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
-            )
+            # Use symlink-safe physical copy instead of shutil.copytree which
+            # may silently follow junctions in the bundled skill directory.
+            if skill_dir.exists():
+                shutil.rmtree(skill_dir)
+            _copy_physical_tree(bundled_skill_dir, skill_dir)
+            # Clear any prior deletion tombstone — the user is explicitly
+            # re-installing this skill, so future sync cycles should not skip it.
+            deleted = _load_deleted_skills(user_id)
+            if req.name in deleted:
+                deleted.discard(req.name)
+                _save_deleted_skills(deleted, user_id)
         else:
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
@@ -286,7 +410,7 @@ def register_skills_routes(app: FastAPI) -> None:
         )
         return {"status": "ok", "name": req.name, "path": str(skill_dir), "installed_files": installed_files}
 
-    @app.put("/v1/skills/{skill_name}")
+    @app.put("/v1/skills/{skill_name}", operation_id="updateSkill")
     async def update_skill(skill_name: str, req: SkillUpdateRequest, user_id: str | None = Query(default=None)):
         if skill_name != req.name:
             raise HTTPException(status_code=400, detail="Skill name mismatch")
@@ -301,7 +425,7 @@ def register_skills_routes(app: FastAPI) -> None:
         skill_md.write_text(req.content, encoding="utf-8")
         return {"status": "ok", "name": skill_name, "path": str(skill_dir)}
 
-    @app.delete("/v1/skills/{skill_name}")
+    @app.delete("/v1/skills/{skill_name}", operation_id="uninstallSkill")
     async def uninstall_skill(skill_name: str, user_id: str | None = Query(default=None)):
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", skill_name):
             raise HTTPException(status_code=400, detail="Skill name is invalid")
@@ -334,8 +458,18 @@ def register_skills_routes(app: FastAPI) -> None:
         skill_dir = skills_dir / skill_name
         if not skill_dir.exists():
             raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+
+        # Check if this skill exists in the bundled repository. If so, record
+        # the deletion in a persistent tombstone so that `update_user_skills`
+        # and the TUI setup handler do not automatically re-sync it.
+        is_bundled = _resolve_bundled_skill_root(skill_name) is not None
+        if is_bundled:
+            deleted = _load_deleted_skills(user_id)
+            deleted.add(skill_name)
+            _save_deleted_skills(deleted, user_id)
+
         shutil.rmtree(skill_dir)
-        return {"status": "ok", "name": skill_name}
+        return {"status": "ok", "name": skill_name, "bundled": is_bundled}
 
     @app.post("/v1/skills/reload")
     async def reload_skills(req: SkillReloadRequest):

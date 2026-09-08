@@ -1040,6 +1040,8 @@ export interface ChatRequest {
   requestId?: string;
   agentId?: string;
   model?: string;
+  reasoningEffort?: ThinkingEffort;
+  planMode?: boolean;
   workspacePath?: string;
   workspaceId?: string;
   workspaceName?: string;
@@ -4113,6 +4115,8 @@ export interface UpdateMyDrSaiConfigRequest {
   dangerous_allowed?: boolean;
 }
 
+export type ThinkingEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface DesktopThread {
   id: string;
   kind: "chat" | "agent_run";
@@ -4120,6 +4124,9 @@ export interface DesktopThread {
   workspacePath?: string;
   boundAgentId?: string;
   boundAgentName?: string;
+  model?: string;
+  reasoningEffort?: ThinkingEffort;
+  planMode?: boolean;
   fork?: DesktopThreadForkMetadata;
   createdAt: string;
   updatedAt: string;
@@ -5309,6 +5316,9 @@ export interface CreateThreadRequest {
   workspacePath?: string;
   boundAgentId?: string;
   boundAgentName?: string;
+  model?: string;
+  reasoningEffort?: ThinkingEffort;
+  planMode?: boolean;
   fork?: DesktopThreadForkMetadata;
 }
 
@@ -5319,6 +5329,9 @@ export interface UpdateThreadRequest {
   workspacePath?: string;
   boundAgentId?: string;
   boundAgentName?: string;
+  model?: string;
+  reasoningEffort?: ThinkingEffort;
+  planMode?: boolean;
   fork?: DesktopThreadForkMetadata;
   lastRunId?: string;
   lastRequestId?: string;

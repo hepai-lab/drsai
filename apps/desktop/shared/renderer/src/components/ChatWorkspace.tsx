@@ -327,6 +327,7 @@ interface ChatWorkspaceProps {
   messages: UiMessage[];
   currentRuntimeMode?: ChatRuntimeMode | null;
   defaultThinkingEffort?: ThinkingEffort;
+  defaultPlanMode?: "normal" | "plan";
   searchRequestNonce?: number;
   messageFocus?: { messageId: string; nonce: number } | null;
   structuredTurnFocus?: { turnId: string; nonce: number } | null;
@@ -401,7 +402,8 @@ function ChatWorkspaceImpl({
   language,
   messages,
   currentRuntimeMode,
-  defaultThinkingEffort = "medium",
+  defaultThinkingEffort = "none",
+  defaultPlanMode = "normal",
   searchRequestNonce = 0,
   messageFocus = null,
   structuredTurnFocus = null,
@@ -963,13 +965,17 @@ function ChatWorkspaceImpl({
   }, [defaultThinkingEffort]);
 
   useEffect(() => {
-    setTaskInteractionMode("normal");
+    setTaskInteractionMode(defaultPlanMode);
+  }, [defaultPlanMode]);
+
+  useEffect(() => {
+    setTaskInteractionMode(defaultPlanMode);
     setRespondedInputRequests(new Set());
     setInteractionDraft("");
     setForkQueueAgentSelections({});
     setPendingReplaceFromMessageId(null);
     editResendBackupRef.current = null;
-  }, [conversationId]);
+  }, [conversationId, defaultPlanMode]);
 
   useEffect(() => {
     if (!agentOptions.some((agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex")) setTaskInteractionMode("normal");
@@ -1219,7 +1225,7 @@ function ChatWorkspaceImpl({
   useEffect(() => {
     if (supportedThinkingEfforts.length === 0) return;
     if (!supportedThinkingEfforts.includes(thinkingEffort)) {
-      setThinkingEffort(supportedThinkingEfforts.includes("high") ? "high" : supportedThinkingEfforts[0]);
+      setThinkingEffort(supportedThinkingEfforts[0]);
     }
   }, [supportedThinkingEfforts, thinkingEffort]);
   const showThinkingEffort = supportedThinkingEfforts.length > 0;
@@ -1230,7 +1236,7 @@ function ChatWorkspaceImpl({
   }, [configurationSection, showThinkingEffort]);
   const thinkingEffortSupported = supportedThinkingEfforts.includes(thinkingEffort);
   const thinkingEffortLabel = getThinkingEffortLabel(
-    thinkingEffortSupported ? thinkingEffort : supportedThinkingEfforts.includes("high") ? "high" : supportedThinkingEfforts[0] ?? thinkingEffort,
+    thinkingEffortSupported ? thinkingEffort : supportedThinkingEfforts[0] ?? thinkingEffort,
     zh,
   );
   const thinkingEffortMenuLabel = showThinkingEffort
@@ -3042,6 +3048,7 @@ function ChatWorkspaceImpl({
 
   async function resolveConversationResourcePart(
     part: ArtifactPart | CitationPart,
+    suppressErrorNotice = false,
   ): Promise<{ request: ConversationResourceResolveRequest; resolved: ConversationResourceResolveResult } | null> {
     const request = conversationResourceRequest(part);
     if (!request) return null;
@@ -3051,7 +3058,9 @@ function ChatWorkspaceImpl({
       setConversationResourceNotice(describeConversationResourceState(resolved));
       return { request, resolved };
     } catch (error) {
-      setConversationResourceNotice(userFacingFailureMessage(error, language, "operation"));
+      if (!suppressErrorNotice) {
+        setConversationResourceNotice(userFacingFailureMessage(error, language, "operation"));
+      }
       return null;
     }
   }
@@ -3060,19 +3069,76 @@ function ChatWorkspaceImpl({
     part: ArtifactPart | CitationPart,
     version: "current" | "observed" = "current",
   ): Promise<void> {
-    const outcome = await resolveConversationResourcePart(part);
-    if (!outcome) return;
+    // For office files, try the local preview first — it includes raw bytes
+    // (dataUrl) which enables rich rendering (docx-preview, JSZip).  The P2
+    // path only returns extracted text.
+    const OFFICE_EXTS = new Set([".docx", ".pptx", ".xlsx", ".doc", ".ppt", ".xls"]);
+    const partExt = (part.path ?? "").match(/(\.[^.]+)$/)?.[1]?.toLowerCase() ?? "";
+    if (OFFICE_EXTS.has(partExt) && part.path && workspacePath) {
+      try {
+        const localPreview = await desktopApi.previewWorkspaceFile({
+          workspacePath,
+          path: part.path,
+          maxBytes: 220_000,
+        });
+        onOpenConversationResourcePreview?.(localPreview, part.path);
+        setToolsOpen(false);
+        return;
+      } catch {
+        // Local preview failed — fall through to P2.
+      }
+    }
+
+    // Suppress resolve-error notice here because we fall back to the local
+    // path below; showing the generic banner would be misleading.
+    const outcome = await resolveConversationResourcePart(part, true);
+    if (!outcome) {
+      // The Runtime/Gateway may be unavailable or the association may not be
+      // found.  Try a direct local preview before falling back to the file
+      // tree, which may not have indexed the file yet.
+      if (part.path && workspacePath) {
+        try {
+          const localPreview = await desktopApi.previewWorkspaceFile({
+            workspacePath,
+            path: part.path,
+            maxBytes: 220_000,
+          });
+          onOpenConversationResourcePreview?.(localPreview, part.path);
+          setToolsOpen(false);
+          return;
+        } catch {
+          // Local preview also failed — let the file tree try.
+        }
+      }
+      if (part.path) onOpenWorkspaceArtifact?.(part.path);
+      return;
+    }
     const { request, resolved } = outcome;
     if (["deleted", "offline", "unsupported"].includes(resolved.state)) return;
     try {
       const preview = await desktopApi.previewConversationResource({ ...request, version });
       onOpenConversationResourcePreview?.(preview, resolved.logicalPath ?? resolved.path);
       setToolsOpen(false);
-    } catch (error) {
-      // A local non-inline format can still be selected in Files even when the
-      // Runtime does not provide an extracted preview.
-      if (resolved.logicalPath ?? resolved.path) onOpenWorkspaceArtifact?.(resolved.logicalPath ?? resolved.path!);
-      else setConversationResourceNotice(userFacingFailureMessage(error, language, "operation"));
+    } catch {
+      // P2 preview failed.  Try a direct local preview first — this works
+      // for office files, text, and markdown because the local preview
+      // function has its own content extraction (extractOfficeText etc.).
+      const fallbackPath = resolved.logicalPath ?? resolved.path ?? part.path;
+      if (fallbackPath && workspacePath) {
+        try {
+          const localPreview = await desktopApi.previewWorkspaceFile({
+            workspacePath,
+            path: fallbackPath,
+            maxBytes: 220_000,
+          });
+          onOpenConversationResourcePreview?.(localPreview, fallbackPath);
+          setToolsOpen(false);
+          return;
+        } catch {
+          // Local preview also failed — fall back to file tree.
+        }
+      }
+      if (fallbackPath) onOpenWorkspaceArtifact?.(fallbackPath);
     }
   }
 
@@ -3083,6 +3149,20 @@ function ChatWorkspaceImpl({
     }
     if (conversationResourceRequest(part)) {
       void previewConversationResourcePart(part);
+      return;
+    }
+    // No P2 association — try a direct local preview.
+    if (part.path && workspacePath) {
+      void desktopApi.previewWorkspaceFile({
+        workspacePath,
+        path: part.path,
+        maxBytes: 220_000,
+      }).then((preview) => {
+        onOpenConversationResourcePreview?.(preview, part.path);
+        setToolsOpen(false);
+      }).catch(() => {
+        if (part.path) onOpenWorkspaceArtifact?.(part.path);
+      });
       return;
     }
     if (part.path) onOpenWorkspaceArtifact?.(part.path);
@@ -3118,6 +3198,20 @@ function ChatWorkspaceImpl({
     }
     if (conversationResourceRequest(part)) {
       void previewConversationResourcePart(part);
+      return;
+    }
+    // No P2 association — try a direct local preview.
+    if (part.path && workspacePath) {
+      void desktopApi.previewWorkspaceFile({
+        workspacePath,
+        path: part.path,
+        maxBytes: 220_000,
+      }).then((preview) => {
+        onOpenConversationResourcePreview?.(preview, part.path);
+        setToolsOpen(false);
+      }).catch(() => {
+        if (part.path) onOpenWorkspaceArtifact?.(part.path);
+      });
       return;
     }
     if (part.path) onOpenWorkspaceArtifact?.(part.path);

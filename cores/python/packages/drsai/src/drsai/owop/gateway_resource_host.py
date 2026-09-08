@@ -149,9 +149,14 @@ class GatewayResourceHost:
         kind, _ = self._handle(handle)
         if kind != "file":
             return self.capabilities(tenant_id, handle)
+        mt = mime_type or ""
         preview = bool(
-            (mime_type or "").startswith("text/")
-            or mime_type in {"application/json", "application/pdf"}
+            mt.startswith("text/")
+            or mt in {"application/json", "application/pdf"}
+            or mt.startswith("application/vnd.openxmlformats-officedocument")
+            or mt.startswith("application/vnd.ms-excel")
+            or mt.startswith("application/vnd.ms-powerpoint")
+            or mt.startswith("application/msword")
         )
         return {
             "read_current": True, "read_snapshot": False, "preview": preview,

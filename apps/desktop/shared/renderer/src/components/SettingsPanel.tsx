@@ -78,7 +78,7 @@ function getAgentConfigurationTab(agent: DesktopAgent): AgentConfigurationTab {
 }
 interface SidebarComponentVisibility { square: boolean; agents: boolean; skills: boolean; }
 interface RightSidebarComponentVisibility {
-  run: boolean; files: boolean; browser: boolean; terminal: boolean; debug: boolean;
+  files: boolean;
 }
 const DEFAULT_AGENT_TEXT_MODEL = "deepseek-v4-pro";
 const LAST_THREAD_STORAGE_KEY = "opendrsai.lastThread";
@@ -2211,16 +2211,8 @@ export function SettingsPanel({
               </div>
               <div className="settings-component-list">
                 <strong>{zh ? "右侧栏组件" : "Right sidebar components"}</strong>
-                {(["run", "files", "browser", "terminal", "debug"] as Array<keyof RightSidebarComponentVisibility>).map((component) => {
-                  const label = component === "run"
-                    ? (zh ? "运行" : "Run")
-                    : component === "files"
-                    ? (zh ? "文件" : "Files")
-                    : component === "browser"
-                      ? (zh ? "浏览器" : "Browser")
-                      : component === "terminal"
-                        ? (zh ? "终端" : "Terminal")
-                        : (zh ? "调试" : "Debug");
+                {(["files"] as Array<keyof RightSidebarComponentVisibility>).map((component) => {
+                  const label = zh ? "文件" : "Files";
                   return (
                     <label className="settings-toggle" key={component}>
                       <span><strong>{label}</strong><small>{zh ? `在右侧栏中显示${label}标签。` : `Show the ${label} tab in the right sidebar.`}</small></span>

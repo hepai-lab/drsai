@@ -423,10 +423,18 @@ function Invoke-StepProcess {
 
     [Console]::Write("`r$((' ' * 120))`r")
     $exitCode = $proc.ExitCode
-    if ($null -eq $exitCode) {
+    if ($null -eq $exitCode -or "" -eq "$exitCode") {
         $successText = $false
         if (Test-Path $stdout) {
-            $successText = Select-String -LiteralPath $stdout -Pattern "installation complete|Developer install complete|Successfully installed|added \d+ packages|up to date, audited \d+ packages" -Quiet
+            $successText = Select-String -LiteralPath $stdout -Pattern "installation complete|Developer install complete|Successfully installed|added \d+ packages|up to date, audited \d+ packages|rebuilt dependencies successfully" -Quiet
+        }
+        if (-not $successText) {
+            $hasStderr = $false
+            if (Test-Path $stderr) {
+                $errContent = (Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue)
+                if ($errContent -and $errContent.Trim() -ne "") { $hasStderr = $true }
+            }
+            if (-not $hasStderr) { $successText = $true }
         }
         if ($successText) {
             $exitCode = 0

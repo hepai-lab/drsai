@@ -5,7 +5,7 @@
 
 import { execFile } from "child_process";
 import { existsSync } from "fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, cp, writeFile } from "fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, cp, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { basename, join } from "path";
 import { promisify } from "util";
@@ -70,7 +70,6 @@ export async function findSkillRoot(extractDir: string): Promise<string> {
   const skipDir = (name: string) =>
     name === "__MACOSX" ||
     name === ".git" ||
-    name === "node_modules" ||
     name === ".venv" ||
     name === "venv" ||
     name.startsWith(".");
@@ -158,8 +157,158 @@ export async function materializeSkillTree(
     installed.find((item) => item.name === installName)?.path ||
     join(await resolveFallbackSkillsDir(options.userId), installName);
 
-  await mkdir(targetPath, { recursive: true });
-  await cp(skillRoot, targetPath, { recursive: true, force: true });
+  // `fs.cp` follows directory links by default on some Node versions and can
+  // preserve links when the source tree contains them. Skills are user-owned
+  // data, so materialize every entry as a real directory/file and never copy a
+  // symlink/junction into the installed tree.
+  //
+  // On Windows, directory junctions created by `mklink /J` are also reported as
+  // symbolic links by `fs.lstat`. We additionally reject reparse points by
+  // checking `sourceStat.isSymbolicLink()` which covers both symlinks and
+  // junctions.
+  function logSkillImport(message: string) {
+    // Best-effort diagnostic — never throws.
+    try {
+      // eslint-disable-next-line no-console
+      console.log(`[skillArchive] ${message}`);
+    } catch { /* noop */ }
+  }
+
+  // Directories that are build artifacts or package-manager caches — never
+  // Directories that are build artifacts or caches — never copied into
+  // the installed skill tree.  Note: node_modules IS copied because some
+  // skills (e.g. presentations) bundle vendored packages via npm file:
+  // links and the user's machine may not have npm available to regenerate
+  // them.  Symlinks/junctions within node_modules are resolved by the
+  // realpath logic below.
+  const SKIP_DIRS = new Set([
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".pytest_cache",
+    ".mypy_cache",
+    "__MACOSX",
+    ".DS_Store",
+  ]);
+
+  // File patterns to skip.
+  const SKIP_FILE_SUFFIXES = [".pyc", ".pyo"];
+
+  async function copyPhysicalTree(source: string, destination: string): Promise<void> {
+    const sourceStat = await lstat(source);
+
+    // If the entry is a symbolic link / junction, **resolve and follow it**
+    // instead of rejecting the entire import.  This handles the common case
+    // where a skill's tool directory contains a symlinked sub-folder.  The
+    // link target is copied as a real directory/file so the installed tree
+    // remains fully physical.
+    if (sourceStat.isSymbolicLink()) {
+      // Resolve the link target and copy *that* path to destination.
+      // realpath() follows the entire chain; if the target doesn't exist
+      // (broken link) we skip the entry.
+      let resolved: string;
+      try {
+        resolved = await realpath(source);
+      } catch {
+        logSkillImport(`copyPhysicalTree: skipping broken symlink ${source}`);
+        return;
+      }
+      const targetStat = await lstat(resolved).catch(() => null);
+      if (!targetStat) {
+        logSkillImport(`copyPhysicalTree: symlink target missing, skipping ${source}`);
+        return;
+      }
+      // Copy the resolved target recursively — this materialises the link
+      // as a real directory/file at the destination.
+      if (targetStat.isDirectory()) {
+        await mkdir(destination, { recursive: true });
+        for (const entry of await readdir(resolved, { withFileTypes: true })) {
+          if (SKIP_DIRS.has(entry.name)) continue;
+          await copyPhysicalTree(join(resolved, entry.name), join(destination, entry.name));
+        }
+      } else if (targetStat.isFile()) {
+        await mkdir(join(destination, ".."), { recursive: true });
+        await cp(resolved, destination, { force: true, preserveTimestamps: true });
+      }
+      return;
+    }
+
+    if (sourceStat.isDirectory()) {
+      await mkdir(destination, { recursive: true });
+      for (const entry of await readdir(source, { withFileTypes: true })) {
+        // Skip build artifacts and package-manager caches.
+        if (SKIP_DIRS.has(entry.name)) {
+          logSkillImport(`copyPhysicalTree: skipping ${entry.name}/ in ${source}`);
+          continue;
+        }
+        await copyPhysicalTree(join(source, entry.name), join(destination, entry.name));
+      }
+      return;
+    }
+    if (!sourceStat.isFile()) {
+      // Skip non-regular files (sockets, FIFOs, devices) silently.
+      return;
+    }
+    if (SKIP_FILE_SUFFIXES.some((suffix) => source.endsWith(suffix))) return;
+    await mkdir(join(destination, ".."), { recursive: true });
+    await cp(source, destination, { force: true, preserveTimestamps: true });
+  }
+
+  /**
+   * Recursively verify that every entry in the target tree is a physical
+   * directory or file — NOT a symlink, junction, or other reparse point.
+   * Throws on the first non-physical entry discovered.
+   */
+  async function assertPhysicalTree(dir: string, label = ""): Promise<void> {
+    const dirStat = await lstat(dir);
+    if (dirStat.isSymbolicLink()) {
+      throw new Error(
+        `Skill installation verification failed: ${label || dir} is a symbolic link/junction, not a physical directory.`,
+      );
+    }
+    if (!dirStat.isDirectory()) return;
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      // `Dirent.isSymbolicLink()` catches symlinks, junctions, and reparse
+      // points without an extra `lstat` call on most platforms. We still do
+      // `lstat` as a cross-check for Windows junction edge cases.
+      if (entry.isSymbolicLink()) {
+        throw new Error(
+          `Skill installation verification failed: ${full} is a symbolic link/junction. The skill tree must contain only physical files and directories.`,
+        );
+      }
+      const entryStat = await lstat(full).catch(() => null);
+      if (entryStat?.isSymbolicLink()) {
+        throw new Error(
+          `Skill installation verification failed: ${full} is a symbolic link/junction (lstat confirmed).`,
+        );
+      }
+      if (entry.isDirectory()) {
+        await assertPhysicalTree(full, label);
+      }
+    }
+  }
+
+  logSkillImport(`importSkill: source=${skillRoot}, target=${targetPath}, name=${installName}`);
+
+  // Remove any pre-existing directory (which might be a leftover symlink/junction
+  // from a previous buggy import or a Python sync that created a junction).
+  await rm(targetPath, { recursive: true, force: true });
+
+  // Verify the source root itself is not a symlink/junction.
+  const sourceRootStat = await lstat(skillRoot);
+  if (sourceRootStat.isSymbolicLink()) {
+    throw new Error(
+      `Skill import source is a symbolic link/junction and was rejected: ${skillRoot}`,
+    );
+  }
+
+  await copyPhysicalTree(skillRoot, targetPath);
+
+  // Post-copy verification: ensure no symlink/junction exists in the installed tree.
+  await assertPhysicalTree(targetPath);
+  logSkillImport(`importSkill: post-copy verification passed for ${targetPath}`);
 
   // Normalize entry filename to SKILL.md for gateway listing.
   const copiedMd = await resolveSkillMdPath(targetPath).catch(() => "");
@@ -176,6 +325,7 @@ export async function materializeSkillTree(
     }
   }
   await countFiles(targetPath);
+  logSkillImport(`importSkill: completed, files=${files}, path=${targetPath}`);
 
   try {
     await reloadSkills(options.threadId, options.userId);

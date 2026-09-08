@@ -96,7 +96,13 @@ async def run_execute(run_id: str, request: RunExecuteRequest, raw_request: Requ
         # Resolve the Run and bind its input synchronously: both can fail for
         # reasons the caller can fix, and neither is worth discovering later on
         # the event stream.
-        engine.get_run(run_id)
+        run = engine.get_run(run_id)
+        engine.update_session(
+            str(run["session_id"]),
+            model=model_alias,
+            reasoning_effort=requested_reasoning_effort,
+            plan_mode=requested_plan_mode,
+        )
         engine.set_run_input(
             run_id,
             request.prompt,

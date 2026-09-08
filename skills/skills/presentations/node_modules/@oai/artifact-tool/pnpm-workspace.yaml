@@ -1,0 +1,5 @@
+packages:
+  - .
+strictDepBuilds: true
+allowBuilds:
+  skia-canvas: true

@@ -627,11 +627,20 @@ class DrSaiAssistant(DrSaiAgent):
             dst_root = self._user_profile_manager.skills_dir
             for src_dir in self._skills_dir:
                 src_path = Path(src_dir)
+                if not src_path.exists():
+                    continue
                 for skill_folder in src_path.iterdir():
                     if skill_folder.is_dir():
                         dst = dst_root / skill_folder.name
                         if not dst.exists():
-                            shutil.copytree(skill_folder, dst)
+                            # Use symlink-safe copy: symlinks=False follows
+                            # links and copies target content.
+                            shutil.copytree(
+                                skill_folder,
+                                dst,
+                                symlinks=False,
+                                copy_function=shutil.copy2,
+                            )
         self._agent_skills_tools = []
 
         # === executor ===
@@ -1172,6 +1181,16 @@ class DrSaiAssistant(DrSaiAgent):
         try:
             user_skills_dir = self._user_profile_manager.skills_dir
 
+            # Load the persistent deletion tombstone (skills the user explicitly
+            # removed from the desktop UI). These must never be re-synced from the
+            # bundled repository, even on refresh or restart.
+            deleted_skills: set[str] = set()
+            try:
+                from drsai.backend.skills_api import _load_deleted_skills
+                deleted_skills = _load_deleted_skills()
+            except Exception:
+                pass
+
             # Load enabled_skills from cli_config (selective sync)
             enabled_skills: Optional[list[str]] = None
             try:
@@ -1201,6 +1220,10 @@ class DrSaiAssistant(DrSaiAgent):
                             if skill_folder.name not in enabled_skills:
                                 continue
 
+                        # Never re-sync skills the user explicitly deleted.
+                        if skill_folder.name in deleted_skills:
+                            continue
+
                         user_skill_folder = user_skills_dir / skill_folder.name
                         user_skill_file = user_skill_folder / "SKILL.md"
                         should_update = False
@@ -1214,8 +1237,25 @@ class DrSaiAssistant(DrSaiAgent):
 
                         if should_update:
                             if user_skill_folder.exists():
-                                shutil.rmtree(user_skill_folder)
-                            shutil.copytree(skill_folder, user_skill_folder)
+                                # If the existing user folder is a symlink/junction,
+                                # remove the link itself, not what it points to.
+                                import os as _os
+                                try:
+                                    if _os.path.islink(str(user_skill_folder)):
+                                        _os.unlink(str(user_skill_folder))
+                                    else:
+                                        shutil.rmtree(user_skill_folder)
+                                except OSError:
+                                    shutil.rmtree(user_skill_folder, ignore_errors=True)
+                            # Use symlink-safe copy: shutil.copytree with
+                            # symlinks=False follows links, but to be extra safe
+                            # we explicitly reject junction sources.
+                            shutil.copytree(
+                                skill_folder,
+                                user_skill_folder,
+                                symlinks=False,
+                                copy_function=shutil.copy2,
+                            )
                             logger.info(f"Updated skill '{skill_folder.name}' from system to user directory")
 
             # 1b. If enabled_skills is set, remove skills not in the list

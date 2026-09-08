@@ -608,6 +608,7 @@ export function projectOaepThreadSnapshot(
       const durationMs = runCompletedAt > runStartedAt ? runCompletedAt - runStartedAt : undefined;
       const structuredTurn: StructuredTurnState = {
         version: 2, turnId, status, parts, activities,
+        processTimeline: [],
         lastSequence: Math.max(0, ...assistantItems.map((item) => item.sequence)),
         seenDedupeKeys: [], protocolIssues: [],
         meta: {

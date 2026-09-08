@@ -57,18 +57,6 @@ export function slideNumberFromModuleName(filePath) {
   return Number.parseInt(match[1], 10);
 }
 
-function defaultRuntimeNodeModules() {
-  return path.join(
-    process.env.HOME || process.env.USERPROFILE || process.cwd(),
-    ".cache",
-    "codex-runtimes",
-    ["codex", "primary", "runtime"].join("-"),
-    "dependencies",
-    "node",
-    "node_modules",
-  );
-}
-
 function candidateArtifactToolPackages(workspaceDir) {
   const candidates = [];
   if (process.env.ARTIFACT_TOOL_PACKAGE_DIR) {
@@ -92,10 +80,6 @@ function candidateArtifactToolPackages(workspaceDir) {
   candidates.push({
     packageDir: path.join(SKILL_DIR, "node_modules", "@oai", "artifact-tool"),
     context: "the skill-local node_modules @oai/artifact-tool package",
-  });
-  candidates.push({
-    packageDir: runtimePackagePath("@oai/artifact-tool"),
-    context: "the bundled Codex runtime @oai/artifact-tool package",
   });
   return candidates;
 }
@@ -202,7 +186,7 @@ function findArtifactToolPackage(workspaceDir) {
       "- set ARTIFACT_TOOL_NODE_MODULES to a node_modules directory",
       "- install it in the temporary workspace node_modules",
       "- install it under this skill folder's node_modules",
-      "- run on a machine with the Codex bundled runtime",
+      "- configure a local package path with ARTIFACT_TOOL_PACKAGE_DIR or ARTIFACT_TOOL_NODE_MODULES",
       "",
       "Attempts:",
       ...failures.map((failure) => `- ${failure}`),
@@ -210,14 +194,9 @@ function findArtifactToolPackage(workspaceDir) {
   );
 }
 
-function runtimePackagePath(packageName) {
-  return path.join(defaultRuntimeNodeModules(), ...packageName.split("/"));
-}
-
-function findOptionalRuntimePackage(packageName) {
+function findOptionalLocalPackage(packageName) {
   const candidates = [
     path.join(SKILL_DIR, "node_modules", ...packageName.split("/")),
-    runtimePackagePath(packageName),
   ];
   for (const candidate of candidates) {
     if (isNamedPackage(candidate, packageName)) {
@@ -280,7 +259,7 @@ export async function ensureArtifactToolWorkspace(workspaceDir) {
   const { packageDir: sourcePackage } = findArtifactToolPackage(resolvedWorkspace);
   await ensureWorkspacePackage(resolvedWorkspace, "@oai/artifact-tool", sourcePackage);
 
-  const lucidePackage = findOptionalRuntimePackage("lucide");
+  const lucidePackage = findOptionalLocalPackage("lucide");
   if (lucidePackage) {
     await ensureWorkspacePackage(resolvedWorkspace, "lucide", lucidePackage);
   }

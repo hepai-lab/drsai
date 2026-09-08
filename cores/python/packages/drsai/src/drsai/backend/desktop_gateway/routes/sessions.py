@@ -44,6 +44,9 @@ async def session_create(request: SessionCreateRequest):
             request.title,
             agent_definition=_state.DEFAULT_AGENT_DEFINITION,
             backend_id="opendrsai",
+            model=request.model,
+            reasoning_effort=request.reasoning_effort,
+            plan_mode=request.plan_mode,
         )
 
 
@@ -77,6 +80,9 @@ async def session_update(session_id: str, request: SessionUpdateRequest):
             title=request.title,
             archived=request.archived,
             lifecycle=request.lifecycle,
+            model=request.model,
+            reasoning_effort=request.reasoning_effort,
+            plan_mode=request.plan_mode,
         )
 
 

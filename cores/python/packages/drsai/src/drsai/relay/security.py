@@ -124,19 +124,15 @@ _CREDENTIAL_SECRET = re.compile(
 
 
 def redact_secrets(value: str) -> str:
-    # [DISABLED] Secret redaction disabled — returns value unchanged
-    return value
-    # redacted = _BEARER.sub(r"\1[REDACTED]", value)
-    # redacted = _QUERY_SECRET.sub(r"\1[REDACTED]", redacted)
-    # redacted = _SPACE_SEPARATED_CREDENTIAL.sub(r"\1 [REDACTED]", redacted)
-    # return _SECRET.sub(r"\1[REDACTED]", redacted)
+    redacted = _BEARER.sub(r"\1[REDACTED]", value)
+    redacted = _QUERY_SECRET.sub(r"\1[REDACTED]", redacted)
+    redacted = _SPACE_SEPARATED_CREDENTIAL.sub(r"\1 [REDACTED]", redacted)
+    return _SECRET.sub(r"\1[REDACTED]", redacted)
 
 
 def redact_credentials(value: str) -> str:
     """Redact credential values while preserving diagnostic response fields."""
-    # [DISABLED] Credential redaction disabled — returns value unchanged
-    return value
-    # redacted = _BEARER.sub(r"\1[REDACTED]", value)
-    # redacted = _QUERY_SECRET.sub(r"\1[REDACTED]", redacted)
-    # redacted = _SPACE_SEPARATED_CREDENTIAL.sub(r"\1 [REDACTED]", redacted)
-    # return _CREDENTIAL_SECRET.sub(r"\1[REDACTED]", redacted)
+    redacted = _BEARER.sub(r"\1[REDACTED]", value)
+    redacted = _QUERY_SECRET.sub(r"\1[REDACTED]", redacted)
+    redacted = _SPACE_SEPARATED_CREDENTIAL.sub(r"\1 [REDACTED]", redacted)
+    return _CREDENTIAL_SECRET.sub(r"\1[REDACTED]", redacted)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   Database,
@@ -20,6 +20,8 @@ interface KnowledgeBasePanelProps {
 }
 
 export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProps): React.JSX.Element {
+  const refreshTimerRef = useRef<number | null>(null);
+  const retryCountRef = useRef(0);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseResource[]>([]);
   const [knowledgePolicy, setKnowledgePolicy] = useState<AgentKnowledgePolicy | null>(null);
   const [knowledgePreview, setKnowledgePreview] = useState<AgentKnowledgePreview | null>(null);
@@ -52,6 +54,7 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
   const isZh = language === "zh";
 
   const refresh = useCallback(async () => {
+    if (!agentId) return;
     setBusy(true);
     setError(null);
     try {
@@ -63,11 +66,15 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
       setKnowledgeBases(bases);
       setKnowledgePolicy(policy);
       setKnowledgePreview(preview);
+      retryCountRef.current = 0;
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : String(cause);
-      if (msg.includes("not running") || msg.includes("is not running") || msg.includes("gateway") || msg.includes("Gateway")) {
-        // Gateway is starting -- retry after a short delay
-        setTimeout(() => void refresh(), 2000);
+      const transient = msg.includes("not running") || msg.includes("is not running") || msg.includes("gateway") || msg.includes("Gateway") || msg.includes("bootstrap") || msg.includes("503");
+      if (transient && retryCountRef.current < 5) {
+        const delay = Math.min(10_000, 500 * 2 ** retryCountRef.current);
+        retryCountRef.current += 1;
+        if (refreshTimerRef.current !== null) window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = window.setTimeout(() => void refresh(), delay);
       } else {
         setError(msg);
       }
@@ -76,7 +83,13 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
     }
   }, [agentId]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    retryCountRef.current = 0;
+    void refresh();
+    return () => {
+      if (refreshTimerRef.current !== null) window.clearTimeout(refreshTimerRef.current);
+    };
+  }, [refresh]);
 
   const toggleKnowledgeBase = async (knowledgeId: string, checked: boolean) => {
     if (!knowledgePolicy || !knowledgePreview) return;
@@ -304,6 +317,14 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
   const localKBs = useMemo(() => knowledgeBases.filter((kb) => kb.type === "local-files"), [knowledgeBases]);
   const remoteKBs = useMemo(() => knowledgeBases.filter((kb) => kb.type === "ragflow"), [knowledgeBases]);
   const selectedIds = useMemo(() => new Set(knowledgePreview?.sources ?? []), [knowledgePreview]);
+
+  type KbTab = "all" | "local" | "remote";
+  const [activeTab, setActiveTab] = useState<KbTab>("all");
+  const tabKBs = useMemo(() => {
+    if (activeTab === "local") return localKBs;
+    if (activeTab === "remote") return remoteKBs;
+    return knowledgeBases;
+  }, [activeTab, localKBs, remoteKBs, knowledgeBases]);
 
   const renderKnowledgeRow = (kb: KnowledgeBaseResource) => (
     <div className="kb-panel-row" key={kb.knowledge_id} data-testid={`kb-panel-row-${kb.knowledge_id}`}>
@@ -574,46 +595,59 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
         </div>
       )}
 
-      <div className="kb-panel-section">
-        <h4 className="kb-panel-section-title">
-          <Database size={13} />
-          {isZh ? "本地知识库" : "Local Knowledge Bases"}
-          <span className="kb-panel-count">{localKBs.length}</span>
-        </h4>
-        {localKBs.length === 0 ? (
-          <p className="kb-panel-empty">{isZh ? "暂无本地知识库" : "No local knowledge bases"}</p>
-        ) : (
-          localKBs.map(renderKnowledgeRow)
+      <div className="kb-panel-tabs">
+        <button
+          type="button"
+          className={`kb-panel-tab${activeTab === "all" ? " active" : ""}`}
+          onClick={() => setActiveTab("all")}
+        >
+          {isZh ? "全部" : "All"}
+          <span className="kb-panel-tab-count">{knowledgeBases.length}</span>
+        </button>
+        <button
+          type="button"
+          className={`kb-panel-tab${activeTab === "local" ? " active" : ""}`}
+          onClick={() => setActiveTab("local")}
+        >
+          <Database size={12} />
+          {isZh ? "本地" : "Local"}
+          <span className="kb-panel-tab-count">{localKBs.length}</span>
+        </button>
+        <button
+          type="button"
+          className={`kb-panel-tab${activeTab === "remote" ? " active" : ""}`}
+          onClick={() => setActiveTab("remote")}
+        >
+          <Globe2 size={12} />
+          {isZh ? "远端" : "Remote"}
+          <span className="kb-panel-tab-count">{remoteKBs.length}</span>
+        </button>
+        {remoteKBs.length > 0 && (
+          <button
+            type="button"
+            className="kb-panel-tab-action"
+            disabled={rediscovering}
+            onClick={() => void handleRediscoverRagflow()}
+            title={isZh ? "从 RAGFlow 重新发现新数据集" : "Re-discover new datasets from RAGFlow"}
+          >
+            <RefreshCw size={12} className={rediscovering ? "kb-spin" : ""} />
+            <span>{rediscovering ? (isZh ? "发现中..." : "Discovering...") : (isZh ? "重新发现" : "Rediscover")}</span>
+          </button>
         )}
+        {newDatasets.length > 0 && <span className="kb-panel-tab-badge">+{newDatasets.length}</span>}
       </div>
 
       <div className="kb-panel-section">
-        <h4 className="kb-panel-section-title">
-          <Globe2 size={13} />
-          {isZh ? "远端知识库" : "Remote Knowledge Bases"}
-          <span className="kb-panel-count">{remoteKBs.length}</span>{remoteKBs.length > 0 && (
-            <button
-              type="button"
-              className="kb-panel-header-btn"
-              disabled={rediscovering}
-              onClick={() => void handleRediscoverRagflow()}
-              title={isZh ? "从 RAGFlow 重新发现新数据集" : "Re-discover new datasets from RAGFlow"}
-              style={{ marginLeft: 8, fontSize: 11, padding: "2px 10px", width: "auto", minWidth: 0 }}
-            >
-              <RefreshCw size={12} className={rediscovering ? "kb-spin" : ""} />
-              <span style={{ marginLeft: 4 }}>
-                {rediscovering
-                  ? (isZh ? "发现中..." : "Discovering...")
-                  : (isZh ? "重新发现" : "Rediscover")}
-              </span>
-            </button>
-          )}
-          {newDatasets.length > 0 && <span className="kb-panel-count kb-panel-count-new">+{newDatasets.length}</span>}
-        </h4>
-        {remoteKBs.length === 0 ? (
-          <p className="kb-panel-empty">{isZh ? "暂无远端知识库" : "No remote knowledge bases"}</p>
+        {tabKBs.length === 0 ? (
+          <p className="kb-panel-empty">
+            {activeTab === "local"
+              ? (isZh ? "暂无本地知识库" : "No local knowledge bases")
+              : activeTab === "remote"
+                ? (isZh ? "暂无远端知识库" : "No remote knowledge bases")
+                : (isZh ? "暂无知识库" : "No knowledge bases")}
+          </p>
         ) : (
-          remoteKBs.map(renderKnowledgeRow)
+          tabKBs.map(renderKnowledgeRow)
         )}
       </div>
 

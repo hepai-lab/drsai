@@ -230,7 +230,11 @@ def ensure_desktop_runtime_config(
                 effective_provider = config.model_provider or provider or DEFAULT_PROVIDER
                 effective_model = config.model or model or DEFAULT_MODEL
                 commit_agent_model_policy(
-                    _default_agent_model_policy(effective_provider, effective_model),
+                    _default_agent_model_policy(
+                        effective_provider,
+                        effective_model,
+                        product_models,
+                    ),
                     expected_revision=None,
                     path=agent_path,
                 )
@@ -269,9 +273,13 @@ def _is_packaged_legacy_hepai(config: object) -> bool:
     return is_hepai_url and is_non_anthropic_model and api_key_env in {"", "ANTHROPIC_API_KEY"}
 
 
-def _default_agent_model_policy(provider: str, primary_model: str) -> AgentModelPolicy:
+def _default_agent_model_policy(
+    provider: str,
+    primary_model: str,
+    product_models: dict[str, dict[str, object]] | None = None,
+) -> AgentModelPolicy:
     explicit = lambda model: AgentModelSelection("explicit", ModelRef(provider, model))
-    product_models = _build_product_models()
+    product_models = product_models if product_models is not None else _build_product_models()
     if provider != DEFAULT_PROVIDER or primary_model not in product_models:
         return AgentModelPolicy(agent_id=DEFAULT_AGENT, primary_model=explicit(primary_model))
     return AgentModelPolicy(

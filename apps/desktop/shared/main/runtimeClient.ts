@@ -466,8 +466,8 @@ export interface RuntimeClient {
   listSessions(workspaceId: string, offset?: number, limit?: number): Promise<RuntimeSessionList>;
   getSession(sessionId: string): Promise<RuntimeSession>;
   openWorkspaceSessionCatalogStream(workspaceId: string, signal: AbortSignal): Promise<RuntimeWorkspaceSessionCatalogStream>;
-  createSession(workspaceId: string, title?: string): Promise<RuntimeSession>;
-  updateSession(sessionId: string, updates: { archived?: boolean; title?: string; lifecycle?: "active" | "archived" | "removed" }): Promise<RuntimeSession>;
+  createSession(workspaceId: string, title?: string, config?: { model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession>;
+  updateSession(sessionId: string, updates: { archived?: boolean; title?: string; lifecycle?: "active" | "archived" | "removed"; model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession>;
   importLegacyDesktopAgentRun(request: LegacyDesktopAgentRunMigrationRequest): Promise<LegacyDesktopAgentRunMigrationResult>;
   getConversationSnapshot(sessionId: string): Promise<RuntimeConversationSnapshot>;
   listSessionEvents(sessionId: string, afterSequence?: number, limit?: number): Promise<RuntimeSessionEventPage>;
@@ -790,8 +790,8 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return { response, events: response.body };
   }
 
-  createSession(workspaceId: string, title = "New session"): Promise<RuntimeSession> {
-    return this.requestJson("/v1/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspace_id: workspaceId, title }) });
+  createSession(workspaceId: string, title = "New session", config?: { model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession> {
+    return this.requestJson("/v1/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspace_id: workspaceId, title, ...(config ?? {}) }) });
   }
 
   updateSession(sessionId: string, updates: { archived?: boolean; title?: string; lifecycle?: "active" | "archived" | "removed" }): Promise<RuntimeSession> {
@@ -996,6 +996,9 @@ abstract class HttpRuntimeClient implements RuntimeClient {
             : {}),
         ...(typeof provenance?.metadata?.reasoning_effort === "string"
           ? { reasoning_effort: provenance.metadata.reasoning_effort }
+          : {}),
+        ...(typeof provenance?.metadata?.plan_mode === "boolean"
+          ? { plan_mode: provenance.metadata.plan_mode }
           : {}),
         metadata: provenance ? {
           ...(provenance.metadata ?? {}),

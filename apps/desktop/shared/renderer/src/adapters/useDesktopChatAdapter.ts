@@ -747,6 +747,8 @@ export function useDesktopChatAdapter({
         attachments,
         draftParts,
         model: options?.model?.trim() || undefined,
+        reasoningEffort: options?.thinkingEffort,
+        planMode: options?.planMode === true ? true : undefined,
         metadata: {
           selected_agent_id: options?.agentId?.trim() || undefined,
           selected_skill_id: skillName || undefined,
@@ -2797,6 +2799,10 @@ function mergeHydratedAssistantMessages(primary: UiMessage, secondary: UiMessage
     ...primaryTurn,
     parts,
     activities,
+    processTimeline: [
+      ...(primaryTurn.processTimeline ?? []),
+      ...(secondaryTurn.processTimeline ?? []),
+    ].slice(-500),
     lastSequence: Math.max(primaryTurn.lastSequence, secondaryTurn.lastSequence),
     seenDedupeKeys: [...new Set([...primaryTurn.seenDedupeKeys, ...secondaryTurn.seenDedupeKeys])],
     protocolIssues: [...primaryTurn.protocolIssues, ...secondaryTurn.protocolIssues],

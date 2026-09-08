@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+﻿import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowUpRight,
@@ -37,6 +37,7 @@ import type {
   NoticePart,
   ReasoningSegment,
   StructuredActivityEvent,
+  StructuredProcessTimelineEntry,
   StructuredAssistantPart,
   StructuredTurnState,
   SubtaskPart,
@@ -145,10 +146,15 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     if (selected.length) inlineArtifactsByMarkdown.set(markdownPart.id, selected);
     for (const artifact of selected) embeddedArtifactIds.add(artifact.id);
   }
+  const finalAnswerParts = turn.parts.filter((part): part is Extract<StructuredAssistantPart, { kind: "markdown" }> =>
+    part.kind === "markdown" && turn.status === "completed" && part.final === true && part.channel === "answer",
+  );
+  const finalAnswerIds = new Set(finalAnswerParts.map((part) => part.id));
+  const finalCitationIds = new Set(finalAnswerParts.flatMap((part) => part.citationIds ?? []));
   const resultParts = turn.parts.filter((part) =>
-    (part.kind === "markdown" && turn.status === "completed" && part.final === true && (part.channel ?? "answer") === "answer")
-    || part.kind === "citation"
-    || (part.kind === "artifact" && !embeddedArtifactIds.has(part.id)),
+    finalAnswerIds.has(part.id)
+    || (part.kind === "citation" && (finalCitationIds.has(part.citationId) || (part.markdownPartId !== undefined && finalAnswerIds.has(part.markdownPartId))))
+    || (part.kind === "artifact" && !embeddedArtifactIds.has(part.id) && (part.citationIds ?? []).some((id) => finalCitationIds.has(id))),
   );
   // The model writes `[E1]` so the support check can tell which passage each
   // sentence rests on. The reader has no use for the number, so the marker is
@@ -166,7 +172,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   const publicSources = useMemo(() => extractPublicSources(turn), [turn]);
   const processPresentation = useMemo(() => buildStructuredProcessPresentation(turn, language), [language, turn]);
   const hasUserWarning = noticeParts.some((part) => part.level === "warning") || turn.parts.some((part) => part.kind === "markdown" && /could not be fully verified|citation_evidence_incomplete/i.test(part.markdown));
-  const hasProcess = progressParts.length > 0 || reasoningParts.length > 0 || subtaskParts.length > 0 || turn.activities.length > 0 || noticeParts.length > 0;
+  const hasProcess = (turn.processTimeline?.length ?? 0) > 0 || progressParts.length > 0 || reasoningParts.length > 0 || subtaskParts.length > 0 || turn.activities.length > 0 || noticeParts.length > 0;
   const waitingApproval = turn.parts.some((part) => part.kind === "interaction" && part.interactionType === "approval" && (part.status === "pending" || part.status === "running"));
   const turnStatusLabel = waitingApproval
     ? (language === "zh" ? "等待审批" : "Waiting for approval")
@@ -298,12 +304,15 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
           <RetrievalStageSummary turn={turn} language={language} />
           {processPresentation.completionSummary ? <div className="structured-process-overview"><CheckCircle2 size={15} aria-hidden="true" /><span>{processPresentation.completionSummary}</span></div> : null}
           <StructuredProcessTimeline
+            timeline={turn.processTimeline}
             reasoningParts={reasoningParts}
             progressParts={progressParts}
+            markdownParts={turn.parts.filter((part): part is Extract<StructuredAssistantPart, { kind: "markdown" }> => part.kind === "markdown")}
             activities={turn.activities.filter((activity) => !activity.subtaskId)}
             language={language}
             resourceStates={resourceStates}
             onOpenResource={onOpenResource}
+            onOpenLink={onOpenLink}
             running={turn.status === "running"}
             renderPart={renderPart}
           />
@@ -642,27 +651,33 @@ function ReasoningDisclosure({
 }
 
 function StructuredProcessTimeline({
+  timeline,
   reasoningParts,
   progressParts,
+  markdownParts,
   activities,
   language,
   resourceStates,
   onOpenResource,
+  onOpenLink,
   running,
   renderPart,
 }: {
+  timeline: StructuredProcessTimelineEntry[] | undefined;
   reasoningParts: Array<Extract<StructuredAssistantPart, { kind: "reasoning" }>>;
   progressParts: Array<Extract<StructuredAssistantPart, { kind: "progress" }>>;
+  markdownParts: Array<Extract<StructuredAssistantPart, { kind: "markdown" }>>;
   activities: StructuredActivityEvent[];
   language: "en" | "zh";
   resourceStates?: Readonly<Record<string, "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported">>;
   onOpenResource?: (resourceRef: OaepResourceRef) => void;
+  onOpenLink?: (href: string) => void;
   running: boolean;
   renderPart: (part: StructuredAssistantPart) => React.JSX.Element | null;
 }): React.JSX.Element | null {
   const [page, setPage] = useState(0);
   const [open, setOpen] = useState(running);
-  const entries = useMemo(() => buildProcessTimeline(reasoningParts, progressParts, activities), [reasoningParts, progressParts, activities]);
+  const entries = useMemo(() => buildProcessTimeline(timeline, reasoningParts, progressParts, markdownParts, activities, running), [timeline, reasoningParts, progressParts, markdownParts, activities, running]);
   const window = boundedProcessWindow(entries.length, page, PROCESS_ACTIVITY_WINDOW_SIZE);
   useEffect(() => setPage((current) => boundedProcessWindow(entries.length, current, PROCESS_ACTIVITY_WINDOW_SIZE).page), [entries.length]);
   if (!entries.length) return null;
@@ -670,6 +685,7 @@ function StructuredProcessTimeline({
     <div className="structured-timeline-window" data-timeline-window-start={window.start} data-timeline-window-end={window.end}>
       {entries.slice(window.start, window.end).map((entry) => {
         if (entry.type === "reasoning") return <div key={entry.id} className="structured-timeline-item reasoning"><span className="structured-timeline-marker">💭</span>{renderPart(entry.part)}</div>;
+        if (entry.type === "markdown") return <div key={entry.id} className="structured-timeline-item streaming-markdown"><span className="structured-timeline-marker">✎</span><ChatMessageContent content={entry.text} streaming={running} language={language} onOpenLink={onOpenLink} /></div>;
         if (entry.type === "progress") return <div key={entry.id} className={`structured-timeline-item progress ${entry.part.status}`}><span className="structured-timeline-marker"><ActivityStatusIcon status={entry.part.status} /></span>{renderPart(entry.part)}</div>;
         return <div key={entry.id} className={`structured-timeline-item activity ${entry.activity.status}`}><span className="structured-timeline-marker"><ActivityStatusIcon status={entry.activity.status} /></span><ActivityTimelineItem activity={entry.activity} language={language} resourceStates={resourceStates} onOpenResource={onOpenResource} /></div>;
       })}
@@ -680,14 +696,54 @@ function StructuredProcessTimeline({
 
 type ProcessTimelineEntry =
   | { type: "reasoning"; id: string; sequence: number; part: Extract<StructuredAssistantPart, { kind: "reasoning" }> }
+  | { type: "markdown"; id: string; sequence: number; text: string; transient: boolean }
   | { type: "progress"; id: string; sequence: number; part: Extract<StructuredAssistantPart, { kind: "progress" }> }
   | { type: "activity"; id: string; sequence: number; activity: StructuredActivityEvent };
 
 function buildProcessTimeline(
+  timeline: StructuredProcessTimelineEntry[] | undefined,
   reasoningParts: Array<Extract<StructuredAssistantPart, { kind: "reasoning" }>>,
   progressParts: Array<Extract<StructuredAssistantPart, { kind: "progress" }>>,
+  markdownParts: Array<Extract<StructuredAssistantPart, { kind: "markdown" }>>,
   activities: StructuredActivityEvent[],
+  running: boolean,
 ): ProcessTimelineEntry[] {
+  // Prefer the authoritative append-ordered timeline when available.
+  if (timeline && timeline.length) {
+    const activityById = new Map(activities.map((activity) => [activity.id, activity]));
+    const reasoningByPartId = new Map(reasoningParts.map((part) => [part.id, part]));
+    const progressByPartId = new Map(progressParts.map((part) => [part.id, part]));
+    const result: ProcessTimelineEntry[] = [];
+    for (const entry of timeline) {
+      if (entry.kind === "reasoning") {
+        const part = reasoningByPartId.get(entry.partId);
+        if (part) {
+          // For timeline display, we show only the segment text from this
+          // delta boundary, not the full accumulated reasoning. We create a
+          // lightweight wrapper part so renderPart can display it.
+          const segmentPart = { ...part, segments: part.segments.filter((seg) => seg.id === entry.segmentId || seg.text.includes(entry.text.slice(0, 50))) };
+          if (segmentPart.segments.length === 0) segmentPart.segments = [{ id: entry.segmentId, text: entry.text, status: entry.status }];
+          result.push({ type: "reasoning", id: entry.id, sequence: entry.sequence, part: segmentPart });
+        }
+      } else if (entry.kind === "markdown") {
+        // Transient (answer) markdown appears in Process only while running.
+        // After completion, transient entries are filtered out so the final
+        // answer lives only in the Result layer.
+        if (entry.transient && !running) continue;
+        result.push({ type: "markdown", id: entry.id, sequence: entry.sequence, text: entry.text, transient: entry.transient });
+      } else if (entry.kind === "progress") {
+        const part = progressByPartId.get(entry.partId);
+        if (part) result.push({ type: "progress", id: entry.id, sequence: entry.sequence, part });
+      } else if (entry.kind === "activity") {
+        const activity = activityById.get(entry.activityId);
+        if (activity) result.push({ type: "activity", id: entry.id, sequence: entry.sequence, activity });
+      }
+    }
+    return result;
+  }
+
+  // Legacy fallback: reconstruct from aggregate parts when no authoritative
+  // timeline exists (e.g. old snapshots). Uses part.sequence for ordering.
   const entries: ProcessTimelineEntry[] = [];
   reasoningParts.forEach((part, index) => {
     const sequence = part.sequence ?? Number.MAX_SAFE_INTEGER - 100000 + index;
@@ -697,11 +753,41 @@ function buildProcessTimeline(
     const sequence = part.sequence ?? Number.MAX_SAFE_INTEGER - 50000 + index;
     entries.push({ type: "progress", id: `progress:${part.id}`, sequence, part });
   });
+  // Show process-channel markdown in the timeline during fallback.
+  markdownParts.filter((part) => part.channel === "process" || (part.channel === undefined && !part.final)).forEach((part, index) => {
+    const sequence = part.sequence ?? Number.MAX_SAFE_INTEGER - 80000 + index;
+    entries.push({ type: "markdown", id: `markdown:${part.id}`, sequence, text: part.markdown, transient: false });
+  });
   activities.forEach((activity, index) => {
     const sequence = activity.sequence ?? Number.MAX_SAFE_INTEGER - 10000 + index;
     entries.push({ type: "activity", id: `activity:${activity.id}`, sequence, activity });
   });
   return entries.sort((a, b) => a.sequence - b.sequence);
+}
+
+const TOOL_OUTPUT_PREVIEW_LIMIT = 600;
+
+function truncateToolPayload(value: unknown, limit = TOOL_OUTPUT_PREVIEW_LIMIT): string {
+  if (value === undefined || value === null) return "";
+  const display = typeof value === "string" ? value : (() => { try { return JSON.stringify(value, null, 2) } catch { return String(value) } })();
+  if (display.length <= limit) return display;
+  return display.slice(0, limit) + "…";
+}
+
+function formatToolInputSummary(input: unknown, language: "en" | "zh"): string {
+  if (input === undefined || input === null) return "";
+  if (typeof input === "string") return input.slice(0, 200);
+  if (typeof input === "object") {
+    try {
+      const obj = input as Record<string, unknown>;
+      const entries = Object.entries(obj).slice(0, 4);
+      return entries.map(([key, val]) => {
+        const valStr = typeof val === "string" ? val.slice(0, 80) : (() => { try { return JSON.stringify(val) } catch { return String(val) } })().slice(0, 80);
+        return `${key}: ${valStr}`;
+      }).join(", ");
+    } catch { return String(input).slice(0, 200); }
+  }
+  return String(input).slice(0, 200);
 }
 
 function ActivityTimelineItem({
@@ -716,7 +802,52 @@ function ActivityTimelineItem({
   onOpenResource?: (resourceRef: OaepResourceRef) => void;
 }): React.JSX.Element {
   const label = formatActivitySummary(activity, language);
-  return <div className="structured-timeline-activity"><span>{label}</span>{activity.kind === "file_change" && activity.resourceRef && onOpenResource ? <button type="button" onClick={() => onOpenResource(activity.resourceRef!)}>{activity.path}</button> : null}</div>;
+  const [expanded, setExpanded] = useState(false);
+  const zh = language === "zh";
+
+  // For file_change activities, keep the original compact rendering
+  if (activity.kind === "file_change") {
+    return <div className="structured-timeline-activity"><span>{label}</span>{activity.resourceRef && onOpenResource ? <button type="button" onClick={() => onOpenResource(activity.resourceRef!)}>{activity.path}</button> : null}</div>;
+  }
+
+  // For tool activities, show enhanced detail with input/output
+  if (activity.kind === "tool") {
+    const hasInput = activity.input !== undefined && activity.input !== null;
+    const hasOutput = activity.output !== undefined && activity.output !== null && activity.output !== "";
+    const hasDetail = hasInput || hasOutput;
+    const inputPreview = hasInput ? formatToolInputSummary(activity.input, language) : "";
+    const outputPreview = hasOutput ? truncateToolPayload(activity.output) : "";
+    const showDuration = activity.durationMs !== undefined && (activity.durationMs >= 500 || activity.status === "error");
+    const isError = activity.status === "error";
+
+    return <div className={`structured-timeline-activity structured-timeline-tool ${activity.status}`}>
+      <div className="structured-tool-header" onClick={hasDetail ? () => setExpanded((v) => !v) : undefined} role={hasDetail ? "button" : undefined} tabIndex={hasDetail ? 0 : undefined}>
+        <ActivityStatusIcon status={activity.status} />
+        <span className="structured-tool-name">{activity.toolName}</span>
+        <span className="structured-tool-label">{label}</span>
+        {showDuration && activity.durationMs !== undefined ? <time className="structured-tool-duration">{formatRunDuration(activity.durationMs, language)}</time> : null}
+        {hasDetail ? <ChevronDown size={12} className={`structured-tool-chevron ${expanded ? "expanded" : ""}`} aria-hidden="true" /> : null}
+      </div>
+      {hasDetail && !expanded ? <div className="structured-tool-preview">
+        {inputPreview ? <span className="structured-tool-input-preview"><em>{zh ? "输入" : "Input"}:</em> {inputPreview}</span> : null}
+        {outputPreview ? <span className="structured-tool-output-preview"><em>{zh ? "输出" : "Output"}:</em> {outputPreview.slice(0, 200)}{outputPreview.length > 200 ? "…" : ""}</span> : null}
+      </div> : null}
+      {hasDetail && expanded ? <div className="structured-tool-detail">
+        {hasInput ? <div className="structured-tool-input">
+          <strong>{zh ? "输入参数" : "Input"}</strong>
+          <pre>{truncateToolPayload(activity.input, 4000)}</pre>
+        </div> : null}
+        {hasOutput ? <div className="structured-tool-output">
+          <strong>{zh ? "输出结果" : "Output"}</strong>
+          <pre>{truncateToolPayload(activity.output, 4000)}</pre>
+        </div> : null}
+        {isError ? <div className="structured-tool-error">{zh ? "执行出错" : "Execution error"}</div> : null}
+      </div> : null}
+    </div>;
+  }
+
+  // For other activity kinds (model, retry, subtask, log), keep compact rendering
+  return <div className="structured-timeline-activity"><span>{label}</span></div>;
 }
 
 function AggregatedActivityDetails({
@@ -739,7 +870,10 @@ function AggregatedActivityDetails({
     <div className="structured-activity-window" data-activity-window-start={window.start} data-activity-window-end={window.end}>
       {groups.slice(window.start, window.end).map((group) => <div className={`structured-activity-group ${group.status}`} key={group.id}>
         <ActivityStatusIcon status={group.status} />
-        <span>{group.label}</span>
+        <span style={{ display: "flex", alignItems: "baseline", gap: "5px", minWidth: 0 }}>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.label}</span>
+          {group.kind === "tool" && group.toolName ? <small className="structured-activity-tool-name" title={group.toolName}>{group.toolName}</small> : null}
+        </span>
         {group.count > 1 ? <small>×{group.count}</small> : null}
         {group.fileResources.length && onOpenResource ? <span className="structured-activity-files structured-activity-resource-links">
           {group.fileResources.slice(0, 3).map(({ name, resourceRef }) => {

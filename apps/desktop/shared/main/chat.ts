@@ -3,7 +3,7 @@ import { appendFileSync, createReadStream, createWriteStream, mkdirSync } from "
 import { readFile, stat, mkdir, writeFile, readdir, rm, rename, statfs, open } from "fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import { pipeline } from "stream/promises";
-import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, ChatTurnCancelResult, ChatTurnIdentity, MaterialRoleItem, OaepInputResource, RuntimeModelRef } from "../api/desktopApi";
+import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, ChatTurnCancelResult, ChatTurnIdentity, MaterialRoleItem, OaepInputResource, RuntimeModelRef, ThinkingEffort } from "../api/desktopApi";
 import { LEGACY_MY_DRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
 import { normalizeRuntimeErrorEnvelope } from "../api/errorEnvelope";
 import { RemoteProtocolError } from "../api/remoteSshProtocol";
@@ -26,7 +26,7 @@ import {
   parseProviderUsageAnalyticsSseFrame,
   parseAgentRunSseFileEvents,
 } from "./sseParser";
-import { expectRuntimeSessionBind, listThreads, rememberRuntimeSessionOwner, updateThread, upsertThreadFromRun } from "./threads";
+import { expectRuntimeSessionBind, listThreads, normalizeThinkingEffort, rememberRuntimeSessionOwner, updateThread, upsertThreadFromRun } from "./threads";
 import { sanitizeDesktopThreadTitle } from "../api/threadSidebarCatalog";
 import { persistProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { persistProviderUsageAnalytics } from "./providerUsageAnalytics";
@@ -966,6 +966,8 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
     requestId: request.requestId,
     agentId: request.agentId?.trim() || undefined,
     model: request.model?.trim() || undefined,
+    reasoningEffort: normalizeThinkingEffort(request.reasoningEffort),
+    planMode: request.planMode === true ? true : undefined,
     workspacePath: request.workspacePath?.trim() || undefined,
     workspaceId: request.workspaceId?.trim() || undefined,
     workspaceName: request.workspaceName?.trim() || undefined,
@@ -1138,6 +1140,11 @@ async function runChat(
     workspacePath: request.workspacePath,
     boundAgentId,
     boundAgentName,
+    model: request.model,
+    reasoningEffort: request.reasoningEffort
+      ?? (request.metadata?.thinking_effort as ThinkingEffort | undefined)
+      ?? (request.metadata?.reasoning_effort as ThinkingEffort | undefined),
+    planMode: request.planMode ?? (request.metadata?.plan_mode as boolean | undefined),
     // Codex resolves legacy Runtime Session bindings from the previous Run.
     // Do not overwrite that recovery handle until its new Run exists.
     lastRunId: isCodexBackend || !platformDescriptor ? undefined : runId,
