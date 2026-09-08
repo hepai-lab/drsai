@@ -6,7 +6,8 @@
  *   user / plan / step
  *   process[]   — ReAct: thinking, narration, tools, logs
  *   final       — turn.ready (or live candidate), reply text only
- *   files[]
+ *   files[]     — last FilesEvent of the turn only (intermediate drafts stay off-thread)
+
  *
  * Slot assignment prefers ``turn_plane`` stamped by the stream protocol.
  * Array order inside a turn is ignored for slot placement.
@@ -176,9 +177,16 @@ function assembleTurnBody(body: Indexed[]): MessageSegment[] {
   finals.forEach((item) => {
     segments.push({ kind: "single", idx: item.idx, msg: item.msg });
   });
-  files.forEach((item) => {
-    segments.push({ kind: "single", idx: item.idx, msg: item.msg });
-  });
+  // Intermediate workspace writes (test_*.pptx etc.) are still in run.file_events.
+  // The thread only shows the last file of the turn as the deliverable.
+  if (files.length > 0) {
+    const deliverable = files[files.length - 1];
+    segments.push({
+      kind: "single",
+      idx: deliverable.idx,
+      msg: deliverable.msg,
+    });
+  }
   return segments;
 }
 
