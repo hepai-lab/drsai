@@ -698,20 +698,24 @@ async function getLocalCodexDevelopmentEnv(): Promise<Record<string, string>> {
 }
 
 /**
- * A Windows virtual environment's console launcher can start the base Python
- * interpreter as a second console process. When its parent is Electron, that
- * second hop may ask the configured Windows terminal host to create a visible
- * window even though Node's first spawn used `windowsHide`.
+ * Prefer the console `python.exe` launcher on Windows.
  *
- * Gateway is a background service and already writes to the managed log sink,
- * so use the GUI-subsystem launcher on Windows. Interactive CLI and developer
- * terminal commands continue to use DRSAI_PYTHON.
+ * Historically this resolved to `pythonw.exe` so Electron would not flash a
+ * console. That GUI-subsystem host is also what many endpoint agents
+ * (WinError 5 / 拒绝访问) blanket-deny when it later CreateProcess's
+ * powershell.exe — breaking Agent shell tools. Node's spawn already passes
+ * `windowsHide: true`, which keeps the console subsystem quiet for Gateway.
+ *
+ * Keep `pythonw.exe` only as an explicit opt-in via OPENDRSAI_GATEWAY_PYTHONW=1
+ * for hosts that still need the no-console binary and have shell allowlisted.
  */
 export function resolveGatewayPythonExecutable(
   pythonExecutable = DRSAI_PYTHON,
   platform = process.platform,
 ): string {
   if (platform !== "win32") return pythonExecutable;
+  const preferPythonw = process.env.OPENDRSAI_GATEWAY_PYTHONW === "1";
+  if (!preferPythonw) return pythonExecutable;
   const backgroundExecutable = join(dirname(pythonExecutable), "pythonw.exe");
   return existsSync(backgroundExecutable) ? backgroundExecutable : pythonExecutable;
 }

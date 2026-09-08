@@ -156,8 +156,16 @@ class RuntimeArtifactStore:
             raise RuntimeArtifactError("artifact_quota_exceeded", "Artifact exceeds the per-file size limit")
 
         requested_name = str(
-            arguments.get("destination_name") or arguments.get("display_name") or source.name
+            arguments.get("destination_name") or source.name
         ).strip()
+        # display_name is UI metadata. Only reuse it as the on-disk name when the
+        # caller omitted destination_name and the display label keeps the source
+        # extension — otherwise Chinese titles become broken filenames like
+        # "Deck (2).pptx（介绍）" that hosts cannot open by extension.
+        if not arguments.get("destination_name") and arguments.get("display_name"):
+            display = str(arguments.get("display_name") or "").strip()
+            if display and Path(display).suffix.lower() == source.suffix.lower():
+                requested_name = display
         safe_name = self._safe_destination_name(requested_name)
         artifacts_root = self._verified_artifacts_root(root)
 
@@ -236,6 +244,7 @@ class RuntimeArtifactStore:
         if not value or Path(value).name != value or value in {".", ".."}:
             raise RuntimeArtifactError("artifact_destination_invalid", "Artifact destination name is invalid")
         cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).rstrip(" .")
+        cleaned = RuntimeArtifactStore._strip_extension_trailing_junk(cleaned)
         if not cleaned or cleaned in {".", ".."}:
             raise RuntimeArtifactError("artifact_destination_invalid", "Artifact destination name is invalid")
         if Path(cleaned).stem.upper() in {
@@ -262,6 +271,27 @@ class RuntimeArtifactStore:
             stem = "".join(stem_chars).rstrip(" .") or "artifact"
             cleaned = f"{stem}{suffix}"
         return cleaned
+
+    @staticmethod
+    def _strip_extension_trailing_junk(name: str) -> str:
+        """Keep `Deck.pptx` when models append titles like `Deck.pptx（介绍）`."""
+        known = (
+            ".pptx", ".docx", ".xlsx", ".ppt", ".doc", ".xls",
+            ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+            ".md", ".json", ".csv", ".tsv", ".html", ".htm", ".txt", ".zip", ".rtf",
+        )
+        direct = Path(name).suffix.lower()
+        if direct in known:
+            return name
+        lower = name.lower()
+        for ext in sorted(known, key=len, reverse=True):
+            idx = lower.rfind(ext)
+            if idx < 0:
+                continue
+            end = idx + len(ext)
+            if name[end:]:
+                return name[:end]
+        return name
 
     @staticmethod
     def _verified_artifacts_root(workspace_root: Path) -> Path:

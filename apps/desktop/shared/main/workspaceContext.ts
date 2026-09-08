@@ -158,6 +158,13 @@ const MEDIA_MIME: Record<string, string> = {
 
 const OFFICE_EXTENSIONS = new Set([".docx", ".pptx", ".xlsx", ".doc", ".ppt", ".xls"]);
 
+/** Whether a file should use the local rich extractor instead of gateway bytes. */
+export function prefersLocalRichPreview(filePath: string | undefined): boolean {
+  if (!filePath) return false;
+  const extension = extname(filePath).toLowerCase();
+  return OFFICE_EXTENSIONS.has(extension) || extension === ".pdf";
+}
+
 export async function getWorkspaceContextOverview(
   rawWorkspacePath: unknown,
   trusted = true,

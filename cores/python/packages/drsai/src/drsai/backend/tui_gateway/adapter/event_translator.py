@@ -167,6 +167,21 @@ def _is_subagent_source(source: str | None) -> bool:
     return bool(source) and source.startswith("sub:")
 
 
+def _recover_pending_tool_id(state: TurnState, name: str) -> str:
+    """Map a tool result without call_id back onto a pending tool.start id."""
+    pending = state.pending_tool_calls
+    if not pending:
+        return ""
+    if name:
+        for pending_id, (pname, _pargs, _started) in pending.items():
+            bare = pname.rsplit("] ", 1)[-1] if "] " in pname else pname
+            if pname == name or bare == name:
+                return pending_id
+    if len(pending) == 1:
+        return next(iter(pending))
+    return ""
+
+
 def extract_citation_payloads(metadata: Any, state: TurnState) -> list[dict[str, Any]]:
     """Normalize provider citation/annotation metadata without guessing from prose."""
     if not isinstance(metadata, dict):
@@ -410,7 +425,9 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         for call in calls:
             if not isinstance(call, FunctionCall):
                 continue
-            tool_id = getattr(call, "id", None) or f"tool-{int(time.time() * 1000)}"
+            # Some providers (esp. skill/tool paths) omit FunctionCall.id; Runtime
+            # requires a non-empty call identity on every tool event.
+            tool_id = str(getattr(call, "id", None) or "").strip() or f"tool-{int(time.time() * 1000)}"
             name = getattr(call, "name", "?")
             args = _parse_tool_args(getattr(call, "arguments", {}))
             state.pending_tool_calls[tool_id] = (name, args, time.time())
@@ -432,18 +449,24 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         is_sub = _is_subagent_source(msg_source)
         results = message.content or []
         for r in results:
-            tool_id = getattr(r, "call_id", None) or getattr(r, "id", None) or ""
+            tool_id = str(getattr(r, "call_id", None) or getattr(r, "id", None) or "").strip()
             name = getattr(r, "name", "") or ""
             content = getattr(r, "content", None)
             result_str = _safe_str(content)
             duration_ms = 0
             args: dict = {}
+            if not tool_id:
+                # Results sometimes omit call_id even when the matching start used
+                # a synthesised id (common when loading skills). Recover from pending.
+                tool_id = _recover_pending_tool_id(state, name)
             if tool_id and tool_id in state.pending_tool_calls:
                 pname, pargs, started = state.pending_tool_calls.pop(tool_id)
                 if not name:
                     name = pname
                 args = pargs
                 duration_ms = int((time.time() - started) * 1000)
+            if not tool_id:
+                tool_id = f"tool-orphan-{int(time.time() * 1000)}"
             payload = {
                 "tool_id": tool_id,
                 "name": name,

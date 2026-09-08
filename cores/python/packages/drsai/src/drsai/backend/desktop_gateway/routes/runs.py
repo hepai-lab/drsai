@@ -27,8 +27,9 @@ from __future__ import annotations
 from drsai.backend.desktop_gateway._diag import diag_log
 
 import asyncio
+import re
 from contextlib import nullcontext
-from typing import Any
+from typing import Any, Mapping
 
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
@@ -45,6 +46,30 @@ api = APIRouter(tags=["runs"])
 # Detached executions are kept referenced until they finish; without this the
 # event loop is free to garbage-collect a running task mid-turn.
 _EXECUTIONS: dict[str, asyncio.Task] = {}
+_SELECTED_SKILL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+def _selected_skill_id(metadata: Mapping[str, Any]) -> str | None:
+    """Parse composer skill selection from execute metadata."""
+    raw = metadata.get("selected_skill_id")
+    if raw in (None, ""):
+        return None
+    if not isinstance(raw, str):
+        raise RuntimeExecutionError(
+            "thread_skill_invalid",
+            "selected_skill_id must be a string skill name.",
+            detail={"skill_id": raw},
+        )
+    skill_id = raw.strip()
+    if not skill_id:
+        return None
+    if not _SELECTED_SKILL_ID_RE.fullmatch(skill_id):
+        raise RuntimeExecutionError(
+            "thread_skill_invalid",
+            "selected_skill_id has an invalid format.",
+            detail={"skill_id": skill_id},
+        )
+    return skill_id
 
 
 @api.post("/v1/sessions/{session_id}/runs", operation_id="createRun")
@@ -103,6 +128,7 @@ async def run_execute(run_id: str, request: RunExecuteRequest, raw_request: Requ
             reasoning_effort=requested_reasoning_effort,
             plan_mode=requested_plan_mode,
         )
+        selected_skill_id = _selected_skill_id(metadata)
         engine.set_run_input(
             run_id,
             request.prompt,
@@ -130,6 +156,7 @@ async def run_execute(run_id: str, request: RunExecuteRequest, raw_request: Requ
                     model_override=model_alias,
                     reasoning_effort=requested_reasoning_effort,
                     plan_mode=requested_plan_mode,
+                    selected_skill_id=selected_skill_id,
                 )
             diag_log(f"[DIAG] runs.py execute(): run_id={run_id} detached task COMPLETED")
             return result

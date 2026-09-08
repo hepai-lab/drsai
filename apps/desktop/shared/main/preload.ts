@@ -311,6 +311,16 @@ import type {
   GatewaySkill,
   GatewayAvailableSkill,
   GatewaySkillInstallRequest,
+  SkillsSquareStatus,
+  DesktopSquareSkillDetail,
+  DesktopSquareSkillsPage,
+  DesktopSquareSkillsListRequest,
+  DesktopSquareSkillStats,
+  DesktopSquareSkillTag,
+  DesktopSquareInstallRequest,
+  DesktopSquareUploadRequest,
+  DesktopSquareUpdateRequest,
+  DesktopSquareShareInfo,
   GfsListRequest,
   GfsListResult,
   GfsObjectInfo,
@@ -738,32 +748,12 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:list-installed-skills", request),
   listAvailableSkills: (request?: { userId?: string; coreOnly?: boolean }): Promise<GatewayAvailableSkill[]> =>
     ipcRenderer.invoke("desktop:list-available-skills", request),
-  // Online skills temporarily disabled — keep invoke channels but main rejects.
-  listPublicSkillsSquare: (request?: {
-    page?: number;
-    pageSize?: number;
-    q?: string;
-    tags?: string;
-    sort?: "name" | "time";
-    installFilter?: "all" | "installed" | "not_installed";
-    userId?: string;
-    detailSlug?: string;
-  }) => ipcRenderer.invoke("desktop:list-public-skills-square", request),
-  getPublicSkillDetail: (request: { slug: string }) =>
-    ipcRenderer.invoke("desktop:get-public-skill-detail", request),
   getSkillContent: (request: { skillPath: string }): Promise<{ path: string; content: string }> =>
     ipcRenderer.invoke("desktop:get-skill-content", request),
   installSkill: (
     request: GatewaySkillInstallRequest,
   ): Promise<{ status: string; name: string; path: string }> =>
     ipcRenderer.invoke("desktop:install-skill", request),
-  installPublicSkillSquare: (request: {
-    slug: string;
-    name?: string;
-    userId?: string;
-    threadId?: string;
-  }): Promise<{ status: string; name: string; path: string; files: number }> =>
-    ipcRenderer.invoke("desktop:install-public-skill-square", request),
   importSkillFolder: (request: {
     folderPath: string;
     name?: string;
@@ -794,6 +784,91 @@ const api: DesktopApi = {
     userId?: string;
   }): Promise<{ ok: boolean; reloaded: boolean }> =>
     ipcRenderer.invoke("desktop:reload-skills", request),
+
+  getSkillsSquareStatus: (): Promise<SkillsSquareStatus> =>
+    ipcRenderer.invoke("desktop:get-skills-square-status"),
+  listSkillsSquare: (request?: DesktopSquareSkillsListRequest): Promise<DesktopSquareSkillsPage> =>
+    ipcRenderer.invoke("desktop:list-skills-square", request),
+  getSkillsSquareDetail: (request: { slug: string; userEmail?: string }): Promise<DesktopSquareSkillDetail> =>
+    ipcRenderer.invoke("desktop:get-skills-square-detail", request),
+  getSkillsSquareSkillMd: (request: { slug: string }): Promise<{ content: string }> =>
+    ipcRenderer.invoke("desktop:get-skills-square-skill-md", request),
+  getSkillsSquareStats: (): Promise<DesktopSquareSkillStats> =>
+    ipcRenderer.invoke("desktop:get-skills-square-stats"),
+  listSkillsSquareTags: (request?: { operatorUserId?: string }): Promise<DesktopSquareSkillTag[]> =>
+    ipcRenderer.invoke("desktop:list-skills-square-tags", request),
+  createSkillsSquareTag: (request: {
+    name: string;
+    sortOrder?: number;
+    operatorUserId?: string;
+  }): Promise<DesktopSquareSkillTag> =>
+    ipcRenderer.invoke("desktop:create-skills-square-tag", request),
+  updateSkillsSquareTag: (request: {
+    tagId: number;
+    name?: string;
+    sortOrder?: number;
+    operatorUserId?: string;
+  }): Promise<DesktopSquareSkillTag> =>
+    ipcRenderer.invoke("desktop:update-skills-square-tag", request),
+  deleteSkillsSquareTag: (request: {
+    tagId: number;
+    operatorUserId?: string;
+  }): Promise<{ id: number }> =>
+    ipcRenderer.invoke("desktop:delete-skills-square-tag", request),
+  installSkillsSquare: (request: DesktopSquareInstallRequest): Promise<{
+    status: string;
+    name: string;
+    path: string;
+    files: number;
+  }> => ipcRenderer.invoke("desktop:install-skills-square", request),
+  downloadSkillsSquare: (request: { slug: string }): Promise<{ fileName: string; base64: string }> =>
+    ipcRenderer.invoke("desktop:download-skills-square", request),
+  uploadSkillsSquare: (request: DesktopSquareUploadRequest): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke("desktop:upload-skills-square", request),
+  updateSkillsSquare: (request: DesktopSquareUpdateRequest): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke("desktop:update-skills-square", request),
+  deleteSkillsSquare: (request: {
+    slug: string;
+    intent?: "delete" | "uncollect";
+    userId?: string;
+    userEmail?: string;
+  }): Promise<{ slug: string }> =>
+    ipcRenderer.invoke("desktop:delete-skills-square", request),
+  toggleSkillsSquareVisibility: (request: {
+    slug: string;
+    visibility: "public" | "private" | "team";
+  }): Promise<{ slug: string; visibility: string }> =>
+    ipcRenderer.invoke("desktop:toggle-skills-square-visibility", request),
+  collectSkillsSquare: (request: {
+    slug: string;
+    displayName?: string;
+    icon?: string;
+    description?: string;
+    version?: string;
+    tags?: string;
+    owner?: string;
+    ownerId?: string;
+    changelog?: string;
+  }): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke("desktop:collect-skills-square", request),
+  createSkillsSquareShare: (request: {
+    slug: string;
+    userId: string;
+    password?: string;
+    expiresInHours?: number;
+  }): Promise<DesktopSquareShareInfo> =>
+    ipcRenderer.invoke("desktop:create-skills-square-share", request),
+  listSkillsSquareShares: (request: {
+    slug: string;
+    userId: string;
+  }): Promise<DesktopSquareShareInfo[]> =>
+    ipcRenderer.invoke("desktop:list-skills-square-shares", request),
+  revokeSkillsSquareShare: (request: {
+    slug: string;
+    shareId: string;
+    userId: string;
+  }): Promise<void> =>
+    ipcRenderer.invoke("desktop:revoke-skills-square-share", request),
 
   gfsList: (request: GfsListRequest): Promise<GfsListResult> =>
     ipcRenderer.invoke("desktop:gfs-list", request),

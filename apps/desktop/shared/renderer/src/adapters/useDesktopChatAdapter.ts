@@ -554,20 +554,10 @@ export function useDesktopChatAdapter({
     attachments: ChatAttachment[] = [],
     options?: ChatSubmitOptions,
   ): Promise<boolean> {
-    const skillName = options?.skillName?.trim();
-    const skillPrefix = skillName
-      ? languageRef.current === "zh"
-        ? `用 ${skillName} `
-        : `Use ${skillName} skill to `
-      : "";
-    const rawInput = (options?.text ?? input).trim();
-    const alreadyPrefixed = Boolean(
-      skillName &&
-        (languageRef.current === "zh"
-          ? new RegExp(`^用\\s+${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(rawInput)
-          : new RegExp(`^Use\\s+${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+skill\\s+to\\b`, "i").test(rawInput)),
-    );
-    const text = (skillPrefix && !alreadyPrefixed ? `${skillPrefix}${rawInput}` : rawInput).trim();
+    // Skills are loaded from the local scan directory on demand by the agent.
+    // Desktop no longer forces a per-turn selected_skill_id via composer chip.
+    const skillName = options?.skillName?.trim() || undefined;
+    const text = (options?.text ?? input).trim();
     if (!text) return false;
     const preserveComposer = options?.text !== undefined;
 
@@ -579,11 +569,7 @@ export function useDesktopChatAdapter({
       ? messagesRef.current.slice(0, replaceIndex)
       : messagesRef.current
     ).filter((message) => message.id !== "welcome");
-    const draftParts = options?.draftParts
-      ? (skillPrefix && !alreadyPrefixed
-          ? [{ type: "text" as const, text: skillPrefix }, ...options.draftParts]
-          : options.draftParts)
-      : undefined;
+    const draftParts = options?.draftParts;
 
     const materialPaths = [...new Set(attachments
       .filter((attachment) => attachment.kind === "file" && !attachment.blockedReason && attachment.path)
@@ -706,6 +692,7 @@ export function useDesktopChatAdapter({
       content: text,
       ...(attachments.length ? { attachments } : {}),
       ...(draftParts?.length ? { draftParts } : {}),
+      ...(skillName ? { skillName } : {}),
     };
     const assistantId = crypto.randomUUID();
     const requestId = crypto.randomUUID();
@@ -796,18 +783,39 @@ export function useDesktopChatAdapter({
 
   async function abort(): Promise<void> {
     const requestId = activeRequestIdRef.current ?? activeRequestId;
-    if (!requestId || cancellingRequestId === requestId) return;
+    if (!requestId) return;
+    // Allow a second Stop click to force-unlock even if the first cancel is still in flight.
+    const forceUnlock = cancellingRequestId === requestId;
     setCancellingRequestId(requestId);
     const assistantId = streamingAssistantByRequest.current[requestId];
+    // Optimistically clear the busy composer so the UI never stays stuck when
+    // cancelChatTurn hangs (e.g. blocked shell / stuck subagent).
+    activeRequestIdRef.current = null;
+    setActiveRequestId((current) => (current === requestId ? null : current));
     setMessages((current) => updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
       ...message,
       streaming: false,
       lastEventAt: Date.now(),
     })));
+    if (forceUnlock) {
+      setCancellingRequestId((current) => (current === requestId ? null : current));
+      setMessages((current) => publishAndReturn(
+        updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+          ...message,
+          streaming: false,
+          structuredTurn: finalizeStructuredTurn(
+            message.structuredTurn,
+            message.id,
+            "cancelled",
+          ),
+          lastEventAt: Date.now(),
+        })),
+      ));
+      return;
+    }
     try {
       const runtimeRunId = messages.find((message) => message.id === assistantId)?.runtimeRunId;
       const result = await desktopApi.cancelChatTurn({ requestId, sessionId: threadIdRef.current, runId: runtimeRunId });
-      if (result.state === "cancelling") return;
       setMessages((current) => publishAndReturn(
         updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
           ...message,
@@ -820,21 +828,26 @@ export function useDesktopChatAdapter({
           lastEventAt: Date.now(),
         })),
       ));
-      setCancellingRequestId((current) => current === requestId ? null : current);
-      setActiveRequestId((current) => current === requestId ? null : current);
-      activeRequestIdRef.current = null;
     } catch (error) {
-      setCancellingRequestId((current) => current === requestId ? null : current);
-      setMessages((current) => updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
-        ...message,
-        streaming: message.structuredTurn?.status === "pending" || message.structuredTurn?.status === "running",
-        lastEventAt: Date.now(),
-      })));
+      setMessages((current) => publishAndReturn(
+        updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+          ...message,
+          streaming: false,
+          structuredTurn: finalizeStructuredTurn(
+            message.structuredTurn,
+            message.id,
+            "cancelled",
+          ),
+          lastEventAt: Date.now(),
+        })),
+      ));
       appendDebugLog(
         "error",
         error instanceof Error ? error.message : "Chat stop request failed.",
         "chat",
       );
+    } finally {
+      setCancellingRequestId((current) => (current === requestId ? null : current));
     }
   }
 

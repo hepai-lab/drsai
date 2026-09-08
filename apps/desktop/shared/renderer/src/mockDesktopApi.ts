@@ -2743,16 +2743,6 @@ export function installMockDesktopApi(): void {
       }
       return catalog;
     },
-    // Online skills temporarily disabled (keep in sync with skillsSquare ENABLE_ONLINE_SKILLS).
-    listPublicSkillsSquare: async () => {
-      throw new Error("Online skills are temporarily disabled.");
-    },
-    getPublicSkillDetail: async () => {
-      throw new Error("Online skills are temporarily disabled.");
-    },
-    installPublicSkillSquare: async () => {
-      throw new Error("Online skills are temporarily disabled.");
-    },
     getSkillContent: async (request) => {
       const skill = mockInstalledSkills.find((item) => item.path === request.skillPath || item.name === request.skillPath);
       if (!skill) throw new Error(`Skill not found: ${request.skillPath}`);
@@ -2823,6 +2813,83 @@ export function installMockDesktopApi(): void {
       return { status: "ok", name: request.name };
     },
     reloadSkills: async () => ({ ok: true, reloaded: true }),
+    getSkillsSquareStatus: async () => ({
+      state: "ready" as const,
+      message: "Mock skills square ready (OIDC)",
+      authMode: "oidc" as const,
+      lastCheckedAt: new Date().toISOString(),
+      portalUrl: "https://opendrsai.ihep.ac.cn",
+    }),
+    listSkillsSquare: async (request) => ({
+      items: [],
+      page: request?.page ?? 1,
+      pageSize: request?.pageSize ?? 20,
+      total: 0,
+      hasNext: false,
+      installedCount: 0,
+      notInstalledCount: 0,
+      status: {
+        state: "ready" as const,
+        message: "Mock empty catalog",
+        authMode: "oidc" as const,
+        lastCheckedAt: new Date().toISOString(),
+      },
+    }),
+    getSkillsSquareDetail: async (request) => ({
+      slug: request.slug,
+      name: request.slug,
+      description: "",
+      body: "",
+      installed: false,
+      isCollected: false,
+    }),
+    getSkillsSquareSkillMd: async () => ({ content: "" }),
+    getSkillsSquareStats: async () => ({
+      totalSkills: 0,
+      publicSkills: 0,
+      totalDownloads: 0,
+      totalCollects: 0,
+    }),
+    listSkillsSquareTags: async () => [],
+    createSkillsSquareTag: async (request) => ({
+      id: 1,
+      name: request.name,
+      sortOrder: request.sortOrder ?? 0,
+    }),
+    updateSkillsSquareTag: async (request) => ({
+      id: request.tagId,
+      name: request.name ?? `tag-${request.tagId}`,
+      sortOrder: request.sortOrder ?? 0,
+    }),
+    deleteSkillsSquareTag: async (request) => ({ id: request.tagId }),
+    installSkillsSquare: async (request) => ({
+      status: "ok",
+      name: request.name || request.slug,
+      path: `/mock/skills/${request.slug}`,
+      files: 1,
+    }),
+    downloadSkillsSquare: async (request) => ({
+      fileName: `${request.slug}.zip`,
+      base64: "",
+    }),
+    uploadSkillsSquare: async () => ({ status: true }),
+    updateSkillsSquare: async () => ({ status: true }),
+    deleteSkillsSquare: async (request) => ({ slug: request.slug }),
+    toggleSkillsSquareVisibility: async (request) => ({
+      slug: request.slug,
+      visibility: request.visibility,
+    }),
+    collectSkillsSquare: async () => ({ status: true }),
+    createSkillsSquareShare: async (request) => ({
+      shareId: "mock-share",
+      skillSlug: request.slug,
+      hasPassword: Boolean(request.password),
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      createdAt: new Date().toISOString(),
+      shareUrl: "https://opendrsai.ihep.ac.cn/share/skill/mock-share",
+    }),
+    listSkillsSquareShares: async () => [],
+    revokeSkillsSquareShare: async () => undefined,
     gfsList: async () => ({ items: [], prefix: "", truncated: false }),
     gfsStat: async (request) => ({
       path: request.path,

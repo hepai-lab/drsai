@@ -1578,78 +1578,147 @@ export interface GatewayAvailableSkill extends GatewaySkill {
   bundledId?: string;
 }
 
-/** WebUI public Skills Square item (`GET /api/skills?type=public`). */
-export interface DesktopPublicSkill {
+export interface GatewaySkillInstallRequest {
+  name: string;
+  content?: string;
+  source?: string;
+  userId?: string;
+}
+
+/** Skills Square (WebUI GFS marketplace) — auth via HepAI OIDC only. */
+export type SkillsSquareStatusState = "ready" | "requires_login" | "forbidden" | "error";
+
+export interface SkillsSquareStatus {
+  state: SkillsSquareStatusState;
+  message: string;
+  authMode?: "oidc" | "none";
+  lastCheckedAt: string;
+  /** WebUI origin that hosts /share/skill/* (same as Skills API root). */
+  portalUrl?: string;
+}
+
+export interface DesktopSquareSkill {
   slug: string;
   name: string;
   description: string;
-  owner?: string;
+  icon?: string;
   version?: string;
-  downloads?: number;
-  tags?: string[];
+  owner?: string;
+  ownerId?: string;
+  author?: string;
+  visibility?: string;
   source?: string;
+  uskillsType?: string | null;
+  tags?: string[];
+  downloads?: number;
+  collects?: number;
+  collectorIds?: string[];
+  isCollected?: boolean;
+  canEdit?: boolean;
+  profile?: string;
+  changelog?: string;
+  createdAt?: string;
   updatedAt?: string;
   installed: boolean;
+  academicGroupId?: string;
 }
 
-export interface DesktopPublicSkillsPage {
-  items: DesktopPublicSkill[];
+export interface DesktopSquareSkillDetail extends DesktopSquareSkill {
+  body: string;
+  /** Higraf / group-restricted skills block download & body (WebUI parity). */
+  restricted?: boolean;
+}
+
+export interface DesktopSquareSkillsPage {
+  items: DesktopSquareSkill[];
   page: number;
   pageSize: number;
   total: number;
   hasNext: boolean;
-  /** Catalog totals for the current search (not limited to the current page). */
   installedCount: number;
   notInstalledCount: number;
-  availableTags?: string[];
-  /** Present when `detailSlug` is requested via listPublicSkillsSquare. */
-  detail?: DesktopPublicSkillDetail;
+  status: SkillsSquareStatus;
 }
 
-export interface DesktopPublicSkillsListRequest {
+export interface DesktopSquareSkillsListRequest {
+  scope?: "public" | "user";
   page?: number;
   pageSize?: number;
   q?: string;
   tags?: string;
-  sort?: "name" | "time";
+  sort?: "name" | "time" | "downloads" | "collects";
   installFilter?: "all" | "installed" | "not_installed";
+  uskillsType?: "created" | "imported";
+  visibility?: string;
   userId?: string;
-  /** Fetch one public skill detail through the list IPC channel (stale-preload compat). */
-  detailSlug?: string;
+  userEmail?: string;
 }
 
-export interface DesktopPublicSkillInstallRequest {
+export interface DesktopSquareSkillStats {
+  totalSkills: number;
+  publicSkills: number;
+  totalDownloads: number;
+  totalCollects: number;
+}
+
+export interface DesktopSquareSkillTag {
+  id: number;
+  uuid?: string;
+  name: string;
+  sortOrder?: number;
+}
+
+export interface DesktopSquareInstallRequest {
   slug: string;
   name?: string;
   userId?: string;
   threadId?: string;
 }
 
-/** WebUI public skill detail (`GET /api/skills/{slug}?type=public`). */
-export interface DesktopPublicSkillDetail {
-  slug: string;
-  name: string;
-  description: string;
-  body: string;
+export interface DesktopSquareUploadRequest {
+  zipBase64?: string;
+  fileName?: string;
+  slug?: string;
+  displayName?: string;
   icon?: string;
+  description?: string;
   version?: string;
-  owner?: string;
-  downloads?: number;
-  tags?: string[];
-  source?: string;
-  createdAt?: string;
-  updatedAt?: string;
   changelog?: string;
-  compatibility?: string;
-  restricted?: boolean;
-  profile?: string;
+  tags?: string;
+  visibility?: "public" | "private" | "team";
+  source?: string;
+  owner?: string;
+  ownerId?: string;
+  profileBase64?: string;
+  profileFileName?: string;
 }
 
-export interface GatewaySkillInstallRequest {
-  name: string;
-  content?: string;
-  source?: string;
-  userId?: string;
+export interface DesktopSquareUpdateRequest {
+  slug: string;
+  zipBase64?: string;
+  fileName?: string;
+  displayName?: string;
+  name?: string;
+  icon?: string;
+  description?: string;
+  version?: string;
+  changelog?: string;
+  tags?: string;
+  visibility?: string;
+  profileBase64?: string;
+  profileFileName?: string;
+}
+
+export interface DesktopSquareShareInfo {
+  shareId: string;
+  skillSlug?: string;
+  hasPassword: boolean;
+  expiresAt?: string;
+  createdAt?: string;
+  expired?: boolean;
+  accessCount?: number;
+  /** Absolute landing URL on the active Skills Square host (test=drsaiv2, prod=opendrsai). */
+  shareUrl?: string;
 }
 
 export interface GfsObjectInfo {
@@ -4170,6 +4239,8 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   structuredTurn?: StructuredTurnState;
   /** User-visible attachment chips; not part of the model prompt text. */
   attachments?: ChatAttachment[];
+  /** Composer-selected skill for this turn; shown as a chip, not message text. */
+  skillName?: string;
   /** Original text/attachment ordering from the Composer. */
   draftParts?: ChatDraftPart[];
   inputRequest?: {
@@ -4595,6 +4666,8 @@ export interface WorkspaceFilePreview {
   fileHash?: string;
   content?: string;
   dataUrl?: string;
+  /** Rendered PPTX slide thumbnails (data URLs) when sibling PNGs exist. */
+  slideImages?: Array<{ label: string; dataUrl: string }>;
   rows?: string[][];
   columns?: string[];
   message?: string;
@@ -6355,19 +6428,11 @@ export interface DesktopApi {
   onTerminalExit(callback: (event: TerminalExitEvent) => void): () => void;
   onBrowserTaskEvent(callback: (event: BrowserTaskEvent) => void): () => void;
 
-  // Skills (gateway-managed)
+  // Skills (gateway-managed, local)
   listInstalledSkills(request?: { userId?: string }): Promise<GatewaySkill[]>;
   listAvailableSkills(request?: { userId?: string; coreOnly?: boolean }): Promise<GatewayAvailableSkill[]>;
-  listPublicSkillsSquare(request?: DesktopPublicSkillsListRequest): Promise<DesktopPublicSkillsPage>;
-  getPublicSkillDetail(request: { slug: string }): Promise<DesktopPublicSkillDetail>;
   getSkillContent(request: { skillPath: string }): Promise<{ path: string; content: string }>;
   installSkill(request: GatewaySkillInstallRequest): Promise<{ status: string; name: string; path: string }>;
-  installPublicSkillSquare(request: DesktopPublicSkillInstallRequest): Promise<{
-    status: string;
-    name: string;
-    path: string;
-    files: number;
-  }>;
   importSkillFolder(request: {
     folderPath: string;
     name?: string;
@@ -6383,6 +6448,75 @@ export interface DesktopApi {
   updateSkill(request: { name: string; content: string; userId?: string }): Promise<{ status: string; name: string; path: string }>;
   uninstallSkill(request: { name: string; userId?: string }): Promise<{ status: string; name: string }>;
   reloadSkills(request?: { threadId?: string; userId?: string }): Promise<{ ok: boolean; reloaded: boolean }>;
+
+  // Skills Square (WebUI marketplace — public / mine / publish / collect / share)
+  getSkillsSquareStatus(): Promise<SkillsSquareStatus>;
+  listSkillsSquare(request?: DesktopSquareSkillsListRequest): Promise<DesktopSquareSkillsPage>;
+  getSkillsSquareDetail(request: { slug: string; userEmail?: string }): Promise<DesktopSquareSkillDetail>;
+  getSkillsSquareSkillMd(request: { slug: string }): Promise<{ content: string }>;
+  getSkillsSquareStats(): Promise<DesktopSquareSkillStats>;
+  listSkillsSquareTags(request?: { operatorUserId?: string }): Promise<DesktopSquareSkillTag[]>;
+  createSkillsSquareTag(request: {
+    name: string;
+    sortOrder?: number;
+    operatorUserId?: string;
+  }): Promise<DesktopSquareSkillTag>;
+  updateSkillsSquareTag(request: {
+    tagId: number;
+    name?: string;
+    sortOrder?: number;
+    operatorUserId?: string;
+  }): Promise<DesktopSquareSkillTag>;
+  deleteSkillsSquareTag(request: {
+    tagId: number;
+    operatorUserId?: string;
+  }): Promise<{ id: number }>;
+  installSkillsSquare(request: DesktopSquareInstallRequest): Promise<{
+    status: string;
+    name: string;
+    path: string;
+    files: number;
+  }>;
+  /** Download skill ZIP (WebUI parity). */
+  downloadSkillsSquare(request: { slug: string }): Promise<{ fileName: string; base64: string }>;
+  uploadSkillsSquare(request: DesktopSquareUploadRequest): Promise<Record<string, unknown>>;
+  updateSkillsSquare(request: DesktopSquareUpdateRequest): Promise<Record<string, unknown>>;
+  deleteSkillsSquare(request: {
+    slug: string;
+    intent?: "delete" | "uncollect";
+    userId?: string;
+    userEmail?: string;
+  }): Promise<{ slug: string }>;
+  toggleSkillsSquareVisibility(request: {
+    slug: string;
+    visibility: "public" | "private" | "team";
+  }): Promise<{ slug: string; visibility: string }>;
+  collectSkillsSquare(request: {
+    slug: string;
+    displayName?: string;
+    icon?: string;
+    description?: string;
+    version?: string;
+    tags?: string;
+    owner?: string;
+    ownerId?: string;
+    changelog?: string;
+  }): Promise<Record<string, unknown>>;
+  createSkillsSquareShare(request: {
+    slug: string;
+    userId: string;
+    password?: string;
+    expiresInHours?: number;
+  }): Promise<DesktopSquareShareInfo>;
+  listSkillsSquareShares(request: {
+    slug: string;
+    userId: string;
+  }): Promise<DesktopSquareShareInfo[]>;
+  revokeSkillsSquareShare(request: {
+    slug: string;
+    shareId: string;
+    userId: string;
+  }): Promise<void>;
 
   // GFS cloud storage
   gfsList(request: GfsListRequest): Promise<GfsListResult>;
