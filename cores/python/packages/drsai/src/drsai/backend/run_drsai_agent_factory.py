@@ -339,7 +339,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         token_limit=1000000,     # context window: 1M (input+output shared)
         max_tokens=64000,       # max output per request
         client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
+        reasoning=ReasoningConfig(supported=True, effort_levels=["minimal", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
         vision=True,            # Claude Sonnet 4.6 supports image input
     ),
     "gemini-3-flash-preview": ModelEntry(
@@ -347,7 +347,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         token_limit=1000000,     # context window: 1M (input+output shared)
         max_tokens=64000,       # max output per request
         client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
+        reasoning=ReasoningConfig(supported=True, effort_levels=["minimal", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
         vision=True,            # Claude Sonnet 4.6 supports image input
     ),
     # ── Zhipu GLM ────────────────────────────────────────────────────
