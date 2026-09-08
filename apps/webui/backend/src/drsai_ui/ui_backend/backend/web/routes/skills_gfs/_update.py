@@ -82,7 +82,7 @@ async def update_skill(
 
     auth_user_id = await _resolve_user_from_apikey(request)
     if not auth_user_id:
-        raise HTTPException(status_code=401, detail="API key required for write operations")
+        raise HTTPException(status_code=401, detail="Authentication required")
     return await _update_skill(
         slug, auth_user_id, file, name or display_name, icon, description,
         version, changelog, tags, visibility, profile,

@@ -23,6 +23,7 @@ OIDC_CACHE_TTL_SECONDS = 15 * 60
 class NativeIdentity:
     user_id: str
     issuer: str
+    email: str | None = None
 
 
 _jwks_cache: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -71,7 +72,24 @@ async def get_native_identity(
     subject = claims.get("sub")
     if not isinstance(subject, str) or not subject:
         raise _unauthorized("invalid_token")
-    return NativeIdentity(user_id=subject, issuer=issuer)
+    return NativeIdentity(user_id=subject, issuer=issuer, email=_optional_email(claims.get("email")))
+
+
+async def try_get_native_identity(authorization: str | None) -> NativeIdentity | None:
+    """Verify a HepAI OIDC access token; return None instead of raising."""
+    try:
+        return await get_native_identity(authorization)
+    except HTTPException:
+        return None
+    except Exception:
+        return None
+
+
+def _optional_email(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    email = value.strip()
+    return email or None
 
 
 def _bearer_token(authorization: str | None) -> str:
