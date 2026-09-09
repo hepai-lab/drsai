@@ -9,9 +9,11 @@ from typing import Any
 import httpx
 from fastapi import HTTPException, Request
 
-from .native_auth import NativeIdentity, try_get_native_identity
+from .native_auth import NativeIdentity, fetch_native_userinfo_email, try_get_native_identity
 
 logger = logging.getLogger(__name__)
+
+_OIDC_AUTH_MODE = "oidc"
 
 
 def _extract_bearer(request: Request) -> str | None:
@@ -24,6 +26,23 @@ def _extract_bearer(request: Request) -> str | None:
 
 def _looks_like_jwt(token: str) -> bool:
     return token.count(".") == 2
+
+
+def _header(request: Request, name: str) -> str:
+    return (request.headers.get(name) or "").strip()
+
+
+def _is_oidc_auth_mode(request: Request) -> bool:
+    return _header(request, "X-OpenDrSai-Auth-Mode").lower() == _OIDC_AUTH_MODE
+
+
+def _normalize_email(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    email = value.strip().lower()
+    if not email or "@" not in email or any(ch.isspace() for ch in email):
+        return None
+    return email
 
 
 def _bind_user(request: Request, user_id: str, db: Any = None) -> str:
@@ -39,10 +58,35 @@ def _oidc_session_user_id(request: Request) -> str | None:
     return session_user_id(get_session_user(request))
 
 
-def _native_skill_user_id(identity: NativeIdentity) -> str:
-    if identity.email:
-        return identity.email
-    return identity.user_id
+async def _skill_email_from_native(
+    request: Request,
+    token: str,
+    identity: NativeIdentity,
+) -> str:
+    """Skills plaza persists account email, never the OIDC subject UUID.
+
+    Email comes from the verified access token or HepAI userinfo. The
+    ``X-OpenDrSai-Principal`` header is not an identity source; if it looks
+    like an email it must match the token-bound address.
+    """
+    email = _normalize_email(identity.email)
+    if not email:
+        email = _normalize_email(
+            await fetch_native_userinfo_email(token, identity.issuer, identity.user_id)
+        )
+    if not email:
+        raise HTTPException(
+            status_code=401,
+            detail="OIDC user is missing a verified email",
+        )
+
+    principal = _normalize_email(_header(request, "X-OpenDrSai-Principal"))
+    if principal and principal != email:
+        raise HTTPException(
+            status_code=401,
+            detail="OIDC principal does not match token email",
+        )
+    return email
 
 
 def _webui_jwt_user_id(token: str) -> str | None:
@@ -90,17 +134,28 @@ async def resolve_request_user(
 ) -> str | None:
     """Resolve user_id: OIDC session / OIDC access token / WebUI JWT, then API key.
 
+    Native OIDC callers (Desktop) are identified by account email. When
+    ``X-OpenDrSai-Auth-Mode`` is ``oidc``, a broken JWT is not treated as an
+    API key.
+
     Returns None when no credential is present. Invalid API keys still raise 401.
     """
     session_uid = _oidc_session_user_id(request)
     if session_uid:
-        return _bind_user(request, session_uid, db)
+        return _bind_user(request, _normalize_email(session_uid) or session_uid, db)
 
     token = _extract_bearer(request)
+    oidc_mode = _is_oidc_auth_mode(request)
+
+    if oidc_mode and (not token or not _looks_like_jwt(token)):
+        raise HTTPException(status_code=401, detail="OIDC access token required")
+
     if token and _looks_like_jwt(token):
         identity = await try_get_native_identity(f"Bearer {token}")
         if identity is not None:
-            return _bind_user(request, _native_skill_user_id(identity), db)
+            return _bind_user(request, await _skill_email_from_native(request, token, identity), db)
+        if oidc_mode:
+            raise HTTPException(status_code=401, detail="Invalid OIDC access token")
         jwt_uid = _webui_jwt_user_id(token)
         if jwt_uid:
             return _bind_user(request, jwt_uid, db)

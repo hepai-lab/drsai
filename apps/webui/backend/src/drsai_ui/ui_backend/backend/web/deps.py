@@ -238,6 +238,7 @@ async def resolve_user_from_apikey(
 ) -> str | None:
     """Resolve user_id: OIDC first (session / access token / WebUI JWT), then API key.
 
+    Native OIDC identities persist as account email, not the token subject.
     Missing credentials return None. Invalid API keys still raise 401.
     """
     from .identity import resolve_request_user
