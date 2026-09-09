@@ -52,11 +52,39 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
             // Science user iframe embed:
             //   统一认证: ?user_source=science_user&access_token=<ihep_token>
             //   院平台:   ?user_source=science_user&tokenId=<cas_token>
-            // CSNS user_agent embed:
-            //   ?user_source=user_agent&access_token=<csns_token>&email=<cstnetId>
+            // CSNS user_agent:
+            //   推荐: ?user_source=user_agent&ticket=<one-time>
+            //   过渡: ?user_source=user_agent&access_token=<csns_token>&email=<cstnetId>
             // 在所有其他守卫逻辑之前处理，避免跳转到登录页
             const userSource = (searchParams.get("user_source") || "").trim();
             if (userSource === "user_agent") {
+                const finishLogin = (result: {
+                    access_token: string;
+                    user_id: string;
+                    agent_name?: string | null;
+                }) => {
+                    saveAuthSession(result.access_token, result.user_id);
+                    localStorage.removeItem("drsai-mode-config");
+                    localStorage.removeItem("drsai.recentAgents");
+                    setUser({ name: result.user_id, email: result.user_id });
+                    const agentName = result.agent_name || "iPanda";
+                    window.location.replace(
+                        `/?menu=current_session&view=chat&share_agent=true&agentName=${encodeURIComponent(agentName)}`
+                    );
+                };
+                const ticket = (searchParams.get("ticket") || "").trim();
+                if (ticket) {
+                    try {
+                        const result = await authAPI.userAgentConsume(ticket);
+                        if (cancelled) return;
+                        finishLogin(result);
+                    } catch (err: any) {
+                        if (cancelled) return;
+                        const isNetwork = err instanceof TypeError || String(err?.message).includes("fetch");
+                        setScienceAuthError(isNetwork ? "networkError" : "invalidToken");
+                    }
+                    return;
+                }
                 const accessToken =
                     searchParams.get("access_token") || searchParams.get("token");
                 const email =
@@ -71,14 +99,7 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
                 try {
                     const result = await authAPI.userAgentVerify(accessToken, email);
                     if (cancelled) return;
-                    saveAuthSession(result.access_token, result.user_id);
-                    localStorage.removeItem("drsai-mode-config");
-                    localStorage.removeItem("drsai.recentAgents");
-                    setUser({ name: result.user_id, email: result.user_id });
-                    const agentName = result.agent_name || "iPanda";
-                    window.location.replace(
-                        `/?menu=current_session&view=chat&share_agent=true&agentName=${encodeURIComponent(agentName)}`
-                    );
+                    finishLogin(result);
                 } catch (err: any) {
                     if (cancelled) return;
                     const isNetwork = err instanceof TypeError || String(err?.message).includes("fetch");

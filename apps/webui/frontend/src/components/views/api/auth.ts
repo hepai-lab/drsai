@@ -86,7 +86,24 @@ export class AuthAPI {
         return data.data as { access_token: string; user_id: string };
     }
 
-    /** CSNS user_agent 嵌入登录：校验 access_token，用 URL 上的 email 登录 */
+    /** CSNS 一次性 ticket：浏览器打开 login_url 后换取本系统 JWT */
+    async userAgentConsume(
+        ticket: string,
+    ): Promise<{ access_token: string; user_id: string; agent_name?: string | null }> {
+        const params = new URLSearchParams({ ticket });
+        const response = await fetch(`${this.getBaseUrl()}/auth/user-agent/consume?${params.toString()}`, {
+            method: "POST",
+            headers: this.getHeaders(),
+            credentials: "include",
+        });
+        const data = await response.json();
+        if (!response.ok || !data.status) {
+            throw new Error(data.detail || data.message || `user_agent_auth_failed`);
+        }
+        return data.data as { access_token: string; user_id: string; agent_name?: string | null };
+    }
+
+    /** CSNS user_agent 旧嵌入登录：校验 access_token，身份以 token/verify 的 cstnetId 为准 */
     async userAgentVerify(
         accessToken: string,
         email: string = "",
