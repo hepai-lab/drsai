@@ -5,15 +5,23 @@ Science user authentication via CAS token validation.
 Flow: external system embeds our app in an iframe and passes ?tokenId=xxx&user_source=science_user.
 We validate tokenId against the CAS API; on success we issue a JWT and redirect to /auth.
 
-CSNS user_agent embed: ?user_source=user_agent&access_token=...&email=...
-Validate access_token via CSNS /api/validatetoken, then log in as the URL email.
+CSNS user_agent:
+  Preferred: CSNS server POSTs /auth/user-agent/exchange with access_token.
+  We POST CSNS /api/token/verify with token + fixed key, persist the user,
+  return a one-time login_url. The user browser opens login_url; frontend
+  POSTs /auth/user-agent/consume.
+
+  Legacy (transition): ?user_source=user_agent&access_token=...&email=...
+  Identity still comes from token/verify cstnetId; URL email must match if present.
 """
 
+import hmac
 import os
-from datetime import timedelta
+import secrets
+from datetime import UTC, datetime, timedelta
 
 import httpx
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from loguru import logger
 
@@ -35,14 +43,45 @@ IHEP_VERIFY_TOKEN_API = os.getenv(
     "SCIENCE_USER_VERIFY_API",
     "https://newlogin.ihep.ac.cn/api/validateAccessToken",
 )
-# CSNS user_agent 嵌入登录：从 URL 取 access_token，调此接口校验
-CSNS_VERIFY_TOKEN_API = os.getenv(
-    "USER_AGENT_VERIFY_API",
-    "https://login.csns.ihep.ac.cn/api/validatetoken",
-)
+# CSNS user_agent 嵌入登录：POST token + 固定 key 校验
+_DEFAULT_CSNS_VERIFY_TOKEN_API = "https://user.csns.ihep.ac.cn/api/token/verify"
+_DEFAULT_CSNS_VERIFY_TOKEN_KEY = "3a4dec8389aa11e899fffa163e84aab7"
 USER_AGENT_DEFAULT_NAME = "iPanda"
 REQUEST_TIMEOUT = 10.0
 user_agent_router = APIRouter()
+
+
+def _csns_verify_api() -> str:
+    return (
+        os.getenv("USER_AGENT_VERIFY_API")
+        or os.getenv("CSNS_VERIFY_TOKEN_API")
+        or _DEFAULT_CSNS_VERIFY_TOKEN_API
+    ).strip()
+
+
+def _csns_verify_key() -> str:
+    return (
+        os.getenv("USER_AGENT_VERIFY_KEY")
+        or os.getenv("CSNS_VERIFY_TOKEN_KEY")
+        or _DEFAULT_CSNS_VERIFY_TOKEN_KEY
+    ).strip()
+
+
+def _csns_verify_form(access_token: str) -> dict[str, str]:
+    """CSNS token/verify: application/x-www-form-urlencoded with token + key only."""
+    form = {"token": access_token}
+    key = _csns_verify_key()
+    if key:
+        form["key"] = key
+    return form
+
+
+def _mask_secret(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "***"
+    return f"{value[:4]}...{value[-4:]}"
 
 
 async def _fetch_cas_user(token_id: str) -> dict:
@@ -117,17 +156,25 @@ _CSNS_EMAIL_KEYS = (
 _CSNS_ID_KEYS = ("umtId", "umt_id", "uid", "id")
 
 
+_CSNS_OK_CODES = {200, "200", 0, "0"}
+
+
 def _csns_token_ok(body: dict) -> bool:
-    """CSNS /api/validatetoken: { result, code: 200, stauts: "success" }."""
-    code = body.get("code")
-    if code not in (200, "200"):
+    """CSNS token/verify (and legacy validatetoken): code 200/0 plus success flag."""
+    if body.get("valid") is False or body.get("success") is False:
         return False
-    flag = body.get("stauts") or body.get("status") or body.get("success")
+    code = body.get("code")
+    if code is not None and code not in _CSNS_OK_CODES:
+        if str(code).strip().lower() not in {"success", "ok", "true"}:
+            return False
+    flag = body.get("stauts") or body.get("status") or body.get("success") or body.get("valid")
     if flag is None:
         return True
     if isinstance(flag, bool):
         return flag
-    return str(flag).strip().lower() in {"success", "ok", "true", "1"}
+    if isinstance(flag, (int, float)):
+        return flag in (200, 0, 1)
+    return str(flag).strip().lower() in {"success", "ok", "true", "1", "200", "0"}
 
 
 def _pick_csns_user_id(obj: object, *, depth: int = 0, allow_bare_id: bool = False) -> str | None:
@@ -163,19 +210,21 @@ def _pick_csns_user_id(obj: object, *, depth: int = 0, allow_bare_id: bool = Fal
 
 
 def _extract_csns_user_id(body: object) -> str | None:
-    """Extract a user identifier from CSNS /api/validatetoken JSON."""
+    """Extract a user identifier from CSNS token/verify JSON."""
     if not isinstance(body, dict):
         return None
     if not _csns_token_ok(body):
         return None
 
+    nested = True
     payload = body.get("result")
     if payload in (None, {}, []):
         payload = body.get("data")
     if payload in (None, {}, []):
-        return None
+        payload = body
+        nested = False
 
-    found = _pick_csns_user_id(payload, allow_bare_id=True)
+    found = _pick_csns_user_id(payload, allow_bare_id=nested)
     if found:
         return found
     return None
@@ -192,28 +241,25 @@ def _normalize_embed_user(value: str | None) -> str | None:
 def _resolve_user_agent_id(body: object, email: str = "") -> str | None:
     """After CSNS token validation succeeds, pick the login user_id.
 
-    Prefer the identity CSNS puts on the embed URL (`email`), then fall back to
-    whatever /api/validatetoken returns.
+    Identity comes only from CSNS token/verify (`cstnetId`). If the caller
+    also sent an email (legacy URL embed), it must match.
     """
     if not isinstance(body, dict) or not _csns_token_ok(body):
         return None
+    user_id = _extract_csns_user_id(body)
+    if not user_id:
+        return None
     query_user = _normalize_embed_user(email)
-    if query_user:
-        return query_user
-    return _extract_csns_user_id(body)
+    if query_user and query_user != user_id:
+        logger.warning(
+            f"[CSNS] URL email={query_user} does not match cstnetId={user_id}"
+        )
+        return None
+    return user_id
 
 
-async def _complete_embed_login(user_id: str, user_source: str) -> JSONResponse:
-    """Issue our JWT, persist user_source, and seed default agents."""
-    access_token = create_jwt_token(
-        data={"sub": user_id},
-        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
-    )
-    refresh_token = create_jwt_token(
-        data={"sub": user_id},
-        expires_delta=timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
-    )
-
+async def _persist_embed_user(user_id: str, user_source: str) -> None:
+    """Record SSO user_source and seed default agents if this is a first login."""
     from drsai_ui.ui_backend.backend.web.deps import get_db
     from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, UserAgents
     from drsai_ui.agent_factory.agent_mode_cofigs import get_default_agent_mode_config
@@ -226,6 +272,18 @@ async def _complete_embed_login(user_id: str, user_source: str) -> JSONResponse:
         agents_list = get_default_agent_mode_config(user_id, user_source=user_source)
         db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
         db.upsert(UserAgents(user_id=user_id, agents=agents_list))
+
+
+async def _issue_embed_session(user_id: str, user_source: str) -> JSONResponse:
+    """Issue our JWT + refresh cookie. Does not persist user records."""
+    access_token = create_jwt_token(
+        data={"sub": user_id},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    refresh_token = create_jwt_token(
+        data={"sub": user_id},
+        expires_delta=timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+    )
 
     response = JSONResponse(
         content={
@@ -241,6 +299,172 @@ async def _complete_embed_login(user_id: str, user_source: str) -> JSONResponse:
     from drsai_ui.ui_backend.backend.web.auth_cookies import set_refresh_cookie
     set_refresh_cookie(response, refresh_token.access_token)
     return response
+
+
+async def _complete_embed_login(user_id: str, user_source: str) -> JSONResponse:
+    """Persist user_source, seed default agents, and issue our JWT."""
+    await _persist_embed_user(user_id, user_source)
+    return await _issue_embed_session(user_id, user_source)
+
+
+def _public_app_base(request: Request) -> str:
+    configured = (
+        os.getenv("DRSAI_PUBLIC_URL")
+        or os.getenv("PUBLIC_APP_URL")
+        or "https://drsaiv2.ihep.ac.cn"
+    ).strip().rstrip("/")
+    if configured:
+        return configured
+    proto = (
+        request.headers.get("x-forwarded-proto")
+        or request.url.scheme
+        or "https"
+    )
+    host = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+        or "drsaiv2.ihep.ac.cn"
+    )
+    return f"{proto}://{host}"
+
+
+def _require_csns_exchange_secret(request: Request) -> None:
+    secret = (
+        os.getenv("CSNS_EXCHANGE_SECRET")
+        or os.getenv("USER_AGENT_EXCHANGE_SECRET")
+        or ""
+    ).strip()
+    if not secret:
+        logger.warning(
+            "[CSNS] CSNS_EXCHANGE_SECRET is unset; /exchange is unauthenticated"
+        )
+        return
+    provided = ""
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        provided = auth[7:].strip()
+    if not provided:
+        provided = (request.headers.get("x-csns-secret") or "").strip()
+    if not provided or not hmac.compare_digest(provided, secret):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="user_agent_auth_failed",
+        )
+
+
+async def _read_exchange_access_token(request: Request, access_token: str) -> str:
+    token = (access_token or "").strip()
+    if token:
+        return token
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        return str(form.get("access_token") or form.get("token") or "").strip()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if isinstance(body, dict):
+        return str(body.get("access_token") or body.get("token") or "").strip()
+    return ""
+
+
+def _ticket_ttl() -> int:
+    raw = (os.getenv("USER_AGENT_TICKET_TTL_SECONDS") or "90").strip()
+    try:
+        ttl = int(raw)
+    except ValueError:
+        ttl = 90
+    return ttl if ttl > 0 else 90
+
+
+async def _create_login_ticket(user_id: str) -> tuple[str, int]:
+    from drsai_ui.ui_backend.backend.web.deps import get_db
+    from drsai_ui.ui_backend.backend.datamodel.db import UserAgentLoginTicket
+
+    ttl = _ticket_ttl()
+    ticket_value = secrets.token_urlsafe(32)
+    expires_at = datetime.now(UTC) + timedelta(seconds=ttl)
+    db = await get_db()
+    _cleanup_login_tickets(db)
+    saved = db.upsert(
+        UserAgentLoginTicket(
+            ticket=ticket_value,
+            user_id=user_id,
+            expires_at=expires_at,
+        )
+    )
+    if not saved.status:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="user_agent_auth_failed",
+        )
+    return ticket_value, ttl
+
+
+def _cleanup_login_tickets(db) -> None:
+    from sqlmodel import Session, select
+    from drsai_ui.ui_backend.backend.datamodel.db import UserAgentLoginTicket
+
+    cutoff = datetime.now(UTC) - timedelta(hours=1)
+    try:
+        with Session(db.engine) as session:
+            rows = session.exec(
+                select(UserAgentLoginTicket).where(
+                    UserAgentLoginTicket.expires_at <= cutoff
+                )
+            ).all()
+            for row in rows:
+                session.delete(row)
+            if rows:
+                session.commit()
+    except Exception as exc:
+        logger.warning(f"[CSNS] ticket cleanup skipped: {type(exc).__name__}: {exc}")
+
+
+async def _consume_login_ticket(ticket_value: str) -> str:
+    from sqlmodel import Session, select
+    from drsai_ui.ui_backend.backend.web.deps import get_db
+    from drsai_ui.ui_backend.backend.datamodel.db import UserAgentLoginTicket
+
+    ticket_value = (ticket_value or "").strip()
+    if not ticket_value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="ticket is required",
+        )
+
+    db = await get_db()
+    now = datetime.now(UTC)
+    with Session(db.engine) as session:
+        row = session.exec(
+            select(UserAgentLoginTicket).where(
+                UserAgentLoginTicket.ticket == ticket_value
+            )
+        ).first()
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="user_agent_auth_failed",
+            )
+        expires_at = row.expires_at
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if row.used_at is not None or expires_at is None or now >= expires_at:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="user_agent_auth_failed",
+            )
+        user_id = (row.user_id or "").strip().lower()
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="user_agent_auth_failed",
+            )
+        row.used_at = now
+        session.add(row)
+        session.commit()
+        return user_id
 
 
 @router.post("/token")
@@ -363,27 +587,22 @@ async def science_user_verify(access_token: str, username: str = ""):
 
 
 async def _fetch_csns_user(access_token: str) -> dict:
-    """Validate access_token via CSNS /api/validatetoken and return the JSON body.
+    """Validate access_token via CSNS POST /api/token/verify and return the JSON body.
 
-    GET https://login.csns.ihep.ac.cn/api/validatetoken?access_token=...
-    Falls back to POST form if GET is not accepted.
+    POST https://user.csns.ihep.ac.cn/api/token/verify
+    Content-Type: application/x-www-form-urlencoded
+    body: token=...&key=...
     """
-    logger.info(f"[CSNS] validating access_token via {CSNS_VERIFY_TOKEN_API}")
-    token_params = {"access_token": access_token, "token": access_token}
+    api = _csns_verify_api()
+    form = _csns_verify_form(access_token)
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    logger.info(
+        f"[CSNS] validating access_token={_mask_secret(access_token)} "
+        f"key={_mask_secret(form.get('key', ''))} via {api}"
+    )
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            resp = await client.get(
-                CSNS_VERIFY_TOKEN_API,
-                params=token_params,
-            )
-            if resp.status_code in (404, 405, 415):
-                logger.info(
-                    f"[CSNS] GET status={resp.status_code}, retrying POST form"
-                )
-                resp = await client.post(
-                    CSNS_VERIFY_TOKEN_API,
-                    data=token_params,
-                )
+            resp = await client.post(api, data=form, headers=headers)
         logger.info(f"[CSNS] response status={resp.status_code} body={resp.text[:500]}")
         resp.raise_for_status()
         body = resp.json()
@@ -414,10 +633,10 @@ async def _fetch_csns_user(access_token: str) -> dict:
 @user_agent_router.post("/verify")
 async def user_agent_verify(access_token: str, email: str = ""):
     """
-    Validate a CSNS access_token from the embed URL and return our JWT.
+    Legacy browser embed: validate a CSNS access_token and return our JWT.
 
-    Query params: access_token, email (optional; CSNS now puts identity on the URL)
-    Returns: { status, data: { access_token, user_id, agent_name } }
+    Identity comes from token/verify `cstnetId`. Optional `email` must match.
+    Prefer /exchange + /consume so the CSNS token never appears in the browser URL.
     """
     if not access_token:
         raise HTTPException(
@@ -430,7 +649,7 @@ async def user_agent_verify(access_token: str, email: str = ""):
     if not user_id:
         logger.warning(
             f"[CSNS] token ok={_csns_token_ok(body) if isinstance(body, dict) else False} "
-            f"but no email on URL and no user in validatetoken: {body}"
+            f"but no cstnetId (or email mismatch) in token/verify: {body}"
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -439,4 +658,59 @@ async def user_agent_verify(access_token: str, email: str = ""):
 
     logger.info(f"user_agent authenticated via CSNS: {user_id}")
     return await _complete_embed_login(user_id, "user_agent")
+
+
+@user_agent_router.post("/exchange")
+async def user_agent_exchange(request: Request, access_token: str = Query("")):
+    """CSNS server-to-server: validate access_token, persist user, return one-time login_url.
+
+    Do not return our JWT here — the caller is CSNS's server, not the user browser.
+    """
+    _require_csns_exchange_secret(request)
+    token = await _read_exchange_access_token(request, access_token)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="access_token is required",
+        )
+
+    body = await _fetch_csns_user(token)
+    user_id = _resolve_user_agent_id(body)
+    if not user_id:
+        logger.warning(
+            f"[CSNS] exchange token ok={_csns_token_ok(body) if isinstance(body, dict) else False} "
+            f"but no cstnetId in token/verify: {body}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="user_agent_auth_failed",
+        )
+
+    await _persist_embed_user(user_id, "user_agent")
+    ticket_value, ttl = await _create_login_ticket(user_id)
+    login_url = (
+        f"{_public_app_base(request)}/"
+        f"?user_source=user_agent&ticket={ticket_value}"
+    )
+    logger.info(
+        f"[CSNS] exchange ok user_id={user_id} ticket={_mask_secret(ticket_value)} ttl={ttl}s"
+    )
+    return JSONResponse(
+        content={
+            "status": True,
+            "data": {
+                "login_url": login_url,
+                "expires_in": ttl,
+                "user_id": user_id,
+            },
+        }
+    )
+
+
+@user_agent_router.post("/consume")
+async def user_agent_consume(ticket: str = Query("")):
+    """Browser: consume a one-time ticket and issue our JWT + refresh cookie."""
+    user_id = await _consume_login_ticket(ticket)
+    logger.info(f"[CSNS] consume ok user_id={user_id}")
+    return await _issue_embed_session(user_id, "user_agent")
 

@@ -700,6 +700,29 @@ class SkillShare(SQLModel, table=True):
     access_count: int = Field(default=0)
 
 
+class UserAgentLoginTicket(SQLModel, table=True):
+    """One-time CSNS passwordless login ticket (server-to-server exchange)."""
+
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False),
+    )
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )
+    ticket: str = Field(sa_column=Column(String, unique=True, nullable=False, index=True))
+    user_id: str = Field(index=True)
+    expires_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    used_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+
 class DesktopAuthTicket(SQLModel, table=True):
     """Short-lived device-code ticket for Windows desktop SSO."""
 
@@ -776,6 +799,7 @@ DatabaseModel = (
     | SkillDetail
     | SkillShare
     | DesktopAuthTicket
+    | UserAgentLoginTicket
     | SkillTag
 )
 
