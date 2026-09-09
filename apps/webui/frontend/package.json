@@ -10,12 +10,12 @@
   "scripts": {
     "dev": "NODE_OPTIONS=--max-old-space-size=32768 gatsby develop --port ${GATSBY_DEV_PORT:-8000} --host 0.0.0.0",
     "dev:8001": "NODE_OPTIONS=--max-old-space-size=32768 gatsby develop --port 8001 --host 0.0.0.0",
-    "build": "npm run clean && npm run clean:ui && NODE_OPTIONS=--max-old-space-size=32768 gatsby build && npm run sync-build",
-    "build:dev": "npm run clean && npm run clean:ui && NODE_ENV=development GATSBY_SERVICE_MODE=DEV NODE_OPTIONS=--max-old-space-size=32768 gatsby build --no-uglify && npm run sync-build",
+    "build": "npm run clean && npm run clean:ui && GATSBY_CPU_COUNT=8 NODE_OPTIONS=--max-old-space-size=32768 gatsby build && npm run sync-build",
+    "build:dev": "npm run clean && npm run clean:ui && NODE_ENV=development GATSBY_SERVICE_MODE=DEV GATSBY_CPU_COUNT=8 NODE_OPTIONS=--max-old-space-size=32768 gatsby build --no-uglify && npm run sync-build",
     "serve": "NODE_OPTIONS=--max-old-space-size=32768 gatsby serve --port ${GATSBY_DEV_PORT:-8001} --host 0.0.0.0",
-    "clean": "NODE_OPTIONS=--max-old-space-size=32768 gatsby clean",
+    "clean": "bash -c 'for d in .cache public node_modules/.cache/babel-loader node_modules/.cache/terser-webpack-plugin; do [ -e \"$d\" ] || continue; if mv \"$d\" \"$d.del.$$\"; then rm -rf \"$d.del.$$\" || true; else rm -rf \"$d\" || true; fi; done'",
     "clean:ui": "rm -rf ../backend/src/drsai_ui/ui_backend/backend/web/ui/",
-    "sync-build": "rsync -a --delete public/ ../backend/src/drsai_ui/ui_backend/backend/web/ui/",
+    "sync-build": "bash -c 'dest=../backend/src/drsai_ui/ui_backend/backend/web/ui; if command -v rsync >/dev/null 2>&1; then rsync -a --delete public/ \"$dest/\"; else rm -rf \"$dest\" && mkdir -p \"$dest\" && cp -a public/. \"$dest/\"; fi'",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

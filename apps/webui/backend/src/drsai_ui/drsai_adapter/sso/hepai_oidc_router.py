@@ -56,7 +56,11 @@ async def login(request: Request) -> RedirectResponse:
         )
     try:
         config = load_oidc_config()
-        redirect_uri = callback_redirect_uri(request, config.allowed_redirect_uris)
+        redirect_uri = callback_redirect_uri(
+            request,
+            config.allowed_redirect_uris,
+            preferred=config.redirect_uri,
+        )
         client = get_oauth().hai
         extras = authorize_extra_params()
         rv = await client.create_authorization_url(redirect_uri, **extras)
@@ -91,6 +95,7 @@ async def oidc_logout(request: Request) -> HTMLResponse:
 
 
 @router.get("/auth/oidc/callback", name="oidc_callback")
+@router.get("/umt/oidc-callback")
 async def oidc_callback(request: Request, db=Depends(get_db)) -> RedirectResponse:
     if not oidc_configured():
         raise HTTPException(

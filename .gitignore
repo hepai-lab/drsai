@@ -248,6 +248,7 @@ cython_debug/
 ########################
 .cache/
 .cache
+.cache.del.*
 *.log
 *.bak
 

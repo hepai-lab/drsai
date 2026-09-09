@@ -431,6 +431,30 @@ export default function ChatView({
         });
         if (skipLoad) return;
 
+        // First message of a new session: use the run created with the session
+        // instead of blocking on GET /sessions/{id}/runs (full message dump).
+        if (pendingFirstMessage && session.initial_run?.id) {
+          pendingMessageSentRef.current = false;
+          setLocalPlan(null);
+          setPlanProcessed(false);
+          const stub: Run = {
+            id: String(session.initial_run.id),
+            created_at: session.initial_run.created_at || new Date().toISOString(),
+            status: (session.initial_run.status as Run["status"]) || "created",
+            task: (session.initial_run.task as Run["task"]) || {
+              source: "",
+              content: "",
+            },
+            team_result: session.initial_run.team_result ?? null,
+            messages: session.initial_run.messages || [],
+            session_id: session.initial_run.session_id || session.id || 0,
+          };
+          setCurrentRun(stub);
+          setNoMessagesYet(true);
+          setupWebSocket(stub.id, false, false);
+          return;
+        }
+
         // Initial load: currentRun is null
         pendingMessageSentRef.current = false;
         setLocalPlan(null);
@@ -487,7 +511,7 @@ export default function ChatView({
 
     initializeSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.id, visible, loadSessionRun]);
+  }, [session?.id, session?.initial_run?.id, visible, loadSessionRun, pendingFirstMessage]);
 
   // Keep wsActiveRef in sync with run status so initializeSession skips DB
   // reload while streaming is in progress.
@@ -503,6 +527,14 @@ export default function ChatView({
   React.useEffect(() => {
     const status = currentRun?.status ?? null;
     if (status === "awaiting_input" && prevStatusRef.current !== "awaiting_input") {
+      const hasAssistant = (currentRun?.messages || []).some((m) => {
+        const src = (m.config as { source?: string } | undefined)?.source;
+        return !!src && src !== "user";
+      });
+      if (hasAssistant) {
+        prevStatusRef.current = status;
+        return;
+      }
       loadSessionRun().then((latestRun) => {
         if (!latestRun) return;
         setCurrentRun((prev) => {

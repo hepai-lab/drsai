@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>正在登录</title>
+  </head>
+  <body>
+    <p>正在登录…</p>
+    <script>
+      location.replace("/umt/oidc-callback" + location.search + location.hash);
+    </script>
+  </body>
+</html>

@@ -157,11 +157,13 @@ start_backend() {
 
 start_frontend() {
   ensure_pm2; ensure_node; ensure_frontend_env; ensure_frontend_deps
-  info "前端 → 端口 $FRONTEND_PORT (Gatsby HMR)"
+  [[ -f "$FRONTEND_DIR/public/index.html" ]] \
+    || die "前端尚未构建（缺少 public/index.html）。请先在 frontend 执行: yarn build"
+  info "前端 → 端口 $FRONTEND_PORT (gatsby serve)"
   # 用 bash -lc 注入 GATSBY_DEV_PORT（pm2 --env 只对 ecosystem 环境名有效）
   pm2_up "$PM2_FRONTEND" \
     pm2 start -n "$PM2_FRONTEND" --cwd "$FRONTEND_DIR" \
-      bash -- -lc "export GATSBY_DEV_PORT='$FRONTEND_PORT'; yarn dev"
+      bash -- -lc "export GATSBY_DEV_PORT='$FRONTEND_PORT'; yarn serve"
   ok "前端已启动"
 }
 

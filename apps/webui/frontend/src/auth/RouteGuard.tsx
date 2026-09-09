@@ -6,7 +6,7 @@ import { authAPI } from "../components/views/api";
 import ScienceUserErrorPage from "./ScienceUserErrorPage";
 
 const PUBLIC_ROUTES = ["/welcome", "/login", "/auth", "/share"];
-const PUBLIC_ROUTE_PREFIXES = ["/share/skill", "/auth/login", "/auth/oidc", "/umt/oidc-login"];
+const PUBLIC_ROUTE_PREFIXES = ["/share/skill", "/auth/login", "/auth/oidc", "/umt/oidc-login", "/umt/oidc-callback"];
 
 const normalizePath = (path: string) => path.replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";
 

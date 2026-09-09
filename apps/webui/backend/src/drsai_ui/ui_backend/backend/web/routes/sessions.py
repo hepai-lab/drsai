@@ -261,7 +261,27 @@ async def create_session(
         if not run.status:
             # Clean up session if run creation failed
             raise HTTPException(status_code=400, detail=run.message)
-        return {"status": True, "data": session_response.data}
+        session_data = session_response.data
+        run_record = run.data
+        if isinstance(session_data, dict) and run_record is not None:
+            created_at = getattr(run_record, "created_at", None)
+            session_data["initial_run"] = {
+                "id": str(getattr(run_record, "id", "")),
+                "created_at": created_at.isoformat()
+                if hasattr(created_at, "isoformat")
+                else created_at,
+                "status": getattr(
+                    getattr(run_record, "status", None),
+                    "value",
+                    getattr(run_record, "status", "created"),
+                ),
+                "task": None,
+                "team_result": None,
+                "messages": [],
+                "session_id": getattr(run_record, "session_id", None)
+                or session_data.get("id"),
+            }
+        return {"status": True, "data": session_data}
     except Exception as e:
         # Clean up session if run creation failed
         raise HTTPException(status_code=500, detail=str(e)) from e

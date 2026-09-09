@@ -389,20 +389,17 @@ export const useTaskActions = ({
           throw new Error("Could not setup run");
         }
 
-        // 点击发送时：再请求全局setting配置 (API) - 确保获取最新配置
+        // Use cached settings on the send path; refresh in the background.
         let currentSettings = settingsConfig;
         if (userEmail) {
-          try {
-            // 请求最新的全局settings配置
-            currentSettings = (await settingsAPI.getSettings(
-              userEmail
-            )) as GeneralConfig;
-            // 更新store中的配置
-            useSettingsStore.getState().updateConfig(currentSettings);
-          } catch (error) {
-            console.error("Failed to load settings:", error);
-            // 如果请求失败，使用当前的settingsConfig作为后备
-          }
+          void settingsAPI
+            .getSettings(userEmail)
+            .then((fresh) => {
+              useSettingsStore.getState().updateConfig(fresh as GeneralConfig);
+            })
+            .catch((error) => {
+              console.error("Failed to load settings:", error);
+            });
         }
 
         // Setup websocket connection
@@ -412,27 +409,43 @@ export const useTaskActions = ({
         }
 
         // Wait for socket to be ready (timeout after 10s to avoid hanging on "Processing")
-        await new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            reject(new Error("WebSocket connection timeout"));
-          }, 10000);
-
-          const checkState = () => {
-            if (socket.readyState === WebSocket.OPEN) {
+        if (socket.readyState !== WebSocket.OPEN) {
+          await new Promise<void>((resolve, reject) => {
+            const cleanup = () => {
               clearTimeout(timeout);
+              socket.removeEventListener("open", onOpen);
+              socket.removeEventListener("error", onError);
+            };
+            const onOpen = () => {
+              cleanup();
               resolve();
-            } else if (
+            };
+            const onError = () => {
+              cleanup();
+              reject(new Error("Socket failed to connect"));
+            };
+            const timeout = setTimeout(() => {
+              cleanup();
+              reject(new Error("WebSocket connection timeout"));
+            }, 10000);
+
+            if (socket.readyState === WebSocket.OPEN) {
+              cleanup();
+              resolve();
+              return;
+            }
+            if (
               socket.readyState === WebSocket.CLOSED ||
               socket.readyState === WebSocket.CLOSING
             ) {
-              clearTimeout(timeout);
+              cleanup();
               reject(new Error("Socket failed to connect"));
-            } else {
-              setTimeout(checkState, 100);
+              return;
             }
-          };
-          checkState();
-        });
+            socket.addEventListener("open", onOpen);
+            socket.addEventListener("error", onError);
+          });
+        }
 
         // Use files directly (already in the correct format from upload)
         const processedFiles = files && files.length > 0 ? files : [];
@@ -490,7 +503,8 @@ export const useTaskActions = ({
           id: session?.id,
           name: query.slice(0, 50),
         };
-        onSessionNameChange(sessionData);
+        // Don't contend with stream DB writes on the send path.
+        window.setTimeout(() => onSessionNameChange(sessionData), 1500);
       } catch (error) {
         console.error("Failed to start task:", error);
       }

@@ -15,6 +15,7 @@ from typing import AsyncGenerator, Any
 # import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -97,6 +98,34 @@ def _resolve_ui_path_prefix(ui_root: Path) -> str:
     return _detect_ui_path_prefix_from_build(ui_root)
 
 
+_HASHED_STATIC_SUFFIXES = (
+    ".js",
+    ".css",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".png",
+    ".svg",
+    ".webp",
+    ".jpg",
+    ".jpeg",
+    ".ico",
+)
+
+
+class CachedStaticFiles(StaticFiles):
+    """Long-cache hashed webpack assets; keep HTML/json revalidated."""
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        lowered = (path or "").lower()
+        if lowered.endswith(".html") or lowered in ("", "/", "index.html"):
+            response.headers["Cache-Control"] = "no-cache"
+        elif lowered.endswith(_HASHED_STATIC_SUFFIXES):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
@@ -120,7 +149,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         ui_mount = ui_path_prefix or "/"
         app.mount(
             ui_mount,
-            StaticFiles(directory=initializer.ui_root, html=True),
+            CachedStaticFiles(directory=initializer.ui_root, html=True),
             name="ui",
         )
         if ui_path_prefix:
@@ -235,6 +264,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
 # Create API router with version and documentation
 api = FastAPI(
     root_path="/api",
@@ -243,6 +274,7 @@ api = FastAPI(
     description="OpenDrSai-UI API is an application to interact with web agents.",
     docs_url="/docs" if settings.API_DOCS else None,
 )
+api.add_middleware(GZipMiddleware, minimum_size=500)
 
 # Include all routers with their prefixes
 api.include_router(
