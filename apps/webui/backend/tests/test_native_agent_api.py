@@ -152,11 +152,6 @@ def test_native_identity_verifies_rs256_audience_and_derives_subject(monkeypatch
         return {"keys": [jwk]}
 
     monkeypatch.setattr(native_auth, "_get_jwks", fake_jwks)
-    monkeypatch.setattr(
-        native_auth,
-        "get_active_platform",
-        lambda: SimpleNamespace(oidc_issuer="https://ai-dev.ihep.ac.cn/api"),
-    )
     private_pem = private_key.private_bytes(
         serialization.Encoding.PEM,
         serialization.PrivateFormat.PKCS8,
@@ -165,6 +160,7 @@ def test_native_identity_verifies_rs256_audience_and_derives_subject(monkeypatch
     token = jwt.encode(
         {
             "sub": "oidc-subject-42",
+            "email": "native@ihep.ac.cn",
             "iss": "https://ai-dev.ihep.ac.cn/api",
             "aud": "hai-api",
             "exp": 4102444800,
@@ -175,6 +171,7 @@ def test_native_identity_verifies_rs256_audience_and_derives_subject(monkeypatch
     )
     identity = asyncio.run(get_native_identity(f"Bearer {token}"))
     assert identity.user_id == "oidc-subject-42"
+    assert identity.email == "native@ihep.ac.cn"
     assert identity.issuer == "https://ai-dev.ihep.ac.cn/api"
 
 
@@ -215,6 +212,23 @@ def test_native_stream_socket_queues_runtime_messages():
         return await socket.queue.get()
 
     assert asyncio.run(exercise()) == {"type": "system", "status": "connected"}
+
+
+def test_native_sse_adapter_completion_error_uses_bubble_not_stop_reason():
+    frames, terminal = NativeSseAdapter().encode({
+        "type": "completion",
+        "status": "error",
+        "data": {
+            "task_result": {
+                "messages": [{"content": "这次回复出错了，已经安全结束。请重新发送，或输入 continue。如果反复出现，请刷新页面。"}],
+                "stop_reason": "stream_error",
+            }
+        },
+    })
+    assert terminal is True
+    assert "这次回复出错了" in frames[0]
+    assert "stream_error" not in frames[0]
+    assert "Traceback" not in frames[0]
 
 
 def test_native_sse_adapter_maps_structured_error_without_private_data():
