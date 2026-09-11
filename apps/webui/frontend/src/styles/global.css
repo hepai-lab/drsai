@@ -879,12 +879,23 @@
     font-display: swap;
 }
 
+@keyframes drsai-boot-spin {
+    to { transform: rotate(360deg); }
+}
+
 html {
     /* display: table; */
     margin: auto;
     height: 100%;
     font-family: "Segoe UI", "Open Sans", sans-serif;
     overflow-x: hidden;
+    --drsai-boot-bg: #f8f8fb;
+    --drsai-boot-fg: #64748b;
+}
+
+html.dark {
+    --drsai-boot-bg: #0d1016;
+    --drsai-boot-fg: #94a3b8;
 }
 
 body {

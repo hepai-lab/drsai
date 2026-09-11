@@ -1,8 +1,10 @@
-import React, { useContext, useEffect, useState } from "react";
+import React, { useContext, useEffect, useLayoutEffect, useState } from "react";
 import { useLocation, useNavigate } from "../hooks/useRouter";
 import { appContext } from "../hooks/provider";
 import { verifyAuthSession, saveAuthSession } from "../utils/authSession";
 import { authAPI } from "../components/views/api";
+import { BootSplash } from "./BootSplash";
+import { hideBootSplash } from "./bootSplash";
 import ScienceUserErrorPage from "./ScienceUserErrorPage";
 
 const PUBLIC_ROUTES = ["/welcome", "/login", "/auth", "/share"];
@@ -42,6 +44,10 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
     const { setUser } = useContext(appContext);
     const [checked, setChecked] = useState(false);
     const [scienceAuthError, setScienceAuthError] = useState<"invalidToken" | "networkError" | "missingToken" | null>(null);
+
+    useLayoutEffect(() => {
+        hideBootSplash();
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -229,22 +235,16 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
         return <ScienceUserErrorPage errorType={scienceAuthError} />;
     }
 
-    // science_user / user_agent 验证中：显示全屏 loading，等待跳转
     const searchParams = new URLSearchParams(location.search);
     const embedSource = (searchParams.get("user_source") || "").trim();
-    if (embedSource === "science_user" || embedSource === "user_agent") {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950">
-                <div className="flex flex-col items-center gap-3">
-                    <span className="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                    <p className="text-sm text-gray-500 dark:text-slate-400">正在验证身份，请稍候...</p>
-                </div>
-            </div>
-        );
-    }
+    const isEmbed = embedSource === "science_user" || embedSource === "user_agent";
 
     if (!checked) {
-        return null;
+        return (
+            <BootSplash
+                message={isEmbed ? "正在验证身份，请稍候..." : "正在加载"}
+            />
+        );
     }
 
     return <>{children}</>;

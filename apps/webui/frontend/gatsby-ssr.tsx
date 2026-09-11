@@ -5,8 +5,12 @@ import { renderToString } from "react-dom/server";
 
 const codeToRunOnClient = `(function() {
   try {
-    var mode = localStorage.getItem('darkmode');
-    document.getElementsByTagName("html")[0].className === 'dark' ? 'dark' : 'light';
+    var dark = localStorage.getItem('darkmode') === 'dark';
+    var root = document.documentElement;
+    root.className = dark ? 'dark' : 'light';
+    root.style.setProperty('--drsai-boot-bg', dark ? '#0d1016' : '#f8f8fb');
+    root.style.setProperty('--drsai-boot-fg', dark ? '#94a3b8' : '#64748b');
+    root.style.backgroundColor = dark ? '#0d1016' : '#f8f8fb';
   } catch (e) {}
 })();`;
 
