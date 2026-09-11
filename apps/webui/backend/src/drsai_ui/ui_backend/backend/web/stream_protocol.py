@@ -130,7 +130,10 @@ class StreamProjector:
         state = self.active.get(normalized_source)
         if state is None:
             state = self.latest_by_source.get(normalized_source)
-            if state is not None and state.status == "interrupted":
+            # Interrupted OR completed hops are closed. The next token must
+            # open a new message_id — otherwise turn N+1 appends onto turn N's
+            # bubble and the UI shows the answer above the new user message.
+            if state is not None and state.status in {"interrupted", "completed"}:
                 state = None
         if state is None:
             state, events = self._ensure(normalized_source)
@@ -219,13 +222,66 @@ class StreamProjector:
         events.append(self._snapshot_event(state))
         return events
 
-    def complete(
+    def apply_draft(
         self,
         source: str,
         content: str,
         *,
         reasoning: str = "",
     ) -> list[dict[str, Any]]:
+        """Update the live hop from a TextMessage without sealing it.
+
+        A mid-stream TextMessage is a draft snapshot, not ``message.completed``.
+        Never replace longer streamed text with a shorter canonical body.
+        """
+        normalized_source = source or "assistant"
+        state, events = self._ensure(normalized_source)
+        if state.status == "completed":
+            state.status = "streaming"
+            self.active[normalized_source] = state
+        changed = bool(events)
+        if content and len(content) > len(state.content):
+            state.content = content
+            changed = True
+        if reasoning and len(reasoning) > len(state.reasoning):
+            state.reasoning = reasoning
+            changed = True
+        if not changed:
+            return events
+        events.append(self._snapshot_event(state))
+        return events
+
+    def seal_active_assistant(self) -> list[dict[str, Any]]:
+        """Seal live assistant hops. Call this at turn.ready, not on TextMessage."""
+        events: list[dict[str, Any]] = []
+        for source in list(self.active):
+            if source in _USER_SOURCES:
+                continue
+            state = self.active[source]
+            events.extend(
+                self.complete(source, state.content, reasoning=state.reasoning)
+            )
+        return events
+
+    def close_turn(self) -> None:
+        """After turn.ready: keep snapshots for replay, force next tokens onto a new hop."""
+        self.active.clear()
+        self.latest_by_source.clear()
+
+    def complete(
+        self,
+        source: str,
+        content: str,
+        *,
+        reasoning: str = "",
+        keep_open: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Seal a hop as ``message.completed``.
+
+        ``keep_open=True`` still emits completed (so the UI can unlock) but
+        leaves the hop in ``active`` for late same-turn deltas. Call
+        ``close_turn()`` at ``turn.ready`` so the next user turn opens a new id.
+        """
         normalized_source = source or "assistant"
         existing = self.active.get(normalized_source)
         latest = self.latest_by_source.get(normalized_source)
@@ -233,13 +289,23 @@ class StreamProjector:
             existing is None
             and latest is not None
             and latest.status == "completed"
-            and latest.content == content
+            and (not content or content == latest.content)
+            and not keep_open
         ):
             return []
+        # Already completed this hop with the same body — avoid duplicate seals.
+        if (
+            existing is not None
+            and existing.status == "completed"
+            and (not content or content == existing.content)
+            and not keep_open
+        ):
+            self.active.pop(normalized_source, None)
+            return []
         state, events = self._ensure(normalized_source)
-        if content:
+        if content and len(content) >= len(state.content):
             state.content = content
-        if reasoning:
+        if reasoning and len(reasoning) >= len(state.reasoning):
             state.reasoning = reasoning
         state.in_reasoning = False
         state.status = "completed"
@@ -251,7 +317,11 @@ class StreamProjector:
                 status="completed",
             )
         )
-        self.active.pop(state.source, None)
+        if keep_open:
+            # Late tokens in this turn still append; next turn must close_turn().
+            self.active[normalized_source] = state
+        else:
+            self.active.pop(state.source, None)
         return events
 
     def interrupt(self, sources: Iterable[str] | None = None) -> list[dict[str, Any]]:

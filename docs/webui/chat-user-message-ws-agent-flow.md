@@ -1,5 +1,7 @@
 # 用户消息 → WebSocket → Agent 回复：端到端过程
 
+按时间顺序看「点发送 → 转发智能体 → 解析 → 流回前端」，见 [chat-send-message-roundtrip.md](./chat-send-message-roundtrip.md)。
+
 本文描述 **当前 WebUI 实现**（不是目标设计）。范围是聊天主链路：用户在输入框提交 → 前端走 WebSocket → 后端启动 / 唤醒 Team → Agent 推理并流式回包 → 前端渲染气泡并解锁下一轮输入。
 
 用来重新规划这条链路时，先对齐「现在每一层实际经历了什么」。

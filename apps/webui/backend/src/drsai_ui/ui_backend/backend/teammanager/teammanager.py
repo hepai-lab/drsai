@@ -243,6 +243,12 @@ class TeamManager:
         if not alias:
             return []
 
+        logger.info(
+            "[CHAT_TURN] event=switch_remote_model_begin alias={} candidates_pending=True",
+            alias,
+        )
+        t0 = time.monotonic()
+
         candidates: list[Any] = []
         if hasattr(self.team, "switch_remote_model"):
             candidates.append(self.team)
@@ -269,6 +275,12 @@ class TeamManager:
                 results.append(
                     {"status": False, "message": str(e), "agent": agent_name, "defult_config_name": None}
                 )
+        logger.info(
+            "[CHAT_TURN] event=switch_remote_model_done alias={} elapsed_ms={} results={}",
+            alias,
+            round((time.monotonic() - t0) * 1000),
+            results,
+        )
         return results
 
     async def run_stream(

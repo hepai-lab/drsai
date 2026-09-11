@@ -19,6 +19,7 @@ import {
 import { messageUtils } from "../rendermessage";
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 import { appContext } from "../../../hooks/provider";
+import { chatTurnLog, socketStatePayload } from "../chatTurnLog";
 
 type SelectedLlm = { label: string; value: string };
 
@@ -117,8 +118,27 @@ export const useTaskActions = ({
         const needsReconnect =
           !activeSocketRef.current ||
           activeSocketRef.current.readyState !== WebSocket.OPEN;
+        const tSend = typeof performance !== "undefined" ? performance.now() : Date.now();
+        chatTurnLog("fe:input_response:start", {
+          runId: currentRun.id,
+          status: currentRun.status,
+          agentWorking: currentRun.agent_working ?? null,
+          needsReconnect,
+          msgCount: currentRun.messages?.length ?? 0,
+          ...socketStatePayload(activeSocketRef.current),
+          queryPreview: String(response || "").replace(/\s+/g, " ").trim().slice(0, 80),
+          attachedSkillCount: attachedSkills?.length ?? 0,
+          fileCount: files?.length ?? 0,
+        });
 
         const socket = await ensureWebSocketConnection(currentRun.id);
+        chatTurnLog("fe:input_response:socket-ready", {
+          runId: currentRun.id,
+          waitMs: Math.round(
+            (typeof performance !== "undefined" ? performance.now() : Date.now()) - tSend
+          ),
+          ...socketStatePayload(socket),
+        });
 
         const lastMessage = currentRun.messages.slice(-1)[0];
         let planString = "";
@@ -160,6 +180,16 @@ export const useTaskActions = ({
           currentRun?.status === "awaiting_input" ||
           currentRun?.status === "ready";
 
+        chatTurnLog("fe:input_response:route", {
+          runId: currentRun.id,
+          status: currentRun.status,
+          isAwaitingInput,
+          needsReconnect,
+          path:
+            needsReconnect && !isAwaitingInput ? "continue" : "input_response",
+          willSetAgentWorking: !(needsReconnect && !isAwaitingInput),
+        });
+
         if (needsReconnect && !isAwaitingInput) {
           let currentSettings = settingsConfig;
           if (userEmail) {
@@ -200,6 +230,11 @@ export const useTaskActions = ({
           };
 
           socket.send(JSON.stringify(continueMessage));
+          chatTurnLog("fe:input_response:sent-continue", {
+            runId: currentRun.id,
+            status: currentRun.status,
+            note: "continue path does NOT set agent_working — loading may be missing",
+          });
           return;
         }
 
@@ -223,6 +258,12 @@ export const useTaskActions = ({
           },
         };
         socket.send(JSON.stringify(inputResponseMessage));
+        chatTurnLog("fe:input_response:sent", {
+          runId: currentRun.id,
+          prevStatus: currentRun.status,
+          nextStatus: "active",
+          nextAgentWorking: { phase: "model" },
+        });
 
         setCurrentRun((current: Run | null) => {
           if (!current) return null;
@@ -234,6 +275,10 @@ export const useTaskActions = ({
           };
         });
       } catch (error) {
+        chatTurnLog("fe:input_response:error", {
+          runId: currentRun?.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
         handleError(error);
       }
     },
@@ -412,6 +457,15 @@ export const useTaskActions = ({
           }
         }
 
+        chatTurnLog("fe:start:begin", {
+          runId: currentRun.id,
+          status: currentRun.status,
+          fresh_socket,
+          queryPreview: String(query || "").replace(/\s+/g, " ").trim().slice(0, 80),
+          attachedSkillCount: attachedSkills?.length ?? 0,
+          ...socketStatePayload(activeSocketRef.current),
+        });
+
         // Setup websocket connection
         const socket = setupWebSocket(currentRun.id, fresh_socket, false);
         if (!socket) {
@@ -502,6 +556,13 @@ export const useTaskActions = ({
           };
         });
 
+        chatTurnLog("fe:start:sent", {
+          runId: currentRun.id,
+          nextStatus: "active",
+          nextAgentWorking: { phase: "orchestrator" },
+          ...socketStatePayload(socket),
+        });
+
         socket.send(JSON.stringify(messageToSend));
 
         const sessionData = {
@@ -510,6 +571,10 @@ export const useTaskActions = ({
         };
         onSessionNameChange(sessionData);
       } catch (error) {
+        chatTurnLog("fe:start:error", {
+          runId: currentRun?.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
         console.error("Failed to start task:", error);
       }
     },

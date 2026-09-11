@@ -54,7 +54,9 @@ function demoteUnsealedCandidates(
   for (const id of order) {
     if (sealedFinalIds.has(id)) continue;
     const entity = next[id];
-    if (entity?.plane !== "final") continue;
+    // Only live (still-streaming) final candidates can be demoted into the
+    // process box. Completed hops from earlier turns must stay as finals.
+    if (entity?.plane !== "final" || entity.status === "completed") continue;
     next[id] = { ...entity, plane: "process" };
     changed = true;
   }
@@ -84,10 +86,17 @@ function sealTurnPlanes(
     const entity = byId[id];
     if (!entity) continue;
     if (resolved && id === resolved) {
-      byId[id] = { ...entity, plane: "final" };
+      byId[id] = { ...entity, plane: "final", status: "completed" };
       sealed.add(id);
-    } else if (entity.plane === "final") {
+    } else if (
+      entity.plane === "final" &&
+      entity.status !== "completed"
+    ) {
+      // Demote only the open candidate for this turn — never prior sealed-or-
+      // completed finals from earlier user turns in the same run.
       byId[id] = { ...entity, plane: "process" };
+    } else if (entity.status === "completed" && entity.plane === "final") {
+      sealed.add(id);
     }
   }
   return { byId, sealedFinalIds: sealed };
@@ -126,11 +135,12 @@ function applyOrderedEvent(
 
   const existing = state.byId[event.message_id];
   let byId = state.byId;
+  let sealedFinalIds = state.sealedFinalIds ?? new Set();
   if (!existing && event.event === "message.started") {
     byId = demoteUnsealedCandidates(
       state.byId,
       state.order,
-      state.sealedFinalIds ?? new Set()
+      sealedFinalIds
     );
   }
   const entity: StreamMessageEntity = existing || {
@@ -145,10 +155,15 @@ function applyOrderedEvent(
   let nextEntity = entity;
 
   if (event.event === "message.delta" && event.delta && event.channel) {
-    if (entity.status === "streaming") {
+    if (entity.status !== "interrupted") {
       const previous = entity[event.channel];
-      // Deltas are append-only. event_id/seq dedupe prevents double application.
-      nextEntity = { ...entity, [event.channel]: previous + event.delta };
+      // Deltas are append-only. Keep applying after a racy completed so
+      // late tokens can finish the same bubble instead of being dropped.
+      nextEntity = {
+        ...entity,
+        [event.channel]: previous + event.delta,
+        status: entity.status === "completed" ? "streaming" : entity.status,
+      };
     }
   } else if (
     (event.event === "message.snapshot" ||
@@ -170,7 +185,7 @@ function applyOrderedEvent(
       event.snapshot.status === "interrupted"
         ? event.snapshot.status
         : entity.status;
-    const sealed = state.sealedFinalIds?.has(entity.messageId);
+    const sealed = sealedFinalIds.has(entity.messageId);
     nextEntity = {
       ...entity,
       content,
@@ -182,6 +197,17 @@ function applyOrderedEvent(
           ? "process"
           : "final",
     };
+    // Seal as soon as a hop truly completes so a later turn's
+    // message.started cannot shove prior finals into 处理过程.
+    if (
+      event.event === "message.completed" &&
+      nextStatus === "completed" &&
+      nextEntity.source !== "user" &&
+      nextEntity.source !== "user_proxy"
+    ) {
+      sealedFinalIds = new Set(sealedFinalIds).add(entity.messageId);
+      nextEntity = { ...nextEntity, plane: "final" };
+    }
   } else if (event.event === "message.started") {
     nextEntity = existing
       ? entity
@@ -194,6 +220,7 @@ function applyOrderedEvent(
     seenEventIds,
     byId: { ...byId, [event.message_id]: nextEntity },
     order: existing ? state.order : [...state.order, event.message_id],
+    sealedFinalIds,
   };
 }
 

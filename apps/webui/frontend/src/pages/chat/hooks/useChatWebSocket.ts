@@ -20,6 +20,7 @@ import {
   sealStreamMessage,
   splitAgentVisibleContent,
 } from "../chatMessagePipeline";
+import { chatTurnLog, socketStatePayload } from "../chatTurnLog";
 import {
   ChatStreamState,
   LegacyStreamAdapter,
@@ -140,6 +141,32 @@ export const useChatWebSocket = ({
   }, []);
   const enqueueWsMessage = React.useCallback((msg: IncomingWebSocketMessage) => {
     const legacyData = (msg as WebSocketMessage).data as any;
+    const eventName = isStreamV2Event(msg) ? msg.event : undefined;
+    const isControl =
+      msg.type === "system" ||
+      msg.type === "input_request" ||
+      msg.type === "error" ||
+      msg.type === "completion" ||
+      msg.type === "result" ||
+      eventName === "agent.working" ||
+      eventName === "turn.ready" ||
+      eventName === "interaction.required" ||
+      eventName === "message.started" ||
+      eventName === "message.completed";
+    if (isControl) {
+      chatTurnLog("fe:ws:in", {
+        type: msg.type,
+        event: eventName,
+        status: isStreamV2Event(msg) ? msg.status : (msg as WebSocketMessage).status,
+        source: isStreamV2Event(msg) ? msg.source : legacyData?.source,
+        working: isStreamV2Event(msg) ? (msg as any).working : undefined,
+        seq: isStreamV2Event(msg) ? msg.seq : undefined,
+        preview:
+          typeof legacyData?.content === "string"
+            ? String(legacyData.content).replace(/\s+/g, " ").trim().slice(0, 80)
+            : undefined,
+      });
+    }
     chatRenderLog("ws:enqueue", {
       type: msg.type,
       source: isStreamV2Event(msg) ? msg.source : legacyData?.source,
@@ -210,12 +237,26 @@ export const useChatWebSocket = ({
             ) {
               // Visible stream tokens replace the waiting indicator.
               nextAgentWorking = null;
-              if (nextStatus === "ready") nextStatus = "active";
+              const sealed = state.sealedFinalIds?.has(event.message_id);
+              if (nextStatus === "ready" && !sealed) nextStatus = "active";
             } else if (event.event === "message.completed") {
               nextAgentWorking = null;
-              // Answer is on screen; unlock the composer before turn.ready.
-              // Further agent.working / message.started will flip back to active.
-              nextStatus = "ready";
+              const completedStatus =
+                event.status || event.snapshot?.status || "completed";
+              // Tool-interrupted hops are not the end of the turn.
+              // User-source completions (user_proxy) signal a new user
+              // turn — the agent is about to work, not "ready".
+              if (completedStatus !== "interrupted") {
+                if (
+                  event.source === "user" ||
+                  event.source === "user_proxy"
+                ) {
+                  nextStatus = "active";
+                  nextAgentWorking = { phase: "model" };
+                } else {
+                  nextStatus = "ready";
+                }
+              }
             } else if (event.event === "turn.ready") {
               nextStatus = "ready";
               nextInputRequest = undefined;
@@ -232,6 +273,26 @@ export const useChatWebSocket = ({
               };
               nextAgentWorking = null;
             }
+          }
+          const prevWorking = current.agent_working ?? null;
+          if (
+            nextStatus !== current.status ||
+            JSON.stringify(nextAgentWorking) !== JSON.stringify(prevWorking)
+          ) {
+            chatTurnLog("fe:ws:state", {
+              runId: current.id,
+              events: streamEvents.map((e) => e.event),
+              prevStatus: current.status,
+              nextStatus,
+              prevAgentWorking: prevWorking,
+              nextAgentWorking,
+              note:
+                current.status === "active" &&
+                nextStatus === "ready" &&
+                Boolean(prevWorking)
+                  ? "cleared loading after send — likely late turn.ready/message.completed"
+                  : undefined,
+            });
           }
           streamStateRef.current = state;
           if (state.needsResume && activeSocketRef.current?.readyState === WebSocket.OPEN) {
@@ -280,6 +341,11 @@ export const useChatWebSocket = ({
               "paused",
             ]);
             if (nonTerminal.has(current.status)) {
+              chatTurnLog("fe:ws:error-stop", {
+                runId: current.id,
+                prevStatus: current.status,
+                error: (wsMessage as any).error,
+              });
               return {
                 ...current,
                 status: "stopped" as BaseRunStatus,
@@ -938,6 +1004,12 @@ export const useChatWebSocket = ({
                 wsMessage.input_type || "text_input"
               )
             ) {
+              chatTurnLog("fe:ws:legacy-input_request-as-ready", {
+                runId: current.id,
+                prevStatus: current.status,
+                prevAgentWorking: current.agent_working ?? null,
+                prompt: wsMessage.prompt,
+              });
               return {
                 ...current,
                 status: "ready" as BaseRunStatus,
@@ -976,6 +1048,12 @@ export const useChatWebSocket = ({
           }
 
           case "system":
+            chatTurnLog("fe:ws:system", {
+              runId: current.id,
+              prevStatus: current.status,
+              nextStatus: wsMessage.status,
+              prevAgentWorking: current.agent_working ?? null,
+            });
             // Do not let a stale awaiting_input system frame override turn.ready.
             if (
               current.status === "ready" &&
@@ -1076,6 +1154,13 @@ export const useChatWebSocket = ({
         return null;
       }
 
+      chatTurnLog("fe:ws:setup", {
+        runId,
+        fresh_socket,
+        only_retrieve_existing_socket,
+        ...socketStatePayload(socket),
+      });
+
       socket.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
@@ -1091,7 +1176,16 @@ export const useChatWebSocket = ({
       const socketSessionId = session.id;
       const socketRunId = runId;
       
-      socket.onclose = () => {
+      socket.onclose = (ev: CloseEvent) => {
+        chatTurnLog("fe:ws:close", {
+          runId,
+          sessionId: socketSessionId,
+          code: ev.code,
+          reason: ev.reason,
+          wasClean: ev.wasClean,
+          isActiveSocket: activeSocketRef.current === socket,
+          ...socketStatePayload(socket),
+        });
         // Only process close event if this socket belongs to the current session and run
         // This prevents old socket close events from affecting new sessions
         setCurrentRun((current: Run | null) => {
@@ -1112,6 +1206,11 @@ export const useChatWebSocket = ({
             "paused",
           ]);
           if (nonTerminal.has(current.status)) {
+            chatTurnLog("fe:ws:close-stop-run", {
+              runId: current.id,
+              prevStatus: current.status,
+              note: "socket close while non-terminal — UI looks disconnected",
+            });
             const updatedRun = {
               ...current,
               status: "stopped" as BaseRunStatus,
@@ -1137,6 +1236,16 @@ export const useChatWebSocket = ({
       };
 
       socket.onopen = () => {
+        chatTurnLog("fe:ws:open", {
+          runId,
+          sessionId: socketSessionId,
+          isActiveSocket: activeSocketRef.current === socket,
+          lastSeq:
+            streamStateRef.current?.runId === runId
+              ? streamStateRef.current.lastSeq
+              : 0,
+          ...socketStatePayload(socket),
+        });
         if (activeSocketRef.current !== socket) return;
         // Only resume after a real gap. Fresh sockets start at seq 0 and
         // negotiate protocol via the subsequent start/continue payload.
@@ -1155,6 +1264,11 @@ export const useChatWebSocket = ({
       };
 
       socket.onerror = (error) => {
+        chatTurnLog("fe:ws:error", {
+          runId,
+          sessionId: socketSessionId,
+          ...socketStatePayload(socket),
+        });
         console.error("WebSocket error:", error);
       };
 
@@ -1170,6 +1284,12 @@ export const useChatWebSocket = ({
       if (activeSocketRef.current?.readyState === WebSocket.OPEN) {
         return activeSocketRef.current;
       }
+
+      chatTurnLog("fe:ws:reconnect:start", {
+        runId,
+        ...socketStatePayload(activeSocketRef.current),
+      });
+      const t0 = typeof performance !== "undefined" ? performance.now() : Date.now();
 
       antdMessage.loading("正在重新连接...", 0.5);
 
@@ -1187,6 +1307,15 @@ export const useChatWebSocket = ({
           const checkState = () => {
             if (socket.readyState === WebSocket.OPEN) {
               clearTimeout(timeout);
+              chatTurnLog("fe:ws:reconnect:ok", {
+                runId,
+                waitMs: Math.round(
+                  (typeof performance !== "undefined"
+                    ? performance.now()
+                    : Date.now()) - t0
+                ),
+                ...socketStatePayload(socket),
+              });
               antdMessage.success("重新连接成功", 1);
               resolve();
             } else if (

@@ -29,6 +29,7 @@ import {
   collapseMessagesForDisplay,
   classifyMessage,
 } from "./chatMessagePipeline";
+import { chatTurnLog } from "./chatTurnLog";
 import ProcessMessageGroup from "./ProcessMessageGroup";
 import { streamMessageId } from "./chatStreamReducer";
 import {
@@ -1626,6 +1627,34 @@ const RunView: React.FC<RunViewProps> = ({
   const composerStatus =
     turnSettledVisually || run.status === "ready" ? "ready" : run.status;
 
+  useEffect(() => {
+    chatTurnLog("fe:ui:working-flags", {
+      runId: run.id,
+      status: run.status,
+      agentWorking: run.agent_working ?? null,
+      showAgentWorking,
+      hasLiveAssistantDraft,
+      hasAssistantOutputAfterLastUser,
+      turnSettledVisually,
+      composerStatus,
+      processGroupStatus,
+      statusIconStatus,
+      msgCount: localMessages.length,
+    });
+  }, [
+    run.id,
+    run.status,
+    run.agent_working,
+    showAgentWorking,
+    hasLiveAssistantDraft,
+    hasAssistantOutputAfterLastUser,
+    turnSettledVisually,
+    composerStatus,
+    processGroupStatus,
+    statusIconStatus,
+    localMessages.length,
+  ]);
+
   const canSendInputResponse =
     run.status === "awaiting_input" ||
     run.status === "ready" ||
@@ -1881,6 +1910,13 @@ const RunView: React.FC<RunViewProps> = ({
                 attachedSkills?: HepaiSkillPickRow[]
               ) => {
                 scrollToBottom("auto", true);
+                chatTurnLog("fe:runview:submit", {
+                  runId: run.id,
+                  runStatus: run.status,
+                  composerStatus,
+                  canSendInputResponse,
+                  path: canSendInputResponse ? "input_response" : "start",
+                });
                 if (canSendInputResponse) {
                   onInputResponse?.(
                     query,
