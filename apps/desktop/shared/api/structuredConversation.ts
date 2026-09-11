@@ -63,6 +63,7 @@ export interface ArtifactPart extends StructuredPartBase {
   url?: string;
   mime?: string;
   size?: number;
+  sha256?: string;
   previewable?: boolean;
   downloadable?: boolean;
   citationIds?: string[];
@@ -1040,6 +1041,7 @@ function sanitizeStructuredPart(part: StructuredAssistantPart): StructuredAssist
       ...(part.url ? { url: part.url.slice(0, 4_096) } : {}),
       ...(part.mime ? { mime: part.mime.slice(0, 160) } : {}),
       ...(Number.isFinite(part.size) ? { size: Math.max(0, Number(part.size)) } : {}),
+      ...(part.sha256 ? { sha256: part.sha256.slice(0, 128) } : {}),
       ...(typeof part.previewable === "boolean" ? { previewable: part.previewable } : {}),
       ...(typeof part.downloadable === "boolean" ? { downloadable: part.downloadable } : {}),
       ...(part.citationIds ? { citationIds: sanitizeRelationIds(part.citationIds) } : {}),

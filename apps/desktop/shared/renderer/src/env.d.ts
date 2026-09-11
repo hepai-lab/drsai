@@ -30,6 +30,48 @@ declare module "docx-preview" {
   ): Promise<unknown>;
 }
 
+declare module "pptx-preview" {
+  interface PptxPreviewer {
+    preview(data: ArrayBuffer | Uint8Array): Promise<unknown>;
+    destroy?: () => void;
+  }
+
+  export function init(
+    container: HTMLElement,
+    options?: { width?: number; height?: number; mode?: "list" | "slide" },
+  ): PptxPreviewer;
+}
+
+declare module "xlsx" {
+  interface ExcelCell {
+    v?: unknown;
+    w?: string;
+  }
+
+  interface ExcelSheet {
+    [address: string]: ExcelCell | string | undefined;
+    "!ref"?: string;
+  }
+
+  interface ExcelWorkbook {
+    SheetNames: string[];
+    Sheets: Record<string, ExcelSheet | undefined>;
+  }
+
+  interface ExcelUtils {
+    decode_range(ref: string): { s: { r: number; c: number }; e: { r: number; c: number } };
+    encode_cell(address: { r: number; c: number }): string;
+    format_cell(cell: ExcelCell): string;
+  }
+
+  export function read(
+    data: ArrayBuffer | Uint8Array,
+    options?: { type?: string; cellDates?: boolean },
+  ): ExcelWorkbook;
+
+  export const utils: ExcelUtils;
+}
+
 interface OpenDrSaiWebviewTag extends HTMLElement {
   src: string;
   canGoBack(): boolean;

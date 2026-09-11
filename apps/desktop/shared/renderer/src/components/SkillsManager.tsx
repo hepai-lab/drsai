@@ -573,23 +573,24 @@ export function SkillsManager({
   }, [skills]);
 
   const localSubtitle = zh
-    ? "与后端扫描目录一致：装进本地即可被对话按需调用。新建、导入文件夹或压缩包。"
-    : "Mirrors the backend scan directory. Installed skills are available on demand. Create or import a folder/ZIP.";
+    ? "磁盘上的技能会进入扫描目录；对话需要时再按需调用。可新建，或从文件夹 / ZIP 导入。"
+    : "Skills on disk enter the scan directory and are invoked on demand. Create new ones, or import a folder / ZIP.";
+  const onlineSubtitle = zh
+    ? "浏览、收藏与发布市场技能。只有安装到本地后，才会进入扫描目录并参与对话。"
+    : "Browse, collect, and publish marketplace skills. They only join chat after you install them locally.";
 
   // ── Online (WebUI Skills Square) ─────────────────────────────────────────────
 
   if (topTab === "online") {
     return (
       <SkillsPageShell toast={actionToast}>
-        <SkillsHeader
-          zh={zh}
-          title={zh ? "在线技能" : "Online skills"}
-          subtitle={
-            zh
-              ? "浏览、收藏与发布；安装到本地后才会进入扫描目录并参与对话。"
-              : "Browse, collect, and publish. Install locally to enter the scan directory and chat."
-          }
-        />
+        <div className="skills-page-top">
+          <SkillsHeader
+            zh={zh}
+            title={zh ? "在线技能" : "Online skills"}
+            subtitle={onlineSubtitle}
+          />
+        </div>
         <SkillsSquarePanel
           language={language}
           userId={userId}
@@ -609,11 +610,13 @@ export function SkillsManager({
   if (loading && view.kind === "list") {
     return (
       <SkillsPageShell toast={actionToast}>
-        <SkillsHeader
-          zh={zh}
-          title={zh ? "本地技能" : "Local skills"}
-          subtitle={localSubtitle}
-        />
+        <div className="skills-page-top">
+          <SkillsHeader
+            zh={zh}
+            title={zh ? "本地技能" : "Local skills"}
+            subtitle={localSubtitle}
+          />
+        </div>
         <div className="skills-page-content">
           <p className="skills-loading">{zh ? "正在连接网关并加载 Skills…" : "Connecting to gateway and loading Skills…"}</p>
         </div>
@@ -624,11 +627,13 @@ export function SkillsManager({
   if (loadError && view.kind === "list") {
     return (
       <SkillsPageShell toast={actionToast}>
-        <SkillsHeader
-          zh={zh}
-          title={zh ? "本地技能" : "Local skills"}
-          subtitle={localSubtitle}
-        />
+        <div className="skills-page-top">
+          <SkillsHeader
+            zh={zh}
+            title={zh ? "本地技能" : "Local skills"}
+            subtitle={localSubtitle}
+          />
+        </div>
         <div className="skills-page-content">
           <div className="skills-empty-state skills-online-empty">
             <div className="skills-online-empty-icon skills-online-empty-icon-error">
@@ -650,13 +655,12 @@ export function SkillsManager({
   if (view.kind === "list") {
     return (
       <SkillsPageShell toast={actionToast}>
-        <SkillsHeader
-          zh={zh}
-          title={zh ? "本地技能" : "Local skills"}
-          subtitle={localSubtitle}
-        />
-
-        <div className="skills-page-content skills-local">
+        <div className="skills-page-top">
+          <SkillsHeader
+            zh={zh}
+            title={zh ? "本地技能" : "Local skills"}
+            subtitle={localSubtitle}
+          />
           <div className="skills-online-stats" aria-label={zh ? "统计" : "Stats"}>
             {(
               [
@@ -670,7 +674,9 @@ export function SkillsManager({
               </div>
             ))}
           </div>
+        </div>
 
+        <div className="skills-page-content skills-local">
           <div className="skills-online-filters">
             <div className="skills-online-filter-bar">
               <div className="skills-online-cat-tabs" role="group" aria-label={zh ? "筛选" : "Filters"}>
@@ -775,10 +781,10 @@ export function SkillsManager({
                   <Package size={28} />
                 </div>
                 <p className="skills-online-empty-title">
-                  {zh ? "尚未安装任何 Skill" : "No skills installed yet"}
+                  {zh ? "本地还没有技能" : "No local skills yet"}
                 </p>
                 <p className="skills-online-empty-desc">
-                  {zh ? "本地目录为空。请使用「导入文件夹」「导入压缩包」或「新建」。" : "No local skills yet. Use Import folder, Import ZIP, or New."}
+                  {zh ? "用「新建」写一个，或导入文件夹 / ZIP。" : "Create one, or import a folder / ZIP."}
                 </p>
               </div>
             ) : filteredLocalSkills.length === 0 ? (
@@ -904,7 +910,9 @@ export function SkillsManager({
     const { skill, content } = view;
     return (
       <SkillsPageShell toast={actionToast}>
-        <SkillsHeader zh={zh} title={zh ? "本地技能" : "Local skills"} />
+        <div className="skills-page-top">
+          <SkillsHeader zh={zh} title={zh ? "本地技能" : "Local skills"} />
+        </div>
         <div className="skills-page-content">
           <div className="skills-online-detail">
             <button type="button" className="skills-btn skills-online-detail-back" onClick={() => { void goBack(); }}>
@@ -973,7 +981,9 @@ export function SkillsManager({
 
     return (
       <SkillsPageShell toast={actionToast}>
-        <SkillsHeader zh={zh} title={zh ? "本地技能" : "Local skills"} />
+        <div className="skills-page-top">
+          <SkillsHeader zh={zh} title={zh ? "本地技能" : "Local skills"} />
+        </div>
         <div className="skills-page-content">
           <div className="skills-local-editor-card">
             <div className="skills-local-editor-header">
@@ -1067,12 +1077,6 @@ function SkillsPageShell({
 }): React.JSX.Element {
   return (
     <div className="skills-manager skills-manager-page skills-manager-online">
-      <div className="skills-page-bg skills-online-bg" aria-hidden>
-        <div className="skills-online-bg-orb skills-online-bg-orb-tr" />
-        <div className="skills-online-bg-orb skills-online-bg-orb-bl" />
-        <div className="skills-online-bg-orb skills-online-bg-orb-center" />
-        <div className="skills-online-bg-grid" />
-      </div>
       {children}
       {toast ? <SkillsActionToast toast={toast} /> : null}
     </div>
@@ -1099,10 +1103,14 @@ function SkillsHeader({
   zh: boolean;
   title?: string;
   subtitle?: string;
+  plane?: string;
 }): React.JSX.Element {
+  const isLocal = Boolean(title && (title.includes("本地") || title.toLowerCase().includes("local")));
   return (
     <div className="skills-header">
-      <Zap size={16} />
+      <span className="skills-header-mark" aria-hidden>
+        {isLocal ? <Package size={16} /> : <Zap size={16} />}
+      </span>
       <div className="skills-header-text">
         <h2 className="skills-title">{title || (zh ? "技能" : "Skills")}</h2>
         {subtitle ? <p className="skills-relation-hint">{subtitle}</p> : null}

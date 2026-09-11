@@ -1350,7 +1350,7 @@ export function SkillsSquarePanel(props: SkillsSquarePanelProps): JSX.Element {
       className={`skills-online${mode === "publish" && !detailSlug ? " is-publish" : ""}`}
       ref={scrollRef}
     >
-      {/* Page chrome orbs live on SkillsManager (skills-manager-page) for both tabs. */}
+      {/* Shared page chrome with Knowledge / Local skills. */}
       <div className="skills-online-content">
         {!detailSlug ? (
           <div className="skills-online-subtabs" role="tablist" aria-label={zh ? "在线技能分区" : "Online skills sections"}>
@@ -1367,8 +1367,6 @@ export function SkillsSquarePanel(props: SkillsSquarePanelProps): JSX.Element {
                   if (tab.id === "publish" && mode !== "publish") {
                     resetPublishForm();
                   }
-                  // Immediate loading feedback so tab switches never look frozen
-                  // while the previous list remains on screen.
                   if (tab.id !== mode && tab.id !== "publish") {
                     fetchGenRef.current += 1;
                     setLoading(true);

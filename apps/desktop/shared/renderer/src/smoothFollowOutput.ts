@@ -10,7 +10,7 @@ interface SmoothFollowOutputOptions {
 
 const SCROLL_DIRECTION_TOLERANCE = 0.5;
 const HEIGHT_CHANGE_TOLERANCE = 0.5;
-const AT_BOTTOM_TOLERANCE = 4;
+const AT_BOTTOM_TOLERANCE = 64;
 
 export function createSmoothFollowOutputController({
   scrollToBottom,
@@ -50,20 +50,22 @@ export function createSmoothFollowOutputController({
 
   const handleScroll = (scrollTop: number, maxScrollTop: number): boolean => {
     const movedUp = lastScrollTop !== undefined && scrollTop < lastScrollTop - SCROLL_DIRECTION_TOLERANCE;
-    const movedDown = lastScrollTop !== undefined && scrollTop > lastScrollTop + SCROLL_DIRECTION_TOLERANCE;
     const layoutShrank = lastMaxScrollTop !== undefined && maxScrollTop < lastMaxScrollTop - HEIGHT_CHANGE_TOLERANCE;
+    const atBottom = maxScrollTop - scrollTop <= AT_BOTTOM_TOLERANCE;
     lastScrollTop = scrollTop;
     lastMaxScrollTop = maxScrollTop;
-    if (movedUp && !layoutShrank && !programmaticScrollActive) {
+    if (movedUp && !layoutShrank && !programmaticScrollActive && !atBottom) {
       const stopActiveScroll = following;
       pause();
       pausedByUser = true;
       if (stopActiveScroll) stopScrolling?.(scrollTop);
       return true;
     }
-    if (maxScrollTop - scrollTop <= AT_BOTTOM_TOLERANCE) {
+    if (atBottom) {
       programmaticScrollActive = false;
-      if (movedDown && pausedByUser) resume();
+      // Re-engage follow whenever the viewport is on the latest content,
+      // even if the last delta was not a clear downward move (scrollbar jump).
+      if (pausedByUser) resume();
     }
     return false;
   };

@@ -46,9 +46,9 @@ import type {
 } from "@shared/structuredConversation";
 import type { RunReproducibilityLevel } from "@shared/runInspection";
 import type { OaepResourceRef } from "@shared/oaep.generated";
+import { selectInlineArtifactLinks, type InlineArtifactLink, type SelectedInlineArtifactLink } from "../artifactLinkPlugin";
 import { ChatMessageContent } from "./ChatMessageContent";
 import { desktopApi } from "../desktopApi";
-import { selectInlineArtifactLinks, type InlineArtifactLink, type SelectedInlineArtifactLink } from "../artifactLinkPlugin";
 
 export interface InteractionResponse extends Record<string, unknown> {
   approved?: boolean;
@@ -163,11 +163,15 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   );
   const finalAnswerIds = new Set(finalAnswerParts.map((part) => part.id));
   const finalCitationIds = new Set(finalAnswerParts.flatMap((part) => part.citationIds ?? []));
+  // Keep the answer text clean (webui style): file cards sit below the final reply,
+  // not as inline chips where the model happens to name the file.
   const resultParts = turn.parts.filter((part) =>
     finalAnswerIds.has(part.id)
-    || (part.kind === "citation" && (finalCitationIds.has(part.citationId) || (part.markdownPartId !== undefined && finalAnswerIds.has(part.markdownPartId))))
-    || (part.kind === "artifact" && !embeddedArtifactIds.has(part.id) && (part.citationIds ?? []).some((id) => finalCitationIds.has(id))),
+    || (part.kind === "citation" && (finalCitationIds.has(part.citationId) || (part.markdownPartId !== undefined && finalAnswerIds.has(part.markdownPartId)))),
   );
+  const deliveryArtifactParts = turn.status === "completed"
+    ? selectDeliveryArtifacts(artifactParts)
+    : [];
   // The model writes `[E1]` so the support check can tell which passage each
   // sentence rests on. The reader has no use for the number, so the marker is
   // shown as the document it stands for. Order is the marker order the runtime
@@ -286,15 +290,6 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
               const citation = citationParts.find((candidate) => candidate.citationId === citationId);
               if (citation) onOpenCitation(citation);
             }}
-            artifactLinks={inlineArtifactsByMarkdown.get(part.id)}
-            onOpenArtifactLink={(artifactPartId) => {
-              const artifact = artifactParts.find((candidate) => candidate.id === artifactPartId);
-              if (artifact) onOpenArtifact(artifact);
-            }}
-            onOpenArtifactLinkMenu={onOpenArtifactMenu ? (artifactPartId, anchor) => {
-              const artifact = artifactParts.find((candidate) => candidate.id === artifactPartId);
-              if (artifact) onOpenArtifactMenu(artifact, anchor);
-            } : undefined}
           />
           {part.citationIds?.length ? <div className="structured-inline-citations" aria-label={language === "zh" ? "本段引用" : "Citations for this section"}>
             {part.citationIds.map((citationId) => {
@@ -381,7 +376,28 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
       </header>}
       {importantNoticeParts.length ? <section className="structured-important-notices">{importantNoticeParts.map(renderPart)}</section> : null}
       {interactionParts.length ? <section className="structured-interaction-layer" aria-label={language === "zh" ? "待用户交互" : "User action required"}>{interactionParts.map(renderPart)}</section> : null}
-      {resultParts.length ? <section className="structured-result-layer"><h3>{language === "zh" ? "回答" : "Answer"}</h3>{resultParts.map(renderPart)}</section> : null}
+      {resultParts.length || deliveryArtifactParts.length ? (
+        <section className="structured-result-layer">
+          <h3>{language === "zh" ? "回答" : "Answer"}</h3>
+          {resultParts.map(renderPart)}
+          {deliveryArtifactParts.length ? (
+            <div className="structured-result-files" aria-label={language === "zh" ? "生成的文件" : "Generated files"}>
+              {deliveryArtifactParts.map((part) => (
+                <ArtifactItem
+                  key={part.id}
+                  part={part}
+                  language={language}
+                  workspacePath={workspacePath}
+                  resourceState={resourceState(part, resourceStates)}
+                  focused={focusedPartId === part.id}
+                  onOpen={() => onOpenArtifact(part)}
+                  onOpenMenu={onOpenArtifactMenu ? (anchor) => onOpenArtifactMenu(part, anchor) : undefined}
+                />
+              ))}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
       <PublicSourcesDisclosure sources={publicSources} language={language} onOpenLink={onOpenLink} running={turn.status === "running"} />
     </div>
   );
@@ -1023,6 +1039,59 @@ function isImageArtifact(part: ArtifactPart): boolean {
   if (part.mime?.toLowerCase().startsWith("image/")) return true;
   const name = `${part.name || ""} ${part.path || ""}`.toLowerCase();
   return /\.(png|jpe?g|gif|webp|bmp|svg)(?:$|[?#])/i.test(name);
+}
+
+const DOCUMENT_ARTIFACT_EXT = /\.(pdf|docx?|pptx?|xlsx?|rtf|od[tsp])$/i;
+
+function artifactBaseName(part: ArtifactPart): string {
+  const leaf = (part.name || part.path || "").split(/[\\/]/).pop() || "";
+  return leaf.replace(/\.[^.]+$/, "").toLowerCase();
+}
+
+/** Agent often ships `foo-预览.png` / `foo-preview.png` next to `foo.pdf` — hide the thumbnail. */
+function isCompanionPreviewImage(
+  part: ArtifactPart,
+  documents: readonly ArtifactPart[],
+): boolean {
+  if (!isImageArtifact(part) || documents.length === 0) return false;
+  const leaf = ((part.name || part.path || "").split(/[\\/]/).pop() || "").toLowerCase();
+  if (!/(?:^|[_\-.])(预览|preview|thumb|thumbnail)(?:[_\-.]|\.|$)/i.test(leaf)
+    && !/(预览|preview|thumb|thumbnail)\.(png|jpe?g|gif|webp)$/i.test(leaf)) {
+    return false;
+  }
+  const imageStem = leaf
+    .replace(/\.(png|jpe?g|gif|webp|bmp|svg)$/i, "")
+    .replace(/[-_.]?(预览|preview|thumb|thumbnail)$/i, "")
+    .toLowerCase();
+  return documents.some((doc) => {
+    const docStem = artifactBaseName(doc);
+    return Boolean(docStem) && (imageStem === docStem || imageStem.startsWith(`${docStem}-`) || imageStem.startsWith(`${docStem}_`));
+  });
+}
+
+/** One card per logical file: explicit deliver first, skip same-content copies. */
+function selectDeliveryArtifacts(parts: readonly ArtifactPart[]): ArtifactPart[] {
+  const selected: ArtifactPart[] = [];
+  const seenDigests = new Set<string>();
+  const seenSizeKeys = new Set<string>();
+  for (const part of parts) {
+    if (part.artifactType === "web") continue;
+    const digest = part.sha256?.trim();
+    if (digest) {
+      if (seenDigests.has(digest)) continue;
+      seenDigests.add(digest);
+      selected.push(part);
+      continue;
+    }
+    // Legacy turns without sha256: collapse deliver-copy + scanned source pairs.
+    const extension = (part.name.split(".").pop() || "").toLowerCase();
+    const sizeKey = part.size !== undefined ? `${part.size}:${extension}` : "";
+    if (sizeKey && seenSizeKeys.has(sizeKey)) continue;
+    if (sizeKey) seenSizeKeys.add(sizeKey);
+    selected.push(part);
+  }
+  const documents = selected.filter((part) => DOCUMENT_ARTIFACT_EXT.test(part.name || part.path || ""));
+  return selected.filter((part) => !isCompanionPreviewImage(part, documents));
 }
 
 function formatArtifactSize(size: number | undefined): string | undefined {

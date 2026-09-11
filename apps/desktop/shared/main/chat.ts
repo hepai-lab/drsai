@@ -52,6 +52,12 @@ import {
 import { desktopDiagnostics, type DiagnosticOperationHandle } from "./diagnostics";
 import { BoundedEventDispatcher } from "./boundedEventDispatcher";
 import { BackpressureController } from "./backpressureController";
+import {
+  isRendererIpcTargetGone,
+  resumeRendererIpc,
+  suspendRendererIpc,
+  trySendToRenderer,
+} from "./rendererIpcTarget";
 import { listRecordedChatRunEvents, recordChatRunEvent } from "./chatRunJournal";
 import { codexContinuationAction } from "./codexSessionResumePolicy";
 import { selectCurrentUserInput } from "./chatInput";
@@ -69,6 +75,10 @@ export interface ChatEventTarget {
   send(channel: string, ...args: unknown[]): void;
   /** When true the renderer frame is gone; the dispatcher must stop sending. */
   isDestroyed?(): boolean;
+  /** True while the main frame is (re)loading — IPC to the old frame is unsafe. */
+  isLoadingMainFrame?(): boolean;
+  /** Electron WebContents main frame; used to detect reload disposal gaps. */
+  mainFrame?: { isDestroyed(): boolean };
 }
 
 const chatEventDispatchers = new WeakMap<ChatEventTarget, BoundedEventDispatcher<ChatEvent>>();
@@ -106,12 +116,12 @@ function getChatEventDispatcher(target: ChatEventTarget): BoundedEventDispatcher
   const dispatcher = new BoundedEventDispatcher<ChatEvent>({
     capacity: 256,
     deliver: (event) => {
-      // Do NOT swallow errors here. If target.send() throws (frame disposed),
-      // the error propagates to flush() which calls close() and permanently
-      // stops the dispatcher. The previous try/catch swallowed the error so
-      // flush() never saw it and close() was never called -- the dispatcher
-      // stayed open and spammed "Render frame was disposed" errors forever.
-      target.send("desktop:chat-event", event);
+      // Never call send() on a disposed frame — Electron often logs
+      // "Render frame was disposed" without throwing, so shouldClose alone
+      // (isDestroyed) is not enough. Skip + throw so flush() closes.
+      if (!trySendToRenderer(target, "desktop:chat-event", event)) {
+        throw new Error("Render frame was disposed");
+      }
     },
     merge: (previous, next) => {
       if (previous.requestId !== next.requestId || previous.type !== next.type) return null;
@@ -144,7 +154,7 @@ function getChatEventDispatcher(target: ChatEventTarget): BoundedEventDispatcher
       return null;
     },
     schedule: controller.createAdaptiveScheduler(),
-    shouldClose: () => target.isDestroyed?.() ?? false,
+    shouldClose: () => isRendererIpcTargetGone(target),
   });
   chatEventDispatchers.set(target, dispatcher);
   return dispatcher;
@@ -251,6 +261,7 @@ export function hasActiveChats(): boolean {
  * releaseChatQuarantine() when the new frame is ready (did-finish-load).
  */
 export function quarantineChatDispatcher(target: ChatEventTarget): void {
+  suspendRendererIpc(target);
   chatQuarantinedTargets.add(target);
   disposeChatEventDispatcher(target);
 }
@@ -262,6 +273,7 @@ export function quarantineChatDispatcher(target: ChatEventTarget): void {
 export function releaseChatQuarantine(target: ChatEventTarget): void {
   chatQuarantinedTargets.delete(target);
   chatEventDispatchers.delete(target);
+  resumeRendererIpc(target);
 }
 
 /**

@@ -427,6 +427,7 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
       ...(item.content.path ? { path: String(item.content.path) } : {}),
       ...(item.content.mime_type ? { mime: String(item.content.mime_type) } : {}),
       ...(typeof item.content.size === "number" ? { size: item.content.size } : {}),
+      ...(typeof item.content.sha256 === "string" && item.content.sha256 ? { sha256: String(item.content.sha256) } : {}),
       ...(typeof item.content.previewable === "boolean" ? { previewable: item.content.previewable } : {}),
       ...(typeof item.content.downloadable === "boolean" ? { downloadable: item.content.downloadable } : {}),
       ...(reference ? { resourceRef: reference } : {}),

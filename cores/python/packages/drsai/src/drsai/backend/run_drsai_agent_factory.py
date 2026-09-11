@@ -374,7 +374,13 @@ def _build_cwd_prompt(cli_cfg: dict[str, Any], work_dir: str = "") -> str:
             "the `artifacts/` directory in this Workspace. Use private "
             "temporary storage only for scripts, caches, and intermediate "
             "files, and never report an internal storage path as a delivered "
-            "result."
+            "result.\n"
+            "Do not create companion preview/thumbnail images for documents "
+            "(for example `*-预览.png` / `*-preview.png` next to a PDF or "
+            "Office file) unless the user explicitly asked for an image. "
+            "Desktop previews PDF and Office natively. Presentation skills "
+            "that require per-slide review images are an exception when that "
+            "skill is active."
         )
     extra = os.environ.get("DRSAI_SYSTEM_MESSAGE") or cli_cfg.get("system_message") or ""
     extra = str(extra).strip()

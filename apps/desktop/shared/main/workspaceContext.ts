@@ -84,18 +84,22 @@ const TEXT_EXTENSIONS = new Set([
   ".ini",
   ".js",
   ".jsx",
+  ".less",
   ".log",
   ".md",
   ".mjs",
   ".ps1",
   ".py",
   ".rs",
+  ".sass",
+  ".scss",
   ".sh",
   ".sql",
   ".toml",
   ".ts",
   ".tsx",
   ".txt",
+  ".vue",
   ".xml",
   ".yaml",
   ".yml",
@@ -116,19 +120,27 @@ const CODE_EXTENSIONS = new Set([
   ".c",
   ".cpp",
   ".cs",
+  ".css",
   ".go",
   ".java",
   ".js",
   ".jsx",
   ".kt",
+  ".less",
   ".mjs",
   ".php",
   ".py",
   ".rb",
   ".rs",
+  ".sass",
+  ".scss",
+  ".sh",
+  ".sql",
+  ".svelte",
   ".swift",
   ".ts",
   ".tsx",
+  ".vue",
 ]);
 
 const IMAGE_MIME: Record<string, string> = {
@@ -157,7 +169,24 @@ const OFFICE_EXTENSIONS = new Set([".docx", ".pptx", ".xlsx", ".doc", ".ppt", ".
 export function prefersLocalRichPreview(filePath: string | undefined): boolean {
   if (!filePath) return false;
   const extension = extname(filePath).toLowerCase();
-  return OFFICE_EXTENSIONS.has(extension) || extension === ".pdf";
+  // Images must not go through gateway /file with a small max_bytes cap — a
+  // truncated JPEG/PNG data URL only decodes the top of the picture.
+  if (OFFICE_EXTENSIONS.has(extension) || extension === ".pdf" || extension in IMAGE_MIME) {
+    return true;
+  }
+  // Text / code / json / yaml: always read a UTF-8 source body locally so the
+  // preview pane shows the file itself instead of metadata-only fallbacks.
+  return CODE_EXTENSIONS.has(extension)
+    || TEXT_EXTENSIONS.has(extension)
+    || CONFIG_EXTENSIONS.has(extension)
+    || extension === ".json"
+    || extension === ".ipynb"
+    || extension === ".csv"
+    || extension === ".tsv"
+    || extension === ".md"
+    || extension === ".mdx"
+    || extension === ".html"
+    || extension === ".htm";
 }
 
 export async function getWorkspaceContextOverview(
@@ -1047,6 +1076,28 @@ export async function previewWorkspaceFile(
   }
 
   if (kind === "pdf") {
+    // Prefer original PDF bytes for iframe preview. Extracted text is only a
+    // fallback when the file is too large to ship raw.
+    const MAX_PDF_RAW_BYTES = 15_000_000;
+    let dataUrl: string | undefined;
+    let sizeMessage: string | undefined;
+    if (fileStat.size <= MAX_PDF_RAW_BYTES) {
+      try {
+        const rawBuffer = await readFile(target);
+        dataUrl = `data:application/pdf;base64,${rawBuffer.toString("base64")}`;
+      } catch {
+        // Continue with text-only preview if raw read fails.
+      }
+    } else {
+      sizeMessage = `PDF is larger than ${Math.round(MAX_PDF_RAW_BYTES / (1024 * 1024))} MB; inline preview is disabled. Use system open for the full document.`;
+    }
+    if (dataUrl) {
+      return {
+        ...base,
+        dataUrl,
+        message: undefined,
+      };
+    }
     const presentation = await extractPresentationPdf(target);
     const pdfText = presentation
       ? formatPresentationPdfSummary(presentation, Math.max(maxBytes, 120_000))
@@ -1057,18 +1108,18 @@ export async function previewWorkspaceFile(
       ...(presentation?.type === "presentation_pdf" && presentation.analysis
         ? { presentationStory: buildPresentationStory(presentation) }
         : {}),
-      message: pdfText
-        ? "Extracted structured PDF text with page roles for analysis."
-        : getMetadataOnlyMessage(kind),
+      message: sizeMessage
+        ?? (pdfText
+          ? "Extracted PDF text preview; open externally for the full document."
+          : getMetadataOnlyMessage(kind)),
     };
   }
 
   if (
     kind === "office"
   ) {
-    const officeText = await extractOfficeText(target, extension, Math.min(fileStat.size, maxBytes));
-    // Include raw bytes for in-browser rich rendering (docx-preview / JSZip).
-    // Cap at 10 MB to avoid IPC serialization issues.
+    // Prefer original bytes for in-browser rich rendering (docx-preview / JSZip).
+    // Extracted text is only a fallback when the file is too large to ship raw.
     const MAX_OFFICE_RAW_BYTES = 10_000_000;
     let dataUrl: string | undefined;
     if (fileStat.size <= MAX_OFFICE_RAW_BYTES) {
@@ -1076,15 +1127,24 @@ export async function previewWorkspaceFile(
         const rawBuffer = await readFile(target);
         dataUrl = `data:${base.mime};base64,${rawBuffer.toString("base64")}`;
       } catch {
-        // If raw read fails, continue with text-only preview.
+        // Fall through to text extraction.
       }
     }
+    if (dataUrl) {
+      return {
+        ...base,
+        dataUrl,
+        // Keep a short notice out of the primary preview chrome — the renderer
+        // shows the original document when bytes are present.
+        message: undefined,
+      };
+    }
+    const officeText = await extractOfficeText(target, extension, Math.min(fileStat.size, maxBytes));
     return {
       ...base,
       content: officeText || undefined,
-      dataUrl,
       message: officeText
-        ? "Extracted a basic text preview from the Office document."
+        ? "Document is too large for inline layout preview; showing extracted text."
         : getMetadataOnlyMessage(kind),
     };
   }
@@ -1673,14 +1733,20 @@ function getMime(extension: string, kind: WorkspacePreviewKind): string {
   if (kind === "markdown") return "text/markdown";
   if (kind === "html") return "text/html";
   if (kind === "pdf") return "application/pdf";
+  if (extension === ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (extension === ".doc") return "application/msword";
+  if (extension === ".pptx") return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  if (extension === ".ppt") return "application/vnd.ms-powerpoint";
+  if (extension === ".xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (extension === ".xls") return "application/vnd.ms-excel";
   if (kind === "office") return "application/vnd.openxmlformats-officedocument";
   if (kind === "binary") return "application/octet-stream";
   return "text/plain";
 }
 
 function getMetadataOnlyMessage(kind: WorkspacePreviewKind): string {
-  if (kind === "pdf") return "PDF preview is metadata-only in this version; add a text summary in V2.";
-  if (kind === "office") return "Office preview is metadata-only in this version; extraction arrives in V2.";
+  if (kind === "pdf") return "PDF preview is unavailable for this file; try opening it with the system viewer.";
+  if (kind === "office") return "Office preview could not extract content; try opening it with the system viewer.";
   if (kind === "large") return "Large file preview is limited to metadata unless explicitly opened.";
   return "Preview shows metadata only for this file type.";
 }
@@ -2332,6 +2398,13 @@ export function convertGatewayFilePreview(
   const absolutePath = join(workspacePath, response.path);
   const name = basename(response.path);
   const kind = classifyPreviewKind(response.path, response.size);
+  const modifiedRaw = response.modified_at as string | number | undefined;
+  const modifiedAt = typeof modifiedRaw === "number"
+    ? new Date(modifiedRaw * (modifiedRaw < 1e12 ? 1000 : 1)).toISOString()
+    : String(modifiedRaw ?? new Date().toISOString());
+  // Prefer UTF-8 text body for text-like kinds even when the gateway also
+  // attached a data URL (e.g. mis-detected binary).
+  const textContent = typeof response.content === "string" ? response.content : undefined;
   return {
     workspacePath,
     path: absolutePath,
@@ -2340,11 +2413,11 @@ export function convertGatewayFilePreview(
     kind,
     mime: response.mime,
     size: response.size,
-    modifiedAt: response.modified_at,
+    modifiedAt,
     truncated: response.truncated,
     fileHash: response.sha256,
-    content: response.content,
-    dataUrl: response.data_url,
+    content: textContent,
+    dataUrl: textContent != null && !response.binary ? undefined : response.data_url,
   };
 }
 
@@ -2393,9 +2466,20 @@ export async function previewWorkspaceFileViaGateway(
   const workspaceId = request.workspaceId;
   if (!workspaceId) throw new Error("workspaceId is required for gateway file preview");
 
+  const extension = extname(request.path).toLowerCase();
+  const imagePreview = extension in IMAGE_MIME;
+  // Match local previewWorkspaceFile: images need the full file, not a
+  // text-oriented max_bytes sample that corrupts the bitmap.
+  const maxBytes = imagePreview
+    ? Math.min(1_048_576, MAX_IMAGE_DATA_URL_BYTES)
+    : clampInt(request.maxBytes, 8_000, 500_000, DEFAULT_PREVIEW_BYTES);
+
+  // Gateway expects a workspace-relative path; tree selection often passes absolute.
+  const relativePath = relativeWorkspacePath(request.workspacePath, request.path) || request.path;
+
   const params = new URLSearchParams();
-  params.set("path", request.path);
-  params.set("max_bytes", String(clampInt(request.maxBytes, 8_000, 500_000, DEFAULT_PREVIEW_BYTES)));
+  params.set("path", relativePath);
+  params.set("max_bytes", String(maxBytes));
 
   const response = await client.requestFiles<GatewayFileReadResponse>(
     workspaceId,
