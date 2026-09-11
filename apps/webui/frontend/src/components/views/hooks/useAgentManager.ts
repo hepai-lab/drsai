@@ -15,6 +15,33 @@ import { agentAPI, agentWorkerAPI } from '../api';
 
 const HINT_ROTATE_MS = 2400;
 
+function findShareTarget(
+  agents: Agent[],
+  urlAgentId: string | null,
+  urlAgentName: string | null,
+): Agent | undefined {
+  let matched: Agent | undefined;
+  if (urlAgentId) {
+    matched = agents.find((a) => a.id === urlAgentId);
+  }
+  if (!matched && urlAgentName) {
+    matched = agents.find((a) => agentNameMatches(a.name, urlAgentName));
+  }
+  return matched;
+}
+
+function clearShareAgentParams(urlParams: URLSearchParams): void {
+  urlParams.delete("share_agent");
+  urlParams.delete("agentId");
+  urlParams.delete("agentName");
+  const newSearch = urlParams.toString();
+  window.history.replaceState(
+    null,
+    "",
+    newSearch ? `?${newSearch}` : window.location.pathname,
+  );
+}
+
 export const useAgentManager = (userEmail: string | undefined) => {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -95,8 +122,20 @@ export const useAgentManager = (userEmail: string | undefined) => {
         mode,
       });
 
-      if (!newAgents && isBrandNewUser) {
-        startHintRotation(platformPolicy?.default_agent_name);
+      const urlParamsEarly = new URLSearchParams(window.location.search);
+      const shareAgentEarly = urlParamsEarly.get("share_agent") === "true";
+      const shareAgentNameEarly = urlParamsEarly.get("agentName");
+      // Deep-link / CSNS redirect must refresh DDF so the named agent can appear.
+      const forceShareRefresh = shareAgentEarly && Boolean(
+        urlParamsEarly.get("agentId") || shareAgentNameEarly,
+      );
+
+      if (!newAgents && (isBrandNewUser || forceShareRefresh)) {
+        startHintRotation(
+          shareAgentNameEarly ||
+            platformPolicy?.science_default_agent_name ||
+            platformPolicy?.default_agent_name,
+        );
       }
 
       let res: Agent[];
@@ -104,7 +143,7 @@ export const useAgentManager = (userEmail: string | undefined) => {
         res = newAgents;
       } else {
         let catalogApiKey = "";
-        if (isBrandNewUser) {
+        if (isBrandNewUser || forceShareRefresh) {
           try {
             catalogApiKey =
               (await getModelApiKeyFromSettings(userEmail)) ?? "";
@@ -118,7 +157,7 @@ export const useAgentManager = (userEmail: string | undefined) => {
         const refreshed = await agentWorkerAPI.getUserAgents(
           userEmail,
           catalogApiKey,
-          isBrandNewUser,
+          isBrandNewUser || forceShareRefresh,
         );
         res = (refreshed || []) as Agent[];
       }
@@ -130,6 +169,7 @@ export const useAgentManager = (userEmail: string | undefined) => {
       }
 
       // URL share_agent=true + agentId/agentName 直链展示指定智能体
+      let shareMissAfterRefresh = false;
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const shareAgent = urlParams.get("share_agent");
@@ -139,26 +179,50 @@ export const useAgentManager = (userEmail: string | undefined) => {
           const urlAgentName = urlParams.get("agentName");
           console.log("[agentLink] useAgentManager: agentId =", urlAgentId, "agentName =", urlAgentName);
           if (urlAgentId || urlAgentName) {
-            let matched: Agent | undefined;
-            if (urlAgentId) {
-              matched = res.find((a) => a.id === urlAgentId);
-            }
-            if (!matched && urlAgentName) {
-              const candidates = res.map((a) => a.name);
-              console.log("[agentLink] useAgentManager: looking for", urlAgentName, "in", candidates);
-              matched = res.find((a) => agentNameMatches(a.name, urlAgentName));
-            }
+            let matched = findShareTarget(res, urlAgentId, urlAgentName);
             console.log("[agentLink] useAgentManager: matched =", matched?.name || matched?.id || "NONE");
+
+            // Catalog may only have DocMaster if DDF failed earlier — force one refresh.
+            if (!matched && !newAgents) {
+              console.warn(
+                "[agentLink] share target missing; forcing catalog refresh",
+                { urlAgentId, urlAgentName, names: res.map((a) => a.name) },
+              );
+              startHintRotation(
+                urlAgentName ||
+                  platformPolicy?.science_default_agent_name ||
+                  platformPolicy?.default_agent_name,
+              );
+              let catalogApiKey = "";
+              try {
+                catalogApiKey =
+                  (await getModelApiKeyFromSettings(userEmail)) ?? "";
+              } catch {
+                /* ignore */
+              }
+              const retried = await agentWorkerAPI.getUserAgents(
+                userEmail,
+                catalogApiKey,
+                true,
+              );
+              res = (retried || []) as Agent[];
+              setAgents(res);
+              matched = findShareTarget(res, urlAgentId, urlAgentName);
+              console.log(
+                "[agentLink] useAgentManager: after refresh matched =",
+                matched?.name || matched?.id || "NONE",
+              );
+            }
+
             if (matched) {
               await applyAgent(matched);
-              // 清除 URL 参数避免刷新时重复命中
-              urlParams.delete("share_agent");
-              urlParams.delete("agentId");
-              urlParams.delete("agentName");
-              const newSearch = urlParams.toString();
-              window.history.replaceState(null, "", newSearch ? `?${newSearch}` : window.location.pathname);
+              clearShareAgentParams(urlParams);
               return;
             }
+
+            // Still missing: do not silently fall through to DocMaster is_default.
+            shareMissAfterRefresh = true;
+            clearShareAgentParams(urlParams);
           }
         }
       } catch { /* URL 解析失败不影响正常流程 */ }
@@ -167,6 +231,8 @@ export const useAgentManager = (userEmail: string | undefined) => {
       const fallbackAgent = policyDefault;
 
       const resolveLastUsedFromPersist = (): Agent | undefined => {
+        // After a failed share_agent deep-link, ignore stale last-used DocMaster.
+        if (shareMissAfterRefresh) return undefined;
         if (recentFirstId) {
           const byRecent = res.find((a) => a.id === recentFirstId);
           if (byRecent) return byRecent;
@@ -181,7 +247,7 @@ export const useAgentManager = (userEmail: string | undefined) => {
         return undefined;
       };
 
-      if (selectedAgent && selectedAgent.mode) {
+      if (!shareMissAfterRefresh && selectedAgent && selectedAgent.mode) {
         const existingAgent = res.find(
           (agent) => agent.mode === selectedAgent.mode
         );
@@ -210,7 +276,12 @@ export const useAgentManager = (userEmail: string | undefined) => {
 
       // Final fallback: when no agent was auto-selected (e.g. science_user with
       // only one agent and no platform policy), pick the preferred agent from the list.
-      if (!useModeConfigStore.getState().agentId && res.length > 0) {
+      // Skip when share_agent demanded a named agent that is still missing — avoid DocMaster.
+      if (
+        !shareMissAfterRefresh &&
+        !useModeConfigStore.getState().agentId &&
+        res.length > 0
+      ) {
         const preferred = pickPreferredAgentFromList(res);
         if (preferred) {
           await applyAgent(preferred);

@@ -111,13 +111,24 @@ def _resolve_platform_api_key(
     is_refresh: bool = False,
     user_source: str | None = None,
 ) -> str:
-    """Prefer caller Bearer; on DDF refresh without Bearer use user's HepAI key; else admin env."""
+    """Prefer caller Bearer; else shared/personal key; else admin env.
+
+    CSNS / science embed users (shared-key sources) resolve the shared key even
+    when the client did not pass Bearer and is_refresh is false — otherwise the
+    first catalog load can persist an empty DDF cache and stick on DocMaster.
+    """
     apikey = ""
     if authorization and authorization.startswith("Bearer "):
         apikey = authorization[7:].strip()
     if apikey:
         return apikey
-    if is_refresh and user_id:
+
+    from drsai_ui.drsai_adapter.personal_config_fetcher import uses_shared_api_key
+
+    should_resolve_user_key = bool(user_id) and (
+        is_refresh or uses_shared_api_key(user_source)
+    )
+    if should_resolve_user_key:
         try:
             from drsai_ui.drsai_adapter.singleton import (
                 personal_key_config_fetcher as fetcher,
@@ -213,10 +224,16 @@ def get_agent_mode_config(
 def get_default_agent_mode_config(
     user_id: str, user_source: str | None = None
 ) -> List[Dict[str, Any]]:
-    """Return the default agent list for a user."""
+    """Return the default agent list for a user.
+
+    For CSNS embed users (``user_source=user_agent``), do not mark the first
+    DEFAULT_REMOTE_AGENTS entry (often DocMaster) as ``is_default`` — their
+    product default is iPanda from DDF / ``DRUSER_AGENT_DEFAULT_AGENT_NAME``.
+    """
     agents_list = []
     DEFAULT_REMOTE_AGENTS = os.getenv("DEFAULT_REMOTE_AGENTS", None)
     loaded_default_remote_agents = False
+    source = (user_source or "").strip()
     if DEFAULT_REMOTE_AGENTS:
         try:
             p = Path(DEFAULT_REMOTE_AGENTS).expanduser()
@@ -238,7 +255,14 @@ def get_default_agent_mode_config(
                         agent.update({"id": str(uuid.uuid4())})
                 # First entry is treated as default (downstream-friendly).
                 # If the config already has an explicit `is_default`, we keep it.
-                if default_agents and not any(bool(a.get("is_default")) for a in default_agents):
+                # CSNS users must not inherit DocMaster as is_default.
+                if source == "user_agent":
+                    for agent in default_agents:
+                        if isinstance(agent, dict):
+                            agent["is_default"] = False
+                elif default_agents and not any(
+                    bool(a.get("is_default")) for a in default_agents
+                ):
                     default_agents[0]["is_default"] = True
                 agents_list.extend(default_agents)
                 loaded_default_remote_agents = True
@@ -308,27 +332,37 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
     try:
         # Check cache first
         response = db.get(UserDDFAgents, filters={"user_id": user_id})
-        
+
         agents_name_old = {}
         if response.status and response.data:
             user_ddf_agents = response.data[0]
             agents_old = user_ddf_agents.agents or []
-            agents_name_old = {agent["name"]: agent for agent in agents_old}
-            if not is_refresh:
-                # Check if cache is still valid (less than 2 hours old)
+            agents_name_old = {
+                agent["name"]: agent
+                for agent in agents_old
+                if isinstance(agent, dict) and agent.get("name")
+            }
+            # Empty catalog is never a valid cache hit.
+            if not is_refresh and agents_old:
+                time_diff = timedelta(hours=3)
                 if user_ddf_agents.updated_at:
-                    time_diff = datetime.now() - user_ddf_agents.updated_at.replace(tzinfo=None)
+                    time_diff = datetime.now() - user_ddf_agents.updated_at.replace(
+                        tzinfo=None
+                    )
                 cached_platform_urls = {
                     str((agent.get("config") or {}).get("url") or "").rstrip("/")
                     for agent in agents_old
+                    if isinstance(agent, dict)
                 }
                 cache_matches_platform = cached_platform_urls == {platform.base_url}
                 if time_diff < timedelta(hours=2) and cache_matches_platform:
-                    # Return cached data
                     return {"status": True, "data": agents_old}
 
         apikey = _resolve_platform_api_key(
-            authorization, user_id=user_id, is_refresh=is_refresh, user_source=user_source
+            authorization,
+            user_id=user_id,
+            is_refresh=is_refresh,
+            user_source=user_source,
         )
         if not apikey:
             return {"status": True, "data": agents_old}
@@ -375,33 +409,50 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
             except Exception:
                 return None
 
-        model_ids = [model.id for model in models.data if model.id != "hepai/custom-model"]
+        model_ids = []
+        for model in getattr(models, "data", None) or []:
+            if isinstance(model, dict):
+                mid = str(model.get("id") or "").strip()
+            else:
+                mid = str(getattr(model, "id", None) or "").strip()
+            if mid and mid != "hepai/custom-model":
+                model_ids.append(mid)
         if model_ids:
-            fetched_agents = await asyncio.gather(*(_fetch_model_info(model_id) for model_id in model_ids))
+            fetched_agents = await asyncio.gather(
+                *(_fetch_model_info(model_id) for model_id in model_ids)
+            )
         else:
             fetched_agents = []
         agents = [agent for agent in fetched_agents if agent]
 
-        # 保持用户体验：刷新失败时不要把已有列表变为空
+        # Refresh failure must not wipe a non-empty catalog; do not persist a
+        # brand-new empty list (poisons later loads).
         if not agents and agents_old:
             agents = agents_old
-        
-        # Update cache
-        if response.status and response.data:
-            # Update existing record
-            if user_ddf_agents is not None and agents != agents_old:
-                user_ddf_agents.agents = agents
-                db.upsert(user_ddf_agents)
-        else:
-            # Create new record
-            new_user_ddf_agents = UserDDFAgents(
-                user_id=user_id,
-                agents=agents
-            )
-            db.upsert(new_user_ddf_agents)
-            
+
+        if agents:
+            if response.status and response.data:
+                if user_ddf_agents is not None and agents != agents_old:
+                    user_ddf_agents.agents = agents
+                    db.upsert(user_ddf_agents)
+            else:
+                db.upsert(
+                    UserDDFAgents(
+                        user_id=user_id,
+                        agents=agents,
+                    )
+                )
+        elif response.status and response.data and user_ddf_agents is not None:
+            if not agents_old:
+                try:
+                    db.delete(UserDDFAgents, filters={"user_id": user_id})
+                except Exception:
+                    logger.warning(
+                        "Failed to clear empty DDF cache for user %s", user_id
+                    )
+
         return {"status": True, "data": agents}
-    
+
     except Exception as e:
         logger.warning("Failed to refresh DDF agents for user %s: %s", user_id, str(e))
         return {"status": True, "data": agents_old}
@@ -542,6 +593,17 @@ async def get_user_agents(
 
     # Mark featured/default agent flags for UI consumption
     _mark_featured_and_default_agents(agents_list)
+
+    # CSNS embed: product default is iPanda (name match), not DocMaster from
+    # DEFAULT_REMOTE_AGENTS. Re-stamp is_default after the merge.
+    if (user_source or "").strip() == "user_agent":
+        target = get_user_agent_default_agent_name()
+        matched = find_agent_by_name(agents_list, target)
+        if matched and matched.get("id"):
+            matched_id = str(matched["id"])
+            for agent in agents_list:
+                if isinstance(agent, dict):
+                    agent["is_default"] = str(agent.get("id") or "") == matched_id
 
     # 刷新进入UserAgents
     response = db.get(UserAgents, filters={"user_id": user_id})
