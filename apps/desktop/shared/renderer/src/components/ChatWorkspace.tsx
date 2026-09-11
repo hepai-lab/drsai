@@ -110,6 +110,7 @@ import { StructuredMessageParts, type InteractionResponse } from "./StructuredMe
 import { getReasoningChatText, getVisibleChatText, stripAgentToolDebugText } from "../chatOutputModel";
 import { createSmoothFollowOutputController } from "../smoothFollowOutput";
 import { KnowledgeBaseSelector } from "./KnowledgeBaseSelector";
+import { FilePreviewer } from "./files/file_previewer/FilePreviewer";
 import { VoiceCaptureBar } from "./voice/VoiceCaptureBar";
 import { VoiceReviewBar } from "./voice/VoiceReviewBar";
 import {
@@ -234,7 +235,9 @@ const THINKING_EFFORTS: ThinkingEffort[] = ["none", "low", "medium", "high", "xh
 const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGE_COUNT = 4;
 const MAX_CLIPBOARD_PATH_MENTIONS = 6;
-const AT_BOTTOM_TOLERANCE = 4;
+// Generous tolerance so subpixel scroll, trackpad settle, and near-bottom
+// scrollbar clicks don't leave the "jump to latest" affordance stuck on.
+const AT_BOTTOM_TOLERANCE = 64;
 
 // Module-level style constants to avoid creating new object references on every render.
 const VOICE_BUTTON_WRAPPER_STYLE: React.CSSProperties = { position: "relative", display: "inline-flex" };
@@ -1819,6 +1822,15 @@ function ChatWorkspaceImpl({
     return Math.max(0, list.scrollHeight - list.clientHeight);
   }
 
+  function isMessageListAtBottom(list: HTMLDivElement): boolean {
+    return getMessageListMaxScrollTop(list) - list.scrollTop <= AT_BOTTOM_TOLERANCE;
+  }
+
+  function syncAwayFromLatestFromScroll(list: HTMLDivElement): void {
+    const atBottom = isMessageListAtBottom(list);
+    setAwayFromLatest((current) => (current === !atBottom ? current : !atBottom));
+  }
+
   function scrollMessageListToLatest(behavior: ScrollBehavior = "auto"): void {
     const list = messageListRef.current;
     if (!list) return;
@@ -1841,7 +1853,11 @@ function ChatWorkspaceImpl({
   }
 
   useEffect(() => {
-    if (!messageListRef.current || !shouldFollowOutputRef.current) return;
+    if (!messageListRef.current) return;
+    if (!shouldFollowOutputRef.current) {
+      syncAwayFromLatestFromScroll(messageListRef.current);
+      return;
+    }
     if (!hasStreamingMessage) {
       scrollMessageListToLatest("smooth");
       if (finalScrollSettleTimerRef.current !== null) window.clearTimeout(finalScrollSettleTimerRef.current);
@@ -1870,10 +1886,16 @@ function ChatWorkspaceImpl({
     const lastMessage = list?.lastElementChild;
     if (!list || !lastMessage) return undefined;
     const observer = new ResizeObserver(() => {
-      if (!shouldFollowOutputRef.current) return;
+      if (!shouldFollowOutputRef.current) {
+        // Content grew/shrank while the user is paused — keep the jump button
+        // in sync with the real distance from the latest messages.
+        if (messageListRef.current) syncAwayFromLatestFromScroll(messageListRef.current);
+        smoothFollowOutput.handleHeightChange(list.scrollHeight);
+        return;
+      }
       // Direct scroll on height change — more reliable than handleHeightChange
       // which may be gated by controller state (pendingFrame, following, etc.)
-      const frame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
         if (shouldFollowOutputRef.current && messageListRef.current) {
           scrollMessageListToLatest("auto");
         }
@@ -1968,17 +1990,19 @@ function ChatWorkspaceImpl({
     const list = messageListRef.current;
     if (!list) return;
     const maxScrollTop = getMessageListMaxScrollTop(list);
+    const atBottom = isMessageListAtBottom(list);
     // If this scroll was triggered by our own programmatic scrollTo, don't
     // treat it as user intent. Just sync state.
     if (programmaticScrollRef.current) {
       // Check if we've reached the bottom — re-enable follow if so.
-      if (maxScrollTop - list.scrollTop <= AT_BOTTOM_TOLERANCE) {
+      if (atBottom) {
         programmaticScrollRef.current = false;
         if (programmaticScrollTimerRef.current !== null) {
           window.clearTimeout(programmaticScrollTimerRef.current);
           programmaticScrollTimerRef.current = null;
         }
         shouldFollowOutputRef.current = true;
+        smoothFollowOutput.resume();
         setAwayFromLatest(false);
       }
       return;
@@ -1986,16 +2010,16 @@ function ChatWorkspaceImpl({
     // User-initiated scroll: let smoothFollowOutput handle the state machine
     // (it distinguishes up/down, layout shrink, etc.), then sync our flag.
     const userPaused = smoothFollowOutput.handleScroll(list.scrollTop, maxScrollTop);
-    if (userPaused) {
-      // handleScroll detected upward movement and paused following
-      shouldFollowOutputRef.current = false;
-    } else if (maxScrollTop - list.scrollTop <= AT_BOTTOM_TOLERANCE) {
-      // Scrolled to the bottom — re-enable follow
+    // At-bottom wins over pause intent so the jump button never sticks while
+    // the viewport is already on the latest content (e.g. scrollbar click).
+    if (atBottom) {
       shouldFollowOutputRef.current = true;
+      smoothFollowOutput.resume();
+    } else if (userPaused) {
+      shouldFollowOutputRef.current = false;
     }
-    // Otherwise: keep current follow state (e.g., user scrolling down but
-    // not yet at the bottom shouldn't pause following)
-    setAwayFromLatest((current) => current === !shouldFollowOutputRef.current ? current : !shouldFollowOutputRef.current);
+    // Jump affordance tracks real distance from bottom, not follow-pause alone.
+    setAwayFromLatest((current) => (current === !atBottom ? current : !atBottom));
   }
 
   function handleMessageListWheel(event: React.WheelEvent<HTMLDivElement>): void {
@@ -2013,7 +2037,9 @@ function ChatWorkspaceImpl({
     if (!list) return;
     smoothFollowOutput.handleUserScrollIntent(list.scrollTop);
     shouldFollowOutputRef.current = false;
-    setAwayFromLatest(true);
+    // Only show the jump button once we've actually left the bottom; a wheel
+    // tick / trackpad bounce at the bottom must not leave it stuck visible.
+    syncAwayFromLatestFromScroll(list);
   }
 
   function pauseMessageListFollowForUserIntent(): void {
@@ -2029,7 +2055,7 @@ function ChatWorkspaceImpl({
     if (!list) return;
     smoothFollowOutput.handleUserScrollIntent(list.scrollTop);
     shouldFollowOutputRef.current = false;
-    setAwayFromLatest(true);
+    syncAwayFromLatestFromScroll(list);
   }
 
   function handleMessageListPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
@@ -3187,8 +3213,9 @@ function ChatWorkspaceImpl({
     // (dataUrl) which enables rich rendering (docx-preview, JSZip).  The P2
     // path only returns extracted text.
     const OFFICE_EXTS = new Set([".docx", ".pptx", ".xlsx", ".doc", ".ppt", ".xls"]);
+    const RICH_LOCAL_EXTS = new Set([...OFFICE_EXTS, ".pdf"]);
     const partExt = (part.path ?? "").match(/(\.[^.]+)$/)?.[1]?.toLowerCase() ?? "";
-    if (OFFICE_EXTS.has(partExt) && part.path && workspacePath) {
+    if (RICH_LOCAL_EXTS.has(partExt) && part.path && workspacePath) {
       try {
         const localPreview = await desktopApi.previewWorkspaceFile({
           workspacePath,
@@ -4433,7 +4460,7 @@ function ChatWorkspaceImpl({
                   aria-expanded={metaMenuOpen === "configuration"}
                   aria-haspopup="dialog"
                   onClick={() => toggleMetaMenu("configuration")}
-                  title={zh ? "智能体、模型、推理强度和任务模式" : "Agent, model, reasoning effort, and task mode"}
+                  title={composerConfigurationSummary}
                 >
                   <AgentInlineIcon agent={activeAgent} size={14} />
                   <span>{composerConfigurationSummary}</span>
@@ -5422,6 +5449,30 @@ function isImageAttachment(
   return isImageFileName(attachment.name) || isImageFileName(attachment.path);
 }
 
+function splitLocalFilePreviewPath(filePath: string): { workspacePath: string; relativePath: string } | null {
+  const trimmed = filePath.trim();
+  if (!trimmed || trimmed.startsWith("clipboard:")) return null;
+  const sepIdx = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (sepIdx <= 0) return null;
+  const workspacePath = trimmed.slice(0, sepIdx);
+  const relativePath = trimmed.slice(sepIdx + 1);
+  if (!workspacePath || !relativePath) return null;
+  return { workspacePath, relativePath };
+}
+
+function canOpenComposerFilePreview(attachment: ComposerAttachment): boolean {
+  if (attachment.kind === "folder" || attachment.kind === "terminal" || attachment.kind === "selection" || attachment.kind === "browser") {
+    return false;
+  }
+  if (attachment.folderImport?.phase === "scanning" || attachment.folderImport?.phase === "failed") {
+    return false;
+  }
+  if (attachment.importFile?.status && attachment.importFile.status !== "ready") {
+    return false;
+  }
+  return Boolean(splitLocalFilePreviewPath(attachment.path));
+}
+
 function ComposerAttachmentChip({
   attachment,
   workspacePath,
@@ -5445,7 +5496,9 @@ function ComposerAttachmentChip({
         : Paperclip;
   const previewSrc = useAttachmentImageSrc(attachment, workspacePath, attachment.importFile);
   const [lightboxOpen, setLightboxOpen] = useState(false);
-  const canPreview = Boolean(previewSrc);
+  const [filePreviewOpen, setFilePreviewOpen] = useState(false);
+  const canPreviewImage = Boolean(previewSrc);
+  const canPreviewFile = !canPreviewImage && canOpenComposerFilePreview(attachment);
   const copy = (
     <span className="composer-attachment-copy">
       <strong>{attachment.name}</strong>
@@ -5476,7 +5529,7 @@ function ComposerAttachmentChip({
       data-failed-count={attachment.folderImport?.failed ?? ""}
       data-duplicate-count={attachment.folderImport?.duplicates ?? ""}
     >
-      {canPreview && previewSrc ? (
+      {canPreviewImage && previewSrc ? (
         <button
           type="button"
           className="composer-attachment-preview"
@@ -5486,6 +5539,18 @@ function ComposerAttachmentChip({
           onClick={() => setLightboxOpen(true)}
         >
           <img className="composer-attachment-thumb" src={previewSrc} alt="" />
+          {copy}
+        </button>
+      ) : canPreviewFile ? (
+        <button
+          type="button"
+          className="composer-attachment-preview composer-attachment-file-preview"
+          title={zh ? `预览：${attachment.name}` : `Preview: ${attachment.name}`}
+          aria-label={zh ? `预览：${attachment.name}` : `Preview: ${attachment.name}`}
+          data-testid="composer-attachment-file-preview"
+          onClick={() => setFilePreviewOpen(true)}
+        >
+          <Icon size={14} />
           {copy}
         </button>
       ) : (
@@ -5509,6 +5574,16 @@ function ComposerAttachmentChip({
             path={attachment.path}
             zh={zh}
             onClose={() => setLightboxOpen(false)}
+          />
+        )
+        : null}
+      {filePreviewOpen
+        ? (
+          <ComposerFilePreviewLightbox
+            attachment={attachment}
+            language={zh ? "zh" : "en"}
+            zh={zh}
+            onClose={() => setFilePreviewOpen(false)}
           />
         )
         : null}
@@ -5605,6 +5680,110 @@ function AttachmentImageLightbox({
           </button>
         </header>
         <img src={src} alt={name} />
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function ComposerFilePreviewLightbox({
+  attachment,
+  language,
+  zh,
+  onClose,
+}: {
+  attachment: ComposerAttachment;
+  language: AppLanguage;
+  zh: boolean;
+  onClose: () => void;
+}): React.JSX.Element {
+  const [preview, setPreview] = useState<WorkspaceFilePreview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [onClose]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const parts = splitLocalFilePreviewPath(attachment.path);
+    if (!parts) {
+      setLoading(false);
+      setError(zh ? "无法解析附件路径。" : "Could not resolve attachment path.");
+      return () => undefined;
+    }
+
+    setLoading(true);
+    setError(null);
+    setPreview(null);
+    void (async () => {
+      try {
+        const result = await desktopApi.previewWorkspaceFile({
+          workspacePath: parts.workspacePath,
+          path: parts.relativePath,
+          maxBytes: 220_000,
+        });
+        if (cancelled) return;
+        setPreview(result);
+      } catch (cause) {
+        if (cancelled) return;
+        setPreview(null);
+        setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [attachment.path, zh]);
+
+  return createPortal(
+    <div
+      className="message-attachment-lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label={attachment.name}
+      data-testid="composer-file-preview-lightbox"
+    >
+      <button
+        type="button"
+        className="message-attachment-lightbox-backdrop"
+        aria-label={zh ? "关闭预览" : "Close preview"}
+        onClick={onClose}
+      />
+      <div className="message-attachment-lightbox-panel composer-file-preview-panel">
+        <header>
+          <strong title={attachment.path || attachment.name}>{attachment.name}</strong>
+          <button type="button" aria-label={zh ? "关闭" : "Close"} onClick={onClose}>
+            <X size={16} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="composer-file-preview-body">
+          {loading ? (
+            <p className="composer-file-preview-status">{zh ? "正在加载预览…" : "Loading preview…"}</p>
+          ) : null}
+          {error ? (
+            <p className="composer-file-preview-status" role="alert">{error}</p>
+          ) : null}
+          {!loading && !error && preview ? (
+            <FilePreviewer language={language} preview={preview} />
+          ) : null}
+        </div>
       </div>
     </div>,
     document.body,

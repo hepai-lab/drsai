@@ -3,6 +3,7 @@ import remarkGfm from "remark-gfm";
 import {
   ChevronDown,
   ChevronRight,
+  Cloud,
   Code,
   Download,
   ExternalLink,
@@ -14,11 +15,14 @@ import {
   Image as ImageIcon,
   RotateCw,
   Trash2,
-  X,
   Eye,
   EyeOff,
   ArrowLeft,
   Star,
+  Search,
+  FolderPlus,
+  Pencil,
+  Upload,
 } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GfsObjectInfo } from "@shared/desktopApi";
@@ -28,47 +32,26 @@ import { requestAppDecision } from "./AppDecisionDialog";
 
 type GfsPane = "favorites" | "mine";
 
-interface GfsFavorite {
+/** 与 WebUI 一致：收藏列表来自桶内 `favorites/` 前缀（写入由对话/预览等入口完成，云盘页只读+删除）。 */
+const GFS_FAVORITES_DIR = "favorites";
+
+function fileBaseName(path: string): string {
+  return path.replace(/\/+$/, "").split("/").pop() ?? path;
+}
+
+interface GfsFavoriteItem {
   path: string;
   name: string;
   size: number;
-  favoritedAt: number;
+  modifiedMs?: number;
 }
 
-/** 收藏仅存本机 localStorage，不与 GFS / 网关同步。 */
-const FAVORITES_KEY = "drsai:gfs:favorites";
-
-function loadFavorites(): GfsFavorite[] {
-  try {
-    const raw = localStorage.getItem(FAVORITES_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((item): item is GfsFavorite =>
-        Boolean(item)
-        && typeof item === "object"
-        && typeof (item as GfsFavorite).path === "string"
-        && typeof (item as GfsFavorite).name === "string",
-      )
-      .map((item) => ({
-        path: item.path,
-        name: item.name,
-        size: typeof item.size === "number" ? item.size : 0,
-        favoritedAt: typeof item.favoritedAt === "number" ? item.favoritedAt : Date.now(),
-      }));
-  } catch {
-    return [];
-  }
-}
-
-function saveFavorites(items: GfsFavorite[]): void {
-  try {
-    // 上限 200 条，避免 localStorage 膨胀
-    localStorage.setItem(FAVORITES_KEY, JSON.stringify(items.slice(0, 200)));
-  } catch {
-    /* ignore quota */
-  }
+function formatFavoriteTime(ms: number | undefined): string | null {
+  if (!ms || ms <= 0) return null;
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return null;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 // ── file type icons ────────────────────────────────────────────────────────────
@@ -439,6 +422,20 @@ function buildNode(item: GfsObjectInfo, parentPrefix: string): TreeFile {
   return { ...item, id: item.path, name, children: item.isDir ? [] : null };
 }
 
+function normalizeGfsDirPath(path: string): string {
+  const trimmed = path.replace(/\/+$/, "");
+  return trimmed ? `${trimmed}/` : "";
+}
+
+function isSameOrDescendantPath(parent: string, child: string): boolean {
+  const p = parent.replace(/\/+$/, "");
+  const c = child.replace(/\/+$/, "");
+  if (!p) return false;
+  return c === p || c.startsWith(`${p}/`);
+}
+
+const GFS_DND_MIME = "application/x-opendrsai-gfs-node";
+
 const TreeNode: React.FC<{
   node: TreeFile;
   depth: number;
@@ -452,26 +449,39 @@ const TreeNode: React.FC<{
   downloadingPath: string | null;
   selectedPaths: Set<string>;
   onToggleSelect: (path: string) => void;
-  favoritePaths: Set<string>;
-  onToggleFavorite: (file: { path: string; name: string; size: number }) => void;
+  renamingPath: string | null;
+  renameDraft: string;
+  onRenameDraftChange: (value: string) => void;
+  onStartRename: (node: TreeFile) => void;
+  onCommitRename: () => void;
+  onCancelRename: () => void;
+  onMove: (sourcePath: string, targetDir: string, isDir: boolean) => void;
+  dropTargetPath: string | null;
+  onDropTargetChange: (path: string | null) => void;
+  draggingPath: string | null;
+  onDraggingPathChange: (path: string | null) => void;
 }> = ({
   node, depth, expanded, loadingPaths, onToggleExpand, onNavigate, onPreview, onDelete, onDownload,
-  downloadingPath, selectedPaths, onToggleSelect, favoritePaths, onToggleFavorite,
+  downloadingPath, selectedPaths, onToggleSelect,
+  renamingPath, renameDraft, onRenameDraftChange, onStartRename, onCommitRename, onCancelRename,
+  onMove, dropTargetPath, onDropTargetChange, draggingPath, onDraggingPathChange,
 }) => {
   const isDir = node.isDir;
   const isOpen = expanded.has(node.id);
   const isSelected = selectedPaths.has(node.path);
-  const isFavorited = favoritePaths.has(node.path);
   const isLoading = loadingPaths.has(node.id);
+  const isRenaming = renamingPath === node.path;
+  const isDropTarget = isDir && dropTargetPath === node.path;
 
   const handleClick = useCallback(() => {
+    if (isRenaming) return;
     if (isDir) {
       onToggleExpand(node.id);
       onNavigate(node.path);
     } else {
       onPreview({ path: node.path, name: node.name, size: node.size, ext: getExt(node.path) });
     }
-  }, [isDir, node, onNavigate, onPreview, onToggleExpand]);
+  }, [isDir, isRenaming, node, onNavigate, onPreview, onToggleExpand]);
 
   const handleChevron = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -482,8 +492,53 @@ const TreeNode: React.FC<{
     <>
       <div
         style={{ paddingLeft: `${depth * 14 + 4}px` }}
-        className="gfs-tree-row group"
+        className={`gfs-tree-row group${isDropTarget ? " drop-target" : ""}`}
         onClick={handleClick}
+        draggable={!isRenaming}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(GFS_DND_MIME, JSON.stringify({
+            path: node.path,
+            isDir,
+            name: node.name,
+          }));
+          e.dataTransfer.setData("text/plain", node.path);
+          e.dataTransfer.effectAllowed = "move";
+          onDraggingPathChange(node.path);
+        }}
+        onDragEnd={() => {
+          onDraggingPathChange(null);
+          onDropTargetChange(null);
+        }}
+        onDragOver={(e) => {
+          if (!isDir || !draggingPath) return;
+          if (isSameOrDescendantPath(draggingPath, node.path)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          if (dropTargetPath !== node.path) onDropTargetChange(node.path);
+        }}
+        onDragLeave={() => {
+          if (dropTargetPath === node.path) onDropTargetChange(null);
+        }}
+        onDrop={(e) => {
+          if (!isDir) return;
+          e.preventDefault();
+          e.stopPropagation();
+          onDropTargetChange(null);
+          onDraggingPathChange(null);
+          try {
+            const raw = e.dataTransfer.getData(GFS_DND_MIME) || "";
+            const payload = raw
+              ? JSON.parse(raw) as { path?: string; isDir?: boolean }
+              : { path: e.dataTransfer.getData("text/plain"), isDir: false };
+            const sourcePath = payload.path;
+            if (!sourcePath || isSameOrDescendantPath(sourcePath, node.path) || sourcePath.replace(/\/+$/, "") === node.path.replace(/\/+$/, "")) {
+              return;
+            }
+            onMove(sourcePath, node.path, Boolean(payload.isDir));
+          } catch {
+            /* ignore bad payload */
+          }
+        }}
       >
         {/* chevron */}
         {isDir ? (
@@ -504,27 +559,44 @@ const TreeNode: React.FC<{
         {/* icon */}
         <span className="flex-shrink-0">{fileIcon(node.path, isDir, isOpen)}</span>
 
-        {/* name */}
-        <span className="gfs-tree-name" title={node.name}>{node.name}</span>
+        {/* name / rename */}
+        {isRenaming ? (
+          <input
+            className="gfs-tree-rename-input"
+            value={renameDraft}
+            autoFocus
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => onRenameDraftChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onCommitRename();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                onCancelRename();
+              }
+            }}
+            onBlur={() => onCommitRename()}
+          />
+        ) : (
+          <span className="gfs-tree-name" title={node.name}>{node.name}</span>
+        )}
 
         {/* size */}
-        {!isDir && <span className="gfs-tree-size">{formatSize(node.size)}</span>}
+        {!isDir && !isRenaming && <span className="gfs-tree-size">{formatSize(node.size)}</span>}
 
         {/* actions */}
-        {!isDir && (
+        {!isRenaming && (
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleFavorite({ path: node.path, name: node.name, size: node.size });
-            }}
-            title={isFavorited ? "取消收藏" : "加入收藏"}
-            className={`gfs-tree-btn favorite${isFavorited ? " active" : ""}`}
+            onClick={(e) => { e.stopPropagation(); onStartRename(node); }}
+            title="重命名"
+            className="gfs-tree-btn rename"
           >
-            <Star className="w-3.5 h-3.5" fill={isFavorited ? "currentColor" : "none"} />
+            <Pencil className="w-3.5 h-3.5" />
           </button>
         )}
-        {!isDir && (
+        {!isDir && !isRenaming && (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onPreview({ path: node.path, name: node.name, size: node.size, ext: getExt(node.path) }); }}
@@ -534,7 +606,7 @@ const TreeNode: React.FC<{
             <Eye className="w-3.5 h-3.5" />
           </button>
         )}
-        {!isDir && (
+        {!isDir && !isRenaming && (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onDownload(node.path); }}
@@ -547,14 +619,16 @@ const TreeNode: React.FC<{
               : <Download className="w-3.5 h-3.5" />}
           </button>
         )}
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onDelete(node.path, isDir); }}
-          title="删除"
-          className="gfs-tree-btn delete"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        {!isRenaming && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onDelete(node.path, isDir); }}
+            title="删除"
+            className="gfs-tree-btn delete"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       {/* children */}
@@ -567,7 +641,11 @@ const TreeNode: React.FC<{
             onPreview={onPreview} onDelete={onDelete} onDownload={onDownload}
             downloadingPath={downloadingPath}
             selectedPaths={selectedPaths} onToggleSelect={onToggleSelect}
-            favoritePaths={favoritePaths} onToggleFavorite={onToggleFavorite}
+            renamingPath={renamingPath} renameDraft={renameDraft}
+            onRenameDraftChange={onRenameDraftChange}
+            onStartRename={onStartRename} onCommitRename={onCommitRename} onCancelRename={onCancelRename}
+            onMove={onMove} dropTargetPath={dropTargetPath} onDropTargetChange={onDropTargetChange}
+            draggingPath={draggingPath} onDraggingPathChange={onDraggingPathChange}
           />
         ))
       }
@@ -578,19 +656,118 @@ const TreeNode: React.FC<{
   );
 };
 
+// ── Split: tree + resizable preview ────────────────────────────────────────────
+
+const GFS_TREE_PANE_DEFAULT = 44;
+const GFS_TREE_PANE_MIN = 22;
+const GFS_TREE_PANE_MAX = 72;
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function GfsSplitView({
+  hasPreview,
+  treePanePct,
+  onTreePanePctChange,
+  resizeTitle,
+  tree,
+  preview,
+}: {
+  hasPreview: boolean;
+  treePanePct: number;
+  onTreePanePctChange: (pct: number) => void;
+  resizeTitle: string;
+  tree: React.ReactNode;
+  preview: React.ReactNode | null;
+}): React.JSX.Element {
+  const splitRef = useRef<HTMLDivElement>(null);
+  const [resizing, setResizing] = useState(false);
+
+  const startSplitResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const split = splitRef.current;
+    if (!split) return;
+    const rect = split.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    setResizing(true);
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    function handlePointerMove(moveEvent: PointerEvent): void {
+      const nextPct = ((moveEvent.clientX - rect.left) / rect.width) * 100;
+      onTreePanePctChange(clampNumber(nextPct, GFS_TREE_PANE_MIN, GFS_TREE_PANE_MAX));
+    }
+
+    function handlePointerUp(): void {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      setResizing(false);
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+  };
+
+  return (
+    <div
+      ref={splitRef}
+      className={`gfs-split${hasPreview ? " has-preview" : ""}${resizing ? " is-resizing" : ""}`}
+    >
+      <div
+        className="gfs-tree"
+        style={hasPreview ? { flexBasis: `${treePanePct}%` } : undefined}
+      >
+        {tree}
+      </div>
+      {hasPreview ? (
+        <>
+          <div
+            className="gfs-split-resize-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-valuenow={Math.round(treePanePct)}
+            aria-valuemin={GFS_TREE_PANE_MIN}
+            aria-valuemax={GFS_TREE_PANE_MAX}
+            title={resizeTitle}
+            onPointerDown={startSplitResize}
+          />
+          {preview}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 // ── status ─────────────────────────────────────────────────────────────────────
 
 type ConnStatus = "checking" | "connected" | "disconnected" | "error";
-const STATUS_DOT: Record<ConnStatus, string> = { connected: "🟢", disconnected: "🔴", checking: "🟡", error: "🔴" };
-const STATUS_LABEL: Record<ConnStatus, string> = { connected: "已连接", disconnected: "未连接", checking: "检测中…", error: "连接异常" };
+const STATUS_LABEL_ZH: Record<ConnStatus, string> = {
+  connected: "已连接",
+  disconnected: "未连接",
+  checking: "检测中…",
+  error: "连接异常",
+};
+const STATUS_LABEL_EN: Record<ConnStatus, string> = {
+  connected: "Connected",
+  disconnected: "Offline",
+  checking: "Checking…",
+  error: "Error",
+};
 
 // ── main ───────────────────────────────────────────────────────────────────────
 
 export function GfsView({
-  language: _language,
+  language,
 }: {
   language: AppLanguage;
 }): React.JSX.Element {
+  const isZh = language === "zh";
+  const STATUS_LABEL = isZh ? STATUS_LABEL_ZH : STATUS_LABEL_EN;
   const [connStatus, setConnStatus] = useState<ConnStatus>("checking");
   const [bucketName, setBucketName] = useState("");
   /** true：展示首次/更新密钥表单（密钥落盘到 $DRSAI_HOME/.env）。 */
@@ -607,8 +784,11 @@ export function GfsView({
   const [showAccessKey, setShowAccessKey] = useState(false);
   const [showSecretKey, setShowSecretKey] = useState(false);
   const [activePane, setActivePane] = useState<GfsPane>("mine");
-  const [favorites, setFavorites] = useState<GfsFavorite[]>(() => loadFavorites());
-  const favoritePaths = useMemo(() => new Set(favorites.map((item) => item.path)), [favorites]);
+  const [favorites, setFavorites] = useState<GfsFavoriteItem[]>([]);
+  const [favoritesLoading, setFavoritesLoading] = useState(false);
+  const [favoritesRefreshKey, setFavoritesRefreshKey] = useState(0);
+  const [removingFavoritePath, setRemovingFavoritePath] = useState<string | null>(null);
+  const [favoritesQuery, setFavoritesQuery] = useState("");
   /** 当前选中的上传目标目录前缀（树仍以 bucket 为根）。 */
   const [currentPath, setCurrentPath] = useState("");
   const [treeData, setTreeData]       = useState<TreeFile[]>([]);
@@ -620,15 +800,40 @@ export function GfsView({
   const [expanded, setExpanded]       = useState<Set<string>>(new Set());
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
-  const [error, setError]             = useState<string | null>(null);
-  const [message, setMessage]         = useState<string | null>(null);
-  /** 正在下载的远端路径；非 null 时展示 loading 横幅并禁用重复下载。 */
+  const [actionToast, setActionToast] = useState<{ type: "success" | "warning" | "error"; message: string } | null>(null);
+  const actionToastTimerRef = useRef<number | null>(null);
+  /** 正在下载的远端路径；非 null 时禁用重复下载。 */
   const [downloadingPath, setDownloadingPath] = useState<string | null>(null);
   /** 右侧预览面板当前文件；null 表示关闭。 */
   const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
+  /** 有预览时左侧文件树宽度占比（%），拖拽分隔线可调。 */
+  const [treePanePct, setTreePanePct] = useState(GFS_TREE_PANE_DEFAULT);
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameIsDir, setRenameIsDir] = useState(false);
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
+  const [draggingPath, setDraggingPath] = useState<string | null>(null);
+  const [mkdirBusy, setMkdirBusy] = useState(false);
 
-  const [_uploading, setUploading]    = useState(false);
+  const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const showActionToast = useCallback((type: "success" | "warning" | "error", text: string) => {
+    if (actionToastTimerRef.current !== null) {
+      window.clearTimeout(actionToastTimerRef.current);
+    }
+    setActionToast({ type, message: text });
+    actionToastTimerRef.current = window.setTimeout(() => {
+      setActionToast(null);
+      actionToastTimerRef.current = null;
+    }, 3200);
+  }, []);
+
+  useEffect(() => () => {
+    if (actionToastTimerRef.current !== null) {
+      window.clearTimeout(actionToastTimerRef.current);
+    }
+  }, []);
 
   const refreshConfigSummary = useCallback(async () => {
     if (typeof desktopApi.gfsGetConfig !== "function") return;
@@ -658,27 +863,13 @@ export function GfsView({
         if (r.bucket) setBucketName(r.bucket);
         await refreshConfigSummary();
         if (cancelled) return;
-        if (!r.ok) {
-          // 缺密钥时只出表单，不叠错误条
-          setError(
-            r.needsSetup
-              ? null
-              : (r.reason
-                || (r.mode === "admin"
-                  ? "GFS admin 模式未就绪。请检查配置或重新填写个人密钥。"
-                  : "GFS 未连接。请检查密钥或网络后重试。")),
-          );
-        } else {
-          setError(null);
+        if (r.ok) {
           setNeedsSetup(false);
         }
-      } catch (e) {
+      } catch {
         if (cancelled) return;
         setConnStatus("error");
-        const detail = e instanceof Error ? e.message : String(e);
-        setError(detail.includes("404")
-          ? "GFS API 未就绪，请重启桌面端以加载网关路由。"
-          : `无法连接 GFS 网关。${detail ? ` (${detail})` : ""}`);
+        // 顶部状态卡已反映异常；不在进页时刷 toast
       }
     })();
     return () => { cancelled = true; };
@@ -691,8 +882,6 @@ export function GfsView({
   /** 打开「配置密钥」：回填已保存的 $DRSAI_HOME/.env 凭证。 */
   const openCredentialForm = useCallback(async () => {
     setNeedsSetup(true);
-    setError(null);
-    setMessage(null);
     setShowAccessKey(false);
     setShowSecretKey(false);
     try {
@@ -706,15 +895,13 @@ export function GfsView({
       setGfsEnabled(Boolean(cfg.enabled && cfg.configured));
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
-      setError(`读取已保存配置失败：${raw}`);
+      showActionToast("error", `读取已保存配置失败：${raw}`);
     }
-  }, []);
+  }, [showActionToast]);
 
   const handleToggleEnabled = useCallback(async (nextEnabled: boolean) => {
     if (toggleBusy) return;
     setToggleBusy(true);
-    setError(null);
-    setMessage(null);
     try {
       await desktopApi.startGateway();
       if (!nextEnabled) {
@@ -741,24 +928,22 @@ export function GfsView({
         setSetupSecretKey("");
         setSetupBucket("");
         setSetupEmail("");
-        setMessage(result.message || "已关闭 GFS 并清除配置。");
+        showActionToast("success", result.message || "已关闭 GFS 并清除配置。");
         setHealthKey((k) => k + 1);
         return;
       }
       // 开启：进入配置表单；保存成功后即启用并同步 Agent 工具配置
       await openCredentialForm();
-      setMessage("请填写并保存 GFS 密钥以开启云盘与 Agent 工具。");
+      showActionToast("warning", "请填写并保存 GFS 密钥以开启云盘与 Agent 工具。");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      showActionToast("error", e instanceof Error ? e.message : String(e));
     } finally {
       setToggleBusy(false);
     }
-  }, [toggleBusy, openCredentialForm]);
+  }, [toggleBusy, openCredentialForm, showActionToast]);
 
   const handleSaveSetup = useCallback(async () => {
     setSetupSaving(true);
-    setError(null);
-    setMessage(null);
     try {
       await desktopApi.startGateway();
       const result = await desktopApi.gfsSaveConfig({
@@ -767,7 +952,7 @@ export function GfsView({
         bucket: setupBucket.trim(),
         email: setupEmail.trim() || undefined,
       });
-      setMessage(result.message || "GFS 密钥已保存");
+      showActionToast("success", result.message || "GFS 密钥已保存");
       setNeedsSetup(false);
       setGfsEnabled(true);
       if (result.bucket) setBucketName(result.bucket);
@@ -776,18 +961,17 @@ export function GfsView({
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
       const detailMatch = raw.match(/\{.*"detail"\s*:\s*"([^"]+)"/);
-      setError(detailMatch?.[1] || raw);
+      showActionToast("error", detailMatch?.[1] || raw);
     } finally {
       setSetupSaving(false);
     }
-  }, [setupAccessKey, setupSecretKey, setupBucket, setupEmail, refreshConfigSummary]);
+  }, [setupAccessKey, setupSecretKey, setupBucket, setupEmail, refreshConfigSummary, showActionToast]);
 
   // Always load a rooted tree: bucket -> children (lazy expand for deeper folders)
   useEffect(() => {
     if (connStatus !== "connected") return;
     let cancelled = false;
     setLoading(true);
-    setError(null);
     setSelectedPaths(new Set());
 
     const rootId = bucketName ? `${bucketName}/` : "";
@@ -815,7 +999,7 @@ export function GfsView({
         setCurrentPath("");
       } catch (e) {
         if (cancelled) return;
-        setError(`加载目录失败：${e instanceof Error ? e.message : String(e)}`);
+        showActionToast("error", `加载目录失败：${e instanceof Error ? e.message : String(e)}`);
         setTreeData([]);
       } finally {
         if (!cancelled) setLoading(false);
@@ -823,7 +1007,7 @@ export function GfsView({
     })();
 
     return () => { cancelled = true; };
-  }, [connStatus, refreshKey, bucketName]);
+  }, [connStatus, refreshKey, bucketName, showActionToast]);
 
   /** 仅重载目录树（上传/删除等内部调用，不关预览）。 */
   const triggerRefresh = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -833,7 +1017,6 @@ export function GfsView({
     triggerRefresh();
   }, [triggerRefresh]);
   const retryConnection = useCallback(() => {
-    setError(null);
     setHealthKey((k) => k + 1);
   }, []);
 
@@ -895,7 +1078,7 @@ export function GfsView({
             upsertChildren(id, children);
           })
           .catch((e) => {
-            setError(`展开目录失败：${e instanceof Error ? e.message : String(e)}`);
+            showActionToast("error", `展开目录失败：${e instanceof Error ? e.message : String(e)}`);
           })
           .finally(() => {
             setLoadingPaths((p) => {
@@ -908,12 +1091,10 @@ export function GfsView({
       });
       return next;
     });
-  }, [resolveListPrefix, upsertChildren]);
+  }, [resolveListPrefix, upsertChildren, showActionToast]);
 
   /** Select a folder as upload target; does not flatten the tree. */
   const handleNavigate = useCallback((path: string) => {
-    setMessage(null);
-    setError(null);
     if (!path || path === "/" || (bucketName && (path === bucketName || path === `${bucketName}/`))) {
       setCurrentPath("");
       return;
@@ -934,37 +1115,121 @@ export function GfsView({
   const handleDelete = useCallback(async (path: string, isDir: boolean) => {
     const name = path.replace(/\/$/, "").split("/").pop() ?? path;
     if (!await requestAppDecision({ id: "delete-gfs-object", tone: "danger", title: isDir ? `删除文件夹“${name}”？` : `删除“${name}”？`, description: isDir ? "该文件夹及其全部内容将被删除。" : "该文件将被删除。", impact: "此操作不可恢复。", confirmLabel: "确认删除" })) return;
-    setMessage(null);
     try {
-      await desktopApi.gfsDelete({ path });
-      setMessage(`已删除：${name}`);
-      if (previewFile?.path === path) setPreviewFile(null);
+      const deletePath = isDir ? normalizeGfsDirPath(path) : path;
+      await desktopApi.gfsDelete({ path: deletePath });
+      showActionToast("success", `已删除：${name}`);
+      if (previewFile?.path === path || previewFile?.path === deletePath) setPreviewFile(null);
       triggerRefresh();
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  }, [triggerRefresh, previewFile]);
+    } catch (e) {
+      showActionToast("error", e instanceof Error ? e.message : String(e));
+    }
+  }, [triggerRefresh, previewFile, showActionToast]);
+
+  const handleStartRename = useCallback((node: TreeFile) => {
+    setRenamingPath(node.path);
+    setRenameDraft(node.name);
+    setRenameIsDir(Boolean(node.isDir));
+  }, []);
+
+  const handleCancelRename = useCallback(() => {
+    setRenamingPath(null);
+    setRenameDraft("");
+    setRenameIsDir(false);
+  }, []);
+
+  const handleCommitRename = useCallback(async () => {
+    if (!renamingPath) return;
+    const nextName = renameDraft.trim();
+    const oldName = renamingPath.replace(/\/$/, "").split("/").pop() ?? "";
+    if (!nextName || nextName === oldName) {
+      handleCancelRename();
+      return;
+    }
+    if (nextName.includes("/") || nextName === "." || nextName === "..") {
+      showActionToast("error", isZh ? "名称不能包含路径分隔符" : "Name cannot contain path separators");
+      return;
+    }
+    try {
+      await desktopApi.gfsRename({
+        path: renamingPath,
+        newName: nextName,
+        isDir: renameIsDir,
+      });
+      showActionToast("success", isZh ? `已重命名为 ${nextName}` : `Renamed to ${nextName}`);
+      if (previewFile?.path === renamingPath) setPreviewFile(null);
+      handleCancelRename();
+      triggerRefresh();
+    } catch (e) {
+      showActionToast("error", e instanceof Error ? e.message : String(e));
+    }
+  }, [renamingPath, renameDraft, renameIsDir, handleCancelRename, previewFile, triggerRefresh, showActionToast, isZh]);
+
+  const handleMove = useCallback(async (sourcePath: string, targetDir: string, isDir: boolean) => {
+    const src = sourcePath.replace(/\/$/, "");
+    const destDir = targetDir.replace(/\/$/, "");
+    if (!src || isSameOrDescendantPath(src, destDir)) return;
+    const name = src.split("/").pop() ?? src;
+    try {
+      await desktopApi.gfsMove({
+        sourcePath,
+        targetDir: destDir,
+        isDir,
+      });
+      showActionToast("success", isZh ? `已移动：${name}` : `Moved: ${name}`);
+      if (previewFile && isSameOrDescendantPath(src, previewFile.path.replace(/\/$/, ""))) {
+        setPreviewFile(null);
+      }
+      triggerRefresh();
+    } catch (e) {
+      showActionToast("error", e instanceof Error ? e.message : String(e));
+    }
+  }, [previewFile, triggerRefresh, showActionToast, isZh]);
+
+  const handleCreateFolder = useCallback(async () => {
+    if (mkdirBusy || connStatus !== "connected") return;
+    const suggested = isZh ? "新建文件夹" : "New folder";
+    const name = window.prompt(isZh ? "文件夹名称" : "Folder name", suggested)?.trim();
+    if (!name) return;
+    if (name.includes("/") || name === "." || name === "..") {
+      showActionToast("error", isZh ? "名称不能包含路径分隔符" : "Name cannot contain path separators");
+      return;
+    }
+    setMkdirBusy(true);
+    try {
+      await desktopApi.gfsMkdir({
+        parentPath: currentPath.replace(/\/$/, ""),
+        name,
+      });
+      showActionToast("success", isZh ? `已创建：${name}` : `Created: ${name}`);
+      triggerRefresh();
+    } catch (e) {
+      showActionToast("error", e instanceof Error ? e.message : String(e));
+    } finally {
+      setMkdirBusy(false);
+    }
+  }, [mkdirBusy, connStatus, currentPath, triggerRefresh, showActionToast, isZh]);
 
   const handleDownload = useCallback(async (path: string) => {
     if (downloadingPath) return;
     const name = path.replace(/\/$/, "").split("/").pop() ?? path;
-    setError(null);
-    setMessage(null);
     setDownloadingPath(path);
     try {
       const r = await desktopApi.gfsDownloadToDisk({ path });
       if (r.canceled) return;
-      setMessage(`下载完成：${name}`);
+      showActionToast("success", `下载完成：${name}`);
     } catch (e) {
-      setError(`下载失败（${name}）：${e instanceof Error ? e.message : String(e)}`);
+      showActionToast("error", `下载失败（${name}）：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setDownloadingPath(null);
     }
-  }, [downloadingPath]);
+  }, [downloadingPath, showActionToast]);
 
   const handleFilesPicked = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = Array.from(e.target.files ?? []);
     if (e.target) e.target.value = "";
     if (picked.length === 0) return;
-    setUploading(true); setMessage(null); setError(null);
+    setUploading(true);
     let uploaded = 0;
     const destDir = currentPath || "uploads/";
     for (const file of picked) {
@@ -985,441 +1250,713 @@ export function GfsView({
         }
         uploaded += 1;
       } catch (err) {
-        setError(`上传失败（${file.name}）：${err instanceof Error ? err.message : String(err)}`);
+        showActionToast("error", `上传失败（${file.name}）：${err instanceof Error ? err.message : String(err)}`);
       }
     }
     setUploading(false);
     if (uploaded > 0) {
-      setMessage(`已上传 ${uploaded} 个文件到 ${destDir}`);
+      showActionToast("success", `已上传 ${uploaded} 个文件到 ${destDir}`);
       triggerRefresh();
     }
-  }, [currentPath, triggerRefresh]);
+  }, [currentPath, triggerRefresh, showActionToast]);
 
   const toggleSelect = useCallback((path: string) => {
     setSelectedPaths((prev) => { const n = new Set(prev); n.has(path) ? n.delete(path) : n.add(path); return n; });
   }, []);
 
-  const toggleFavorite = useCallback((file: { path: string; name: string; size: number }) => {
-    setFavorites((prev) => {
-      const exists = prev.some((item) => item.path === file.path);
-      const next = exists
-        ? prev.filter((item) => item.path !== file.path)
-        : [{ path: file.path, name: file.name, size: file.size, favoritedAt: Date.now() }, ...prev];
-      saveFavorites(next);
-      return next;
-    });
+  const refreshFavorites = useCallback(() => {
+    setFavoritesRefreshKey((k) => k + 1);
   }, []);
 
-  /** 用户刷新收藏列表时同步关闭预览。 */
-  const refreshFavorites = useCallback(() => {
-    setPreviewFile(null);
-    setFavorites(loadFavorites());
-  }, []);
+  // 从 GFS favorites/ 拉取收藏列表（与 WebUI CloudPage 一致）
+  useEffect(() => {
+    if (connStatus !== "connected") {
+      setFavorites([]);
+      setFavoritesLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setFavoritesLoading(true);
+    void (async () => {
+      try {
+        const r = await desktopApi.gfsList({
+          prefix: `${GFS_FAVORITES_DIR}/`,
+          recursive: false,
+          maxItems: 500,
+        });
+        if (cancelled) return;
+        const items: GfsFavoriteItem[] = r.items
+          .filter((item) => !item.isDir)
+          .map((item) => {
+            const name = fileBaseName(item.path);
+            return {
+              path: item.path,
+              name,
+              size: item.size ?? 0,
+              modifiedMs: typeof item.modifiedMs === "number" ? item.modifiedMs : undefined,
+            };
+          })
+          .sort((a, b) => (b.modifiedMs ?? 0) - (a.modifiedMs ?? 0));
+        setFavorites(items);
+      } catch (e) {
+        if (cancelled) return;
+        // 目录不存在时视为空收藏，不打断主流程
+        const msg = e instanceof Error ? e.message : String(e);
+        if (/not\s*found|nosuch|404/i.test(msg)) {
+          setFavorites([]);
+        } else {
+          showActionToast("error", isZh ? `加载收藏失败：${msg}` : `Failed to load favorites: ${msg}`);
+          setFavorites([]);
+        }
+      } finally {
+        if (!cancelled) setFavoritesLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [connStatus, favoritesRefreshKey, showActionToast, isZh]);
+
+  const removeFavorite = useCallback(async (item: GfsFavoriteItem) => {
+    if (removingFavoritePath) return;
+    setRemovingFavoritePath(item.path);
+    try {
+      await desktopApi.gfsDelete({ path: item.path });
+      showActionToast("success", isZh ? `已取消收藏：${item.name}` : `Removed from favorites: ${item.name}`);
+      if (previewFile?.path === item.path) setPreviewFile(null);
+      refreshFavorites();
+      triggerRefresh();
+    } catch (e) {
+      showActionToast(
+        "error",
+        isZh
+          ? `取消收藏失败：${e instanceof Error ? e.message : String(e)}`
+          : `Remove favorite failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      refreshFavorites();
+    } finally {
+      setRemovingFavoritePath(null);
+    }
+  }, [removingFavoritePath, previewFile, refreshFavorites, triggerRefresh, showActionToast, isZh]);
+
+  const filteredFavorites = useMemo(() => {
+    const q = favoritesQuery.trim().toLowerCase();
+    if (!q) return favorites;
+    return favorites.filter((item) =>
+      item.name.toLowerCase().includes(q) || item.path.toLowerCase().includes(q),
+    );
+  }, [favorites, favoritesQuery]);
+
+  const gfsIsOn = gfsEnabled || connStatus === "connected";
+  const statusHint = bucketName
+    ? (isZh ? `存储桶：${bucketName}` : `Bucket: ${bucketName}`)
+    : (isZh
+      ? "配置密钥后即可浏览云盘并供 Agent 使用。"
+      : "Configure credentials to browse cloud storage for agents.");
 
   return (
-    <div className="gfs-page">
-      {/* header */}
-      <div className="gfs-page-header">
-        <div className="gfs-page-header-left">
-          <h2 className="gfs-page-title">云盘（GFS）</h2>
-          <span title={`GFS ${STATUS_LABEL[connStatus]}${bucketName ? `\n${bucketName}` : ""}`} className="gfs-status-dot">
-            {STATUS_DOT[connStatus]}
-          </span>
-          <span className="gfs-status-label">{STATUS_LABEL[connStatus]}</span>
-          {bucketName && <span className="gfs-bucket-label" title={bucketName}>· {bucketName}</span>}
+    <div className="gfs-page skills-manager skills-manager-page" data-testid="gfs-panel">
+      {actionToast ? (
+        <div
+          className={`skills-action-toast skills-action-toast-${actionToast.type}`}
+          role="status"
+          aria-live="polite"
+        >
+          {actionToast.message}
         </div>
-        <div className="gfs-page-header-actions">
-          <button
-            type="button"
-            className="gfs-header-btn"
-            data-testid="gfs-configure-credentials"
-            onClick={() => void openCredentialForm()}
-            title="填写或更新 GFS 密钥"
-          >
-            <span>配置密钥</span>
-          </button>
-          {connStatus !== "connected" ? (
-            <button
-              type="button"
-              className="gfs-header-btn"
-              onClick={retryConnection}
-              disabled={connStatus === "checking"}
-              title="重新检测连接"
-            >
-              <RotateCw className={`w-3.5 h-3.5${connStatus === "checking" ? " gfs-spin" : ""}`} />
-              <span>重试连接</span>
-            </button>
-          ) : activePane === "favorites" ? (
-            <button
-              type="button"
-              className="gfs-header-btn"
-              onClick={refreshFavorites}
-              title="刷新收藏"
-            >
-              <RotateCw className="w-3.5 h-3.5" />
-              <span>刷新</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="gfs-header-btn"
-              onClick={handleRefreshClick}
-              disabled={loading}
-              title="刷新当前目录"
-            >
-              <RotateCw className={`w-3.5 h-3.5${loading ? " gfs-spin" : ""}`} />
-              <span>刷新</span>
-            </button>
-          )}
+      ) : null}
+      <div className="skills-page-top">
+        <header className="skills-header">
+          <span className="skills-header-mark" aria-hidden>
+            <Cloud size={16} />
+          </span>
+          <div className="skills-header-text">
+            <h2 className="skills-title">{isZh ? "云盘（GFS）" : "Cloud Drive (GFS)"}</h2>
+            <p className="skills-relation-hint">{statusHint}</p>
+          </div>
+        </header>
+
+        <div className="skills-online-stats" aria-label={isZh ? "统计" : "Stats"}>
+          <div className="skills-online-stat-card" title={bucketName || undefined}>
+            <div className="skills-online-stat-title">{isZh ? "连接" : "Status"}</div>
+            <div className="skills-online-stat-value gfs-stat-status">{STATUS_LABEL[connStatus]}</div>
+          </div>
+          {/* 收藏统计卡片暂隐藏，后续再开
+          <div className="skills-online-stat-card">
+            <div className="skills-online-stat-title">{isZh ? "收藏" : "Favorites"}</div>
+            <div className="skills-online-stat-value">{favorites.length}</div>
+          </div>
+          */}
+          <div className="skills-online-stat-card">
+            <div className="skills-online-stat-title">{isZh ? "已开启" : "Enabled"}</div>
+            <div className="skills-online-stat-value">{gfsIsOn ? (isZh ? "是" : "On") : (isZh ? "否" : "Off")}</div>
+          </div>
         </div>
       </div>
 
-      <div className="gfs-manage-bar" data-testid="gfs-manage-bar">
-        <label className="gfs-switch" title={gfsEnabled ? "关闭并清除 GFS 配置" : "开启 GFS（需配置密钥）"}>
-          <input
-            type="checkbox"
-            checked={gfsEnabled || connStatus === "connected"}
-            disabled={toggleBusy || connStatus === "checking"}
-            onChange={(e) => { void handleToggleEnabled(e.target.checked); }}
-          />
-          <span className="gfs-switch-track" aria-hidden />
-          <span className="gfs-switch-label">
-            {gfsEnabled || connStatus === "connected" ? "GFS 已开启" : "GFS 已关闭"}
-          </span>
-        </label>
-      </div>
-
-      {/* content */}
-      <div className="gfs-tab-content">
-          {needsSetup ? (
-            <div className="gfs-setup">
-              <h3 className="gfs-setup-title">
-                {connStatus === "connected" ? "更新 GFS 访问密钥" : "首次使用：配置 GFS 访问密钥"}
-              </h3>
-              <p className="gfs-setup-desc">
-                请先在 GFS 网页创建或查看你的 Access Key / Secret Key 与存储桶，再填回本页。
-                密钥保存在本机用户目录，无需编辑仓库 <code>.env</code>。
-              </p>
-              <ol className="gfs-setup-steps">
-                <li>打开 GFS 控制台，进入「访问密钥」</li>
-                <li>创建永久密钥或点击「显示密钥」复制 Access Key / Secret Key</li>
-                <li>在「存储桶」页确认完整桶名（如 <code>20001-username</code>）</li>
-                <li>将密钥填入下方并保存</li>
-              </ol>
-              <button type="button" className="gfs-setup-portal-btn" onClick={handleOpenPortal}>
-                <ExternalLink className="w-4 h-4" />
-                <span>打开 https://gfs.ihep.ac.cn/</span>
-              </button>
-              <div className="gfs-setup-form">
-                <label className="gfs-setup-field">
-                  <span>Access Key（访问密钥 ID）</span>
-                  <span className="gfs-setup-hint">在 GFS 网页「显示密钥」中复制</span>
-                  <div className="gfs-setup-secret-input">
-                    <input
-                      type={showAccessKey ? "text" : "password"}
-                      autoComplete="off"
-                      spellCheck={false}
-                      value={setupAccessKey}
-                      onChange={(e) => setSetupAccessKey(e.target.value)}
-                      placeholder="例如 20240527-xxxxxxxxxxxx"
-                    />
-                    <button
-                      type="button"
-                      className="gfs-setup-secret-toggle"
-                      onClick={() => setShowAccessKey((v) => !v)}
-                      title={showAccessKey ? "隐藏 Access Key" : "显示 Access Key"}
-                      aria-label={showAccessKey ? "隐藏 Access Key" : "显示 Access Key"}
-                    >
-                      {showAccessKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </label>
-                <label className="gfs-setup-field">
-                  <span>Secret Key（密钥口令）</span>
-                  <span className="gfs-setup-hint">网页里的「凭据值」，与 Access Key 成对</span>
-                  <div className="gfs-setup-secret-input">
-                    <input
-                      type={showSecretKey ? "text" : "password"}
-                      autoComplete="new-password"
-                      spellCheck={false}
-                      value={setupSecretKey}
-                      onChange={(e) => setSetupSecretKey(e.target.value)}
-                      placeholder="显示密钥后复制凭据值"
-                    />
-                    <button
-                      type="button"
-                      className="gfs-setup-secret-toggle"
-                      onClick={() => setShowSecretKey((v) => !v)}
-                      title={showSecretKey ? "隐藏 Secret Key" : "显示 Secret Key"}
-                      aria-label={showSecretKey ? "隐藏 Secret Key" : "显示 Secret Key"}
-                    >
-                      {showSecretKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </label>
-                <label className="gfs-setup-field">
-                  <span>完整桶名（Bucket）</span>
-                  <span className="gfs-setup-hint">
-                    你的 GFS 存储空间名称，在侧栏「存储桶」页面。一般是「数字-用户名」，例如 20001-username，不要只填短名。
-                  </span>
+      <div className="skills-page-content skills-local gfs-page-content">
+        {needsSetup ? (
+          <div className="gfs-setup gfs-setup-card">
+            <h3 className="gfs-setup-title">
+              {connStatus === "connected"
+                ? (isZh ? "更新 GFS 访问密钥" : "Update GFS credentials")
+                : (isZh ? "首次使用：配置 GFS 访问密钥" : "First-time setup: GFS credentials")}
+            </h3>
+            <p className="gfs-setup-desc">
+              {isZh
+                ? <>请先在 GFS 网页创建或查看你的 Access Key / Secret Key 与存储桶，再填回本页。密钥保存在本机用户目录，无需编辑仓库 <code>.env</code>。</>
+                : <>Create or view your Access Key / Secret Key and bucket on the GFS portal, then paste them here. Keys are stored in the local user directory — no need to edit the repo <code>.env</code>.</>}
+            </p>
+            <ol className="gfs-setup-steps">
+              <li>{isZh ? "打开 GFS 控制台，进入「访问密钥」" : "Open the GFS console → Access Keys"}</li>
+              <li>{isZh ? "创建永久密钥或点击「显示密钥」复制 Access Key / Secret Key" : "Create a permanent key or reveal and copy Access / Secret Key"}</li>
+              <li>{isZh ? <>在「存储桶」页确认完整桶名（如 <code>20001-username</code>）</> : <>Confirm the full bucket name (e.g. <code>20001-username</code>)</>}</li>
+              <li>{isZh ? "将密钥填入下方并保存" : "Paste credentials below and save"}</li>
+            </ol>
+            <button type="button" className="skills-btn ghost gfs-setup-portal-btn" onClick={handleOpenPortal}>
+              <ExternalLink className="w-4 h-4" />
+              <span>打开 https://gfs.ihep.ac.cn/</span>
+            </button>
+            <div className="gfs-setup-form">
+              <label className="gfs-setup-field">
+                <span>Access Key（访问密钥 ID）</span>
+                <span className="gfs-setup-hint">{isZh ? "在 GFS 网页「显示密钥」中复制" : "Copy from GFS portal “Show key”"}</span>
+                <div className="gfs-setup-secret-input">
                   <input
-                    type="text"
+                    type={showAccessKey ? "text" : "password"}
                     autoComplete="off"
                     spellCheck={false}
-                    value={setupBucket}
-                    onChange={(e) => setSetupBucket(e.target.value)}
-                    placeholder="例如 20001-username"
+                    value={setupAccessKey}
+                    onChange={(e) => setSetupAccessKey(e.target.value)}
+                    placeholder="例如 20240527-xxxxxxxxxxxx"
                   />
-                </label>
-                <label className="gfs-setup-field">
-                  <span>邮箱（可选）</span>
-                  <span className="gfs-setup-hint">用于标识，可用你的 IHEP 邮箱</span>
-                  <input
-                    type="email"
-                    autoComplete="off"
-                    value={setupEmail}
-                    onChange={(e) => setSetupEmail(e.target.value)}
-                    placeholder="user@ihep.ac.cn"
-                  />
-                </label>
-              </div>
-              {error && <div className="gfs-setup-error">{error}</div>}
-              {message && <div className="gfs-setup-message">{message}</div>}
-              <div className="gfs-setup-actions">
-                <button
-                  type="button"
-                  className="gfs-setup-save"
-                  disabled={setupSaving || !setupAccessKey.trim() || !setupSecretKey.trim() || !setupBucket.trim()}
-                  onClick={() => void handleSaveSetup()}
-                >
-                  {setupSaving ? "保存并检测中…" : "保存并连接"}
-                </button>
-                {connStatus === "connected" && (
                   <button
                     type="button"
-                    className="gfs-header-btn"
+                    className="gfs-setup-secret-toggle"
+                    onClick={() => setShowAccessKey((v) => !v)}
+                    title={showAccessKey ? "隐藏 Access Key" : "显示 Access Key"}
+                    aria-label={showAccessKey ? "隐藏 Access Key" : "显示 Access Key"}
+                  >
+                    {showAccessKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </label>
+              <label className="gfs-setup-field">
+                <span>Secret Key（密钥口令）</span>
+                <span className="gfs-setup-hint">{isZh ? "网页里的「凭据值」，与 Access Key 成对" : "Credential value paired with Access Key"}</span>
+                <div className="gfs-setup-secret-input">
+                  <input
+                    type={showSecretKey ? "text" : "password"}
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    value={setupSecretKey}
+                    onChange={(e) => setSetupSecretKey(e.target.value)}
+                    placeholder={isZh ? "显示密钥后复制凭据值" : "Paste secret after revealing key"}
+                  />
+                  <button
+                    type="button"
+                    className="gfs-setup-secret-toggle"
+                    onClick={() => setShowSecretKey((v) => !v)}
+                    title={showSecretKey ? "隐藏 Secret Key" : "显示 Secret Key"}
+                    aria-label={showSecretKey ? "隐藏 Secret Key" : "显示 Secret Key"}
+                  >
+                    {showSecretKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </label>
+              <label className="gfs-setup-field">
+                <span>{isZh ? "完整桶名（Bucket）" : "Full bucket name"}</span>
+                <span className="gfs-setup-hint">
+                  {isZh
+                    ? "你的 GFS 存储空间名称，在侧栏「存储桶」页面。一般是「数字-用户名」，例如 20001-username，不要只填短名。"
+                    : "Your GFS storage name from the Buckets page (e.g. 20001-username). Use the full name."}
+                </span>
+                <input
+                  type="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={setupBucket}
+                  onChange={(e) => setSetupBucket(e.target.value)}
+                  placeholder="例如 20001-username"
+                />
+              </label>
+              <label className="gfs-setup-field">
+                <span>{isZh ? "邮箱（可选）" : "Email (optional)"}</span>
+                <span className="gfs-setup-hint">{isZh ? "用于标识，可用你的 IHEP 邮箱" : "Optional identity, e.g. IHEP email"}</span>
+                <input
+                  type="email"
+                  autoComplete="off"
+                  value={setupEmail}
+                  onChange={(e) => setSetupEmail(e.target.value)}
+                  placeholder="user@ihep.ac.cn"
+                />
+              </label>
+            </div>
+            <div className="gfs-setup-actions">
+              <button
+                type="button"
+                className="skills-btn primary"
+                disabled={setupSaving || !setupAccessKey.trim() || !setupSecretKey.trim() || !setupBucket.trim()}
+                onClick={() => void handleSaveSetup()}
+              >
+                {setupSaving
+                  ? (isZh ? "保存并检测中…" : "Saving…")
+                  : (isZh ? "保存并连接" : "Save & connect")}
+              </button>
+              {connStatus === "connected" && (
+                <button
+                  type="button"
+                  className="skills-btn ghost"
+                  onClick={() => {
+                    setNeedsSetup(false);
+                    setShowAccessKey(false);
+                    setShowSecretKey(false);
+                  }}
+                >
+                  {isZh ? "取消" : "Cancel"}
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="skills-online-filters gfs-filters">
+              <div className="skills-online-filter-bar">
+                <div className="skills-online-cat-tabs" role="tablist" aria-label={isZh ? "云盘分区" : "Cloud panes"}>
+                  {/* 我的收藏 Tab 暂隐藏，后续再开
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activePane === "favorites"}
+                    className={`skills-online-cat-tab${activePane === "favorites" ? " active" : ""}`}
                     onClick={() => {
-                      setNeedsSetup(false);
-                      setError(null);
-                      setMessage(null);
-                      setShowAccessKey(false);
-                      setShowSecretKey(false);
+                      setPreviewFile(null);
+                      setFavoritesQuery("");
+                      setActivePane("favorites");
                     }}
                   >
-                    取消
+                    {isZh ? "我的收藏" : "Favorites"}
                   </button>
-                )}
-              </div>
-            </div>
-          ) : (
-          <>
-          <div className="gfs-tabs" role="tablist" aria-label="云盘分区">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activePane === "favorites"}
-              className={`gfs-tab${activePane === "favorites" ? " active" : ""}`}
-              onClick={() => setActivePane("favorites")}
-            >
-              我的收藏
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activePane === "mine"}
-              className={`gfs-tab${activePane === "mine" ? " active" : ""}`}
-              onClick={() => setActivePane("mine")}
-            >
-              我的云盘
-            </button>
-          </div>
-
-          {downloadingPath && (
-            <div className="gfs-banner info" role="status" aria-live="polite">
-              <span className="gfs-banner-loading">
-                <RotateCw className="w-3.5 h-3.5 gfs-spin" />
-                正在下载：{downloadingPath.replace(/\/$/, "").split("/").pop() ?? downloadingPath}…
-              </span>
-            </div>
-          )}
-          {!downloadingPath && message && (
-            <div className="gfs-banner success" role="status" aria-live="polite">
-              <span>{message}</span>
-              <button type="button" onClick={() => setMessage(null)} aria-label="关闭">
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          )}
-          {!downloadingPath && error && (
-            <div className="gfs-banner error">
-              <span>{error}</span>
-              <div className="gfs-banner-actions">
-                {connStatus !== "connected" ? (
-                  <button type="button" onClick={retryConnection}>重试</button>
-                ) : (
-                  <button type="button" onClick={handleRefreshClick}>重新加载</button>
-                )}
-                <button type="button" onClick={() => setError(null)} aria-label="关闭"><X className="w-3 h-3" /></button>
-              </div>
-            </div>
-          )}
-
-          {activePane === "favorites" ? (
-            <div className="gfs-favorites">
-              {favorites.length === 0 ? (
-                <div className="gfs-favorites-empty">
-                  <Star className="w-10 h-10 gfs-favorites-empty-icon" />
-                  <p className="gfs-favorites-empty-title">还没有收藏过文件</p>
-                  <small className="gfs-favorites-empty-sub">在「我的云盘」里点击星标即可收藏</small>
-                  <button type="button" className="gfs-header-btn" onClick={refreshFavorites} style={{ marginTop: 10 }}>
-                    <RotateCw className="w-3.5 h-3.5" />
-                    <span>刷新</span>
+                  */}
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activePane === "mine"}
+                    className={`skills-online-cat-tab${activePane === "mine" ? " active" : ""}`}
+                    onClick={() => {
+                      setPreviewFile(null);
+                      setFavoritesQuery("");
+                      setActivePane("mine");
+                    }}
+                  >
+                    {isZh ? "我的云盘" : "My drive"}
                   </button>
                 </div>
-              ) : (
-                <div className={`gfs-split${previewFile ? " has-preview" : ""}`}>
-                  <div className="gfs-tree">
-                    {favorites.map((item) => (
-                      <div
-                        key={item.path}
-                        className="gfs-tree-row group"
-                        onClick={() => setPreviewFile({
-                          path: item.path,
-                          name: item.name,
-                          size: item.size,
-                          ext: getExt(item.path),
-                        })}
-                      >
-                        <span className="gfs-tree-chevron-placeholder" />
-                        <span className="flex-shrink-0">{fileIcon(item.path, false)}</span>
-                        <span className="gfs-tree-name" title={item.path}>{item.name}</span>
-                        <span className="gfs-tree-size">{formatSize(item.size)}</span>
-                        <button
-                          type="button"
-                          className="gfs-tree-btn favorite active"
-                          title="取消收藏"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleFavorite(item);
-                          }}
-                        >
-                          <Star className="w-3.5 h-3.5" fill="currentColor" />
-                        </button>
-                        <button
-                          type="button"
-                          className="gfs-tree-btn preview"
-                          title="预览"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setPreviewFile({
-                              path: item.path,
-                              name: item.name,
-                              size: item.size,
-                              ext: getExt(item.path),
-                            });
-                          }}
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          className="gfs-tree-btn download"
-                          title={downloadingPath === item.path ? "下载中…" : downloadingPath ? "请等待当前下载完成" : "下载"}
-                          disabled={Boolean(downloadingPath)}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDownload(item.path);
-                          }}
-                        >
-                          {downloadingPath === item.path
-                            ? <RotateCw className="w-3.5 h-3.5 gfs-spin" />
-                            : <Download className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  {previewFile && (
-                    <PreviewPanel
-                      file={previewFile}
-                      onClose={() => setPreviewFile(null)}
-                      onDownload={handleDownload}
-                      downloading={downloadingPath === previewFile.path}
+                <div className="skills-online-filter-actions">
+                  <label
+                    className="gfs-switch"
+                    data-testid="gfs-manage-bar"
+                    title={gfsIsOn
+                      ? (isZh ? "关闭并清除 GFS 配置" : "Disable and clear GFS config")
+                      : (isZh ? "开启 GFS（需配置密钥）" : "Enable GFS (credentials required)")}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={gfsIsOn}
+                      disabled={toggleBusy || connStatus === "checking"}
+                      onChange={(e) => { void handleToggleEnabled(e.target.checked); }}
                     />
+                    <span className="gfs-switch-track" aria-hidden />
+                    <span className="gfs-switch-label">
+                      {gfsIsOn
+                        ? (isZh ? "已开启" : "On")
+                        : (isZh ? "已关闭" : "Off")}
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    className="skills-btn ghost"
+                    data-testid="gfs-configure-credentials"
+                    onClick={() => void openCredentialForm()}
+                    title={isZh ? "填写或更新 GFS 密钥" : "Configure GFS credentials"}
+                  >
+                    {isZh ? "配置密钥" : "Credentials"}
+                  </button>
+                  {connStatus !== "connected" ? (
+                    <button
+                      type="button"
+                      className="skills-btn ghost"
+                      onClick={retryConnection}
+                      disabled={connStatus === "checking"}
+                      title={isZh ? "重新检测连接" : "Retry connection"}
+                    >
+                      <RotateCw className={`w-3.5 h-3.5${connStatus === "checking" ? " gfs-spin" : ""}`} />
+                      <span>{isZh ? "重试连接" : "Retry"}</span>
+                    </button>
+                  ) : activePane === "favorites" ? (
+                    <button
+                      type="button"
+                      className="skills-btn ghost"
+                      onClick={() => {
+                        setPreviewFile(null);
+                        refreshFavorites();
+                      }}
+                      disabled={favoritesLoading}
+                      title={isZh ? "刷新收藏" : "Refresh favorites"}
+                    >
+                      <RotateCw className={`w-3.5 h-3.5${favoritesLoading ? " gfs-spin" : ""}`} />
+                      <span>{isZh ? "刷新" : "Refresh"}</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="skills-btn ghost"
+                      onClick={handleRefreshClick}
+                      disabled={loading}
+                      title={isZh ? "刷新当前目录" : "Refresh folder"}
+                    >
+                      <RotateCw className={`w-3.5 h-3.5${loading ? " gfs-spin" : ""}`} />
+                      <span>{isZh ? "刷新" : "Refresh"}</span>
+                    </button>
                   )}
                 </div>
+              </div>
+            </div>
+
+            <div className="gfs-workspace">
+              {activePane === "favorites" ? (
+                <div className="gfs-favorites">
+                  <div className="gfs-breadcrumb-bar">
+                    <Star className="w-3 h-3" />
+                    <span className="gfs-breadcrumb-btn current" title={`${GFS_FAVORITES_DIR}/`}>
+                      {GFS_FAVORITES_DIR}
+                    </span>
+                    {connStatus === "connected" && favorites.length > 0 ? (
+                      <label className="gfs-favorites-search">
+                        <Search className="w-3.5 h-3.5" aria-hidden />
+                        <input
+                          type="search"
+                          value={favoritesQuery}
+                          onChange={(e) => setFavoritesQuery(e.target.value)}
+                          placeholder={isZh ? "搜索" : "Search"}
+                          aria-label={isZh ? "搜索收藏文件" : "Search favorites"}
+                        />
+                      </label>
+                    ) : null}
+                  </div>
+
+                  <GfsSplitView
+                    hasPreview={Boolean(previewFile)}
+                    treePanePct={treePanePct}
+                    onTreePanePctChange={setTreePanePct}
+                    resizeTitle={isZh ? "拖拽调整预览宽度" : "Drag to resize preview"}
+                    tree={(
+                      <>
+                        {connStatus !== "connected" ? (
+                          <div className="gfs-tree-empty">
+                            <Cloud className="w-10 h-10" style={{ color: "#6b7280" }} />
+                            <p>{isZh ? "云盘未连接" : "Cloud drive not connected"}</p>
+                            <small>{isZh ? "检查配置后点击「重试连接」" : "Check config, then retry"}</small>
+                            <button type="button" className="skills-btn ghost" onClick={retryConnection} style={{ marginTop: 8 }}>
+                              <RotateCw className="w-3.5 h-3.5" />
+                              <span>{isZh ? "重试连接" : "Retry"}</span>
+                            </button>
+                          </div>
+                        ) : favoritesLoading && favorites.length === 0 ? (
+                          <div className="gfs-tree-loading">
+                            <RotateCw className="w-4 h-4 gfs-spin" />
+                            <span>{isZh ? "加载中…" : "Loading…"}</span>
+                          </div>
+                        ) : favorites.length === 0 ? (
+                          <div className="gfs-tree-empty">
+                            <Star className="w-10 h-10" style={{ color: "#6b7280" }} />
+                            <p>{isZh ? "还没有收藏过文件" : "No favorites yet"}</p>
+                            <small>
+                              {isZh
+                                ? "在文件预览中点击「收藏」后会出现在这里"
+                                : "Collect files from preview to see them here"}
+                            </small>
+                            <button
+                              type="button"
+                              className="skills-btn ghost"
+                              onClick={refreshFavorites}
+                              disabled={favoritesLoading}
+                              style={{ marginTop: 8 }}
+                            >
+                              <RotateCw className={`w-3.5 h-3.5${favoritesLoading ? " gfs-spin" : ""}`} />
+                              <span>{isZh ? "刷新" : "Refresh"}</span>
+                            </button>
+                          </div>
+                        ) : filteredFavorites.length === 0 ? (
+                          <div className="gfs-tree-empty">
+                            <Search className="w-10 h-10" style={{ color: "#6b7280" }} />
+                            <p>{isZh ? "没有匹配的收藏" : "No matching favorites"}</p>
+                            <small>
+                              {isZh
+                                ? `未找到包含「${favoritesQuery.trim()}」的文件`
+                                : `No files match “${favoritesQuery.trim()}”`}
+                            </small>
+                            <button
+                              type="button"
+                              className="skills-btn ghost"
+                              onClick={() => setFavoritesQuery("")}
+                              style={{ marginTop: 8 }}
+                            >
+                              {isZh ? "清除搜索" : "Clear search"}
+                            </button>
+                          </div>
+                        ) : (
+                          filteredFavorites.map((item) => {
+                            const ext = getExt(item.path);
+                            const modified = formatFavoriteTime(item.modifiedMs);
+                            const selected = previewFile?.path === item.path;
+                            return (
+                              <div
+                                key={item.path}
+                                className={`gfs-tree-row group${selected ? " selected" : ""}`}
+                                onClick={() => setPreviewFile({
+                                  path: item.path,
+                                  name: item.name,
+                                  size: item.size,
+                                  ext,
+                                })}
+                              >
+                                <span className="gfs-tree-chevron-placeholder" />
+                                <span className="flex-shrink-0">{fileIcon(item.path, false)}</span>
+                                <span className="gfs-tree-name" title={item.path}>{item.name}</span>
+                                {modified ? (
+                                  <span className="gfs-tree-mtime" title={modified}>{modified}</span>
+                                ) : null}
+                                <span className="gfs-tree-size">{formatSize(item.size)}</span>
+                                <button
+                                  type="button"
+                                  className="gfs-tree-btn preview"
+                                  title={isZh ? "预览" : "Preview"}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPreviewFile({
+                                      path: item.path,
+                                      name: item.name,
+                                      size: item.size,
+                                      ext,
+                                    });
+                                  }}
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="gfs-tree-btn download"
+                                  title={downloadingPath === item.path
+                                    ? (isZh ? "下载中…" : "Downloading…")
+                                    : downloadingPath
+                                      ? (isZh ? "请等待当前下载完成" : "Wait for current download")
+                                      : (isZh ? "下载" : "Download")}
+                                  disabled={Boolean(downloadingPath)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleDownload(item.path);
+                                  }}
+                                >
+                                  {downloadingPath === item.path
+                                    ? <RotateCw className="w-3.5 h-3.5 gfs-spin" />
+                                    : <Download className="w-3.5 h-3.5" />}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="gfs-tree-btn delete"
+                                  title={isZh ? "取消收藏" : "Remove from favorites"}
+                                  disabled={Boolean(removingFavoritePath)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void removeFavorite(item);
+                                  }}
+                                >
+                                  {removingFavoritePath === item.path
+                                    ? <RotateCw className="w-3.5 h-3.5 gfs-spin" />
+                                    : <Trash2 className="w-3.5 h-3.5" />}
+                                </button>
+                              </div>
+                            );
+                          })
+                        )}
+                      </>
+                    )}
+                    preview={previewFile ? (
+                      <PreviewPanel
+                        file={previewFile}
+                        onClose={() => setPreviewFile(null)}
+                        onDownload={handleDownload}
+                        downloading={downloadingPath === previewFile.path}
+                      />
+                    ) : null}
+                  />
+
+                  {!favoritesLoading && connStatus === "connected" && favorites.length > 0 && !previewFile ? (
+                    <div className="gfs-tree-footer">
+                      <span>
+                        {favoritesQuery.trim()
+                          ? (isZh
+                            ? `显示 ${filteredFavorites.length} / ${favorites.length} 个文件`
+                            : `Showing ${filteredFavorites.length} / ${favorites.length} files`)
+                          : (isZh
+                            ? `共 ${favorites.length} 个文件`
+                            : `${favorites.length} file${favorites.length === 1 ? "" : "s"}`)}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+              <div className="gfs-mine">
+                  <input ref={fileInputRef} type="file" multiple style={{ display: "none" }} onChange={handleFilesPicked} />
+
+                  <div
+                    className={`gfs-breadcrumb-bar${dropTargetPath === "__current__" ? " drop-target" : ""}`}
+                    onDragOver={(e) => {
+                      if (!draggingPath) return;
+                      if (currentPath && isSameOrDescendantPath(draggingPath, currentPath)) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      if (dropTargetPath !== "__current__") setDropTargetPath("__current__");
+                    }}
+                    onDragLeave={() => {
+                      if (dropTargetPath === "__current__") setDropTargetPath(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDropTargetPath(null);
+                      setDraggingPath(null);
+                      try {
+                        const raw = e.dataTransfer.getData(GFS_DND_MIME) || "";
+                        const payload = raw
+                          ? JSON.parse(raw) as { path?: string; isDir?: boolean }
+                          : { path: e.dataTransfer.getData("text/plain"), isDir: false };
+                        if (!payload.path) return;
+                        const target = currentPath.replace(/\/$/, "");
+                        if (target && isSameOrDescendantPath(payload.path, target)) return;
+                        void handleMove(payload.path, currentPath, Boolean(payload.isDir));
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                  >
+                    <Home className="w-3 h-3" />
+                    <span className="gfs-breadcrumb-btn current" title={selectedPathLabel}>
+                      {selectedPathLabel}
+                    </span>
+                    <div className="gfs-breadcrumb-actions">
+                      <button
+                        type="button"
+                        className="gfs-breadcrumb-action"
+                        disabled={uploading || connStatus !== "connected"}
+                        onClick={() => fileInputRef.current?.click()}
+                        title={isZh ? "上传文件到当前目录" : "Upload files here"}
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>{uploading ? (isZh ? "上传中…" : "Uploading…") : (isZh ? "上传文件" : "Upload")}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="gfs-breadcrumb-action"
+                        disabled={mkdirBusy || connStatus !== "connected"}
+                        onClick={() => void handleCreateFolder()}
+                        title={isZh ? "在当前目录新建文件夹" : "Create folder here"}
+                      >
+                        <FolderPlus className="w-3.5 h-3.5" />
+                        <span>{isZh ? "新建文件夹" : "New folder"}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <GfsSplitView
+                    hasPreview={Boolean(previewFile)}
+                    treePanePct={treePanePct}
+                    onTreePanePctChange={setTreePanePct}
+                    resizeTitle={isZh ? "拖拽调整预览宽度" : "Drag to resize preview"}
+                    tree={(
+                      <>
+                        {connStatus === "checking" || loading ? (
+                          <div className="gfs-tree-loading">
+                            <RotateCw className="w-4 h-4 gfs-spin" />
+                            <span>{isZh ? "加载中…" : "Loading…"}</span>
+                          </div>
+                        ) : connStatus !== "connected" ? (
+                          <div className="gfs-tree-empty">
+                            <Folder className="w-10 h-10" style={{ color: "#6b7280" }} />
+                            <p>{isZh ? "云盘未连接" : "Cloud drive not connected"}</p>
+                            <small>{isZh ? "检查配置后点击「重试连接」" : "Check config, then retry"}</small>
+                            <button type="button" className="skills-btn ghost" onClick={retryConnection} style={{ marginTop: 8 }}>
+                              <RotateCw className="w-3.5 h-3.5" />
+                              <span>{isZh ? "重试连接" : "Retry"}</span>
+                            </button>
+                          </div>
+                        ) : treeData.length === 0 ? (
+                          <div className="gfs-tree-empty">
+                            <Folder className="w-10 h-10" style={{ color: "#6b7280" }} />
+                            <p>{isZh ? "此目录为空" : "This folder is empty"}</p>
+                            <small>{isZh ? "上传文件、新建文件夹或切换目录" : "Upload, create a folder, or change directory"}</small>
+                            <button
+                              type="button"
+                              className="skills-btn ghost"
+                              disabled={uploading || connStatus !== "connected"}
+                              onClick={() => fileInputRef.current?.click()}
+                              style={{ marginTop: 8 }}
+                            >
+                              <Upload className="w-3.5 h-3.5" />
+                              <span>{uploading ? (isZh ? "上传中…" : "Uploading…") : (isZh ? "上传文件" : "Upload")}</span>
+                            </button>
+                          </div>
+                        ) : (
+                          treeData.map((node) => (
+                            <TreeNode
+                              key={node.id} node={node} depth={0}
+                              expanded={expanded} loadingPaths={loadingPaths}
+                              onToggleExpand={handleToggleExpand} onNavigate={handleNavigate}
+                              onPreview={setPreviewFile} onDelete={handleDelete} onDownload={handleDownload}
+                              downloadingPath={downloadingPath}
+                              selectedPaths={selectedPaths} onToggleSelect={toggleSelect}
+                              renamingPath={renamingPath} renameDraft={renameDraft}
+                              onRenameDraftChange={setRenameDraft}
+                              onStartRename={handleStartRename}
+                              onCommitRename={() => { void handleCommitRename(); }}
+                              onCancelRename={handleCancelRename}
+                              onMove={(sourcePath, targetDir, isDir) => { void handleMove(sourcePath, targetDir, isDir); }}
+                              dropTargetPath={dropTargetPath}
+                              onDropTargetChange={setDropTargetPath}
+                              draggingPath={draggingPath}
+                              onDraggingPathChange={setDraggingPath}
+                            />
+                          ))
+                        )}
+                      </>
+                    )}
+                    preview={previewFile ? (
+                      <PreviewPanel
+                        file={previewFile}
+                        onClose={() => setPreviewFile(null)}
+                        onDownload={handleDownload}
+                        downloading={downloadingPath === previewFile.path}
+                      />
+                    ) : null}
+                  />
+
+                  {!loading && connStatus === "connected" && treeData.length > 0 && !previewFile && (
+                    <div className="gfs-tree-footer">
+                      <span>
+                        {isZh
+                          ? `共 ${treeData.filter((n) => n.isDir).length} 个目录，${treeData.filter((n) => !n.isDir).length} 个文件`
+                          : `${treeData.filter((n) => n.isDir).length} folders, ${treeData.filter((n) => !n.isDir).length} files`}
+                      </span>
+                      {selectedPaths.size > 0 && (
+                        <span className="gfs-tree-footer-sel">
+                          {isZh ? `已选 ${selectedPaths.size} 项` : `${selectedPaths.size} selected`}
+                        </span>
+                      )}
+                    </div>
+                  )}
+              </div>
               )}
             </div>
-          ) : (
-          <div className="gfs-mine">
-            <input ref={fileInputRef} type="file" multiple style={{ display: "none" }} onChange={handleFilesPicked} />
-
-            {/* selected path (upload target); navigation is tree expand/collapse */}
-            <div className="gfs-breadcrumb-bar">
-              <Home className="w-3 h-3" />
-              <span className="gfs-breadcrumb-btn current" title={selectedPathLabel}>
-                {selectedPathLabel}
-              </span>
-            </div>
-
-            {/* split: tree + preview */}
-            <div className={`gfs-split${previewFile ? " has-preview" : ""}`}>
-              {/* tree */}
-              <div className="gfs-tree">
-                {connStatus === "checking" || loading ? (
-                  <div className="gfs-tree-loading"><RotateCw className="w-4 h-4 gfs-spin" /><span>加载中…</span></div>
-                ) : connStatus !== "connected" ? (
-                  <div className="gfs-tree-empty">
-                    <Folder className="w-10 h-10" style={{ color: "#6b7280" }} />
-                    <p>云盘未连接</p>
-                    <small>检查配置后点击「重试连接」</small>
-                    <button type="button" className="gfs-header-btn" onClick={retryConnection} style={{ marginTop: 8 }}>
-                      <RotateCw className="w-3.5 h-3.5" />
-                      <span>重试连接</span>
-                    </button>
-                  </div>
-                ) : treeData.length === 0 ? (
-                  <div className="gfs-tree-empty">
-                    <Folder className="w-10 h-10" style={{ color: "#6b7280" }} />
-                    <p>此目录为空</p>
-                    <small>上传文件或切换目录</small>
-                  </div>
-                ) : (
-                  treeData.map((node) => (
-                    <TreeNode
-                      key={node.id} node={node} depth={0}
-                      expanded={expanded} loadingPaths={loadingPaths}
-                      onToggleExpand={handleToggleExpand} onNavigate={handleNavigate}
-                      onPreview={setPreviewFile} onDelete={handleDelete} onDownload={handleDownload}
-                      downloadingPath={downloadingPath}
-                      selectedPaths={selectedPaths} onToggleSelect={toggleSelect}
-                      favoritePaths={favoritePaths} onToggleFavorite={toggleFavorite}
-                    />
-                  ))
-                )}
-              </div>
-
-              {/* preview panel */}
-              {previewFile && (
-                <PreviewPanel
-                  file={previewFile}
-                  onClose={() => setPreviewFile(null)}
-                  onDownload={handleDownload}
-                  downloading={downloadingPath === previewFile.path}
-                />
-              )}
-            </div>
-
-            {/* footer */}
-            {!loading && connStatus === "connected" && treeData.length > 0 && !previewFile && (
-              <div className="gfs-tree-footer">
-                <span>共 {treeData.filter((n) => n.isDir).length} 个目录，{treeData.filter((n) => !n.isDir).length} 个文件</span>
-                {selectedPaths.size > 0 && <span className="gfs-tree-footer-sel">已选 {selectedPaths.size} 项</span>}
-              </div>
-            )}
-          </div>
-          )}
           </>
-          )}
+        )}
       </div>
     </div>
   );

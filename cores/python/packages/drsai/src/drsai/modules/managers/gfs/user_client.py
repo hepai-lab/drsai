@@ -273,6 +273,78 @@ class GfsUserClient:
         self._s3.upload_fileobj(stream, self.bucket, key, ExtraArgs=extra)
 
     # ------------------------------------------------------------------ #
+    # 目录 / 移动 / 重命名
+    # ------------------------------------------------------------------ #
+    def mkdir(self, path: str) -> str:
+        """创建空目录占位对象（S3 key 以 ``/`` 结尾），返回不含尾斜杠的路径."""
+        key = _normalize_key(path.rstrip("/")) + "/"
+        self._s3.put_object(Bucket=self.bucket, Key=key, Body=b"")
+        return key.rstrip("/")
+
+    def _list_all_keys(self, prefix: str) -> list[str]:
+        """递归列出前缀下全部 key（含零字节目录占位）."""
+        norm = _normalize_prefix(prefix)
+        if prefix and not norm.endswith("/"):
+            norm = norm + "/"
+        out: list[str] = []
+        paginator = self._s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=norm):
+            for obj in page.get("Contents", []) or []:
+                key = obj.get("Key")
+                if isinstance(key, str) and key:
+                    out.append(key)
+        return out
+
+    def move(self, source: str, dest: str, *, is_dir: bool = False) -> str:
+        """移动或重命名对象；目录时递归复制前缀下全部 key 再删除源."""
+        src = _normalize_key(source.rstrip("/"))
+        dst = _normalize_key(dest.rstrip("/"))
+        if src == dst:
+            return dst
+        if dst.startswith(src + "/"):
+            raise ValueError(f"cannot move {src!r} into its own subdirectory {dst!r}")
+
+        if is_dir or source.endswith("/"):
+            prefix = src + "/"
+            keys = self._list_all_keys(prefix)
+            if not keys:
+                # 空目录：只建目标占位，并尽量清掉源占位
+                self.mkdir(dst)
+                try:
+                    self._s3.delete_object(Bucket=self.bucket, Key=prefix)
+                except Exception:
+                    pass
+                return dst
+            for key in keys:
+                rel = key[len(prefix):] if key.startswith(prefix) else key
+                new_key = f"{dst}/{rel}" if rel else f"{dst}/"
+                self._s3.copy_object(
+                    Bucket=self.bucket,
+                    CopySource={"Bucket": self.bucket, "Key": key},
+                    Key=new_key,
+                )
+            self.delete_many(keys)
+            return dst
+
+        self._s3.copy_object(
+            Bucket=self.bucket,
+            CopySource={"Bucket": self.bucket, "Key": src},
+            Key=dst,
+        )
+        self._s3.delete_object(Bucket=self.bucket, Key=src)
+        return dst
+
+    def rename(self, path: str, new_name: str, *, is_dir: bool = False) -> str:
+        """重命名同级对象；``new_name`` 不能包含路径分隔符."""
+        name = (new_name or "").strip()
+        if not name or "/" in name or name in (".", ".."):
+            raise ValueError(f"invalid new name: {new_name!r}")
+        src = path.rstrip("/")
+        parent, sep, _old = src.rpartition("/")
+        dest = f"{parent}/{name}" if sep else name
+        return self.move(src, dest, is_dir=is_dir)
+
+    # ------------------------------------------------------------------ #
     # 删
     # ------------------------------------------------------------------ #
     def delete(self, path: str) -> None:
@@ -292,6 +364,19 @@ class GfsUserClient:
         errs = r.get("Errors") or []
         failed = {e["Key"] for e in errs}
         return [k for k in keys if k not in failed]
+
+    def delete_prefix(self, path: str) -> list[str]:
+        """删除目录前缀下全部对象（含占位 key）."""
+        prefix = _normalize_key(path.rstrip("/")) + "/"
+        keys = self._list_all_keys(prefix)
+        if not keys:
+            # 尝试删除孤立占位
+            try:
+                self._s3.delete_object(Bucket=self.bucket, Key=prefix)
+            except Exception:
+                pass
+            return []
+        return self.delete_many(keys)
 
     # ------------------------------------------------------------------ #
     # 预签名 URL

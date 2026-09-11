@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Check, ChevronDown, Database, Globe2, Loader2 } from "lucide-react";
+import { BookOpen, Check, ChevronDown, Database, Globe2 } from "lucide-react";
 import { desktopApi } from "../desktopApi";
 
 interface KnowledgeBaseSelectorProps {
@@ -19,10 +19,7 @@ export function KnowledgeBaseSelector({ agentId, language }: KnowledgeBaseSelect
     if (!agentId) return;
     setBusy(true);
     try {
-      const [policy, preview] = await Promise.all([
-        desktopApi.getMyDrSaiAgentKnowledgePolicy(agentId),
-        desktopApi.previewMyDrSaiAgentKnowledge(agentId),
-      ]);
+      const preview = await desktopApi.previewMyDrSaiAgentKnowledge(agentId);
       setSelectedIds(new Set(preview.sources));
       setKnowledgeBases(preview.knowledge_bases);
     } catch {
@@ -74,19 +71,21 @@ export function KnowledgeBaseSelector({ agentId, language }: KnowledgeBaseSelect
   const remoteKBs = useMemo(() => knowledgeBases.filter((kb) => kb.type === "ragflow"), [knowledgeBases]);
 
   return (
-    <div className="composer-meta-item kb-selector-container" ref={ref} onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+    <div className="composer-meta-item kb-selector-container" ref={ref}>
       <button
         className={"composer-meta-chip composer-meta-button" + (selectedCount > 0 ? " active" : "")}
         type="button"
         aria-expanded={open}
+        aria-haspopup="menu"
         title={isZh ? "知识库" : "Knowledge Base"}
+        onClick={() => setOpen((prev) => !prev)}
       >
         <BookOpen size={14} />
         {isZh ? "知识库" : "KB"}
         {selectedCount > 0 && <span className="kb-selector-badge">{selectedCount}</span>}
         <ChevronDown size={13} />
       </button>
-      {open && (
+      {open ? (
         <div className="composer-meta-menu kb-selector-menu" role="menu" aria-label={isZh ? "知识库选择" : "Knowledge Base selection"}>
           {busy && knowledgeBases.length === 0 && (
             <p className="composer-meta-menu-empty">{isZh ? "正在加载…" : "Loading…"}</p>
@@ -137,7 +136,7 @@ export function KnowledgeBaseSelector({ agentId, language }: KnowledgeBaseSelect
             </>
           )}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

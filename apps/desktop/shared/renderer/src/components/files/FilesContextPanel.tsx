@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   FileText,
+  Loader2,
+  PanelRightClose,
+  PanelRightOpen,
   RefreshCw,
   Rows3,
   Rows4,
@@ -26,9 +29,32 @@ interface FilesContextPanelProps {
   language: AppLanguage;
   workspaceId: string;
   workspacePath: string;
+  onFocusPathConsumed?: () => void;
+  onClearResourcePreview?: () => void;
 }
 
 type LoadState = "idle" | "loading" | "error";
+
+const FILES_TREE_DEFAULT_WIDTH = 260;
+const FILES_TREE_MIN_WIDTH = 160;
+const FILES_TREE_COLLAPSE_WIDTH = 120;
+const FILES_TREE_MAX_RATIO = 0.78;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function toWorkspaceRelativePath(path: string, workspacePath: string): string {
+  const normalized = normalizeWorkspaceArtifactPath(path);
+  const root = normalizeWorkspaceArtifactPath(workspacePath);
+  if (!root) return normalized;
+  const rootPrefix = `${root}/`.toLowerCase();
+  if (normalized.toLowerCase().startsWith(rootPrefix)) {
+    return normalized.slice(root.length + 1);
+  }
+  if (normalized.toLowerCase() === root.toLowerCase()) return "";
+  return normalized;
+}
 
 /** Merge a page of nodes into an existing tree, deduplicating by path. */
 function mergeTreeNodes(existing: WorkspaceFileNode[], incoming: WorkspaceFileNode[]): WorkspaceFileNode[] {
@@ -109,6 +135,8 @@ export function FilesContextPanel({
   language,
   workspaceId,
   workspacePath,
+  onFocusPathConsumed,
+  onClearResourcePreview,
 }: FilesContextPanelProps): React.JSX.Element {
   const zh = language === "zh";
   const [overview, setOverview] = useState<WorkspaceContextOverview | null>(null);
@@ -125,30 +153,18 @@ export function FilesContextPanel({
   const [truncated, setTruncated] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [loadMoreState, setLoadMoreState] = useState<LoadState>("idle");
+  const [treeWidth, setTreeWidth] = useState(FILES_TREE_DEFAULT_WIDTH);
+  const [treePaneCollapsed, setTreePaneCollapsed] = useState(false);
+  const [treeResizing, setTreeResizing] = useState(false);
   const previewRequestPathRef = useRef<string | null>(null);
   const focusRefreshPathRef = useRef<string | null>(null);
+  const appliedFocusPathRef = useRef<string | null>(null);
+  const revealingFocusPathRef = useRef<string | null>(null);
   const treePaneRef = useRef<HTMLDivElement>(null);
-  const splitDragRef = useRef<{ startX: number; startTreeWidth: number } | null>(null);
-  const [treeWidth, setTreeWidth] = useState(260);
-
-  const startSplitDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    splitDragRef.current = { startX: event.clientX, startTreeWidth: treeWidth };
-  }, [treeWidth]);
-
-  const moveSplitDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = splitDragRef.current;
-    if (!drag) return;
-    const nextWidth = Math.max(160, Math.min(520, drag.startTreeWidth - (event.clientX - drag.startX)));
-    setTreeWidth(nextWidth);
-  }, []);
-
-  const endSplitDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (!splitDragRef.current) return;
-    splitDragRef.current = null;
-    event.currentTarget.releasePointerCapture(event.pointerId);
-  }, []);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const treeWidthBeforeCollapseRef = useRef(FILES_TREE_DEFAULT_WIDTH);
+  const nodesRef = useRef<WorkspaceFileNode[]>([]);
+  nodesRef.current = nodes;
 
   // Expanded paths are managed here (not in FilesTree) so they persist across
   // refreshes and file-watch events.  Reset only when the workspace changes.
@@ -187,9 +203,23 @@ export function FilesContextPanel({
   }, []);
 
   /** Lazy-load a directory's direct children from the backend. */
-  const loadDirectoryChildren = useCallback(async (node: WorkspaceFileNode): Promise<void> => {
-    // Skip if already loaded or currently loading.
-    if (dirLoadedRef.current.has(node.path) || dirLoadingRef.current.has(node.path)) return;
+  const loadDirectoryChildren = useCallback(async (node: WorkspaceFileNode): Promise<WorkspaceFileNode[]> => {
+    if (dirLoadedRef.current.has(node.path)) {
+      return findNodeByPath(nodesRef.current, node.path)?.children ?? node.children ?? [];
+    }
+    // Wait out an in-flight load for the same directory (e.g. focus walk + click).
+    if (dirLoadingRef.current.has(node.path)) {
+      for (let i = 0; i < 40; i += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+        if (dirLoadedRef.current.has(node.path)) {
+          return findNodeByPath(nodesRef.current, node.path)?.children ?? node.children ?? [];
+        }
+        if (!dirLoadingRef.current.has(node.path)) break;
+      }
+    }
+    if (dirLoadedRef.current.has(node.path)) {
+      return findNodeByPath(nodesRef.current, node.path)?.children ?? node.children ?? [];
+    }
     dirLoadingRef.current.add(node.path);
     setDirErrors((prev) => { const next = { ...prev }; delete next[node.path]; return next; });
     forceExpandRender((n) => n + 1);
@@ -203,16 +233,21 @@ export function FilesContextPanel({
       });
       dirLoadedRef.current.add(node.path);
       dirLoadingRef.current.delete(node.path);
-      // Merge children into the tree.
-      setNodes((current) => replaceNodeChildren(current, node.path, result.nodes));
+      setNodes((current) => {
+        const next = replaceNodeChildren(current, node.path, result.nodes);
+        nodesRef.current = next;
+        return next;
+      });
       forceExpandRender((n) => n + 1);
+      return result.nodes;
     } catch (caught) {
       dirLoadingRef.current.delete(node.path);
       const msg = caught instanceof Error ? caught.message : String(caught);
       setDirErrors((prev) => ({ ...prev, [node.path]: msg }));
       forceExpandRender((n) => n + 1);
+      return [];
     }
-  }, [replaceNodeChildren, workspaceId, workspacePath]);
+  }, [findNodeByPath, replaceNodeChildren, workspaceId, workspacePath]);
 
   const toggleExpanded = useCallback((node: WorkspaceFileNode) => {
     const current = expandedPathsRef.current;
@@ -229,6 +264,57 @@ export function FilesContextPanel({
     expandedPathsRef.current = next;
     forceExpandRender((n) => n + 1);
   }, [loadDirectoryChildren]);
+
+  /** Expand + lazy-load ancestors so a nested artifact path becomes visible in the tree. */
+  const revealPathInTree = useCallback(async (path: string): Promise<WorkspaceFileNode | null> => {
+    const relative = toWorkspaceRelativePath(path, workspacePath);
+    const segments = normalizeWorkspaceArtifactPath(relative).split("/").filter(Boolean);
+    let level = nodesRef.current;
+
+    for (let index = 0; index < Math.max(0, segments.length - 1); index += 1) {
+      const segment = segments[index];
+      const dir = level.find((node) =>
+        node.type === "directory"
+        && normalizeWorkspaceArtifactPath(node.name).toLowerCase() === segment.toLowerCase()
+      );
+      if (!dir) break;
+      expandedPathsRef.current = new Set(expandedPathsRef.current).add(dir.path);
+      forceExpandRender((n) => n + 1);
+      const children = await loadDirectoryChildren(dir);
+      level = children.length
+        ? children
+        : (findNodeByPath(nodesRef.current, dir.path)?.children ?? []);
+    }
+
+    const found = findWorkspaceNodeByArtifactPath(nodesRef.current, path)
+      ?? findWorkspaceNodeByArtifactPath(nodesRef.current, relative);
+    if (!found) return null;
+
+    // Ensure every ancestor directory stays expanded after the node is found.
+    const foundRel = normalizeWorkspaceArtifactPath(found.relativePath || relative);
+    const ancestorSegs = foundRel.split("/").filter(Boolean).slice(0, -1);
+    let walk = nodesRef.current;
+    for (const segment of ancestorSegs) {
+      const dir = walk.find((node) =>
+        node.type === "directory"
+        && normalizeWorkspaceArtifactPath(node.name).toLowerCase() === segment.toLowerCase()
+      );
+      if (!dir) break;
+      expandedPathsRef.current = new Set(expandedPathsRef.current).add(dir.path);
+      walk = dir.children ?? [];
+    }
+    forceExpandRender((n) => n + 1);
+    return found;
+  }, [findNodeByPath, loadDirectoryChildren, workspacePath]);
+
+  function scrollSelectedTreeRowIntoView(): void {
+    window.requestAnimationFrame(() => {
+      treePaneRef.current?.querySelector<HTMLElement>(".files-tree-row.selected")?.scrollIntoView({
+        block: "nearest",
+        inline: "nearest",
+      });
+    });
+  }
 
   const systemOpenLabel = selectedNode?.type === "directory"
     ? (zh ? "打开文件夹" : "Open folder")
@@ -317,20 +403,116 @@ export function FilesContextPanel({
   }, [refresh]);
 
   useEffect(() => {
-    if (!focusPath || selectedNode?.path === focusPath || selectedNode?.relativePath === normalizeWorkspaceArtifactPath(focusPath)) return;
-    const target = findWorkspaceNodeByArtifactPath(nodes, focusPath);
-    if (target) {
-      focusRefreshPathRef.current = null;
-      setUnavailableFocusPath(null);
-      void selectNode(target);
+    if (!focusPath) {
+      appliedFocusPathRef.current = null;
+      revealingFocusPathRef.current = null;
       return;
     }
-    if (focusRefreshPathRef.current !== focusPath) {
+    // One-shot: apply each external focus request once, then let the user
+    // browse freely without being yanked back to the artifact.
+    if (appliedFocusPathRef.current === focusPath) return;
+
+    let cancelled = false;
+    revealingFocusPathRef.current = focusPath;
+    setTreePaneCollapsed(false);
+    setUnavailableFocusPath(null);
+
+    void (async () => {
+      // Wait for the initial tree page before walking nested directories.
+      for (let i = 0; i < 40 && nodesRef.current.length === 0; i += 1) {
+        if (cancelled) return;
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+      }
+      if (cancelled) return;
+
+      async function applyTarget(target: WorkspaceFileNode): Promise<void> {
+        appliedFocusPathRef.current = focusPath!;
+        revealingFocusPathRef.current = null;
+        focusRefreshPathRef.current = null;
+        setUnavailableFocusPath(null);
+        previewRequestPathRef.current = target.path;
+        setSelectedNode(target);
+        setError(null);
+        const previewMatchesTarget = Boolean(
+          resourcePreview
+          && (
+            normalizeWorkspaceArtifactPath(resourcePreview.path) === normalizeWorkspaceArtifactPath(target.path)
+            || normalizeWorkspaceArtifactPath(resourcePreview.relativePath) === normalizeWorkspaceArtifactPath(target.relativePath)
+            || normalizeWorkspaceArtifactPath(resourcePreview.relativePath) === normalizeWorkspaceArtifactPath(focusPath!)
+          ),
+        );
+        if (previewMatchesTarget && resourcePreview) {
+          setPreview(resourcePreview);
+          setPreviewState("idle");
+        } else if (target.type === "file") {
+          void selectNode(target);
+        } else {
+          setPreview(null);
+          setPreviewState("idle");
+        }
+        scrollSelectedTreeRowIntoView();
+        window.setTimeout(() => scrollSelectedTreeRowIntoView(), 80);
+        onFocusPathConsumed?.();
+      }
+
+      const target = await revealPathInTree(focusPath);
+      if (cancelled) return;
+      if (target) {
+        await applyTarget(target);
+        return;
+      }
+
+      // One deep lookup can still help when the file was just written.
+      if (focusRefreshPathRef.current === focusPath) {
+        revealingFocusPathRef.current = null;
+        setUnavailableFocusPath(focusPath);
+        return;
+      }
       focusRefreshPathRef.current = focusPath;
-      setUnavailableFocusPath(null);
-      void refresh().then(() => setUnavailableFocusPath(focusPath));
-    }
-  }, [focusPath, nodes, refresh, selectedNode?.path, selectedNode?.relativePath]);
+      try {
+        const leaf = normalizeWorkspaceArtifactPath(focusPath).split("/").filter(Boolean).at(-1);
+        const deep = await desktopApi.listWorkspaceFiles({
+          workspacePath,
+          workspaceId,
+          query: leaf,
+          maxDepth: 8,
+          maxEntries: 900,
+        });
+        if (cancelled) return;
+        setNodes((current) => {
+          const next = mergeTreeNodes(current, deep.nodes);
+          nodesRef.current = next;
+          return next;
+        });
+        expandedPathsRef.current = new Set([
+          ...expandedPathsRef.current,
+          ...collectDirectoryPaths(deep.nodes),
+        ]);
+        dirLoadedRef.current = new Set([
+          ...dirLoadedRef.current,
+          ...collectDirectoryPaths(deep.nodes),
+        ]);
+        forceExpandRender((n) => n + 1);
+        const retry = await revealPathInTree(focusPath);
+        if (cancelled) return;
+        if (!retry) {
+          revealingFocusPathRef.current = null;
+          setUnavailableFocusPath(focusPath);
+          return;
+        }
+        await applyTarget(retry);
+      } catch {
+        if (!cancelled) {
+          revealingFocusPathRef.current = null;
+          setUnavailableFocusPath(focusPath);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [focusPath, onFocusPathConsumed, resourcePreview, revealPathInTree, workspaceId, workspacePath]);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -342,11 +524,23 @@ export function FilesContextPanel({
     return () => { unsubscribe(); if (timer !== undefined) window.clearTimeout(timer); };
   }, [refresh, workspacePath]);
 
-  // Reset state when the workspace changes.
+  // Reset state when the workspace changes so the tree does not keep showing
+  // the previous workspace while the new listing loads.
   useEffect(() => {
+    appliedFocusPathRef.current = null;
+    focusRefreshPathRef.current = null;
+    revealingFocusPathRef.current = null;
+    previewRequestPathRef.current = null;
     setSelectedNode(null);
     setPreview(null);
+    setPreviewState("idle");
+    setOverview(null);
+    setNodes([]);
+    setNextOffset(null);
+    setTruncated(false);
+    setLoadState("loading");
     setError(null);
+    setUnavailableFocusPath(null);
     expandedPathsRef.current = new Set();
     dirLoadedRef.current = new Set();
     dirLoadingRef.current = new Set();
@@ -409,7 +603,9 @@ export function FilesContextPanel({
         workspacePath,
         workspaceId,
         path: node.path,
-        maxBytes: 220_000,
+        // Images need the full file; gateway/text defaults (~220KB) truncate
+        // JPEG/PNG payloads and only the top of the picture decodes.
+        maxBytes: node.previewKind === "image" ? 1_500_000 : 220_000,
       });
       if (previewRequestPathRef.current !== node.path) return;
       setPreview(nextPreview);
@@ -472,7 +668,7 @@ export function FilesContextPanel({
         workspacePath,
         workspaceId,
         path: selectedNode.path,
-        maxBytes: 220_000,
+        maxBytes: selectedNode.previewKind === "image" ? 1_500_000 : 220_000,
         mode,
       });
       if (previewRequestPathRef.current !== selectedNode.path) return;
@@ -485,6 +681,84 @@ export function FilesContextPanel({
       setPreviewState("error");
     }
   }
+
+  function toggleTreePane(): void {
+    setTreePaneCollapsed((collapsed) => {
+      if (!collapsed) {
+        treeWidthBeforeCollapseRef.current = treeWidth;
+        return true;
+      }
+      setTreeWidth(clamp(treeWidthBeforeCollapseRef.current, FILES_TREE_MIN_WIDTH, 720));
+      return false;
+    });
+  }
+
+  function startTreePaneResize(event: React.PointerEvent<HTMLDivElement>): void {
+    event.preventDefault();
+    const body = bodyRef.current;
+    const handle = event.currentTarget;
+    if (!body) return;
+    const rect = body.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const maxWidth = Math.max(FILES_TREE_MIN_WIDTH, Math.floor(rect.width * FILES_TREE_MAX_RATIO));
+    const startWidth = treeWidth;
+    let collapseRequested = false;
+    setTreeResizing(true);
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.body.classList.add("is-panel-resizing");
+    try {
+      handle.setPointerCapture(event.pointerId);
+    } catch {
+      // Some hosts reject capture; window listeners below still help.
+    }
+
+    function handlePointerMove(moveEvent: PointerEvent): void {
+      const nextWidth = rect.right - moveEvent.clientX;
+      if (nextWidth < FILES_TREE_COLLAPSE_WIDTH) {
+        if (!collapseRequested) {
+          collapseRequested = true;
+          treeWidthBeforeCollapseRef.current = startWidth;
+          setTreePaneCollapsed(true);
+        }
+        return;
+      }
+      if (collapseRequested) {
+        collapseRequested = false;
+        setTreePaneCollapsed(false);
+      }
+      setTreeWidth(clamp(nextWidth, FILES_TREE_MIN_WIDTH, maxWidth));
+    }
+
+    function cleanup(): void {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      document.body.classList.remove("is-panel-resizing");
+      setTreeResizing(false);
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", cleanup);
+      window.removeEventListener("pointercancel", cleanup);
+      window.removeEventListener("blur", cleanup);
+      try {
+        if (handle.hasPointerCapture(event.pointerId)) {
+          handle.releasePointerCapture(event.pointerId);
+        }
+      } catch {
+        // Ignore release errors after the handle unmounts.
+      }
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", cleanup);
+    window.addEventListener("pointercancel", cleanup);
+    window.addEventListener("blur", cleanup);
+  }
+
+  const treeToggleLabel = treePaneCollapsed
+    ? (zh ? "展开文件树" : "Show file tree")
+    : (zh ? "收起文件树" : "Hide file tree");
 
   return (
     <section className="files-context-panel files-preview-only" aria-label="Files preview">
@@ -508,8 +782,14 @@ export function FilesContextPanel({
               aria-label={zh ? "筛选文件" : "Filter files"}
             />
           </label>
-          <button type="button" onClick={() => void refresh()} title="Refresh" aria-label="Refresh files">
-            <RefreshCw size={14} />
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            title="Refresh"
+            aria-label="Refresh files"
+            disabled={loadState === "loading"}
+          >
+            <RefreshCw size={14} className={loadState === "loading" ? "files-context-spin" : undefined} />
           </button>
           <button
             type="button"
@@ -551,6 +831,15 @@ export function FilesContextPanel({
           >
             <FileText size={14} />
           </button>
+          <button
+            type="button"
+            onClick={toggleTreePane}
+            title={treeToggleLabel}
+            aria-label={treeToggleLabel}
+            aria-pressed={!treePaneCollapsed}
+          >
+            {treePaneCollapsed ? <PanelRightOpen size={14} /> : <PanelRightClose size={14} />}
+          </button>
         </div>
       </header>
 
@@ -562,20 +851,22 @@ export function FilesContextPanel({
       ) : null}
 
       <div
-        className="files-context-body"
-        style={{ "--files-tree-width": `${treeWidth}px` } as React.CSSProperties}
+        ref={bodyRef}
+        className={`files-context-body${treePaneCollapsed ? " tree-collapsed" : ""}${treeResizing ? " is-resizing" : ""}`}
+        style={treePaneCollapsed ? undefined : { "--files-tree-width": `${treeWidth}px` } as React.CSSProperties}
       >
-        <main className="files-context-preview" aria-label="File preview">
+        <main className="files-context-preview" aria-label="File preview" aria-busy={previewState === "loading"}>
           {!selectedNode ? (
             <div className="files-context-empty-state">
               <FileText size={24} />
               <h3>{zh ? "选择文件以预览" : "Select a file to preview"}</h3>
               <p>{zh ? "从右侧文件树选择文件或文件夹。" : "Pick a file or folder from the tree."}</p>
             </div>
-          ) : loadState === "loading" && !preview ? (
-            <div className="files-context-empty-state">
-              <FileText size={24} />
-              <h3>{zh ? "正在加载预览..." : "Loading preview..."}</h3>
+          ) : previewState === "loading" ? (
+            <div className="files-context-empty-state files-context-loading-state" role="status">
+              <Loader2 size={24} className="files-context-spin" aria-hidden />
+              <h3>{zh ? "正在切换文件..." : "Switching file..."}</h3>
+              <p>{selectedNode.name}</p>
             </div>
           ) : error && !preview ? (
             <div className="files-context-empty-state">
@@ -594,44 +885,64 @@ export function FilesContextPanel({
           )}
         </main>
 
-        <div
-          className="files-context-splitter"
-          role="separator"
-          aria-label={zh ? "调整预览区和文件树宽度" : "Resize preview and file tree"}
-          aria-orientation="vertical"
-          onPointerDown={startSplitDrag}
-          onPointerMove={moveSplitDrag}
-          onPointerUp={endSplitDrag}
-          onPointerCancel={endSplitDrag}
-        />
+        {!treePaneCollapsed ? (
+          <>
+            <div
+              className="files-context-splitter"
+              role="separator"
+              aria-label={zh ? "调整预览区和文件树宽度" : "Resize preview and file tree"}
+              aria-orientation="vertical"
+              aria-valuenow={Math.round(treeWidth)}
+              aria-valuemin={FILES_TREE_MIN_WIDTH}
+              title={zh ? "拖拽调整文件树宽度" : "Drag to resize file tree"}
+              onPointerDown={startTreePaneResize}
+            />
 
-        <aside className="files-context-tree-pane" aria-label="Workspace file tree">
-          {nodes.length === 0 ? (
-            <p className="files-context-empty">
-              {loadState === "loading"
-                ? zh ? "正在读取文件..." : "Loading files..."
-                : zh ? "没有可显示的文件。" : "No files to show."}
-            </p>
-          ) : (
-            <div className="files-context-tree-scroll" ref={treePaneRef} onScroll={handleTreeScroll}>
-              <FilesTree
-                expandedPaths={expandedPathsRef.current}
-                nodes={nodes}
-                selectedPath={selectedNode?.path}
-                loadingDirs={dirLoadingRef.current}
-                dirErrors={dirErrors}
-                onSelect={(node) => void selectNode(node)}
-                onToggleExpanded={toggleExpanded}
-                onContextMenu={(node, x, y) => setContextMenu({ node, x, y })}
-              />
-              {loadMoreState === "loading" ? (
-                <div className="files-context-tree-loading-more">
-                  {zh ? "加载中..." : "Loading..."}
+            <aside
+              className={`files-context-tree-pane${loadState === "loading" ? " is-loading" : ""}`}
+              aria-label="Workspace file tree"
+              aria-busy={loadState === "loading"}
+            >
+              {loadState === "loading" && nodes.length === 0 ? (
+                <div className="files-context-tree-loading" role="status">
+                  <Loader2 size={18} className="files-context-spin" aria-hidden />
+                  <span>{zh ? "正在切换工作区..." : "Switching workspace..."}</span>
+                </div>
+              ) : nodes.length === 0 ? (
+                <p className="files-context-empty">
+                  {zh ? "没有可显示的文件。" : "No files to show."}
+                </p>
+              ) : (
+                <div className="files-context-tree-scroll" ref={treePaneRef} onScroll={handleTreeScroll}>
+                  <FilesTree
+                    expandedPaths={expandedPathsRef.current}
+                    nodes={nodes}
+                    selectedPath={selectedNode?.path}
+                    loadingDirs={dirLoadingRef.current}
+                    dirErrors={dirErrors}
+                    onSelect={(node) => {
+                      onClearResourcePreview?.();
+                      void selectNode(node);
+                    }}
+                    onToggleExpanded={toggleExpanded}
+                    onContextMenu={(node, x, y) => setContextMenu({ node, x, y })}
+                  />
+                  {loadMoreState === "loading" ? (
+                    <div className="files-context-tree-loading-more">
+                      {zh ? "加载中..." : "Loading..."}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+              {loadState === "loading" && nodes.length > 0 ? (
+                <div className="files-context-tree-loading-overlay" role="status">
+                  <Loader2 size={16} className="files-context-spin" aria-hidden />
+                  <span>{zh ? "正在刷新文件树..." : "Refreshing file tree..."}</span>
                 </div>
               ) : null}
-            </div>
-          )}
-        </aside>
+            </aside>
+          </>
+        ) : null}
       </div>
       {contextMenu ? (
         <FilesTreeContextMenu

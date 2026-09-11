@@ -902,6 +902,23 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:gfs-download-to-disk", request),
   gfsDelete: (request: { path: string }): Promise<{ path: string }> =>
     ipcRenderer.invoke("desktop:gfs-delete", request),
+  gfsMkdir: (request: {
+    parentPath?: string;
+    name: string;
+  }): Promise<{ path: string; name: string }> =>
+    ipcRenderer.invoke("desktop:gfs-mkdir", request),
+  gfsRename: (request: {
+    path: string;
+    newName: string;
+    isDir?: boolean;
+  }): Promise<{ path: string; name: string }> =>
+    ipcRenderer.invoke("desktop:gfs-rename", request),
+  gfsMove: (request: {
+    sourcePath: string;
+    targetDir?: string;
+    isDir?: boolean;
+  }): Promise<{ path: string; name: string }> =>
+    ipcRenderer.invoke("desktop:gfs-move", request),
   gfsShareUrl: (request: {
     path: string;
     ttlMinutes?: number;
