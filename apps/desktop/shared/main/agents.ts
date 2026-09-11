@@ -285,11 +285,15 @@ async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
   }
   try {
     const client = await LocalRuntimeClient.connect();
+    // Capabilities are authoritative. Do not probe optional Codex routes when
+    // this Runtime does not register the backend; probing creates a noisy 404
+    // on every Agent catalog refresh.
+    const capability = (await client.getCapabilities()).agent_backends?.codex;
+    if (!capability?.available) return agents;
     const [modelCatalog, account] = await Promise.all([
       client.getBackendModels("codex", options.refresh === true),
       client.getBackendAccount("codex", options.refresh === true),
     ]);
-    const capability = (await client.getCapabilities()).agent_backends?.codex;
     const visibleModels = modelCatalog.models?.filter((model) => !model.hidden) ?? [];
     const defaultModel = modelCatalog.default_model
       ?? visibleModels.find((model) => model.default)?.id;

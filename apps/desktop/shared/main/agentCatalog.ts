@@ -52,10 +52,16 @@ export function markCachedPlatformAgents(agents: DesktopAgent[]): DesktopAgent[]
   }));
 }
 
+/**
+ * Merge catalog sources without allowing stale platform cache entries to appear
+ * as selectable agents. The UI can still expose an explicit unavailable view,
+ * but the normal catalog is actionable by construction.
+ */
 export function mergeAndSortAgents(...groups: DesktopAgent[][]): DesktopAgent[] {
   const byId = new Map<string, DesktopAgent>();
   for (const agent of groups.flat()) {
     if (!agent.id || byId.has(agent.id)) continue;
+    if (agent.source === "remote" && agent.available === false) continue;
     byId.set(agent.id, agent);
   }
   return [...byId.values()].sort(compareAgents);

@@ -3107,6 +3107,7 @@ export function installMockDesktopApi(): void {
         type: "part.completed",
         part: {
           id: `${turnId}:markdown`, kind: "markdown", status: "completed",
+          channel: "answer", final: true,
           markdown: markdownContent,
           citationIds: ["mock-docs"],
         },
@@ -3533,7 +3534,7 @@ export function installMockDesktopApi(): void {
     getWorkspaceContextOverview: async (workspacePath) =>
       createMockWorkspaceOverview(workspacePath),
     listWorkspaceFiles: async (request) =>
-      createMockWorkspaceFiles(request.workspacePath, request.query),
+      createMockWorkspaceFiles(request.workspacePath, request.query, request.directoryPath),
     summarizeWorkspaceFolder: async (request) =>
       createMockWorkspaceFolderSummary(request.path),
     analyzeMaterialRoles: async (request) => ({
@@ -6914,18 +6915,49 @@ function createMockWorkspaceFolderSummary(path: string): WorkspaceFolderSummaryR
 function createMockWorkspaceFiles(
   workspacePath: string,
   query?: string,
+  directoryPath?: string,
 ): WorkspaceFileTreeResult {
-  const nodes = createMockWorkspaceNodes(workspacePath);
+  const allNodes = createMockWorkspaceNodes(workspacePath);
   const normalizedQuery = query?.trim().toLowerCase();
+
+  // If directoryPath is provided, find that directory in the mock tree and
+  // return only its direct children (simulating per-directory lazy loading).
+  if (directoryPath) {
+    const dirNode = findMockNodeByPath(allNodes, directoryPath);
+    const children = dirNode?.children ?? [];
+    return {
+      workspacePath,
+      nodes: children,
+      totalEntries: children.length,
+      truncated: false,
+      flat: false,
+      scanLimit: 500,
+    };
+  }
+
   const filteredNodes = normalizedQuery
-    ? filterMockNodes(nodes, normalizedQuery)
-    : nodes;
+    ? filterMockNodes(allNodes, normalizedQuery)
+    : allNodes;
   return {
     workspacePath,
     nodes: filteredNodes,
     totalEntries: countMockNodes(filteredNodes),
     truncated: false,
+    flat: false,
+    scanLimit: 500,
   };
+}
+
+/** Find a node by its path anywhere in the mock tree. */
+function findMockNodeByPath(nodes: WorkspaceFileNode[], path: string): WorkspaceFileNode | null {
+  for (const node of nodes) {
+    if (node.path === path) return node;
+    if (node.children) {
+      const found = findMockNodeByPath(node.children, path);
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
@@ -6947,6 +6979,7 @@ function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
       path: `${workspacePath}\\src`,
       relativePath: "src",
       type: "directory",
+      hasChildren: true,
       modifiedAt: now,
       gitStatus: "clean",
       children: [
@@ -7001,6 +7034,7 @@ function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
       path: `${workspacePath}\\data`,
       relativePath: "data",
       type: "directory",
+      hasChildren: true,
       modifiedAt: now,
       gitStatus: "clean",
       children: [
@@ -7033,6 +7067,7 @@ function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
       path: `${workspacePath}\\docs`,
       relativePath: "docs",
       type: "directory",
+      hasChildren: true,
       modifiedAt: now,
       gitStatus: "clean",
       children: [
@@ -7076,6 +7111,7 @@ function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
       path: `${workspacePath}\\assets`,
       relativePath: "assets",
       type: "directory",
+      hasChildren: true,
       modifiedAt: now,
       gitStatus: "clean",
       children: [

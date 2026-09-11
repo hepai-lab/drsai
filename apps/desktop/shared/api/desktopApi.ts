@@ -4591,12 +4591,19 @@ export interface WorkspaceFileNode {
   previewKind?: WorkspacePreviewKind;
   children?: WorkspaceFileNode[];
   truncated?: boolean;
+  /**
+   * True when this directory has (or may have) children.  Lets the renderer
+   * distinguish an empty directory from one whose children were not loaded.
+   */
+  hasChildren?: boolean;
 }
 
 export interface WorkspaceFileTreeRequest {
   workspacePath: string;
   workspaceId?: string;
   query?: string;
+  /** Absolute directory to list directly; omitted means the workspace root. */
+  directoryPath?: string;
   maxDepth?: number;
   maxEntries?: number;
   offset?: number;
@@ -4609,6 +4616,10 @@ export interface WorkspaceFileTreeResult {
   truncated: boolean;
   nextOffset?: number;
   stale?: boolean;
+  /** True when the underlying listing was a flat search/page result. */
+  flat?: boolean;
+  /** Scan budget the server applied when walking the workspace. */
+  scanLimit?: number;
 }
 
 export interface WorkspaceFolderSummaryRequest {

@@ -24,6 +24,8 @@ import { stripTrailingSourceList } from "../sourceListPresentation";
 import { stripAgentToolDebugText } from "../chatOutputModel";
 import type { InlineCitationLink } from "../citationMarkerPlugin";
 import { boundedProcessWindow, PROCESS_ACTIVITY_WINDOW_SIZE, PROCESS_PART_WINDOW_SIZE } from "../boundedProcessWindow";
+import { useFollowLatestPage } from "../useFollowLatestPage";
+import { createSmoothFollowOutputController } from "../smoothFollowOutput";
 import {
   buildStructuredProcessPresentation,
   formatActivitySummary,
@@ -120,6 +122,16 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     turn.status === "running" || turn.status === "error",
   );
   const previousTurnStatusRef = useRef(turn.status);
+  const processContentRef = useRef<HTMLDivElement | null>(null);
+  const [processFollowOutput] = useState(() => createSmoothFollowOutputController({
+    scrollToBottom: (behavior) => {
+      const el = processContentRef.current;
+      if (el) el.scrollTo({ top: Math.max(0, el.scrollHeight - el.clientHeight), behavior });
+    },
+    stopScrolling: (scrollTop) => {
+      processContentRef.current?.scrollTo({ top: scrollTop, behavior: "auto" });
+    },
+  }));
   const citationParts = turn.parts.filter((part): part is CitationPart => part.kind === "citation");
   const progressParts = turn.parts.filter((part) => part.kind === "progress");
   const reasoningParts = turn.parts.filter((part) => part.kind === "reasoning");
@@ -218,6 +230,34 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     previousTurnStatusRef.current = turn.status;
   }, [turn.status]);
 
+  // Auto-scroll the "过程" content container to bottom during streaming,
+  // using the same smoothFollowOutput state machine as the outer message list.
+  // Without this, the independent overflow-y:auto viewport stays at its
+  // current scroll position while new content grows below.
+  useEffect(() => {
+    if (!processOpen) return;
+    const container = processContentRef.current;
+    if (!container) return;
+    const onScroll = () => {
+      const maxScroll = container.scrollHeight - container.clientHeight;
+      processFollowOutput.handleScroll(container.scrollTop, maxScroll);
+    };
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => container.removeEventListener("scroll", onScroll);
+  }, [processOpen, processFollowOutput]);
+
+  useEffect(() => {
+    if (!processOpen || turn.status !== "running") return;
+    const container = processContentRef.current;
+    if (!container) return;
+    const frame = requestAnimationFrame(() => {
+      if (container) processFollowOutput.handleHeightChange(container.scrollHeight);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [turn, processOpen, processFollowOutput]);
+
+  useEffect(() => () => processFollowOutput.dispose(), [processFollowOutput]);
+
   function focusPart(partId: string): void {
     setFocusedPartId(partId);
     window.requestAnimationFrame(() => {
@@ -300,7 +340,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
             <ChevronDown size={14} aria-hidden="true" />
           </span>
         </summary>
-        {processOpen ? <div className="structured-process-content" data-testid="structured-process-content">
+        {processOpen ? <div className="structured-process-content" ref={processContentRef} data-testid="structured-process-content">
           <RetrievalStageSummary turn={turn} language={language} />
           {processPresentation.completionSummary ? <div className="structured-process-overview"><CheckCircle2 size={15} aria-hidden="true" /><span>{processPresentation.completionSummary}</span></div> : null}
           <StructuredProcessTimeline
@@ -313,11 +353,18 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
             resourceStates={resourceStates}
             onOpenResource={onOpenResource}
             onOpenLink={onOpenLink}
+            artifactParts={artifactParts}
+            inlineArtifactsByMarkdown={inlineArtifactsByMarkdown}
+            citationParts={citationParts}
+            inlineCitations={inlineCitations}
+            onOpenArtifact={onOpenArtifact}
+            onOpenArtifactMenu={onOpenArtifactMenu}
+            onOpenCitation={onOpenCitation}
             running={turn.status === "running"}
             renderPart={renderPart}
           />
-          <BoundedProcessSection title={language === "zh" ? "子任务" : "Subtasks"} items={subtaskParts} language={language} renderPart={renderPart} />
-          <BoundedProcessSection title={language === "zh" ? "运行信息" : "Run information"} items={backgroundNoticeParts} language={language} renderPart={renderPart} />
+          <BoundedProcessSection title={language === "zh" ? "子任务" : "Subtasks"} items={subtaskParts} language={language} renderPart={renderPart} running={turn.status === "running"} />
+          <BoundedProcessSection title={language === "zh" ? "运行信息" : "Run information"} items={backgroundNoticeParts} language={language} renderPart={renderPart} running={turn.status === "running"} />
           <div className="structured-process-footer">
             {onOpenRun && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onOpenRun(runId)}>{language === "zh" ? "查看完整运行" : "View full run"}<ArrowUpRight size={13} aria-hidden /></button> : null}
             {onCreateRunExperiment && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onCreateRunExperiment(runId)}>{language === "zh" ? "创建实验" : "Create experiment"}<FlaskConical size={13} aria-hidden /></button> : null}
@@ -335,7 +382,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
       {importantNoticeParts.length ? <section className="structured-important-notices">{importantNoticeParts.map(renderPart)}</section> : null}
       {interactionParts.length ? <section className="structured-interaction-layer" aria-label={language === "zh" ? "待用户交互" : "User action required"}>{interactionParts.map(renderPart)}</section> : null}
       {resultParts.length ? <section className="structured-result-layer"><h3>{language === "zh" ? "回答" : "Answer"}</h3>{resultParts.map(renderPart)}</section> : null}
-      <PublicSourcesDisclosure sources={publicSources} language={language} onOpenLink={onOpenLink} />
+      <PublicSourcesDisclosure sources={publicSources} language={language} onOpenLink={onOpenLink} running={turn.status === "running"} />
     </div>
   );
 });
@@ -458,15 +505,15 @@ function PublicSourcesDisclosure({
   sources,
   language,
   onOpenLink,
+  running,
 }: {
   sources: Array<{ url: string; label: string }>;
   language: "en" | "zh";
   onOpenLink: (href: string | undefined) => void;
+  running: boolean;
 }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
-  const [page, setPage] = useState(0);
-  const window = boundedProcessWindow(sources.length, page, PROCESS_PART_WINDOW_SIZE);
-  useEffect(() => setPage((current) => boundedProcessWindow(sources.length, current, PROCESS_PART_WINDOW_SIZE).page), [sources.length]);
+  const { page, setPage, window } = useFollowLatestPage(sources.length, PROCESS_PART_WINDOW_SIZE, running);
   if (!sources.length) return null;
   return <details className="structured-source-list" open={open} onToggle={(event) => setOpen(event.currentTarget.open)} aria-label={language === "zh" ? "回答来源" : "Answer sources"}>
     <summary>{language === "zh" ? `来源 · ${sources.length}` : `Sources · ${sources.length}`}<ChevronDown size={14} aria-hidden="true" /></summary>
@@ -511,15 +558,15 @@ function BoundedProcessSection({
   items,
   language,
   renderPart,
+  running,
 }: {
   title: string;
   items: StructuredAssistantPart[];
   language: "en" | "zh";
   renderPart: (part: StructuredAssistantPart) => React.JSX.Element | null;
+  running: boolean;
 }): React.JSX.Element | null {
-  const [page, setPage] = useState(0);
-  const window = boundedProcessWindow(items.length, page, PROCESS_PART_WINDOW_SIZE);
-  useEffect(() => setPage((current) => boundedProcessWindow(items.length, current, PROCESS_PART_WINDOW_SIZE).page), [items.length]);
+  const { page, setPage, window } = useFollowLatestPage(items.length, PROCESS_PART_WINDOW_SIZE, running);
   if (!items.length) return null;
   return <section className="structured-process-section" data-process-item-total={items.length}>
     <h4>{title}</h4>
@@ -580,13 +627,13 @@ function formatRunContext(backend: string | undefined): string {
 function CompactProgressSection({
   groups,
   language,
+  running,
 }: {
   groups: ProcessProgressGroup[];
   language: "en" | "zh";
+  running: boolean;
 }): React.JSX.Element | null {
-  const [page, setPage] = useState(0);
-  const window = boundedProcessWindow(groups.length, page, PROCESS_PART_WINDOW_SIZE);
-  useEffect(() => setPage((current) => boundedProcessWindow(groups.length, current, PROCESS_PART_WINDOW_SIZE).page), [groups.length]);
+  const { page, setPage, window } = useFollowLatestPage(groups.length, PROCESS_PART_WINDOW_SIZE, running);
   if (!groups.length) return null;
   return <section className="structured-process-section structured-progress-groups" data-progress-group-total={groups.length}>
     <h4>{language === "zh" ? "进度与计划" : "Progress and plan"}</h4>
@@ -614,29 +661,15 @@ function ReasoningDisclosure({
   renderPart: (part: StructuredAssistantPart) => React.JSX.Element | null;
 }): React.JSX.Element | null {
   const [open, setOpen] = useState(running);
-  const [page, setPage] = useState(0);
   const previousRunningRef = useRef(running);
-  const previousPartCountRef = useRef(parts.length);
   useEffect(() => {
     const wasRunning = previousRunningRef.current;
     if (running && !wasRunning) setOpen(true);
     else if (!running && wasRunning) setOpen(false);
     previousRunningRef.current = running;
   }, [running]);
-  useEffect(() => {
-    const previousCount = previousPartCountRef.current;
-    const window = boundedProcessWindow(parts.length, page, PROCESS_PART_WINDOW_SIZE);
-    // Follow newly appended reasoning only while the user is already viewing
-    // the newest page. Manual navigation to an older page is respected.
-    if (running && parts.length > previousCount && page >= Math.max(0, window.pageCount - 2)) {
-      setPage(Math.max(0, Math.ceil(parts.length / PROCESS_PART_WINDOW_SIZE) - 1));
-    } else {
-      setPage(window.page);
-    }
-    previousPartCountRef.current = parts.length;
-  }, [parts.length, page, running]);
+  const { page, setPage, window } = useFollowLatestPage(parts.length, PROCESS_PART_WINDOW_SIZE, running);
   if (!parts.length) return null;
-  const window = boundedProcessWindow(parts.length, page, PROCESS_PART_WINDOW_SIZE);
   const latestSummary = [...parts].reverse().map((part) => part.summary?.trim()).find(Boolean);
   return <details className="structured-analysis-disclosure" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
     <summary>
@@ -660,6 +693,13 @@ function StructuredProcessTimeline({
   resourceStates,
   onOpenResource,
   onOpenLink,
+  artifactParts,
+  inlineArtifactsByMarkdown,
+  citationParts,
+  inlineCitations,
+  onOpenArtifact,
+  onOpenArtifactMenu,
+  onOpenCitation,
   running,
   renderPart,
 }: {
@@ -671,21 +711,25 @@ function StructuredProcessTimeline({
   language: "en" | "zh";
   resourceStates?: Readonly<Record<string, "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported">>;
   onOpenResource?: (resourceRef: OaepResourceRef) => void;
-  onOpenLink?: (href: string) => void;
+  onOpenLink: (href: string | undefined) => void;
+  artifactParts: ArtifactPart[];
+  inlineArtifactsByMarkdown: Map<string, SelectedInlineArtifactLink[]>;
+  citationParts: CitationPart[];
+  inlineCitations: InlineCitationLink[];
+  onOpenArtifact: (part: ArtifactPart) => void;
+  onOpenArtifactMenu?: (part: ArtifactPart, anchor: { x: number; y: number; trigger?: HTMLElement }) => void;
+  onOpenCitation: (part: CitationPart) => void;
   running: boolean;
   renderPart: (part: StructuredAssistantPart) => React.JSX.Element | null;
 }): React.JSX.Element | null {
-  const [page, setPage] = useState(0);
-  const [open, setOpen] = useState(running);
   const entries = useMemo(() => buildProcessTimeline(timeline, reasoningParts, progressParts, markdownParts, activities, running), [timeline, reasoningParts, progressParts, markdownParts, activities, running]);
-  const window = boundedProcessWindow(entries.length, page, PROCESS_ACTIVITY_WINDOW_SIZE);
-  useEffect(() => setPage((current) => boundedProcessWindow(entries.length, current, PROCESS_ACTIVITY_WINDOW_SIZE).page), [entries.length]);
+  const { page, setPage, window } = useFollowLatestPage(entries.length, PROCESS_ACTIVITY_WINDOW_SIZE, running);
   if (!entries.length) return null;
   return <div className="structured-process-timeline" aria-label={language === "zh" ? "执行时间线" : "Execution timeline"}>
     <div className="structured-timeline-window" data-timeline-window-start={window.start} data-timeline-window-end={window.end}>
       {entries.slice(window.start, window.end).map((entry) => {
         if (entry.type === "reasoning") return <div key={entry.id} className="structured-timeline-item reasoning"><span className="structured-timeline-marker">💭</span>{renderPart(entry.part)}</div>;
-        if (entry.type === "markdown") return <div key={entry.id} className="structured-timeline-item streaming-markdown"><span className="structured-timeline-marker">✎</span><ChatMessageContent content={entry.text} streaming={running} language={language} onOpenLink={onOpenLink} /></div>;
+        if (entry.type === "markdown") return <div key={entry.id} className="structured-timeline-item streaming-markdown"><span className="structured-timeline-marker">✎</span><ChatMessageContent content={entry.text} streaming={running} language={language} onOpenLink={onOpenLink} citations={inlineCitations} onOpenCitation={(citationId) => { const citation = citationParts.find((candidate) => candidate.citationId === citationId); if (citation) onOpenCitation(citation); }} artifactLinks={inlineArtifactsByMarkdown.get(entry.partId)} onOpenArtifactLink={(artifactPartId) => { const artifact = artifactParts.find((candidate) => candidate.id === artifactPartId); if (artifact) onOpenArtifact(artifact); }} onOpenArtifactLinkMenu={onOpenArtifactMenu ? (artifactPartId, anchor) => { const artifact = artifactParts.find((candidate) => candidate.id === artifactPartId); if (artifact) onOpenArtifactMenu(artifact, anchor); } : undefined} /></div>;
         if (entry.type === "progress") return <div key={entry.id} className={`structured-timeline-item progress ${entry.part.status}`}><span className="structured-timeline-marker"><ActivityStatusIcon status={entry.part.status} /></span>{renderPart(entry.part)}</div>;
         return <div key={entry.id} className={`structured-timeline-item activity ${entry.activity.status}`}><span className="structured-timeline-marker"><ActivityStatusIcon status={entry.activity.status} /></span><ActivityTimelineItem activity={entry.activity} language={language} resourceStates={resourceStates} onOpenResource={onOpenResource} /></div>;
       })}
@@ -696,7 +740,7 @@ function StructuredProcessTimeline({
 
 type ProcessTimelineEntry =
   | { type: "reasoning"; id: string; sequence: number; part: Extract<StructuredAssistantPart, { kind: "reasoning" }> }
-  | { type: "markdown"; id: string; sequence: number; text: string; transient: boolean }
+  | { type: "markdown"; id: string; partId: string; sequence: number; text: string; transient: boolean }
   | { type: "progress"; id: string; sequence: number; part: Extract<StructuredAssistantPart, { kind: "progress" }> }
   | { type: "activity"; id: string; sequence: number; activity: StructuredActivityEvent };
 
@@ -713,6 +757,7 @@ function buildProcessTimeline(
     const activityById = new Map(activities.map((activity) => [activity.id, activity]));
     const reasoningByPartId = new Map(reasoningParts.map((part) => [part.id, part]));
     const progressByPartId = new Map(progressParts.map((part) => [part.id, part]));
+    const markdownByPartId = new Map(markdownParts.map((part) => [part.id, part]));
     const result: ProcessTimelineEntry[] = [];
     for (const entry of timeline) {
       if (entry.kind === "reasoning") {
@@ -726,11 +771,17 @@ function buildProcessTimeline(
           result.push({ type: "reasoning", id: entry.id, sequence: entry.sequence, part: segmentPart });
         }
       } else if (entry.kind === "markdown") {
-        // Transient (answer) markdown appears in Process only while running.
-        // After completion, transient entries are filtered out so the final
-        // answer lives only in the Result layer.
+        // The aggregate markdown part is the source of truth at render time.
+        // A hydrated/legacy timeline may have lost its transient flag, so do
+        // not let a finalized answer reappear in Process after completion.
+        const markdownPart = markdownByPartId.get(entry.partId);
+        const isFinalAnswer = markdownPart?.channel === "answer" && markdownPart.final === true;
+        // A finalized answer is exclusively owned by Result. Do not render it
+        // in Process even during the short part.completed/turn.completed race;
+        // otherwise the same text is printed twice.
+        if (isFinalAnswer) continue;
         if (entry.transient && !running) continue;
-        result.push({ type: "markdown", id: entry.id, sequence: entry.sequence, text: entry.text, transient: entry.transient });
+        result.push({ type: "markdown", id: entry.id, partId: entry.partId, sequence: entry.sequence, text: entry.text, transient: entry.transient });
       } else if (entry.kind === "progress") {
         const part = progressByPartId.get(entry.partId);
         if (part) result.push({ type: "progress", id: entry.id, sequence: entry.sequence, part });
@@ -754,9 +805,11 @@ function buildProcessTimeline(
     entries.push({ type: "progress", id: `progress:${part.id}`, sequence, part });
   });
   // Show process-channel markdown in the timeline during fallback.
-  markdownParts.filter((part) => part.channel === "process" || (part.channel === undefined && !part.final)).forEach((part, index) => {
+  markdownParts.filter((part) =>
+    part.channel === "process" || (part.channel === undefined && !part.final),
+  ).forEach((part, index) => {
     const sequence = part.sequence ?? Number.MAX_SAFE_INTEGER - 80000 + index;
-    entries.push({ type: "markdown", id: `markdown:${part.id}`, sequence, text: part.markdown, transient: false });
+    entries.push({ type: "markdown", id: `markdown:${part.id}`, partId: part.id, sequence, text: part.markdown, transient: false });
   });
   activities.forEach((activity, index) => {
     const sequence = activity.sequence ?? Number.MAX_SAFE_INTEGER - 10000 + index;
@@ -855,15 +908,15 @@ function AggregatedActivityDetails({
   language,
   resourceStates,
   onOpenResource,
+  running,
 }: {
   groups: ProcessActivityGroup[];
   language: "en" | "zh";
   resourceStates?: Readonly<Record<string, "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported">>;
   onOpenResource?: (resourceRef: OaepResourceRef) => void;
+  running: boolean;
 }): React.JSX.Element | null {
-  const [page, setPage] = useState(0);
-  const window = boundedProcessWindow(groups.length, page, PROCESS_ACTIVITY_WINDOW_SIZE);
-  useEffect(() => setPage((current) => boundedProcessWindow(groups.length, current, PROCESS_ACTIVITY_WINDOW_SIZE).page), [groups.length]);
+  const { page, setPage, window } = useFollowLatestPage(groups.length, PROCESS_ACTIVITY_WINDOW_SIZE, running);
   if (!groups.length) return null;
   return <section className="structured-process-section structured-activity-groups" data-activity-group-total={groups.length}>
     <h4>{language === "zh" ? "操作与文件" : "Actions and files"}</h4>
@@ -930,22 +983,38 @@ function StructuredReasoning({
   const content = visibleSegments.map((segment) => segment.text).filter(Boolean).join("\n\n");
   if (!content && !part.summary) return null;
   const running = part.status === "running" || part.status === "pending";
+  // Auto-expand while running, auto-collapse when done. User can still toggle.
+  const [open, setOpen] = useState(running);
+  const previousRunningRef = useRef(running);
+  useEffect(() => {
+    const wasRunning = previousRunningRef.current;
+    if (running && !wasRunning) setOpen(true);
+    else if (!running && wasRunning) setOpen(false);
+    previousRunningRef.current = running;
+  }, [running]);
   return (
-    <div className="structured-reasoning" data-segment-count={visibleSegments.length}>
-      <div className="chat-reasoning-content">
+    <details className="structured-reasoning" open={open} onToggle={(event) => setOpen(event.currentTarget.open)} data-segment-count={visibleSegments.length}>
+      <summary>
+        <span className="structured-reasoning-label">
+          {language === "zh" ? "思考" : "Reasoning"}
+          {part.summary ? <small>{part.summary}</small> : null}
+        </span>
+        <ChevronDown size={12} aria-hidden="true" />
+      </summary>
+      {open ? <div className="chat-reasoning-content">
         {part.summary ? <p className="structured-reasoning-summary">{part.summary}</p> : null}
         {/* plainMarkdown avoids nesting a second "Thinking…" block via think-tag parsing. */}
         {content ? (
           <ChatMessageContent
             content={content}
             plainMarkdown
-            streaming={false}
+            streaming={running}
             language={language}
             onOpenLink={onOpenLink}
           />
         ) : null}
-      </div>
-    </div>
+      </div> : null}
+    </details>
   );
 }
 

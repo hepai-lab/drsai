@@ -27,7 +27,6 @@ assert.ok(launcher.includes('$env:OPENDRSAI_RUNTIME_ROOT = $InstallDir'));
 assert.ok(launcher.includes('".drsai-prod" } else { ".drsai-dev"'));
 assert.ok(launcher.includes('[int]$GatewayPort = 0'));
 assert.ok(launcher.includes('$GatewayPort = 28643'));
-assert.ok(launcher.includes('DRSAI_DESKTOP_GATEWAY_HOME'));
 assert.ok(launcher.includes('desktop_gateway'));
 assert.ok(launcher.includes('$env:OPENDRSAI_ELECTRON_USER_DATA = $ElectronUserData'));
 assert.ok(launcher.includes('$env:OPENDRSAI_DEV_HOME = $DrsaiHome'));

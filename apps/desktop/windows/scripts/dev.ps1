@@ -663,9 +663,6 @@ if (-not $DrsaiHome) {
 }
 $DrsaiHome = [IO.Path]::GetFullPath($DrsaiHome)
 $ElectronUserData = Join-Path $DrsaiHome "electron-user-data"
-if (-not $env:DRSAI_DESKTOP_GATEWAY_HOME) {
-    $env:DRSAI_DESKTOP_GATEWAY_HOME = Join-Path $env:USERPROFILE ".drsai-workbench"
-}
 
 # Desktop development must exercise the same OIDC-only credential boundary as
 # a clean packaged install. Static keys in the host environment or ~/.drsai/.env
@@ -782,9 +779,8 @@ Write-Host "OpenDrSai Windows desktop source bootstrap ($LaunchModeName platform
 Write-Host "  Repository:  $RepoRoot" -ForegroundColor Green
 Write-Host "  DrSai home:  $DrsaiHome" -ForegroundColor Green
 Write-Host "  User data:   $ElectronUserData" -ForegroundColor Green
-Write-Host "  Surface:     workbench (desktop_gateway)" -ForegroundColor Green
 Write-Host "  Gateway:     http://127.0.0.1:$GatewayPort" -ForegroundColor Green
-Write-Host "  State home:  $env:DRSAI_DESKTOP_GATEWAY_HOME" -ForegroundColor Green
+Write-Host "  DRSAI_HOME:  $DrsaiHome" -ForegroundColor Green
 Write-Host "  Platform:    $(if ($IsProductionLaunch) { 'WebUI prod portal + HepAI aiapi (DDF)' } else { 'WebUI test: ai-dev OIDC + HepAI aiapi (DDF)' })" -ForegroundColor Green
 Write-Host "  Skills API:  $($env:OPENDRSAI_SKILLS_API_BASE_URL)" -ForegroundColor Green
 Write-Host "  Skills:      $BuiltInSkillsDir" -ForegroundColor Green

@@ -142,7 +142,7 @@ export function projectOaepEventForPresentation(
         if (newBudget > PART_SPILL_THRESHOLD && part.kind === "markdown") {
           // Spill: emit part.completed + artifact reference, skip delta
           output.push({ ...base(`part-spill:${part.id}`), type: "part.completed",
-            part: { ...part, status: "completed" } });
+            part: { ...part, status: "completed", channel: "answer", final: true } });
           const artifactId = `${part.id}:spill`;
           output.push({
             ...base(`part-started:${artifactId}`),

@@ -185,6 +185,36 @@ export function describeUserFacingError(error: unknown, language: "zh" | "en"): 
       }),
     };
   }
+  if (envelope.code === "agent_error_yielded") {
+    return {
+      title: language === "zh" ? "智能体执行出错" : "Agent execution error",
+      action: language === "zh"
+        ? "模型调用或工具执行过程中发生错误，已收到的内容会保留。请重试，或查看诊断信息了解详情。"
+        : "An error occurred during model invocation or tool execution. Received content is preserved. Retry, or view diagnostics for details.",
+      retryable: envelope.retryable,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (envelope.code === "run_cancelled") {
+    return {
+      title: language === "zh" ? "任务已取消" : "Task cancelled",
+      action: language === "zh"
+        ? "任务已被取消，已收到的内容会保留。可以重新发送消息重试，或新建任务。"
+        : "The task was cancelled. Received content is preserved. Retry by sending again, or start a new task.",
+      retryable: true,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: ["retry", "new_task", "diagnostics"].map((action) => {
+        const id = ACTION_IDS[action as RuntimeRecoveryAction];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
   const copy = TEXT[envelope.category][language];
   return {
     title: copy[0], action: copy[1], retryable: envelope.retryable,

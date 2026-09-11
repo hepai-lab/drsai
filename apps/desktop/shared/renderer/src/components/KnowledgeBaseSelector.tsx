@@ -16,6 +16,7 @@ export function KnowledgeBaseSelector({ agentId, language }: KnowledgeBaseSelect
   const isZh = language === "zh";
 
   const refresh = useCallback(async () => {
+    if (!agentId) return;
     setBusy(true);
     try {
       const [policy, preview] = await Promise.all([

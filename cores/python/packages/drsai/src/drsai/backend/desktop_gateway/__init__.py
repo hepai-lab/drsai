@@ -13,16 +13,14 @@ keep these tests hostage to legacy import errors. Nothing in this package
 imports ``gateway`` or ``gateway_legacy``, so retiring the legacy monolith is a
 deletion, not a disentangling.
 
-State and ports are separately addressable so this can run beside the frozen
-legacy gateway during the migration::
+State and ports are addressable via environment variables::
 
-    DRSAI_DESKTOP_GATEWAY_HOME  state root   (falls back to DRSAI_HOME, then ~/.drsai)
-    DRSAI_DESKTOP_GATEWAY_HOST  bind host    (default 127.0.0.1)
-    DRSAI_DESKTOP_GATEWAY_PORT  bind port    (default 28643; 28642 is legacy's)
+    DRSAI_HOME                   state root   (falls back to ~/.drsai)
+    DRSAI_DESKTOP_GATEWAY_HOST   bind host    (default 127.0.0.1)
+    DRSAI_DESKTOP_GATEWAY_PORT   bind port    (default 28643)
 
-The pairing token is the deliberate exception: it is read from ``DRSAI_HOME``
-because it is a Desktop handoff file rather than Runtime state, and both
-surfaces honour one token.
+The pairing token is read from ``DRSAI_HOME`` because it is a Desktop handoff
+file rather than Runtime state.
 
 Layout::
 

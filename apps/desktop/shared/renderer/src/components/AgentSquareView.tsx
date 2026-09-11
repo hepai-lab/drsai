@@ -44,7 +44,10 @@ export function AgentSquareView({
   const [platformStatus, setPlatformStatus] = useState<PlatformAgentStatus | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [group, setGroup] = useState<"all" | "local" | "official" | "mine">("all");
-  const [availability, setAvailability] = useState<"all" | "available" | "unavailable">("all");
+  // Unavailable cached/platform entries are diagnostic data, not selectable
+  // agents. Keep them accessible through the explicit filter, but do not show
+  // them in the normal Agent Square view.
+  const [availability, setAvailability] = useState<"all" | "available" | "unavailable">("available");
   const [sort, setSort] = useState<"default" | "name">("default");
   const [detailAgent, setDetailAgent] = useState<DesktopAgent | null>(null);
 

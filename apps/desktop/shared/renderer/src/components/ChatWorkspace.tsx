@@ -91,6 +91,7 @@ import type { AppLanguage } from "../navigation";
 import { supportsFullAgentPrimaryRuntime } from "../modelCatalogRecovery";
 import { getAgentEmptyChatPrompts, parseCatalogAgentExamples } from "../agentExamplePrompts";
 import { desktopApi, hasDesktopApi } from "../desktopApi";
+import { appendRendererStage } from "../debugLogStore";
 import { decideWeChatComposerSubmit } from "../wechatComposerPolicy";
 import { copyTextSafely } from "../clipboard";
 import {
@@ -233,6 +234,7 @@ const THINKING_EFFORTS: ThinkingEffort[] = ["none", "low", "medium", "high", "xh
 const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGE_COUNT = 4;
 const MAX_CLIPBOARD_PATH_MENTIONS = 6;
+const AT_BOTTOM_TOLERANCE = 4;
 
 // Module-level style constants to avoid creating new object references on every render.
 const VOICE_BUTTON_WRAPPER_STYLE: React.CSSProperties = { position: "relative", display: "inline-flex" };
@@ -452,6 +454,17 @@ function ChatWorkspaceImpl({
   onLoadEarlierHistory,
   onSubmit,
 }: ChatWorkspaceProps): React.JSX.Element {
+  useEffect(() => {
+    appendRendererStage("chat_workspace.mounted", {
+      conversationId,
+      selectedAgentId,
+      workspacePath,
+      canChat,
+      messageCount: messages.length,
+    });
+    return () => appendRendererStage("chat_workspace.unmounted", { conversationId });
+  }, [conversationId]);
+
   // The composer textarea is mirrored in local state so that keystrokes only
   // re-render this component instead of the whole AuthenticatedApp tree. The
   // adapter `input` prop is the external source of truth (thread switch,
@@ -1092,6 +1105,8 @@ function ChatWorkspaceImpl({
     setInteractionDraft("");
   }
   const shouldFollowOutputRef = useRef(true);
+  const programmaticScrollRef = useRef(false);
+  const programmaticScrollTimerRef = useRef<number | null>(null);
   const finalScrollSettleTimerRef = useRef<number | null>(null);
   const [smoothFollowOutput] = useState(() => createSmoothFollowOutputController({
     scrollToBottom: (behavior) => {
@@ -1808,7 +1823,21 @@ function ChatWorkspaceImpl({
     const list = messageListRef.current;
     if (!list) return;
     const target = getMessageListMaxScrollTop(list);
+    programmaticScrollRef.current = true;
     list.scrollTo({ top: target, behavior });
+    // Schedule a safety-net clear. For instant (auto) scrolls, the flag is
+    // normally cleared by handleMessageListScroll when the scroll event
+    // fires and we're at the bottom. The timeout handles edge cases where
+    // the scroll event doesn't fire or we're already at the target.
+    // For smooth scrolls, use a longer timeout to cover the animation.
+    const timeout = behavior === "auto" ? 200 : 1200;
+    if (programmaticScrollTimerRef.current !== null) {
+      window.clearTimeout(programmaticScrollTimerRef.current);
+    }
+    programmaticScrollTimerRef.current = window.setTimeout(() => {
+      programmaticScrollTimerRef.current = null;
+      programmaticScrollRef.current = false;
+    }, timeout);
   }
 
   useEffect(() => {
@@ -1818,11 +1847,20 @@ function ChatWorkspaceImpl({
       if (finalScrollSettleTimerRef.current !== null) window.clearTimeout(finalScrollSettleTimerRef.current);
       finalScrollSettleTimerRef.current = window.setTimeout(() => {
         finalScrollSettleTimerRef.current = null;
-        if (shouldFollowOutputRef.current && smoothFollowOutput.isFollowing()) scrollMessageListToLatest("auto");
+        if (shouldFollowOutputRef.current) scrollMessageListToLatest("auto");
       }, 360);
       return;
     }
+    // During streaming, directly scroll to the latest content on every
+    // messages update. Use auto (not smooth) for immediate tracking and
+    // defer to the next animation frame so the DOM has been laid out.
+    const frame = window.requestAnimationFrame(() => {
+      if (shouldFollowOutputRef.current && messageListRef.current) {
+        scrollMessageListToLatest("auto");
+      }
+    });
     smoothFollowOutput.handleHeightChange(messageListRef.current.scrollHeight);
+    return () => window.cancelAnimationFrame(frame);
   }, [hasStreamingMessage, messages, smoothFollowOutput]);
 
   useEffect(() => () => smoothFollowOutput.dispose(), [smoothFollowOutput]);
@@ -1832,7 +1870,15 @@ function ChatWorkspaceImpl({
     const lastMessage = list?.lastElementChild;
     if (!list || !lastMessage) return undefined;
     const observer = new ResizeObserver(() => {
-      if (shouldFollowOutputRef.current) smoothFollowOutput.handleHeightChange(list.scrollHeight);
+      if (!shouldFollowOutputRef.current) return;
+      // Direct scroll on height change — more reliable than handleHeightChange
+      // which may be gated by controller state (pendingFrame, following, etc.)
+      const frame = window.requestAnimationFrame(() => {
+        if (shouldFollowOutputRef.current && messageListRef.current) {
+          scrollMessageListToLatest("auto");
+        }
+      });
+      smoothFollowOutput.handleHeightChange(list.scrollHeight);
     });
     observer.observe(lastMessage);
     smoothFollowOutput.handleHeightChange(list.scrollHeight);
@@ -1841,6 +1887,7 @@ function ChatWorkspaceImpl({
 
   useEffect(() => () => {
     if (finalScrollSettleTimerRef.current !== null) window.clearTimeout(finalScrollSettleTimerRef.current);
+    if (programmaticScrollTimerRef.current !== null) window.clearTimeout(programmaticScrollTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -1920,13 +1967,48 @@ function ChatWorkspaceImpl({
   function handleMessageListScroll(): void {
     const list = messageListRef.current;
     if (!list) return;
-    smoothFollowOutput.handleScroll(list.scrollTop, getMessageListMaxScrollTop(list));
-    shouldFollowOutputRef.current = smoothFollowOutput.isFollowing();
+    const maxScrollTop = getMessageListMaxScrollTop(list);
+    // If this scroll was triggered by our own programmatic scrollTo, don't
+    // treat it as user intent. Just sync state.
+    if (programmaticScrollRef.current) {
+      // Check if we've reached the bottom — re-enable follow if so.
+      if (maxScrollTop - list.scrollTop <= AT_BOTTOM_TOLERANCE) {
+        programmaticScrollRef.current = false;
+        if (programmaticScrollTimerRef.current !== null) {
+          window.clearTimeout(programmaticScrollTimerRef.current);
+          programmaticScrollTimerRef.current = null;
+        }
+        shouldFollowOutputRef.current = true;
+        setAwayFromLatest(false);
+      }
+      return;
+    }
+    // User-initiated scroll: let smoothFollowOutput handle the state machine
+    // (it distinguishes up/down, layout shrink, etc.), then sync our flag.
+    const userPaused = smoothFollowOutput.handleScroll(list.scrollTop, maxScrollTop);
+    if (userPaused) {
+      // handleScroll detected upward movement and paused following
+      shouldFollowOutputRef.current = false;
+    } else if (maxScrollTop - list.scrollTop <= AT_BOTTOM_TOLERANCE) {
+      // Scrolled to the bottom — re-enable follow
+      shouldFollowOutputRef.current = true;
+    }
+    // Otherwise: keep current follow state (e.g., user scrolling down but
+    // not yet at the bottom shouldn't pause following)
     setAwayFromLatest((current) => current === !shouldFollowOutputRef.current ? current : !shouldFollowOutputRef.current);
   }
 
   function handleMessageListWheel(event: React.WheelEvent<HTMLDivElement>): void {
     if (event.deltaY >= 0) return;
+    // Wheel events are always user-initiated — clear any programmatic scroll
+    // flag so subsequent scroll events are treated as user intent.
+    if (programmaticScrollRef.current) {
+      programmaticScrollRef.current = false;
+      if (programmaticScrollTimerRef.current !== null) {
+        window.clearTimeout(programmaticScrollTimerRef.current);
+        programmaticScrollTimerRef.current = null;
+      }
+    }
     const list = messageListRef.current;
     if (!list) return;
     smoothFollowOutput.handleUserScrollIntent(list.scrollTop);
@@ -1935,6 +2017,14 @@ function ChatWorkspaceImpl({
   }
 
   function pauseMessageListFollowForUserIntent(): void {
+    // Pointer/key events are always user-initiated — clear programmatic flag.
+    if (programmaticScrollRef.current) {
+      programmaticScrollRef.current = false;
+      if (programmaticScrollTimerRef.current !== null) {
+        window.clearTimeout(programmaticScrollTimerRef.current);
+        programmaticScrollTimerRef.current = null;
+      }
+    }
     const list = messageListRef.current;
     if (!list) return;
     smoothFollowOutput.handleUserScrollIntent(list.scrollTop);
@@ -1955,6 +2045,7 @@ function ChatWorkspaceImpl({
 
   function scrollToLatest(): void {
     shouldFollowOutputRef.current = true;
+    programmaticScrollRef.current = false;
     smoothFollowOutput.resume();
     setAwayFromLatest(false);
     scrollMessageListToLatest("smooth");
@@ -2017,6 +2108,15 @@ function ChatWorkspaceImpl({
 
   function handleSubmit(event: FormEvent): void {
     event.preventDefault();
+    appendRendererStage("chat_workspace.submit.start", {
+      conversationId,
+      selectedAgentId,
+      canChat,
+      channelSource,
+      hasText: Boolean(composerTextRef.current.trim()),
+      attachmentCount: attachments.length + externalAttachments.length + inlineMentionAttachments.length,
+      messageCount: messages.length,
+    });
     if (channelSource === "wechat") {
       const decision = decideWeChatComposerSubmit({
         channelSource, trigger: "button", available: wechatCapability?.available === true,
@@ -2206,6 +2306,11 @@ function ChatWorkspaceImpl({
   }
 
   async function submitWithAttachments(): Promise<void> {
+    // Reset scroll-follow state so the view tracks the latest streaming output.
+    shouldFollowOutputRef.current = true;
+    programmaticScrollRef.current = false;
+    smoothFollowOutput.resume();
+    setAwayFromLatest(false);
     if (duplexVoiceInput.phase === "active") { await submitDuplexText(); return; }
     if (["starting", "recovering", "stopping"].includes(duplexVoiceInput.phase)) {
       setVoiceError(zh ? "实时语音正在连接、恢复或结束；文字草稿已保留，请稍后重试。" : "Realtime voice is connecting, recovering, or ending. Your text draft is preserved; retry shortly.");
@@ -2230,6 +2335,12 @@ function ChatWorkspaceImpl({
       ...externalAttachments,
       ...inlineMentionAttachments,
     ], folderSummaryProvider);
+    appendRendererStage("chat_workspace.submit.before_adapter", {
+      conversationId,
+      selectedAgentId,
+      textLength: textDraft.length,
+      attachmentCount: submittedAttachments.length,
+    });
     const submitted = await onSubmit(
       submittedAttachments.filter((attachment) => !attachment.blockedReason),
       {
@@ -2258,6 +2369,7 @@ function ChatWorkspaceImpl({
       },
     );
     if (submitted) {
+      appendRendererStage("chat_workspace.submit.adapter_ok", { conversationId, selectedAgentId, isVoiceSubmission });
       if (!isVoiceSubmission) applyComposerText("");
       setAttachments([]);
       onClearExternalAttachments?.();
@@ -2265,7 +2377,9 @@ function ChatWorkspaceImpl({
       setPendingReplaceFromMessageId(null);
       editResendBackupRef.current = null;
       if (isVoiceSubmission) dispatchVoiceTurn({ type: "response_started" });
-    } else if (isVoiceSubmission) {
+    } else {
+      appendRendererStage("chat_workspace.submit.failed", { conversationId, selectedAgentId, isVoiceSubmission }, "error");
+      if (!isVoiceSubmission) return;
       const message = zh ? "语音消息发送失败，转写文本和附件已保留。" : "The voice message could not be sent. The transcript and attachments were preserved.";
       dispatchVoiceTurn({
         type: "fail",
@@ -3405,6 +3519,7 @@ function ChatWorkspaceImpl({
             className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatches.includes(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""} ${message.structuredTurn?.turnId === highlightedTurnId ? "structured-turn-focus" : ""}`}
             pinned={message.streaming === true || visibleMessages.length - messageIndex <= 12}
             scrollRootRef={messageListRef}
+            now={message.streaming ? now : undefined}
           >
             {message.role === "user" || !message.structuredTurn ? <strong className="message-author">{message.role === "user" ? "You" : "OpenDrSai"}</strong> : null}
             <div className="message-body">
@@ -4304,10 +4419,12 @@ function ChatWorkspaceImpl({
                   </span>
                 </div>
               )}
-              <KnowledgeBaseSelector
-                agentId={selectedAgentId ?? ""}
-                language={language}
-              />
+              {isLocalOpenDrSaiAgent && (
+                <KnowledgeBaseSelector
+                  agentId={selectedAgentId!}
+                  language={language}
+                />
+              )}
               <div className="composer-meta-item composer-configuration" data-meta-menu="configuration">
                 <button
                   className="composer-meta-chip composer-meta-button composer-configuration-trigger"
@@ -4669,12 +4786,14 @@ const VirtualizedMessage = memo(function VirtualizedMessage({
   className,
   pinned,
   scrollRootRef,
+  now,
   children,
 }: {
   message: UiMessage;
   className: string;
   pinned: boolean;
   scrollRootRef: React.RefObject<HTMLDivElement | null>;
+  now?: number;
   children: React.ReactNode;
 }): React.JSX.Element {
   const elementRef = useRef<HTMLElement | null>(null);
@@ -4721,7 +4840,7 @@ const VirtualizedMessage = memo(function VirtualizedMessage({
       {renderContent ? children : null}
     </article>
   );
-}, (prev, next) => prev.message === next.message && prev.pinned === next.pinned);
+}, (prev, next) => prev.message === next.message && prev.pinned === next.pinned && prev.now === next.now);
 
 function formatPickedFileMeta(file: PickedFileDescriptor, zh: boolean): string {
   const category = {

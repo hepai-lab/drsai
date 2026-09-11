@@ -374,7 +374,7 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
     const citationIds = citationIdsForMarkdown(markdown, citations);
     return {
       parts: [
-        { id: item.id, kind: "markdown", status, channel: "answer", final: status === "completed", markdown, ...(citationIds.length ? { citationIds } : {}) },
+        { id: item.id, kind: "markdown", status, channel: status === "completed" ? "answer" : "process", final: status === "completed", markdown, ...(citationIds.length ? { citationIds } : {}) },
         ...citations,
       ],
       activities: [],

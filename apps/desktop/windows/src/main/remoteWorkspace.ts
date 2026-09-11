@@ -1137,11 +1137,23 @@ export async function commitRemoteWorkspace(workspacePath: string, message: stri
   await remotePost(workspacePath, "/git/commit", { message, body, idempotency_key: approvalId });
 }
 
+/** Convert an absolute path to a workspace-relative POSIX-style path for the remote API. */
+function relativeRemoteWorkspacePath(workspacePath: string, path: string): string {
+  return path.startsWith(workspacePath)
+    ? path.slice(workspacePath.length).replace(/^[/\\]+/, "").replace(/\\/g, "/")
+    : path.replace(/\\/g, "/");
+}
+
 export async function listRemoteWorkspaceFiles(request: WorkspaceFileTreeRequest): Promise<WorkspaceFileTreeResult> {
   const stale = !getRemoteGatewayAccess(request.workspacePath, request.workspaceId);
   ensureRemoteFileWatcher(request.workspacePath, request.workspaceId);
   const parameters = new URLSearchParams({ depth: String(Math.max(0, Math.min(5, request.maxDepth ?? 2))), max_entries: String(request.maxEntries ?? 500), offset: String(request.offset ?? 0) });
   if (request.query) parameters.set("query", request.query);
+  // Forward directoryPath as relative "path" for per-directory lazy loading.
+  if (request.directoryPath?.trim()) {
+    const rel = relativeRemoteWorkspacePath(request.workspacePath, request.directoryPath);
+    if (rel) parameters.set("path", rel);
+  }
   const payload = await remoteJson<{ data: Array<Record<string, unknown>>; total?: number; truncated?: boolean; next_offset?: number | null }>(request.workspacePath, `/files?${parameters}`, request.workspaceId);
   let count = 0;
   const mapNode = (row: Record<string, unknown>): any => {

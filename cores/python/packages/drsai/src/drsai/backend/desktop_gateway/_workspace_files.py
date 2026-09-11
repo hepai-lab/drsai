@@ -156,17 +156,24 @@ def list_files(
                 "size": stat.st_size,
                 "modified_at": stat.st_mtime,
             }
-            if resolved.is_dir() and remaining > 0:
-                row["children"] = visit(resolved, remaining - 1)
-                descendant = next(
-                    (
-                        status for changed, status in git_statuses.items()
-                        if changed == relative or changed.startswith(relative + "/")
-                    ),
-                    None,
-                )
-                if descendant:
-                    row["git_status"] = descendant
+            if resolved.is_dir():
+                if remaining > 0:
+                    row["children"] = visit(resolved, remaining - 1)
+                    row["has_children"] = bool(row["children"])
+                    descendant = next(
+                        (
+                            status for changed, status in git_statuses.items()
+                            if changed == relative or changed.startswith(relative + "/")
+                        ),
+                        None,
+                    )
+                    if descendant:
+                        row["git_status"] = descendant
+                else:
+                    # At the depth boundary we cannot know without listing,
+                    # so flag conservatively to let the client show an expand
+                    # arrow and lazy-load on demand.
+                    row["has_children"] = True
             elif relative in git_statuses:
                 row["git_status"] = git_statuses[relative]
             rows.append(row)
@@ -183,21 +190,45 @@ def list_files(
             collect(row.get("children", []))
 
     collect(tree)
+    total = len(matched)
     page = matched[offset:offset + max_entries]
-    truncated = scan_truncated or offset + len(page) < len(matched)
+    truncated = scan_truncated or offset + len(page) < total
+    next_offset = offset + len(page) if truncated and len(page) else None
     # A plain browse returns the nested tree; a search or a paged request returns
-    # the flat matches, because a filtered tree is not renderable -- its interior
-    # nodes need not match.  The client cannot infer which it received: a flat
+    # the flat matches.  The client cannot infer which it received -- a flat
     # listing and a tree whose entries happen to have no children look identical,
     # so the shape is stated rather than guessed.
-    flat = bool(needle or offset or len(matched) > max_entries)
+    flat = bool(needle or offset or total > max_entries)
+    if flat:
+        # Synthesize ancestor directory entries for the page so the client can
+        # rebuild a proper tree from path prefixes.  Without this, a match at
+        # "src/components/FilesTree.tsx" would have no "src" or
+        # "src/components" nodes to hang from.  Ancestors are computed per
+        # page so `total` stays the true match count and offsets paginate
+        # over real matches only; the client merges pages by path.
+        page_by_path: dict[str, dict[str, Any]] = {}
+        for item in page:
+            parts = item["path"].split("/")
+            for i in range(1, len(parts)):
+                ancestor_path = "/".join(parts[:i])
+                if ancestor_path not in page_by_path:
+                    page_by_path[ancestor_path] = {
+                        "name": parts[i - 1],
+                        "path": ancestor_path,
+                        "directory": True,
+                        "size": 0,
+                        "modified_at": item.get("modified_at", 0),
+                        "has_children": True,
+                    }
+            page_by_path[item["path"]] = item
+        page = sorted(page_by_path.values(), key=lambda r: r["path"])
     return {
         "workspace_id": workspace_id,
         "shape": "flat" if flat else "tree",
         "data": page if flat else tree,
-        "total": len(matched),
+        "total": total,
         "offset": offset,
-        "next_offset": offset + len(page) if truncated and len(page) else None,
+        "next_offset": next_offset,
         "truncated": truncated,
         "scan_limit": scan_limit,
     }

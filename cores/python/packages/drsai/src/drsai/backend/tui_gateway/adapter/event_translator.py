@@ -574,7 +574,15 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
             return out
 
         # Otherwise treat as a delayed message.complete-ish chunk.
-        out.append(("message.delta", {"text": text}))
+        delta_payload: dict = {"text": text}
+        # Pass through error/warning/paused/cancelled metadata flags so
+        # downstream consumers (desktop gateway, TUI, frontend) can
+        # differentiate rendering (red error style, recovery buttons, etc.).
+        for _flag in ("error", "warning", "paused", "cancelled"):
+            _val = metadata.get(_flag)
+            if _val is not None:
+                delta_payload[_flag] = _val
+        out.append(("message.delta", delta_payload))
         state.streamed_visible = True
         return out
 
@@ -601,7 +609,15 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
             ):
                 text = getattr(chat, "content", "") or ""
                 if text and not state.streamed_visible:
-                    out.append(("message.delta", {"text": text}))
+                    delta_payload: dict = {"text": text}
+                    # Pass through error/warning/paused/cancelled metadata
+                    # flags so downstream consumers can differentiate
+                    # rendering (red error style, recovery buttons, etc.).
+                    for _flag in ("error", "warning", "paused", "cancelled"):
+                        _val = metadata.get(_flag)
+                        if _val is not None:
+                            delta_payload[_flag] = _val
+                    out.append(("message.delta", delta_payload))
                     state.streamed_visible = True
         else:
             captured2 = False

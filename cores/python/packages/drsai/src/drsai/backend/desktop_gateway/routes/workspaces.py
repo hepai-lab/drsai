@@ -66,7 +66,7 @@ async def workspace_close(workspace_id: str):
 async def workspace_files(
     workspace_id: str,
     path: str = ".",
-    depth: int = Query(default=2, ge=0, le=5),
+    depth: int = Query(default=2, ge=0, le=8),
     query: str = "",
     offset: int = Query(default=0, ge=0),
     max_entries: int = Query(default=500, ge=1, le=5000),

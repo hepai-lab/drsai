@@ -3853,6 +3853,7 @@ class RuntimeEngine:
         """Persist normalized semantics canonically, then write a legacy projection."""
         from drsai.backend.runtime.normalized_writer import (
             normalized_canonical_item,
+            normalized_journal_item_payload,
             normalized_runtime_write,
         )
         from drsai.backend.runtime.normalized_events import NormalizedEventKind
@@ -3948,6 +3949,9 @@ class RuntimeEngine:
                     prior,
                     dict(audit or {}),
                 )
+                journal_payload = normalized_journal_item_payload(
+                    event, dict(audit or {}),
+                )
                 revision = int(existing_item["revision"]) + 1 if existing_item is not None else 1
                 _item, _journal_event, journal_created = self.conversation_journal.upsert_item_in_transaction(
                     db,
@@ -3958,6 +3962,7 @@ class RuntimeEngine:
                     revision=revision,
                     source_client="runtime",
                     payload=payload,
+                    event_payload_override=journal_payload,
                     run_id=run_id,
                     event_kind=item_event_kind,
                     updated_at=created,

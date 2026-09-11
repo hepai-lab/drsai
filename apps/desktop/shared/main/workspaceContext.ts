@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import { createReadStream, existsSync } from "fs";
 import { open, readdir, readFile, realpath, stat } from "fs/promises";
 import { createHash } from "crypto";
-import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "path";
 import { inflateRawSync } from "zlib";
 import type {
   MaterialConsistencyAnalysisRequest,
@@ -69,12 +69,7 @@ const NOISY_DIRS = new Set([
   ".turbo",
   ".venv",
   "__pycache__",
-  "build",
-  "coverage",
-  "dist",
   "node_modules",
-  "out",
-  "target",
   "venv",
 ]);
 
@@ -196,16 +191,25 @@ export async function listWorkspaceFiles(
   const request = validateTreeRequest(rawRequest);
   const workspacePath = await resolveWorkspaceRoot(request.workspacePath);
   const query = request.query?.trim().toLowerCase() || "";
+  const requestedDirectory = request.directoryPath
+    ? resolve(workspacePath, request.directoryPath)
+    : workspacePath;
+  if (!requestedDirectory.startsWith(`${workspacePath}${sep}`) && requestedDirectory !== workspacePath) {
+    throw new Error("Workspace directory is outside the workspace root.");
+  }
+  const listingRoot = request.directoryPath ? await resolveWorkspaceRoot(requestedDirectory) : workspacePath;
   const maxDepth = clampInt(request.maxDepth, 1, 8, DEFAULT_MAX_DEPTH);
   const maxEntries = clampInt(request.maxEntries, 50, 2_000, DEFAULT_MAX_ENTRIES);
+  const offset = clampInt(request.offset, 0, 1_000_000, 0);
   const gitStatuses = new Map(
     (await getGitChangedFiles(workspacePath)).map((item) => [normalizeRel(item.path), item.status]),
   );
   let totalEntries = 0;
+  let scannedEntries = 0;
   let truncated = false;
 
   async function walk(dirPath: string, depth: number): Promise<WorkspaceFileNode[]> {
-    if (totalEntries >= maxEntries) {
+    if (scannedEntries >= maxEntries + offset) {
       truncated = true;
       return [];
     }
@@ -222,23 +226,31 @@ export async function listWorkspaceFiles(
 
     const nodes: WorkspaceFileNode[] = [];
     for (const entry of entries) {
-      if (totalEntries >= maxEntries) {
+      if (scannedEntries >= maxEntries + offset) {
         truncated = true;
         break;
       }
-      if (entry.name.startsWith(".") && entry.name !== ".claude" && entry.name !== ".env.example") {
-        if (entry.name !== ".env" && entry.name !== ".github") continue;
-      }
+      // Show dot-files by default (align with VSCode).  Only hide the noisy
+      // directories in NOISY_DIRS and version-control dirs.
       if (entry.isDirectory() && NOISY_DIRS.has(entry.name)) continue;
 
       const absolutePath = join(dirPath, entry.name);
       const relativePath = normalizeRel(relative(workspacePath, absolutePath));
       const matchesQuery = !query || relativePath.toLowerCase().includes(query);
       let children: WorkspaceFileNode[] | undefined;
-      if (entry.isDirectory() && depth < maxDepth) {
-        children = await walk(absolutePath, depth + 1);
+      let hasChildren: boolean | undefined;
+      if (entry.isDirectory()) {
+        if (depth < maxDepth) {
+          children = await walk(absolutePath, depth + 1);
+          hasChildren = children.length > 0;
+        } else {
+          hasChildren = true; // conservative: might have children
+        }
       }
       if (!matchesQuery && (!children || children.length === 0)) continue;
+
+      scannedEntries += 1;
+      if (scannedEntries <= offset) continue; // skip entries before offset
 
       const fileStat = await safeStat(absolutePath);
       const fileSize = toSafeNumber(fileStat?.size);
@@ -254,17 +266,29 @@ export async function listWorkspaceFiles(
         gitStatus: gitStatuses.get(relativePath) ?? "clean",
         previewKind: entry.isFile() ? classifyPreviewKind(entry.name, fileSize ?? 0) : undefined,
         children,
+        hasChildren,
         truncated: entry.isDirectory() && depth >= maxDepth,
       });
     }
     return nodes;
   }
 
+  const allNodes = await walk(listingRoot, 0);
+  // When searching, rebuild tree from flat results so the renderer always
+  // gets a proper hierarchy (same as the gateway path).
+  const resultNodes = query
+    ? rebuildLocalTreeFromFlat(allNodes)
+    : allNodes;
+
   return {
     workspacePath,
-    nodes: await walk(workspacePath, 0),
+    nodes: resultNodes,
     totalEntries,
     truncated,
+    nextOffset: truncated && offset + totalEntries < scannedEntries
+      ? offset + totalEntries
+      : undefined,
+    flat: query ? true : undefined,
   };
 }
 
@@ -1424,9 +1448,14 @@ function validateTreeRequest(rawRequest: unknown): WorkspaceFileTreeRequest {
   const request = rawRequest as Partial<WorkspaceFileTreeRequest>;
   return {
     workspacePath: String(request.workspacePath ?? ""),
+    directoryPath:
+      typeof request.directoryPath === "string" && request.directoryPath.trim()
+        ? request.directoryPath.trim().slice(0, 4096)
+        : undefined,
     query: typeof request.query === "string" ? request.query.slice(0, 200) : undefined,
     maxDepth: typeof request.maxDepth === "number" ? request.maxDepth : undefined,
     maxEntries: typeof request.maxEntries === "number" ? request.maxEntries : undefined,
+    offset: typeof request.offset === "number" ? request.offset : undefined,
   };
 }
 
@@ -2016,6 +2045,12 @@ function normalizeRel(value: string): string {
   return value.replace(/\\/g, "/").replace(/^\.?\//, "");
 }
 
+/** Convert an absolute directory path to a workspace-relative POSIX-style path. */
+function relativeWorkspacePath(workspacePath: string, directoryPath: string): string {
+  const rel = relative(workspacePath, directoryPath);
+  return rel.replace(/\\/g, "/");
+}
+
 function clampInt(value: number | undefined, min: number, max: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
   return Math.max(min, Math.min(max, Math.floor(value as number)));
@@ -2078,6 +2113,12 @@ interface GatewayFileTreeEntry {
   modified_at?: string;
   git_status?: string;
   children?: GatewayFileTreeEntry[];
+  /**
+   * Present on directory rows: false = verified empty, true = has (or may
+   * have) children.  Absent on rows from older gateways — fall back to
+   * `Boolean(children?.length)`.
+   */
+  has_children?: boolean;
 }
 
 /** Gateway response for GET /v1/workspaces/{id}/files. */
@@ -2128,20 +2169,158 @@ function convertGatewayFileNode(
     gitStatus: (entry.git_status as WorkspaceFileGitStatus | undefined) ?? undefined,
     previewKind: !isDir ? classifyPreviewKind(entry.name, entry.size ?? 0) : undefined,
     children: entry.children?.map((child) => convertGatewayFileNode(child, workspacePath)),
+    hasChildren: isDir
+      ? entry.has_children ?? Boolean(entry.children?.length)
+      : undefined,
   };
 }
 
-/** Convert a gateway list-files response to WorkspaceFileTreeResult. */
+/**
+ * Rebuild a nested tree from a flat listing.  Entries carry full relative
+ * paths ("src/components/FilesTree.tsx"); intermediate directories that are
+ * missing from the listing are synthesized as placeholder nodes so the
+ * renderer always receives a proper hierarchy.  Parent directories sort
+ * before their contents, directories before files at the same level.
+ */
+function rebuildTreeFromFlatEntries(
+  entries: GatewayFileTreeEntry[],
+): GatewayFileTreeEntry[] {
+  const nodeByPath = new Map<string, GatewayFileTreeEntry & { children: GatewayFileTreeEntry[] }>();
+  const roots: GatewayFileTreeEntry[] = [];
+
+  const ensureDirectory = (path: string): GatewayFileTreeEntry & { children: GatewayFileTreeEntry[] } => {
+    const existing = nodeByPath.get(path);
+    if (existing) return existing;
+    const name = path.split("/").pop() ?? path;
+    const created: GatewayFileTreeEntry & { children: GatewayFileTreeEntry[] } = {
+      name,
+      path,
+      directory: true,
+      children: [],
+      has_children: true,
+    };
+    nodeByPath.set(path, created);
+    const parentPath = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+    if (parentPath) {
+      ensureDirectory(parentPath).children.push(created);
+    } else {
+      roots.push(created);
+    }
+    return created;
+  };
+
+  for (const entry of entries) {
+    if (entry.directory) {
+      const dir = ensureDirectory(entry.path);
+      // Overlay real metadata (git_status, size, ...) onto the placeholder.
+      Object.assign(dir, { ...entry, children: dir.children, has_children: true });
+      continue;
+    }
+    const node: GatewayFileTreeEntry & { children: GatewayFileTreeEntry[] } = { ...entry, children: [] };
+    nodeByPath.set(entry.path, node);
+    const parentPath = entry.path.includes("/") ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "";
+    if (parentPath) {
+      ensureDirectory(parentPath).children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  const sortLevel = (items: GatewayFileTreeEntry[]) => {
+    items.sort((a, b) =>
+      (a.directory === b.directory ? 0 : a.directory ? -1 : 1)
+      || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    for (const item of items) if (item.children?.length) sortLevel(item.children);
+  };
+  sortLevel(roots);
+  return roots;
+}
+
+/**
+ * Rebuild a nested tree from a flat list of WorkspaceFileNode entries
+ * (local path).  Uses `relativePath` to infer parent-child relationships.
+ * Synthesizes missing intermediate directory nodes so the renderer always
+ * receives a proper hierarchy.
+ */
+function rebuildLocalTreeFromFlat(flatNodes: WorkspaceFileNode[]): WorkspaceFileNode[] {
+  const nodeByPath = new Map<string, WorkspaceFileNode & { children: WorkspaceFileNode[] }>();
+  const roots: WorkspaceFileNode[] = [];
+
+  const ensureDirectory = (relativePath: string, workspacePath: string): WorkspaceFileNode & { children: WorkspaceFileNode[] } => {
+    const existing = nodeByPath.get(relativePath);
+    if (existing) return existing;
+    const name = relativePath.split("/").pop() ?? relativePath;
+    const absolutePath = join(workspacePath, relativePath);
+    const created: WorkspaceFileNode & { children: WorkspaceFileNode[] } = {
+      name,
+      path: absolutePath,
+      relativePath,
+      type: "directory",
+      children: [],
+      hasChildren: true,
+    };
+    nodeByPath.set(relativePath, created);
+    const parentRel = relativePath.includes("/")
+      ? relativePath.slice(0, relativePath.lastIndexOf("/"))
+      : "";
+    if (parentRel) {
+      ensureDirectory(parentRel, workspacePath).children.push(created);
+    } else {
+      roots.push(created);
+    }
+    return created;
+  };
+
+  for (const node of flatNodes) {
+    if (node.type === "directory") {
+      const dir = ensureDirectory(node.relativePath, node.path.slice(0, node.path.length - node.relativePath.length));
+      // Overlay real metadata onto the placeholder.
+      Object.assign(dir, {
+        ...node,
+        children: dir.children,
+        hasChildren: true,
+      });
+      continue;
+    }
+    const enriched: WorkspaceFileNode & { children: WorkspaceFileNode[] } = { ...node, children: [] };
+    nodeByPath.set(node.relativePath, enriched);
+    const parentRel = node.relativePath.includes("/")
+      ? node.relativePath.slice(0, node.relativePath.lastIndexOf("/"))
+      : "";
+    if (parentRel) {
+      const workspaceBase = node.path.slice(0, node.path.length - node.relativePath.length);
+      ensureDirectory(parentRel, workspaceBase).children.push(enriched);
+    } else {
+      roots.push(enriched);
+    }
+  }
+
+  const sortLevel = (items: WorkspaceFileNode[]) => {
+    items.sort((a, b) =>
+      (a.type === "directory" && b.type !== "directory" ? -1
+        : a.type !== "directory" && b.type === "directory" ? 1 : 0)
+      || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    for (const item of items) if (item.children?.length) sortLevel(item.children);
+  };
+  sortLevel(roots);
+  return roots;
+}
 export function convertGatewayFileList(
   response: GatewayFileListResponse,
   workspacePath: string,
 ): WorkspaceFileTreeResult {
+  const isFlat = response.shape === "flat";
+  const treeData = isFlat
+    ? rebuildTreeFromFlatEntries(response.data)
+    : response.data;
   return {
     workspacePath,
-    nodes: response.data.map((entry) => convertGatewayFileNode(entry, workspacePath)),
+    nodes: treeData.map((entry) => convertGatewayFileNode(entry, workspacePath)),
     totalEntries: response.total,
     truncated: response.truncated,
     nextOffset: response.next_offset ?? undefined,
+    flat: isFlat || undefined,
+    scanLimit: response.scan_limit,
   };
 }
 
@@ -2182,7 +2361,14 @@ export async function listWorkspaceFilesViaGateway(
   if (!workspaceId) throw new Error("workspaceId is required for gateway file listing");
 
   const params = new URLSearchParams();
-  params.set("path", ".");
+  // When directoryPath is provided, list that directory's direct children.
+  // Convert absolute → relative for the gateway API (which expects relative).
+  if (request.directoryPath?.trim()) {
+    const rel = relativeWorkspacePath(request.workspacePath, request.directoryPath);
+    params.set("path", rel || ".");
+  } else {
+    params.set("path", ".");
+  }
   params.set("depth", String(clampInt(request.maxDepth, 1, 8, DEFAULT_MAX_DEPTH)));
   if (request.query?.trim()) params.set("query", request.query.trim());
   params.set("offset", String(clampInt(request.offset, 0, 1_000_000, 0)));

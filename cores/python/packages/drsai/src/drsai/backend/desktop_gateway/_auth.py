@@ -7,9 +7,8 @@ this middleware, which checks four headers on every request::
 
     x-opendrsai-gateway-token   proves the caller is the paired local main process
                                 (issued by Desktop into ``$DRSAI_HOME/runtime/
-                                instance-token`` -- note DRSAI_HOME, not
-                                DRSAI_DESKTOP_GATEWAY_HOME: it is a pairing handoff, not
-                                Runtime state, and both surfaces honour one token)
+                                instance-token`` -- it is a pairing handoff, not
+                                Runtime state)
     x-opendrsai-auth-mode       "oidc" or "offline"
     authorization               Bearer <hepai access token>
     x-opendrsai-principal       the subject the caller claims to be

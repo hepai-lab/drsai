@@ -767,7 +767,7 @@ function applyPartDelta(
   return {
     ...state,
     parts: state.parts.map((item, index) => index === partIndex ? updated : item),
-    processTimeline: appendProcessTimelineDelta(state.processTimeline, part, delta, sequence),
+    processTimeline: appendProcessTimelineDelta(state.processTimeline ?? [], part, delta, sequence),
   };
 }
 
@@ -783,7 +783,7 @@ function appendProcessTimelineDelta(
       return [...timeline.slice(0, -1), { ...previous, text: `${previous.text}${delta.text}` }];
     }
     const id = `reasoning:${part.id}:${sequence}`;
-    return [...timeline, { id, kind: "reasoning", sequence, partId: part.id, segmentId: delta.segmentId, text: delta.text, status: "running" }].slice(-500);
+    return [...timeline, { id, kind: "reasoning", sequence, partId: part.id, segmentId: delta.segmentId, text: delta.text, status: "running" } as StructuredProcessTimelineEntry].slice(-500);
   }
   if (part.kind === "markdown" && delta.kind === "markdown.append") {
     const transient = (part.channel ?? "process") === "answer";
@@ -792,10 +792,10 @@ function appendProcessTimelineDelta(
       return [...timeline.slice(0, -1), { ...previous, text: `${previous.text}${delta.text}` }];
     }
     const id = `markdown:${part.id}:${sequence}`;
-    return [...timeline, { id, kind: "markdown", sequence, partId: part.id, text: delta.text, status: "running", transient }].slice(-500);
+    return [...timeline, { id, kind: "markdown", sequence, partId: part.id, text: delta.text, status: "running", transient } as StructuredProcessTimelineEntry].slice(-500);
   }
   if (part.kind === "progress" && delta.kind === "progress.update") {
-    return [...timeline, { id: `progress:${part.id}:${sequence}`, kind: "progress", sequence, partId: part.id, summary: delta.summary, status: "running", ...(delta.phase ? { phase: delta.phase } : {}), ...(delta.completed !== undefined ? { completed: delta.completed } : {}), ...(delta.total !== undefined ? { total: delta.total } : {}) }].slice(-500);
+    return [...timeline, { id: `progress:${part.id}:${sequence}`, kind: "progress", sequence, partId: part.id, summary: delta.summary, status: "running", ...(delta.phase ? { phase: delta.phase } : {}), ...(delta.completed !== undefined ? { completed: delta.completed } : {}), ...(delta.total !== undefined ? { total: delta.total } : {}) } as StructuredProcessTimelineEntry].slice(-500);
   }
   return timeline;
 }
@@ -808,7 +808,7 @@ function upsertProcessTimelineActivity(
   const id = `activity:${activityId}`;
   const existing = timeline.find((entry) => entry.id === id);
   if (existing) return timeline.map((entry) => entry.id === id ? { ...entry, sequence } : entry);
-  return [...timeline, { id, kind: "activity", sequence, activityId }].slice(-500);
+  return [...timeline, { id, kind: "activity", sequence, activityId } as StructuredProcessTimelineEntry].slice(-500);
 }
 
 function updatePartWithDelta(part: StructuredAssistantPart, delta: StructuredPartDelta, sequence: number): StructuredAssistantPart | null {
@@ -981,16 +981,16 @@ function sanitizeProcessTimelineEntry(entry: unknown): StructuredProcessTimeline
   if (!isNonEmptyString(value.id) || !Number.isSafeInteger(value.sequence) || Number(value.sequence) <= 0 || !isNonEmptyString(value.partId ?? value.activityId)) return [];
   const base = { id: String(value.id).slice(0, 300), sequence: Number(value.sequence) };
   if (value.kind === "reasoning" && isNonEmptyString(value.partId) && isNonEmptyString(value.segmentId) && typeof value.text === "string" && isPartStatus(value.status)) {
-    return [{ ...base, kind: "reasoning", partId: value.partId.slice(0, 200), segmentId: value.segmentId.slice(0, 200), text: value.text.slice(0, 16_384), status: value.status }];
+    return [{ ...base, kind: "reasoning", partId: value.partId.slice(0, 200), segmentId: value.segmentId.slice(0, 200), text: value.text.slice(0, 16_384), status: value.status }] as StructuredProcessTimelineEntry[];
   }
   if (value.kind === "markdown" && isNonEmptyString(value.partId) && typeof value.text === "string" && isPartStatus(value.status)) {
-    return [{ ...base, kind: "markdown", partId: value.partId.slice(0, 200), text: value.text.slice(0, 16_384), status: value.status, transient: value.transient === true }];
+    return [{ ...base, kind: "markdown", partId: value.partId.slice(0, 200), text: value.text.slice(0, 16_384), status: value.status, transient: value.transient === true }] as StructuredProcessTimelineEntry[];
   }
   if (value.kind === "progress" && isNonEmptyString(value.partId) && typeof value.summary === "string" && isPartStatus(value.status)) {
-    return [{ ...base, kind: "progress", partId: value.partId.slice(0, 200), summary: value.summary.slice(0, 10_000), status: value.status, ...(typeof value.phase === "string" ? { phase: value.phase.slice(0, 200) } : {}), ...(Number.isFinite(value.completed) ? { completed: Number(value.completed) } : {}), ...(Number.isFinite(value.total) ? { total: Number(value.total) } : {}) }];
+    return [{ ...base, kind: "progress", partId: value.partId.slice(0, 200), summary: value.summary.slice(0, 10_000), status: value.status, ...(typeof value.phase === "string" ? { phase: value.phase.slice(0, 200) } : {}), ...(Number.isFinite(value.completed) ? { completed: Number(value.completed) } : {}), ...(Number.isFinite(value.total) ? { total: Number(value.total) } : {}) }] as StructuredProcessTimelineEntry[];
   }
   if (value.kind === "activity" && isNonEmptyString(value.activityId)) {
-    return [{ ...base, kind: "activity", activityId: value.activityId.slice(0, 200) }];
+    return [{ ...base, kind: "activity", activityId: value.activityId.slice(0, 200) }] as StructuredProcessTimelineEntry[];
   }
   return [];
 }

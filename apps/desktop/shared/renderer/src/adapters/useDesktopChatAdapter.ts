@@ -52,6 +52,7 @@ import { acceptChatEventSequence, getVisibleChatText } from "../chatOutputModel"
 import { sanitizeSensitiveValue } from "../../../api/sensitiveData";
 import {
   appendDebugLog,
+  appendRendererStage,
   appendRuntimeLogEvent,
   appendStructuredActivityLog,
   appendStructuredProtocolLog,
@@ -256,7 +257,11 @@ export function useDesktopChatAdapter({
     return events;
   }
 
-  function restoreActiveStructuredTurns(snapshotMessages: UiMessage[]): void {
+  function restoreActiveStructuredTurns(snapshotMessages: UiMessage[], expectedThreadId = threadIdRef.current): void {
+    // Recovery is asynchronous. A completed recovery from the previous thread
+    // must never mutate the newly selected thread.
+    const isCurrentThread = (): boolean => threadIdRef.current === expectedThreadId;
+    if (!isCurrentThread()) return;
     let latestActiveRequestId: string | null = null;
     const settleUnrecoverableTurn = (requestId: string, turnId: string): void => {
       setMessages((current) => publishAndReturn(current.map((candidate) => {
@@ -299,6 +304,7 @@ export function useDesktopChatAdapter({
       });
       void recovery
         .then((events) => {
+          if (!isCurrentThread()) return;
           if (!events.length) {
             settleUnrecoverableTurn(requestId, turn.turnId);
             return;
@@ -331,6 +337,7 @@ export function useDesktopChatAdapter({
           window.setTimeout(() => events.forEach(applyChatEvent), 0);
         })
         .catch((error) => {
+          if (!isCurrentThread()) return;
           settleUnrecoverableTurn(requestId, turn.turnId);
           appendDebugLog("warn", error instanceof Error ? error.message : `Structured turn recovery failed: ${requestId}`, "chat");
         });
@@ -400,6 +407,7 @@ export function useDesktopChatAdapter({
   }, [activeRequestId]);
 
   useEffect(() => {
+    appendRendererStage("chat_adapter.thread_changed", { threadId });
     threadIdRef.current = threadId;
     const cached = liveThreadViewsRef.current.get(threadId);
     if (cached?.activeRequestId) {
@@ -683,7 +691,25 @@ export function useDesktopChatAdapter({
 
     if (!canChat) {
       const liveGateway = await desktopApi.getGatewayStatus().catch(() => null);
-      if (!liveGateway?.ready || liveGateway.externalConflict) return false;
+      if (!liveGateway?.ready || liveGateway.externalConflict) {
+        const friendlyError = describeUserFacingError(
+          { code: liveGateway?.externalConflict ? "gateway_external_conflict" : "GATEWAY_NOT_READY" },
+          languageRef.current,
+        );
+        appendDebugLog("error", friendlyError.diagnosticCode, "chat");
+        setMessages((current) => publishAndReturn([
+          ...current,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `${friendlyError.title} ${friendlyError.action}`,
+            error: true,
+            replyFailed: true,
+            lastEventAt: Date.now(),
+          },
+        ]));
+        return false;
+      }
     }
 
     const userMessage: UiMessage = {
@@ -723,6 +749,12 @@ export function useDesktopChatAdapter({
     setActiveRequestId(requestId);
 
     try {
+      appendRendererStage("chat_adapter.submit.before_start_chat", {
+        requestId,
+        threadId: threadIdRef.current,
+        workspaceId,
+        agentId: options?.agentId,
+      });
       await desktopApi.startChat({
         requestId,
         agentId: options?.agentId?.trim() || undefined,
@@ -762,8 +794,14 @@ export function useDesktopChatAdapter({
           currentRuntimeModeRef.current,
         ),
       });
+      appendRendererStage("chat_adapter.submit.start_chat_ok", { requestId, threadId: threadIdRef.current });
       return true;
     } catch (error) {
+      appendRendererStage("chat_adapter.submit.start_chat_failed", {
+        requestId,
+        threadId: threadIdRef.current,
+        error: error instanceof Error ? error.message : String(error),
+      }, "error");
       const message = error instanceof Error
         ? error.message
         : languageRef.current === "zh" ? "聊天未能启动。" : "Chat failed to start.";
@@ -3181,7 +3219,7 @@ function finalizeStructuredTurn(
   if (status === "cancelled") return applyLocalStructuredEvent(state, { type: "turn.cancelled" });
   for (const part of state.parts) {
     if (part.status === "running" || part.status === "pending") {
-      state = applyLocalStructuredEvent(state, { type: "part.completed", part: { ...part, status: "completed" } });
+      state = applyLocalStructuredEvent(state, { type: "part.completed", part: { ...part, status: "completed", final: true } });
     }
   }
   return applyLocalStructuredEvent(state, { type: "turn.completed" });

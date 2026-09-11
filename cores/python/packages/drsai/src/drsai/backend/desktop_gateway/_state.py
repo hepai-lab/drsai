@@ -2,16 +2,8 @@
 
 Everything here is a lazy accessor over ``backend/runtime/``, which is already
 implemented.  This gateway owns no persistence of its own: it opens the same
-``RuntimeRegistry`` / ``RuntimeEngine`` SQLite files the legacy gateway does,
-under a state root that can be pointed elsewhere during development.
-
-State root resolution is deliberately three-tiered::
-
-    DRSAI_DESKTOP_GATEWAY_HOME  >  DRSAI_HOME  >  ~/.drsai
-
-``DRSAI_DESKTOP_GATEWAY_HOME`` exists so this process can run beside the frozen
-legacy gateway without the two writing each other's session rows (decision 2 in
-``apps/desktop/docs/v2/v2-minimal-surface.zh-CN.md`` §4).
+``RuntimeRegistry`` / ``RuntimeEngine`` SQLite files under a state root
+resolved from ``DRSAI_HOME`` (falling back to ``~/.drsai``).
 
 None of these accessors are patched by the legacy test suite; this package owns
 them outright.  :func:`reset_state` is the single supported way for a test to get a
@@ -46,11 +38,7 @@ _workspace_roots: dict[str, Path] = {}
 
 def state_root() -> Path:
     """Return the directory holding this Runtime's SQLite state."""
-    raw = (
-        os.environ.get("DRSAI_DESKTOP_GATEWAY_HOME")
-        or os.environ.get("DRSAI_HOME")
-        or str(Path.home() / ".drsai")
-    )
+    raw = os.environ.get("DRSAI_HOME") or str(Path.home() / ".drsai")
     return Path(raw).expanduser()
 
 

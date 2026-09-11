@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "crypto";
 import { appendFileSync, createReadStream, createWriteStream, mkdirSync } from "fs";
+import { homedir } from "os";
 import { readFile, stat, mkdir, writeFile, readdir, rm, rename, statfs, open } from "fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
 import { pipeline } from "stream/promises";
@@ -7,7 +8,7 @@ import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, ChatTurnCance
 import { LEGACY_MY_DRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
 import { normalizeRuntimeErrorEnvelope } from "../api/errorEnvelope";
 import { RemoteProtocolError } from "../api/remoteSshProtocol";
-import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, type AuthContext } from "./auth";
+import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, AuthSessionError, type AuthContext } from "./auth";
 import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToDdfChatInput, respondToPlatformChatInput, resolvePlatformBearerToken, stopPlatformChat } from "./agents";
 import { getMyDrSaiAgentModelPolicy, listConfiguredAgents } from "./myDrSaiConfig";
 import {
@@ -72,8 +73,24 @@ export interface ChatEventTarget {
 
 const chatEventDispatchers = new WeakMap<ChatEventTarget, BoundedEventDispatcher<ChatEvent>>();
 const chatBackpressureControllers = new WeakMap<ChatEventTarget, BackpressureController>();
+/**
+ * Targets whose renderer frame is being replaced (reload, HMR, crash recovery).
+ * While quarantined, getChatEventDispatcher() returns a permanently-closed
+ * no-op dispatcher so background tasks don't create real dispatchers that
+ * spam "Render frame was disposed" errors during the reload gap.
+ */
+const chatQuarantinedTargets = new WeakSet<ChatEventTarget>();
+const QUARANTINED_CHAT_DISPATCHER = new BoundedEventDispatcher<ChatEvent>({
+  capacity: 0,
+  deliver: () => {},
+  shouldClose: () => true,
+});
+QUARANTINED_CHAT_DISPATCHER.close();
 
 function getChatEventDispatcher(target: ChatEventTarget): BoundedEventDispatcher<ChatEvent> {
+  // During renderer reload, do not create new dispatchers — the frame is
+  // disposed and sends will throw "Render frame was disposed" forever.
+  if (chatQuarantinedTargets.has(target)) return QUARANTINED_CHAT_DISPATCHER;
   const existing = chatEventDispatchers.get(target);
   // A reload may dispose a frame while the WebContents wrapper survives. Do
   // not reuse a dispatcher that was closed after the old frame disappeared.
@@ -225,6 +242,26 @@ export function handleChatRenderHealthReport(
 
 export function hasActiveChats(): boolean {
   return chatTurns.size > 0;
+}
+
+/**
+ * Quarantine a target whose renderer frame is being replaced (reload, HMR).
+ * While quarantined, getChatEventDispatcher() returns a closed no-op so no
+ * new dispatchers are created during the reload gap.  Call
+ * releaseChatQuarantine() when the new frame is ready (did-finish-load).
+ */
+export function quarantineChatDispatcher(target: ChatEventTarget): void {
+  chatQuarantinedTargets.add(target);
+  disposeChatEventDispatcher(target);
+}
+
+/**
+ * Release the reload quarantine and clear any closed dispatcher so the next
+ * emit() creates a fresh dispatcher bound to the new frame.
+ */
+export function releaseChatQuarantine(target: ChatEventTarget): void {
+  chatQuarantinedTargets.delete(target);
+  chatEventDispatchers.delete(target);
 }
 
 /**
@@ -1064,8 +1101,11 @@ async function runChat(
   request: ChatRequest,
   controller: AbortController,
 ): Promise<void> {
-  let auth = await requireAuthContext();
-  writeChatDiagnostic(requestId, "stage: authenticated");
+  // Defer auth requirement until after the local/remote branch. Local agents
+  // talk to a gateway on localhost and do NOT need a valid OIDC session. Only
+  // platform (HAI) agents require a live bearer token. This prevents an expired
+  // or unrefreshable session from blocking local-only workflows.
+  let auth: AuthContext | null = null;
   const sessionId = request.threadId || request.sessionId || requestId;
   const runId = request.runId || requestId;
   const isCodexBackend = request.agentId === "my-codex";
@@ -1075,9 +1115,14 @@ async function runChat(
   let configuredAgents: Awaited<ReturnType<typeof listConfiguredAgents>> = { current_agent: "", agents: [] };
   if (!selectedPlatformDescriptor) {
     try {
+      writeChatDiagnostic(requestId, "stage: gateway_start:start");
       if (!await startGateway()) throw new Error("Gateway is not ready.");
+      writeChatDiagnostic(requestId, "stage: gateway_start:ok");
+      writeChatDiagnostic(requestId, "stage: agent_config:start");
       configuredAgents = await listConfiguredAgents();
+      writeChatDiagnostic(requestId, `stage: agent_config:ok agents=${configuredAgents.agents.length} current=${configuredAgents.current_agent || "none"}`);
     } catch (error) {
+      writeChatDiagnostic(requestId, `stage: gateway_or_config:failed code=${error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string" ? (error as { code: string }).code : "unknown"} ${error instanceof Error ? error.message : String(error)}`);
       const gatewayUnavailable = error instanceof Error
         && /OpenDrSai is not running|Gateway is not ready|local Runtime is unavailable/i.test(error.message);
       throw chatReadinessError(
@@ -1180,6 +1225,29 @@ async function runChat(
   const timeout = CHAT_TIMEOUT_MS > 0 ? setTimeout(() => controller.abort("timeout"), CHAT_TIMEOUT_MS) : null;
   try {
     if (!platformDescriptor) {
+      // Local agents talk to a localhost gateway and do not require a valid
+      // OIDC session. Try to obtain the real auth context (so that OIDC
+      // bearer tokens still reach the gateway for model inference), but
+      // fall back to an offline context if the session is expired or
+      // unrefreshable. This prevents an expired login from blocking local
+      // agent workflows entirely.
+      if (!auth) {
+        try {
+          auth = await requireAuthContext();
+          writeChatDiagnostic(requestId, "stage: authenticated");
+        } catch (authError) {
+          if (authError instanceof AuthSessionError) {
+            auth = {
+              session: { authenticated: false, user: null, expiresAt: null, authMode: null },
+              userId: "local",
+              authMode: "offline",
+            };
+            writeChatDiagnostic(requestId, `stage: auth unavailable (${authError.code}), using offline context for local agent`);
+          } else {
+            throw authError;
+          }
+        }
+      }
       await runRuntimeBackendChat(
         webContents,
         requestId,
@@ -1201,6 +1269,11 @@ async function runChat(
     }
     // Only HAI Platform Agents reach this branch. OpenDrSai and Codex have
     // already entered the Runtime-authoritative Session/Run path above.
+    // Platform agents require a valid OIDC bearer token — enforce it now.
+    if (!auth) {
+      auth = await requireAuthContext();
+      writeChatDiagnostic(requestId, "stage: authenticated (platform)");
+    }
     const messages = enrichedRequest.messages;
     const resumeState: StreamResumeState = { content: "", fileEventKeys: new Set() };
     const recoveryStartedAt = Date.now();
@@ -1268,7 +1341,7 @@ async function runChat(
     let refreshedToken = false;
     while (!sawDone) {
       try {
-        sawDone = await send(auth, recoveryAttempt);
+        sawDone = await send(auth!, recoveryAttempt);
         if (!sawDone) throw new RecoverableStreamError("Chat stream ended before completion.");
       } catch (error) {
         if (error instanceof ChatSseError && error.code === "invalid_token") {
@@ -1954,16 +2027,21 @@ async function runRuntimeBackendChat(
   auth: AuthContext,
 ): Promise<void> {
   if (!request.workspacePath) throw new Error("Runtime Agent requires an open Workspace.");
-  const resolved = await acquireRuntimeClientLease(() =>
-    connectRuntimeClientForWorkspace(request.workspacePath!, request.workspaceId, request.workspaceName));
+  const resolved = await runChatStage(requestId, "runtime_connect", () => acquireRuntimeClientLease(() =>
+    connectRuntimeClientForWorkspace(request.workspacePath!, request.workspaceId, request.workspaceName)));
   const client = resolved.client;
   try {
   if (agentDefinition === "codex@1") {
+    const capability = (await client.getCapabilities()).agent_backends?.codex;
+    if (!capability?.available) {
+      const error = new Error(capability?.reason ?? "codex_backend_not_registered");
+      Object.assign(error, { code: capability?.reason ?? "codex_backend_not_registered", retryable: false });
+      throw error;
+    }
     const [catalog, account] = await Promise.all([
       client.getBackendModels("codex"),
       client.getBackendAccount("codex"),
     ]);
-    const capability = (await client.getCapabilities()).agent_backends?.codex;
     const requestedModel = request.model?.trim();
     const visibleModels = (catalog.models ?? []).filter((model) => !model.hidden);
     const preflightFailure = !capability?.available || capability.contract_compatible === false
@@ -2036,7 +2114,7 @@ async function runRuntimeBackendChat(
       workspacePath: request.workspacePath,
       title,
     });
-    runtimeSessionId = (await client.createSession(resolved.workspaceId, title)).session_id;
+    runtimeSessionId = (await runChatStage(requestId, "session_create", () => client.createSession(resolved.workspaceId, title))).session_id;
     rememberRuntimeSessionOwner(displaySessionId, runtimeSessionId);
     const turn = chatTurns.get(requestId);
     if (turn) turn.runtimeSessionId = runtimeSessionId;
@@ -2082,7 +2160,7 @@ async function runRuntimeBackendChat(
     ),
   };
   controller.signal.throwIfAborted();
-  const liveSubscription = await subscribeOaepSession(client as RuntimeClient, runtimeSessionId, {
+  const liveSubscription = await runChatStage(requestId, "session_subscribe", () => subscribeOaepSession(client as RuntimeClient, runtimeSessionId, {
     onEvent(event, state) {
       if (event.data.item && typeof event.data.item === "object" && "source" in event.data.item) {
         const source = (event.data.item as OaepItem).source;
@@ -2169,16 +2247,16 @@ async function runRuntimeBackendChat(
         source: agentDefinition === "opendrsai@1" ? "opendrsai-runtime" : "codex-runtime",
       } });
     },
-  });
+  }));
   let run;
   await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "sending");
   try {
     controller.signal.throwIfAborted();
-    run = await client.createAgentRun(
+    run = await runChatStage(requestId, "run_create", () => client.createAgentRun(
       runtimeSessionId,
       agentDefinition,
       idempotencyKey,
-    );
+    ));
   } catch (error) {
     if (!isUncertainRunCreateFailure(error)) {
       liveSubscription.stop();
@@ -3581,9 +3659,23 @@ export function getGatewayPort(): string {
   return resolveGatewayPort();
 }
 
+async function runChatStage<T>(requestId: string, stage: string, operation: () => Promise<T>): Promise<T> {
+  writeChatDiagnostic(requestId, `stage: ${stage}:start`);
+  try {
+    const result = await operation();
+    writeChatDiagnostic(requestId, `stage: ${stage}:ok`);
+    return result;
+  } catch (error) {
+    const code = error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+      ? ` code=${(error as { code: string }).code}` : "";
+    writeChatDiagnostic(requestId, `stage: ${stage}:failed${code} ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
+  }
+}
+
 function writeChatDiagnostic(requestId: string, error: string): void {
-  const diagnosticPath = process.env.OPENDRSAI_DIAGNOSTIC_LOG_PATH?.trim();
-  if (!diagnosticPath) return;
+  const diagnosticPath = process.env.OPENDRSAI_DIAGNOSTIC_LOG_PATH?.trim()
+    || join(process.env.DRSAI_HOME?.trim() || join(homedir(), ".drsai-dev"), "desktop", "chat-diagnostics.log");
   const safeError = error
     .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+/gi, "Bearer [REDACTED]")
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED_JWT]")

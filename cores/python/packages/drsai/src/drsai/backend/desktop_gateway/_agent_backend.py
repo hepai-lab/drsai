@@ -29,6 +29,7 @@ gateway in ``tui_gateway/adapter/``, shared with the TUI.
 from __future__ import annotations
 
 from drsai.backend.desktop_gateway._diag import diag_log
+from drsai.backend.runtime.conversation import _ThinkStreamNormalizer
 
 import asyncio
 import re
@@ -36,6 +37,8 @@ import time
 from typing import Any
 
 from autogen_core import CancellationToken
+from autogen_agentchat.base import Response
+from autogen_agentchat.messages import TextMessage
 
 from drsai.backend.runtime.agent import (
     AgentDefinition,
@@ -102,6 +105,17 @@ class DesktopAgentBackend:
         cancellation = CancellationToken()
         self._cancellations[context.run_id] = cancellation
         translation = ConversationTranslationState()
+        # The authoritative final answer comes from the terminal TextMessage
+        # that DrSaiAssistant yields after model_result is resolved.  That
+        # content is already clean – LLMClient.create_stream() separates
+        # ``content_deltas`` (answer) from ``thought_deltas`` (reasoning) in
+        # the final CreateResult.  Streaming ``message.delta`` chunks may
+        # still carry  tags from the wire, but they are only for the
+        # live Process layer; they must never become agent.completed.content.
+        final_content: str | None = None
+        # Fallback: accumulate filtered deltas in case no terminal TextMessage
+        # arrives (edge case: stream interrupted before the Response).
+        answer_normalizer = _ThinkStreamNormalizer()
         content_parts: list[str] = []
         citations: list[dict[str, Any]] = []
 
@@ -128,22 +142,74 @@ class DesktopAgentBackend:
             )
             diag_log(f"[DIAG] DesktopAgentBackend.execute: run_id={context.run_id} stream created, iterating events...")
             _event_count = 0
+            _final_meta: dict[str, Any] = {}
             async for event in stream:
                 _event_count += 1
+                # Intercept the terminal TextMessage/Response *before* the
+                # translator (which skips it when streaming already happened)
+                # so agent.completed.content comes from model_result.content,
+                # not from re-joined streaming deltas.
+                if isinstance(event, Response):
+                    chat = getattr(event, "chat_message", None)
+                    if isinstance(chat, TextMessage):
+                        src = getattr(chat, "source", "") or ""
+                        meta = getattr(chat, "metadata", None) or {}
+                        if src.lower() != "user" and meta.get("internal") != "yes":
+                            final_content = getattr(chat, "content", "") or ""
+                            _final_meta = {k: v for k, v in meta.items() if k != "internal"}
+                elif isinstance(event, TextMessage):
+                    src = getattr(event, "source", "") or ""
+                    meta = getattr(event, "metadata", None) or {}
+                    if src.lower() != "user" and meta.get("internal") != "yes":
+                        final_content = getattr(event, "content", "") or ""
+                        _final_meta = {k: v for k, v in meta.items() if k != "internal"}
                 for event_type, payload in translate_conversation_event(event, translation):
                     kind, data = self._normalize_event(context, event_type, payload)
                     if kind == "agent.message.delta":
-                        content_parts.append(str(data.get("delta") or ""))
+                        text_chunks, _reasoning_chunks = answer_normalizer.push_content(
+                            str(data.get("delta") or "")
+                        )
+                        content_parts.extend(text_chunks)
                     elif kind == "citation.added":
                         citations.append(dict(data))
                     services.emit(context, kind, data)
             diag_log(f"[DIAG] DesktopAgentBackend.execute: run_id={context.run_id} stream exhausted, event_count={_event_count}")
 
+            # Flush a possible partial marker, but never append buffered
+            # reasoning. The final completion is answer-only by contract.
+            text_chunks, _reasoning_chunks = answer_normalizer.finish()
+            content_parts.extend(text_chunks)
             _artifacts.register_new_artifacts(context, baseline, started_at, services.emit)
-            content = "".join(content_parts)
+            # Prefer the terminal TextMessage.content (already clean) over
+            # the filtered streaming deltas.
+            content = final_content if final_content is not None else "".join(content_parts)
+
+            # ── Error / cancelled / paused terminal handling ──────────
+            # When on_messages_stream catches an error internally and yields
+            # a Response with metadata={"error": "true"}, we must NOT emit a
+            # normal agent.completed.  Instead, raise a RuntimeExecutionError
+            # so the Runtime records agent.failed and the frontend renders the
+            # error UI (red styling + recovery actions) instead of a normal
+            # assistant message.
+            if _final_meta.get("error") == "true":
+                raise RuntimeExecutionError(
+                    "agent_error_yielded",
+                    content or "The agent reported an error.",
+                    retryable=True,
+                    detail={"reason": "agent_yielded_error_response"},
+                )
+            if _final_meta.get("cancelled") == "true":
+                raise RuntimeExecutionError(
+                    "run_cancelled",
+                    content or "The task was cancelled by the user.",
+                    detail={"reason": "agent_yielded_cancelled_response"},
+                )
+
             services.emit(context, "agent.completed", {
                 "content": content,
                 **({"citations": citations} if citations else {}),
+                **({"paused": True} if _final_meta.get("paused") == "true" else {}),
+                **({"warning": True} if _final_meta.get("warning") == "true" else {}),
             })
             diag_log(f"[DIAG] DesktopAgentBackend.execute: run_id={context.run_id} COMPLETED, content_len={len(content)}")
             return {"content": content}

@@ -47,11 +47,7 @@ def _gfs_enabled() -> bool:
 
 def _drsai_home() -> Path:
     """Resolve desktop data home (``DRSAI_HOME`` / ``~/.drsai``)."""
-    raw = (
-        os.environ.get("DRSAI_HOME")
-        or os.environ.get("DRSAI_DESKTOP_GATEWAY_HOME")
-        or ""
-    ).strip()
+    raw = (os.environ.get("DRSAI_HOME") or "").strip()
     if raw:
         return Path(raw).expanduser()
     return Path.home() / ".drsai"

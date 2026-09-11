@@ -1,4 +1,5 @@
 import { RemoteProtocolError } from "../../../shared/api/remoteSshProtocol";
+import { runtimeSessionIdForLookup } from "../../../shared/api/threadSidebarCatalog";
 import { connectRuntimeClientForWorkspace } from "./runtimeClient";
 import { listThreads, updateThread } from "./threads";
 import type { DesktopThread, UpdateThreadRequest } from "../shared/desktopApi";
@@ -41,7 +42,8 @@ const defaultThreadArchivePort: ThreadArchivePort = {
   listThreads,
   updateThread,
   async resolveRuntimeSessionId(thread) {
-    if (thread.runtimeSessionId) return thread.runtimeSessionId;
+    const boundSessionId = runtimeSessionIdForLookup(thread);
+    if (boundSessionId) return boundSessionId;
     if (!thread.lastRunId || !thread.workspacePath) return undefined;
     const runtime = await connectRuntimeClientForWorkspace(
       thread.workspacePath,

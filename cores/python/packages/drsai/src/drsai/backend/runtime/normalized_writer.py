@@ -128,6 +128,54 @@ def normalized_canonical_item(
     return kind, role, payload, event_kind
 
 
+def normalized_journal_item_payload(
+    event: NormalizedAgentEvent,
+    audit: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a compact journal event payload for ITEM_DELTA events.
+
+    Unlike ``normalized_canonical_item`` which accumulates the full
+    text/content/output, this returns **only the current delta chunk** plus
+    essential metadata.  For non-delta events the incoming payload is
+    returned unchanged.  This prevents O(n²) storage growth in
+    ``runtime_session_journal.payload_json`` and ``runtime_oaep_events``.
+    """
+    if event.item_type is None:
+        raise ValueError("Journal Item payload requires item_type")
+    incoming = dict(event.payload)
+    if event.kind != NormalizedEventKind.ITEM_DELTA:
+        return {
+            **dict(audit or {}),
+            **incoming,
+            "backend": event.backend,
+            "normalized_item_type": event.item_type.value,
+        }
+
+    delta = str(incoming.get("text") or "")
+    payload: dict[str, Any] = {
+        **dict(audit or {}),
+        "backend": event.backend,
+        "normalized_item_type": event.item_type.value,
+        "status": "streaming",
+        "delta": delta,
+        "delta_kind": event.delta_kind.value if event.delta_kind else None,
+    }
+    if event.phase:
+        payload["phase"] = event.phase
+    if event.stream:
+        payload["stream"] = event.stream
+    if event.segment_id:
+        payload["segment_id"] = event.segment_id
+    if event.item_type is NormalizedItemType.REASONING:
+        payload["reasoning_kind"] = event.reasoning_kind.value
+        payload["visibility"] = event.reasoning_visibility.value
+        payload["source"] = event.reasoning_source.value
+    for key in ("ordinal", "received_bytes", "truncated", "truncated_prefix_bytes"):
+        if key in incoming:
+            payload[key] = incoming[key]
+    return payload
+
+
 def normalized_runtime_write(event: NormalizedAgentEvent) -> tuple[str, dict[str, Any], str]:
     """Return the bounded Runtime write for a validated normalized event."""
 

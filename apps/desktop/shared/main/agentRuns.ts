@@ -62,8 +62,24 @@ const activeRuns = new Map<string, ActiveAgentRun>();
 const lifecycleListeners = new Set<AgentRunLifecycleListener>();
 const agentEventDispatchers = new WeakMap<WebContents, BoundedEventDispatcher<AgentRunEvent>>();
 const agentBackpressureControllers = new WeakMap<WebContents, BackpressureController>();
+/**
+ * WebContents whose renderer frame is being replaced. While quarantined,
+ * getAgentEventDispatcher() returns a permanently-closed no-op dispatcher
+ * so background runs don't create real dispatchers that spam
+ * "Render frame was disposed" errors during the reload gap.
+ */
+const agentQuarantinedWebContents = new WeakSet<WebContents>();
+const QUARANTINED_AGENT_DISPATCHER = new BoundedEventDispatcher<AgentRunEvent>({
+  capacity: 0,
+  deliver: () => {},
+  shouldClose: () => true,
+});
+QUARANTINED_AGENT_DISPATCHER.close();
 
 function getAgentEventDispatcher(webContents: WebContents): BoundedEventDispatcher<AgentRunEvent> {
+  // During renderer reload, do not create new dispatchers — the frame is
+  // disposed and sends will throw "Render frame was disposed" forever.
+  if (agentQuarantinedWebContents.has(webContents)) return QUARANTINED_AGENT_DISPATCHER;
   const existing = agentEventDispatchers.get(webContents);
   // A renderer reload can dispose the current frame without destroying the
   // WebContents object. The old dispatcher is permanently closed after the
@@ -112,6 +128,26 @@ export function handleRenderHealthReport(webContents: WebContents, fps: number, 
 
 export function hasActiveAgentRuns(): boolean {
   return activeRuns.size > 0;
+}
+
+/**
+ * Quarantine a WebContents whose renderer frame is being replaced (reload,
+ * HMR). While quarantined, getAgentEventDispatcher() returns a closed no-op
+ * so no new dispatchers are created during the reload gap. Call
+ * releaseAgentQuarantine() when the new frame is ready (did-finish-load).
+ */
+export function quarantineAgentDispatcher(webContents: WebContents): void {
+  agentQuarantinedWebContents.add(webContents);
+  disposeAgentEventDispatcher(webContents);
+}
+
+/**
+ * Release the reload quarantine and clear any closed dispatcher so the next
+ * emit() creates a fresh dispatcher bound to the new frame.
+ */
+export function releaseAgentQuarantine(webContents: WebContents): void {
+  agentQuarantinedWebContents.delete(webContents);
+  agentEventDispatchers.delete(webContents);
 }
 
 /**

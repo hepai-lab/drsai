@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -12,6 +11,7 @@ import {
   FileText,
   FileType2,
   Folder,
+  Loader2,
   Table2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -21,35 +21,28 @@ import type {
 } from "@shared/desktopApi";
 
 export function FilesTree({
-  autoExpand = false,
+  expandedPaths,
   nodes,
   selectedForContext,
   selectedPath,
+  loadingDirs,
+  dirErrors,
   onSelect,
+  onToggleExpanded,
   onToggleContext,
+  onContextMenu,
 }: {
-  autoExpand?: boolean;
+  expandedPaths: Set<string>;
   nodes: WorkspaceFileNode[];
   selectedForContext?: Set<string>;
   selectedPath?: string;
+  loadingDirs?: Set<string>;
+  dirErrors?: Record<string, string>;
   onSelect: (node: WorkspaceFileNode) => void;
+  onToggleExpanded: (node: WorkspaceFileNode) => void;
   onToggleContext?: (node: WorkspaceFileNode) => void;
+  onContextMenu?: (node: WorkspaceFileNode, x: number, y: number) => void;
 }): React.JSX.Element {
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
-
-  useEffect(() => {
-    setExpandedPaths(autoExpand ? collectDirectoryPaths(nodes) : new Set());
-  }, [autoExpand, nodes]);
-
-  function toggleExpanded(node: WorkspaceFileNode): void {
-    setExpandedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(node.path)) next.delete(node.path);
-      else next.add(node.path);
-      return next;
-    });
-  }
-
   return (
     <div className="files-context-tree">
       {nodes.map((node) => (
@@ -60,9 +53,12 @@ export function FilesTree({
           node={node}
           selectedForContext={selectedForContext}
           selectedPath={selectedPath}
+          loadingDirs={loadingDirs}
+          dirErrors={dirErrors}
           onSelect={onSelect}
-          onToggleExpanded={toggleExpanded}
+          onToggleExpanded={onToggleExpanded}
           onToggleContext={onToggleContext}
+          onContextMenu={onContextMenu}
         />
       ))}
     </div>
@@ -75,25 +71,42 @@ function FilesTreeRow({
   node,
   selectedForContext,
   selectedPath,
+  loadingDirs,
+  dirErrors,
   onSelect,
   onToggleExpanded,
   onToggleContext,
+  onContextMenu,
 }: {
   depth: number;
   expandedPaths: Set<string>;
   node: WorkspaceFileNode;
   selectedForContext?: Set<string>;
   selectedPath?: string;
+  loadingDirs?: Set<string>;
+  dirErrors?: Record<string, string>;
   onSelect: (node: WorkspaceFileNode) => void;
   onToggleExpanded: (node: WorkspaceFileNode) => void;
   onToggleContext?: (node: WorkspaceFileNode) => void;
+  onContextMenu?: (node: WorkspaceFileNode, x: number, y: number) => void;
 }): React.JSX.Element {
   const Icon = node.type === "directory" ? Folder : getPreviewIcon(node.previewKind);
   const gitStatus = node.gitStatus && node.gitStatus !== "clean" ? node.gitStatus : null;
-  const hasChildren = Boolean(node.children?.length);
+  // Use hasChildren when available; fall back to children?.length for older
+  // data sources that don't provide the flag.
+  const hasChildren = node.hasChildren ?? Boolean(node.children?.length);
   const expanded = node.type === "directory" && expandedPaths.has(node.path);
   const Chevron = expanded ? ChevronDown : ChevronRight;
   const showContextToggle = Boolean(onToggleContext);
+  const isLoading = loadingDirs?.has(node.path) ?? false;
+  const dirError = dirErrors?.[node.path];
+  // Show inline states when a directory is expanded:
+  // - loading spinner if children are being fetched
+  // - error message if fetch failed
+  // - empty hint if expanded with no children (and not loading)
+  const showLoading = expanded && isLoading;
+  const showError = expanded && !isLoading && Boolean(dirError);
+  const showEmpty = expanded && !isLoading && !dirError && (!node.children || node.children.length === 0);
 
   function handleRowClick(): void {
     onSelect(node);
@@ -107,8 +120,12 @@ function FilesTreeRow({
       <button
         type="button"
         className={`files-tree-row ${selectedPath === node.path ? "selected" : ""}`}
-        style={{ paddingLeft: `${10 + depth * 18}px` }}
+        style={{ paddingLeft: `${10 + depth * 16}px` }}
         onClick={handleRowClick}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onContextMenu?.(node, e.clientX, e.clientY);
+        }}
         title={node.relativePath}
       >
         {showContextToggle ? (
@@ -129,42 +146,54 @@ function FilesTreeRow({
             className="files-tree-toggle"
             aria-hidden="true"
           >
-            <Chevron size={14} className="files-tree-chevron" />
+            {hasChildren ? <Chevron size={14} className="files-tree-chevron" /> : <span className="files-tree-spacer" />}
           </span>
         ) : (
           <span className="files-tree-spacer" />
         )}
-        <Icon size={15} className={`files-type-icon ${node.previewKind ?? "folder"}`} />
+        <Icon size={14} className={`files-type-icon ${node.previewKind ?? "folder"}`} />
         <span className="files-tree-name">{node.name}</span>
         {gitStatus ? <span className={`files-git-dot ${gitStatus}`} /> : null}
+        {node.truncated ? <span className="files-tree-truncated" title="Not fully loaded" /> : null}
       </button>
-      {expanded ? node.children?.map((child) => (
-        <FilesTreeRow
-          key={child.path}
-          depth={depth + 1}
-          expandedPaths={expandedPaths}
-          node={child}
-          selectedForContext={selectedForContext}
-          selectedPath={selectedPath}
-          onSelect={onSelect}
-          onToggleExpanded={onToggleExpanded}
-          onToggleContext={onToggleContext}
-        />
-      )) : null}
+      {expanded ? (
+        <>
+          {showLoading ? (
+            <div className="files-tree-dir-status" style={{ paddingLeft: `${10 + (depth + 1) * 16}px` }}>
+              <Loader2 size={12} className="files-tree-spinner" />
+              <span>Loading...</span>
+            </div>
+          ) : null}
+          {showError ? (
+            <div className="files-tree-dir-status files-tree-dir-error" style={{ paddingLeft: `${10 + (depth + 1) * 16}px` }}>
+              <span>{dirError}</span>
+            </div>
+          ) : null}
+          {showEmpty ? (
+            <div className="files-tree-dir-status files-tree-dir-empty" style={{ paddingLeft: `${10 + (depth + 1) * 16}px` }}>
+              <span>Empty</span>
+            </div>
+          ) : null}
+          {node.children?.map((child) => (
+            <FilesTreeRow
+              key={child.path}
+              depth={depth + 1}
+              expandedPaths={expandedPaths}
+              node={child}
+              selectedForContext={selectedForContext}
+              selectedPath={selectedPath}
+              loadingDirs={loadingDirs}
+              dirErrors={dirErrors}
+              onSelect={onSelect}
+              onToggleExpanded={onToggleExpanded}
+              onToggleContext={onToggleContext}
+              onContextMenu={onContextMenu}
+            />
+          ))}
+        </>
+      ) : null}
     </div>
   );
-}
-
-function collectDirectoryPaths(nodes: WorkspaceFileNode[]): Set<string> {
-  const paths = new Set<string>();
-  for (const node of nodes) {
-    if (node.type !== "directory") continue;
-    paths.add(node.path);
-    for (const childPath of collectDirectoryPaths(node.children ?? [])) {
-      paths.add(childPath);
-    }
-  }
-  return paths;
 }
 
 function getPreviewIcon(kind?: WorkspacePreviewKind): LucideIcon {

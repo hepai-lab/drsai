@@ -169,16 +169,17 @@ import {
   startUpdateScheduler,
   subscribeUpdateStatus,
 } from "./updates";
-import { cancelChatTurn, disposeAllChatForTarget, disposeChatEventDispatcher, handleChatRenderHealthReport, hasActiveChats, recoverChatRun, respondChatInput, startChat } from "./chat";
+import { cancelChatTurn, disposeAllChatForTarget, handleChatRenderHealthReport, hasActiveChats, quarantineChatDispatcher, recoverChatRun, releaseChatQuarantine, respondChatInput, startChat } from "./chat";
 import { listProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
 import {
   abortAgentRun,
-  disposeAgentEventDispatcher,
   disposeAllAgentRunsForTarget,
   handleRenderHealthReport,
   hasActiveAgentRuns,
+  quarantineAgentDispatcher,
   recoverAgentRun,
+  releaseAgentQuarantine,
   startAgentRun,
   subscribeAgentRunLifecycle,
 } from "./agentRuns";
@@ -719,7 +720,7 @@ async function applyRuntimeWorkspaceCatalogEvent(
     sourceChannel,
     messageCount: typeof session.message_count === "number" ? session.message_count : 0,
   });
-  if (result.changed && !webContents.isDestroyed()) webContents.send("desktop:thread-catalog", {
+  if (result.changed && !webContents.isDestroyed()) safeWebContentsSend(webContents, "desktop:thread-catalog", {
     thread: result.thread,
     source: "runtime-session",
   });
@@ -760,7 +761,7 @@ function startRuntimeWorkspaceCatalogSubscription(
           messageCount: typeof session.message_count === "number" ? session.message_count : 0,
         })));
         for (const result of bootstrapResults) {
-          if (result.changed && !webContents.isDestroyed()) webContents.send("desktop:thread-catalog", {
+          if (result.changed && !webContents.isDestroyed()) safeWebContentsSend(webContents, "desktop:thread-catalog", {
             thread: result.thread,
             source: "runtime-session",
           });
@@ -873,7 +874,7 @@ async function syncRuntimeThreadCatalog(
         unread: thread.id !== activeThreadId,
       });
       if (!webContents.isDestroyed()) {
-        webContents.send("desktop:thread-catalog", {
+        safeWebContentsSend(webContents, "desktop:thread-catalog", {
           thread: updated,
           source: "runtime-session",
         });
@@ -939,7 +940,7 @@ function hasActiveForegroundIndependentWork(): boolean {
 function sendManagerPresentationProgress(progress: ManagerPresentationProgressEvent): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-      window.webContents.send("desktop:manager-presentation-progress", progress);
+      safeWebContentsSend(window.webContents, "desktop:manager-presentation-progress", progress);
     }
   }
 }
@@ -1009,11 +1010,26 @@ const browserTaskService = new BrowserTaskService({
     void recordBrowserTaskDiagnostic(event);
     for (const subscriber of [...browserTaskSubscribers]) {
       if (subscriber.isDestroyed()) browserTaskSubscribers.delete(subscriber);
-      else subscriber.send("desktop:browser-task-event", event);
+      else safeWebContentsSend(subscriber, "desktop:browser-task-event", event);
     }
   },
   recordError: (line) => console.warn("[browser-use worker]", line),
 });
+
+/**
+ * Unified safe send for WebContents — checks isDestroyed() AND wraps send()
+ * in a try/catch so "Render frame was disposed" errors during reload are
+ * silently dropped instead of flooding the console.
+ */
+function safeWebContentsSend(wc: WebContents, channel: string, ...args: unknown[]): void {
+  if (wc.isDestroyed()) return;
+  try {
+    wc.send(channel, ...args);
+  } catch {
+    // Frame may be disposed during reload — silently drop
+  }
+}
+
 const pendingDesktopApprovals = new Map<string, DesktopPendingApproval>();
 const executedDesktopApprovalIds = new Set<string>();
 const pendingDesktopApprovalPayloads = new Map<string, DesktopApprovalPayload>();
@@ -3191,13 +3207,19 @@ function createWindow(): void {
   // A renderer reload (Ctrl+R, HMR, crash recovery) disposes the current
   // render frame while keeping the WebContents wrapper alive.  The frame-
   // disposal signal is the earliest reliable point where sends to the old
-  // frame start throwing "Render frame was disposed"; close the cached
-  // dispatchers here so no queued event attempts a send during the reload
-  // gap.  Active Runs/Chats keep running in the main process and recover
-  // through the OAEP subscription on the new frame.
+  // frame start throwing "Render frame was disposed"; quarantine the
+  // dispatchers so no new ones are created during the reload gap.
+  // Active Runs/Chats keep running in the main process and recover through
+  // the OAEP subscription on the new frame.
   mainWindow.webContents.on("did-start-loading", () => {
-    disposeChatEventDispatcher(mainWindow!.webContents);
-    disposeAgentEventDispatcher(mainWindow!.webContents);
+    quarantineChatDispatcher(mainWindow!.webContents);
+    quarantineAgentDispatcher(mainWindow!.webContents);
+  });
+  // When the new frame finishes loading, release the quarantine so the next
+  // emit() creates a fresh dispatcher bound to the new frame.
+  mainWindow.webContents.on("did-finish-load", () => {
+    releaseChatQuarantine(mainWindow!.webContents);
+    releaseAgentQuarantine(mainWindow!.webContents);
   });
   // When the WebContents itself is permanently destroyed (window close, app
   // quit), release turn records and stop subscriptions.  Backend Runs are
@@ -4833,9 +4855,21 @@ function registerIpc(): void {
       let capability = (await client.getCapabilities()).agent_backends?.codex;
       let account;
       if (capability?.available) {
-        await client.getBackendModels("codex", refresh);
-        account = await client.getBackendAccount("codex", refresh);
-        capability = (await client.getCapabilities()).agent_backends?.codex;
+        try {
+          await client.getBackendModels("codex", refresh);
+          account = await client.getBackendAccount("codex", refresh);
+          capability = (await client.getCapabilities()).agent_backends?.codex;
+        } catch (error) {
+          // V2 desktop_gateway may advertise a stale capability snapshot while
+          // the codex adapter routes are not registered. Treat the endpoint 404
+          // as "not installed" and stop retrying it on every health tick.
+          if (!(error instanceof RemoteProtocolError) || error.status !== 404) throw error;
+          capability = {
+            backend_id: "codex",
+            available: false,
+            reason: "codex_backend_not_registered",
+          };
+        }
       }
       status = !capability?.available
         ? presentCodexBackendStatus(capability)
@@ -6566,7 +6600,7 @@ function registerIpc(): void {
   secureHandle("desktop:voice-preferences-update", async (_event, request: import("../../../shared/api/desktopApi").DesktopVoicePreferencesUpdateRequest) => {
     const preferences = await updateVoicePreferences(request);
     for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("desktop:voice-preferences-changed", preferences);
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) safeWebContentsSend(window.webContents, "desktop:voice-preferences-changed", preferences);
     }
     return preferences;
   });
@@ -7051,7 +7085,7 @@ app.whenReady().then(async () => {
   setAuthSessionInvalidatedNotifier(() => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-        window.webContents.send("desktop:auth-session-invalidated");
+        safeWebContentsSend(window.webContents, "desktop:auth-session-invalidated");
       }
     }
   });
@@ -7062,7 +7096,7 @@ app.whenReady().then(async () => {
     publishClick: (event) => {
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-          window.webContents.send("desktop:completion-notification-click", event);
+          safeWebContentsSend(window.webContents, "desktop:completion-notification-click", event);
         }
       }
     },
@@ -7103,7 +7137,7 @@ app.whenReady().then(async () => {
   });
   interactiveDebugger.setPublisher((debugSession) => {
     for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("desktop:interactive-debug-event", debugSession);
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) safeWebContentsSend(window.webContents, "desktop:interactive-debug-event", debugSession);
     }
     void desktopDiagnostics.record({
       traceId: debugSession.traceId ?? debugSession.id,
@@ -7135,14 +7169,14 @@ app.whenReady().then(async () => {
       ? await recoverLifecycleGateway()
       : false;
     const event = { reason, recoveredGateway, at: new Date().toISOString() };
-    for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("desktop:lifecycle-event", event);
+    for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && !window.webContents.isDestroyed()) safeWebContentsSend(window.webContents, "desktop:lifecycle-event", event);
   };
   powerMonitor.on("suspend", () => { void publishLifecycle("suspend"); });
   powerMonitor.on("lock-screen", () => { void publishLifecycle("lock-screen"); });
   powerMonitor.on("resume", () => { void publishLifecycle("resume"); });
   powerMonitor.on("unlock-screen", () => { void publishLifecycle("unlock-screen"); });
   setRemoteWorkspaceStatusPublisher((status) => {
-    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:remote-workspace-status-event", status);
+    for (const window of BrowserWindow.getAllWindows()) safeWebContentsSend(window.webContents, "desktop:remote-workspace-status-event", status);
     desktopDiagnostics.registerHealth({
       id: `remote:${status.hostAlias}`,
       module: "workspace",
@@ -7160,7 +7194,7 @@ app.whenReady().then(async () => {
     });
   });
   setRemoteGatewayOperationPublisher((operation) => {
-    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:remote-gateway-operation-event", operation);
+    for (const window of BrowserWindow.getAllWindows()) safeWebContentsSend(window.webContents, "desktop:remote-gateway-operation-event", operation);
     void desktopDiagnostics.record({
       traceId: operation.operationId,
       module: "runtime",
@@ -7177,7 +7211,7 @@ app.whenReady().then(async () => {
     });
   });
   setRemoteFileChangePublisher((change) => {
-    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:workspace-file-change-event", change);
+    for (const window of BrowserWindow.getAllWindows()) safeWebContentsSend(window.webContents, "desktop:workspace-file-change-event", change);
   });
   // Eager gateway start: the gateway process starts in the background while
   // the renderer renders the login screen. When the user finishes signing in

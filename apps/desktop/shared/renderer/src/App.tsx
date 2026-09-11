@@ -74,6 +74,7 @@ import type {
 import { desktopApi } from "./desktopApi";
 import { copyTextSafely } from "./clipboard";
 import { describeUserFacingError, type UserFacingRecoveryAction } from "./userFacingErrors";
+import { appendRendererStage } from "./debugLogStore";
 import { userFacingBusinessText, userFacingFailureMessage } from "./userFacingLanguage";
 import { supportsFullAgentPrimaryRuntime } from "./modelCatalogRecovery";
 import { getAgentModelOptions } from "./agentModelOptions";
@@ -724,7 +725,10 @@ function AuthenticatedApp({
   // Keep Runtime-backed adapter prefetches dormant until bootstrap succeeds.
   // The composer has a separate on-demand gate below so the first send can
   // bootstrap and continue without requiring a second click.
-  const servicePreparing = !remotePlatformChatAvailable && (auth.serviceBusy || !auth.serviceReady);
+  // When the local Gateway is already external-ready, local agents can chat
+  // even if the full Runtime bootstrap (auth.serviceReady) hasn't completed.
+  // servicePreparing should only block when the Gateway is still coming up.
+  const servicePreparing = !remotePlatformChatAvailable && (auth.serviceBusy || (!auth.serviceReady && !health?.gateway?.externalReady));
   const runtimeAvailable = remotePlatformChatAvailable || Boolean(health?.installed || health?.gateway?.externalReady);
   const chatUnavailableReason = remotePlatformChatAvailable
     ? undefined
@@ -1399,6 +1403,24 @@ function AuthenticatedApp({
     };
   }, [activeWorkspaceId, chatChoicesRefreshNonce, effectiveWorkspacePath, health?.gatewayReady, user?.id, workspacesLoaded]);
 
+  // Auto-refresh agent catalog when the window becomes visible again.
+  // This ensures platform agents (e.g. DocMaster) are refreshed after the user
+  // switches away and returns, instead of showing stale cached data.
+  const lastAgentRefreshRef = useRef(0);
+  useEffect(() => {
+    function handleVisibilityForAgents(): void {
+      if (document.visibilityState !== "visible") return;
+      if (!workspacesLoaded || !health?.gatewayReady) return;
+      // Throttle: don't refresh more than once per 30 seconds.
+      const now = Date.now();
+      if (now - lastAgentRefreshRef.current < 30_000) return;
+      lastAgentRefreshRef.current = now;
+      setChatChoicesRefreshNonce((current) => current + 1);
+    }
+    document.addEventListener("visibilitychange", handleVisibilityForAgents);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityForAgents);
+  }, [workspacesLoaded, health?.gatewayReady]);
+
   useEffect(() => {
     if (selectedChatAgentId !== myDrSaiAgentModelPolicy?.agent_id || !myDrSaiAgentModelPolicy?.effective_ref?.model_id) return;
     const primaryModel = myDrSaiAgentModelPolicy.effective_ref.model_id;
@@ -1866,13 +1888,23 @@ function AuthenticatedApp({
     threadId: string, generation: number, requestId: string,
     options: { forceFresh?: boolean; minimumSequence?: number; expectedGeneration?: number; historyCursor?: string },
   ): Promise<void> {
-    setHydratingThreadId(threadId);
+    const isCurrentThread = (): boolean => activeThreadIdRef.current === threadId;
+    if (isCurrentThread()) setHydratingThreadId(threadId);
     const resyncStartedAt = performance.now();
     setThreadHydrationError((current) => current?.threadId === threadId ? null : current);
     try {
       const envelope = await desktopApi.getThreadSnapshotEnvelope(threadId, requestId, options);
+      if (!isCurrentThread()) return;
       if ((threadSnapshotCoordinatorRef.current.get(threadId)?.generation ?? 0) !== generation) return;
-      if (!envelope) throw new Error(language === "zh" ? "未能读取该会话的历史内容。" : "The session history could not be loaded.");
+      if (!envelope) {
+        // A null envelope for a thread with no messages and no Runtime session
+        // is expected (e.g. a freshly created conversation).  Do not treat
+        // this as a hydration error — just clear the hydrating flag and
+        // return gracefully so the adapter shows the welcome message.
+        const thread = threads.find((item) => item.id === threadId);
+        if (!thread || ((thread.messageCount ?? 0) === 0 && !thread.runtimeSessionId)) return;
+        throw new Error(language === "zh" ? "未能读取该会话的历史内容。" : "The session history could not be loaded.");
+      }
       const existing = threadSnapshotStore.get(threadId) ?? undefined;
       const snapshot = mergeThreadSnapshotForDisplay(envelope.snapshot, existing);
       if (!threadSnapshotCoordinatorRef.current.commitEnvelope(envelope, () => threadSnapshotStore.set(threadId, snapshot))) {
@@ -1894,6 +1926,7 @@ function AuthenticatedApp({
         }
         return;
       }
+      if (!isCurrentThread()) return;
       const state = threadSnapshotCoordinatorRef.current.noteResyncFailure(threadId);
       const friendly = describeUserFacingError(error, language);
       setThreadHydrationError({
@@ -1904,7 +1937,9 @@ function AuthenticatedApp({
       });
     } finally {
       threadSyncMetrics.observe("resync", performance.now() - resyncStartedAt);
-      setHydratingThreadId((current) => current === threadId ? null : current);
+      if (isCurrentThread()) {
+        setHydratingThreadId((current) => current === threadId ? null : current);
+      }
     }
   }
 
@@ -2031,7 +2066,11 @@ function AuthenticatedApp({
     options: { persistInBackground?: boolean; agent?: DesktopAgent; forceNewConversation?: boolean } = {},
   ): Promise<boolean> {
     const agent = options.agent ?? availableChatAgents.find((item) => item.id === agentId);
-    if (!agent) return false;
+    appendRendererStage("agent_square.select_agent", { agentId, agentName: agent?.name, forceNewConversation: options.forceNewConversation });
+    if (!agent) {
+      appendRendererStage("agent_square.agent_not_found", { agentId }, "error");
+      return false;
+    }
     if (options.agent) {
       setAvailableChatAgents((current) => [
         agent,
@@ -2040,6 +2079,7 @@ function AuthenticatedApp({
     }
     if (options.forceNewConversation) {
       applyChatAgent(agent);
+      appendRendererStage("agent_square.create_thread.start", { agentId: agent.id, workspacePath: effectiveWorkspacePath });
       const thread = await desktopApi.createThread({
         kind: "chat",
         title: language === "zh" ? `与 ${agent.name} 的新会话` : `New chat with ${agent.name}`,
@@ -2047,7 +2087,13 @@ function AuthenticatedApp({
         boundAgentId: agent.id,
         boundAgentName: agent.name,
       });
+      appendRendererStage("agent_square.create_thread.ok", { threadId: thread.id, agentId: agent.id });
+      // Update the ref synchronously as well as React state. The Agent Square
+      // callback navigates in the same tick after this promise resolves, so a
+      // stale activeThreadId closure must not be used to identify the new chat.
+      activeThreadIdRef.current = thread.id;
       setActiveThreadId(thread.id);
+      appendRendererStage("agent_square.set_active_thread", { threadId: thread.id });
       setThreads((current) => sortThreadsForSidebar([thread, ...current.filter((item) => item.id !== thread.id)]));
       return true;
     }
@@ -2169,7 +2215,7 @@ function AuthenticatedApp({
         ? null
         : currentEffort && selectedEfforts.includes(currentEffort)
           ? currentEffort
-          : selectedEfforts.includes("high") ? "high" : selectedEfforts[0] ?? null;
+          : null;
       const modelId = selected.model || selected.alias;
       const updated = await desktopApi.updateMyDrSaiAgentModelPolicy(agentId, {
         agent_id: agentId,
@@ -2978,7 +3024,11 @@ function AuthenticatedApp({
                 )
           }
           onSubmit={async (attachments, options) => {
-            if (!remotePlatformChatAvailable && !auth.serviceReady) {
+            // For local agents, only attempt bootstrap when the Gateway isn't
+            // already running. A healthy Gateway is sufficient for local agent
+            // chat even if the full Runtime bootstrap (serviceReady) hasn't
+            // completed — the main process chat.ts handles auth context.
+            if (!remotePlatformChatAvailable && !auth.serviceReady && !health?.gateway?.externalReady) {
               const ready = await auth.retryBootstrap();
               await desktop.refreshHealth();
               if (!ready) return false;
@@ -3034,7 +3084,18 @@ function AuthenticatedApp({
               if (!selected) return;
               setRightPanelCollapsed(true);
               setComposerFocusRequest((current) => current + 1);
+              appendRendererStage("agent_square.navigate_current_session", { agentId: agent.id, threadId: activeThreadIdRef.current });
               navigateTo(MENU_IDS.currentSession);
+            }).catch((error) => {
+              appendRendererStage("agent_square.select_agent.failed", {
+                agentId: agent.id,
+                error: error instanceof Error ? error.message : String(error),
+              }, "error");
+              void showAppNotice({
+                id: "agent-square-start-failed",
+                title: language === "zh" ? "打开智能体失败" : "Failed to open agent",
+                description: language === "zh" ? "创建会话失败，请查看诊断日志。" : "The conversation could not be created. Check diagnostics.",
+              });
             });
           }}
         />
@@ -3112,10 +3173,18 @@ function AuthenticatedApp({
       <ProviderAnalyticsView language={language} />
     ) : activeNav === MENU_IDS.knowledgeBase ? (
       selectedChatAgentId ? (
-        <KnowledgeBasePanel
-          agentId={selectedChatAgentId}
-          language={language}
-        />
+        selectedChatAgent?.source === "local" && selectedChatAgentId !== "my-codex" ? (
+          <KnowledgeBasePanel
+            agentId={selectedChatAgentId}
+            language={language}
+          />
+        ) : (
+          <div className="empty-state">
+            {language === "zh"
+              ? "知识库仅支持本地智能体。请先选择本机 OpenDrSai 智能体。"
+              : "Knowledge base is only available for local agents. Select the local OpenDrSai agent first."}
+          </div>
+        )
       ) : (
         <div className="empty-state">{language === "zh" ? "正在准备 Agent…" : "Preparing Agent…"}</div>
       )
@@ -3842,7 +3911,16 @@ function threadNeedsHistoryHydration(thread?: {
   if ((thread.messageCount ?? 0) > 0) return true;
   if (thread.runtimeSessionId) return true;
   const title = thread.title?.trim() ?? "";
-  return Boolean(title) && title !== "New chat" && title !== "新会话" && title !== "Agent run";
+  if (!title) return false;
+  // New-conversation titles created by selectChatAgent(forceNewConversation)
+  // follow the patterns "与 {agent} 的新会话" / "New chat with {agent}".
+  // These threads have no persisted history and no Runtime session, so
+  // attempting hydration would only return null and surface a spurious
+  // "未能读取该会话的历史内容" backend-category error.
+  if (title === "New chat" || title === "新会话" || title === "Agent run") return false;
+  if (title.startsWith("New chat with ")) return false;
+  if (/^与 .+ 的新会话$/.test(title)) return false;
+  return true;
 }
 
 function mergeThreadSnapshotForDisplay(

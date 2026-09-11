@@ -493,7 +493,16 @@ function isSafeImageSource(src: string): boolean {
 }
 
 function ReasoningPart({ text, complete, language }: { text: string; complete: boolean; language: "en" | "zh" }): React.JSX.Element {
-  const [open, setOpen] = useState(false);
+  // Auto-expand while streaming (complete=false), auto-collapse when done.
+  // User can still manually toggle; the effect only fires on `complete` change.
+  const [open, setOpen] = useState(!complete);
+  const previousCompleteRef = useRef(complete);
+  useEffect(() => {
+    const wasComplete = previousCompleteRef.current;
+    if (!complete && wasComplete) setOpen(true);   // streaming started → expand
+    else if (complete && !wasComplete) setOpen(false); // streaming ended → collapse
+    previousCompleteRef.current = complete;
+  }, [complete]);
   const labels = { reasoning: "Reasoning", thinking: "Thinking" };
   const title = complete ? labels.reasoning : labels.thinking;
   return (
@@ -503,7 +512,7 @@ function ReasoningPart({ text, complete, language }: { text: string; complete: b
         <span>{title}</span>
       </summary>
       <div className="chat-reasoning-content">
-        <MarkdownContent content={text} language={language} onOpenLink={() => undefined} />
+        <MarkdownContent content={text} streaming={!complete} language={language} onOpenLink={() => undefined} />
       </div>
     </details>
   );

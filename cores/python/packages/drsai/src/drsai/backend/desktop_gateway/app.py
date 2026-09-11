@@ -40,8 +40,6 @@ from .routes import (
 )
 
 DEFAULT_HOST = os.environ.get("DRSAI_DESKTOP_GATEWAY_HOST", "127.0.0.1")
-# 28642 belongs to the frozen gateway in the desktop dev setup; this takes the
-# next port so both can run at once during the migration.
 DEFAULT_PORT = int(os.environ.get("DRSAI_DESKTOP_GATEWAY_PORT", "28643"))
 
 ROUTERS = (

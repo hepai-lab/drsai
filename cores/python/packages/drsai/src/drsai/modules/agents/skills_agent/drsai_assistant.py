@@ -222,6 +222,13 @@ def is_retryable_llm_error(error: BaseException) -> bool:
             "ReadTimeout",
         }:
             return True
+        # RuntimeError / AssertionError from "No final model result" indicate
+        # the streaming connection was silently dropped (e.g. GC-triggered
+        # connection-pool closure).  These are transient and should be retried.
+        if isinstance(current, (RuntimeError, AssertionError)):
+            msg = str(current).lower()
+            if "no final model result" in msg or "no model result" in msg:
+                return True
         current = current.__cause__ or current.__context__
     return False
 
@@ -1780,7 +1787,7 @@ class DrSaiAssistant(DrSaiAgent):
                 chat_message=TextMessage(
                     content=f"The {self.name} is paused.",
                     source=self.name,
-                    metadata={"internal": "yes"},
+                    metadata={"internal": "no", "paused": "true"},
                 )
             )
             return
@@ -2000,7 +2007,7 @@ class DrSaiAssistant(DrSaiAgent):
                                     "The model returned empty output after multiple retries. "
                                     "Please try again later or start a new session.",
                             source=agent_name,
-                            metadata={"internal": "no"},
+                            metadata={"internal": "no", "error": "true"},
                         ),
                         inner_messages=inner_messages,
                     )
@@ -2080,7 +2087,7 @@ class DrSaiAssistant(DrSaiAgent):
                         chat_message=TextMessage(
                             content="\n\n(●'◡'●)抱歉，已达最大的任务循环次数，触发了保护措施，请重新调整您的询问方式或者更具体的告诉您的助手应该怎么做。",
                             source=agent_name,
-                            metadata={"internal": "no"},
+                            metadata={"internal": "no", "warning": "true"},
                         ),
                         inner_messages=inner_messages,
                     )
@@ -2092,7 +2099,7 @@ class DrSaiAssistant(DrSaiAgent):
                 chat_message=TextMessage(
                     content="The task was cancelled by the user.",
                     source=self._user_profile_manager.agent_name,
-                    metadata={"internal": "yes"},
+                    metadata={"internal": "no", "cancelled": "true"},
                 ),
                 inner_messages=inner_messages,
             )
@@ -2116,16 +2123,30 @@ class DrSaiAssistant(DrSaiAgent):
                     f"Tool batch validation failed: {e}"
                 )
             else:
-                error_content = (
-                    f"❌ 执行任务时发生错误: {type(e).__name__}: {e}\n\n"
-                    f"模型调用已重试 {self._llm_max_retries} 次仍然失败。请检查网络连接或模型配置后重试。\n"
-                    f"An error occurred after {self._llm_max_retries} retries: {e}"
-                )
+                # Use the actual retry count from the loop instead of always
+                # reporting self._llm_max_retries.  llm_retry_count is defined
+                # inside the try block; if the error occurred before the loop
+                # started, it may be unbound — fall back to 0.
+                _actual_retries = locals().get("llm_retry_count", 0)
+                if _actual_retries > 0:
+                    error_content = (
+                        f"❌ 执行任务时发生错误: {type(e).__name__}: {e}\n\n"
+                        f"模型调用已重试 {_actual_retries} 次后仍然失败。请检查网络连接或模型配置后重试。\n"
+                        f"An error occurred after {_actual_retries} retries: {e}"
+                    )
+                else:
+                    # Non-retryable error (is_retryable_llm_error returned False)
+                    # or error occurred before the LLM call loop started.
+                    error_content = (
+                        f"❌ 执行任务时发生错误: {type(e).__name__}: {e}\n\n"
+                        f"该错误不可自动重试，请检查输入或模型配置后重试。\n"
+                        f"An unretryable error occurred: {e}"
+                    )
             yield Response(
                 chat_message=TextMessage(
                     content=error_content,
                     source=self._user_profile_manager.agent_name,
-                    metadata={"internal": "no"},
+                    metadata={"internal": "no", "error": "true"},
                 ),
                 inner_messages=inner_messages,
             )

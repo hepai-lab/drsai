@@ -564,45 +564,18 @@ class RuntimeConversationJournal:
             omit_legacy_item=omit_legacy_item,
         )
         if canonical_item is not None and envelope["type"].startswith("event.item."):
-            event_item = canonical_item
             if envelope["type"] == "event.item.delta":
-                # Persist the exact pre-delta state. The canonical Item is the
-                # post-delta Snapshot state, so reverse only the append carried
-                # by this Event; replay then applies it exactly once.
-                event_item = json.loads(_oaep_json(canonical_item))
-                delta = (envelope.get("data") or {}).get("delta")
-                content = event_item.get("content") if isinstance(event_item.get("content"), dict) else {}
-                if isinstance(delta, dict):
-                    kind = str(delta.get("kind") or "")
-                    text = str(delta.get("text") or "")
-                    field = {
-                        "message.text.append": "text",
-                        "plan.text.append": "text",
-                        "command.output.append": "output",
-                        "tool.output.append": "result",
-                        "subtask.summary.append": "summary",
-                    }.get(kind)
-                    if field is not None and isinstance(content.get(field), str):
-                        current = str(content[field])
-                        content[field] = current[:-len(text)] if text and current.endswith(text) else current
-                    elif kind in {"reasoning.text.append", "reasoning.segment.added"}:
-                        segments = content.get("segments") if isinstance(content.get("segments"), list) else []
-                        segment_id = str(delta.get("segment_id") or f"{event_item.get('id')}:text")
-                        for index in range(len(segments) - 1, -1, -1):
-                            segment = segments[index]
-                            if not isinstance(segment, dict) or str(segment.get("id")) != segment_id:
-                                continue
-                            current = str(segment.get("text") or "")
-                            if kind == "reasoning.segment.added" and current == text:
-                                segments.pop(index)
-                            elif text and current.endswith(text):
-                                segment["text"] = current[:-len(text)]
-                            break
-                event_item["content"] = content
-            envelope["data"] = {
-                **dict(envelope.get("data") or {}),
-                "item": event_item,
-            }
+                # Delta events carry only the delta itself; the canonical
+                # post-delta Item is already projected in runtime_oaep_items.
+                # Embedding the full pre-delta snapshot here caused O(n²)
+                # storage growth.  reduce_oaep_events() reconstructs Items
+                # from pure deltas without needing data.item.
+                pass
+            else:
+                envelope["data"] = {
+                    **dict(envelope.get("data") or {}),
+                    "item": canonical_item,
+                }
         row = db.execute(
             "SELECT * FROM runtime_sessions WHERE session_id=?",
             (event["session_id"],),
@@ -1175,6 +1148,7 @@ class RuntimeConversationJournal:
         run_id: str | None = None,
         source_message_id: str | None = None,
         event_kind: str | None = None,
+        event_payload_override: dict[str, Any] | None = None,
         created_at: str | None = None,
         updated_at: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], bool]:
@@ -1257,6 +1231,13 @@ class RuntimeConversationJournal:
         }:
             raise ValueError("Conversation Item event kind is invalid")
         event_id = f"se-{uuid.uuid4()}"
+        # For ITEM_DELTA events, use the compact delta-only payload (not the
+        # cumulative canonical payload) to avoid O(n²) journal growth.
+        journal_item_payload = (
+            event_payload_override
+            if event_payload_override is not None
+            else json.loads(encoded)
+        )
         event_payload = {
             "item_id": item_id,
             "revision": revision,
@@ -1266,7 +1247,7 @@ class RuntimeConversationJournal:
             "source_message_id": source_message_id,
             "created_at": created,
             "updated_at": timestamp,
-            "payload": json.loads(encoded),
+            "payload": journal_item_payload,
         }
         db.execute(
             "INSERT INTO runtime_session_journal("

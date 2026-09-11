@@ -45,7 +45,6 @@ export function catalogSessionIdsForDelete(thread: DesktopThread): string[] {
   return uniqueSessionIds([
     runtimeSessionIdForLookup(thread),
     thread.id.startsWith("session-") ? thread.id : undefined,
-    thread.id.startsWith("thread-") ? thread.id : undefined,
   ]);
 }
 

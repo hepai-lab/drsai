@@ -20,7 +20,7 @@ const EXPLICIT_ACTIONS = new Set<RuntimeRecoveryAction>([
 export function runtimeErrorCategory(code: string): RuntimeErrorCategory {
   const value = code.toLowerCase();
   if (["binding", "resume_required", "session_recovery", "session_model", "session_workspace"].some((part) => value.includes(part))) return "binding";
-  if (["auth", "token", "logged_in", "permission_denied"].some((part) => value.includes(part))) return "auth";
+  if (["auth", "token", "logged_in", "permission_denied", "session_missing", "session_expired", "refresh_failed", "refresh_unavailable"].some((part) => value.includes(part))) return "auth";
   if (value.includes("approval")) return "approval";
   if (["resource", "attachment", "workspace_escape", "disk_", "path_"].some((part) => value.includes(part))) return "resource";
   if (["history", "cursor", "snapshot"].some((part) => value.includes(part))) return "history";
