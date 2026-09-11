@@ -63,27 +63,31 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
   skillsSubTab,
   onSkillsSubTabChange,
 }) => {
-  const { darkMode } = useContext(appContext);
+  const { darkMode, user } = useContext(appContext);
   const { t } = useLang();
   const isDark = darkMode === "dark";
 
   const [expanded, setExpanded] = useState<Record<SectionId, boolean>>({
     chat: true,
     settings: false,
-    history: true,
+    history: false,
     skills: true,
   });
 
   useEffect(() => {
     if (["current_session"].includes(activeSubMenuItem)) {
       setExpanded((e) => ({ ...e, chat: true }));
-    } else if (historyContent) {
-      setExpanded((e) => ({ ...e, history: true }));
+    } else {
+      setExpanded((e) => ({ ...e, history: false }));
     }
     if (activeSubMenuItem !== "skills_square") {
       setExpanded((e) => ({ ...e, skills: false }));
     }
   }, [activeSubMenuItem]);
+
+  useEffect(() => {
+    setExpanded((e) => ({ ...e, history: false }));
+  }, [user?.email]);
 
   const toggleSection = (id: SectionId) =>
     setExpanded((e) => ({ ...e, [id]: !e[id] }));

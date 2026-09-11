@@ -98,6 +98,16 @@ export interface Session extends DBModel {
   name: string;
   team_id?: number;
   agent_mode_config?: any;
+  /** Present on create-session responses so chat can start without GET /runs. */
+  initial_run?: {
+    id: string;
+    created_at?: string;
+    status?: string;
+    task?: AgentMessageConfig;
+    team_result?: TeamResult | null;
+    messages?: Message[];
+    session_id?: number;
+  };
 }
 
 export interface SessionRuns {

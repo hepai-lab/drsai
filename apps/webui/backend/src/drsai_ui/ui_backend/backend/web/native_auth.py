@@ -1,6 +1,7 @@
 """OIDC authentication used by native OpenDrSai clients."""
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -18,14 +19,18 @@ DEFAULT_ALLOWED_ISSUERS = {
 OIDC_AUDIENCE = os.getenv("OPENDRSAI_NATIVE_OIDC_AUDIENCE", "hai-api")
 OIDC_CACHE_TTL_SECONDS = 15 * 60
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class NativeIdentity:
     user_id: str
     issuer: str
+    email: str | None = None
 
 
 _jwks_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_userinfo_email_cache: dict[str, tuple[float, str]] = {}
 
 
 async def get_native_identity(
@@ -71,7 +76,92 @@ async def get_native_identity(
     subject = claims.get("sub")
     if not isinstance(subject, str) or not subject:
         raise _unauthorized("invalid_token")
-    return NativeIdentity(user_id=subject, issuer=issuer)
+    return NativeIdentity(user_id=subject, issuer=issuer, email=_optional_email(claims.get("email")))
+
+
+async def try_get_native_identity(authorization: str | None) -> NativeIdentity | None:
+    """Verify a HepAI OIDC access token; return None instead of raising."""
+    try:
+        return await get_native_identity(authorization)
+    except HTTPException:
+        return None
+    except Exception:
+        return None
+
+
+async def fetch_native_userinfo_email(
+    access_token: str,
+    issuer: str,
+    subject: str,
+) -> str | None:
+    """Return the verified email for a native OIDC access token.
+
+    Access tokens typically omit the email claim; HepAI userinfo has it.
+    `sub` is kept as NativeIdentity.user_id for native APIs. Skills plaza
+    must persist email, not the subject UUID.
+    """
+    cache_key = f"{issuer}|{subject}"
+    cached = _userinfo_email_cache.get(cache_key)
+    if cached and cached[0] > time.monotonic():
+        return cached[1]
+
+    timeout = float(os.getenv("OPENDRSAI_NATIVE_OIDC_TIMEOUT", "8"))
+    url = f"{issuer.rstrip('/')}/oauth2/userinfo"
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+    except Exception as exc:
+        logger.warning("OIDC userinfo request failed for %s: %s", issuer, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="OIDC userinfo is unavailable",
+        ) from exc
+
+    if response.status_code != 200:
+        logger.warning(
+            "OIDC userinfo returned %s for issuer=%s",
+            response.status_code,
+            issuer,
+        )
+        if response.status_code in (401, 403):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="OIDC userinfo rejected the access token",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="OIDC userinfo is unavailable",
+        )
+
+    try:
+        payload = response.json()
+    except Exception:
+        payload = None
+    if not isinstance(payload, dict):
+        return None
+
+    payload_sub = payload.get("sub")
+    if isinstance(payload_sub, str) and payload_sub.strip() and payload_sub.strip() != subject:
+        logger.warning("OIDC userinfo sub does not match access token sub")
+        return None
+    if payload.get("email_verified") is False:
+        return None
+
+    email = _optional_email(payload.get("email"))
+    if not email:
+        return None
+    _userinfo_email_cache[cache_key] = (time.monotonic() + OIDC_CACHE_TTL_SECONDS, email)
+    return email
+
+
+def _optional_email(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    email = value.strip()
+    return email or None
 
 
 def _bearer_token(authorization: str | None) -> str:

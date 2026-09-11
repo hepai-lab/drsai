@@ -64,11 +64,15 @@ class Message(SQLModel, table=True):
     )
     session_id: Optional[int] = Field(
         default=None,
-        sa_column=Column(Integer, ForeignKey("session.id", ondelete="CASCADE")),
+        sa_column=Column(
+            Integer, ForeignKey("session.id", ondelete="CASCADE"), index=True
+        ),
     )
     run_id: Optional[int] = Field(
         default=None,
-        sa_column=Column(Integer, ForeignKey("run.id", ondelete="CASCADE")),
+        sa_column=Column(
+            Integer, ForeignKey("run.id", ondelete="CASCADE"), index=True
+        ),
     )
     message_meta: Optional[Union[MessageMeta, dict[str, Any]]] = Field(
         default={}, sa_column=Column(JSON)
@@ -89,7 +93,7 @@ class Session(SQLModel, table=True):
         default_factory=datetime.now,
         sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
     )  # pylint: disable=not-callable
-    user_id: Optional[str] = None
+    user_id: Optional[str] = Field(default=None, index=True)
     version: Optional[str] = "0.0.1"
     team_id: Optional[int] = Field(
         default=None,
@@ -140,7 +144,10 @@ class Run(SQLModel, table=True):
     session_id: Optional[int] = Field(
         default=None,
         sa_column=Column(
-            Integer, ForeignKey("session.id", ondelete="CASCADE"), nullable=False
+            Integer,
+            ForeignKey("session.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
         ),
     )
     status: RunStatus = Field(default=RunStatus.CREATED)
@@ -700,6 +707,29 @@ class SkillShare(SQLModel, table=True):
     access_count: int = Field(default=0)
 
 
+class UserAgentLoginTicket(SQLModel, table=True):
+    """One-time CSNS passwordless login ticket (server-to-server exchange)."""
+
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False),
+    )
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )
+    ticket: str = Field(sa_column=Column(String, unique=True, nullable=False, index=True))
+    user_id: str = Field(index=True)
+    expires_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    used_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+
 class DesktopAuthTicket(SQLModel, table=True):
     """Short-lived device-code ticket for Windows desktop SSO."""
 
@@ -776,6 +806,7 @@ DatabaseModel = (
     | SkillDetail
     | SkillShare
     | DesktopAuthTicket
+    | UserAgentLoginTicket
     | SkillTag
 )
 

@@ -20,7 +20,7 @@ async def toggle_skill_visibility(
 
     auth_user_id = await _resolve_user_from_apikey(request)
     if not auth_user_id:
-        raise HTTPException(status_code=401, detail="API key required")
+        raise HTTPException(status_code=401, detail="Authentication required")
     return await _toggle_visibility(slug, auth_user_id, visibility)
 
 

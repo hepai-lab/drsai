@@ -236,94 +236,32 @@ async def resolve_user_from_apikey(
     request: Request,
     db: "DatabaseManager | None" = None,
 ) -> str | None:
-    """Resolve user_id from API key in Authorization header.
+    """Resolve user_id: OIDC first (session / access token / WebUI JWT), then API key.
 
-    Calls the external API key verification service. The service requires:
-    - Authorization header: Bearer <user_api_key>
-    - Internal call uses admin API key from HEPAI_APP_ADMIN_API_KEY env var
+    Native OIDC identities persist as account email, not the token subject.
+    Missing credentials return None. Invalid API keys still raise 401.
     """
-    import os
+    from .identity import resolve_request_user
 
-    verify_url = os.getenv("DRSAI_UI_API_KEY_VERIFY_URL", "http://localhost:42551/apiv2/user")
-    admin_api_key = os.getenv("HEPAI_APP_ADMIN_API_KEY", "")
-
-    # Extract user's API key from Authorization header
-    auth = request.headers.get("Authorization", "")
-    api_key: str | None = None
-
-    if auth.startswith("bearer ") or auth.startswith("Bearer "):
-        api_key = auth.split(" ", 1)[1]
-
-    if not api_key:
-        return None  # No API key present, caller decides whether that's ok
-
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"{verify_url}/get_user_info_by_key",
-                params={"api_key": api_key},
-                headers={"Authorization": f"Bearer {admin_api_key}"} if admin_api_key else {},
-            )
-        if resp.status_code != 200:
-            raise HTTPException(status_code=401, detail="Invalid API key")
-
-        body = resp.json()
-        user_id = None
-        if isinstance(body, dict):
-            user_id = body.get("email") or body.get("user_id") or body.get("userId")
-
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Cannot resolve user from API key")
-
-        # Store on request.state for downstream use
-        request.state.user_id = user_id
-        if db is not None:
-            request.state.skill_role = None  # will be resolved by require_skill_role
-        return user_id
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"API key verification failed: {e}")
-        raise HTTPException(status_code=502, detail="API key verification service unavailable")
+    return await resolve_request_user(request, db)
 
 
 async def get_user_or_none(
     request: Request,
     db=Depends(get_db),
 ) -> str | None:
-    """Resolve user_id from JWT or API key. Returns None if neither is present.
+    """Resolve user_id from OIDC or API key. Returns None if neither is present.
 
     Use this for endpoints that are optionally authenticated (e.g. public reads
     that may show extra info to logged-in users)."""
-    # Try API key first (query param or header), then JWT
     try:
-        uid = await resolve_user_from_apikey(request, db)
-        if uid:
-            return uid
+        return await resolve_user_from_apikey(request, db)
     except HTTPException:
-        pass  # Invalid API key, fall through
-
-    # Try JWT Bearer token
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        from ..drsai_adapter.sso.jwt import decode_jwt_token
-        try:
-            token = auth.split(" ", 1)[1]
-            data = decode_jwt_token(token)
-            if data.user_id:
-                request.state.user_id = data.user_id
-                return data.user_id
-        except Exception:
-            pass
-
-    return None
+        return None
 
 
 def require_auth(*roles: str):
-    """Require auth (API key or JWT) AND optionally a skill_role.
+    """Require auth (OIDC or API key) AND optionally a skill_role.
 
     Usage::
 

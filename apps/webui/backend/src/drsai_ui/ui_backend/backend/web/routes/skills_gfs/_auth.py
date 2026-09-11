@@ -15,6 +15,7 @@ from ._constants import SkillType
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def _resolve_user_from_apikey(request: Request) -> str | None:
+    """OIDC first, then HepAI API key."""
     from ...deps import resolve_user_from_apikey
     return await resolve_user_from_apikey(request)
 
