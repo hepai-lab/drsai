@@ -304,6 +304,39 @@ class TestDelete:
         mock_s3.delete_objects.assert_not_called()
 
 
+class TestMkdirMoveRename:
+    def test_mkdir(self, client, mock_s3):
+        assert client.mkdir("docs/new") == "docs/new"
+        mock_s3.put_object.assert_called_with(
+            Bucket="20001-alice", Key="docs/new/", Body=b"",
+        )
+
+    def test_move_file(self, client, mock_s3):
+        assert client.move("a.txt", "b/a.txt") == "b/a.txt"
+        mock_s3.copy_object.assert_called_once()
+        mock_s3.delete_object.assert_called_with(Bucket="20001-alice", Key="a.txt")
+
+    def test_move_dir(self, client, mock_s3):
+        mock_s3.get_paginator.return_value.paginate.return_value = [{
+            "Contents": [
+                {"Key": "old/"},
+                {"Key": "old/x.txt"},
+            ],
+        }]
+        mock_s3.delete_objects.return_value = {"Errors": []}
+        assert client.move("old", "new", is_dir=True) == "new"
+        assert mock_s3.copy_object.call_count == 2
+        mock_s3.delete_objects.assert_called_once()
+
+    def test_rename(self, client, mock_s3):
+        assert client.rename("dir/old.txt", "new.txt") == "dir/new.txt"
+        mock_s3.copy_object.assert_called_once()
+
+    def test_rename_rejects_slash(self, client, mock_s3):
+        with pytest.raises(ValueError):
+            client.rename("a.txt", "b/c.txt")
+
+
 class TestPresign:
     def test_presign_get(self, client, mock_s3):
         mock_s3.generate_presigned_url.return_value = "https://x/y?sig=..."

@@ -10,10 +10,17 @@ import { NotebookPreviewer } from "./NotebookPreviewer";
 import { OfficePreviewer } from "./OfficePreviewer";
 import { OutlinePreviewer } from "./OutlinePreviewer";
 import { PdfPreviewer } from "./PdfPreviewer";
-import { StructuredPreviewer } from "./StructuredPreviewer";
 import { TablePreviewer } from "./TablePreviewer";
 import { TextPreviewer } from "./TextPreviewer";
 import type { LineHighlight } from "./types";
+
+function isSourceTextKind(kind: WorkspaceFilePreview["kind"]): boolean {
+  return kind === "text"
+    || kind === "code"
+    || kind === "json"
+    || kind === "config"
+    || kind === "structured";
+}
 
 export function FilePreviewer({
   language,
@@ -27,20 +34,27 @@ export function FilePreviewer({
 }): React.JSX.Element {
   if (!preview) return <EmptyPreviewer language={language} />;
   if (preview.kind === "notebook") return <NotebookPreviewer language={language} preview={preview} />;
-  // An outline hides the lines a citation points at, so a cited file is shown
-  // in full even when it is large enough that browsing would summarise it.
-  if (preview.outline?.length && !highlight) return <OutlinePreviewer language={language} preview={preview} />;
+  // Outline mode is explicit; never hide source text behind a symbol list.
+  if (preview.mode === "outline" && preview.outline?.length && !highlight) {
+    return <OutlinePreviewer language={language} preview={preview} />;
+  }
   if (preview.kind === "image") return <ImagePreviewer language={language} preview={preview} />;
   if (preview.kind === "table") return <TablePreviewer language={language} preview={preview} />;
   if (preview.kind === "markdown") return <MarkdownPreviewer language={language} preview={preview} highlight={highlight} />;
   if (preview.kind === "html") return <HtmlPreviewer language={language} preview={preview} />;
-  if (preview.kind === "json" || preview.kind === "structured" || preview.kind === "config") {
-    return <StructuredPreviewer language={language} preview={preview} />;
-  }
   if (preview.kind === "pdf") return <PdfPreviewer language={language} preview={preview} />;
   if (preview.kind === "office") return <OfficePreviewer language={language} preview={preview} />;
   if (preview.kind === "media") return <MediaPreviewer language={language} preview={preview} />;
-  if (preview.content) return <TextPreviewer language={language} preview={preview} highlight={highlight} />;
+  // Text / code / json / yaml / css / sql: always show the source file body.
+  if (preview.content != null && isSourceTextKind(preview.kind)) {
+    return <TextPreviewer language={language} preview={preview} highlight={highlight} />;
+  }
+  if (preview.content != null) {
+    return <TextPreviewer language={language} preview={preview} highlight={highlight} />;
+  }
+  if (preview.outline?.length) {
+    return <OutlinePreviewer language={language} preview={preview} />;
+  }
   return <MetadataPreviewer language={language} preview={preview} />;
 }
 

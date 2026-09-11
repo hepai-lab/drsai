@@ -170,6 +170,7 @@ import {
   subscribeUpdateStatus,
 } from "./updates";
 import { cancelChatTurn, disposeAllChatForTarget, handleChatRenderHealthReport, hasActiveChats, quarantineChatDispatcher, recoverChatRun, releaseChatQuarantine, respondChatInput, startChat } from "./chat";
+import { trySendToRenderer } from "../../../shared/main/rendererIpcTarget";
 import { listProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
 import {
@@ -1017,17 +1018,12 @@ const browserTaskService = new BrowserTaskService({
 });
 
 /**
- * Unified safe send for WebContents — checks isDestroyed() AND wraps send()
- * in a try/catch so "Render frame was disposed" errors during reload are
- * silently dropped instead of flooding the console.
+ * Unified safe send for WebContents — refuse disposed/loading frames before
+ * send() so Electron does not log "Render frame was disposed" (it often
+ * swallows the exception after logging, which would otherwise spam forever).
  */
 function safeWebContentsSend(wc: WebContents, channel: string, ...args: unknown[]): void {
-  if (wc.isDestroyed()) return;
-  try {
-    wc.send(channel, ...args);
-  } catch {
-    // Frame may be disposed during reload — silently drop
-  }
+  trySendToRenderer(wc, channel, ...args);
 }
 
 const pendingDesktopApprovals = new Map<string, DesktopPendingApproval>();
@@ -3215,6 +3211,14 @@ function createWindow(): void {
     quarantineChatDispatcher(mainWindow!.webContents);
     quarantineAgentDispatcher(mainWindow!.webContents);
   });
+  // did-start-navigation can fire slightly earlier than did-start-loading for
+  // main-frame navigations; quarantine here too to shrink the race with
+  // backpressure setTimeout flushes. Skip same-document navigations.
+  mainWindow.webContents.on("did-start-navigation", (details) => {
+    if (!details.isMainFrame || details.isSameDocument) return;
+    quarantineChatDispatcher(mainWindow!.webContents);
+    quarantineAgentDispatcher(mainWindow!.webContents);
+  });
   // When the new frame finishes loading, release the quarantine so the next
   // emit() creates a fresh dispatcher bound to the new frame.
   mainWindow.webContents.on("did-finish-load", () => {
@@ -4400,7 +4404,7 @@ function serializeDecisionCsv(rows: string[][]): string {
 }
 
 function isDecisionAnomaly(value: string): boolean {
-  return /^(?:true|1|yes|y|anomaly|�쳣)$/i.test(value.trim());
+  return /^(?:true|1|yes|y|anomaly|\u5f02\u5e38)$/i.test(value.trim());
 }
 
 async function applyAnomalyDecision(request: DesktopAnomalyDecisionApplyRequest): Promise<DesktopAnomalyDecisionApplyResult> {

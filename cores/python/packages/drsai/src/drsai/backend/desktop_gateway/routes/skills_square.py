@@ -36,7 +36,7 @@ SKILLS_SQUARE_PRODUCTION_API_ROOT = "https://opendrsai.ihep.ac.cn"
 
 def _is_skills_square_test_environment() -> bool:
     launch = (os.environ.get("OPENDRSAI_DESKTOP_LAUNCH_MODE") or "").strip().lower()
-    if launch in {"development", "dev"}:
+    if launch in {"development", "dev"}:    
         return True
     if launch in {"production", "prod"}:
         return False

@@ -1,38 +1,31 @@
-import { Code2, Eye, FileCode2 } from "lucide-react";
+import { Code2, Eye } from "lucide-react";
 import { useState } from "react";
 import type { PreviewerProps } from "./types";
 
 export function HtmlPreviewer({
   preview,
+  language,
 }: PreviewerProps): React.JSX.Element {
   const [mode, setMode] = useState<"rendered" | "source">("rendered");
   const content = preview.content ?? "";
+  const isZh = language === "zh";
+  const showingSource = mode === "source";
   return (
     <div className="files-preview-html">
-      <div className="files-preview-subtoolbar">
-        <span>
-          <FileCode2 size={13} />
-          HTML
-        </span>
-        <div>
-          <button
-            type="button"
-            className={mode === "rendered" ? "active" : ""}
-            onClick={() => setMode("rendered")}
-          >
-            <Eye size={12} />
-            Render
-          </button>
-          <button
-            type="button"
-            className={mode === "source" ? "active" : ""}
-            onClick={() => setMode("source")}
-          >
-            <Code2 size={12} />
-            Source
-          </button>
-        </div>
-      </div>
+      <button
+        type="button"
+        className="files-preview-mode-toggle files-preview-mode-toggle-float"
+        aria-pressed={showingSource}
+        title={showingSource
+          ? (isZh ? "切换到渲染视图" : "Switch to rendered view")
+          : (isZh ? "切换到源码视图" : "Switch to source view")}
+        onClick={() => setMode((current) => (current === "rendered" ? "source" : "rendered"))}
+      >
+        {showingSource ? <Eye size={12} /> : <Code2 size={12} />}
+        {showingSource
+          ? (isZh ? "渲染" : "Render")
+          : (isZh ? "源码" : "Source")}
+      </button>
       {mode === "rendered" ? (
         <iframe
           className="files-preview-html-frame"

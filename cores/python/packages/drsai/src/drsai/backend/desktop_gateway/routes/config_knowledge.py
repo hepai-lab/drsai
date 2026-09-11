@@ -37,6 +37,7 @@ from drsai.config import (
     canonical_knowledge_id,
     delete_credential,
     delete_knowledge_resource,
+    diff_local_knowledge_corpus,
     get_knowledge_resource,
     index_local_files,
     knowledge_corpus_state,
@@ -379,17 +380,9 @@ async def check_knowledge_base_stale(knowledge_id: str, user_id: str | None = Qu
     if resource.type != "local-files":
         raise HTTPException(status_code=400, detail="Only local-files Knowledge Bases support stale checks")
     try:
-        state = await asyncio.to_thread(knowledge_corpus_state, config_dir, resource)
+        return await asyncio.to_thread(diff_local_knowledge_corpus, config_dir, resource)
     except ModelProviderConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {
-        "knowledge_id": knowledge_id,
-        "stale": not state.get("corpus_complete", False),
-        "changed": [],
-        "added": [],
-        "removed": [],
-        "documents": state.get("documents", []),
-    }
 
 
 @api.post("/v1/config/knowledge-bases/{knowledge_id}/refresh-if-stale", operation_id="refreshKnowledgeBaseIfStale")
@@ -403,14 +396,13 @@ async def refresh_knowledge_base_if_stale(knowledge_id: str, user_id: str | None
     if resource.type != "local-files":
         raise HTTPException(status_code=400, detail="Only local-files Knowledge Bases support refresh")
     try:
-        state = await asyncio.to_thread(knowledge_corpus_state, config_dir, resource)
+        diff = await asyncio.to_thread(diff_local_knowledge_corpus, config_dir, resource)
     except ModelProviderConfigError:
-        pass
-    else:
-        if state.get("corpus_complete", False):
-            return {"knowledge_id": knowledge_id, "stale": False, "status": "unchanged"}
+        diff = {"stale": True}
+    if not diff.get("stale", True):
+        return {"knowledge_id": knowledge_id, "stale": False, "status": "unchanged"}
     result = await asyncio.to_thread(index_local_files, config_dir, resource)
-    return {"knowledge_id": knowledge_id, "stale": False, "status": result.get("status", "ready")}
+    return {"knowledge_id": knowledge_id, "stale": True, "status": result.get("status", "ready")}
 
 
 @api.get("/v1/config/knowledge-bases/ragflow/discover", operation_id="rediscoverRagflowDatasets")

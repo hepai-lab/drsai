@@ -2909,6 +2909,15 @@ export function installMockDesktopApi(): void {
       size: 0,
     }),
     gfsDelete: async (request) => ({ path: request.path }),
+    gfsMkdir: async (request) => ({
+      path: `${request.parentPath ? `${request.parentPath.replace(/\/$/, "")}/` : ""}${request.name}`,
+      name: request.name,
+    }),
+    gfsRename: async (request) => ({ path: request.path, name: request.newName }),
+    gfsMove: async (request) => ({
+      path: `${request.targetDir ? `${request.targetDir.replace(/\/$/, "")}/` : ""}${request.sourcePath.split("/").pop() ?? ""}`,
+      name: request.sourcePath.split("/").pop() ?? "",
+    }),
     gfsShareUrl: async () => ({
       url: "https://example.invalid/mock-gfs-share",
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),

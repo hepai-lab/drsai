@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { Braces } from "lucide-react";
 import type { PreviewerProps } from "./types";
 
 export function StructuredPreviewer({
@@ -11,12 +10,6 @@ export function StructuredPreviewer({
   );
   return (
     <div className="files-preview-structured">
-      <div className="files-preview-subtoolbar">
-        <span>
-          <Braces size={13} />
-          {preview.kind}
-        </span>
-      </div>
       {parsed ? (
         <StructuredNode value={parsed} depth={0} />
       ) : (

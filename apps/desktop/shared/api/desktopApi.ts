@@ -6545,6 +6545,20 @@ export interface DesktopApi {
     path: string;
   }): Promise<{ canceled: boolean; localPath?: string; size?: number }>;
   gfsDelete(request: { path: string }): Promise<{ path: string }>;
+  gfsMkdir(request: {
+    parentPath?: string;
+    name: string;
+  }): Promise<{ path: string; name: string }>;
+  gfsRename(request: {
+    path: string;
+    newName: string;
+    isDir?: boolean;
+  }): Promise<{ path: string; name: string }>;
+  gfsMove(request: {
+    sourcePath: string;
+    targetDir?: string;
+    isDir?: boolean;
+  }): Promise<{ path: string; name: string }>;
   gfsShareUrl(request: {
     path: string;
     ttlMinutes?: number;

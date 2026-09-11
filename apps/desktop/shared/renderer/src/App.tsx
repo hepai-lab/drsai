@@ -2988,12 +2988,17 @@ function AuthenticatedApp({
             setActiveRightTab("files");
             setRightPanelCollapsed(false);
           }}
-          onOpenConversationResourcePreview={(preview, _logicalPath) => {
-            // Runtime-owned and remote resources do not have to be present in
-            // the local workspace tree. The preview itself is authoritative;
-            // using its logical path as a tree focus would show a false
-            // "missing artifact" warning beside a valid preview.
-            setFilesPanelFocusPath(undefined);
+          onOpenConversationResourcePreview={(preview, logicalPath) => {
+            // Prefer revealing a workspace path in the file tree. Runtime-only
+            // resources may have no tree entry — keep preview without a false
+            // "missing file" focus when the path is not workspace-local.
+            const candidate = (logicalPath || preview.relativePath || "").trim();
+            const focusable = Boolean(
+              candidate
+              && !candidate.startsWith("artifact://")
+              && !/^https?:\/\//i.test(candidate),
+            );
+            setFilesPanelFocusPath(focusable ? candidate : undefined);
             setFilesPanelResourcePreview(preview);
             setActiveRightTab("files");
             setRightPanelCollapsed(false);
@@ -3174,10 +3179,12 @@ function AuthenticatedApp({
     ) : activeNav === MENU_IDS.knowledgeBase ? (
       selectedChatAgentId ? (
         selectedChatAgent?.source === "local" && selectedChatAgentId !== "my-codex" ? (
-          <KnowledgeBasePanel
-            agentId={selectedChatAgentId}
-            language={language}
-          />
+          <section className="skills-square-panel skills-manager-panel">
+            <KnowledgeBasePanel
+              agentId={selectedChatAgentId}
+              language={language}
+            />
+          </section>
         ) : (
           <div className="empty-state">
             {language === "zh"
@@ -3189,7 +3196,9 @@ function AuthenticatedApp({
         <div className="empty-state">{language === "zh" ? "正在准备 Agent…" : "Preparing Agent…"}</div>
       )
     ) : activeNav === MENU_IDS.library ? (
-      <GfsView language={language} />
+      <section className="skills-square-panel skills-manager-panel">
+        <GfsView language={language} />
+      </section>
     ) : activeNav === MENU_IDS.profile ? (
       <ModelSettingsContainer
         initialProvider={myDrSaiConfig?.modelConnection?.model_provider}
@@ -3383,6 +3392,8 @@ function AuthenticatedApp({
         workspacePath={filesWorkspacePath}
         focusPath={filesPanelFocusPath}
         resourcePreview={filesPanelResourcePreview}
+        onFocusPathConsumed={() => setFilesPanelFocusPath(undefined)}
+        onClearResourcePreview={() => setFilesPanelResourcePreview(undefined)}
       />
     );
 

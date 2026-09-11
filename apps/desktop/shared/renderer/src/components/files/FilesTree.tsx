@@ -119,7 +119,7 @@ function FilesTreeRow({
     <div className="files-tree-branch">
       <button
         type="button"
-        className={`files-tree-row ${selectedPath === node.path ? "selected" : ""}`}
+        className={`files-tree-row ${pathsMatch(selectedPath, node.path) || pathsMatch(selectedPath, node.relativePath) ? "selected" : ""}`}
         style={{ paddingLeft: `${10 + depth * 16}px` }}
         onClick={handleRowClick}
         onContextMenu={(e) => {
@@ -194,6 +194,15 @@ function FilesTreeRow({
       ) : null}
     </div>
   );
+}
+
+function normalizeTreePath(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "").toLowerCase();
+}
+
+function pathsMatch(left: string | undefined, right: string | undefined): boolean {
+  if (!left || !right) return false;
+  return normalizeTreePath(left) === normalizeTreePath(right);
 }
 
 function getPreviewIcon(kind?: WorkspacePreviewKind): LucideIcon {

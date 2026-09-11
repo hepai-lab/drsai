@@ -255,6 +255,77 @@ def index_local_files(config_dir: str | Path, resource: KnowledgeResource) -> di
     }
 
 
+def _iter_local_supported_files(resource: KnowledgeResource) -> list[tuple[str, Path]]:
+    """Return (relative source, absolute path) for supported files under the KB root."""
+    if resource.type != "local-files":
+        raise ConfigError("Only local-files Knowledge Bases support local file scans")
+    config = dict(resource.config or {})
+    root = Path(str(config.get("root_path") or "")).expanduser().resolve()
+    if not root.is_dir():
+        raise ConfigError("Knowledge Base root_path is unavailable")
+    source_paths = config.get("paths") or ["."]
+    if not isinstance(source_paths, list):
+        raise ConfigError("Knowledge Base paths are invalid")
+    seen: set[Path] = set()
+    files: list[tuple[str, Path]] = []
+    for raw in source_paths:
+        candidate = (root / str(raw)).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError as exc:
+            raise ConfigError("Knowledge Base path escapes root_path") from exc
+        paths: Iterable[Path] = sorted(candidate.rglob("*")) if candidate.is_dir() else (candidate,)
+        for path in paths:
+            if not path.is_file() or path in seen:
+                continue
+            seen.add(path)
+            if path.suffix.lower() not in SUPPORTED_SUFFIXES:
+                continue
+            files.append((path.relative_to(root).as_posix(), path))
+    return files
+
+
+def diff_local_knowledge_corpus(config_dir: str | Path, resource: KnowledgeResource) -> dict[str, object]:
+    """Compare the on-disk folder against the current index.
+
+    ``stale`` is true when files were added, removed, or changed since the last
+    index, or when the last index left unreadable corpus members.
+    """
+    state = knowledge_corpus_state(config_dir, resource)
+    indexed = {
+        str(document["source"]): str(document.get("sha256") or "")
+        for document in state.get("documents", [])
+        if isinstance(document, dict) and document.get("source")
+    }
+    disk: dict[str, str] = {}
+    for source, path in _iter_local_supported_files(resource):
+        if path.stat().st_size > _MAX_DOCUMENT_BYTES:
+            # Still treat oversized files as present so "removed" stays accurate;
+            # index stores them with an empty digest when they fail as too large.
+            disk[source] = indexed.get(source, "")
+            continue
+        disk[source] = _file_sha256(path)
+
+    added = [{"source": source} for source in sorted(set(disk) - set(indexed))]
+    removed = [{"source": source} for source in sorted(set(indexed) - set(disk))]
+    changed = [
+        {"source": source}
+        for source in sorted(set(disk) & set(indexed))
+        if indexed[source] and disk[source] and indexed[source] != disk[source]
+    ]
+    incomplete = not bool(state.get("corpus_complete", False))
+    stale = bool(added or removed or changed or incomplete)
+    return {
+        "knowledge_id": resource.knowledge_id,
+        "stale": stale,
+        "changed": changed,
+        "added": added,
+        "removed": removed,
+        "corpus_complete": not incomplete,
+        "documents": state.get("documents", []),
+    }
+
+
 def _pack_units(
     units: Sequence[DocumentUnit], size: int, overlap: int,
 ) -> Iterable[tuple[str, DocumentLocator]]:
