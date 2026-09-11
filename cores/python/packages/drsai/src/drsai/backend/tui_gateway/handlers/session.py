@@ -43,6 +43,7 @@ from ..server import (
     method,
 )
 from ..transport import current_transport
+from drsai.platform_upstream import resolve_hepai_oidc_issuer
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +91,7 @@ def _load_platform_auth_for_init(cfg: dict):
                 from drsai.backend.auth.oidc_client import OidcClient
                 from drsai.backend.auth.token_store import save_auth_session
                 client = OidcClient(
-                    issuer=session.get("issuer", os.environ.get(
-                        "OPENDRSAI_OIDC_ISSUER",
-                        os.environ.get("HAI_OIDC_ISSUER", "https://ai-dev.ihep.ac.cn/api"),
-                    )),
+                    issuer=session.get("issuer", resolve_hepai_oidc_issuer(os.environ)),
                     client_id=session.get("client_id", os.environ.get(
                         "OPENDRSAI_OIDC_CLIENT_ID", "opendrsai-tui",
                     )),

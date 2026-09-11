@@ -23,6 +23,7 @@ import threading
 from .. import server
 from ..adapter import callbacks as _callbacks
 from ..server import _emit, _err, _get_db_manager, _ok, _resolve_user_id, _sessions, method
+from drsai.platform_upstream import resolve_hepai_oidc_issuer
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +63,7 @@ def _load_platform_auth_context():
                 from drsai.backend.auth.oidc_client import OidcClient
                 import os
                 client = OidcClient(
-                    issuer=session.get("issuer", os.environ.get(
-                        "OPENDRSAI_OIDC_ISSUER",
-                        os.environ.get("HAI_OIDC_ISSUER", "https://ai-dev.ihep.ac.cn/api"),
-                    )),
+                    issuer=session.get("issuer", resolve_hepai_oidc_issuer(os.environ)),
                     client_id=session.get("client_id", os.environ.get(
                         "OPENDRSAI_OIDC_CLIENT_ID", "opendrsai-tui",
                     )),

@@ -42,11 +42,14 @@ Remove-Item Env:DRSAI_GATEWAY_DEV_MANAGED -ErrorAction SilentlyContinue
 Remove-Item Env:DRSAI_GATEWAY_HOT_RELOAD -ErrorAction SilentlyContinue
 Remove-Item Env:OPENDRSAI_WORKBENCH_EXTERNAL_RUNTIME -ErrorAction SilentlyContinue
 $env:OPENDRSAI_PLATFORM_BASE_URL = "https://ai-dev.ihep.ac.cn"
-$env:OPENDRSAI_PLATFORM_API_BASE_URL = "https://aiapi.ihep.ac.cn/apiv2"
 # Development launcher → test WebUI Skills Square (drsaiv2). Production launch
 # uses opendrsai via windows\scripts\dev.ps1 -LaunchMode Production.
 $env:OPENDRSAI_SKILLS_API_BASE_URL = "https://drsaiv2.ihep.ac.cn"
+# DDF catalog on production aiapi (different host from ai-dev).
 $env:OPENDRSAI_DDF_API_BASE_URL = "https://aiapi.ihep.ac.cn/apiv2"
+# Model endpoint explicitly set to prevent DDF_API_BASE_URL from overriding
+# (dev OIDC tokens can't be verified by the production aiapi server).
+$env:OPENDRSAI_MODEL_BASE_URL = "https://ai-dev.ihep.ac.cn/apiv2/v1"
 $env:OPENDRSAI_OIDC_ISSUER = "https://ai-dev.ihep.ac.cn/api"
 $env:SYSTEM_SKILLS_DIR = Join-Path $RepoRoot "skills\skills"
 Remove-Item Env:HEPAI_API_KEY -ErrorAction SilentlyContinue

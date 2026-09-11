@@ -268,6 +268,7 @@ def _is_packaged_legacy_hepai(config: object) -> bool:
     is_hepai_url = base_url in {
         hepai_anthropic_base_url().rstrip("/").lower(),
         "https://aiapi.ihep.ac.cn/apiv2/anthropic",
+        "https://ddf.ihep.ac.cn/apiv2/anthropic",
     }
     is_non_anthropic_model = not model.startswith(("claude-", "claude/", "anthropic/"))
     return is_hepai_url and is_non_anthropic_model and api_key_env in {"", "ANTHROPIC_API_KEY"}

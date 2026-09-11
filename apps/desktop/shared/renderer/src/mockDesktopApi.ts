@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   AuthSession,
   AgentRunEvent,
   ChatEvent,
@@ -1017,7 +1017,7 @@ export function installMockDesktopApi(): void {
     model_provider: "hepai",
     provider: {
       name: "hepai",
-      base_url: "https://aiapi.ihep.ac.cn/apiv2",
+      base_url: "https://ddf.ihep.ac.cn/apiv2",
       wire_api: "openai",
       requires_api_key: false,
       has_api_key: true,
@@ -2281,7 +2281,7 @@ export function installMockDesktopApi(): void {
         owner: "HepAI",
         source: "remote",
         status: "running",
-        url: "https://aiapi.ihep.ac.cn/apiv2",
+        url: "https://ddf.ihep.ac.cn/apiv2",
         examples: [
           {
             zh: "帮我整理今天的科研任务。",
@@ -2525,7 +2525,7 @@ export function installMockDesktopApi(): void {
       assertions: [{ id: "mock-provider-model", passed: true }],
     }),
     testMyDrSaiModelDraft: async (request, mode) => ({ ok: Boolean(request.model && request.model_provider && request.base_url), provider: request.model_provider, wire_api: request.wire_api ?? "openai", persisted: false, ...(mode === "model" ? { output: "pong" } : {}) }),
-    listMyDrSaiModelProviderPresets: async () => [{ id: "hepai", label: "HepAI", base_url: "https://aiapi.ihep.ac.cn/apiv2", wire_api: "openai", requires_api_key: false, base_url_editable: false, supports_model_discovery: true, auth_mode: "oidc" }],
+    listMyDrSaiModelProviderPresets: async () => [{ id: "hepai", label: "HepAI", base_url: "https://ddf.ihep.ac.cn/apiv2", wire_api: "openai", requires_api_key: false, base_url_editable: false, supports_model_discovery: true, auth_mode: "oidc" }],
     discoverMyDrSaiProviderModels: async (provider) => ({ ok: true, provider, models: [myDrSaiModelConnection.model], cached: false }),
     preflightMyDrSaiModelProviderDeletion: async (provider) => ({
       provider,
@@ -2536,7 +2536,7 @@ export function installMockDesktopApi(): void {
     }),
     deleteMyDrSaiModelProvider: async (provider, _deleteCredential = true) => {
       if (provider === myDrSaiModelConnection.model_provider) {
-        myDrSaiModelConnection = { ...myDrSaiModelConnection, model_provider: "hepai", provider: { ...myDrSaiModelConnection.provider, name: "hepai", base_url: "https://aiapi.ihep.ac.cn/apiv2" } };
+        myDrSaiModelConnection = { ...myDrSaiModelConnection, model_provider: "hepai", provider: { ...myDrSaiModelConnection.provider, name: "hepai", base_url: "https://ddf.ihep.ac.cn/apiv2" } };
       }
       return { ok: true, active: myDrSaiModelConnection.model_provider };
     },

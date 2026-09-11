@@ -155,7 +155,7 @@ class HepAIWorkerAgent(DrSaiAgent):
         
         # initialize the sync model client
         self.api_key = model_remote_configs.pop("api_key", "")
-        self.url = model_remote_configs.pop("url", "https://aiapi.ihep.ac.cn/apiv2")
+        self.url = model_remote_configs.pop("url", "https://ddf.ihep.ac.cn/apiv2")
         self.model_name = model_remote_configs.pop("name", "hepai/drsai")
         self.defult_config_name = (
             model_remote_configs.pop("defult_config_name", None)

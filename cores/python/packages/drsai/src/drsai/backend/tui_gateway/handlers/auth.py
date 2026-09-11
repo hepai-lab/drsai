@@ -22,15 +22,13 @@ import os
 
 from ..server import _err, _ok, method
 from drsai.backend.cli import config as cli_config
+from drsai.platform_upstream import resolve_hepai_oidc_issuer
 
 logger = logging.getLogger(__name__)
 
 # ── OIDC provider config ─────────────────────────────────────────────
 
-_OIDC_ISSUER = os.environ.get(
-    "OPENDRSAI_OIDC_ISSUER",
-    os.environ.get("HAI_OIDC_ISSUER", "https://ai-dev.ihep.ac.cn/api"),
-)
+_OIDC_ISSUER = resolve_hepai_oidc_issuer(os.environ)
 _OIDC_CLIENT_ID = os.environ.get(
     "OPENDRSAI_OIDC_CLIENT_ID",
     "opendrsai-tui",

@@ -486,7 +486,7 @@ def configure_worker_registration_metadata(
 class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from HRModel.
     # _info 默认值，缺省时自动填充
     _DEFAULT_INFO: dict = {
-        "logo": "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+        "logo": "https://ddf.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
         "examples": [],
         "agent_config": {},
         "defult_config_name": None,
@@ -765,7 +765,7 @@ async def run_worker(
     host: str | None = None,
     port: int | None = None,
     no_register: bool | None = None,
-    controller_address: str = "https://aiapi.ihep.ac.cn",
+    controller_address: str = "https://ddf.ihep.ac.cn",
     # ── DB 配置 ──
     drsai_dir: str | None = None,
     engine_uri: str | None = None,

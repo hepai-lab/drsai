@@ -760,10 +760,14 @@ def create_agent(
         # ── Determine client_type ──
         # Priority: platform_auth > yaml entry (explicit) > config.toml provider > model-name heuristic
         platform_auth = get_platform_auth()
-        if platform_auth is not None:
-            # The OIDC model service is the authoritative transport for this
-            # request. A static Provider selected in config.toml must not force
-            # an Anthropic-prefixed catalog model through the OpenAI wire API.
+        is_hepai_provider = (
+            active_user_model is None
+            or active_user_model.provider.name in {"hepai", "hepai-anthropic"}
+        )
+        if platform_auth is not None and is_hepai_provider:
+            # OIDC is authoritative only for the HepAI provider. An active
+            # desktop session must not change a third-party provider's wire
+            # protocol or credentials.
             client_type = "anthropic" if llm_model.casefold().startswith("anthropic/") else "openai"
         elif entry.client_type in ("openai", "anthropic", "gemini"):
             # yaml entry is authoritative when explicitly set (not "auto")
@@ -839,6 +843,10 @@ def create_agent(
                 api_key=active_api_key,
                 model_info=model_info,
                 max_tokens=max_tokens,
+                allow_deferred_oidc=bool(
+                    active_user_model is None
+                    or active_user_model.provider.name in {"hepai", "hepai-anthropic"}
+                ),
             )
 
         # OpenAI-compatible client: use vision from the config entry

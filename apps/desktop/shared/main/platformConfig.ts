@@ -10,6 +10,12 @@ export interface DesktopPlatformConfig {
   oidcIssuer: string;
 }
 
+/** OIDC issuer defaults — independent from the DDF platform host. */
+const DEFAULT_OIDC_ISSUERS: Record<string, string> = {
+  production: "https://ai.ihep.ac.cn/api",
+  development: "https://ai-dev.ihep.ac.cn/api",
+};
+
 function defaultActivePlatform(): string {
   return isDesktopDevelopment() ? "development" : "production";
 }
@@ -22,8 +28,8 @@ function defaultConfig(): string {
   return `active_platform = "${defaultActivePlatform()}"
 
 [platforms.production]
-portal_url = "https://ai.ihep.ac.cn"
-base_url = "https://aiapi.ihep.ac.cn/apiv2"
+portal_url = "https://ddf.ihep.ac.cn"
+base_url = "https://ddf.ihep.ac.cn/apiv2"
 
 [platforms.development]
 portal_url = "https://ai-dev.ihep.ac.cn"
@@ -33,12 +39,11 @@ base_url = "https://ai-dev.ihep.ac.cn/apiv2"
 
 const BUILT_INS: Record<string, { portalUrl: string; baseUrl: string }> = {
   production: {
-    // Match WebUI `platform_config.DEFAULT_PLATFORMS["production"]`.
-    portalUrl: "https://ai.ihep.ac.cn",
-    baseUrl: "https://aiapi.ihep.ac.cn/apiv2",
+    // DDF platform production host (portal + API + model share the same gateway).
+    portalUrl: "https://ddf.ihep.ac.cn",
+    baseUrl: "https://ddf.ihep.ac.cn/apiv2",
   },
   development: {
-    // Match WebUI `platform_config.DEFAULT_PLATFORMS["development"]`.
     portalUrl: "https://ai-dev.ihep.ac.cn",
     baseUrl: "https://ai-dev.ihep.ac.cn/apiv2",
   },
@@ -77,13 +82,21 @@ export function getActivePlatformConfig(): DesktopPlatformConfig {
     process.env.OPENDRSAI_PLATFORM_BASE_URL || builtIn?.portalUrl || configured?.portalUrl,
     "portal_url",
   );
+  // baseUrl priority: PLATFORM_API_BASE_URL > DDF_API_BASE_URL > built-in/configured.
+  // DDF_API_BASE_URL participates because DDF and Model share the same gateway.
   const baseUrl = normalizeUrl(
-    process.env.OPENDRSAI_PLATFORM_API_BASE_URL || builtIn?.baseUrl || configured?.baseUrl,
+    process.env.OPENDRSAI_PLATFORM_API_BASE_URL ||
+      process.env.OPENDRSAI_DDF_API_BASE_URL ||
+      builtIn?.baseUrl ||
+      configured?.baseUrl,
     "base_url",
   );
+  // OIDC issuer is an independent service from the DDF platform.
+  // Priority: env override > per-platform default > portalUrl + "/api".
   const configuredIssuer =
     process.env.OPENDRSAI_OIDC_ISSUER?.trim() ||
-    process.env.HAI_OIDC_ISSUER?.trim();
+    process.env.HAI_OIDC_ISSUER?.trim() ||
+    DEFAULT_OIDC_ISSUERS[activePlatform];
   return {
     name: activePlatform,
     portalUrl,

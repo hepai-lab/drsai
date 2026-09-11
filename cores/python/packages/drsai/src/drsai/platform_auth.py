@@ -18,7 +18,13 @@ from dataclasses import dataclass, field as dataclass_field
 from typing import FrozenSet, Iterator, Protocol
 from pydantic import SecretStr
 
-from drsai.platform_upstream import resolve_hepai_model_base_url
+from drsai.platform_upstream import (
+    API_PATH_PREFIX,
+    DEVELOPMENT_MODEL_BASE_URL,
+    PRODUCTION_MODEL_BASE_URL,
+    resolve_platform_base_url,
+    resolve_hepai_model_base_url,
+)
 
 
 @dataclass(frozen=True)
@@ -51,7 +57,7 @@ class DelegatedCredentialContext:
     worker_id: str = ""
     allowed_models: FrozenSet[str] = frozenset()
     allowed_operations: FrozenSet[str] = frozenset()
-    model_base_url: str = "https://ai-dev.ihep.ac.cn/apiv2/v1"
+    model_base_url: str = DEVELOPMENT_MODEL_BASE_URL
 
     def __post_init__(self) -> None:
         if isinstance(self.access_token, str):
@@ -60,7 +66,15 @@ class DelegatedCredentialContext:
             raise ValueError("invalid_delegated_credential")
         if self.expires_at <= int(time.time()):
             raise ValueError("delegation_expired")
-        if not self.model_base_url.startswith("https://ai-dev.ihep.ac.cn/"):
+        # Build the allowed set from the unified platform base + explicit overrides.
+        allowed = {DEVELOPMENT_MODEL_BASE_URL, PRODUCTION_MODEL_BASE_URL}
+        base = resolve_platform_base_url(os.environ)
+        allowed.add(f"{base}{API_PATH_PREFIX}")
+        allowed.add(f"{base}{API_PATH_PREFIX}/v1")
+        configured = os.environ.get("OPENDRSAI_MODEL_BASE_URL", "").strip().rstrip("/")
+        if configured:
+            allowed.add(configured)
+        if self.model_base_url.rstrip("/") not in allowed:
             raise ValueError("delegation_host_not_allowed")
 
     def __reduce__(self):
@@ -230,6 +244,11 @@ def get_delegated_credential() -> DelegatedCredentialContext | None:
         worker_id=delegated.worker_id,
         allowed_models=frozenset(delegated.allowed_models),
         allowed_operations=frozenset(delegated.allowed_operations),
+        model_base_url=getattr(
+            delegated,
+            "model_base_url",
+            resolve_hepai_model_base_url(os.environ),
+        ),
     )
 
 

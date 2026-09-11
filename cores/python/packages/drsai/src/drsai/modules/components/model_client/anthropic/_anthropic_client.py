@@ -82,6 +82,7 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
     component_provider_override = "drsai.modules.components.model_client.anthropic._anthropic_client.HepAIAnthropicChatCompletionClient"
 
     def __init__(self, **kwargs: Any):
+        self._allow_deferred_oidc = bool(kwargs.pop("allow_deferred_oidc", True))
         self._oidc_credential_pending = False
         self._uses_platform_auth = False
         if not static_model_credentials_allowed():
@@ -89,6 +90,7 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         credential = get_model_credential_provider(
             kwargs.get("api_key"),
             kwargs.get("base_url"),
+            configured_provider=not self._allow_deferred_oidc,
         )
         if credential:
             kwargs["api_key"] = credential.access_token
@@ -565,7 +567,7 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         # Heuristic: if base_url points at the HepAI Anthropic gateway,
         # assume the envelope is in play until proven otherwise.
         base_url = str(getattr(self._client, "base_url", "") or "")
-        return "aiapi.ihep.ac.cn" in base_url or "/apiv2/anthropic" in base_url
+        return "aiapi.ihep.ac.cn" in base_url or "ddf.ihep.ac.cn" in base_url or "/apiv2/anthropic" in base_url
 
     def _remember_envelope_detection(self, detected: bool) -> None:
         setattr(self, self._METRICS_ENVELOPE_DETECTED_ATTR, detected)

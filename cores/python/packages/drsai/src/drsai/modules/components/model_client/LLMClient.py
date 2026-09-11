@@ -26,6 +26,7 @@ from drsai.platform_auth import (
     static_model_credentials_allowed,
     try_refresh_platform_auth,
 )
+from drsai.platform_upstream import resolve_hepai_model_base_url
 
 from openai.types.chat import ChatCompletionChunk
 from tiktoken.model import MODEL_TO_ENCODING
@@ -155,7 +156,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             if "base_url" not in kwargs:
                 kwargs["base_url"] = os.environ.get(
                     "OPENDRSAI_MODEL_BASE_URL",
-                    "https://ai-dev.ihep.ac.cn/apiv2/v1",
+                    resolve_hepai_model_base_url(os.environ),
                 )
             if not kwargs.get("api_key"):
                 if not self._allow_deferred_oidc:
@@ -486,6 +487,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
                 stacklevel=2,
             )
 
+        print("base_url: ", self._client.base_url)
         if create_params.response_format is not None:
             chunks = self._create_stream_chunks_beta_client(
                 tool_params=create_params.tools,

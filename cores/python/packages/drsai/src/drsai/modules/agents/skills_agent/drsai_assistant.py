@@ -3497,7 +3497,7 @@ class DrSaiAssistant(DrSaiAgent):
             name="Remote_Subagent",
             description=cfg.get("description", ""),
             model_remote_configs={
-                "url": remote_configs.get("url", "https://aiapi.ihep.ac.cn/apiv2"),
+                "url": remote_configs.get("url", "https://ddf.ihep.ac.cn/apiv2"),
                 "api_key": self._model_client._client.api_key if self._model_client else None,
                 "name": remote_configs.get("name", sub_agent_name),
             },
@@ -3891,7 +3891,7 @@ class DrSaiAssistant(DrSaiAgent):
                     output_content_type=output_content_type,)
             elif sub_agent_type == "HepAIWorkerAgent":
                 model_remote_configs = sub_agent.get("model_remote_configs")
-                url = model_remote_configs.get("url", "https://aiapi.ihep.ac.cn/apiv2")
+                url = model_remote_configs.get("url", "https://ddf.ihep.ac.cn/apiv2")
                 name = model_remote_configs.get("name")
                 # 使用原始 model_client 获取 api_key,因为这里只是读取配置,不会造成关闭问题
                 api_key = model_client._client.api_key if model_client else None

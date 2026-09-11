@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from drsai.platform_upstream import (
+    resolve_ddf_api_base_url,
     resolve_hepai_anthropic_base_url,
     resolve_hepai_model_base_url,
 )
@@ -20,7 +21,14 @@ DEFAULT_PROVIDER = "hepai"
 
 
 def hepai_openai_base_url(environ: Mapping[str, str] | None = None) -> str:
-    """Resolve the HepAI model upstream from the selected desktop platform."""
+    """Resolve the HepAI model upstream from the DDF platform base URL.
+
+    ``resolve_hepai_model_base_url`` already incorporates ``OPENDRSAI_DDF_API_BASE_URL``
+    as its second-priority override (DDF and Model share the same gateway),
+    satisfying the requirement that DDF_API_BASE_URL participates in model
+    client construction.  We keep it (rather than ``resolve_ddf_api_base_url``)
+    because the model endpoint needs an extra ``/v1`` suffix in development.
+    """
     return resolve_hepai_model_base_url(environ)
 
 

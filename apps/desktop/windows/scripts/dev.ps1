@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet("Development", "Production")]
     [string]$LaunchMode = "Development",
     [string]$DrsaiHome,
@@ -673,15 +673,21 @@ $env:OPENDRSAI_DESKTOP_DEV = if ($IsProductionLaunch) { "0" } else { "1" }
 $env:OPENDRSAI_ACTIVE_PLATFORM = if ($IsProductionLaunch) { "production" } else { "development" }
 $env:OPENDRSAI_OIDC_ONLY = "1"
 $env:VITE_OPENDRSAI_OIDC_ONLY = "1"
-$PlatformPortalUrl = if ($IsProductionLaunch) { "https://ai.ihep.ac.cn" } else { "https://ai-dev.ihep.ac.cn" }
-# WebUI test (drsaiv2) and production both use HepAI production base_url for
-# get_ddf_agents (aiapi). Desktop mirrors that for Agent Square in both launch
-# modes. Portal/OIDC stay on the launch-mode portal (ai-dev for Development).
-$PlatformApiBaseUrl = "https://aiapi.ihep.ac.cn/apiv2"
-$env:OPENDRSAI_PLATFORM_BASE_URL = $PlatformPortalUrl
-$env:OPENDRSAI_PLATFORM_API_BASE_URL = $PlatformApiBaseUrl
+# All platform/DDF/model endpoints derive from PLATFORM_BASE_URL + /apiv2.
+# Development: DDF catalog is on aiapi.ihep.ac.cn (different host from ai-dev).
+# MODEL_BASE_URL is explicitly set in dev to prevent DDF_API_BASE_URL from
+# overriding the model endpoint (dev OIDC tokens can't be verified by aiapi).
+if ($IsProductionLaunch) {
+    $env:OPENDRSAI_PLATFORM_BASE_URL = "https://ddf.ihep.ac.cn"
+    $env:OPENDRSAI_OIDC_ISSUER = "https://ai.ihep.ac.cn/api"
+} else {
+    $env:OPENDRSAI_PLATFORM_BASE_URL = "https://ai-dev.ihep.ac.cn"
+    $env:OPENDRSAI_DDF_API_BASE_URL = "https://aiapi.ihep.ac.cn/apiv2"
+    $env:OPENDRSAI_MODEL_BASE_URL = "https://ai-dev.ihep.ac.cn/apiv2/v1"
+    $env:OPENDRSAI_OIDC_ISSUER = "https://ai-dev.ihep.ac.cn/api"
+}
 # Skills Square APIs are on WebUI hosts (not HepAI portal used for OIDC):
-# test → drsaiv2 ; production → opendrsai.
+# test -> drsaiv2 ; production -> opendrsai.
 $env:OPENDRSAI_SKILLS_API_BASE_URL = if ($env:OPENDRSAI_SKILLS_API_BASE_URL) {
     $env:OPENDRSAI_SKILLS_API_BASE_URL
 } elseif ($IsProductionLaunch) {
@@ -689,15 +695,6 @@ $env:OPENDRSAI_SKILLS_API_BASE_URL = if ($env:OPENDRSAI_SKILLS_API_BASE_URL) {
 } else {
     "https://drsaiv2.ihep.ac.cn"
 }
-# OPENDRSAI_MODEL_BASE_URL must NOT override to the production aiapi server.
-# The OIDC token is issued by $PlatformPortalUrl/api (e.g. ai-dev.ihep.ac.cn).
-# Sending a dev OIDC token to the production aiapi.ihep.ac.cn server causes
-# 401 "OIDC signing keys are unavailable" because the production server
-# cannot fetch JWKS from the dev OIDC issuer. Instead, let
-# resolve_hepai_model_base_url() in platform_upstream.py resolve the correct
-# model base URL based on the OIDC issuer (DEVELOPMENT_OIDC_ISSUER → ai-dev).
-$env:OPENDRSAI_DDF_API_BASE_URL = $PlatformApiBaseUrl
-$env:OPENDRSAI_OIDC_ISSUER = "$PlatformPortalUrl/api"
 $BuiltInSkillsDir = Join-Path $RepoRoot "skills\skills"
 if (-not (Test-Path -LiteralPath $BuiltInSkillsDir -PathType Container)) {
     throw "Cannot find the built-in Skills directory: $BuiltInSkillsDir"
@@ -781,7 +778,7 @@ Write-Host "  DrSai home:  $DrsaiHome" -ForegroundColor Green
 Write-Host "  User data:   $ElectronUserData" -ForegroundColor Green
 Write-Host "  Gateway:     http://127.0.0.1:$GatewayPort" -ForegroundColor Green
 Write-Host "  DRSAI_HOME:  $DrsaiHome" -ForegroundColor Green
-Write-Host "  Platform:    $(if ($IsProductionLaunch) { 'WebUI prod portal + HepAI aiapi (DDF)' } else { 'WebUI test: ai-dev OIDC + HepAI aiapi (DDF)' })" -ForegroundColor Green
+Write-Host "  Platform:    $(if ($IsProductionLaunch) { 'DDF prod: ddf.ihep.ac.cn (unified)' } else { 'Dev: ai-dev OIDC + aiapi DDF catalog' })" -ForegroundColor Green
 Write-Host "  Skills API:  $($env:OPENDRSAI_SKILLS_API_BASE_URL)" -ForegroundColor Green
 Write-Host "  Skills:      $BuiltInSkillsDir" -ForegroundColor Green
 Write-Host "  Pip index:   $($env:PIP_INDEX_URL)" -ForegroundColor Green
