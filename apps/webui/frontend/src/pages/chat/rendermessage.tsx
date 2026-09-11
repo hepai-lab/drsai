@@ -39,7 +39,6 @@ import MarkdownRenderer from "../../components/common/markdownrender";
 import PlanView from "./plan";
 import { IPlanStep, convertToIPlanSteps } from "../../components/types/plan";
 import RenderFile from "../../components/common/filerenderer";
-import LearnPlanButton from "../../components/features/Plans/LearnPlanButton";
 import { appContext } from "../../hooks/provider";
 
 // Types
@@ -662,22 +661,14 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
 
 interface RenderFinalAnswerProps {
   content: string;
-  sessionId: number;
-  messageIdx: number;
 }
 
 const RenderFinalAnswer: React.FC<RenderFinalAnswerProps> = memo(
-  ({ content, sessionId, messageIdx }) => {
+  ({ content }) => {
     return (
       <div className="border-2 border-secondary rounded-lg p-4">
         <div className="flex justify-between items-center">
           <div className="font-semibold text-primary">Final Answer</div>
-          <LearnPlanButton
-            sessionId={sessionId}
-            messageId={messageIdx}
-            onSuccess={(planId: string) => {
-            }}
-          />
         </div>
         <div className="">
           <MarkdownRenderer content={content} />
@@ -1637,8 +1628,6 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                 ) : orchestratorContent?.type === "final-answer" ? (
                   <RenderFinalAnswer
                     content={orchestratorContent.content}
-                    sessionId={sessionId}
-                    messageIdx={messageIdx}
                   />
                 ) : messageUtils.isToolCallContent(parsedContent.text) ? (
                   (() => {

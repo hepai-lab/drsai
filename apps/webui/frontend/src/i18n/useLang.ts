@@ -196,7 +196,6 @@ const dict = {
   "menuRoute.chat":              { zh: "聊天",                en: "Chat" },
   "menuRoute.myAgents":          { zh: "我的智能体",          en: "My Agents" },
   "menuRoute.agentSquare":       { zh: "智能体广场",          en: "Agent Square" },
-  "menuRoute.savedPlan":         { zh: "计划",                en: "Saved Plans" },
   "menuRoute.skillsSquare":      { zh: "技能广场",            en: "Skills Square" },
   "menuRoute.cloud":             { zh: "云盘（GFS）",         en: "Cloud (GFS)" },
   "menuRoute.profile":           { zh: "配置",                en: "Profile" },

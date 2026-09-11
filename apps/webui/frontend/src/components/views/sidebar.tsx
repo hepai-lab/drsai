@@ -1,6 +1,5 @@
 import { Dropdown, Tooltip } from "antd";
 import {
-  Archive,
   BookOpen,
   ChevronDown,
   ChevronUp,
@@ -30,7 +29,6 @@ import { Agent } from "../../types/common";
 import { BrandLogo } from "../common/BrandLogo";
 import { Button } from "../common/Button";
 import SubMenu from "../common/SubMenu";
-import LearnPlanButton from "../features/Plans/LearnPlanButton";
 import SettingsMenu from "../settings";
 import type { RunStatus, Session } from "../types/datamodel";
 import UserProfileModal from "../userProfile";
@@ -253,16 +251,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         disabled: isLoading,
                         danger: true,
                       },
-                      {
-                        key: "learn-plan",
-                        label: (
-                          <LearnPlanButton
-                            sessionId={Number(s.id)}
-                            messageId={-1}
-                          />
-                        ),
-                        onClick: (e) => e.domEvent.stopPropagation(),
-                      },
                     ],
                   }}
                   placement="bottomRight"
@@ -382,11 +370,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   id: "current_session",
                   label: "Current Session",
                   icon: <FileText className="w-4 h-4" />,
-                },
-                {
-                  id: "saved_plan",
-                  label: "Saved Plans",
-                  icon: <Archive className="w-4 h-4" />,
                 },
                 {
                   id: "agent_square",

@@ -7,7 +7,7 @@ from drsai_ui.env_load import load_webui_dotenv
 
 load_webui_dotenv()
 
-from .routes import access_compat, admin_analytics, agent_mode, agent_skills, agent_worker, auth, cloud, deer_flow, desktop_auth, docmaster, files, local_login, models, native, plans, releases, runs, sessions, settingsroute, skill_tags, skills, skills_gfs, skills_share, teams, users, validation
+from .routes import access_compat, admin_analytics, agent_mode, agent_skills, agent_worker, auth, cloud, deer_flow, desktop_auth, docmaster, files, local_login, models, native, releases, runs, sessions, settingsroute, skill_tags, skills, skills_gfs, skills_share, teams, users, validation
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator, Any
@@ -27,7 +27,6 @@ from .routes import (
     admin_analytics,
     cloud,
     deer_flow,
-    plans,
     runs,
     sessions,
     settingsroute,
@@ -249,13 +248,6 @@ api.include_router(
     sessions.router,
     prefix="/sessions",
     tags=["sessions"],
-    responses={404: {"description": "Not found"}},
-)
-
-api.include_router(
-    plans.router,
-    prefix="/plans",
-    tags=["plans"],
     responses={404: {"description": "Not found"}},
 )
 
