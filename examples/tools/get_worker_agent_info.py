@@ -18,15 +18,17 @@ async def get_remote_agent(apikey: str) -> Dict:
         models = client.agents.list()
         agents = {}
         for model in models.data:
-            if model.id != "hepai/custom-model":
+            mid = model.get("id") if isinstance(model, dict) else getattr(model, "id", None)
+            if mid and mid != "hepai/custom-model":
                 worker = HRModel.connect(
-                    name=model.id, 
+                    name=mid,
                     api_key=apikey,
                     base_url="https://aiapi.ihep.ac.cn/apiv2",
                 )
                 agent_info: dict = worker.get_info()
-                agent_info.update({"owner": model.owner})
-                agents[model.id] = agent_info
+                owner = model.get("owner") if isinstance(model, dict) else getattr(model, "owner", None)
+                agent_info.update({"owner": owner})
+                agents[mid] = agent_info
         return {"status": True, "data": agents}
     
     except Exception as e:
