@@ -275,15 +275,22 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
         vision=False,           # DeepSeek V4 text models do not support image input
     ),
-    
     "hepai/deepseek-v4-flash": ModelEntry(
         model="hepai/deepseek-v4-flash",
-        token_limit=10000000,      # context window: 163,840 (shared input+output)
+        token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
         max_tokens=64000,       # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
         vision=False,           # DeepSeek V4 text models do not support image input
     ),
+    "deepseek-v4.1-flash": ModelEntry(
+            model="deepseek-ai/deepseek-v4.1-flash",
+            token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
+            max_tokens=64000,       # max output per request
+            client_type="openai",
+            reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
+            vision=True,           # DeepSeek V4 text models do not support image input
+        ),
     "deepseek-v4-pro": ModelEntry(
         model="deepseek-ai/deepseek-v4-pro",
         token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
@@ -294,21 +301,13 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
     ),
     "deepseek-v4-flash": ModelEntry(
         model="deepseek-ai/deepseek-v4-flash",
-        token_limit=10000000,      # context window: 163,840 (shared input+output)
+        token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
         max_tokens=64000,       # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
         vision=False,
     ),
     # ── OpenAI GPT ───────────────────────────────────────────────────
-    "gpt-5.5": ModelEntry(
-        model="openai/gpt-5.5",
-        token_limit=1050000,     # max input tokens (output comes from this pool)
-        max_tokens=64000,      # max output per request
-        client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
-        vision=True,            # GPT-5.x supports image input
-    ),
     "gpt-5.6-luna": ModelEntry(
             model="openai/gpt-5.6-luna",
             token_limit=1050000,     # max input tokens (output comes from this pool)
@@ -318,85 +317,76 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
             vision=True,            # GPT-5.x supports image input
         ),
     "gpt-5.6-terra": ModelEntry(
-            model="openai/gpt-5.6-terra",
-            token_limit=1050000,     # max input tokens (output comes from this pool)
-            max_tokens=64000,      # max output per request
-            client_type="openai",
-            reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
-            vision=True,            # GPT-5.x supports image input
-        ),
-    "gpt-5.6-sol": ModelEntry(
-                model="openai/gpt-5.6-sol",
+                model="openai/gpt-5.6-terra",
                 token_limit=1050000,     # max input tokens (output comes from this pool)
                 max_tokens=64000,      # max output per request
                 client_type="openai",
                 reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
                 vision=True,            # GPT-5.x supports image input
             ),
-    # ── GIMINI ────────────────────────────────────────────────────
+    "gpt-5.6-sol": ModelEntry(
+                    model="openai/gpt-5.6-sol",
+                    token_limit=1050000,     # max input tokens (output comes from this pool)
+                    max_tokens=64000,      # max output per request
+                    client_type="openai",
+                    reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+                    vision=True,            # GPT-5.x supports image input
+                ),
+    # ── GIMINI ────────────────────────────────────────────────────────────
     "gemini-3.1-pro-preview": ModelEntry(
         model="google/gemini-3.1-pro-preview",
         token_limit=1000000,     # context window: 1M (input+output shared)
         max_tokens=64000,       # max output per request
         client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["minimal", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
-        vision=True,            # Claude Sonnet 4.6 supports image input
+        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
+        vision=True,            # Gemini supports image input
     ),
     "gemini-3-flash-preview": ModelEntry(
         model="google/gemini-3-flash-preview",
         token_limit=1000000,     # context window: 1M (input+output shared)
         max_tokens=64000,       # max output per request
         client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["minimal", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
-        vision=True,            # Claude Sonnet 4.6 supports image input
+        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
+        vision=True,            # Gemini supports image input
     ),
     # ── Zhipu GLM ────────────────────────────────────────────────────
     # Sources: litellm (zai/glm-5), OpenRouter
-    "glm-5.1": ModelEntry(
-        model="zhipu/glm-5.1",
-        token_limit=200000,      # context window: 200K
+    "glm-5.3-flash": ModelEntry(
+        model="zhipu/glm-5.3-flash",
+        token_limit=1000000,      # context window: 200K
         max_tokens=64000,      # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
         vision=True,            # GLM-5.1 supports image input
     ),
-    "glm-5.2": ModelEntry(
-        model="zhipu/glm-5.2",
-        token_limit=200000,
+    "glm-5.3": ModelEntry(
+        model="zhipu/glm-5.3",
+        token_limit=1000000,
         max_tokens=64000,
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
         vision=True,
     ),
-    "kimi-k3": ModelEntry(
-            model="moonshot/kimi-k3",
-            token_limit=200000,
-            max_tokens=64000,
-            client_type="openai",
-            reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
-            vision=True,
-        ),
-    # ── MiniMax ──────────────────────────────────────────────────────
-    "minimax-m2.7-highspeed": ModelEntry(
-        model="minimax/minimax-m2.7-highspeed",
-        token_limit=196608,
-        max_tokens=64000,
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
-        vision=False,           # MiniMax M2.7 does not support image input
-        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
-    ),
     # ── Anthropic Claude ──────────────────────────────────────────────
     # token_limit = total context window (input + output share the same window)
     # max_tokens  = maximum output tokens per request (Anthropic API requires this)
     # Sources: litellm model_prices_and_context_window.json, Anthropic docs
+    "claude-sonnet-4-6": ModelEntry(
+        model="anthropic/claude-sonnet-4-6",
+        token_limit=1000000,      # context window: 200K (input+output shared)
+        max_tokens=64000,       # max output per request
+        client_type="anthropic",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
+        vision=True,            # Claude Sonnet 4.6 supports image input
+        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
+    ),
     "claude-sonnet-5": ModelEntry(
         model="anthropic/claude-sonnet-5",
         token_limit=1000000,     # context window: 1M (input+output shared)
         max_tokens=64000,       # max output per request
         client_type="anthropic",
-        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
-        vision=True,            # Claude Sonnet 4.6 supports image input
+        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
+        vision=True,            # Claude Sonnet 5 supports image input
         base_url=_DEFAULT_ANTHROPIC_BASE_URL,
     ),
     "claude-opus-4-7": ModelEntry(
@@ -404,7 +394,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         token_limit=1000000,     # context window: 1M (input+output shared)
         max_tokens=64000,      # max output per request
         client_type="anthropic",
-        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
+        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
         vision=True,            # Claude Opus 4.7 supports image input
         base_url=_DEFAULT_ANTHROPIC_BASE_URL,
     ),
@@ -413,17 +403,8 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         token_limit=1000000,     # context window: 1M (input+output shared)
         max_tokens=64000,      # max output per request
         client_type="anthropic",
-        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
-        vision=True,            # Claude Opus 4.7 supports image input
-        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
-    ),
-    "claude-haiku-4-5": ModelEntry(
-        model="anthropic/claude-haiku-4-5",
-        token_limit=200000,      # context window: 200K (input+output shared)
-        max_tokens=64000,       # max output per request
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
-        vision=True,            # Claude Haiku 4.5 supports image input
+        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
+        vision=True,            # Claude Opus 4.8 supports image input
         base_url=_DEFAULT_ANTHROPIC_BASE_URL,
     ),
 }
