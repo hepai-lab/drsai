@@ -1,6 +1,27 @@
 import { createHash, randomUUID } from "crypto";
 import { getDiagnosticPropagationHeaders } from "./diagnosticContext";
 import { getGatewayRequestHeaders, getGatewayStatus, startGateway } from "./gateway";
+import { readSavedApiKey } from "./settings";
+import { getSessionAccessToken } from "./auth";
+
+/**
+ * Forward the Desktop-held HepAI/DDF credential to the gateway on remote-worker
+ * requests. The gateway process may not have the key in its environment (an
+ * adopted dev-managed gateway, or a gateway restarted without the Desktop
+ * env); the header lets it reach the platform catalog anyway. The credential
+ * is only used server-side and is never logged or returned to the renderer.
+ *
+ * Credential chain: HEPAI_API_KEY env → saved API key → current OIDC/SSO
+ * session access token (decrypted from auth.json by the Electron main
+ * process; the Python gateway cannot decrypt Electron-stored credentials
+ * itself, so the token must be forwarded per-request).
+ */
+async function remoteWorkerCredentialHeaders(): Promise<Record<string, string>> {
+  const apiKey = process.env.HEPAI_API_KEY?.trim() || readSavedApiKey();
+  if (apiKey) return { "X-Remote-Worker-Credential": apiKey };
+  const accessToken = await getSessionAccessToken();
+  return accessToken ? { "X-Remote-Worker-Credential": accessToken } : {};
+}
 import { parseRemoteProtocolError, RemoteProtocolError, REMOTE_SSH_PROTOCOL_VERSION, type RemoteProtocolErrorBody } from "../api/remoteSshProtocol";
 import type { OWOPOperation, OWOPParamsByOperation } from "../api/owop.generated";
 import type {
@@ -254,6 +275,8 @@ export interface RuntimeWorkspaceSessionCatalogStream {
 export interface RuntimeSession {
   session_id: string;
   workspace_id: string;
+  remote_worker_id?: string;
+  agent_definition: string;
   title: string;
   archived?: boolean;
   lifecycle?: string;
@@ -304,6 +327,32 @@ export interface RuntimeAgentRun {
   runtime_id?: string;
   instance_id?: string;
   input_message?: string;
+}
+export interface RuntimeRemoteWorker {
+  name: string;
+  worker?: string;
+  description?: string | null;
+  description_zh?: string;
+  description_en?: string;
+  author?: string;
+  owner?: string;
+  logo?: string;
+  capabilities?: string[];
+  examples?: { zh?: string[]; en?: string[] };
+  version?: string;
+  updated_at?: string;
+  available?: boolean;
+}
+export interface RuntimeRemoteWorkerCatalog {
+  state: "ready" | "requires_login" | "unavailable" | string;
+  root?: string;
+  workers: RuntimeRemoteWorker[];
+  message?: string;
+}
+export interface RuntimeRemoteWorkerSelection {
+  agent_definition: string;
+  backend: "remote-worker";
+  worker: string;
 }
 export interface LegacyDesktopAgentRunMigrationRequest {
   workspace_id: string;
@@ -464,9 +513,12 @@ export interface RuntimeClient {
   archiveWorktree(workspaceId: string, worktreeId: string, idempotencyKey: string): Promise<RuntimeWorktree>;
   removeWorktree(workspaceId: string, worktreeId: string, expectedStatus: "merged" | "archived", idempotencyKey: string): Promise<RuntimeWorktree>;
   listSessions(workspaceId: string, offset?: number, limit?: number): Promise<RuntimeSessionList>;
+  listRemoteWorkerSessions(worker: string, offset?: number, limit?: number): Promise<RuntimeSessionList>;
   getSession(sessionId: string): Promise<RuntimeSession>;
   openWorkspaceSessionCatalogStream(workspaceId: string, signal: AbortSignal): Promise<RuntimeWorkspaceSessionCatalogStream>;
   createSession(workspaceId: string, title?: string, config?: { model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession>;
+  createRemoteWorkerSession(worker: string, title?: string, config?: { model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession>;
+
   updateSession(sessionId: string, updates: { archived?: boolean; title?: string; lifecycle?: "active" | "archived" | "removed"; model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession>;
   importLegacyDesktopAgentRun(request: LegacyDesktopAgentRunMigrationRequest): Promise<LegacyDesktopAgentRunMigrationResult>;
   getConversationSnapshot(sessionId: string): Promise<RuntimeConversationSnapshot>;
@@ -476,6 +528,8 @@ export interface RuntimeClient {
   listOaepEvents(sessionId: string, afterSequence?: number, limit?: number): Promise<OaepEventPage>;
   openOaepEventStream(sessionId: string, afterSequence: number, signal: AbortSignal): Promise<OaepEventStream>;
   getAgentRun(runId: string): Promise<RuntimeAgentRun>;
+  listRemoteWorkers(refresh?: boolean, force?: boolean): Promise<RuntimeRemoteWorkerCatalog>;
+  selectRemoteWorker(worker: string, options?: { url?: string; model?: string }): Promise<RuntimeRemoteWorkerSelection>;
   createAgentRun(sessionId: string, agentDefinition: string, idempotencyKey: string): Promise<RuntimeAgentRun>;
   getAgentRunByIdempotency(sessionId: string, idempotencyKey: string): Promise<RuntimeAgentRun | null>;
   getRunGoal(runId: string): Promise<RuntimeGoal>;
@@ -772,6 +826,14 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     );
   }
 
+  listRemoteWorkerSessions(worker: string, offset = 0, limit = 100): Promise<RuntimeSessionList> {
+    const safeOffset = Math.max(0, Math.floor(offset));
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+    return this.requestJson(
+      `/v1/sessions?remote_worker_id=${encodeURIComponent(worker)}&offset=${safeOffset}&limit=${safeLimit}`,
+    );
+  }
+
   getSession(sessionId: string): Promise<RuntimeSession> {
     this.assertResourceId("Session", sessionId);
     return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}`);
@@ -792,6 +854,10 @@ abstract class HttpRuntimeClient implements RuntimeClient {
 
   createSession(workspaceId: string, title = "New session", config?: { model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession> {
     return this.requestJson("/v1/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspace_id: workspaceId, title, ...(config ?? {}) }) });
+  }
+
+  createRemoteWorkerSession(worker: string, title = "New session", config?: { model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession> {
+    return this.requestJson("/v1/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ remote_worker_id: worker, title, ...(config ?? {}) }) });
   }
 
   updateSession(sessionId: string, updates: { archived?: boolean; title?: string; lifecycle?: "active" | "archived" | "removed" }): Promise<RuntimeSession> {
@@ -920,6 +986,22 @@ abstract class HttpRuntimeClient implements RuntimeClient {
 
   getAgentRun(runId: string): Promise<RuntimeAgentRun> {
     return this.requestJson(`/v1/runs/${encodeURIComponent(runId)}`);
+  }
+
+  async listRemoteWorkers(refresh = false, force = false): Promise<RuntimeRemoteWorkerCatalog> {
+    const query = new URLSearchParams({ refresh: refresh ? "true" : "false" });
+    if (force) query.set("force", "true");
+    return this.requestJson(`/v1/remote-workers?${query}`, {
+      headers: await remoteWorkerCredentialHeaders(),
+    });
+  }
+
+  async selectRemoteWorker(worker: string, options: { url?: string; model?: string } = {}): Promise<RuntimeRemoteWorkerSelection> {
+    return this.requestJson("/v1/remote-workers/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await remoteWorkerCredentialHeaders()) },
+      body: JSON.stringify({ worker, ...options }),
+    });
   }
 
   createAgentRun(sessionId: string, agentDefinition: string, idempotencyKey: string): Promise<RuntimeAgentRun> {

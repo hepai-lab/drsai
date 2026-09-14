@@ -132,6 +132,8 @@ export interface SubtaskPart extends StructuredPartBase {
   activities?: StructuredActivityEvent[];
   /** 子代理中间 markdown 输出（折叠展示） */
   markdownSummary?: string;
+  /** 子代理内部按首次发生顺序排列的 reasoning / tool / markdown 时间线。 */
+  timeline?: StructuredProcessTimelineEntry[];
   /** 子代理状态详情 */
   startedAt?: string;
   completedAt?: string;
@@ -160,8 +162,12 @@ export type StructuredAssistantPart =
 
 interface ActivityEventBase {
   id: string;
-  /** Structured event order for stable interleaving with reasoning. */
+  /** First appearance order. Immutable after the activity is created. */
   sequence?: number;
+  /** Most recent update order. */
+  updatedSequence?: number;
+  /** Terminal update order, when available. */
+  completedSequence?: number;
   /** Stable child identity when the activity belongs to a subagent. */
   subtaskId?: string;
   /** Present only when this activity is projected from a durable OAEP Item. */
@@ -184,6 +190,11 @@ export type StructuredActivityEvent =
       input?: unknown;
       output?: unknown;
       durationMs?: number;
+      /** Terminal metadata when projected from a command_execution item. */
+      cwd?: string;
+      exitCode?: number | null;
+      /** Semantic renderer category assigned by the runtime projection. */
+      toolCategory?: "skill" | "todo" | "subagent" | "config" | "schedule" | "search" | "file" | "shell" | "generic";
     })
   | (ActivityEventBase & {
       kind: "model";
@@ -306,6 +317,13 @@ export type StructuredProcessTimelineEntry =
       kind: "activity";
       sequence: number;
       activityId: string;
+    }
+  | {
+      id: string;
+      kind: "subtask";
+      sequence: number;
+      partId: string;
+      taskId: string;
     };
 
 export interface StructuredTurnState {
@@ -608,22 +626,35 @@ export function applyStructuredConversationEvent(
       return completePart(next, event.part, event.sequence);
     case "activity.updated": {
       const activity = event.activity;
+      const previous = next.activities.find((item) => item.id === activity.id);
+      const startedSequence = previous?.sequence ?? activity.sequence ?? event.sequence;
+      const terminal = activity.status === "completed" || activity.status === "error" || activity.status === "cancelled";
+      const updatedActivity: StructuredActivityEvent = {
+        ...previous,
+        ...activity,
+        sequence: startedSequence,
+        updatedSequence: event.sequence,
+        ...(terminal ? { completedSequence: event.sequence } : {}),
+      } as StructuredActivityEvent;
       let updatedParts = next.parts;
       if (activity.subtaskId) {
         updatedParts = next.parts.map((part) => {
           if (part.kind !== "subtask" || part.taskId !== activity.subtaskId) return part;
+          const previousChild = part.activities?.find((item) => item.id === activity.id);
+          const childActivity = { ...previousChild, ...updatedActivity, sequence: previousChild?.sequence ?? startedSequence } as StructuredActivityEvent;
           return {
             ...part,
-            activities: upsertById(part.activities ?? [], { ...activity, sequence: event.sequence }),
+            activities: upsertById(part.activities ?? [], childActivity),
+            timeline: upsertProcessTimelineActivity(part.timeline ?? [], activity.id, childActivity.sequence ?? event.sequence),
           };
         });
       }
       const processTimeline = activity.subtaskId
         ? (next.processTimeline ?? [])
-        : upsertProcessTimelineActivity(next.processTimeline ?? [], activity.id, event.sequence);
+        : upsertProcessTimelineActivity(next.processTimeline ?? [], activity.id, startedSequence);
       return {
         ...next,
-        activities: upsertById(next.activities, { ...activity, sequence: event.sequence }),
+        activities: upsertById(next.activities, updatedActivity),
         parts: updatedParts,
         processTimeline,
       };
@@ -708,19 +739,28 @@ export function isStructuredAssistantPart(part: unknown): part is StructuredAssi
   }
 }
 
-function startPart(state: StructuredTurnState, part: StructuredAssistantPart, _sequence: number): StructuredTurnState {
-  return { ...state, parts: upsertById(state.parts, { ...part, sequence: part.sequence ?? _sequence }) };
+function startPart(state: StructuredTurnState, part: StructuredAssistantPart, sequence: number): StructuredTurnState {
+  const existing = state.parts.find((item) => item.id === part.id);
+  return { ...state, parts: upsertById(state.parts, { ...existing, ...part, sequence: existing?.sequence ?? part.sequence ?? sequence } as StructuredAssistantPart) };
 }
 
 function startPartWithRelatedActivities(state: StructuredTurnState, part: StructuredAssistantPart, sequence: number): StructuredTurnState {
   const next = startPart(state, part, sequence);
   if (part.kind !== "subtask") return next;
   const related = next.activities.filter((activity) => activity.subtaskId === part.taskId);
-  if (!related.length) return next;
+  const processTimeline = upsertProcessTimelineSubtask(next.processTimeline ?? [], part.id, part.taskId, part.sequence ?? sequence);
   return {
     ...next,
+    processTimeline,
     parts: next.parts.map((item) => item.kind === "subtask" && item.id === part.id
-      ? { ...item, activities: related }
+      ? {
+          ...item,
+          ...(related.length ? { activities: related } : {}),
+          timeline: related.reduce(
+            (timeline, activity) => upsertProcessTimelineActivity(timeline, activity.id, activity.sequence ?? sequence),
+            item.timeline ?? [],
+          ),
+        }
       : item),
   };
 }
@@ -739,10 +779,12 @@ function completePart(state: StructuredTurnState, part: StructuredAssistantPart,
       reasoningSegments: part.reasoningSegments ?? existing.reasoningSegments,
       activities: part.activities ?? existing.activities,
       markdownSummary: part.markdownSummary ?? existing.markdownSummary,
+      timeline: part.timeline ?? existing.timeline,
+      sequence: existing.sequence ?? part.sequence ?? _sequence,
     };
     return { ...state, parts: upsertById(state.parts, merged) };
   }
-  const merged = { ...existing, ...part, status } as StructuredAssistantPart;
+  const merged = { ...existing, ...part, status, sequence: existing.sequence ?? part.sequence ?? _sequence } as StructuredAssistantPart;
   return { ...state, parts: upsertById(state.parts, merged) };
 }
 
@@ -765,10 +807,15 @@ function applyPartDelta(
       sequence,
     });
   }
+  const updatedWithTimeline = updated.kind === "subtask"
+    ? { ...updated, timeline: appendProcessTimelineDelta(updated.timeline ?? [], part, delta, sequence) }
+    : updated;
   return {
     ...state,
-    parts: state.parts.map((item, index) => index === partIndex ? updated : item),
-    processTimeline: appendProcessTimelineDelta(state.processTimeline ?? [], part, delta, sequence),
+    parts: state.parts.map((item, index) => index === partIndex ? updatedWithTimeline : item),
+    processTimeline: part.kind === "subtask"
+      ? (state.processTimeline ?? [])
+      : appendProcessTimelineDelta(state.processTimeline ?? [], part, delta, sequence),
   };
 }
 
@@ -798,6 +845,22 @@ function appendProcessTimelineDelta(
   if (part.kind === "progress" && delta.kind === "progress.update") {
     return [...timeline, { id: `progress:${part.id}:${sequence}`, kind: "progress", sequence, partId: part.id, summary: delta.summary, status: "running", ...(delta.phase ? { phase: delta.phase } : {}), ...(delta.completed !== undefined ? { completed: delta.completed } : {}), ...(delta.total !== undefined ? { total: delta.total } : {}) } as StructuredProcessTimelineEntry].slice(-500);
   }
+  if (part.kind === "subtask" && delta.kind === "subtask.reasoning.append") {
+    const previous = timeline.at(-1);
+    if (previous?.kind === "reasoning" && previous.partId === part.id && previous.segmentId === delta.segmentId && previous.text.length < 16_384) {
+      return [...timeline.slice(0, -1), { ...previous, text: `${previous.text}${delta.text}` }];
+    }
+    const entry: StructuredProcessTimelineEntry = { id: `reasoning:${part.id}:${sequence}`, kind: "reasoning", sequence, partId: part.id, segmentId: delta.segmentId, text: delta.text, status: "running" };
+    return [...timeline, entry].slice(-500);
+  }
+  if (part.kind === "subtask" && delta.kind === "subtask.markdown.append") {
+    const previous = timeline.at(-1);
+    if (previous?.kind === "markdown" && previous.partId === part.id && previous.text.length < 16_384) {
+      return [...timeline.slice(0, -1), { ...previous, text: `${previous.text}${delta.text}` }];
+    }
+    const entry: StructuredProcessTimelineEntry = { id: `markdown:${part.id}:${sequence}`, kind: "markdown", sequence, partId: part.id, text: delta.text, status: "running", transient: false };
+    return [...timeline, entry].slice(-500);
+  }
   return timeline;
 }
 
@@ -808,8 +871,20 @@ function upsertProcessTimelineActivity(
 ): StructuredProcessTimelineEntry[] {
   const id = `activity:${activityId}`;
   const existing = timeline.find((entry) => entry.id === id);
-  if (existing) return timeline.map((entry) => entry.id === id ? { ...entry, sequence } : entry);
+  if (existing) return timeline;
   return [...timeline, { id, kind: "activity", sequence, activityId } as StructuredProcessTimelineEntry].slice(-500);
+}
+
+function upsertProcessTimelineSubtask(
+  timeline: StructuredProcessTimelineEntry[],
+  partId: string,
+  taskId: string,
+  sequence: number,
+): StructuredProcessTimelineEntry[] {
+  const id = `subtask:${partId}`;
+  if (timeline.some((entry) => entry.id === id)) return timeline;
+  const entry: StructuredProcessTimelineEntry = { id, kind: "subtask", sequence, partId, taskId };
+  return [...timeline, entry].slice(-500);
 }
 
 function updatePartWithDelta(part: StructuredAssistantPart, delta: StructuredPartDelta, sequence: number): StructuredAssistantPart | null {
@@ -993,6 +1068,9 @@ function sanitizeProcessTimelineEntry(entry: unknown): StructuredProcessTimeline
   if (value.kind === "activity" && isNonEmptyString(value.activityId)) {
     return [{ ...base, kind: "activity", activityId: value.activityId.slice(0, 200) }] as StructuredProcessTimelineEntry[];
   }
+  if (value.kind === "subtask" && isNonEmptyString(value.partId) && isNonEmptyString(value.taskId)) {
+    return [{ ...base, kind: "subtask", partId: value.partId.slice(0, 200), taskId: value.taskId.slice(0, 200) }] as StructuredProcessTimelineEntry[];
+  }
   return [];
 }
 
@@ -1013,6 +1091,7 @@ function sanitizeStructuredPart(part: StructuredAssistantPart): StructuredAssist
       ...(part.summary ? { summary: part.summary.slice(0, 10_000) } : {}),
       segments: part.segments.slice(0, 32).map((segment) => ({
         id: segment.id.slice(0, 200),
+        ...(Number.isSafeInteger(segment.sequence) ? { sequence: segment.sequence } : {}),
         text: segment.text.slice(0, 80_000),
         status: segment.status,
         ...(segment.source ? { source: segment.source.slice(0, 200) } : {}),
@@ -1083,6 +1162,7 @@ function sanitizeStructuredPart(part: StructuredAssistantPart): StructuredAssist
       })) } : {}),
       ...(part.activities ? { activities: part.activities.slice(0, 50).filter(isStructuredActivityEvent) } : {}),
       ...(part.markdownSummary ? { markdownSummary: part.markdownSummary.slice(0, 40_000) } : {}),
+      ...(part.timeline ? { timeline: part.timeline.slice(-500).flatMap(sanitizeProcessTimelineEntry) } : {}),
       ...(part.startedAt ? { startedAt: part.startedAt.slice(0, 80) } : {}),
       ...(part.completedAt ? { completedAt: part.completedAt.slice(0, 80) } : {}),
       ...(Number.isFinite(part.durationMs) ? { durationMs: part.durationMs } : {}),
@@ -1100,10 +1180,13 @@ function sanitizeStructuredActivity(activity: StructuredActivityEvent): Structur
   const base = {
     id: activity.id.slice(0, 200),
     ...(Number.isSafeInteger(activity.sequence) ? { sequence: activity.sequence } : {}),
+    ...(Number.isSafeInteger(activity.updatedSequence) ? { updatedSequence: activity.updatedSequence } : {}),
+    ...(Number.isSafeInteger(activity.completedSequence) ? { completedSequence: activity.completedSequence } : {}),
     turnId: activity.turnId.slice(0, 200),
     timestamp: activity.timestamp.slice(0, 80), source: activity.source.slice(0, 200),
     status: activity.status, title: activity.title.slice(0, 1_000),
     ...(activity.subtaskId ? { subtaskId: activity.subtaskId.slice(0, 200) } : {}),
+    ...(activity.oaepItemId ? { oaepItemId: activity.oaepItemId.slice(0, 200) } : {}),
   };
   if (activity.kind === "tool") return {
     ...base, kind: activity.kind, toolName: activity.toolName.slice(0, 300), callId: activity.callId.slice(0, 200),
@@ -1113,6 +1196,9 @@ function sanitizeStructuredActivity(activity: StructuredActivityEvent): Structur
     ...(activity.input !== undefined ? { input: boundStructuredPayload(activity.input) } : {}),
     ...(activity.output !== undefined ? { output: boundStructuredPayload(activity.output) } : {}),
     ...(Number.isFinite(activity.durationMs) ? { durationMs: activity.durationMs } : {}),
+    ...(activity.cwd ? { cwd: activity.cwd.slice(0, 2_048) } : {}),
+    ...(activity.exitCode !== undefined ? { exitCode: activity.exitCode } : {}),
+    ...(activity.toolCategory ? { toolCategory: activity.toolCategory } : {}),
   };
   if (activity.kind === "model") return {
     ...base, kind: activity.kind,

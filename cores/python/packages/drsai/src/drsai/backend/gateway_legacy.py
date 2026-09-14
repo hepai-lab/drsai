@@ -158,7 +158,7 @@ from drsai.backend.runtime.agent import (
 )
 from drsai.backend.runtime.conversation import StructuredConversationProjector
 from drsai.backend.runtime.desktop_oaep_bridge import DesktopOaepJournalBridge
-from drsai.backend.tui_gateway.adapter.event_translator import (
+from drsai.backend.events.agent_event_translator import (
     TurnState as ConversationTranslationState,
     finalize as finalize_conversation_translation,
     translate as translate_conversation_event,

@@ -96,6 +96,9 @@ export interface WorkspaceThread {
   unread?: boolean;
   activity: ThreadActivityState;
   source?: "codex" | "opendrsai" | "remote" | "wechat";
+  sessionScope?: "workspace" | "remote_agent";
+  remoteWorkerId?: string;
+  remoteWorkerName?: string;
 }
 
 export interface ForkConflictFile {
@@ -416,6 +419,23 @@ export function WorkspaceShell({
   const workspaceItems = getEnabledNavItems(navSections, "workspace");
   const workspaceDetails = workspaces.find((workspace) => workspace.id === workspaceDetailsId) ?? null;
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0] ?? null;
+  const remoteWorkerGroups = useMemo(() => {
+    const groups = new Map<string, { workerId: string; workerName: string; threads: WorkspaceThread[] }>();
+    for (const thread of workspaceThreads) {
+      if (thread.sessionScope !== "remote_agent" || !thread.remoteWorkerId) continue;
+      const workerId = thread.remoteWorkerId;
+      const entry = groups.get(workerId) ?? {
+        workerId,
+        workerName: thread.remoteWorkerName || workerId,
+        threads: [],
+      };
+      entry.workerName = thread.remoteWorkerName || entry.workerName;
+      entry.threads.push(thread);
+      groups.set(workerId, entry);
+    }
+    return [...groups.values()].sort((a, b) => a.workerName.localeCompare(b.workerName));
+  }, [workspaceThreads]);
+
   const workspaceThreadsById = useMemo(() => {
     const normalizePath = (path: string | undefined): string =>
       (path ?? "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
@@ -637,11 +657,6 @@ export function WorkspaceShell({
   function toggleRightPanelFromMenu(): void {
     closeWorkbenchMenu();
     onToggleRightPanel();
-  }
-
-  function openDebugPanelFromMenu(): void {
-    closeWorkbenchMenu();
-    if (rightPanelCollapsed) onToggleRightPanel();
   }
 
   function resetLayoutFromMenu(): void {
@@ -1984,12 +1999,6 @@ export function WorkspaceShell({
             shortcut: shortcutDrafts.toggleRightPanel,
             onClick: toggleRightPanelFromMenu,
           })}
-          {renderMenuItem({
-            label: zh ? "打开调试面板" : "Open debug panel",
-            icon: HelpCircle,
-            shortcut: shortcutDrafts.debug,
-            onClick: openDebugPanelFromMenu,
-          })}
           <div className="workbench-menu-separator" role="separator" />
           {renderMenuItem({
             label: zh ? "重置布局" : "Reset layout",
@@ -2535,6 +2544,22 @@ export function WorkspaceShell({
                     </div>
                   );
                 })}
+                {remoteWorkerGroups.length > 0 && (
+                  <div className="remote-worker-tree-node">
+                    <div className="workspace-row remote-workers-header">
+                      <span className="workspace-item remote-workers-title">
+                        <span className="workspace-item-name">{zh ? "远程智能体" : "Remote Agents"}</span>
+                      </span>
+                    </div>
+                    {remoteWorkerGroups.map((group) => (
+                      <div className="workspace-thread-list remote-worker-group" key={group.workerId}>
+                        <p className="remote-worker-group-name" title={group.workerId}>{group.workerName}</p>
+                        {group.threads.slice(0, 5).map((thread) => renderWorkspaceThread(thread, true))}
+                        {group.threads.length === 0 && <p>{zh ? "暂无会话" : "No sessions yet"}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

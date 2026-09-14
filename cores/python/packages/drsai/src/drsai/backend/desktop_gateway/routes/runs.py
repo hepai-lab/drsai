@@ -82,10 +82,22 @@ async def run_create(session_id: str, request: RunCreateRequest, idempotency_key
             content={"detail": "Idempotency-Key header or body field is required."},
         )
     with _errors.http_errors(not_found="Unknown Session"):
-        definition = _state.agent_definition_store().load(_state.DEFAULT_AGENT_DEFINITION)
+        # A Run binds to an exact id@version. Local agents use the built-in
+        # OpenDrSai Definition; a remote agent selects the remote-worker
+        # Definition (whose worker connection was materialised by
+        # /v1/remote-workers/select). Unknown references fail closed.
+        session = _state.runtime_engine().get_session(session_id)
+        authoritative = session.get("agent_definition") or _state.DEFAULT_AGENT_DEFINITION
+        reference = request.agent_definition or authoritative
+        if reference != authoritative:
+            return JSONResponse(
+                status_code=422,
+                content={"detail": "agent_definition cannot override the Session binding."},
+            )
+        definition = _state.agent_definition_store().load(reference)
         run, created = _state.runtime_engine().create_run(
             session_id,
-            _state.DEFAULT_AGENT_DEFINITION,
+            reference,
             idempotency_key,
             definition.backend,
             manifest_evidence=agent_definition_evidence(definition),

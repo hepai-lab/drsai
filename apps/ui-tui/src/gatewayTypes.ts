@@ -2,7 +2,7 @@
  * JSON-RPC types for the DrSai TUI gateway.
  *
  * Source of truth for event shapes is the Python side
- * (`cores/python/packages/drsai/src/drsai/backend/tui_gateway/adapter/event_translator.py`).
+ * (`cores/python/packages/drsai/src/drsai/backend/events/agent_event_translator.py`).
  * This file mirrors that contract for the TS UI.
  */
 

@@ -22,8 +22,8 @@ Cut, with reasons:
   - **regression control / experiment scopes**: acceptance-harness machinery.
   - **image generation context**: no image-generation feature in the list.
 
-The event translator is imported, not copied -- it already lives outside the
-gateway in ``tui_gateway/adapter/``, shared with the TUI.
+The event translator is imported, not copied -- it lives in the shared event
+layer ``drsai.backend.events.agent_event_translator``, shared with the TUI.
 """
 
 from __future__ import annotations
@@ -45,10 +45,10 @@ from drsai.backend.runtime.agent import (
     RuntimeExecutionError,
     RuntimeRunContext,
 )
-from drsai.backend.tui_gateway.adapter.event_translator import (
+from drsai.backend.events.agent_event_translator import (
     TurnState as ConversationTranslationState,
 )
-from drsai.backend.tui_gateway.adapter.event_translator import (
+from drsai.backend.events.agent_event_translator import (
     translate as translate_conversation_event,
 )
 from drsai.platform_auth import classify_model_error, get_platform_auth

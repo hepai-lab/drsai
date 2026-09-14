@@ -13,6 +13,8 @@ in an import-time constructor.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -131,16 +133,21 @@ def agent_service():
         from drsai.backend.runtime.agent import RuntimeAgentService
 
         from ._agent_backend import DesktopAgentBackend
+        from ._remote_worker_backend import RemoteWorkerBackend
 
         root = state_root()
         _ensure_agent_definition(root)
         backend = DesktopAgentBackend()
+        remote_backend = RemoteWorkerBackend()
         _agent_service = RuntimeAgentService(
             runtime_engine(),
             runtime_registry(),
-            AgentDefinitionStore(root / "assets" / "agents", allowed_backends=("opendrsai",)),
+            AgentDefinitionStore(
+                root / "assets" / "agents",
+                allowed_backends=("opendrsai", "remote-worker"),
+            ),
             tool_dispatcher(),
-            {backend.backend_id: backend},
+            {backend.backend_id: backend, remote_backend.backend_id: remote_backend},
         )
     return _agent_service
 
@@ -151,6 +158,13 @@ def agent_service():
 AGENT_DEFINITION_ID = "opendrsai"
 AGENT_DEFINITION_VERSION = "1"
 DEFAULT_AGENT_DEFINITION = f"{AGENT_DEFINITION_ID}@{AGENT_DEFINITION_VERSION}"
+
+# Remote worker Agent Definition. Individual remote agents (HepAI/DDF workers)
+# bind to this backend and carry their worker connection in the payload; the
+# Desktop addresses one worker at a time through the same Run contract.
+REMOTE_WORKER_DEFINITION_ID = "remote-worker"
+REMOTE_WORKER_DEFINITION_VERSION = "1"
+DEFAULT_REMOTE_WORKER_DEFINITION = f"{REMOTE_WORKER_DEFINITION_ID}@{REMOTE_WORKER_DEFINITION_VERSION}"
 
 
 def _ensure_agent_definition(root: Path) -> None:
@@ -177,12 +191,91 @@ def _ensure_agent_definition(root: Path) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     os.replace(temporary, path)
+    # Seed the remote-worker template too. It carries no credential: a Run that
+    # selects it supplies the worker identity, and the backend resolves the
+    # url/api-key from the Definition payload (falling back to the platform
+    # credential the Runtime already holds).
+    remote_path = root / "assets" / "agents" / REMOTE_WORKER_DEFINITION_ID / f"{REMOTE_WORKER_DEFINITION_VERSION}.json"
+    if not remote_path.exists():
+        remote_path.parent.mkdir(parents=True, exist_ok=True)
+        remote_payload = {
+            "id": REMOTE_WORKER_DEFINITION_ID,
+            "version": REMOTE_WORKER_DEFINITION_VERSION,
+            "backend": "remote-worker",
+            "instructions": "Proxy a remote HepAI/DDF worker agent through this Runtime.",
+            "permissions": [],
+            "remote_worker": {},
+        }
+        remote_temporary = remote_path.with_suffix(".tmp")
+        remote_temporary.write_text(
+            json.dumps(remote_payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8",
+        )
+        os.replace(remote_temporary, remote_path)
 
 
 def agent_definition_store() -> AgentDefinitionStore:
     root = state_root()
     _ensure_agent_definition(root)
-    return AgentDefinitionStore(root / "assets" / "agents", allowed_backends=("opendrsai",))
+    return AgentDefinitionStore(
+        root / "assets" / "agents",
+        allowed_backends=("opendrsai", "remote-worker"),
+    )
+
+
+def remote_worker_definition_reference(worker_id: str) -> str:
+    """Return a deterministic immutable Definition reference for one worker."""
+    normalized = str(worker_id or "").strip()
+    if not normalized:
+        from drsai.backend.runtime.agent import RuntimeExecutionError
+        raise RuntimeExecutionError("remote_worker_invalid", "A remote worker id is required.")
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:24]
+    return f"remote-worker-{digest}@{REMOTE_WORKER_DEFINITION_VERSION}"
+
+
+def write_remote_worker_definition(payload: dict[str, Any]) -> str:
+    """Create/reuse a worker-scoped immutable Definition and return its reference."""
+    worker = payload.get("remote_worker")
+    name = worker.get("name") if isinstance(worker, dict) else None
+    if not isinstance(name, str) or not name.strip():
+        from drsai.backend.runtime.agent import RuntimeExecutionError
+        raise RuntimeExecutionError("remote_worker_invalid", "A remote worker selection must name a worker.")
+    reference = remote_worker_definition_reference(name)
+    definition_id, version = reference.rsplit("@", 1)
+    scoped_payload = {
+        **payload,
+        "id": definition_id,
+        "version": version,
+        "backend": "remote-worker",
+        "remote_worker": {**worker, "name": name.strip()},
+    }
+    path = state_root() / "assets" / "agents" / definition_id / f"{version}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = json.dumps(scoped_payload, ensure_ascii=False, separators=(",", ":"))
+    if path.exists():
+        existing = path.read_text(encoding="utf-8")
+        if existing != encoded:
+            from drsai.backend.runtime.agent import RuntimeExecutionError
+            raise RuntimeExecutionError(
+                "remote_worker_definition_conflict",
+                "The immutable Definition for this remote worker already has different routing data.",
+            )
+        return reference
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(encoded, encoding="utf-8")
+    try:
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return reference
+
+
+def ensure_remote_agents_workspace() -> str:
+    """Open the hidden compatibility Workspace used by remote-agent Sessions."""
+    root = state_root() / "runtime" / "remote-agents-workspace"
+    root.mkdir(parents=True, exist_ok=True)
+    record = runtime_registry().open_workspace(str(root), display_name="Remote Agents")
+    remember_workspace_root(record.workspace_id, root)
+    return record.workspace_id
 
 
 def reset_state() -> None:

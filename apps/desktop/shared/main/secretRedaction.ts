@@ -1,6 +1,7 @@
-import { redactSensitiveData } from "../api/sensitiveData";
+import { redactSensitiveData as _redactSensitiveData } from "../api/sensitiveData";
 
-const SECRET_PATTERNS: RegExp[] = [
+// @ts-expect-error: kept for disabled desktop secret redaction feature
+const _SECRET_PATTERNS: RegExp[] = [
   /\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi,
   /\b((?:api[_-]?(?:key|token)|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|registration[_-]?token|access[_-]?grant[_-]?code|password|message|prompt|command|arguments|b64_json|content_base64|data_url|image_base64)\s*[:=]\s*)[^\s,;&]+/gi,
   /([?&](?:code|token|access_token|refresh_token|id_token|client_secret|state)=)[^&#\s]+/gi,

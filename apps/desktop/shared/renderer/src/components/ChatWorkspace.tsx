@@ -359,10 +359,7 @@ interface ChatWorkspaceProps {
   onSelectWorkspace?: (workspaceId: string) => void;
   onSelectModel?: (model: string, providerId?: string) => void;
   onOpenExternal: (url: string) => void;
-  onOpenDebug?: (runId?: string, view?: "activity" | "app-errors") => void;
   onOpenAgentSettings?: () => void;
-  onOpenRun?: (runId: string, itemId?: string) => void;
-  onCreateRunExperiment?: (runId: string, itemId?: string) => void;
   onOpenPreviewBrowser?: (url?: string) => void;
   onOpenWorkspaceArtifact?: (path: string) => void;
   onOpenConversationResourcePreview?: (preview: WorkspaceFilePreview, logicalPath?: string) => void;
@@ -435,10 +432,7 @@ function ChatWorkspaceImpl({
   onSelectWorkspace,
   onSelectModel,
   onOpenExternal,
-  onOpenDebug,
   onOpenAgentSettings,
-  onOpenRun,
-  onCreateRunExperiment,
   onOpenPreviewBrowser,
   onOpenWorkspaceArtifact,
   onOpenConversationResourcePreview,
@@ -573,8 +567,7 @@ function ChatWorkspaceImpl({
   const [wechatSending, setWechatSending] = useState(false);
   const [wechatSendStatus, setWechatSendStatus] = useState<string | null>(null);
   const [runReproducibility, setRunReproducibility] = useState<Record<string, RunReproducibilityLevel>>({});
-  const runtimeRunIdsKey = useMemo(() => {
-    const runIds = [...new Set(messages
+  const runtimeRunIdsKey = useMemo(() => {    const runIds = [...new Set(messages
       .map((message) => message.runtimeRunId)
       .filter((runId): runId is string => Boolean(runId?.startsWith("run-"))))]
       .slice(-20);
@@ -645,7 +638,7 @@ function ChatWorkspaceImpl({
   const [taskInteractionMode, setTaskInteractionMode] = useState<"normal" | "plan">("normal");
   const [searchOpen, setSearchOpen] = useState(false);
   const [metaMenuOpen, setMetaMenuOpen] = useState<"configuration" | "skill" | null>(null);
-  const [configurationSection, setConfigurationSection] = useState<"model" | "thinking" | "task" | null>(null);
+  const [configurationSection, setConfigurationSection] = useState<"model" | "thinking" | "task" | "agent" | null>(null);
   const [configurationSubmenuPosition, setConfigurationSubmenuPosition] = useState({ top: 0, left: 0, maxHeight: 220 });
   const [installedSkills, setInstalledSkills] = useState<GatewaySkill[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
@@ -1441,8 +1434,7 @@ function ChatWorkspaceImpl({
       errorCode: voiceState === "failed" ? "capture_error" : undefined,
       durationMs: Date.now() - active.startedAt,
     });
-    if (voiceState === "failed") onOpenDebug?.(undefined, "app-errors");
-  }, [onOpenDebug, voiceDeviceId, voiceError, voiceState]);
+  }, [voiceDeviceId, voiceError, voiceState]);
 
   useEffect(() => {
     const activeMessageId = voicePlayback.activeMessageId;
@@ -2566,7 +2558,6 @@ function ChatWorkspaceImpl({
         selectedDevice: Boolean(voiceDeviceId),
       },
     });
-    onOpenDebug?.(undefined, "app-errors");
   }
 
   function stopVoiceRecording(mode: "transcribe" | "discard"): void {
@@ -2768,7 +2759,6 @@ function ChatWorkspaceImpl({
       stack: voiceDiagnosticStack(error),
       attributes: { stage },
     });
-    onOpenDebug?.(undefined, "app-errors");
   }
 
   function completeSerialVoiceTranscription(
@@ -3564,7 +3554,6 @@ function ChatWorkspaceImpl({
               ) : null}
               {message.role === "assistant" && message.replyFailed ? (
                 <div className="chat-reply-failed">
-                  <button type="button" onClick={() => onOpenDebug?.(message.runtimeRunId)}><Bug size={14} aria-hidden /><span>{zh ? "回复未完成 · 查看调试" : "Reply incomplete · View debug"}</span></button>
                   {onRetryMessage ? <span className="chat-retry-actions">
                     <button type="button" onClick={() => void onRetryMessage(message.id, "same_session")}>{zh ? "在当前会话重试" : "Retry in this session"}</button>
                     <button type="button" onClick={() => void onRetryMessage(message.id, "new_session")}>{zh ? "分支到新会话" : "Branch to a new session"}</button>
@@ -3577,7 +3566,6 @@ function ChatWorkspaceImpl({
                 message.structuredTurn.parts.length || message.structuredTurn.activities.length ? (
                   <StructuredMessageParts
                     turn={message.structuredTurn}
-                    runId={message.runtimeRunId}
                     language={language}
                     workspacePath={workspacePath}
                     resourceStates={conversationResourceStates}
@@ -3591,10 +3579,7 @@ function ChatWorkspaceImpl({
                     onOpenCitationMenu={openConversationResourceMenu}
                     onRespondInteraction={(part, response) => respondToStructuredInteraction(message.structuredTurn!.turnId, part, response)}
                     onRequestTextInteraction={(part) => requestStructuredTextInput(message.structuredTurn!.turnId, part)}
-                      onOpenDebug={onOpenDebug ? () => onOpenDebug(message.runtimeRunId) : undefined}
-                      onOpenRun={onOpenRun}
-                      onCreateRunExperiment={onCreateRunExperiment}
-                      reproducibilityLevel={message.runtimeRunId ? runReproducibility[message.runtimeRunId] : undefined}
+                    reproducibilityLevel={message.runtimeRunId ? runReproducibility[message.runtimeRunId] : undefined}
                     now={now}
                     startedAt={message.startedAt}
                     completedAt={message.lastEventAt}

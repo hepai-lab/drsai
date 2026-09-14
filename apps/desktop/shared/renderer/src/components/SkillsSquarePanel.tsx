@@ -1230,7 +1230,6 @@ export function SkillsSquarePanel(props: SkillsSquarePanelProps): JSX.Element {
       const items = await desktopApi.listSkillsSquareShares({
         slug,
         userId: shareUser,
-        userEmail: operatorEmail,
       });
       setShareList(items ?? []);
     } catch {
@@ -1253,7 +1252,6 @@ export function SkillsSquarePanel(props: SkillsSquarePanelProps): JSX.Element {
       const created = await desktopApi.createSkillsSquareShare({
         slug: shareSlug,
         userId: shareUser,
-        userEmail: operatorEmail,
         password: sharePassword.trim() || undefined,
         expiresInHours: shareExpiryHours,
       });
@@ -1281,7 +1279,6 @@ export function SkillsSquarePanel(props: SkillsSquarePanelProps): JSX.Element {
         const items = await desktopApi.listSkillsSquareShares({
           slug: shareSlug,
           userId: shareUser,
-          userEmail: operatorEmail,
         });
         if (items?.length) {
           const byId = new Map<string, DesktopSquareShareInfo>();
@@ -1318,7 +1315,6 @@ export function SkillsSquarePanel(props: SkillsSquarePanelProps): JSX.Element {
         slug: shareSlug,
         shareId,
         userId: shareUser,
-        userEmail: operatorEmail,
       });
       setShareList((prev) => prev.filter((s) => s.shareId !== shareId));
       showToast("success", zh ? "已撤销" : "Revoked");

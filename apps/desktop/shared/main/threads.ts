@@ -150,9 +150,21 @@ function selectRecentThreads(threads: DesktopThread[], request: DesktopThreadLis
   const limit = Math.max(1, Math.min(200, Math.trunc(request.limit ?? 50)));
   const offset = Math.max(0, Math.trunc(request.offset ?? 0));
   const wantedWorkspace = request.workspacePath ? comparableWorkspacePath(request.workspacePath) : null;
-  const scoped = wantedWorkspace
-    ? threads.filter((thread) => comparableWorkspacePath(thread.workspacePath) === wantedWorkspace)
-    : threads;
+  let scoped: DesktopThread[];
+  if (request.sessionScope === "remote_agent") {
+    // Remote-agent threads have no workspacePath; they must never be dropped by
+    // workspace scoping or they vanish from the sidebar after restart.
+    scoped = threads.filter((thread) => thread.sessionScope === "remote_agent"
+      && typeof thread.remoteWorkerId === "string"
+      && thread.remoteWorkerId.length > 0
+      && thread.workspacePath === undefined);
+  } else if (request.sessionScope === "workspace") {
+    scoped = threads.filter((thread) => thread.sessionScope !== "remote_agent");
+  } else {
+    scoped = wantedWorkspace
+      ? threads.filter((thread) => comparableWorkspacePath(thread.workspacePath) === wantedWorkspace)
+      : threads;
+  }
   const required = new Set((request.requiredThreadIds ?? []).filter((id) => THREAD_ID_PATTERN.test(id)));
   const allProtectedThreads = scoped.filter((thread) => !thread.archived && (
     required.has(thread.id) || thread.pinned === true || thread.status === "running"));
@@ -195,6 +207,9 @@ export async function createThread(rawRequest: unknown): Promise<DesktopThread> 
       kind: request.kind,
       title: request.title || defaultTitle(request.kind),
       workspacePath: request.workspacePath,
+      sessionScope: request.sessionScope,
+      remoteWorkerId: request.remoteWorkerId,
+      remoteWorkerName: request.remoteWorkerName,
       boundAgentId: request.boundAgentId,
       boundAgentName: request.boundAgentName,
       model: request.model,
@@ -237,11 +252,18 @@ export async function updateThread(rawRequest: unknown): Promise<DesktopThread> 
     const threads = await readThreads();
     const now = new Date().toISOString();
     const existing = threads.find((thread) => thread.id === request.id);
+    // A remote_agent thread must never inherit a workspacePath from generic
+    // updates (e.g. snapshot persistence passes the active workspace path).
+    // Only an explicit sessionScope change can convert the thread.
+    const effectiveScope = request.sessionScope ?? existing?.sessionScope;
     const next: DesktopThread = {
       id: request.id,
       kind: request.kind || existing?.kind || "chat",
       title: request.title || existing?.title || defaultTitle(request.kind || existing?.kind || "chat"),
-      workspacePath: request.workspacePath ?? existing?.workspacePath,
+      workspacePath: effectiveScope === "remote_agent" ? undefined : request.workspacePath ?? existing?.workspacePath,
+      sessionScope: effectiveScope,
+      remoteWorkerId: effectiveScope === "workspace" ? undefined : request.remoteWorkerId ?? existing?.remoteWorkerId,
+      remoteWorkerName: effectiveScope === "workspace" ? undefined : request.remoteWorkerName ?? existing?.remoteWorkerName,
       boundAgentId: request.boundAgentId ?? existing?.boundAgentId,
       boundAgentName: request.boundAgentName ?? existing?.boundAgentName,
       model: request.model ?? existing?.model,
@@ -414,6 +436,9 @@ export async function upsertThreadFromRun(input: {
   kind: DesktopThread["kind"];
   title?: string;
   workspacePath?: string;
+  sessionScope?: DesktopThread["sessionScope"];
+  remoteWorkerId?: string;
+  remoteWorkerName?: string;
   boundAgentId?: string;
   boundAgentName?: string;
   model?: string;
@@ -437,6 +462,9 @@ export async function upsertThreadFromRun(input: {
         kind: input.kind,
         title: input.title || defaultTitle(input.kind),
         workspacePath: input.workspacePath,
+        sessionScope: input.sessionScope,
+        remoteWorkerId: input.remoteWorkerId,
+        remoteWorkerName: input.remoteWorkerName,
         boundAgentId: input.boundAgentId,
         boundAgentName: input.boundAgentName,
         createdAt: now,
@@ -702,6 +730,17 @@ function validCatalogTimestamp(value: string | undefined, fallback: string): str
   return typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : fallback;
 }
 
+/**
+ * Legacy bug repair: snapshot persistence once wrote the active workspace path
+ * into remote_agent threads, which made them fail remote_agent listing. Strip
+ * the stale path so the row is visible again under the remote agent scope.
+ */
+function migrateRemoteAgentWorkspacePath(thread: DesktopThread): DesktopThread {
+  if (thread.sessionScope !== "remote_agent" || thread.workspacePath === undefined) return thread;
+  const { workspacePath: _ignored, ...rest } = thread;
+  return rest as DesktopThread;
+}
+
 async function readThreads(): Promise<DesktopThread[]> {
   return (await readThreadsWithMigration()).threads;
 }
@@ -718,6 +757,11 @@ async function readThreadsWithMigration(): Promise<{ threads: DesktopThread[]; m
       if (cleared !== next) {
         migrated = true;
         next = cleared;
+      }
+      const repaired = migrateRemoteAgentWorkspacePath(next);
+      if (repaired !== next) {
+        migrated = true;
+        next = repaired;
       }
       return next;
     });
@@ -902,10 +946,22 @@ function validateCreateThreadRequest(rawRequest: unknown): CreateThreadRequest {
   if (request.kind !== "chat" && request.kind !== "agent_run") {
     throw new Error("Thread kind is invalid.");
   }
+  if (request.sessionScope !== undefined && request.sessionScope !== "workspace" && request.sessionScope !== "remote_agent") {
+    throw new Error("Thread Session scope is invalid.");
+  }
+  if (request.sessionScope === "remote_agent" && !String(request.remoteWorkerId ?? "").trim()) {
+    throw new Error("Remote Agent threads require a stable remote worker id.");
+  }
+  if (request.sessionScope === "remote_agent" && request.workspacePath !== undefined) {
+    throw new Error("Remote Agent threads cannot own a Workspace path.");
+  }
   return {
     kind: request.kind,
     title: sanitizeTitle(request.title),
     workspacePath: sanitizeWorkspacePath(request.workspacePath),
+    sessionScope: request.sessionScope === "workspace" || request.sessionScope === "remote_agent" ? request.sessionScope : undefined,
+    remoteWorkerId: sanitizeOptionalAgentText(request.remoteWorkerId, MAX_AGENT_ID_CHARS, "Remote worker id is invalid."),
+    remoteWorkerName: sanitizeOptionalAgentText(request.remoteWorkerName, MAX_AGENT_NAME_CHARS, "Remote worker name is invalid."),
     boundAgentId: sanitizeOptionalAgentText(request.boundAgentId, MAX_AGENT_ID_CHARS, "Thread agent id is invalid."),
     boundAgentName: sanitizeOptionalAgentText(request.boundAgentName, MAX_AGENT_NAME_CHARS, "Thread agent name is invalid."),
     model: sanitizeOptionalAgentText(request.model, MAX_MODEL_CHARS, "Thread model is invalid."),
@@ -925,6 +981,12 @@ function validateUpdateThreadRequest(rawRequest: unknown): UpdateThreadRequest {
   if (request.kind !== undefined && request.kind !== "chat" && request.kind !== "agent_run") {
     throw new Error("Thread kind is invalid.");
   }
+  if (request.sessionScope !== undefined && request.sessionScope !== "workspace" && request.sessionScope !== "remote_agent") {
+    throw new Error("Thread Session scope is invalid.");
+  }
+  if (request.sessionScope === "remote_agent" && request.remoteWorkerId !== undefined && !String(request.remoteWorkerId).trim()) {
+    throw new Error("Remote Agent threads require a stable remote worker id.");
+  }
   if (
     request.status !== undefined &&
     request.status !== "idle" &&
@@ -938,6 +1000,9 @@ function validateUpdateThreadRequest(rawRequest: unknown): UpdateThreadRequest {
     kind: request.kind,
     title: sanitizeTitle(request.title),
     workspacePath: sanitizeWorkspacePath(request.workspacePath),
+    sessionScope: request.sessionScope === "workspace" || request.sessionScope === "remote_agent" ? request.sessionScope : undefined,
+    remoteWorkerId: sanitizeOptionalAgentText(request.remoteWorkerId, MAX_AGENT_ID_CHARS, "Remote worker id is invalid."),
+    remoteWorkerName: sanitizeOptionalAgentText(request.remoteWorkerName, MAX_AGENT_NAME_CHARS, "Remote worker name is invalid."),
     boundAgentId: sanitizeOptionalAgentText(request.boundAgentId, MAX_AGENT_ID_CHARS, "Thread agent id is invalid."),
     boundAgentName: sanitizeOptionalAgentText(request.boundAgentName, MAX_AGENT_NAME_CHARS, "Thread agent name is invalid."),
     model: sanitizeOptionalAgentText(request.model, MAX_MODEL_CHARS, "Thread model is invalid."),
@@ -1347,6 +1412,8 @@ function isThread(value: unknown): value is DesktopThread {
       typeof thread.createdAt === "string" &&
       typeof thread.updatedAt === "string" &&
       (thread.sourceChannel === undefined || thread.sourceChannel === "wechat") &&
+      (thread.sessionScope === undefined || thread.sessionScope === "workspace" || thread.sessionScope === "remote_agent") &&
+      (thread.sessionScope !== "remote_agent" || (typeof thread.remoteWorkerId === "string" && thread.remoteWorkerId.length > 0)) &&
       (thread.fork === undefined || isForkMetadata(thread.fork)),
   );
 }

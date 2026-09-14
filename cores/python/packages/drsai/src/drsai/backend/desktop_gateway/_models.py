@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class WorkspaceOpenRequest(BaseModel):
@@ -22,11 +22,19 @@ class WorkspaceOpenRequest(BaseModel):
 
 
 class SessionCreateRequest(BaseModel):
-    workspace_id: str
+    workspace_id: str | None = None
+    remote_worker_id: str | None = None
+    remote_worker_name: str | None = None
     title: str = "New session"
     model: str | None = None
     reasoning_effort: str | None = None
     plan_mode: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_owner(self):
+        if bool(self.workspace_id) == bool(self.remote_worker_id):
+            raise ValueError("Exactly one of workspace_id or remote_worker_id is required")
+        return self
 
 
 class SessionUpdateRequest(BaseModel):
@@ -50,8 +58,9 @@ class RunCreateRequest(BaseModel):
     The key may be sent in the JSON body **or** in the ``Idempotency-Key``
     header.  The desktop frontend sends it as a header, so the body field is
     optional here and the route handler falls back to the header.
-    ``agent_definition`` is accepted for API completeness but the gateway
-    always uses its own default definition for local agents.
+    ``agent_definition`` selects an exact installed Definition. The Desktop
+    uses ``remote-worker@1`` for official remote workers and otherwise lets the
+    gateway choose its local default.
     """
 
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=200)

@@ -426,7 +426,7 @@ class AgentSession:
         *,
         images: Optional[list[dict]] = None,
     ) -> str:
-        from .event_translator import TurnState, finalize, translate
+        from drsai.backend.events.agent_event_translator import TurnState, finalize, translate
 
         state = TurnState()
         status = "complete"

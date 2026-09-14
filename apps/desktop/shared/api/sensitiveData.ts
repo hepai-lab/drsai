@@ -16,7 +16,8 @@ interface PatternDefinition {
   captureGroup?: number;
 }
 
-const PATTERNS: PatternDefinition[] = [
+// @ts-ignore: kept for disabled sensitive data scanning feature
+const _PATTERNS: PatternDefinition[] = [
   { kind: "api_key", severity: "high", source: String.raw`\b(?:api[_ -]?key)\b\s*[:=]\s*["']?([A-Za-z0-9._~+\/-]{8,})`, flags: "gi", captureGroup: 1 },
   { kind: "user_secret", severity: "high", source: String.raw`\b(?:user[_ -]?secret|token|secret|password)\b\s*[:=]\s*["']?([A-Za-z0-9._~+\/-]{8,})`, flags: "gi", captureGroup: 1 },
   { kind: "bearer_token", severity: "high", source: String.raw`\bBearer\s+([A-Za-z0-9._~+\/-]{8,})`, flags: "gi", captureGroup: 1 },
@@ -25,10 +26,12 @@ const PATTERNS: PatternDefinition[] = [
   { kind: "phone", severity: "personal", source: String.raw`(?<!\d)1[3-9]\d{9}(?!\d)`, flags: "g" },
 ];
 
-const SECRET_FIELD = /^(?:authorization|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|registration[_-]?token|password|secret)$/i;
-const BINARY_FIELD = /^(?:b64_json|content_base64|data_url|image_base64)$/i;
+// @ts-ignore: kept for disabled sensitive data scanning feature
+const _SECRET_FIELD = /^(?:authorization|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|registration[_-]?token|password|secret)$/i;
+// @ts-ignore: kept for disabled sensitive data scanning feature
+const _BINARY_FIELD = /^(?:b64_json|content_base64|data_url|image_base64)$/i;
 
-export function scanSensitiveData(text: string): SensitiveDataMatch[] {
+export function scanSensitiveData(_text: string): SensitiveDataMatch[] {
   // [DISABLED] Sensitive data scanning disabled — returns empty array (no matches)
   return [];
   /* Original logic:
@@ -50,7 +53,7 @@ export function scanSensitiveData(text: string): SensitiveDataMatch[] {
   */
 }
 
-export function redactSensitiveData(text: string, options: { includePersonal?: boolean } = {}): string {
+export function redactSensitiveData(text: string, _options: { includePersonal?: boolean } = {}): string {
   // [DISABLED] Sensitive data redaction disabled — returns text unchanged
   return text;
   /* Original logic:
@@ -63,7 +66,7 @@ export function redactSensitiveData(text: string, options: { includePersonal?: b
   */
 }
 
-export function sanitizeSensitiveValue<T>(value: T, options: { includePersonal?: boolean } = {}): T {
+export function sanitizeSensitiveValue<T>(value: T, _options: { includePersonal?: boolean } = {}): T {
   // [DISABLED] Sensitive value sanitization disabled — returns value unchanged
   return value;
   /* Original logic:
@@ -80,7 +83,8 @@ export function sanitizeSensitiveValue<T>(value: T, options: { includePersonal?:
   */
 }
 
-function redactionLabel(kind: SensitiveDataKind): string {
+// @ts-ignore: kept for disabled sensitive data scanning feature
+function _redactionLabel(kind: SensitiveDataKind): string {
   if (kind === "email") return "[REDACTED EMAIL]";
   if (kind === "phone") return "[REDACTED PHONE]";
   if (kind === "bearer_token") return "[REDACTED TOKEN]";

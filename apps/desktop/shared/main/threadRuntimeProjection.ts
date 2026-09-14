@@ -18,6 +18,7 @@ import {
   type StructuredActivityEvent,
   type StructuredAssistantPart,
   type StructuredPartStatus,
+  type StructuredProcessTimelineEntry,
   type StructuredTurnState,
 } from "../api/structuredConversation";
 import type { RuntimeConversationItem } from "./runtimeClient";
@@ -358,7 +359,7 @@ function structuredStatus(status: OaepItem["status"] | OaepRun["status"]): Struc
   return "running";
 }
 
-export function projectOaepAssistantItem(item: OaepItem, runId: string, includeEmpty = false): {
+function projectOaepAssistantItemUnsequenced(item: OaepItem, runId: string, includeEmpty = false): {
   parts: StructuredAssistantPart[];
   activities: StructuredActivityEvent[];
 } {
@@ -470,6 +471,15 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
   if (item.type === "command_execution" || item.type === "tool_call") {
     const toolName = item.type === "command_execution"
       ? String(item.content.display_command || "Command") : String(item.content.tool_name || "Tool");
+    const normalizedToolName = toolName.trim().toLowerCase();
+    const toolCategory = item.type === "command_execution" ? "shell" as const
+      : normalizedToolName === "skill" ? "skill" as const
+      : normalizedToolName === "todowrite" ? "todo" as const
+      : normalizedToolName === "delegate" ? "subagent" as const
+      : normalizedToolName === "updateuserconfig" ? "config" as const
+      : normalizedToolName === "scheduledtaskmanager" ? "schedule" as const
+      : normalizedToolName === "web_search" || normalizedToolName === "web_fetch" ? "search" as const
+      : "generic" as const;
     return { parts: [], activities: [{
       id: item.id, oaepItemId: item.id, turnId: runId, timestamp: item.updated_at, source: item.source.backend,
       status, title: toolName, kind: "tool", toolName, callId: item.type === "tool_call" ? item.content.call_id : item.id,
@@ -481,9 +491,65 @@ export function projectOaepAssistantItem(item: OaepItem, runId: string, includeE
       input: item.type === "command_execution" ? item.content.command : item.content.arguments,
       output: item.type === "command_execution" ? item.content.output : item.content.result,
       durationMs: item.content.duration_ms ?? undefined,
+      ...(item.type === "command_execution" ? {
+        cwd: item.content.cwd || undefined,
+        exitCode: item.content.exit_code,
+      } : {}),
+      toolCategory,
     }] };
   }
   return { parts: [], activities: [] };
+}
+
+export function projectOaepAssistantItem(item: OaepItem, runId: string, includeEmpty = false): {
+  parts: StructuredAssistantPart[];
+  activities: StructuredActivityEvent[];
+} {
+  const projected = projectOaepAssistantItemUnsequenced(item, runId, includeEmpty);
+  return {
+    parts: projected.parts.map((part) => {
+      if (part.kind !== "reasoning") return { ...part, sequence: item.sequence };
+      return {
+        ...part,
+        sequence: item.sequence,
+        segments: part.segments.map((segment) => ({ ...segment, sequence: segment.sequence ?? item.sequence })),
+      };
+    }),
+    activities: projected.activities.map((activity) => ({
+      ...activity,
+      sequence: activity.sequence ?? item.sequence,
+      updatedSequence: item.sequence,
+      ...(["completed", "error", "cancelled"].includes(activity.status) ? { completedSequence: item.sequence } : {}),
+    } as StructuredActivityEvent)),
+  };
+}
+
+function projectOaepTimelineEntries(
+  item: OaepItem,
+  projection: { parts: StructuredAssistantPart[]; activities: StructuredActivityEvent[] },
+): StructuredProcessTimelineEntry[] {
+  const entries: StructuredProcessTimelineEntry[] = [];
+  for (const part of projection.parts) {
+    if (part.kind === "reasoning") {
+      for (const segment of part.segments) entries.push({
+        id: `reasoning:${part.id}:${segment.id}`,
+        kind: "reasoning",
+        sequence: item.sequence,
+        partId: part.id,
+        segmentId: segment.id,
+        text: segment.text,
+        status: part.status,
+      });
+    } else if (part.kind === "markdown") {
+      entries.push({ id: `markdown:${part.id}`, kind: "markdown", sequence: item.sequence, partId: part.id, text: part.markdown, status: part.status, transient: false });
+    } else if (part.kind === "progress") {
+      entries.push({ id: `progress:${part.id}`, kind: "progress", sequence: item.sequence, partId: part.id, summary: part.summary, status: part.status, ...(part.phase ? { phase: part.phase } : {}), ...(part.completed !== undefined ? { completed: part.completed } : {}), ...(part.total !== undefined ? { total: part.total } : {}) });
+    } else if (part.kind === "subtask") {
+      entries.push({ id: `subtask:${part.id}`, kind: "subtask", sequence: item.sequence, partId: part.id, taskId: part.taskId });
+    }
+  }
+  for (const activity of projection.activities) entries.push({ id: `activity:${activity.id}`, kind: "activity", sequence: item.sequence, activityId: activity.id });
+  return entries;
 }
 
 function userAttachments(item: OaepItem): ChatAttachment[] {
@@ -598,6 +664,7 @@ export function projectOaepThreadSnapshot(
       const projected = assistantItems.map((item) => projectOaepAssistantItem(item, turnId));
       const parts = projected.flatMap((value) => value.parts);
       const activities = projected.flatMap((value) => value.activities);
+      const processTimeline = assistantItems.flatMap((item, index) => projectOaepTimelineEntries(item, projected[index]));
       const status = !isLast ? "completed" : run?.status === "failed" ? "error"
         : run?.status === "cancelled" ? "cancelled" : run?.status === "completed" ? "completed" : "running";
       const itemStartedAt = Math.min(...assistantItems.map((item) => timestamp(item.created_at)));
@@ -609,7 +676,7 @@ export function projectOaepThreadSnapshot(
       const durationMs = runCompletedAt > runStartedAt ? runCompletedAt - runStartedAt : undefined;
       const structuredTurn: StructuredTurnState = {
         version: 2, turnId, status, parts, activities,
-        processTimeline: [],
+        processTimeline,
         lastSequence: Math.max(0, ...assistantItems.map((item) => item.sequence)),
         seenDedupeKeys: [], protocolIssues: [],
         meta: {

@@ -190,7 +190,7 @@ async function fetchDdfAgentsLikeWebUi(
     } satisfies HostedAgentRecord;
   });
 
-  return enriched.filter((item): item is HostedAgentRecord => Boolean(item));
+  return enriched.filter(Boolean) as HostedAgentRecord[];
 }
 
 async function listAgentsPage(

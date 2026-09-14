@@ -1123,7 +1123,7 @@ export interface ChatEvent {
     attempt: number;
     delayMs?: number;
     timestamp: string;
-    source: "gateway" | "remote-gateway" | "opendrsai-runtime" | "codex-runtime";
+    source: "gateway" | "remote-gateway" | "opendrsai-runtime" | "codex-runtime" | "remote-worker-runtime";
   };
 }
 
@@ -3664,6 +3664,8 @@ export interface RuntimeErrorEnvelope {
 export interface DesktopAgentListOptions {
   refresh?: boolean;
   preferCache?: boolean;
+  /** Bypass the gateway's 24h remote-worker catalog cache (explicit Refresh button only). */
+  force?: boolean;
 }
 
 export interface DesktopAgentPreferenceResult {
@@ -4191,6 +4193,9 @@ export interface DesktopThread {
   kind: "chat" | "agent_run";
   title: string;
   workspacePath?: string;
+  sessionScope?: "workspace" | "remote_agent";
+  remoteWorkerId?: string;
+  remoteWorkerName?: string;
   boundAgentId?: string;
   boundAgentName?: string;
   model?: string;
@@ -4223,6 +4228,8 @@ export interface DesktopThreadListRequest {
   requiredThreadIds?: string[];
   /** Runtime Workspace whose live catalog should be followed by this window. */
   runtimeWorkspaceId?: string;
+  /** Restrict the listing to a session scope: remote_agent threads have no workspacePath. */
+  sessionScope?: "workspace" | "remote_agent";
 }
 
 export interface DesktopThreadMessageSnapshot extends ChatMessage {
@@ -5398,6 +5405,9 @@ export interface CreateThreadRequest {
   kind: DesktopThread["kind"];
   title?: string;
   workspacePath?: string;
+  sessionScope?: "workspace" | "remote_agent";
+  remoteWorkerId?: string;
+  remoteWorkerName?: string;
   boundAgentId?: string;
   boundAgentName?: string;
   model?: string;
@@ -5411,6 +5421,9 @@ export interface UpdateThreadRequest {
   kind?: DesktopThread["kind"];
   title?: string;
   workspacePath?: string;
+  sessionScope?: "workspace" | "remote_agent";
+  remoteWorkerId?: string;
+  remoteWorkerName?: string;
   boundAgentId?: string;
   boundAgentName?: string;
   model?: string;

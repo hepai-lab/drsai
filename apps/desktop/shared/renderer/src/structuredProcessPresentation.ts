@@ -91,7 +91,13 @@ export function buildStructuredProcessPresentation(
 
 export function formatActivitySummary(activity: StructuredActivityEvent, language: ProcessLanguage): string {
   if (activity.kind === "tool") {
-    if (activity.toolName === "web_search") return formatWebSearchActivitySummary(activity, language);
+    if (activity.toolCategory === "search" || activity.toolName === "web_search") return formatWebSearchActivitySummary(activity, language);
+    const categoryLabels = language === "zh"
+      ? { skill: "加载技能", todo: "更新任务清单", subagent: "分派子任务", config: "更新用户配置", schedule: "管理定时任务", shell: "执行终端命令", file: "处理文件" }
+      : { skill: "Load skill", todo: "Update task list", subagent: "Delegate subtask", config: "Update user configuration", schedule: "Manage scheduled tasks", shell: "Run terminal command", file: "Handle file" };
+    if (activity.toolCategory && activity.toolCategory in categoryLabels) {
+      return categoryLabels[activity.toolCategory as keyof typeof categoryLabels];
+    }
     return formatToolActivityLabel(activity.toolName, activity.title, language);
   }
   if (activity.kind === "model") return language === "zh" ? "正在生成" : "Generating";

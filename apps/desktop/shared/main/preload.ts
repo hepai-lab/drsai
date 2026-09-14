@@ -958,7 +958,7 @@ const api: DesktopApi = {
   }): Promise<{
     ok: boolean;
     configured: boolean;
-    enabled?: boolean;
+    enabled: boolean;
     needsSetup: boolean;
     mode: string;
     bucket?: string;

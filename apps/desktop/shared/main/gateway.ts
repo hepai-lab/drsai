@@ -564,6 +564,22 @@ async function startGatewayOnce(): Promise<boolean> {
     ? { DRSAI_DESKTOP_USER: desktopUserId, DRSAI_USER_ID: desktopUserId }
     : {};
 
+  // The gateway's remote-worker catalog and remote-run backend need the
+  // HepAI/DDF credential in their process env. Inherit the Desktop session
+  // value, and fall back to the saved key so a freshly spawned gateway works
+  // even when the Electron process itself was started without it. (Lazy
+  // require: settings.ts imports this module.)
+  const savedApiKeyEnv = process.env.HEPAI_API_KEY?.trim()
+    ? {}
+    : (() => {
+      try {
+        const saved = require("./settings").readSavedApiKey() as string;
+        return saved ? { HEPAI_API_KEY: saved } : {};
+      } catch {
+        return {};
+      }
+    })();
+
   gatewaySpawnError = null;
   prepareGatewayLog();
   gatewayProcess = spawn(GATEWAY_PYTHON, args, {
@@ -580,6 +596,7 @@ async function startGatewayOnce(): Promise<boolean> {
       ...(NODE_PTY_MODULE ? { OPENDRSAI_NODE_PTY_MODULE: NODE_PTY_MODULE } : {}),
       ...localCodexEnv,
       ...identityEnv,
+      ...savedApiKeyEnv,
       PATH: getEnhancedPath(),
     },
     windowsHide: true,

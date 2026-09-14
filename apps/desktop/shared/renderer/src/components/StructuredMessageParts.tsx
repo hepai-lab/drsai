@@ -59,7 +59,6 @@ export interface InteractionResponse extends Record<string, unknown> {
 
 interface StructuredMessagePartsProps {
   turn: StructuredTurnState;
-  runId?: string;
   language: "en" | "zh";
   workspacePath?: string;
   resourceStates?: Readonly<Record<string, "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported">>;
@@ -74,9 +73,6 @@ interface StructuredMessagePartsProps {
   onOpenResource?: (resourceRef: OaepResourceRef) => void;
   onRespondInteraction: (part: InteractionPart, response: InteractionResponse) => void;
   onRequestTextInteraction: (part: InteractionPart) => void;
-  onOpenDebug?: () => void;
-  onOpenRun?: (runId: string, itemId?: string) => void;
-  onCreateRunExperiment?: (runId: string, itemId?: string) => void;
   reproducibilityLevel?: RunReproducibilityLevel;
   now: number;
   startedAt?: number;
@@ -93,9 +89,7 @@ export function getStructuredVisibleText(turn: StructuredTurnState): string {
 
 export const StructuredMessageParts = memo(function StructuredMessageParts({
   turn,
-  runId,
-  language,
-  workspacePath,
+  language,  workspacePath,
   resourceStates,
   respondedRequestIds,
   configuredCapabilityRequestIds,
@@ -107,9 +101,6 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
   onOpenResource,
   onRespondInteraction,
   onRequestTextInteraction,
-  onOpenDebug,
-  onOpenRun,
-  onCreateRunExperiment,
   reproducibilityLevel,
   now,
   startedAt,
@@ -317,9 +308,9 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     }
     if (part.kind === "artifact") return <ArtifactItem key={part.id} part={part} language={language} workspacePath={workspacePath} resourceState={resourceState(part, resourceStates)} focused={focusedPartId === part.id} onOpen={() => onOpenArtifact(part)} onOpenMenu={onOpenArtifactMenu ? (anchor) => onOpenArtifactMenu(part, anchor) : undefined} />;
     if (part.kind === "citation") return <CitationItem key={part.id} part={part} index={citationParts.findIndex((candidate) => candidate.id === part.id) + 1} language={language} resourceState={resourceState(part, resourceStates)} focused={focusedPartId === part.id} onOpen={() => onOpenCitation(part)} onOpenMenu={onOpenCitationMenu && (part.resourceRef || part.associationId) ? (anchor) => onOpenCitationMenu(part, anchor) : undefined} onBack={part.markdownPartId ? () => focusPart(part.markdownPartId as string) : undefined} />;
-    if (part.kind === "interaction") return <InteractionItem compact key={part.id} part={part} language={language} responded={respondedRequestIds.has(part.requestId)} capabilityConfigured={configuredCapabilityRequestIds.has(part.requestId)} onRespond={onRespondInteraction} onRequestText={onRequestTextInteraction} onOpenResult={onOpenDebug} onOpenLink={onOpenLink} />;
+    if (part.kind === "interaction") return <InteractionItem compact key={part.id} part={part} language={language} responded={respondedRequestIds.has(part.requestId)} capabilityConfigured={configuredCapabilityRequestIds.has(part.requestId)} onRespond={onRespondInteraction} onRequestText={onRequestTextInteraction} onOpenLink={onOpenLink} />;
     if (part.kind === "subtask") return <SubtaskContainer key={part.id} part={part} language={language} onOpenLink={onOpenLink} />;
-    return <NoticeItem key={part.id} part={part} language={language} onOpenDebug={onOpenDebug} />;
+    return <NoticeItem key={part.id} part={part} language={language} />;
   }
 
   return (
@@ -344,6 +335,7 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
             progressParts={progressParts}
             markdownParts={turn.parts.filter((part): part is Extract<StructuredAssistantPart, { kind: "markdown" }> => part.kind === "markdown")}
             activities={turn.activities.filter((activity) => !activity.subtaskId)}
+            subtaskParts={subtaskParts}
             language={language}
             resourceStates={resourceStates}
             onOpenResource={onOpenResource}
@@ -358,21 +350,20 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
             running={turn.status === "running"}
             renderPart={renderPart}
           />
-          <BoundedProcessSection title={language === "zh" ? "子任务" : "Subtasks"} items={subtaskParts} language={language} renderPart={renderPart} running={turn.status === "running"} />
+          <BoundedProcessSection
+            title={language === "zh" ? "子任务" : "Subtasks"}
+            items={subtaskParts.filter((part) => !(turn.processTimeline ?? []).some((entry) => entry.kind === "subtask" && entry.partId === part.id))}
+            language={language}
+            renderPart={renderPart}
+            running={turn.status === "running"}
+          />
           <BoundedProcessSection title={language === "zh" ? "运行信息" : "Run information"} items={backgroundNoticeParts} language={language} renderPart={renderPart} running={turn.status === "running"} />
-          <div className="structured-process-footer">
-            {onOpenRun && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onOpenRun(runId)}>{language === "zh" ? "查看完整运行" : "View full run"}<ArrowUpRight size={13} aria-hidden /></button> : null}
-            {onCreateRunExperiment && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onCreateRunExperiment(runId)}>{language === "zh" ? "创建实验" : "Create experiment"}<FlaskConical size={13} aria-hidden /></button> : null}
-            {onOpenDebug ? <button type="button" className="structured-debug-link" onClick={onOpenDebug}>{language === "zh" ? "技术诊断" : "Technical diagnostics"}</button> : null}
-          </div>
         </div> : null}
       </details> : <header className="structured-run-status" title={statusMeta}>
         <span className="structured-run-context">{statusContext}</span>
         <span className={`structured-turn-status status-${turn.status}`}>{turnStatusLabel}{durationLabel ? ` · ${durationLabel}` : ""}</span>
         {runCounts.length ? <span className="structured-run-counts" aria-label={language === "zh" ? "运行步骤计数" : "Run step counts"}>{runCounts.map((item) => <small key={item.key}>{item.label} {item.count}</small>)}</span> : null}
         {reproducibilityLevel === "partial" || reproducibilityLevel === "unavailable" ? <span className={`structured-reproducibility level-${reproducibilityLevel}`}>{reproducibilitySummaryLabel(reproducibilityLevel, language)}</span> : null}
-        {onOpenRun && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onOpenRun(runId)}>{language === "zh" ? "查看运行" : "View run"}<ArrowUpRight size={13} aria-hidden /></button> : null}
-        {onCreateRunExperiment && runId ? <button type="button" className="structured-run-inspect-link" onClick={() => onCreateRunExperiment(runId)}>{language === "zh" ? "创建实验" : "Create experiment"}<FlaskConical size={13} aria-hidden /></button> : null}
       </header>}
       {importantNoticeParts.length ? <section className="structured-important-notices">{importantNoticeParts.map(renderPart)}</section> : null}
       {interactionParts.length ? <section className="structured-interaction-layer" aria-label={language === "zh" ? "待用户交互" : "User action required"}>{interactionParts.map(renderPart)}</section> : null}
@@ -419,7 +410,8 @@ const SubtaskContainer = memo(function SubtaskContainer({
     : part.status === "running" ? Loader2
     : CircleEllipsis;
   const iconClass = part.status === "running" ? "structured-subtask-icon spinning" : "structured-subtask-icon";
-  const hasInternals = (part.reasoningSegments?.length ?? 0) > 0
+  const hasInternals = (part.timeline?.length ?? 0) > 0
+    || (part.reasoningSegments?.length ?? 0) > 0
     || (part.activities?.length ?? 0) > 0
     || Boolean(part.markdownSummary);
 
@@ -446,35 +438,52 @@ const SubtaskContainer = memo(function SubtaskContainer({
       </div>
       {expanded && hasInternals ? (
         <div className="structured-subtask-internals">
-          {part.reasoningSegments?.length ? (
-            <details className="structured-subtask-reasoning" open>
-              <summary><Info size={12} /> {language === "zh" ? "推理过程" : "Reasoning"}</summary>
-              {part.reasoningSegments.map((seg) => (
-                <div key={seg.id} className="structured-subtask-reasoning-segment">
-                  <ChatMessageContent content={seg.text} plainMarkdown language={language} onOpenLink={onOpenLink} />
-                </div>
-              ))}
-            </details>
-          ) : null}
-          {part.activities?.length ? (
-            <details className="structured-subtask-activities">
-              <summary><ListChecks size={12} /> {language === "zh" ? `工具活动 · ${part.activities.length}` : `Tool activities · ${part.activities.length}`}</summary>
-              <div className="structured-subtask-activity-list">
-                {part.activities.slice(0, 50).map((activity) => (
-                  <div key={activity.id} className="structured-subtask-activity-item">
-                    <ActivityStatusIcon status={activity.status} />
-                    <span>{activity.title}</span>
-                    {activity.kind === "tool" ? <small>{activity.toolName}</small> : null}
+          {part.timeline?.length ? [...part.timeline].sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id)).map((entry) => {
+            if (entry.kind === "reasoning") return (
+              <div key={entry.id} className="structured-subtask-reasoning-segment">
+                <ChatMessageContent content={entry.text} plainMarkdown streaming={part.status === "running"} language={language} onOpenLink={onOpenLink} />
+              </div>
+            );
+            if (entry.kind === "markdown") return (
+              <div key={entry.id} className="structured-subtask-markdown">
+                <ChatMessageContent content={entry.text} plainMarkdown streaming={part.status === "running"} language={language} onOpenLink={onOpenLink} />
+              </div>
+            );
+            if (entry.kind === "activity") {
+              const activity = part.activities?.find((candidate) => candidate.id === entry.activityId);
+              return activity ? <ActivityTimelineItem key={entry.id} activity={activity} language={language} /> : null;
+            }
+            if (entry.kind === "progress") return (
+              <div key={entry.id} className={`structured-progress ${entry.status}`}>
+                <ActivityStatusIcon status={entry.status} /><span>{entry.summary}</span>
+              </div>
+            );
+            return null;
+          }) : <>
+            {part.reasoningSegments?.length ? (
+              <details className="structured-subtask-reasoning" open>
+                <summary><Info size={12} /> {language === "zh" ? "推理过程" : "Reasoning"}</summary>
+                {part.reasoningSegments.map((seg) => (
+                  <div key={seg.id} className="structured-subtask-reasoning-segment">
+                    <ChatMessageContent content={seg.text} plainMarkdown language={language} onOpenLink={onOpenLink} />
                   </div>
                 ))}
+              </details>
+            ) : null}
+            {part.activities?.length ? (
+              <details className="structured-subtask-activities">
+                <summary><ListChecks size={12} /> {language === "zh" ? `工具活动 · ${part.activities.length}` : `Tool activities · ${part.activities.length}`}</summary>
+                <div className="structured-subtask-activity-list">
+                  {part.activities.slice(0, 50).map((activity) => <ActivityTimelineItem key={activity.id} activity={activity} language={language} />)}
+                </div>
+              </details>
+            ) : null}
+            {part.markdownSummary ? (
+              <div className="structured-subtask-markdown">
+                <ChatMessageContent content={part.markdownSummary} plainMarkdown language={language} onOpenLink={onOpenLink} />
               </div>
-            </details>
-          ) : null}
-          {part.markdownSummary ? (
-            <div className="structured-subtask-markdown">
-              <ChatMessageContent content={part.markdownSummary} plainMarkdown language={language} onOpenLink={onOpenLink} />
-            </div>
-          ) : null}
+            ) : null}
+          </>}
         </div>
       ) : null}
     </div>
@@ -705,6 +714,7 @@ function StructuredProcessTimeline({
   progressParts,
   markdownParts,
   activities,
+  subtaskParts,
   language,
   resourceStates,
   onOpenResource,
@@ -724,6 +734,7 @@ function StructuredProcessTimeline({
   progressParts: Array<Extract<StructuredAssistantPart, { kind: "progress" }>>;
   markdownParts: Array<Extract<StructuredAssistantPart, { kind: "markdown" }>>;
   activities: StructuredActivityEvent[];
+  subtaskParts: SubtaskPart[];
   language: "en" | "zh";
   resourceStates?: Readonly<Record<string, "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported">>;
   onOpenResource?: (resourceRef: OaepResourceRef) => void;
@@ -738,7 +749,7 @@ function StructuredProcessTimeline({
   running: boolean;
   renderPart: (part: StructuredAssistantPart) => React.JSX.Element | null;
 }): React.JSX.Element | null {
-  const entries = useMemo(() => buildProcessTimeline(timeline, reasoningParts, progressParts, markdownParts, activities, running), [timeline, reasoningParts, progressParts, markdownParts, activities, running]);
+  const entries = useMemo(() => buildProcessTimeline(timeline, reasoningParts, progressParts, markdownParts, activities, subtaskParts, running), [timeline, reasoningParts, progressParts, markdownParts, activities, subtaskParts, running]);
   const { page, setPage, window } = useFollowLatestPage(entries.length, PROCESS_ACTIVITY_WINDOW_SIZE, running);
   if (!entries.length) return null;
   return <div className="structured-process-timeline" aria-label={language === "zh" ? "执行时间线" : "Execution timeline"}>
@@ -747,6 +758,7 @@ function StructuredProcessTimeline({
         if (entry.type === "reasoning") return <div key={entry.id} className="structured-timeline-item reasoning"><span className="structured-timeline-marker">💭</span>{renderPart(entry.part)}</div>;
         if (entry.type === "markdown") return <div key={entry.id} className="structured-timeline-item streaming-markdown"><span className="structured-timeline-marker">✎</span><ChatMessageContent content={entry.text} streaming={running} language={language} onOpenLink={onOpenLink} citations={inlineCitations} onOpenCitation={(citationId) => { const citation = citationParts.find((candidate) => candidate.citationId === citationId); if (citation) onOpenCitation(citation); }} artifactLinks={inlineArtifactsByMarkdown.get(entry.partId)} onOpenArtifactLink={(artifactPartId) => { const artifact = artifactParts.find((candidate) => candidate.id === artifactPartId); if (artifact) onOpenArtifact(artifact); }} onOpenArtifactLinkMenu={onOpenArtifactMenu ? (artifactPartId, anchor) => { const artifact = artifactParts.find((candidate) => candidate.id === artifactPartId); if (artifact) onOpenArtifactMenu(artifact, anchor); } : undefined} /></div>;
         if (entry.type === "progress") return <div key={entry.id} className={`structured-timeline-item progress ${entry.part.status}`}><span className="structured-timeline-marker"><ActivityStatusIcon status={entry.part.status} /></span>{renderPart(entry.part)}</div>;
+        if (entry.type === "subtask") return <div key={entry.id} className={`structured-timeline-item subtask ${entry.part.status}`}><span className="structured-timeline-marker"><ActivityStatusIcon status={entry.part.status} /></span><SubtaskContainer part={entry.part} language={language} onOpenLink={onOpenLink} /></div>;
         return <div key={entry.id} className={`structured-timeline-item activity ${entry.activity.status}`}><span className="structured-timeline-marker"><ActivityStatusIcon status={entry.activity.status} /></span><ActivityTimelineItem activity={entry.activity} language={language} resourceStates={resourceStates} onOpenResource={onOpenResource} /></div>;
       })}
       <ProcessWindowNavigation window={window} total={entries.length} language={language} onPage={setPage} />
@@ -758,7 +770,8 @@ type ProcessTimelineEntry =
   | { type: "reasoning"; id: string; sequence: number; part: Extract<StructuredAssistantPart, { kind: "reasoning" }> }
   | { type: "markdown"; id: string; partId: string; sequence: number; text: string; transient: boolean }
   | { type: "progress"; id: string; sequence: number; part: Extract<StructuredAssistantPart, { kind: "progress" }> }
-  | { type: "activity"; id: string; sequence: number; activity: StructuredActivityEvent };
+  | { type: "activity"; id: string; sequence: number; activity: StructuredActivityEvent }
+  | { type: "subtask"; id: string; sequence: number; part: SubtaskPart };
 
 function buildProcessTimeline(
   timeline: StructuredProcessTimelineEntry[] | undefined,
@@ -766,6 +779,7 @@ function buildProcessTimeline(
   progressParts: Array<Extract<StructuredAssistantPart, { kind: "progress" }>>,
   markdownParts: Array<Extract<StructuredAssistantPart, { kind: "markdown" }>>,
   activities: StructuredActivityEvent[],
+  subtaskParts: SubtaskPart[],
   running: boolean,
 ): ProcessTimelineEntry[] {
   // Prefer the authoritative append-ordered timeline when available.
@@ -774,6 +788,7 @@ function buildProcessTimeline(
     const reasoningByPartId = new Map(reasoningParts.map((part) => [part.id, part]));
     const progressByPartId = new Map(progressParts.map((part) => [part.id, part]));
     const markdownByPartId = new Map(markdownParts.map((part) => [part.id, part]));
+    const subtaskByPartId = new Map(subtaskParts.map((part) => [part.id, part]));
     const result: ProcessTimelineEntry[] = [];
     for (const entry of timeline) {
       if (entry.kind === "reasoning") {
@@ -791,11 +806,10 @@ function buildProcessTimeline(
         // A hydrated/legacy timeline may have lost its transient flag, so do
         // not let a finalized answer reappear in Process after completion.
         const markdownPart = markdownByPartId.get(entry.partId);
-        const isFinalAnswer = markdownPart?.channel === "answer" && markdownPart.final === true;
-        // A finalized answer is exclusively owned by Result. Do not render it
-        // in Process even during the short part.completed/turn.completed race;
-        // otherwise the same text is printed twice.
-        if (isFinalAnswer) continue;
+        const visibleInResult = !running && markdownPart?.channel === "answer" && markdownPart.final === true;
+        // Keep the process copy until Result owns the final answer. This avoids
+        // a blank frame when part.completed arrives before turn.completed.
+        if (visibleInResult) continue;
         if (entry.transient && !running) continue;
         result.push({ type: "markdown", id: entry.id, partId: entry.partId, sequence: entry.sequence, text: entry.text, transient: entry.transient });
       } else if (entry.kind === "progress") {
@@ -804,6 +818,9 @@ function buildProcessTimeline(
       } else if (entry.kind === "activity") {
         const activity = activityById.get(entry.activityId);
         if (activity) result.push({ type: "activity", id: entry.id, sequence: entry.sequence, activity });
+      } else if (entry.kind === "subtask") {
+        const part = subtaskByPartId.get(entry.partId);
+        if (part) result.push({ type: "subtask", id: entry.id, sequence: entry.sequence, part });
       }
     }
     return result;
@@ -859,6 +876,66 @@ function formatToolInputSummary(input: unknown, language: "en" | "zh"): string {
   return String(input).slice(0, 200);
 }
 
+type TodoItem = { content: string; status: "pending" | "in_progress" | "completed" };
+
+function parseTodoItems(value: unknown): TodoItem[] {
+  const nestedItems = value && typeof value === "object" ? (value as Record<string, unknown>).items : undefined;
+  const raw: unknown[] = Array.isArray(value) ? value : Array.isArray(nestedItems) ? nestedItems : [];
+  return raw.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const status = record.status;
+    if (typeof record.content !== "string" || !["pending", "in_progress", "completed"].includes(String(status))) return [];
+    return [{ content: record.content, status: status as TodoItem["status"] }];
+  });
+}
+
+function renderToolSemanticDetail(activity: Extract<StructuredActivityEvent, { kind: "tool" }>, language: "en" | "zh"): React.JSX.Element | null {
+  const zh = language === "zh";
+  if (activity.toolCategory === "todo") {
+    const items = parseTodoItems(activity.input);
+    if (!items.length) return null;
+    const completed = items.filter((item) => item.status === "completed").length;
+    const warning = typeof activity.output === "string" && /auto-corrected|自动修正/i.test(activity.output);
+    return <div className="structured-tool-semantic structured-todo-card">
+      <div className="structured-todo-progress"><ListChecks size={14} /> {zh ? `任务进度 ${completed}/${items.length}` : `Progress ${completed}/${items.length}`}</div>
+      <div className="structured-todo-progress-track" aria-label={zh ? `已完成 ${completed}/${items.length}` : `${completed}/${items.length} completed`}><span style={{ width: `${items.length ? completed / items.length * 100 : 0}%` }} /></div>
+      {warning ? <div className="structured-todo-warning"><TriangleAlert size={13} />{zh ? "任务状态已自动修正" : "Task status was auto-corrected"}</div> : null}
+      {items.map((item, index) => <div className={`structured-todo-item ${item.status}`} key={`${item.content}:${index}`}>
+        <span aria-hidden="true">{item.status === "completed" ? "✓" : item.status === "in_progress" ? "◐" : "○"}</span><span>{item.content}</span>
+      </div>)}
+    </div>;
+  }
+  if (activity.toolCategory === "skill") {
+    const input = activity.input && typeof activity.input === "object" ? activity.input as Record<string, unknown> : {};
+    const skill = typeof input.skill === "string" ? input.skill : "Skill";
+    return <div className="structured-tool-semantic structured-skill-card"><FileText size={14} /><span>{zh ? "已加载技能" : "Skill loaded"}: {skill}</span></div>;
+  }
+  if (activity.toolCategory === "config") {
+    const input = activity.input && typeof activity.input === "object" ? activity.input as Record<string, unknown> : {};
+    const fields = Object.keys(input);
+    return <div className="structured-tool-semantic"><Info size={14} /><span>{zh ? "配置已更新" : "Configuration updated"}{fields.length ? ` · ${fields.join(", ")}` : ""}</span></div>;
+  }
+  if (activity.toolCategory === "schedule") {
+    const input = activity.input && typeof activity.input === "object" ? activity.input as Record<string, unknown> : {};
+    const operation = typeof input.operation === "string" ? input.operation : typeof input.action === "string" ? input.action : "";
+    return <div className="structured-tool-semantic"><Loader2 size={14} /><span>{zh ? "定时任务操作" : "Scheduled task operation"}{operation ? ` · ${operation}` : ""}</span></div>;
+  }
+  if (activity.toolCategory === "subagent") {
+    const input = activity.input && typeof activity.input === "object" ? activity.input as Record<string, unknown> : {};
+    const description = typeof input.description === "string" ? input.description : typeof input.agent_type === "string" ? input.agent_type : "";
+    return <div className="structured-tool-semantic"><ArrowUpRight size={14} /><span>{zh ? "已分派子任务" : "Subtask delegated"}{description ? ` · ${description}` : ""}</span></div>;
+  }
+  if (activity.toolCategory === "shell") {
+    const command = Array.isArray(activity.input) ? activity.input.map(String).join(" ") : String(activity.input ?? activity.toolName);
+    return <div className="structured-shell-card">
+      <div className="structured-shell-meta"><span>{activity.cwd || (zh ? "终端" : "Terminal")}</span>{activity.exitCode !== undefined && activity.exitCode !== null ? <span className={activity.exitCode === 0 ? "success" : "error"}>exit {activity.exitCode}</span> : null}</div>
+      <code><span aria-hidden="true">$ </span>{command}</code>
+    </div>;
+  }
+  return null;
+}
+
 function ActivityTimelineItem({
   activity,
   language,
@@ -889,7 +966,8 @@ function ActivityTimelineItem({
     const showDuration = activity.durationMs !== undefined && (activity.durationMs >= 500 || activity.status === "error");
     const isError = activity.status === "error";
 
-    return <div className={`structured-timeline-activity structured-timeline-tool ${activity.status}`}>
+    const semanticDetail = renderToolSemanticDetail(activity, language);
+    return <div className={`structured-timeline-activity structured-timeline-tool ${activity.status} structured-tool-category-${activity.toolCategory ?? "generic"}`}>
       <div className="structured-tool-header" onClick={hasDetail ? () => setExpanded((v) => !v) : undefined} role={hasDetail ? "button" : undefined} tabIndex={hasDetail ? 0 : undefined}>
         <ActivityStatusIcon status={activity.status} />
         <span className="structured-tool-name">{activity.toolName}</span>
@@ -897,7 +975,8 @@ function ActivityTimelineItem({
         {showDuration && activity.durationMs !== undefined ? <time className="structured-tool-duration">{formatRunDuration(activity.durationMs, language)}</time> : null}
         {hasDetail ? <ChevronDown size={12} className={`structured-tool-chevron ${expanded ? "expanded" : ""}`} aria-hidden="true" /> : null}
       </div>
-      {hasDetail && !expanded ? <div className="structured-tool-preview">
+      {semanticDetail ? semanticDetail : null}
+      {hasDetail && !expanded && !semanticDetail ? <div className="structured-tool-preview">
         {inputPreview ? <span className="structured-tool-input-preview"><em>{zh ? "输入" : "Input"}:</em> {inputPreview}</span> : null}
         {outputPreview ? <span className="structured-tool-output-preview"><em>{zh ? "输出" : "Output"}:</em> {outputPreview.slice(0, 200)}{outputPreview.length > 200 ? "…" : ""}</span> : null}
       </div> : null}
@@ -1322,7 +1401,6 @@ function InteractionItem({
   capabilityConfigured,
   onRespond,
   onRequestText,
-  onOpenResult,
   onOpenLink,
 }: {
   compact?: boolean;
@@ -1332,7 +1410,6 @@ function InteractionItem({
   capabilityConfigured: boolean;
   onRespond: (part: InteractionPart, response: InteractionResponse) => void;
   onRequestText: (part: InteractionPart) => void;
-  onOpenResult?: () => void;
   onOpenLink?: (href: string | undefined) => void;
 }): React.JSX.Element {
   const zh = language === "zh";
@@ -1524,13 +1601,13 @@ function InteractionItem({
         ) : (
           <button type="button" disabled={responded} onClick={() => onRequestText(part)}>{zh ? "回复" : "Respond"}</button>
         )}
-        {responded ? <span>{zh ? "已发送" : "Sent"}{onOpenResult ? <button type="button" onClick={onOpenResult}>{zh ? "查看操作/审计结果" : "View operation/audit result"}</button> : null}</span> : null}
+        {responded ? <span>{zh ? "已发送" : "Sent"}</span> : null}
       </div>
     </section>
   );
 }
 
-function NoticeItem({ part, language, onOpenDebug }: { part: NoticePart; language: "en" | "zh"; onOpenDebug?: () => void }): React.JSX.Element {
+function NoticeItem({ part, language }: { part: NoticePart; language: "en" | "zh" }): React.JSX.Element {
   const Icon = part.level === "error"
     ? AlertCircle
     : part.level === "warning"
@@ -1542,7 +1619,6 @@ function NoticeItem({ part, language, onOpenDebug }: { part: NoticePart; languag
     <div className={`structured-notice ${part.level}`} role={part.level === "error" ? "alert" : "status"}>
       <Icon size={14} aria-hidden="true" />
       <span>{userFacingNotice(part.message, language)}</span>
-      {(part.level === "error" || part.level === "warning") && onOpenDebug ? <button type="button" onClick={onOpenDebug}>{language === "zh" ? "技术详情" : "Technical details"}</button> : null}
     </div>
   );
 }
@@ -1550,8 +1626,8 @@ function NoticeItem({ part, language, onOpenDebug }: { part: NoticePart; languag
 function userFacingNotice(message: string, language: "en" | "zh"): string {
   if (!message || message === "[REDACTED]") {
     return language === "zh"
-      ? "本次运行未能完成，旧版本没有保存可显示的详细原因。你可以重试，或查看技术详情。"
-      : "This run did not finish, and the older record has no displayable reason. Retry or view technical details.";
+      ? "本次运行未能完成，旧版本没有保存可显示的详细原因。你可以重试。"
+      : "This run did not finish, and the older record has no displayable reason. You can retry.";
   }
   if (/citation_evidence_(invalid|incomplete)/i.test(message)) {
     return language === "zh"

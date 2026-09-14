@@ -282,7 +282,8 @@ function runDurationMs(value: unknown, fallbackStart: number | undefined, fallba
   return completedAt - startedAt;
 }
 
-const DELTA_TEXT_SOFT_LIMIT = 65_536;  // 64KB — single delta text soft limit
+// @ts-expect-error: kept for future delta text optimization
+const _DELTA_TEXT_SOFT_LIMIT = 65_536;  // 64KB — single delta text soft limit
 const DELTA_TEXT_HARD_LIMIT = 262_144; // 256KB — hard limit, truncate beyond this
 const PART_SPILL_THRESHOLD = 131_072;  // 128KB — per-part accumulated, spill to artifact
 

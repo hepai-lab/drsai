@@ -8,7 +8,6 @@ import {
 } from "./structuredConversation";
 import type {
   StructuredConversationEvent,
-  StructuredTurnState,
   StructuredAssistantPart,
   StructuredActivityEvent,
 } from "./structuredConversation";
@@ -464,8 +463,12 @@ describe("Activity timeline entries", () => {
     expect(timeline.length).toBe(1);
     expect(timeline[0].kind).toBe("activity");
     expect((timeline[0] as any).activityId).toBe("act1");
-    // Sequence should be updated to the latest event's sequence
-    expect(timeline[0].sequence).toBe(state.lastSequence);
+    // The card remains anchored to its first appearance; terminal metadata
+    // records the later completion without moving it.
+    expect(timeline[0].sequence).toBe(2);
+    expect(state.activities[0].sequence).toBe(2);
+    expect(state.activities[0].updatedSequence).toBe(3);
+    expect(state.activities[0].completedSequence).toBe(3);
   });
 
   test("subtask activities do NOT appear in parent processTimeline", () => {
@@ -482,6 +485,77 @@ describe("Activity timeline entries", () => {
 
     const timeline = state.processTimeline ?? [];
     expect(timeline.length).toBe(0); // Subtask activities don't enter parent timeline
+  });
+});
+
+
+describe("Subtask anchored timelines", () => {
+  function makeSubtask(id: string, taskId: string, status: "running" | "completed" = "running"): StructuredAssistantPart {
+    return { id, kind: "subtask", taskId, title: `Subtask ${taskId}`, status };
+  }
+
+  test("subtask stays at its start position while child events interleave internally", () => {
+    resetSeq();
+    const turnId = "turn-subtask-timeline";
+    let state = createStructuredTurnState(turnId);
+    state = applyStructuredConversationEvent(state, makeEvent(turnId, "turn.started"));
+    state = applyStructuredConversationEvent(state, makeEvent(turnId, "part.started", { part: makeSubtask("p:sub", "task1") } as any));
+    state = applyStructuredConversationEvent(state, makeEvent(turnId, "part.delta", {
+      partId: "p:sub", delta: { kind: "subtask.reasoning.append", segmentId: "s1", text: "Inspect " },
+    } as any));
+    state = applyStructuredConversationEvent(state, makeEvent(turnId, "activity.updated", {
+      activity: { ...makeActivity(turnId, "child-tool"), subtaskId: "task1" },
+    } as any));
+    state = applyStructuredConversationEvent(state, makeEvent(turnId, "part.delta", {
+      partId: "p:sub", delta: { kind: "subtask.markdown.append", text: "Found it" },
+    } as any));
+    state = applyStructuredConversationEvent(state, makeEvent(turnId, "part.delta", {
+      partId: "p:sub", delta: { kind: "subtask.reasoning.append", segmentId: "s1", text: "again" },
+    } as any));
+    state = applyStructuredConversationEvent(state, makeEvent(turnId, "activity.updated", {
+      activity: { ...makeActivity(turnId, "child-tool", "completed"), subtaskId: "task1" },
+    } as any));
+    state = applyStructuredConversationEvent(state, makeEvent(turnId, "part.completed", {
+      part: makeSubtask("p:sub", "task1", "completed"),
+    } as any));
+
+    expect(state.processTimeline).toEqual([{ id: "subtask:p:sub", kind: "subtask", sequence: 2, partId: "p:sub", taskId: "task1" }]);
+    const part = state.parts.find((candidate) => candidate.id === "p:sub") as Extract<StructuredAssistantPart, { kind: "subtask" }>;
+    expect(part.timeline?.map((entry) => entry.kind)).toEqual(["reasoning", "activity", "markdown", "reasoning"]);
+    expect(part.timeline?.map((entry) => entry.sequence)).toEqual([3, 4, 5, 6]);
+    expect(part.activities?.[0].sequence).toBe(4);
+    expect(part.activities?.[0].completedSequence).toBe(7);
+  });
+
+  test("repeated start and completion preserve the first subtask anchor", () => {
+    resetSeq();
+    const turnId = "turn-subtask-anchor";
+    let state = createStructuredTurnState(turnId);
+    state = applyStructuredConversationEvent(state, makeEvent(turnId, "turn.started"));
+    state = applyStructuredConversationEvent(state, makeEvent(turnId, "part.started", { part: makeSubtask("p:sub", "task1") } as any));
+    state = applyStructuredConversationEvent(state, makeEvent(turnId, "part.started", { part: makeSubtask("p:sub", "task1") } as any));
+    state = applyStructuredConversationEvent(state, makeEvent(turnId, "part.completed", { part: { ...makeSubtask("p:sub", "task1", "completed"), sequence: 99 } } as any));
+
+    const part = state.parts.find((candidate) => candidate.id === "p:sub");
+    expect(part?.sequence).toBe(2);
+    expect(state.processTimeline).toHaveLength(1);
+    expect(state.processTimeline?.[0].sequence).toBe(2);
+  });
+
+  test("subtask timeline survives snapshot sanitization", () => {
+    const state = createStructuredTurnState("turn-subtask-sanitize");
+    state.parts.push({
+      id: "p:sub", kind: "subtask", taskId: "task1", title: "Child", status: "running",
+      timeline: [
+        { id: "reasoning:p:sub:3", kind: "reasoning", sequence: 3, partId: "p:sub", segmentId: "s1", text: "Think", status: "running" },
+        { id: "activity:a1", kind: "activity", sequence: 4, activityId: "a1" },
+      ],
+    });
+    state.processTimeline = [{ id: "subtask:p:sub", kind: "subtask", sequence: 2, partId: "p:sub", taskId: "task1" }];
+    const sanitized = sanitizeStructuredTurnState(JSON.parse(JSON.stringify(state)));
+    const part = sanitized?.parts[0] as Extract<StructuredAssistantPart, { kind: "subtask" }>;
+    expect(sanitized?.processTimeline?.[0].kind).toBe("subtask");
+    expect(part.timeline?.map((entry) => entry.kind)).toEqual(["reasoning", "activity"]);
   });
 });
 

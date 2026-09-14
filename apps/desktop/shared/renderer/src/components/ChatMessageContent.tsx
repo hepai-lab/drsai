@@ -402,7 +402,7 @@ const StableMarkdown = memo(
       const a = prev.citations, b = next.citations;
       if (!a || !b) return a === b;
       if (a.length !== b.length) return false;
-      for (let i = 0; i < a.length; i++) if (a[i].id !== b[i].id) return false;
+      for (let i = 0; i < a.length; i++) if (a[i].citationId !== b[i].citationId) return false;
     }
     if (prev.artifactLinks !== next.artifactLinks) {
       const a = prev.artifactLinks, b = next.artifactLinks;

@@ -74,6 +74,7 @@ export interface DesktopSquareSkill {
 
 export interface DesktopSquareSkillDetail extends DesktopSquareSkill {
   body: string;
+  restricted?: boolean;
 }
 
 export interface DesktopSquareSkillsPage {
@@ -644,7 +645,8 @@ function asStringArray(value: unknown): string[] | undefined {
   return value.filter((v): v is string => typeof v === "string");
 }
 
-function normalizeIdentity(value: string | undefined): string {
+// @ts-expect-error: kept for future use
+function _normalizeIdentity(value: string | undefined): string {
   return (value || "").trim().toLowerCase();
 }
 

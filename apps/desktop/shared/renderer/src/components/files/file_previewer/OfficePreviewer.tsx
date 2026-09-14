@@ -238,7 +238,7 @@ async function parseWorkbookToSheets(arrayBuffer: ArrayBuffer): Promise<ExcelShe
           continue;
         }
         const formatted = XLSX.utils.format_cell(cell);
-        cells.push(formatted ?? (cell.w != null ? String(cell.w) : cell.v != null ? String(cell.v) : ""));
+        cells.push(formatted ?? (typeof cell !== "string" && cell.w != null ? String(cell.w) : typeof cell !== "string" && cell.v != null ? String(cell.v) : ""));
       }
       rows.push(cells);
     }
@@ -520,6 +520,7 @@ export function OfficePreviewer(props: PreviewerProps): React.JSX.Element {
       setState({ phase: "error", message: isZh ? "没有可预览的内容。" : "No content available for preview." });
       setRenderError(null);
     }
+    return;
   }, [preview.dataUrl, preview.content, ext, isZh]);
 
   const excelActive = state.phase === "xlsx-ui" ? state.active : 0;

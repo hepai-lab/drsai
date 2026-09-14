@@ -58,7 +58,6 @@ import type {
   DesktopIdeContextSnapshot,
   DesktopMcpContextResult,
   DesktopThread,
-  ExperimentReleaseGateState,
   InstallProgress,
   AgentModelSelection,
   MyDrSaiModelConfig,
@@ -67,7 +66,6 @@ import type {
   RemoteSshHost,
   RemoteSshHostKey,
   RemoteDirectoryEntry,
-  RunInspectionOpenRequest,
   WorkspaceFilePreview,
   WorkspaceProject,
 } from "@shared/desktopApi";
@@ -323,7 +321,6 @@ function AuthenticatedApp({
   ]);
   const [navHistoryIndex, setNavHistoryIndex] = useState(0);
   const [activeRightTab, setActiveRightTab] = useState<RightTab>("files");
-  const [debugViewRequest, setDebugViewRequest] = useState<{ view: "activity" | "app-errors"; nonce: number; runId?: string } | null>(null);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(() => loadRestoredWorkspaceId());
   const [storedWorkspaces, setStoredWorkspaces] = useState<WorkspaceProject[]>(
     [],
@@ -412,16 +409,6 @@ function AuthenticatedApp({
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(true);
-  const [runInspectionRequest, setRunInspectionRequest] = useState<(RunInspectionOpenRequest & { focusedItemId?: string }) | null>(null);
-  const [experimentReleaseGate, setExperimentReleaseGate] = useState<ExperimentReleaseGateState>({
-    schema_version: "opendrsai.experiment-release-gate/1",
-    enabled: false,
-    required_features: ["M31-02", "M31-03", "M31-04", "M31-05"],
-    passed_features: [],
-    blocking_features: ["M31-02", "M31-03", "M31-04", "M31-05"],
-    source_ledger_sha256: null,
-    reason: "release_gate_resource_missing",
-  });
 
   useEffect(() => {
     const openFeedback = (event: KeyboardEvent): void => {
@@ -449,32 +436,6 @@ function AuthenticatedApp({
     return () => { active = false; };
   }, [sessionRestoring, user]);
 
-  useEffect(() => {
-    let disposed = false;
-    void desktopApi.getExperimentReleaseGate()
-      .then((gate) => { if (!disposed) setExperimentReleaseGate(gate); })
-      .catch(() => undefined);
-    return () => { disposed = true; };
-  }, []);
-
-  useEffect(() => {
-    function openRunInspection(event: Event): void {
-      const detail = (event as CustomEvent<Partial<RunInspectionOpenRequest> & { focusedItemId?: string }>).detail;
-      if (!detail || typeof detail.runId !== "string" || !/^[A-Za-z0-9._:-]{1,200}$/.test(detail.runId)) return;
-      if (typeof detail.workspacePath !== "string" || !detail.workspacePath.trim()) return;
-      setRunInspectionRequest({
-        workspacePath: detail.workspacePath,
-        ...(typeof detail.workspaceId === "string" && detail.workspaceId ? { workspaceId: detail.workspaceId } : {}),
-        runId: detail.runId,
-        ...(detail.createExperiment === true && experimentReleaseGate.enabled ? { createExperiment: true } : {}),
-        ...(typeof detail.focusedItemId === "string" ? { focusedItemId: detail.focusedItemId } : {}),
-      });
-      setActiveRightTab("files");
-      setRightPanelCollapsed(false);
-    }
-    window.addEventListener("opendrsai:open-run-inspection", openRunInspection);
-    return () => window.removeEventListener("opendrsai:open-run-inspection", openRunInspection);
-  }, [experimentReleaseGate.enabled]);
   const [sessionScope, setSessionScope] = useState<"workspace" | "all">(() => loadSessionScope());
   const [availableChatAgents, setAvailableChatAgents] = useState<DesktopAgent[]>([]);
   const [agentCatalogLoaded, setAgentCatalogLoaded] = useState(false);
@@ -679,6 +640,9 @@ function AuthenticatedApp({
     timeLabel: formatThreadTime(thread.updatedAt, language),
     workspaceId: resolveThreadWorkspaceId(thread, workspaces),
     workspacePath: thread.workspacePath,
+    sessionScope: thread.sessionScope,
+    remoteWorkerId: thread.remoteWorkerId,
+    remoteWorkerName: thread.remoteWorkerName,
     fork: thread.fork,
     active: thread.id === activeThreadId,
     pinned: thread.pinned,
@@ -1969,7 +1933,6 @@ function AuthenticatedApp({
     const key = `${assistantMessageId}:${action}`;
     await executeRecoveryActionOnce(recoveryActionInFlightRef.current, key, async () => {
       if (action === "diagnostics") {
-        setDebugViewRequest((current) => ({ view: "activity", nonce: (current?.nonce ?? 0) + 1 }));
         setActiveRightTab("files"); setRightPanelCollapsed(false); return;
       }
       if (action === "abandon") {
@@ -2083,7 +2046,10 @@ function AuthenticatedApp({
       const thread = await desktopApi.createThread({
         kind: "chat",
         title: language === "zh" ? `与 ${agent.name} 的新会话` : `New chat with ${agent.name}`,
-        workspacePath: effectiveWorkspacePath,
+        workspacePath: agent.source === "remote" ? undefined : effectiveWorkspacePath,
+        sessionScope: agent.source === "remote" ? "remote_agent" : "workspace",
+        remoteWorkerId: agent.source === "remote" ? agent.id : undefined,
+        remoteWorkerName: agent.source === "remote" ? agent.name : undefined,
         boundAgentId: agent.id,
         boundAgentName: agent.name,
       });
@@ -2117,7 +2083,10 @@ function AuthenticatedApp({
       const thread = await desktopApi.createThread({
         kind: "chat",
         title: language === "zh" ? `与 ${agent.name} 的新会话` : `New chat with ${agent.name}`,
-        workspacePath: effectiveWorkspacePath,
+        workspacePath: agent.source === "remote" ? undefined : effectiveWorkspacePath,
+        sessionScope: agent.source === "remote" ? "remote_agent" : "workspace",
+        remoteWorkerId: agent.source === "remote" ? agent.id : undefined,
+        remoteWorkerName: agent.source === "remote" ? agent.name : undefined,
         boundAgentId: agent.id,
         boundAgentName: agent.name,
       });
@@ -2128,7 +2097,14 @@ function AuthenticatedApp({
     applyChatAgent(agent);
     if (activeThread && !hasConversation) {
       const persistSelection = desktopApi
-        .updateThread({ id: activeThread.id, boundAgentId: agent.id, boundAgentName: agent.name })
+        .updateThread({
+          id: activeThread.id,
+          boundAgentId: agent.id,
+          boundAgentName: agent.name,
+          sessionScope: agent.source === "remote" ? "remote_agent" : "workspace",
+          remoteWorkerId: agent.source === "remote" ? agent.id : undefined,
+          remoteWorkerName: agent.source === "remote" ? agent.name : undefined,
+        })
         .then((updated) => {
           setThreads((current) => current.map((item) => item.id === updated.id ? updated : item));
         });
@@ -2465,21 +2441,35 @@ function AuthenticatedApp({
     const generation = ++threadCatalogRequestGenerationRef.current;
     try {
       const targets = workspaces.filter((workspace) => workspace.id && workspace.path);
-      const settled = await Promise.allSettled(targets.map(async (workspace) => ({
-        workspace,
-        threads: await desktopApi.listThreads({
-          workspacePath: workspace.path,
-          limit: workspace.id === activeWorkspace.id ? 50 : 5,
+      const settled = await Promise.allSettled([
+        ...targets.map(async (workspace) => ({
+          workspace,
+          threads: await desktopApi.listThreads({
+            workspacePath: workspace.path,
+            limit: workspace.id === activeWorkspace.id ? 50 : 5,
+            includeArchived: sessionScope === "all",
+            requiredThreadIds: workspace.id === activeWorkspace.id && activeThreadId
+              ? [activeThreadId]
+              : [],
+            runtimeWorkspaceId: workspace.id,
+          }),
+        })),
+        // Remote-agent sessions have no workspace; fetch them separately so
+        // they survive restarts and sidebar refreshes.
+        desktopApi.listThreads({
+          sessionScope: "remote_agent",
+          limit: 50,
           includeArchived: sessionScope === "all",
-          requiredThreadIds: workspace.id === activeWorkspace.id && activeThreadId
-            ? [activeThreadId]
-            : [],
-          runtimeWorkspaceId: workspace.id,
-        }),
-      })));
+          requiredThreadIds: activeThreadId ? [activeThreadId] : [],
+        }).then((threads) => ({ workspace: null, threads })),
+      ]);
       if (generation !== threadCatalogRequestGenerationRef.current) return;
       const pages = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-      const activePage = pages.find(({ workspace }) => workspace.id === activeWorkspace.id);
+      const remoteAgentThreads = pages
+        .filter((page): page is { workspace: null; threads: DesktopThread[] } => page.workspace === null)
+        .flatMap((page) => page.threads);
+      const workspacePages = pages.filter((page): page is typeof pages[number] & { workspace: NonNullable<typeof page.workspace> } => page.workspace !== null);
+      const activePage = workspacePages.find(({ workspace }) => workspace.id === activeWorkspace.id);
       const activeCatalog = activePage?.threads ?? [];
       const protectedIds = new Set(activeCatalog.filter((thread) => !thread.archived && (
         thread.id === activeThreadId || thread.pinned || thread.status === "running"
@@ -2490,12 +2480,15 @@ function AuthenticatedApp({
           activeCatalog.filter((thread) => !thread.archived && !protectedIds.has(thread.id)).length === 50,
         );
       }
-      const cleanPages = pages.map(({ workspace, threads: page }) => ({
+      const cleanPages = workspacePages.map(({ workspace, threads: page }) => ({
         workspace,
         threads: page.filter((thread) =>
           !deletedThreadIdsRef.current.has(thread.id)
           && !(thread.runtimeSessionId && deletedThreadIdsRef.current.has(thread.runtimeSessionId))),
       }));
+      const cleanRemoteAgentThreads = remoteAgentThreads.filter((thread) =>
+        !deletedThreadIdsRef.current.has(thread.id)
+        && !(thread.runtimeSessionId && deletedThreadIdsRef.current.has(thread.runtimeSessionId)));
       setThreads((current) => mergeWorkspaceSidebarCatalogPages(current, cleanPages, {
         activeThreadId,
         activeWorkspaceId: activeWorkspace.id,
@@ -2503,6 +2496,7 @@ function AuthenticatedApp({
         activeLimit: 50,
         workspacePreviewLimit: 5,
         archivedLimit: Math.max(sessionScope === "all" ? 50 : 0, archivedThreadOffsetRef.current),
+        extraThreads: cleanRemoteAgentThreads,
       }));
     } finally {
       if (generation === threadCatalogRequestGenerationRef.current) setThreadsLoaded(true);
@@ -2922,36 +2916,9 @@ function AuthenticatedApp({
           onSelectWorkspace={(workspaceId) => void handleEmptyChatWorkspaceSelect(workspaceId)}
           onSelectModel={handleChatModelSelect}
           onOpenExternal={(url) => desktopApi.openExternal(url)}
-          onOpenDebug={platformDescriptor?.capabilities.features.debugger !== true ? undefined : (runId, view = "activity") => {
-            setDebugViewRequest((current) => ({ view, nonce: (current?.nonce ?? 0) + 1, ...(runId ? { runId } : {}) }));
-            setRightSidebarComponents((current) => current);
-            setActiveRightTab("files");
-            setRightPanelCollapsed(false);
-          }}
           onOpenAgentSettings={() => {
             setRequestedSettingsPane("agent-defaults");
             navigateTo(MENU_IDS.profile);
-          }}
-          onOpenRun={platformDescriptor?.capabilities.features.runtime !== true ? undefined : (runId, itemId) => {
-            setRunInspectionRequest({
-              workspacePath: effectiveWorkspacePath,
-              workspaceId: effectiveRuntimeWorkspaceId,
-              runId,
-              ...(itemId ? { focusedItemId: itemId } : {}),
-            });
-            setActiveRightTab("files");
-            setRightPanelCollapsed(false);
-          }}
-          onCreateRunExperiment={platformDescriptor?.capabilities.features.runtime !== true || !experimentReleaseGate.enabled ? undefined : (runId, itemId) => {
-            setRunInspectionRequest({
-              workspacePath: effectiveWorkspacePath,
-              workspaceId: effectiveRuntimeWorkspaceId,
-              runId,
-              createExperiment: true,
-              ...(itemId ? { focusedItemId: itemId } : {}),
-            });
-            setActiveRightTab("files");
-            setRightPanelCollapsed(false);
           }}
           onRetryMessage={async (assistantMessageId, mode) => {
             const assistantIndex = chat.messages.findIndex((message) => message.id === assistantMessageId);
@@ -3057,15 +3024,6 @@ function AuthenticatedApp({
           workspacePath={activeWorkspace.path}
           onOpenSourceTask={(task) => {
             setDeliveryTask(task);
-          }}
-          onOpenSourceRun={(task, runId) => {
-            const sourceWorkspacePath = task.workspacePath || effectiveWorkspacePath;
-            const sourceWorkspaceId = sortedWorkspaces.find((workspace) =>
-              getComparablePath(workspace.path) === getComparablePath(sourceWorkspacePath),
-            )?.id || effectiveRuntimeWorkspaceId;
-            setRunInspectionRequest({ workspacePath: sourceWorkspacePath, workspaceId: sourceWorkspaceId, runId });
-            setActiveRightTab("files");
-            setRightPanelCollapsed(false);
           }}
           onContinueQuestion={(question) => {
             setPendingChatInput(question);
@@ -4607,7 +4565,6 @@ function ResultsCenterView({
   workspaceName,
   workspacePath,
   onOpenSourceTask,
-  onOpenSourceRun,
   onContinueQuestion,
 }: {
   language: AppLanguage;
@@ -4615,7 +4572,6 @@ function ResultsCenterView({
   workspaceName: string;
   workspacePath: string;
   onOpenSourceTask: (task: DesktopBackgroundTask) => void;
-  onOpenSourceRun: (task: DesktopBackgroundTask, runId: string) => void;
   onContinueQuestion: (question: string) => void;
 }): React.JSX.Element {
   const zh = language === "zh";
@@ -5911,10 +5867,6 @@ function ResultsCenterView({
                               const sourceTask = tasks.find((task) => task.id === artifact.sourceTaskId);
                               if (sourceTask) onOpenSourceTask(sourceTask);
                             }}>{zh ? "返回原任务" : "Open source task"}</button>
-                            <button type="button" data-testid="results-open-source-run" onClick={() => {
-                              const sourceTask = tasks.find((task) => task.id === artifact.sourceTaskId);
-                              if (sourceTask) onOpenSourceRun(sourceTask, artifact.provenance!.sourceRunId);
-                            }}>{zh ? "查看 Run" : "Open Run"}</button>
                             <button type="button" data-testid="results-verify-provenance" disabled={provenanceState?.artifactId === artifact.id && provenanceState.state === "checking"} onClick={() => void verifyArtifactSource(artifact)}>{zh ? "验证来源" : "Verify source"}</button>
                           </div>
                           {provenanceState?.artifactId === artifact.id ? <output data-testid="results-provenance-status" data-state={provenanceState.state} role="status">{provenanceState.message}</output> : null}

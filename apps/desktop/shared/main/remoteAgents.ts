@@ -89,7 +89,7 @@ function decodeStore(value: unknown): RemoteAgentStore {
             updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : new Date().toISOString(),
           } satisfies StoredRemoteAgent;
         })
-        .filter((item): item is StoredRemoteAgent => Boolean(item))
+        .filter(Boolean) as StoredRemoteAgent[]
     : [];
   return { agents };
 }

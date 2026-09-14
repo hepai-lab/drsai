@@ -132,6 +132,18 @@ class HepAIWorkerAgent(DrSaiAgent):
         stream_timeout: float = 300.0,
         **kwargs):
         
+        # Remote-worker agents talk to the DDF worker over HTTP using
+        # model_remote_configs; the DrSAIAgent base still requires a
+        # model_client. Derive one from the remote config (same url/key/model
+        # the worker stream uses) instead of raising "Please provide a
+        # model_client." when no local credential is configured.
+        if model_client is None and model_remote_configs:
+            model_client = HepAIChatCompletionClient(
+                model=str(model_remote_configs.get("name", "hepai/drsai")),
+                api_key=str(model_remote_configs.get("api_key") or ""),
+                base_url=str(model_remote_configs.get("url") or "https://ddf.ihep.ac.cn/apiv2"),
+            )
+
         super().__init__(
             name = name, 
             model_client = model_client,

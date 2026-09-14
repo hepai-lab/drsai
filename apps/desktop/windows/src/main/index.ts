@@ -283,6 +283,7 @@ import {
   getRuntimeThreadSnapshotEnvelope,
   subscribeRuntimeThreadSnapshot,
 } from "../../../shared/main/threadRuntimeSubscription";
+import type { DesktopThreadSnapshotEnvelope } from "../../../shared/api/desktopApi";
 import { coalesceHydrationEnvelope, persistedThreadSnapshotEnvelope, threadSnapshotHasConversation } from "../../../shared/api/threadSnapshotHydration";
 import { runtimeSessionIdForLookup } from "../../../shared/api/threadSidebarCatalog";
 import { setThreadArchived } from "./threadArchive";
@@ -5722,6 +5723,9 @@ function registerIpc(): void {
       ...(typeof value.runtimeWorkspaceId === "string" && /^[A-Za-z0-9_.:-]{1,160}$/.test(value.runtimeWorkspaceId)
         ? { runtimeWorkspaceId: value.runtimeWorkspaceId }
         : {}),
+      ...(value.sessionScope === "remote_agent" || value.sessionScope === "workspace"
+        ? { sessionScope: value.sessionScope }
+        : {}),
     } : undefined;
     if (request?.runtimeWorkspaceId) {
       void ensureRuntimeWorkspaceCatalogSubscription(event.sender, request.runtimeWorkspaceId).catch(() => undefined);
@@ -5733,6 +5737,7 @@ function registerIpc(): void {
       ? {
           ...((options as { refresh?: unknown }).refresh === true ? { refresh: true } : {}),
           ...((options as { preferCache?: unknown }).preferCache === true ? { preferCache: true } : {}),
+          ...((options as { force?: unknown }).force === true ? { force: true } : {}),
         }
       : {},
   ));
@@ -5740,6 +5745,7 @@ function registerIpc(): void {
     getAgentCatalogSnapshot(options && typeof options === "object" ? {
       ...((options as { refresh?: unknown }).refresh === true ? { refresh: true } : {}),
       ...((options as { preferCache?: unknown }).preferCache === true ? { preferCache: true } : {}),
+      ...((options as { force?: unknown }).force === true ? { force: true } : {}),
     } : {}));
   secureHandle("desktop:get-platform-agent-status", () => getPlatformAgentStatus());
   secureHandle("desktop:set-default-agent", (_event, agentId) =>
@@ -5793,7 +5799,7 @@ function registerIpc(): void {
   );
   secureHandle("desktop:delete-thread", async (_event, threadId) => {
     try {
-      return await deleteThreadAndRuntimeSession(threadId);
+      return await deleteThreadAndRuntimeSession(threadId as string);
     } catch (error) {
       console.error("[desktop:delete-thread] failed", threadId, error);
       throw error;
@@ -5902,7 +5908,7 @@ function registerIpc(): void {
       if (threadSnapshotHasConversation(persisted)) {
         return persistedThreadSnapshotEnvelope(threadId, persisted, thread?.runtimeSessionId);
       }
-      let runtimeEnvelope = null;
+      let runtimeEnvelope: DesktopThreadSnapshotEnvelope | null = null;
       if (runtimeSessionIdForLookup(thread ?? { runtimeSessionId: undefined })) {
         try {
           runtimeEnvelope = await getRuntimeThreadSnapshotEnvelope(thread!, controller.signal, options);

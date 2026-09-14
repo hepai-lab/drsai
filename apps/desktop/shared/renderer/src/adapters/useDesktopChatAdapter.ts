@@ -3219,7 +3219,7 @@ function finalizeStructuredTurn(
   if (status === "cancelled") return applyLocalStructuredEvent(state, { type: "turn.cancelled" });
   for (const part of state.parts) {
     if (part.status === "running" || part.status === "pending") {
-      state = applyLocalStructuredEvent(state, { type: "part.completed", part: { ...part, status: "completed", final: true } });
+      state = applyLocalStructuredEvent(state, { type: "part.completed", part: { ...part, status: "completed", ...(part.kind === "markdown" ? { final: true } : {}) } });
     }
   }
   return applyLocalStructuredEvent(state, { type: "turn.completed" });

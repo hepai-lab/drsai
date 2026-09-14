@@ -422,7 +422,7 @@ class RuntimeEngine:
                   archived INTEGER NOT NULL DEFAULT 0, lifecycle TEXT NOT NULL DEFAULT 'active',
                   revision INTEGER NOT NULL DEFAULT 1, agent_definition TEXT, backend_id TEXT,
                   model TEXT, reasoning_effort TEXT, plan_mode INTEGER,
-                  removed_at TEXT, origin_kind TEXT, origin_provider TEXT, origin_binding_id TEXT,
+                  remote_worker_id TEXT, remote_worker_name TEXT, removed_at TEXT, origin_kind TEXT, origin_provider TEXT, origin_binding_id TEXT,
                   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_runtime_sessions_workspace ON runtime_sessions(workspace_id, updated_at DESC);
@@ -586,6 +586,11 @@ class RuntimeEngine:
                 db.execute("ALTER TABLE runtime_sessions ADD COLUMN reasoning_effort TEXT")
             if "plan_mode" not in session_columns:
                 db.execute("ALTER TABLE runtime_sessions ADD COLUMN plan_mode INTEGER")
+            if "remote_worker_id" not in session_columns:
+                db.execute("ALTER TABLE runtime_sessions ADD COLUMN remote_worker_id TEXT")
+            if "remote_worker_name" not in session_columns:
+                db.execute("ALTER TABLE runtime_sessions ADD COLUMN remote_worker_name TEXT")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_runtime_sessions_remote_worker ON runtime_sessions(remote_worker_id, updated_at DESC)")
             if "removed_at" not in session_columns:
                 db.execute("ALTER TABLE runtime_sessions ADD COLUMN removed_at TEXT")
             if "origin_kind" not in session_columns:
@@ -865,6 +870,8 @@ class RuntimeEngine:
         model: str | None = None,
         reasoning_effort: str | None = None,
         plan_mode: bool | None = None,
+        remote_worker_id: str | None = None,
+        remote_worker_name: str | None = None,
     ) -> dict[str, Any]:
         if not workspace_id or not self.workspace_exists(workspace_id):
             raise KeyError("Unknown or closed Workspace")
@@ -875,11 +882,11 @@ class RuntimeEngine:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 "INSERT INTO runtime_sessions(session_id,workspace_id,worktree_id,title,archived,lifecycle,"
-                "revision,agent_definition,backend_id,model,reasoning_effort,plan_mode,removed_at,created_at,updated_at) "
-                "VALUES(?,?,?,?,0,'active',1,?,?,?,?,?,NULL,?,?)",
+                "revision,agent_definition,backend_id,model,reasoning_effort,plan_mode,remote_worker_id,remote_worker_name,removed_at,created_at,updated_at) "
+                "VALUES(?,?,?,?,0,'active',1,?,?,?,?,?,?,?,NULL,?,?)",
                 (session_id, workspace_id, worktree_id, title[:240] or "New session",
                  agent_definition, backend_id, model, reasoning_effort,
-                 None if plan_mode is None else int(plan_mode), now, now),
+                 None if plan_mode is None else int(plan_mode), remote_worker_id, remote_worker_name, now, now),
             )
             self.conversation_journal.append_event_in_transaction(
                 db,
@@ -1437,11 +1444,17 @@ class RuntimeEngine:
             raise KeyError("Session not found")
         return self._session(row)
 
-    def list_sessions(self, workspace_id: str, *, offset: int = 0, limit: int = 50, archived: bool | None = False) -> dict[str, Any]:
-        if not workspace_id or not self.workspace_exists(workspace_id):
-            raise KeyError("Unknown or closed Workspace")
-        where = "workspace_id=?"
-        args: list[Any] = [workspace_id]
+    def list_sessions(self, workspace_id: str | None = None, *, remote_worker_id: str | None = None, offset: int = 0, limit: int = 50, archived: bool | None = False) -> dict[str, Any]:
+        if bool(workspace_id) == bool(remote_worker_id):
+            raise ValueError("Exactly one Session owner is required")
+        if workspace_id:
+            if not self.workspace_exists(workspace_id):
+                raise KeyError("Unknown or closed Workspace")
+            where = "workspace_id=? AND remote_worker_id IS NULL"
+            args: list[Any] = [workspace_id]
+        else:
+            where = "remote_worker_id=?"
+            args = [remote_worker_id]
         if archived is False:
             where += " AND lifecycle='active'"
         elif archived is True:
@@ -5039,6 +5052,8 @@ class RuntimeEngine:
             "model": row["model"] if "model" in row.keys() else None,
             "reasoning_effort": row["reasoning_effort"] if "reasoning_effort" in row.keys() else None,
             "plan_mode": bool(row["plan_mode"]) if "plan_mode" in row.keys() and row["plan_mode"] is not None else None,
+            "remote_worker_id": row["remote_worker_id"] if "remote_worker_id" in row.keys() else None,
+            "remote_worker_name": row["remote_worker_name"] if "remote_worker_name" in row.keys() else None,
             "removed_at": row["removed_at"] if "removed_at" in row.keys() else None,
             "created_at": row["created_at"], "updated_at": row["updated_at"],
         }

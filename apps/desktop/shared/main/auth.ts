@@ -212,6 +212,23 @@ export async function requireAuthContext(): Promise<AuthContext> {
 
 registerAuthContextProvider(requireAuthContext);
 
+/**
+ * Best-effort access token for gateway-mediated platform calls (remote DDF
+ * workers). Never throws: returns null when no usable session exists so the
+ * caller can fall back to other credential sources. Refreshes the stored SSO
+ * session when the access token is inside its refresh window.
+ */
+export async function getSessionAccessToken(): Promise<string | null> {
+  try {
+    const stored = readStoredSession();
+    if (!stored || isExpired(stored) || isDisallowedOfflineSession(stored)) return null;
+    const refreshed = await refreshSsoSessionIfNeeded(stored, true);
+    return refreshed?.accessToken || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function login(rawRequest: unknown): Promise<LoginResult> {
   const request = normalizeLoginRequest(rawRequest);
   if ("message" in request) {

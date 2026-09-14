@@ -238,7 +238,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         max_tokens=64000,       # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
-        vision=False,
+        vision=True,
     ),
     # ── OpenAI GPT ───────────────────────────────────────────────────
     "gpt-5.6-luna": ModelEntry(
@@ -306,7 +306,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
     # Sources: litellm model_prices_and_context_window.json, Anthropic docs
     "claude-sonnet-4-6": ModelEntry(
         model="anthropic/claude-sonnet-4-6",
-        token_limit=200000,      # context window: 200K (input+output shared)
+        token_limit=1000000,      # context window: 200K (input+output shared)
         max_tokens=64000,       # max output per request
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),

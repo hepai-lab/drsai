@@ -199,6 +199,9 @@ function sidebarThreadWorkspaceKey(
 ): string {
   const registered = workspaces.find((workspace) => workspaceOwnsSidebarThread(workspace, thread));
   if (registered) return registered.id;
+  if (thread.sessionScope === "remote_agent" && typeof thread.remoteWorkerId === "string" && thread.remoteWorkerId) {
+    return `remote-agent:${thread.remoteWorkerId}`;
+  }
   const path = comparableWorkspacePath(thread.workspacePath);
   return path ? `path:${path}` : "unassigned";
 }
@@ -231,9 +234,13 @@ export function boundWorkspaceSidebarThreads(
   const recent = sorted.filter((thread) => {
     if (thread.archived || protectedIds.has(thread.id)) return false;
     const key = sidebarThreadWorkspaceKey(thread, options.workspaces);
-    const limit = key === options.activeWorkspaceId
-      ? options.activeLimit
-      : options.workspacePreviewLimit;
+    // Remote-agent threads live in their own per-worker bucket with a generous
+    // cap so they never fall out of the sidebar like generic "unassigned" rows.
+    const limit = key.startsWith("remote-agent:")
+      ? Math.max(options.activeLimit, 50)
+      : key === options.activeWorkspaceId
+        ? options.activeLimit
+        : options.workspacePreviewLimit;
     const count = counts.get(key) ?? 0;
     if (count >= limit) return false;
     counts.set(key, count + 1);
@@ -250,12 +257,16 @@ export function boundWorkspaceSidebarThreads(
 export function mergeWorkspaceSidebarCatalogPages(
   current: readonly DesktopThread[],
   pages: readonly { workspace: SidebarWorkspace; threads: readonly DesktopThread[] }[],
-  options: Parameters<typeof boundWorkspaceSidebarThreads>[1],
+  options: Parameters<typeof boundWorkspaceSidebarThreads>[1] & {
+    /** Workspace-independent threads (e.g. remote-agent sessions) merged into every refresh. */
+    extraThreads?: readonly DesktopThread[];
+  },
 ): DesktopThread[] {
   const preserved = current.filter((thread) =>
     !pages.some(({ workspace }) => workspaceOwnsSidebarThread(workspace, thread)));
+  const { extraThreads, ...boundOptions } = options;
   return boundWorkspaceSidebarThreads(
-    [...pages.flatMap(({ threads }) => threads), ...preserved],
-    options,
+    [...pages.flatMap(({ threads }) => threads), ...extraThreads ?? [], ...preserved],
+    boundOptions,
   );
 }

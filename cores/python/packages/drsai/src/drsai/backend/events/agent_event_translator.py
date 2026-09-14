@@ -1,9 +1,13 @@
 """Translate autogen events from ``DrSaiAssistant.run_stream`` to gateway events.
 
+Shared, backend-agnostic event layer: imported by every gateway surface
+(desktop, TUI, remote worker, ...).  It deliberately lives outside any single
+gateway package so that no gateway has to import another gateway.
+
 Each translation produces zero or more ``(event_type, payload)`` tuples that
-the prompt handler emits via :func:`server._emit`. The translator is **pure**
-(no I/O, no global state apart from a per-turn :class:`TurnState`) so it's
-trivially testable.
+the caller (e.g. the TUI prompt handler) emits via its own ``_emit``. The
+translator is **pure** (no I/O, no global state apart from a per-turn
+:class:`TurnState`) so it's trivially testable.
 
 Event mapping (matches design doc Section "关键事件翻译表"):
 
