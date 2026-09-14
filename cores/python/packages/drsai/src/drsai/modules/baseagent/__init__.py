@@ -1,4 +1,4 @@
-from drsai.modules.baseagent.drsaiagent import DrSaiAgent
+from drsai.modules.baseagent.drsaiagent import DrSaiAgent, ModelEmptyStreamError
 from drsai.modules.baseagent.user_proxy import DrSaiUserProxyAgent
 
 from autogen_agentchat.base import (
