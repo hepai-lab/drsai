@@ -14,6 +14,7 @@ from typing import (
     # TYPE_CHECKING,
     )
 import json, re, uuid, shutil
+import base64, io, zipfile
 import asyncio, traceback
 from pydantic import BaseModel
 from pathlib import Path
@@ -1578,6 +1579,84 @@ class DrSaiAssistant(DrSaiAgent):
 
         return installed_names
 
+    def _install_inline_skills(
+        self,
+        inline_skills: List[Dict[str, Any]],
+    ) -> List[str]:
+        """Install Desktop inline skill packages into the user's skills_dir.
+
+        Desktop remote agents cannot reach the local gateway, so the renderer
+        transfers the complete skill package inside the request metadata
+        (``skills`` = ``[{id, source, name, zip_base64, content?}]``):
+
+        - ``zip_base64`` — the full ZIP downloaded from the Skills Square
+          (``/api/skills/{slug}/download``). It is decoded and extracted
+          completely (``SKILL.md`` + ``scripts/`` / ``references/`` /
+          ``assets/``), so resource-bearing skills work end-to-end.
+        - ``content`` — SKILL.md text only; fallback for md-only square
+          entries or when the ZIP download failed on the renderer side.
+
+        Returns the list of installed skill names (for the user notification).
+        """
+        target_skills_dir = self._user_profile_manager.skills_dir
+        target_skills_dir.mkdir(parents=True, exist_ok=True)
+
+        installed_names: List[str] = []
+        for item in inline_skills or []:
+            if not isinstance(item, dict):
+                continue
+            slug = str(item.get("id") or item.get("slug") or "").strip()
+            if not slug:
+                continue
+            name = str(item.get("name") or slug).strip() or slug
+            dst_dir = target_skills_dir / slug
+            try:
+                zip_base64 = item.get("zip_base64")
+                if isinstance(zip_base64, str) and zip_base64.strip():
+                    payload = zip_base64.strip()
+                    if payload.startswith("data:"):
+                        payload = payload.split(",", 1)[-1]
+                    raw_zip = base64.b64decode(payload, validate=True)
+                    with zipfile.ZipFile(io.BytesIO(raw_zip)) as zf:
+                        prefix = _detect_zip_prefix(zf)
+                        dst_dir.mkdir(parents=True, exist_ok=True)
+                        for member in zf.namelist():
+                            if member.endswith("/"):
+                                continue
+                            rel = member
+                            if prefix and rel.startswith(prefix):
+                                rel = rel[len(prefix):].lstrip("/")
+                            if not rel:
+                                continue
+                            out_path = dst_dir / rel
+                            out_path.parent.mkdir(parents=True, exist_ok=True)
+                            out_path.write_bytes(zf.read(member))
+                    if (dst_dir / "SKILL.md").exists():
+                        installed_names.append(name)
+                        logger.info(
+                            f"[remote-skills] installed inline skill package '{name}' "
+                            f"(slug={slug}, files={len(zf.namelist())}) -> {dst_dir}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[remote-skills] inline zip for '{slug}' contained no SKILL.md; removing dir"
+                        )
+                        shutil.rmtree(dst_dir, ignore_errors=True)
+                    continue
+
+                content = item.get("content")
+                if isinstance(content, str) and content.strip():
+                    dst_dir.mkdir(parents=True, exist_ok=True)
+                    (dst_dir / "SKILL.md").write_text(content, encoding="utf-8")
+                    installed_names.append(name)
+                    logger.info(
+                        f"[remote-skills] installed inline skill '{name}' (slug={slug}, SKILL.md only) -> {dst_dir}"
+                    )
+            except Exception as e:
+                logger.error(f"[remote-skills] failed to install inline skill '{slug}': {e}")
+                shutil.rmtree(dst_dir, ignore_errors=True)
+        return installed_names
+
     async def _install_attached_skills_from_task(
         self,
         task: str | BaseChatMessage | Sequence[BaseChatMessage] | None,
@@ -1589,6 +1668,7 @@ class DrSaiAssistant(DrSaiAgent):
         """
         skill_proxy = None
         attached_skills = None
+        inline_skills: List[Dict[str, Any]] = []
         target_msg = None
 
         if isinstance(task, BaseChatMessage):
@@ -1601,7 +1681,36 @@ class DrSaiAssistant(DrSaiAgent):
                     if sp and aks:
                         skill_proxy = sp
                         attached_skills = aks
+                    raw_inline = msg.metadata.get("skills")
+                    if raw_inline:
+                        try:
+                            decoded = (
+                                json.loads(raw_inline)
+                                if isinstance(raw_inline, str)
+                                else raw_inline
+                            )
+                            if isinstance(decoded, list):
+                                inline_skills = [
+                                    item for item in decoded if isinstance(item, dict)
+                                ]
+                        except (TypeError, ValueError):
+                            logger.warning(
+                                "[remote-skills] could not decode 'skills' metadata; skipping inline skills"
+                            )
                     target_msg = msg  # last message gets the notification
+        # Inline content protocol (Desktop square-skill): entries carrying
+        # ``content`` are written directly into skills_dir without any
+        # download — remote workers cannot reach the Desktop gateway.
+        if inline_skills:
+            try:
+                installed_inline = self._install_inline_skills(inline_skills)
+                if installed_inline and target_msg is not None:
+                    names_text = "、".join(installed_inline)
+                    target_msg.content = (target_msg.content or "") + (
+                        "\n\n已为你安装以下技能（可通过 Skill 工具调用）：" + names_text
+                    )
+            except Exception as e:
+                logger.error(f"Error installing inline skills: {e}")
         if not skill_proxy or not attached_skills:
             return
         try:
