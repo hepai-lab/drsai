@@ -347,6 +347,43 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
   return requestId;
 }
 
+/**
+ * User Stop unlocks the composer immediately, but Run cleanup (e.g. image HTTP
+ * still in `to_thread`) can take a long time. Release this turn's outbox as soon
+ * as cancel is accepted so the next send on the same Session is not blocked by
+ * "awaiting Runtime acknowledgement".
+ */
+async function releaseCancelledTurnOutbox(turn: ChatTurnRecord): Promise<void> {
+  let runtimeSessionId = turn.runtimeSessionId;
+  if (!runtimeSessionId) {
+    runtimeSessionId = (await listThreads()).find((candidate) => candidate.id === turn.sessionId)?.runtimeSessionId;
+  }
+  if (!runtimeSessionId) return;
+  await sessionSyncState.completeOutbox(runtimeSessionId, `desktop:${turn.requestId}`).catch(() => undefined);
+}
+
+/** Free an outbox whose owning Desktop turn is gone or already cancelling. */
+async function releaseStaleSessionOutbox(runtimeSessionId: string): Promise<boolean> {
+  const outbox = (await sessionSyncState.get(runtimeSessionId)).outbox;
+  if (!outbox) return false;
+  const match = /^desktop:(.+)$/.exec(outbox.sourceMessageId);
+  const ownerRequestId = match?.[1];
+  const owner = ownerRequestId ? chatTurns.get(ownerRequestId) : undefined;
+  if (owner && owner.phase !== "cancelling" && !owner.cancelRequested && !owner.controller.signal.aborted) {
+    return false;
+  }
+  await sessionSyncState.completeOutbox(runtimeSessionId, outbox.sourceMessageId).catch(() => undefined);
+  return true;
+}
+
+function isSessionOutboxBusyError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { code?: unknown }).code;
+  if (code === "session_outbox_busy") return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("awaiting Runtime acknowledgement");
+}
+
 export async function cancelChatTurn(rawIdentity: unknown): Promise<ChatTurnCancelResult> {
   const identity = validateChatTurnIdentity(rawIdentity);
   if (!identity) return { accepted: false, state: "not_found" };
@@ -360,15 +397,28 @@ export async function cancelChatTurn(rawIdentity: unknown): Promise<ChatTurnCanc
     if (!run) return { accepted: false, state: "not_found" };
     if (run.status === "completed") return { accepted: false, state: "completed" };
     if (run.status === "failed") return { accepted: false, state: "failed" };
-    if (run.status === "cancelled") return { accepted: true, state: "cancelled" };
+    if (run.status === "cancelled") {
+      if (thread.runtimeSessionId) {
+        await sessionSyncState.completeOutbox(thread.runtimeSessionId, `desktop:${identity.requestId}`).catch(() => undefined);
+      }
+      return { accepted: true, state: "cancelled" };
+    }
     await resolved.client.cancelAgentRun(runId);
+    if (thread.runtimeSessionId) {
+      await sessionSyncState.completeOutbox(thread.runtimeSessionId, `desktop:${identity.requestId}`).catch(() => undefined);
+    }
     return { accepted: true, state: "cancelling" };
   }
   if (!turn) return { accepted: false, state: "not_found" };
-  if (turn.phase === "cancelling") return { accepted: true, state: "cancelling" };
+  if (turn.phase === "cancelling") {
+    await releaseCancelledTurnOutbox(turn);
+    return { accepted: true, state: "cancelling" };
+  }
   const requestId = identity.requestId;
   turn.cancelRequested = true;
   turn.phase = "cancelling";
+  // Free the Session outbox before Runtime cancel finishes so Stop → send works.
+  await releaseCancelledTurnOutbox(turn);
   const runtimeTarget = turn.runtime;
   if (runtimeTarget) void runtimeTarget.client.cancelAgentRun(runtimeTarget.runId).catch(() => undefined);
   turn.controller.abort("user");
@@ -1962,7 +2012,7 @@ async function runRuntimeBackendChat(
   if (!isRemoteWorker) bindRuntimeThreadToWorkspace(displaySessionId, resolved.workspaceId, runtimeSessionId);
   const sourceMessageId = `desktop:${requestId}`;
   const idempotencyKey = `desktop-runtime-${requestId}`;
-  await sessionSyncState.beginOutbox(runtimeSessionId, {
+  const outboxEntry = {
     sourceMessageId,
     idempotencyKey,
     payloadHash: sessionPayloadHash({
@@ -1972,7 +2022,18 @@ async function runRuntimeBackendChat(
       })),
       agentDefinition,
     }),
-  });
+  };
+  try {
+    await sessionSyncState.beginOutbox(runtimeSessionId, outboxEntry);
+  } catch (error) {
+    // Stop unlocks the UI before the previous Run fully unwinds. If that turn
+    // is already cancelling (or its map entry was dropped), supersede its
+    // outbox so the user can send again on the same Session.
+    if (!isSessionOutboxBusyError(error) || !(await releaseStaleSessionOutbox(runtimeSessionId))) {
+      throw error;
+    }
+    await sessionSyncState.beginOutbox(runtimeSessionId, outboxEntry);
+  }
   let activeRuntimeRunId: string | undefined;
   let sourceMessageObserved = false;
   let runtimeTerminalStatus: "completed" | "failed" | "cancelled" | undefined;

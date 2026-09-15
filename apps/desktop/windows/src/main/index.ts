@@ -4579,7 +4579,7 @@ async function inspectPickedFileWithTimeout(path: string, category: PickedFileDe
   }
 }
 
-const PICKED_IMAGE_PREVIEW_MAX_BYTES = 1_500_000;
+const PICKED_IMAGE_PREVIEW_MAX_BYTES = 8_000_000;
 
 function pickedImageMime(extension: string): string | null {
   if (extension === ".png") return "image/png";

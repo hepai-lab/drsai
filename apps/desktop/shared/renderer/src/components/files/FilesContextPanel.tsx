@@ -605,7 +605,7 @@ export function FilesContextPanel({
         path: node.path,
         // Images need the full file; gateway/text defaults (~220KB) truncate
         // JPEG/PNG payloads and only the top of the picture decodes.
-        maxBytes: node.previewKind === "image" ? 1_500_000 : 220_000,
+        maxBytes: node.previewKind === "image" ? 8_000_000 : 220_000,
       });
       if (previewRequestPathRef.current !== node.path) return;
       setPreview(nextPreview);
@@ -668,7 +668,7 @@ export function FilesContextPanel({
         workspacePath,
         workspaceId,
         path: selectedNode.path,
-        maxBytes: selectedNode.previewKind === "image" ? 1_500_000 : 220_000,
+        maxBytes: selectedNode.previewKind === "image" ? 8_000_000 : 220_000,
         mode,
       });
       if (previewRequestPathRef.current !== selectedNode.path) return;

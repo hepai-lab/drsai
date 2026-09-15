@@ -18,82 +18,46 @@ from .defaults import (
 )
 from .loader import ConfigError, default_config_path, load_user_config
 from .model_catalog import AgentModelPolicy, AgentModelSelection, ModelRef
+from .model_defaults import (
+    DEFAULT_IMAGE_GENERATION_MODEL,
+    DEFAULT_LLM_MODE_CONFIG,
+    DEFAULT_SPECIALIZED_PRODUCT_MODELS,
+)
 from .writer import update_current_agent, update_model_selection, upsert_provider
 
 
-# ── Specialised product models (not in DEFAULT_LLM_MODE_CONFIG) ─────────────
-# These models serve non-chat roles (image generation, TTS, STT, and the
-# image-understanding model gpt-5.6-luna).  They are merged into the product
-# catalog alongside the chat models that are dynamically discovered from
-# ``run_drsai_agent_factory.DEFAULT_LLM_MODE_CONFIG``.
-_SPECIALIZED_PRODUCT_MODELS: dict[str, dict[str, object]] = {
-    "gpt-5.6-luna": {
-        "input_modalities": ["text", "image"], "output_modalities": ["text"],
-        "api_protocol": "openai", "enabled": True,
-        "capabilities": ["chat", "tool_calling"],
-    },
-    "gemini-3.1-flash-lite-image": {
-        "alias": "Nano Banana 2 Lite",
-        "input_modalities": ["text", "image"], "output_modalities": ["text", "image"],
-        "api_protocol": "openai", "enabled": True,
-        "capabilities": ["chat", "image_generation", "image_edit"],
-    },
-    "tts-1": {
-        "input_modalities": ["text"], "output_modalities": ["audio"],
-        "api_protocol": "openai", "enabled": True,
-        "capabilities": ["text_to_speech"],
-    },
-    "whisper-1": {
-        "input_modalities": ["audio"], "output_modalities": ["text"],
-        "api_protocol": "openai", "enabled": True,
-        "capabilities": ["speech_to_text"],
-    },
-}
-
-
 def _build_product_models() -> dict[str, dict[str, object]]:
-    """Build the HepAI product model catalog from ``DEFAULT_LLM_MODE_CONFIG``.
+    """Build the HepAI product model catalog from ``model_defaults``.
 
-    Chat-capable models are dynamically discovered from the agent factory's
-    LLM catalog (``run_drsai_agent_factory.DEFAULT_LLM_MODE_CONFIG``) so the
-    desktop model picker stays in sync with the backend's source of truth.
-
-    Specialised models (TTS, STT, image generation, gpt-5.6-luna) are merged in
-    from ``_SPECIALIZED_PRODUCT_MODELS`` because they serve non-chat roles
-    and are not part of the LLM catalog.
-
-    The import is deferred to avoid a circular import:
-    ``drsai.config`` → ``drsai.backend.run_drsai_agent_factory`` → ``drsai.config``.
-    By the time this function runs (called from ``ensure_desktop_runtime_config``
-    during gateway lifespan), all modules are fully loaded.
+    Chat-capable models come from ``DEFAULT_LLM_MODE_CONFIG``. Specialised
+    role models (image generation candidates, TTS, STT, image-understanding
+    overrides) come from ``DEFAULT_SPECIALIZED_PRODUCT_MODELS`` in the same
+    module — one backend source of truth, no scattered Desktop-only catalogs.
     """
     product_models: dict[str, dict[str, object]] = {}
 
-    try:
-        from drsai.backend.run_drsai_agent_factory import DEFAULT_LLM_MODE_CONFIG  # noqa: WPS433
+    for alias, entry in DEFAULT_LLM_MODE_CONFIG.items():
+        input_modalities: list[str] = ["text"]
+        if getattr(entry, "vision", False):
+            input_modalities.append("image")
 
-        for alias, entry in DEFAULT_LLM_MODE_CONFIG.items():
-            input_modalities: list[str] = ["text"]
-            if getattr(entry, "vision", False):
-                input_modalities.append("image")
+        capabilities = ["chat", "tool_calling"]
+        reasoning = getattr(entry, "reasoning", None)
+        if reasoning is not None and getattr(reasoning, "supported", False):
+            capabilities.append("reasoning")
 
-            capabilities = ["chat", "tool_calling"]
-            reasoning = getattr(entry, "reasoning", None)
-            if reasoning is not None and getattr(reasoning, "supported", False):
-                capabilities.append("reasoning")
+        client_type = getattr(entry, "client_type", "auto")
+        api_protocol = client_type if client_type != "auto" else "openai"
 
-            client_type = getattr(entry, "client_type", "auto")
-            api_protocol = client_type if client_type != "auto" else "openai"
+        product_models[alias] = {
+            "input_modalities": input_modalities,
+            "output_modalities": ["text"],
+            "api_protocol": api_protocol,
+            "enabled": True,
+            "capabilities": capabilities,
+        }
 
-            product_models[alias] = {
-                "input_modalities": input_modalities,
-                "output_modalities": ["text"],
-                "api_protocol": api_protocol,
-                "enabled": True,
-                "capabilities": capabilities,
-            }
-    except Exception:  # pragma: no cover — fallback if factory import fails
-        # Minimal fallback so the desktop still boots with a basic catalog.
+    if not product_models:  # pragma: no cover — defensive empty catalog
         product_models = {
             "deepseek-v4-flash": {
                 "input_modalities": ["text"], "output_modalities": ["text"],
@@ -107,9 +71,8 @@ def _build_product_models() -> dict[str, dict[str, object]]:
             },
         }
 
-    # Merge specialised models (non-chat roles) — they take precedence on key
-    # conflicts because they carry domain-specific capabilities.
-    product_models.update(_SPECIALIZED_PRODUCT_MODELS)
+    # Specialised models take precedence on key conflicts (role-specific caps).
+    product_models.update(DEFAULT_SPECIALIZED_PRODUCT_MODELS)
     return product_models
 
 
@@ -143,9 +106,8 @@ def ensure_desktop_runtime_config(
         provider = config.model_provider or DEFAULT_PROVIDER
         model = config.model or DEFAULT_MODEL
 
-        # Build the product model catalog from the agent factory's
-        # DEFAULT_LLM_MODE_CONFIG (chat models) plus specialised non-chat
-        # models (TTS, STT, image generation).
+        # Build the product model catalog from model_defaults
+        # (DEFAULT_LLM_MODE_CONFIG + DEFAULT_SPECIALIZED_PRODUCT_MODELS).
         product_models = _build_product_models()
 
         if _is_packaged_legacy_hepai(config):
@@ -179,11 +141,20 @@ def ensure_desktop_runtime_config(
 
         # Every desktop user receives the product-owned HepAI catalog. Merge it
         # with local additions, while keeping the product models authoritative
-        # and free of static credentials.
+        # and free of static credentials. Retired product image models
+        # (e.g. Nano Banana / gemini-3.1-flash-lite-image) are dropped so they
+        # cannot linger in the image-generation picker after catalog sync.
         existing_hepai = config.providers.get(DEFAULT_PROVIDER)
         existing_models = dict(existing_hepai.model_configs) if existing_hepai else {}
+        retired_still_present = any(
+            model_id in existing_models for model_id in _RETIRED_IMAGE_GENERATION_MODELS
+        )
         merged_models = {
-            **{model_id: _model_config_values(value) for model_id, value in existing_models.items()},
+            **{
+                model_id: _model_config_values(value)
+                for model_id, value in existing_models.items()
+                if model_id not in _RETIRED_IMAGE_GENERATION_MODELS
+            },
             **product_models,
         }
         needs_catalog = (
@@ -197,6 +168,7 @@ def ensure_desktop_runtime_config(
                 for model_id, definition in product_models.items()
                 if model_id in existing_models
             )
+            or retired_still_present
         )
         if needs_catalog:
             upsert_provider(
@@ -211,6 +183,8 @@ def ensure_desktop_runtime_config(
                 path=target,
             )
             actions.append("sync_hepai_product_models")
+            if retired_still_present:
+                actions.append("purge_retired_image_generation_models")
             config = load_user_config(target)
 
         if config.current_agent is None:
@@ -239,9 +213,9 @@ def ensure_desktop_runtime_config(
                     path=agent_path,
                 )
                 actions.append("create_default_agent")
-            # An existing Agent file is authoritative user configuration.
-            # Desktop bootstrap may synchronize the Provider catalog, but must
-            # never rewrite explicit per-Agent model bindings on startup.
+            elif _migrate_retired_default_agent_image_model(agent_path):
+                # Only retires removed product image models (e.g. flash-lite).
+                actions.append("migrate_retired_image_generation_model")
 
         final = load_user_config(target)
         if final.current_agent == DEFAULT_AGENT and not (
@@ -274,6 +248,44 @@ def _is_packaged_legacy_hepai(config: object) -> bool:
     return is_hepai_url and is_non_anthropic_model and api_key_env in {"", "ANTHROPIC_API_KEY"}
 
 
+# Product-owned image models removed from the catalog. Bootstrap purges leftover
+# Provider entries and rebinds the default Agent to DEFAULT_IMAGE_GENERATION_MODEL
+# when that constant is set (otherwise clears the binding).
+_RETIRED_IMAGE_GENERATION_MODELS = frozenset({
+    "gemini-3.1-flash-lite-image",
+    "qwen-image-2.0",
+})
+
+
+def _migrate_retired_default_agent_image_model(agent_path: Path) -> bool:
+    """Retire removed image-generation bindings; leave other roles alone."""
+    if not agent_path.is_file():
+        return False
+    snapshot = load_agent_model_policy(DEFAULT_AGENT, path=agent_path)
+    selection = snapshot.policy.image_generation_model or snapshot.policy.image_model
+    model_id = selection.ref.model_id if selection and selection.ref else None
+    if model_id not in _RETIRED_IMAGE_GENERATION_MODELS:
+        return False
+    replacement = (
+        AgentModelSelection("explicit", ModelRef(DEFAULT_PROVIDER, DEFAULT_IMAGE_GENERATION_MODEL))
+        if DEFAULT_IMAGE_GENERATION_MODEL
+        else None
+    )
+    updated = AgentModelPolicy(
+        agent_id=snapshot.policy.agent_id,
+        primary_model=snapshot.policy.primary_model,
+        image_understanding_model=snapshot.policy.image_understanding_model,
+        image_model=None,
+        image_generation_model=replacement,
+        text_to_speech_model=snapshot.policy.text_to_speech_model,
+        realtime_voice_model=snapshot.policy.realtime_voice_model,
+        speech_to_text_model=snapshot.policy.speech_to_text_model,
+        reasoning_effort=snapshot.policy.reasoning_effort,
+    )
+    commit_agent_model_policy(updated, expected_revision=snapshot.revision, path=agent_path)
+    return True
+
+
 def _default_agent_model_policy(
     provider: str,
     primary_model: str,
@@ -283,11 +295,16 @@ def _default_agent_model_policy(
     product_models = product_models if product_models is not None else _build_product_models()
     if provider != DEFAULT_PROVIDER or primary_model not in product_models:
         return AgentModelPolicy(agent_id=DEFAULT_AGENT, primary_model=explicit(primary_model))
+    image_generation = (
+        explicit(DEFAULT_IMAGE_GENERATION_MODEL)
+        if DEFAULT_IMAGE_GENERATION_MODEL
+        else None
+    )
     return AgentModelPolicy(
         agent_id=DEFAULT_AGENT,
         primary_model=explicit(DEFAULT_MODEL),
         image_understanding_model=explicit("gpt-5.6-luna"),
-        image_generation_model=explicit("gemini-3.1-flash-lite-image"),
+        image_generation_model=image_generation,
         text_to_speech_model=explicit("tts-1"),
         speech_to_text_model=explicit("whisper-1"),
     )

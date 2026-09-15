@@ -128,6 +128,10 @@ _DESKTOP_READ_ONLY_TOOLS = {
     "regression_preflight", "regression_history", "regression_get", "regression_events",
 }
 _DESKTOP_LOCAL_WRITE_TOOLS = {"write", "edit", "TodoWrite", "UpdateUserConfig"}
+# Host-owned side effects: always injected by Desktop gateway; user already
+# authorized image generation by selecting an image_generation_model / asking
+# to draw. Must not fall through to external_write+required (no approval UI).
+_DESKTOP_HOST_SIDE_EFFECT_TOOLS = {"deliver_artifact", "image_generation", "image_edit"}
 _DESKTOP_CONDITIONAL_TOOLS = {
     "exec", "exec_background", "task_kill",
     "regression_start", "regression_cancel",
@@ -151,6 +155,12 @@ def _desktop_execution_metadata(name: str, executor_id: str, *, desktop_mode: bo
     if name in _DESKTOP_READ_ONLY_TOOLS:
         risk, approval = "read_only", "none"
     elif name in _DESKTOP_LOCAL_WRITE_TOOLS:
+        risk, approval = "local_write", "none"
+    elif name in _DESKTOP_HOST_SIDE_EFFECT_TOOLS:
+        # Kernel forbids external_write/sensitive with approval_mode=none
+        # (execution_tool_approval_policy_drift). Host-owned image tools write
+        # workspace artifacts after the user already chose image_generation_model;
+        # treat like deliver_artifact — local_write + none, no approval UI.
         risk, approval = "local_write", "none"
     elif name in _DESKTOP_CONDITIONAL_TOOLS:
         risk, approval = "sensitive", "conditional"
@@ -184,10 +194,22 @@ def _desktop_execution_metadata(name: str, executor_id: str, *, desktop_mode: bo
 
 
 def _desktop_tool_error_code(value: Any) -> str:
+    code = getattr(value, "code", None)
+    if isinstance(code, str) and code.strip():
+        return code.strip()
     status = getattr(value, "status_code", None)
     if isinstance(status, int) and 400 <= status <= 599:
         return f"http_{status}"
     text = str(getattr(value, "content", value)).lower()
+    for known in (
+        "image_model_unconfigured", "image_model_unavailable", "model_unauthorized",
+        "image_operation_unsupported", "image_operation_protocol_unsupported",
+        "image_prompt_invalid", "image_size_unsupported", "image_provider_timeout",
+        "image_provider_rejected", "image_provider_invalid_response",
+        "side_effect_outcome_unknown", "run_cancelled",
+    ):
+        if known in text:
+            return known
     for status_code in (400, 401, 403, 408, 429, 500, 502, 503, 504):
         if str(status_code) in text:
             return f"http_{status_code}"
@@ -3225,9 +3247,11 @@ class DrSaiAssistant(DrSaiAgent):
                     exec_results.append(result)
                 except Exception as e:
                     logger.exception(f"Error executing tool {tool_name}: {e}")
-                    error = classify_tool_error(_desktop_tool_error_code(e), registry_record["risk"])
+                    code = _desktop_tool_error_code(e)
+                    error = classify_tool_error(code, registry_record["risk"])
+                    message = getattr(e, "message", None) or str(e)
                     exec_results.append(FunctionExecutionResult(
-                        content=f"Error: {str(e)}\nAction: {error['actionable']}",
+                        content=f"Error[{code}]: {message}\nAction: {error['actionable']}",
                         name=tool_name,
                         call_id=call_id,
                         is_error=True,
