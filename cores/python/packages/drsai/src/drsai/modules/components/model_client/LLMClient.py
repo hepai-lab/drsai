@@ -487,7 +487,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
                 stacklevel=2,
             )
 
-        print("base_url: ", self._client.base_url)
+        # print("base_url: ", self._client.base_url)
         if create_params.response_format is not None:
             chunks = self._create_stream_chunks_beta_client(
                 tool_params=create_params.tools,

@@ -36,6 +36,7 @@ from fastapi.responses import JSONResponse
 
 from drsai.backend.runtime.agent import RuntimeExecutionError
 from drsai.backend.runtime.evidence import agent_definition_evidence
+from drsai.config.model_defaults import PRIVATE_MODEL_NAME
 from drsai.platform_auth import platform_auth_scope
 
 from .. import _auth, _errors, _state
@@ -47,6 +48,83 @@ api = APIRouter(tags=["runs"])
 # event loop is free to garbage-collect a running task mid-turn.
 _EXECUTIONS: dict[str, asyncio.Task] = {}
 _SELECTED_SKILL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+_REMOTE_FILE_MAX_BYTES = 10 * 1024 * 1024
+_REMOTE_SKILL_CONTENT_MAX_BYTES = 512 * 1024
+# Full skill ZIP packages (scripts/assets) — the Skills Square download
+# endpoint caps are comparable; keep a generous but bounded inline limit.
+_REMOTE_SKILL_ZIP_MAX_BYTES = 20 * 1024 * 1024
+
+
+def _remote_payloads(metadata: Mapping[str, Any]) -> tuple[tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]]:
+    """Validate path-free remote files and DDF skill references."""
+    import base64
+
+    files: list[Mapping[str, Any]] = []
+    total = 0
+    raw_files = metadata.get("remote_files")
+    if raw_files not in (None, []):
+        if not isinstance(raw_files, list):
+            raise RuntimeExecutionError("remote_files_invalid", "remote_files must be an array.")
+        for raw in raw_files:
+            if not isinstance(raw, Mapping):
+                raise RuntimeExecutionError("remote_files_invalid", "Each remote file must be an object.")
+            name = str(raw.get("name") or "").strip()
+            data = str(raw.get("base64") or "")
+            encoded = data.split(",", 1)[-1]
+            try:
+                size = len(base64.b64decode(encoded, validate=True))
+            except Exception as exc:
+                raise RuntimeExecutionError("remote_files_invalid", f"{name or 'Remote file'} has invalid Base64 data.") from exc
+            total += size
+            if not name or size > _REMOTE_FILE_MAX_BYTES or total > _REMOTE_FILE_MAX_BYTES:
+                raise RuntimeExecutionError("remote_file_too_large", "Remote attachments must not exceed 10 MB in total.")
+            files.append({"name": name, "base64": data, "size": size})
+    skills: list[Mapping[str, Any]] = []
+    raw_skills = metadata.get("remote_skills")
+    if raw_skills not in (None, []):
+        if not isinstance(raw_skills, list):
+            raise RuntimeExecutionError("remote_skills_invalid", "remote_skills must be an array.")
+        for raw in raw_skills:
+            if not isinstance(raw, Mapping):
+                continue
+            skill_id, source = str(raw.get("id") or "").strip(), str(raw.get("source") or "").strip()
+            if skill_id and source:
+                skill: dict[str, Any] = {"id": skill_id, "source": source}
+                name = str(raw.get("name") or "").strip()
+                if name:
+                    skill["name"] = name
+                content = raw.get("content")
+                if isinstance(content, str) and content.strip():
+                    if len(content.encode("utf-8")) > _REMOTE_SKILL_CONTENT_MAX_BYTES:
+                        raise RuntimeExecutionError(
+                            "remote_skill_too_large",
+                            "Attached skill content must not exceed 512 KB.",
+                        )
+                    skill["content"] = content
+                zip_base64 = raw.get("zip_base64")
+                if isinstance(zip_base64, str) and zip_base64.strip():
+                    payload = zip_base64.strip()
+                    if payload.startswith("data:"):
+                        payload = payload.split(",", 1)[-1]
+                    try:
+                        zip_size = (len(payload) * 3) // 4
+                    except Exception:
+                        zip_size = 0
+                    if zip_size > _REMOTE_SKILL_ZIP_MAX_BYTES:
+                        raise RuntimeExecutionError(
+                            "remote_skill_too_large",
+                            "Attached skill package must not exceed 20 MB.",
+                        )
+                    try:
+                        base64.b64decode(payload, validate=True)
+                    except Exception as exc:
+                        raise RuntimeExecutionError(
+                            "remote_skills_invalid",
+                            "Attached skill package has invalid Base64 data.",
+                        ) from exc
+                    skill["zip_base64"] = payload
+                skills.append(skill)
+    return tuple(files), tuple(skills)
 
 
 def _selected_skill_id(metadata: Mapping[str, Any]) -> str | None:
@@ -112,10 +190,18 @@ async def run_execute(run_id: str, request: RunExecuteRequest, raw_request: Requ
     auth = _auth.auth_context(raw_request)
     correlation_id = _auth.correlation_id(raw_request)
     metadata = request.metadata if isinstance(request.metadata, dict) else {}
-    # Accept the renderer/runtime spellings, with explicit request fields
-    # taking precedence over legacy metadata.  This keeps configuration
-    # request-scoped instead of relying on a cached Agent instance.
+    # Keep the structured model identity intact.  ``model_alias`` remains a
+    # legacy compatibility input, but unified model resolution must receive
+    # provider_id and model_id separately.
+    model_provider = request.model_selection.provider_id if request.model_selection else None
+    model_id = request.model_selection.model_id if request.model_selection else None
     model_alias = request.model_alias or request.model or None
+    if request.model_selection is not None:
+        model_alias = f"{model_provider}/{model_id}"
+    diag_log(
+        f"[MODEL_TRACE] run_id={run_id} model_alias={model_alias!r} "
+        f"model_provider={model_provider!r} model_id={model_id!r}"
+    )
     requested_reasoning_effort = (
         request.reasoning_effort
         if request.reasoning_effort is not None
@@ -134,6 +220,23 @@ async def run_execute(run_id: str, request: RunExecuteRequest, raw_request: Requ
         # reasons the caller can fix, and neither is worth discovering later on
         # the event stream.
         run = engine.get_run(run_id)
+        # Private Mode is a per-turn composer switch, but the override is
+        # resolved here on the server so a client can never pin the model: the
+        # Run's own backend decides.  The override is deliberately alias-only
+        # (``model_provider``/``model_id`` cleared) because PRIVATE_MODEL_NAME
+        # is a catalog alias that is not registered in any provider's model
+        # list; the structured reference path would fail closed in
+        # ``resolve_model_ref``.  Reasoning is pinned to "none" so a private
+        # Run never spends time (or tokens) thinking.
+        if request.private_mode and str(run.get("backend_id") or "") == "opendrsai":
+            model_provider = None
+            model_id = None
+            model_alias = PRIVATE_MODEL_NAME
+            requested_reasoning_effort = "none"
+            diag_log(
+                f"[MODEL_TRACE] private_mode run_id={run_id} "
+                f"model_alias={model_alias!r} reasoning_effort='none'"
+            )
         engine.update_session(
             str(run["session_id"]),
             model=model_alias,
@@ -141,9 +244,15 @@ async def run_execute(run_id: str, request: RunExecuteRequest, raw_request: Requ
             plan_mode=requested_plan_mode,
         )
         selected_skill_id = _selected_skill_id(metadata)
+        remote_files, remote_skills = _remote_payloads(metadata)
+        input_resources = metadata.get("input_resources")
+        input_parts = metadata.get("input_parts")
         engine.set_run_input(
             run_id,
             request.prompt,
+            input_resources=input_resources if isinstance(input_resources, list) else None,
+            input_parts=input_parts if isinstance(input_parts, list) else None,
+            attachment_refs=metadata.get("attachment_refs") if isinstance(metadata.get("attachment_refs"), list) else None,
             correlation_id=correlation_id,
             source_client=(
                 str(metadata.get("source_client"))
@@ -165,10 +274,18 @@ async def run_execute(run_id: str, request: RunExecuteRequest, raw_request: Requ
                     run_id,
                     request.prompt,
                     correlation_id,
-                    model_override=model_alias,
+                    # Structured model selection is authoritative.  The
+                    # alias is retained for legacy AgentDefinition/session
+                    # fields, while provider/model_id drive config.toml
+                    # resolution in the factory.
+                    model_override=None if model_provider and model_id else model_alias,
+                    model_provider=model_provider,
+                    model_id=model_id,
                     reasoning_effort=requested_reasoning_effort,
                     plan_mode=requested_plan_mode,
                     selected_skill_id=selected_skill_id,
+                    remote_files=remote_files,
+                    remote_skills=remote_skills,
                 )
             diag_log(f"[DIAG] runs.py execute(): run_id={run_id} detached task COMPLETED")
             return result

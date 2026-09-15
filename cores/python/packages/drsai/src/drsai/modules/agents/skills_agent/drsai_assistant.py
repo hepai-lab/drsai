@@ -429,7 +429,7 @@ class DrSaiAssistant(DrSaiAgent):
         sub_agent_config: Dict = {},
         max_agent_concurrent: int = 10,
         # task loop and memory
-        max_turn_count: int | None = 1_000,
+        max_turn_count: int | None = 1_000_000,
         # Tool-loop safety ceilings. Defaults preserve desktop behavior; raise
         # for non-desktop surfaces (worker/console) that need longer loops or
         # higher parallelism. Actual loop bound = min(max_turn_count, max_tool_rounds_ceiling).
@@ -1205,8 +1205,9 @@ class DrSaiAssistant(DrSaiAgent):
             # bundled repository, even on refresh or restart.
             deleted_skills: set[str] = set()
             try:
-                from drsai.backend.skills_api import _load_deleted_skills
-                deleted_skills = _load_deleted_skills()
+                from drsai.backend.desktop_gateway._skills_store import load_deleted_skills
+
+                deleted_skills = load_deleted_skills()
             except Exception:
                 pass
 

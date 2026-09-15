@@ -95,6 +95,7 @@ for (const channel of [
   "desktop:terminal-kill",
   "desktop:pick-files",
   "desktop:pick-folder",
+  "desktop:read-attachment-data-url",
   "desktop:workspace-files",
   "desktop:workspace-file-preview",
   "desktop:workspace-file-save-as",

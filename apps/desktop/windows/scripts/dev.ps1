@@ -923,7 +923,7 @@ try {
         $env:OPENDRSAI_ENABLE_DUPLEX_VOICE = "1"
     }
     # Never leave legacy "already managed" flags set: workbench would otherwise
-    # stand down for a 28642 process that does not speak desktop-v2.
+    # stand down for a legacy gateway process that does not speak desktop-v2.
     Remove-Item Env:DRSAI_GATEWAY_DEV_MANAGED -ErrorAction SilentlyContinue
     Remove-Item Env:DRSAI_GATEWAY_HOT_RELOAD -ErrorAction SilentlyContinue
     Remove-Item Env:OPENDRSAI_WORKBENCH_EXTERNAL_RUNTIME -ErrorAction SilentlyContinue

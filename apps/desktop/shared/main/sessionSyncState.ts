@@ -50,6 +50,40 @@ export class SessionSyncStateStore {
     return file.sessions[sessionId] ?? { cursor: 0, updatedAt: new Date(0).toISOString() };
   }
 
+  /** Release an outbox entry after inspecting/recovering its Runtime run. */
+  completeOutboxIfMatches(sessionId: string, sourceMessageId: string): Promise<boolean> {
+    return this.completeOutbox(sessionId, sourceMessageId);
+  }
+
+  /**
+   * Release an outbox entry whose Runtime acknowledgement this Desktop process
+   * can no longer observe (degraded OAEP subscription, fatal stream error, or a
+   * Runtime restart during the Run).
+   *
+   * The row is marked `failed` rather than deleted, because the POST may have
+   * been accepted by the Runtime: the row keeps the idempotency key and Run id
+   * that the restart-recovery path needs to resolve that exact message. A
+   * `failed` row is not "pending" for `beginOutbox` purposes - it is treated as
+   * stale and reconciled before the next send - so the Session can no longer
+   * stay blocked on "awaiting Runtime acknowledgement" forever.
+   */
+  async abandonOutbox(sessionId: string, sourceMessageId: string): Promise<boolean> {
+    this.requireId(sessionId);
+    this.requireId(sourceMessageId);
+    const current = await this.get(sessionId);
+    const outbox = current.outbox;
+    if (!outbox || outbox.sourceMessageId !== sourceMessageId) return false;
+    if (outbox.deliveryState === "terminal" || outbox.deliveryState === "failed") return false;
+    try {
+      await this.markOutboxDelivery(sessionId, sourceMessageId, "failed");
+      return true;
+    } catch {
+      // The row was completed or replaced between the read and the write, so
+      // there is nothing left to release.
+      return false;
+    }
+  }
+
   advanceCursor(sessionId: string, cursor: number): Promise<SessionSyncEntry> {
     this.requireId(sessionId);
     if (!Number.isSafeInteger(cursor) || cursor < 0) throw new Error("Session cursor is invalid.");

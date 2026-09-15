@@ -256,6 +256,8 @@ class DesktopAgentBackend:
             session_id=context.session_id,
             user_id=user_id,
             model_alias=definition.model,
+            model_provider=definition.model_provider,
+            model_id=definition.model_id,
             work_dir=str(context.workspace_path),
             workspace_id=context.workspace_id,
             cancellation_token=cancellation,

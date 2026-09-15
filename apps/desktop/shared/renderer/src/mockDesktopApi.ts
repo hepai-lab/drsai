@@ -148,7 +148,7 @@ const initialHealth: DesktopHealth = {
     managed: true,
     externalReady: true,
     externalConflict: false,
-    baseUrl: "http://127.0.0.1:18642",
+    baseUrl: "http://127.0.0.1:28643",
     pid: 4242,
     lastLog: "",
   },
@@ -1520,6 +1520,47 @@ export function installMockDesktopApi(): void {
       droppedEvents: 0,
       storage: { eventCount: diagnosticEvents.length, maxEvents: 500, persisted: false },
     }),
+    getRedactedDiagnosticTrace: async (traceId) => {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(traceId)) throw new TypeError("Invalid diagnostic traceId.");
+      const events = diagnosticEvents.filter((event) => event.traceId === traceId).slice(-300).map((event) => ({
+        id: event.id,
+        traceId: event.traceId,
+        spanId: event.spanId,
+        ...(event.parentSpanId ? { parentSpanId: event.parentSpanId } : {}),
+        timestamp: event.timestamp,
+        ...(event.endedAt ? { endedAt: event.endedAt } : {}),
+        ...(event.durationMs !== undefined ? { durationMs: event.durationMs } : {}),
+        kind: event.kind,
+        level: event.level,
+        status: event.status,
+        module: event.module,
+        component: event.component,
+        operation: event.operation,
+        message: event.message
+          .replace(/\b(Bearer\s+)[A-Za-z0-9._~+\/-]+/gi, "$1[REDACTED]")
+          .replace(/\b(api[_-]?key|access[_-]?token|password|secret|authorization)\s*[:=]\s*([^\s,;]+)/gi, "$1=[REDACTED]")
+          .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[REDACTED EMAIL]")
+          .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED API KEY]")
+          .slice(0, 2_000),
+        domain: event.domain,
+        visibility: event.visibility,
+        ...(event.agentPhase ? { agentPhase: event.agentPhase } : {}),
+        ...(event.errorCode ? { errorCode: event.errorCode } : {}),
+        ...(event.sequence !== undefined ? { sequence: event.sequence } : {}),
+      }));
+      if (!events.length) return null;
+      const first = events[0];
+      const last = events.at(-1)!;
+      return {
+        traceId,
+        startedAt: first.timestamp,
+        ...(last.endedAt ? { endedAt: last.endedAt } : {}),
+        status: last.status,
+        ...(last.durationMs !== undefined ? { durationMs: last.durationMs } : {}),
+        rootOperation: first.operation,
+        events,
+      };
+    },
     clearDiagnostics: async () => {
       const removedEvents = diagnosticEvents.length;
       diagnosticEvents = [];
@@ -3536,6 +3577,13 @@ export function installMockDesktopApi(): void {
     pickFolder: async () => ({
       canceled: false,
       paths: ["C:\\Users\\Demo\\Documents\\research-folder"],
+    }),
+    readAttachmentDataUrl: async (path: string) => ({
+      path,
+      name: path.split(/[\\/]/).pop() ?? path,
+      sizeBytes: 1024,
+      mimeType: "application/octet-stream",
+      dataUrl: "data:application/octet-stream;base64,ZGVtbw==",
     }),
     getPathForFile: (file: File): string => {
       return `C:\\Users\\Demo\\Downloads\\${file.name}`;

@@ -203,6 +203,40 @@ export interface DiagnosticTrace {
   machineIds?: string[];
 }
 
+/** A narrow diagnostic event safe to expose to ordinary renderer UI. */
+export interface RedactedDiagnosticEvent {
+  id: string;
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  timestamp: string;
+  endedAt?: string;
+  durationMs?: number;
+  kind: DiagnosticKind;
+  level: DiagnosticLevel;
+  status: DiagnosticStatus;
+  module: string;
+  component: string;
+  operation: string;
+  message: string;
+  domain: DiagnosticDomain;
+  visibility: DiagnosticVisibility;
+  agentPhase?: AgentDiagnosticPhase;
+  errorCode?: string;
+  sequence?: number;
+}
+
+/** A bounded, field-whitelisted trace safe to expose to ordinary renderer UI. */
+export interface RedactedDiagnosticTrace {
+  traceId: string;
+  startedAt: string;
+  endedAt?: string;
+  status: DiagnosticStatus;
+  durationMs?: number;
+  rootOperation: string;
+  events: RedactedDiagnosticEvent[];
+}
+
 export type AgentDiagnosticConnectionState = "unknown" | "connecting" | "connected" | "retrying" | "disconnected";
 
 export interface AgentRunDiagnosticState {

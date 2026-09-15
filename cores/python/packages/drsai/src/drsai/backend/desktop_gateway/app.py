@@ -1,4 +1,4 @@
-"""The FastAPI application: config + runtime + audio + models + runs + sessions + workspaces + gfs.
+"""The FastAPI application: config + runtime + audio + models + runs + sessions + workspaces + gfs + skills + channels.
 
 This is a **separate app** from ``gateway_legacy``'s, deliberately. Mounting
 these routers onto the legacy ``app`` would inherit its middleware stack and
@@ -18,12 +18,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from . import _auth, _state
-from drsai.backend.skills_api import register_skills_routes
 
 from .routes import (
     agent_backends,
     audio,
     capabilities,
+    channels_wechat,
     config,
     config_agents,
     config_providers,
@@ -36,6 +36,7 @@ from .routes import (
     runtime,
     remote_workers,
     sessions,
+    skills,
     skills_square,
     workspaces,
 )
@@ -61,6 +62,11 @@ ROUTERS = (
     identity.router,
     gfs.router,
     skills_square.router,
+    channels_wechat.router,
+    # Last on purpose: these routes used to be attached after every router by
+    # ``register_skills_routes(app)``, so keeping the factory here holds the
+    # app's route-declaration order (and the frozen OpenAPI snapshot) still.
+    skills.router,
 )
 
 
@@ -89,6 +95,13 @@ async def lifespan(app: FastAPI):
         logger.exception(
             "Desktop Runtime configuration bootstrap failed: {}", type(exc).__name__,
         )
+
+    # Re-arm the WeChat channel only when the user left it enabled.  A channel
+    # that cannot be restored must never keep the gateway from becoming ready.
+    try:
+        await channels_wechat.restore()
+    except Exception as exc:
+        logger.warning("WeChat channel restore skipped: %s", type(exc).__name__)
 
     async def _run_subprocess_selftest() -> None:
         # Keep this off the startup critical path: Office COM probes can hang
@@ -176,6 +189,12 @@ async def lifespan(app: FastAPI):
         await selftest_task
     except asyncio.CancelledError:
         pass
+    # Stop the channel before the Agent backends it drives are closed.  The
+    # persisted enabled flag is left untouched, so a restart resumes it.
+    try:
+        await channels_wechat.shutdown()
+    except Exception as exc:
+        logger.warning("WeChat channel shutdown failed: %s", type(exc).__name__)
     service = _state.agent_service()
     for backend in service.backends.values():
         await backend.close()
@@ -192,7 +211,6 @@ def create_app() -> FastAPI:
     _auth.install(app)
     for factory in ROUTERS:
         app.include_router(factory())
-    register_skills_routes(app)
     return app
 
 

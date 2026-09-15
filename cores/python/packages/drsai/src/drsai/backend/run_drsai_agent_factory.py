@@ -602,9 +602,13 @@ def create_agent(
         )
 
     # Default alias: explicit arg > env var > cli_cfg > module default.
+    # When provider/model_id are supplied, resolve_model_ref above produces the
+    # canonical upstream model and it must remain authoritative below.
     env_alias = os.environ.get("LLM_DEFAULT_ALIAS")
     resolved_config_name = (
-        resolved_user_model.model
+        resolved_user_model.model_id
+        if resolved_user_model is not None and resolved_user_model.model_id in llm_mode_config
+        else resolved_user_model.model
         if resolved_user_model is not None
         else (
             defult_config_name
@@ -757,7 +761,24 @@ def create_agent(
             entry = llm_mode_config.get(alias)
             if entry is None:
                 entry = llm_mode_config[resolved_config_name]
-        llm_model = entry.model
+        # In Unified TOML mode, the Resolver's model/upstream_id is the
+        # authoritative wire model.  DEFAULT_LLM_MODE_CONFIG supplies
+        # metadata only; using entry.model here would silently replace a TOML
+        # selection with the legacy built-in model (for example v4-flash).
+        llm_model = (
+            active_user_model.model
+            if unified_model_config_active and active_user_model is not None
+            else entry.model
+        )
+        logger.info(
+            "Resolved model client: requested_provider=%s requested_model_id=%s "
+            "config_alias=%s upstream_model=%s metadata_alias=%s",
+            model_provider,
+            model_id,
+            alias,
+            llm_model,
+            entry.model,
+        )
         token_limit = entry.token_limit
         max_tokens = entry.max_tokens if entry.max_tokens > 0 else int(token_limit * 0.25)
         client_type = entry.client_type

@@ -1,5 +1,5 @@
 import type { OaepEvent, OaepItem, OaepRun, OaepSnapshot, RuntimeClient } from "./runtimeClient";
-import { retainRuntimeClient } from "./runtimeClient";
+import { isRuntimeClientGenerationInvalidated, retainRuntimeClient } from "./runtimeClient";
 import { assertOaepEventIntegrity, assertOaepSnapshotIntegrity } from "./oaepIntegrity";
 
 export interface OaepSessionState {
@@ -128,6 +128,35 @@ export function oaepRetryDelayMs(attempt: number, jitterUnit = Math.random()): n
  */
 export const MAX_AUTOMATIC_RETRY_ATTEMPTS = 120;
 
+/**
+ * How many times one Session subscription may replace its Runtime client
+ * generation before falling back to ordinary retry backoff.
+ *
+ * An invalidated shared client aborts every request pre-flight, so retrying it
+ * produces no traffic at all: the subscription used to burn the whole retry
+ * budget (about three and a half minutes) and then degrade, which left the
+ * pending outbox acknowledgement stuck. Re-resolving the client is the only
+ * recovery that can make progress, but it stays bounded so a flapping Runtime
+ * cannot spin the reconnect loop.
+ */
+export const MAX_GENERATION_REBINDS = 5;
+
+/**
+ * A transport together with one already-retained reference to it.
+ *
+ * The reference must be held before the promise settles: the previous holder
+ * can release the last one in between, and a client disposed before it is
+ * retained cannot serve the resumed stream.
+ */
+export interface OaepSessionClientLease {
+  client: RuntimeClient;
+  release: () => void;
+}
+
+function oaepSessionOwnerKey(client: RuntimeClient): string {
+  return client.streamIdentity || `${client.location}:legacy-client`;
+}
+
 function positiveIntEnv(name: string, fallback: number): number {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
@@ -148,6 +177,18 @@ export class OaepSyncDegradedError extends Error {
     super("Runtime OAEP synchronization repeatedly failed and requires an explicit reconnect.");
     this.name = "OaepSyncDegradedError";
   }
+}
+
+/**
+ * True when a stream failure degraded the subscription instead of ending the
+ * Run. The Run itself may still be alive in the Runtime, so a degraded
+ * subscription must not be reported as a Run failure, and its pending
+ * acknowledgement has to be settled explicitly.
+ */
+export function isOaepSyncDegradedError(error: unknown): boolean {
+  return error instanceof OaepSyncDegradedError
+    || Boolean(error && typeof error === "object"
+      && (error as { code?: unknown }).code === "oaep_sync_degraded");
 }
 
 function waitForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
@@ -420,12 +461,34 @@ class SharedOaepSessionController {
     this.readyReject = reject;
   });
   readonly done: Promise<void>;
-  private readonly releaseClient: () => void;
+  private releaseClient: () => void;
   private released = false;
+  /**
+   * Registry key of the transport this controller currently owns. It changes
+   * when a superseded Runtime generation is replaced so the shared-controller
+   * registry follows the controller instead of keeping a stale endpoint key.
+   */
+  ownerKey: string;
+  private clientValue: RuntimeClient;
+  private readonly resolveClient?: () => Promise<OaepSessionClientLease>;
+  /** Bounded count of generation replacements; reset once a stream is stable. */
+  generationRebinds = 0;
 
-  constructor(readonly client: RuntimeClient, readonly sessionId: string, readonly onEmpty: () => void) {
+  constructor(
+    client: RuntimeClient,
+    readonly sessionId: string,
+    readonly onEmpty: () => void,
+    resolveClient?: () => Promise<OaepSessionClientLease>,
+  ) {
+    this.clientValue = client;
+    this.ownerKey = oaepSessionOwnerKey(client);
+    this.resolveClient = resolveClient;
     this.releaseClient = retainRuntimeClient(client);
     this.done = Promise.resolve().then(() => this.run());
+  }
+
+  get client(): RuntimeClient {
+    return this.clientValue;
   }
 
   get state(): OaepSessionState {
@@ -446,6 +509,46 @@ class SharedOaepSessionController {
         this.onEmpty();
       }
     };
+  }
+
+  /**
+   * Replace the transport whose Runtime generation was invalidated.
+   *
+   * Retrying such a client can never succeed: its AbortController is already
+   * aborted, so every request fails pre-flight and never reaches the network.
+   * Re-resolving keeps the same Session and resumes from the current cursor, so
+   * no Event is lost or delivered twice. Returns false when no resolver is
+   * available, the rebind budget is exhausted, or the Runtime cannot be
+   * resolved right now (ordinary backoff then applies).
+   */
+  private async rebindClient(): Promise<boolean> {
+    if (!this.resolveClient || this.generationRebinds >= MAX_GENERATION_REBINDS) return false;
+    this.generationRebinds += 1;
+    let lease: OaepSessionClientLease;
+    try {
+      lease = await this.resolveClient();
+    } catch {
+      return false;
+    }
+    const previousRelease = this.releaseClient;
+    const previousOwnerKey = this.ownerKey;
+    this.clientValue = lease.client;
+    this.releaseClient = lease.release;
+    this.ownerKey = oaepSessionOwnerKey(lease.client);
+    if (previousOwnerKey !== this.ownerKey) {
+      const previous = controllers.get(previousOwnerKey);
+      if (previous?.get(this.sessionId) === this) {
+        previous.delete(this.sessionId);
+        if (!previous.size) controllers.delete(previousOwnerKey);
+      }
+      let next = controllers.get(this.ownerKey);
+      if (!next) { next = new Map(); controllers.set(this.ownerKey, next); }
+      next.set(this.sessionId, this);
+    }
+    // Release the dead generation only once the replacement is in place: the
+    // retired entry stays referenced until this last reference is dropped.
+    previousRelease();
+    return true;
   }
 
   private dispatch(
@@ -619,6 +722,7 @@ class SharedOaepSessionController {
         const stableConnection = setTimeout(() => {
           this.retryAttempt = 0;
           retryStartedAt = 0;
+          this.generationRebinds = 0;
         }, Math.min(5_000, Math.max(250, Math.floor(OAEP_NETWORK_RECOVERY_WINDOW_MS / 2))));
         try {
           await consumeSse(opened.events, this.abort.signal, (event) => this.accept(event, "stream"));
@@ -636,6 +740,17 @@ class SharedOaepSessionController {
           this.markReadyFailed(error);
           this.notifyFatal(error);
           break;
+        }
+        // A shared client whose Runtime generation was invalidated cannot be
+        // kept by retrying the same transport: every request aborts pre-flight,
+        // so the loop would emit no traffic at all and end in a degraded
+        // subscription that leaves the outbox acknowledgement pending.
+        // Re-resolve the client and resume replay from the current cursor.
+        if (isRuntimeClientGenerationInvalidated(error) && await this.rebindClient()) {
+          this.metrics.reconnects += 1;
+          this.transition("retrying");
+          this.notifyConnection("retrying", error);
+          continue;
         }
         this.metrics.reconnects += 1;
         if (error instanceof OaepEventGap || (
@@ -679,6 +794,7 @@ export function getOaepSessionOwnershipDiagnostics(): Array<{
   sse: number;
   phase: OaepStreamPhase;
   cursor: number;
+  generationRebinds: number;
 }> {
   return [...controllers.entries()].flatMap(([endpointKey, sessions]) =>
     [...sessions.entries()].map(([sessionId, controller]) => ({
@@ -688,24 +804,38 @@ export function getOaepSessionOwnershipDiagnostics(): Array<{
       sse: controller.phase === "connected" ? 1 : 0,
       phase: controller.phase,
       cursor: controller.cursor,
+      generationRebinds: controller.generationRebinds,
     })),
   );
 }
 
+/**
+ * Subscribe to one Session's OAEP stream.
+ *
+ * `options.resolveClient` is required for a subscription that must survive a
+ * Runtime generation change: the controller re-resolves the transport and
+ * resumes from its own cursor instead of retrying a client that is already
+ * aborted. Subscriptions without it keep the retry-only behaviour.
+ */
 export async function subscribeOaepSession(
   client: RuntimeClient,
   sessionId: string,
   listener: OaepSessionListener,
+  options: { resolveClient?: () => Promise<OaepSessionClientLease> } = {},
 ): Promise<OaepSessionSubscription> {
-  const ownerKey = client.streamIdentity || `${client.location}:legacy-client`;
+  const ownerKey = oaepSessionOwnerKey(client);
   let sessions = controllers.get(ownerKey);
   if (!sessions) { sessions = new Map(); controllers.set(ownerKey, sessions); }
   let controller = sessions.get(sessionId);
   if (!controller) {
     controller = new SharedOaepSessionController(client, sessionId, () => {
-      sessions?.delete(sessionId);
-      if (!sessions?.size) controllers.delete(ownerKey);
-    });
+      // The controller may have been re-keyed to a newer Runtime generation
+      // while it was subscribed, so resolve the key it owns right now.
+      const currentKey = controller!.ownerKey;
+      const current = controllers.get(currentKey);
+      current?.delete(sessionId);
+      if (current && !current.size) controllers.delete(currentKey);
+    }, options.resolveClient);
     sessions.set(sessionId, controller);
   }
   const remove = controller.add(listener);

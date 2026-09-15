@@ -7,6 +7,7 @@ import { dirname, join } from "path";
 import type { GatewayEndpointStatus, GatewayLiveness, GatewayStartState, GatewayStatus } from "../api/desktopApi";
 import type { DesktopProcessService } from "../api";
 import { DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, getEnhancedPath } from "./paths";
+import { RIPGREP_ENV_VAR, resolveBundledRipgrep } from "./bundledTools";
 import { collectMigrationAliases, getCliConfigUserId, rememberUserIdAlias, setCliConfigUserId } from "./userIdentity";
 import { managedProcessRegistry, type ManagedProcessRegistration } from "./managedProcessRegistry";
 import { redactDesktopSecrets } from "./secretRedaction";
@@ -580,6 +581,12 @@ async function startGatewayOnce(): Promise<boolean> {
       }
     })();
 
+  // Windows has no usable system ripgrep, so the Agent grep tool depends on
+  // the copy vendored with the Desktop payload. Publish it through the child
+  // environment (null when absent, or when the operator already set an
+  // explicit override that must be inherited unchanged).
+  const bundledRipgrep = resolveBundledRipgrep();
+
   gatewaySpawnError = null;
   prepareGatewayLog();
   gatewayProcess = spawn(GATEWAY_PYTHON, args, {
@@ -597,6 +604,7 @@ async function startGatewayOnce(): Promise<boolean> {
       ...localCodexEnv,
       ...identityEnv,
       ...savedApiKeyEnv,
+      ...(bundledRipgrep ? { [RIPGREP_ENV_VAR]: bundledRipgrep } : {}),
       PATH: getEnhancedPath(),
     },
     windowsHide: true,

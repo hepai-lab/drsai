@@ -280,7 +280,7 @@ drsai/
 │   │   │   │   ├── server.py                # RPC dispatcher
 │   │   │   │   ├── handlers/                # session.*, prompt.*, slash.*, tools.*
 │   │   │   │   └── adapter/                 # agent_runner, event_translator, callbacks
-│   │   │   ├── gateway.py                   # Legacy SSE gateway (Electron desktop only)
+│   │   │   ├── desktop_gateway/             # v2 Desktop Runtime (Electron desktop)
 │   │   │   ├── _deprecated/                 # Old prompt_toolkit REPL (kept for reference)
 │   │   │   └── cli/                         # Shared utilities (config, history, commands)
 │   │   ├── modules/agents/                  # DrSaiCLIAssistant, sub-agents
@@ -303,7 +303,7 @@ drsai                       # Launch TUI (default)
 drsai chat                  # Same as above
 drsai chat --attach <ws>    # Connect to existing gateway via WebSocket
 drsai tui-gateway           # Run gateway as standalone process
-drsai gateway --port 8642   # Legacy SSE gateway (for Electron desktop)
+drsai gateway --port 28643  # Desktop Runtime gateway (for the Electron desktop app)
 drsai config --show         # View/edit config
 drsai sessions              # List saved sessions
 drsai version               # Print version
@@ -419,9 +419,9 @@ pip install --upgrade build hatchling twine
 
 The test suite resolves sessions for the current user; sessions are stored in `~/.drsai/`. If you've never run `opendrsai` before, `session.create` will be exercised first.
 
-### `opendrsai gateway` prints a deprecation warning
+### `opendrsai gateway` starts the Desktop Runtime
 
-That's intentional. The old SSE `gateway.py` is preserved only for the Electron desktop client. The new TUI uses `drsai-gateway` (JSON-RPC).
+`opendrsai gateway` boots `drsai.backend.desktop_gateway` (FastAPI, default `127.0.0.1:28643`) — the same Runtime the OpenDrSai desktop app launches. The TUI does not use this command; it spawns its own JSON-RPC gateway via `drsai-gateway`.
 
 ---
 

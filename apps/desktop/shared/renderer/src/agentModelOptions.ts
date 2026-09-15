@@ -38,6 +38,37 @@ export function getAgentModelOptions(
     }];
     return [];
   }
+  // A remote worker owns its model configuration namespace. Never fall back
+  // to Desktop's local provider catalog when get_info omits or limits models.
+  if (agent?.source === "remote") {
+    // The remote default config must always appear in the menu even when a
+    // stale/partial catalog omits it from model_configs.
+    const configNames = (agent.remoteModelConfigs ?? [])
+      .map((config) => config.name)
+      .filter((name): name is string => Boolean(name?.trim()));
+    const defaultName = agent.remoteDefaultModel?.trim() || "";
+    const requested = configNames.length
+      ? (defaultName && !configNames.includes(defaultName) ? [...configNames, defaultName] : configNames)
+      : defaultName
+        ? [defaultName]
+        // Last-resort fallback: the routable worker name is itself a usable
+        // remote model handle when get_info returned no model metadata at all.
+        : agent.model?.trim()
+          ? [agent.model.trim()]
+          : [];
+    return requested.map((name) => ({
+      alias: name,
+      display_name: agent.remoteModelConfigs?.find((config) => config.name === name)?.label || name,
+      model: name,
+      provider_id: `remote:${agent.id}`,
+      // Remote workers declare chat-capable, tool-calling model endpoints; mark
+      // them primary-capable so the composer does not filter them out.
+      operations: ["chat", "tool_calling"],
+      input_modalities: ["text", "image", "audio"],
+      output_modalities: ["text"],
+    }));
+  }
+
   const byIdentity = new Map<string, MyDrSaiModelConfig>();
   for (const model of catalog) {
     for (const identity of [model.alias, model.model]) {

@@ -354,6 +354,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:diagnostics-record", event),
   getDiagnosticSnapshot: (query: DiagnosticQuery = {}) =>
     ipcRenderer.invoke("desktop:diagnostics-snapshot", query),
+  getRedactedDiagnosticTrace: (traceId: string) =>
+    ipcRenderer.invoke("desktop:diagnostics-trace", traceId),
   clearDiagnostics: () => ipcRenderer.invoke("desktop:diagnostics-clear"),
   exportDiagnostics: () => ipcRenderer.invoke("desktop:diagnostics-export"),
   onDiagnosticEvent: (callback: (event: DiagnosticEvent) => void): (() => void) => {
@@ -1109,6 +1111,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:save-api-key", apiKey),
   pickFiles: () => ipcRenderer.invoke("desktop:pick-files"),
   pickFolder: () => ipcRenderer.invoke("desktop:pick-folder"),
+  readAttachmentDataUrl: (path: string): Promise<import("../api/desktopApi").ReadAttachmentDataUrlResult> =>
+    ipcRenderer.invoke("desktop:read-attachment-data-url", path),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   getWorkspaceContextOverview: (
     workspacePath: string,

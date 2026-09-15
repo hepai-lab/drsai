@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 from drsai.backend.tui_gateway.handlers import resource as resource_handler
-from drsai.backend.tui_gateway.handlers.slash import SlashContext, cmd_resource
 from drsai.backend.tui_gateway.resources import (
     oaep_resource_ref,
     register_tui_resource,
@@ -107,23 +105,3 @@ def test_tui_resource_rpc_is_bound_to_session_workspace(tmp_path: Path, monkeypa
     assert escaped["error"]["message"] == "workspace_escape_rejected"
     assert str(workspace) not in repr(registered)
     assert str(workspace) not in repr(resolved)
-
-
-def test_tui_resource_slash_command_reads_text_without_absolute_path(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("DRSAI_HOME", str(tmp_path / "state"))
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    (workspace / "result.txt").write_text("visible result", encoding="utf-8")
-    registered = register_tui_resource("user-a", workspace, "result.txt")
-    monkeypatch.setattr(resource_handler, "_workdir", lambda _session_id: workspace.resolve())
-    context = SlashContext(
-        SimpleNamespace(session_id="session-a", user_id="user-a"),
-        f"{registered['file_id']} read",
-    )
-
-    result = cmd_resource(context)
-
-    assert "visible result" in result["output"]
-    assert registered["file_id"] in result["output"]
-    assert "State: available" in result["output"]
-    assert str(workspace) not in result["output"]

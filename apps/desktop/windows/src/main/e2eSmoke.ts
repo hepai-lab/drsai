@@ -15,6 +15,11 @@ import { createThread } from "./threads";
 import { migrateLegacyAgentRunsToRuntime } from "../../../shared/main/legacyAgentRunMigration";
 import { LocalRuntimeClient, RuntimeOWOPError } from "../../../shared/main/runtimeClient";
 import { getGatewayRequestHeaders, stopGateway } from "./gateway";
+import {
+  DEVELOPMENT_GATEWAY_PORT,
+  PRODUCTION_GATEWAY_PORT,
+  resolveGatewayPort,
+} from "../../../shared/main/gatewayEnvironment";
 import { requireAuthContext } from "../../../shared/main/auth";
 import { bootstrapDesktop } from "./bootstrap";
 import { getDuplexVoiceOccupancy, isDuplexVoiceSessionReady } from "../../../shared/main/voice/duplex/controller";
@@ -573,10 +578,10 @@ async function runDuplexReadinessSmoke(window: BrowserWindow): Promise<SmokeResu
       } catch {}
       checks.gatewayReady = gateway?.ready === true;
       checks.developmentPort = ${JSON.stringify(process.env.DRSAI_HOME?.replace(/[\\/]+$/, "").toLowerCase().endsWith(".drsai-dev") ?? false)}
-        ? gatewayPort === 28642
+        ? gatewayPort === ${DEVELOPMENT_GATEWAY_PORT}
         : true;
       checks.productionPort = ${JSON.stringify([".drsai", ".drsai-prod"].some((leaf) => process.env.DRSAI_HOME?.replace(/[\\/]+$/, "").toLowerCase().endsWith(leaf)) ?? false)}
-        ? gatewayPort === 18642
+        ? gatewayPort === ${PRODUCTION_GATEWAY_PORT}
         : true;
       checks.modelBound = ref?.provider_id === 'zhizengzeng' && ref?.model_id === 'gpt-realtime-2';
       checks.catalogContainsRealtime = realtimeModels.some((model) => model.provider_id === ref?.provider_id && model.alias === ref?.model_id);
@@ -8419,7 +8424,7 @@ async function p3CollectSnapshot(path: string): Promise<Record<string, unknown>>
 }
 
 function p3GatewayGet(path: string): Promise<Record<string, unknown>> {
-  const port = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "28642";
+  const port = resolveGatewayPort();
   return new Promise((resolve, reject) => {
     const request = httpRequest({ hostname: "127.0.0.1", port: Number(port), path, method: "GET", headers: { ...getGatewayRequestHeaders(), Accept: "application/json" } }, (response) => {
       let data = "";

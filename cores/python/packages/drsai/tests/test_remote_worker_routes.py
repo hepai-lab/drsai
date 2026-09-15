@@ -202,3 +202,74 @@ def test_remote_worker_credential_fallbacks(monkeypatch):
     status = asyncio.run(_remote_worker_catalog.remote_worker_status(credential="desk-key"))
     assert status["state"] == "ready"
     assert status["credential_present"] is True
+
+
+def _build_catalog(monkeypatch, rows, infos):
+    """Run the catalog fetch with stubbed DDF HTTP responses."""
+    import asyncio
+
+    from drsai.backend.desktop_gateway import _remote_worker_catalog as catalog
+
+    async def fake_list(_root, _api_key):
+        return rows
+
+    async def fake_info(_root, _api_key, worker):
+        return infos.get(worker)
+
+    monkeypatch.setattr(catalog, "_list_agent_rows", fake_list)
+    monkeypatch.setattr(catalog, "_fetch_worker_info", fake_info)
+
+    async def run():
+        return await catalog._fetch_remote_worker_catalog("https://ddf.example", credential="k")
+
+    return asyncio.run(run())
+
+
+def test_catalog_reads_agent_config_model_aliases(monkeypatch):
+    """DrSai workers expose switchable model aliases via ``agent_config``."""
+    payload = _build_catalog(
+        monkeypatch,
+        rows=[{"name": "DrSai iPanda"}],
+        infos={"DrSai iPanda": {
+            "name": "DrSai iPanda",
+            "description": "Assistant",
+            "defult_config_name": "hepai/deepseek-v4-flash",
+            "agent_config": {
+                "hepai/deepseek-v4-pro": "deepseek-ai/deepseek-v4-pro",
+                "hepai/deepseek-v4-flash": "deepseek-ai/deepseek-v4-flash",
+            },
+        }},
+    )
+    assert payload["state"] == "ready"
+    worker = payload["workers"][0]
+    names = [item["name"] for item in worker["model_configs"]]
+    assert names == ["hepai/deepseek-v4-pro", "hepai/deepseek-v4-flash"]
+    assert worker["defult_config_name"] == "hepai/deepseek-v4-flash"
+
+
+def test_catalog_falls_back_to_default_model_only(monkeypatch):
+    """A worker that only declares a default still shows it as a model option."""
+    payload = _build_catalog(
+        monkeypatch,
+        rows=[{"name": "plain-worker"}],
+        infos={"plain-worker": {"name": "plain-worker", "defult_config_name": "hepai/solo"}},
+    )
+    worker = payload["workers"][0]
+    assert [item["name"] for item in worker["model_configs"]] == ["hepai/solo"]
+
+
+def test_catalog_merges_default_into_agent_config_list(monkeypatch):
+    """The default alias appears in the menu even when agent_config omits it."""
+    payload = _build_catalog(
+        monkeypatch,
+        rows=[{"name": "w"}],
+        infos={"w": {
+            "name": "w",
+            "defult_config_name": "hepai/default-alias",
+            "agent_config": {"hepai/other": "deepseek-ai/other"},
+        }},
+    )
+    worker = payload["workers"][0]
+    names = [item["name"] for item in worker["model_configs"]]
+    assert "hepai/other" in names
+    assert "hepai/default-alias" in names

@@ -216,13 +216,21 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
         vision=False,           # DeepSeek V4 text models do not support image input
     ),
+    "hepai/deepseek-flash": ModelEntry(
+            model="hepai/deepseek-flash",
+            token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
+            max_tokens=64000,       # max output per request
+            client_type="openai",
+            reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
+            vision=True,           # DeepSeek V4 text models do not support image input
+    ),
     "deepseek-v4.1-flash": ModelEntry(
             model="deepseek-ai/deepseek-v4.1-flash",
             token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
             max_tokens=64000,       # max output per request
             client_type="openai",
             reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
-            vision=False,           # DeepSeek V4 text models do not support image input
+            vision=True,           # DeepSeek V4 text models do not support image input
         ),
     "deepseek-v4-pro": ModelEntry(
         model="deepseek-ai/deepseek-v4-pro",
@@ -238,7 +246,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         max_tokens=64000,       # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
-        vision=True,
+        vision=False,
     ),
     # ── OpenAI GPT ───────────────────────────────────────────────────
     "gpt-5.6-luna": ModelEntry(
@@ -343,6 +351,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
 }
 
 DEFAULT_CONFIG_NAME = "hepai/deepseek-v4-flash"
+PRIVATE_MODEL_NAME = "hepai/deepseek-flash"
 
 
 DISPLAY_NAME_OVERRIDES: dict[str, str] = {

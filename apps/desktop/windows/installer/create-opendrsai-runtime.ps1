@@ -7,6 +7,7 @@ param(
     [string]$CodexArtifactDir = "",
     [string]$CodexTrustedPublishersPath = "",
     [string]$OpenSshDir = "$env:WINDIR\System32\OpenSSH",
+    [string]$RipgrepDir = "$PSScriptRoot\..\resources\tools\ripgrep",
     [string]$Version = "",
     [string]$Channel = "dev",
     [ValidateSet("Fastest", "Optimal", "NoCompression")]
@@ -16,6 +17,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Pinned ripgrep release vendored by scripts/fetch-ripgrep.mjs. ripgrep is not
+# Authenticode-signed (see resources/tools/ripgrep/README.md), so integrity is
+# enforced by this SHA-256 digest instead of a publisher signature.
+$RipgrepVersion = "15.2.0"
+$RipgrepRgSha256 = "14231169855ec5205cf5a1b6f1db358ff4aed4247c86b69ce8aae647c77f6680"
 
 function Resolve-FullPath([string]$Path) {
     if (Test-Path $Path) {
@@ -82,6 +89,28 @@ function Add-BundledOpenSshClient([string]$Source, [string]$AppRoot) {
     $crypto = $cryptoCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
     if (-not $crypto) { throw "Required OpenSSH runtime dependency libcrypto.dll was not found beside $Source." }
     Copy-Item -LiteralPath $crypto -Destination (Join-Path $target "libcrypto.dll") -Force
+}
+
+function Add-BundledRipgrep([string]$Source, [string]$AppRoot) {
+    # ripgrep is not Authenticode-signed, so the digest check below replaces the
+    # signature check Add-BundledOpenSshClient relies on. Version and digest are
+    # kept in step with scripts/fetch-ripgrep.mjs by verify-bundled-ripgrep.mjs.
+    $required = @("rg.exe", "LICENSE-MIT", "UNLICENSE", "COPYING")
+    foreach ($name in $required) {
+        $candidate = Join-Path $Source $name
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            throw "Required ripgrep file was not found: $candidate (run: node apps/desktop/windows/scripts/fetch-ripgrep.mjs)"
+        }
+    }
+    $digest = (Get-FileHash -LiteralPath (Join-Path $Source "rg.exe") -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($digest -ne $RipgrepRgSha256) {
+        throw "Bundled ripgrep rg.exe digest mismatch: $digest (expected $RipgrepRgSha256 for $RipgrepVersion). Re-run scripts/fetch-ripgrep.mjs."
+    }
+    $target = Join-Path $AppRoot "resources\tools\ripgrep"
+    New-Item -ItemType Directory -Force -Path $target | Out-Null
+    foreach ($name in $required) {
+        Copy-Item -LiteralPath (Join-Path $Source $name) -Destination (Join-Path $target $name) -Force
+    }
 }
 
 function Add-PortablePythonBase([string]$SourceAgent, [string]$TargetAgent) {
@@ -225,6 +254,7 @@ New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
 Copy-DirectoryContents $desktopAppDir (Join-Path $payloadRoot "app")
 Remove-NodePtyBuildSources (Join-Path $payloadRoot "app")
 Add-BundledOpenSshClient (Resolve-FullPath $OpenSshDir) (Join-Path $payloadRoot "app")
+Add-BundledRipgrep (Resolve-FullPath $RipgrepDir) (Join-Path $payloadRoot "app")
 # The development agent may contain projects, caches, downloaded apps, or user
 # files alongside its venv. Only the managed Python runtime belongs in a
 # redistributable archive.
@@ -268,7 +298,12 @@ if (-not $PSBoundParameters.ContainsKey("DrsaiHomeDefaultsDir") -and $resolvedDe
     throw "Implicit Runtime defaults must resolve to the version-controlled installer defaults directory."
 }
 Copy-DirectoryContents $resolvedDefaults $homeDefaultsTarget
-foreach ($requiredDefault in @("config.toml", "configs\agents\agent_opendrsai.toml")) {
+# v2 contract: the installer ships `config.toml` and nothing else under
+# `drsai-home`. `configs/**` (Agent, Provider, model catalog) is generated on
+# first launch by `drsai.config.ensure_desktop_runtime_config` from the desktop
+# gateway lifespan, which keeps it in step with CURRENT_CONFIG_VERSION; shipping
+# a copy here would freeze a stale one.
+foreach ($requiredDefault in @("config.toml")) {
     if (-not (Test-Path -LiteralPath (Join-Path $homeDefaultsTarget $requiredDefault) -PathType Leaf)) {
         throw "Runtime defaults are incomplete; missing $requiredDefault."
     }

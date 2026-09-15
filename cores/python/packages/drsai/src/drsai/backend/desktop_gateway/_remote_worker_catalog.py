@@ -24,15 +24,19 @@ from loguru import logger
 
 DEFAULT_DDF_ROOT = "https://ddf.ihep.ac.cn/apiv2"
 LIST_AGENTS_TIMEOUT_SECONDS = 12.0
-INFO_TIMEOUT_SECONDS = 5.0
+INFO_TIMEOUT_SECONDS = 8.0
 MAX_INFO_CONCURRENCY = 8
 # The DDF agent catalog is slow (one list_agents call plus one get_info round
 # trip per worker) and rarely changes. Successful "ready" results are cached
 # in-process for 24 hours; ``refresh=True`` only revalidates a stale cache,
 # and ``force=True`` (the explicit Refresh button) bypasses the TTL.
 CATALOG_CACHE_TTL_SECONDS = 24 * 60 * 60
+# A "ready" catalogue whose get_info calls all failed (no default model, no
+# model configs on any worker) must not poison the cache for a day: retry
+# soon so the model information appears once the platform recovers.
+DEGRADED_CACHE_TTL_SECONDS = 5 * 60
 
-_catalog_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_catalog_cache: dict[str, tuple[float, dict[str, Any], float]] = {}
 _catalog_fetch_lock = asyncio.Lock()
 
 
@@ -40,10 +44,10 @@ def _cached_catalog(root: str) -> dict[str, Any] | None:
     entry = _catalog_cache.get(root)
     if not entry:
         return None
-    fetched_at, payload = entry
+    fetched_at, payload, ttl = entry
     if payload.get("state") != "ready":
         return None
-    if time.time() - fetched_at >= CATALOG_CACHE_TTL_SECONDS:
+    if time.time() - fetched_at >= ttl:
         return None
     return {**payload, "cached": True, "cached_at": fetched_at}
 
@@ -278,7 +282,8 @@ async def list_remote_workers(
                 return cached
         payload = await _fetch_remote_worker_catalog(root, credential)
     if payload.get("state") == "ready":
-        _catalog_cache[root] = (time.time(), payload)
+        ttl = DEGRADED_CACHE_TTL_SECONDS if payload.get("degraded") else CATALOG_CACHE_TTL_SECONDS
+        _catalog_cache[root] = (time.time(), payload, ttl)
     return payload
 
 
@@ -305,10 +310,27 @@ async def _fetch_remote_worker_catalog(
             "message": "The remote worker platform is unreachable.",
         }
 
+    # get_info for every worker in parallel (bounded), not sequentially: the
+    # sequential loop multiplied per-worker timeouts by the worker count and
+    # regularly blew past the caller's HTTP budget, leaving the desktop with
+    # a "ready" catalogue whose descriptors carry no model information.
+    info_semaphore = asyncio.Semaphore(MAX_INFO_CONCURRENCY)
+
+    async def _fetch_info_bounded(worker: str) -> dict[str, Any] | None:
+        async with info_semaphore:
+            return await _fetch_worker_info(root, api_key, worker)
+
+    info_results = await asyncio.gather(
+        *(_fetch_info_bounded(str(row.get("name") or "")) for row in rows),
+        return_exceptions=True,
+    )
+
     workers: list[dict[str, Any]] = []
-    for row in rows:
+    for row, info in zip(rows, info_results):
+        if isinstance(info, BaseException):
+            logger.debug("remote worker get_info failed for {}: {}", row.get("name"), info)
+            info = None
         name = str(row.get("name") or "")
-        info = await _fetch_worker_info(root, api_key, name)
         merged = {**row}
         if isinstance(info, dict):
             merged.update({k: v for k, v in info.items() if v not in (None, "", [], {})})
@@ -402,14 +424,105 @@ async def _fetch_remote_worker_catalog(
             descriptor["updated_at"] = updated_at.strip()
         if "available" in merged:
             descriptor["available"] = bool(merged.get("available"))
+
+        # Keep the remote worker's own model catalog separate from Desktop's
+        # local provider catalog. DDF workers historically use the misspelled
+        # ``defult_config_name`` field, so preserve it while accepting the
+        # corrected spelling as well.
+        default_model = merged.get("defult_config_name") or merged.get("default_config_name")
+        if isinstance(default_model, str) and default_model.strip():
+            descriptor["defult_config_name"] = default_model.strip()
+        raw_model_configs = merged.get("model_configs") or merged.get("models") or merged.get("model_config_list")
+        if isinstance(raw_model_configs, list):
+            model_configs: list[dict[str, Any]] = []
+            for item in raw_model_configs:
+                if isinstance(item, str) and item.strip():
+                    model_configs.append({"name": item.strip()})
+                elif isinstance(item, dict):
+                    name_value = item.get("name") or item.get("alias") or item.get("model") or item.get("config_name")
+                    if isinstance(name_value, str) and name_value.strip():
+                        model_configs.append({**item, "name": name_value.strip()})
+            if model_configs:
+                descriptor["model_configs"] = model_configs
+
+        # DrSai remote workers (HepAIWorkerAgent / webui remote-agents style) declare
+        # their switchable model aliases as an ``agent_config`` mapping of
+        # ``alias -> underlying model`` (e.g. "hepai/deepseek-v4-pro" ->
+        # "deepseek-ai/deepseek-v4-pro"). get_info returns it alongside the
+        # misspelled ``defult_config_name`` default. Without this branch the
+        # Desktop model menu only ever shows the default alias.
+        raw_agent_config = merged.get("agent_config")
+        if isinstance(raw_agent_config, dict) and raw_agent_config:
+            existing_names = {
+                str(item.get("name") or "")
+                for item in descriptor.get("model_configs", [])
+                if isinstance(item, dict)
+            }
+            agent_config_models: list[dict[str, Any]] = [
+                item for item in descriptor.get("model_configs", []) if isinstance(item, dict)
+            ]
+            for alias, underlying in raw_agent_config.items():
+                alias_text = str(alias or "").strip()
+                if not alias_text or alias_text in existing_names:
+                    continue
+                # Skip non-model bookkeeping keys some workers keep in the dict
+                # (e.g. ``defult_config_name`` accidentally nested inside it).
+                if alias_text in ("defult_config_name", "default_config_name"):
+                    continue
+                if not (isinstance(underlying, str) and underlying.strip()):
+                    continue
+                agent_config_models.append({"name": alias_text, "model": underlying.strip()})
+            if agent_config_models:
+                descriptor["model_configs"] = agent_config_models
+
+        # Final fallback + completeness: a worker that only declares
+        # ``defult_config_name`` still exposes exactly one switchable model
+        # (the default itself), and the default alias must always appear in
+        # the menu even when ``agent_config`` omits it.
+        default_name = str(descriptor.get("defult_config_name") or "").strip()
+        if default_name:
+            listed = [
+                item for item in descriptor.get("model_configs", []) if isinstance(item, dict)
+            ]
+            if not any(str(item.get("name") or "").strip() == default_name for item in listed):
+                listed.append({"name": default_name})
+            descriptor["model_configs"] = listed
+
+        raw_skills = merged.get("skills")
+        if isinstance(raw_skills, list):
+            skills: list[dict[str, str]] = []
+            for item in raw_skills:
+                if not isinstance(item, dict):
+                    continue
+                skill_id = item.get("id") or item.get("name")
+                source = item.get("source")
+                if isinstance(skill_id, str) and skill_id.strip() and isinstance(source, str) and source.strip():
+                    skills.append({"id": skill_id.strip(), "source": source.strip(), **({"name": str(item["name"]).strip()} if item.get("name") else {})})
+            if skills:
+                descriptor["skills"] = skills
         workers.append(descriptor)
 
-    return {
+    # Degraded detection: get_info is the only source of the default config
+    # (``defult_config_name``) and the switchable model list. If not a single
+    # worker exposes them, the platform calls failed (timeout/auth) — flag it
+    # so the caller caches this result only briefly.
+    model_info_present = any(
+        worker.get("model_configs") or worker.get("defult_config_name")
+        for worker in workers
+    )
+    payload: dict[str, Any] = {
         "state": "ready",
         "root": root,
         "workers": workers,
         "message": f"Loaded {len(workers)} remote worker(s).",
+        "model_info_present": model_info_present,
     }
+    if workers and not model_info_present:
+        payload["degraded"] = True
+        payload["message"] = (
+            f"Loaded {len(workers)} remote worker(s), but get_info returned no model configs."
+        )
+    return payload
 
 
 async def remote_worker_status(credential: str | None = None) -> dict[str, Any]:

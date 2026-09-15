@@ -20,7 +20,7 @@ import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCirc
 import { getFailureRecovery } from "./failureRecovery";
 import { startGateway } from "./gateway";
 import { resolveGatewayPort } from "./gatewayEnvironment";
-import { acquireRuntimeClientLease, bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, LocalRuntimeClient, retainRuntimeClient, type OaepEvent, type OaepItem, type RuntimeAgentRun, type RuntimeClient, type RuntimeExecutionAuth, type RuntimeGoal, type RuntimeIdentity } from "./runtimeClient";
+import { acquireRuntimeClientLease, bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, isRuntimeClientGenerationInvalidated, LocalRuntimeClient, retainRuntimeClient, type OaepEvent, type OaepItem, type RuntimeAgentRun, type RuntimeClient, type RuntimeExecutionAuth, type RuntimeGoal, type RuntimeIdentity } from "./runtimeClient";
 import { sessionPayloadHash, sessionSyncState } from "./sessionSyncState";
 import { isUncertainRunCreateFailure, recoverRunCreation } from "./messageDelivery";
 import { isRecoverableNetworkError } from "./networkRecovery";
@@ -36,7 +36,7 @@ import {
 import { listRecordedChatRunEvents, recordChatRunEvent } from "./chatRunJournal";
 import { codexContinuationAction } from "./codexSessionResumePolicy";
 import { selectCurrentUserInput } from "./chatInput";
-import { isPresentationNoiseOaepEvent, materializeOaepDeltaShadow, presentationItemForOaepEvent, reduceOaepEvent, subscribeOaepSession, type OaepDeltaShadow } from "./oaepSessionStream";
+import { isOaepSyncDegradedError, isPresentationNoiseOaepEvent, materializeOaepDeltaShadow, presentationItemForOaepEvent, reduceOaepEvent, subscribeOaepSession, type OaepDeltaShadow } from "./oaepSessionStream";
 import { selectRuntimeConversationProtocolResult } from "./runtimeProtocolSelection";
 import { decideRuntimeRestartRecovery } from "../api/runtimeRestartRecovery";
 import { OAEP_VERSION } from "../api/oaep.generated";
@@ -412,11 +412,6 @@ function validateChatTurnIdentity(value: unknown): ChatTurnIdentity | null {
   return identity;
 }
 
-function isRuntimeClientGenerationInvalidated(error: unknown): boolean {
-  return Boolean(error && typeof error === "object"
-    && (error as { code?: unknown }).code === "runtime_client_generation_invalidated");
-}
-
 /**
  * Rebuild the Desktop-facing portion of a Runtime chat after Electron restarts.
  * The authoritative Run and its event log remain in the Runtime, so recovery
@@ -610,7 +605,47 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
             timestamp: new Date().toISOString(), source: authoritativeRun.backend_id === "opendrsai" ? "opendrsai-runtime" : "codex-runtime",
           } });
         },
+      }, {
+        // The recovery transaction's own lease must not be the subscription's
+        // only transport ownership: it is released when this function returns.
+        // A later generation change re-resolves through the thread's Workspace
+        // routing instead of retrying an already-aborted client.
+        resolveClient: async () => {
+          const lease = await acquireRuntimeClientLease(() =>
+            connectRuntimeClientForWorkspace(thread!.workspacePath!, thread!.execution?.workspaceId));
+          return { client: lease.client as RuntimeClient, release: lease.release };
+        },
       }));
+      // A degraded or fatal subscription can end without ever publishing the Run
+      // terminal, while a healthy subscription stopped by this function leaves
+      // `terminalError` unset. Settle the durable acknowledgement only in the
+      // first case: the Session must not stay blocked on an ack this Desktop can
+      // no longer observe, but the row itself is kept for restart recovery.
+      const recoveringSubscription = recoveredSubscription;
+      void recoveringSubscription.done.then(async () => {
+        const terminalError = recoveringSubscription.terminalError;
+        if (!terminalError) return;
+        const pending = (await sessionSyncState.get(thread!.runtimeSessionId!)).outbox;
+        if (!pending) return;
+        const released = await sessionSyncState.abandonOutbox(
+          thread!.runtimeSessionId!, pending.sourceMessageId,
+        ).catch(() => false);
+        if (!released) return;
+        await desktopDiagnostics.record({
+          traceId: requestId,
+          module: "runtime",
+          component: "oaep-session",
+          operation: "oaep.recovery.degraded",
+          message: "Recovered OAEP subscription ended without a Run terminal; released the pending Runtime acknowledgement.",
+          status: "failed",
+          level: "warn",
+          domain: "protocol",
+          agentPhase: "responding",
+          sessionId: thread!.runtimeSessionId!,
+          runId: thread.lastRunId,
+          attributes: { degraded: isOaepSyncDegradedError(terminalError) },
+        }).catch(() => undefined);
+      });
     }
     const events: OaepEvent[] = [];
     let cursor = 0;
@@ -961,6 +996,7 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
     model: request.model?.trim() || undefined,
     reasoningEffort: normalizeThinkingEffort(request.reasoningEffort),
     planMode: request.planMode === true ? true : undefined,
+    privateMode: request.privateMode === true ? true : undefined,
     workspacePath: request.workspacePath?.trim() || undefined,
     workspaceId: request.workspaceId?.trim() || undefined,
     workspaceName: request.workspaceName?.trim() || undefined,
@@ -1193,6 +1229,11 @@ async function runChat(
       agentDefinition,
       auth,
       platformDescriptor?.platformId,
+      // The agent square writes remoteWorkerName from the catalog, but this
+      // main-process upsert can run before that field exists on the thread
+      // (fresh placeholder). Fall back to the platform catalog name so the
+      // sidebar group label never degrades to the bare worker id.
+      platformDescriptor?.name,
     );
     if (platformDescriptor && request.agentId) recordAgentCircuitSuccess(request.agentId);
     recordAgentTelemetry({
@@ -1828,14 +1869,19 @@ async function runRuntimeBackendChat(
   initialAgentDefinition: string,
   auth: AuthContext,
   remoteWorker?: string,
+  remoteWorkerName?: string,
 ): Promise<void> {
   const isRemoteWorker = Boolean(remoteWorker);
   if (!isRemoteWorker && !request.workspacePath) throw new Error("Runtime Agent requires an open Workspace.");
   if (isRemoteWorker && !remoteWorker) throw new Error("The selected remote worker has no stable worker id.");
-  const resolved = await runChatStage(requestId, "runtime_connect", () => acquireRuntimeClientLease(async () => {
+  // Shared by the initial lease and by a mid-stream Runtime generation change:
+  // a subscription that lost its transport must re-resolve the same Workspace
+  // through the same routing instead of inventing a new target.
+  const resolveRuntimeClient = async () => {
     if (request.workspacePath) return connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, request.workspaceName);
     return { client: await LocalRuntimeClient.connect(), workspaceId: "" };
-  }));
+  };
+  const resolved = await runChatStage(requestId, "runtime_connect", () => acquireRuntimeClientLease(resolveRuntimeClient));
   const client = resolved.client;
   let agentDefinition = initialAgentDefinition;
   try {
@@ -1866,10 +1912,10 @@ async function runRuntimeBackendChat(
       throw error;
     }
   }
-  if (request.attachments?.length && !request.workspacePath) {
+  if (!isRemoteWorker && request.attachments?.length && !request.workspacePath) {
     throw new Error("Workspace attachments require an open Workspace.");
   }
-  if (request.workspacePath) await preflightAttachments(request.attachments, request.workspacePath, controller.signal);
+  if (!isRemoteWorker && request.workspacePath) await preflightAttachments(request.attachments, request.workspacePath, controller.signal);
   const runtimeProtocol = selectRuntimeConversationProtocolResult(await client.getCapabilities(), {
     forceLegacy: process.env.OPENDRSAI_DESKTOP_PROTOCOL_ROLLBACK === "conversation/1",
   });
@@ -1940,7 +1986,7 @@ async function runRuntimeBackendChat(
       workspacePath: isRemoteWorker ? undefined : request.workspacePath,
       sessionScope: isRemoteWorker ? "remote_agent" : "workspace",
       remoteWorkerId: remoteWorker,
-      remoteWorkerName: existingThread?.remoteWorkerName,
+      remoteWorkerName: existingThread?.remoteWorkerName ?? remoteWorkerName,
       boundAgentId: existingThread?.boundAgentId,
       boundAgentName: existingThread?.boundAgentName,
       runtimeSessionId,
@@ -1962,6 +2008,22 @@ async function runRuntimeBackendChat(
   if (!isRemoteWorker) bindRuntimeThreadToWorkspace(displaySessionId, resolved.workspaceId, runtimeSessionId);
   const sourceMessageId = `desktop:${requestId}`;
   const idempotencyKey = `desktop-runtime-${requestId}`;
+  // A previous failed UI turn can leave a durable outbox row behind if the
+  // process died between the Runtime terminal event and cleanup. Reconcile a
+  // terminal Run before rejecting the next message on this Session.
+  const existingOutbox = (await sessionSyncState.get(runtimeSessionId)).outbox;
+  if (existingOutbox && existingOutbox.sourceMessageId !== sourceMessageId) {
+    const outboxAgeMs = Date.now() - Date.parse(existingOutbox.createdAt);
+    let stale = existingOutbox.deliveryState === "failed" || existingOutbox.deliveryState === "terminal"
+      // An optimistic row without a Run ID older than the grace period means
+      // the previous Desktop process died before Runtime acknowledgement.
+      || (!existingOutbox.runId && Number.isFinite(outboxAgeMs) && outboxAgeMs > 30_000);
+    if (!stale && existingOutbox.runId) {
+      const previousRun = await client.getAgentRun(existingOutbox.runId).catch(() => null);
+      stale = Boolean(previousRun && ["completed", "failed", "cancelled", "aborted", "error"].includes(previousRun.status.toLowerCase()));
+    }
+    if (stale) await sessionSyncState.completeOutboxIfMatches(runtimeSessionId, existingOutbox.sourceMessageId);
+  }
   await sessionSyncState.beginOutbox(runtimeSessionId, {
     sourceMessageId,
     idempotencyKey,
@@ -1992,7 +2054,32 @@ async function runRuntimeBackendChat(
         const source = (event.data.item as OaepItem).source;
         if (source.message_id === sourceMessageId) sourceMessageObserved = true;
       }
-      if (!activeRuntimeRunId || event.run_id !== activeRuntimeRunId) return;
+      if (!activeRuntimeRunId) return;
+      if (event.run_id !== activeRuntimeRunId) {
+        // Keep the run-scoped filter strict, but make a protocol/run binding
+        // regression observable instead of silently dropping all output.
+        void desktopDiagnostics.record({
+          traceId: requestId,
+          module: "runtime",
+          component: "oaep-session",
+          operation: "oaep.event.run-mismatch",
+          message: "Ignored OAEP event for a different Runtime Run.",
+          status: "failed",
+          level: "warn",
+          domain: "protocol",
+          agentPhase: "responding",
+          visibility: "detail",
+          sessionId: runtimeSessionId,
+          runId: activeRuntimeRunId,
+          attributes: {
+            eventType: event.type,
+            eventRunId: event.run_id ?? "missing",
+            eventItemId: event.item_id ?? "",
+            eventSequence: event.sequence,
+          },
+        }).catch(() => undefined);
+        return;
+      }
       emitRuntimeOaepEvent(
         webContents, requestId, displaySessionId, activeRuntimeRunId, event, liveProjectionTarget,
         presentationItemForOaepEvent(state, event),
@@ -2073,6 +2160,16 @@ async function runRuntimeBackendChat(
         source: agentDefinition === "codex@1" ? "codex-runtime" : isRemoteWorker ? "remote-worker-runtime" : "opendrsai-runtime",
       } });
     },
+  }, {
+    // A catalog/config read or a superseding Runtime generation retires the
+    // shared transport this Session subscribed on. Retrying such a client can
+    // never succeed - its AbortController is already aborted, so every request
+    // fails pre-flight - and the subscription would burn the whole retry budget
+    // without emitting a single packet before degrading.
+    resolveClient: async () => {
+      const lease = await acquireRuntimeClientLease(resolveRuntimeClient);
+      return { client: lease.client as RuntimeClient, release: lease.release };
+    },
   }));
   let run: RuntimeAgentRun | null = null;
   await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "sending");
@@ -2140,7 +2237,7 @@ async function runRuntimeBackendChat(
     workspacePath: isRemoteWorker ? undefined : request.workspacePath,
     sessionScope: isRemoteWorker ? "remote_agent" : "workspace",
     remoteWorkerId: remoteWorker,
-    remoteWorkerName: existingThread?.remoteWorkerName,
+    remoteWorkerName: existingThread?.remoteWorkerName ?? remoteWorkerName,
     lastRunId: run.run_id,
     lastRequestId: requestId,
     runtimeSessionId,
@@ -2231,18 +2328,37 @@ async function runRuntimeBackendChat(
     }
   }
 
-  // Stage file attachments into the workspace so the Agent can read them.
+  // Local agents stage files into their workspace. Remote workers receive
+  // bounded path-free Base64 payloads through execute metadata instead.
   let staged: StagedAttachments;
+  let remoteFiles: Array<{ name: string; base64: string }> = [];
   try {
-    staged = await awaitWithSubscriptionCleanup(
-      stageAttachments(request.attachments, request.workspacePath!, run!.run_id, controller.signal),
-    );
+    if (isRemoteWorker) {
+      const attachments = request.attachments ?? [];
+      if (attachments.some((item) => item.kind === "folder" || !item.remoteDataUrl)) {
+        throw new Error("Remote agents accept files up to 10 MB; folders and local-path-only context are unsupported.");
+      }
+      const totalBytes = attachments.reduce((sum, item) => sum + (item.sizeBytes ?? 0), 0);
+      if (attachments.some((item) => (item.sizeBytes ?? 0) > 10 * 1024 * 1024) || totalBytes > 10 * 1024 * 1024) {
+        throw new Error("Remote attachments must not exceed 10 MB in total.");
+      }
+      remoteFiles = attachments.map((item) => ({ name: item.name, base64: item.remoteDataUrl! }));
+      staged = { attachments, refs: [], resources: [] };
+    } else {
+      staged = await awaitWithSubscriptionCleanup(
+        stageAttachments(request.attachments, request.workspacePath!, run!.run_id, controller.signal),
+      );
+    }
   } catch (error) {
     await client.cancelAgentRun(run.run_id).catch(() => undefined);
     throw error;
   }
   let failure: unknown;
-  const modelSelection = agentDefinition === "opendrsai@1" && client.location === "local"
+  // Private Mode is pinned by the Gateway, so the client must not resolve — or
+  // gate on — the Agent's model policy here: a missing primary model, or a
+  // missing image-understanding model, must never block a private Run.
+  const privateMode = request.privateMode === true;
+  const modelSelection = !privateMode && agentDefinition === "opendrsai@1" && client.location === "local"
     ? await getMyDrSaiAgentModelPolicy(request.agentId).then((policy) => {
         if (!policy.valid || !policy.effective_ref) {
           throw new Error(policy.error || "Configure a primary model for this OpenDrSai Agent before starting a Run.");
@@ -2293,16 +2409,32 @@ async function runRuntimeBackendChat(
       sourceMessageId,
       attachmentRefs: staged.refs,
       inputResources: staged.resources,
-      ...(modelSelection ? { modelSelection } : { model: request.model }),
+      // In Private Mode the client deliberately sends no model at all: the
+      // Gateway's private_model override is the only thing that decides.
+      ...(modelSelection ? { modelSelection } : privateMode ? {} : { model: request.model }),
       metadata: {
         ...(request.metadata ?? {}),
         ...(agentDefinition === "opendrsai@1" && request.agentId ? { agent_name: request.agentId } : {}),
         desktop_request_id: requestId,
         ...(goalConfirmationRequired ? { goal_required: true } : {}),
+        ...(privateMode ? { private_mode: true } : {}),
+        ...(isRemoteWorker && remoteFiles.length ? { remote_files: remoteFiles } : {}),
+        ...(isRemoteWorker && Array.isArray(request.metadata?.remote_skills)
+          ? { remote_skills: request.metadata.remote_skills }
+          : {}),
       },
     };
   const executionAuth: RuntimeExecutionAuth | undefined = isPlatformBearerAuth(auth)
-      ? { authMode: "oidc", accessToken: auth.accessToken, refreshToken: auth.refreshToken, userId: auth.userId }
+      ? {
+          authMode: "oidc",
+          accessToken: auth.accessToken,
+          refreshToken: auth.refreshToken,
+          userId: auth.userId,
+          // Remote DDF workers identify users by HepAI email, not the OIDC
+          // subject UUID; forward the login email so the gateway can key the
+          // worker run on it.
+          userEmail: auth.session?.user?.email ?? undefined,
+        }
       : auth.authMode === "offline"
         ? { authMode: "offline", userId: auth.userId }
         : undefined;
@@ -2388,13 +2520,38 @@ async function runRuntimeBackendChat(
   // message. Definitive failures/cancels/timeouts must release it, otherwise
   // every later send on this Session dies with "awaiting Runtime acknowledgement".
   const runtimeReachedTerminal = runtimeTerminalStatus !== undefined;
+  // A degraded subscription (retry budget exhausted, Runtime unreachable for
+  // minutes) is the case that used to leave the acknowledgement pending
+  // forever. The Run may still exist on the Runtime, so the durable row is kept
+  // for restart recovery, but it must stop blocking this Session.
+  const degradedSyncFailure = Boolean(failure && isOaepSyncDegradedError(failure) && !runtimeReachedTerminal);
   const keepOutboxForRetry = Boolean(
     failure
     && isRecoverableNetworkError(failure)
     && !runtimeReachedTerminal
   );
   try {
-    if ((!failure && sourceMessageObserved) || (failure && !keepOutboxForRetry)) {
+    if (degradedSyncFailure) {
+      await awaitWithSubscriptionCleanup(desktopDiagnostics.record({
+        traceId: requestId,
+        parentSpanId: diagnosticOperation?.spanId,
+        module: "runtime",
+        component: "oaep-session",
+        operation: "oaep.session.degraded",
+        message: "OAEP Session subscription degraded; released the pending Runtime acknowledgement so restart recovery can resolve this message.",
+        status: "failed",
+        level: "warn",
+        domain: "protocol",
+        agentPhase: "responding",
+        sessionId: runtimeSessionId,
+        runId: run.run_id,
+        attributes: {
+          authoritativeRunMayStillExist: true,
+          generationRebinds: liveSubscription.metrics.reconnects,
+        },
+      })).catch(() => undefined);
+      await sessionSyncState.abandonOutbox(runtimeSessionId, sourceMessageId).catch(() => undefined);
+    } else if ((!failure && sourceMessageObserved) || (failure && !keepOutboxForRetry)) {
       if (runtimeReachedTerminal) {
         await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "terminal").catch(() => undefined);
       }

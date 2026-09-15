@@ -13,8 +13,7 @@
  * /api/skills*.
  */
 
-import { request as httpRequest } from "http";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
   getAuthSession,
   refreshAuthContextAfterUnauthorized,
@@ -22,12 +21,10 @@ import {
 } from "./auth";
 import { isDesktopDevelopment } from "./desktopRuntimeMode";
 import { readDurableJson, writeDurableJson } from "./durableJsonStore";
-import { getGatewayRequestHeaders } from "./gateway";
-import { resolveGatewayPort } from "./gatewayEnvironment";
 import { DRSAI_HOME } from "./paths";
 import { getActivePlatformConfig } from "./platformConfig";
 import { writeZipBufferAndInstall, sanitizeInstallName } from "./skillArchive";
-import { installSkill, reloadSkills } from "./gatewayManagedResources";
+import { installSkill, listInstalledSkills, reloadSkills } from "./gatewayManagedResources";
 
 /** WebUI Skills Square hosts (not HepAI ai / ai-dev portal). */
 export const SKILLS_SQUARE_TEST_API_ROOT = "https://drsaiv2.ihep.ac.cn";
@@ -312,15 +309,15 @@ function mapShareInfo(
 }
 
 async function resolveSkillsUserId(explicit?: string): Promise<string | undefined> {
-  const trimmed = explicit?.trim();
-  if (trimmed) return trimmed;
-  try {
-    const session = await getAuthSession();
-    const userId = session.user?.id || session.user?.email;
-    return userId?.trim() || undefined;
-  } catch {
-    return undefined;
-  }
+  // The gateway's `effective_user_id` keys the skills directory by the verified
+  // OIDC subject. Aliases (e.g. the operator email) trigger subject_mismatch
+  // 403, so mirror gatewayManagedResources.skillsUserId: subject first.
+  const session = await getAuthSession().catch(() => null);
+  const subject = session?.user?.id?.trim() || "";
+  if (subject) return subject;
+  const value = explicit?.trim();
+  if (value) return value;
+  return session?.user?.email?.trim() || undefined;
 }
 
 async function resolveOperatorEmail(explicit?: string): Promise<string | undefined> {
@@ -336,73 +333,27 @@ async function resolveOperatorEmail(explicit?: string): Promise<string | undefin
 
 // ── Gateway helpers ─────────────────────────────────────────────────────────
 
-interface GatewaySkillRow {
-  name: string;
-}
-
-async function gatewayFetch<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-  timeoutMs = 10_000,
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const json = body !== undefined ? JSON.stringify(body) : undefined;
-    const headers: Record<string, string> = {
-      ...getGatewayRequestHeaders(),
-      Accept: "application/json",
-    };
-    if (json) {
-      headers["Content-Type"] = "application/json";
-      headers["Content-Length"] = Buffer.byteLength(json).toString();
-    }
-    const base = `http://127.0.0.1:${resolveGatewayPort()}`;
-    const url = new URL(path, base);
-    const req = httpRequest(
-      {
-        hostname: url.hostname,
-        port: url.port,
-        path: url.pathname + url.search,
-        method,
-        headers,
-      },
-      (res) => {
-        let data = "";
-        res.setEncoding("utf8");
-        res.on("data", (chunk: string) => {
-          data += chunk;
-        });
-        res.on("end", () => {
-          if (res.statusCode && res.statusCode >= 400) {
-            reject(new Error(`Gateway ${method} ${path} returned ${res.statusCode}: ${data}`));
-            return;
-          }
-          try {
-            resolve(JSON.parse(data) as T);
-          } catch {
-            reject(new Error(`Gateway response not JSON: ${data.slice(0, 200)}`));
-          }
-        });
-      },
-    );
-    req.setTimeout(timeoutMs, () => {
-      req.destroy();
-      reject(new Error("Gateway request timed out"));
-    });
-    req.on("error", reject);
-    if (json) req.write(json);
-    req.end();
-  });
-}
-
 async function listInstalledSkillNames(userId?: string): Promise<Set<string>> {
+  // Must share the install path's user scope: gatewayManagedResources resolves
+  // the verified OIDC subject first. The previous direct
+  // `GET /v1/skills?user_id=<operator email>` asked for the email alias, hit
+  // subject_mismatch 403 and the catch swallowed it into an empty set — which
+  // is why every square skill showed up as "not installed".
   try {
-    const uid = await resolveSkillsUserId(userId);
-    const qs = uid ? `?user_id=${encodeURIComponent(uid)}` : "";
-    const installed = await gatewayFetch<{ data: GatewaySkillRow[] }>("GET", `/v1/skills${qs}`);
-    return new Set((installed.data ?? []).map((s) => s.name));
+    const installed = await listInstalledSkills(userId);
+    const names = new Set<string>();
+    for (const skill of installed ?? []) {
+      // /v1/skills reports the SKILL.md frontmatter name, while the directory
+      // on disk is keyed by the sanitized install name. Keep both so square
+      // entries match regardless of which writer produced the row.
+      const frontmatterName = skill?.name?.trim();
+      if (frontmatterName) names.add(frontmatterName.toLowerCase());
+      const dirName = skill?.path ? basename(skill.path).trim() : "";
+      if (dirName) names.add(dirName.toLowerCase());
+    }
+    return names;
   } catch {
-    return new Set();
+    return new Set<string>();
   }
 }
 
@@ -803,6 +754,26 @@ function resolveIsCollected(
   return false;
 }
 
+// A square skill is "installed" when the local skills directory contains the
+// tree that installSkillsSquare wrote. That directory is keyed by the sanitized
+// square name (skillArchive.sanitizeInstallName) while /v1/skills reports the
+// SKILL.md frontmatter name — compare every variant so renamed or localized
+// square names still match (case-insensitively).
+function isSquareSkillInstalled(name: string, slug: string, installedNames: Set<string>): boolean {
+  const candidates: string[] = [];
+  for (const value of [name, slug]) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    candidates.push(trimmed);
+    try {
+      candidates.push(sanitizeInstallName(trimmed));
+    } catch {
+      // Keep the raw form only.
+    }
+  }
+  return candidates.some((candidate) => installedNames.has(candidate.toLowerCase()));
+}
+
 function mapWebuiSkill(
   raw: Record<string, unknown>,
   installedNames: Set<string>,
@@ -861,7 +832,7 @@ function mapWebuiSkill(
     changelog: asString(raw.changelog),
     createdAt: asString(raw.created_at) || asString(raw.createdAt),
     updatedAt: asString(raw.updated_at) || asString(raw.updatedAt),
-    installed: installedNames.has(name) || installedNames.has(slug),
+    installed: isSquareSkillInstalled(name, slug, installedNames),
     academicGroupId: asString(raw.academicGroupId) || asString(raw.academic_group_id),
   };
 }
@@ -1572,7 +1543,19 @@ export async function installSkillsSquare(
     throw new Error("HepAI OIDC sign-in required to install public skills.");
   }
 
-  const installName = sanitizeInstallName(request.name?.trim() || slug);
+  // Prefer the square display name; the slug is ASCII by construction, so fall
+  // back to it when the name cannot be sanitized into a valid directory name.
+  const installName = ((): string => {
+    const trimmed = request.name?.trim();
+    if (trimmed) {
+      try {
+        return sanitizeInstallName(trimmed);
+      } catch {
+        // Fall through to the slug.
+      }
+    }
+    return sanitizeInstallName(slug);
+  })();
   const uid = await resolveSkillsUserId(request.userId);
 
   let mdInstalled: { status: string; name: string; path: string; files: number } | null = null;

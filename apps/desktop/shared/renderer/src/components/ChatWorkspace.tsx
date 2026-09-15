@@ -37,6 +37,7 @@ import {
   Search,
   ScanSearch,
   Send,
+  ShieldCheck,
   Square,
   TextCursorInput,
   Terminal,
@@ -44,8 +45,7 @@ import {
   Trash2,
   Volume2,
   X,
-  // Temporarily unused while composer Skills picker is hidden — keep for later reuse.
-  // Zap,
+  Zap,
 } from "lucide-react";
 import drsaiLogo from "../assets/drsai.png";
 import { OpenAiBrandIcon } from "./OpenAiBrandIcon";
@@ -67,6 +67,7 @@ import type {
   DesktopDuplexVoiceReadiness,
   DesktopThreadHistoryState,
   DesktopVoiceTranscriptionResult,
+  DesktopSquareSkill,
   ChatToolTimelineEvent,
   ChatMessagePart,
   MyDrSaiModelConfig,
@@ -139,6 +140,7 @@ import {
   type VoiceTurnEvent,
 } from "../voice/voiceTurnReducer";
 import type { UserFacingRecoveryAction } from "../userFacingErrors";
+import type { ChatErrorPresentation } from "../chatErrorPresentation";
 import { userFacingFailureMessage } from "../userFacingLanguage";
 
 export type UiMessage = ChatMessage & {
@@ -161,6 +163,7 @@ export type UiMessage = ChatMessage & {
   /** Files/folders attached when the user sent this message (shown as chips in the bubble). */
   attachments?: ChatAttachment[];
   recoveryActions?: UserFacingRecoveryAction[];
+  errorPresentation?: ChatErrorPresentation;
   inputRequest?: {
     requestId: string;
     prompt: string;
@@ -233,6 +236,7 @@ interface MaterialTaskSuggestion {
 export type ThinkingEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 const THINKING_EFFORTS: ThinkingEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024;
+const REMOTE_ATTACHMENT_LIMIT_BYTES = 10 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGE_COUNT = 4;
 const MAX_CLIPBOARD_PATH_MENTIONS = 6;
 // Generous tolerance so subpixel scroll, trackpad settle, and near-bottom
@@ -263,10 +267,17 @@ export interface ChatSubmitOptions {
   draftParts?: ChatDraftPart[];
   forkQueueAgentAssignments?: ChatForkQueueAgentAssignment[];
   planMode?: boolean;
+  /**
+   * Per-turn Private Mode. The Gateway — not the client — pins this Run to the
+   * private model and forces reasoning off, so the selected model is ignored.
+   */
+  privateMode?: boolean;
   model?: string;
   replaceFromMessageId?: string;
   runtimeMode?: ChatRuntimeMode | null;
   skillName?: string | null;
+  /** Remote-agent skill selection in the WebUI {id, source} protocol. */
+  remoteSkill?: { id: string; source: string; name?: string; content?: string; zipBase64?: string } | null;
   text?: string;
   thinkingEffort?: ThinkingEffort;
   onStarted?: (submission: {
@@ -519,7 +530,12 @@ function ChatWorkspaceImpl({
     setComposerText(input);
   }, [input]);
 
-  useEffect(() => clearComposerSyncTimer, []);
+  useEffect(() => {
+    return () => {
+      clearComposerSyncTimer();
+      if (squareSearchTimerRef.current !== undefined) clearTimeout(squareSearchTimerRef.current);
+    };
+  }, []);
 
   const [toolsOpen, setToolsOpen] = useState(false);
   const [conversationResourceStates, setConversationResourceStates] = useState<Record<string, ConversationResourceResolveResult["state"]>>({});
@@ -624,6 +640,9 @@ function ChatWorkspaceImpl({
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
   const composerAttachmentsByThreadRef = useRef<Map<string, ComposerAttachment[]>>(new Map());
   const composerConversationIdRef = useRef(conversationId);
+  const isRemoteAgent = useMemo(() => agentOptions.some(
+    (agent) => agent.id === selectedAgentId && agent.source === "remote",
+  ), [agentOptions, selectedAgentId]);
   attachmentsRef.current = attachments;
   const [interactionDraft, setInteractionDraft] = useState("");
   const [materialRoleAnalysis, setMaterialRoleAnalysis] = useState<MaterialRoleAnalysisResult | null>(null);
@@ -636,14 +655,55 @@ function ChatWorkspaceImpl({
   const materialConsistencyRequestRef = useRef(0);
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>(defaultThinkingEffort);
   const [taskInteractionMode, setTaskInteractionMode] = useState<"normal" | "plan">("normal");
+  const [privateMode, setPrivateMode] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [metaMenuOpen, setMetaMenuOpen] = useState<"configuration" | "skill" | null>(null);
-  const [configurationSection, setConfigurationSection] = useState<"model" | "thinking" | "task" | "agent" | null>(null);
+  const [configurationSection, setConfigurationSection] = useState<"model" | "thinking" | "task" | "agent" | "private" | null>(null);
   const [configurationSubmenuPosition, setConfigurationSubmenuPosition] = useState({ top: 0, left: 0, maxHeight: 220 });
   const [installedSkills, setInstalledSkills] = useState<GatewaySkill[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillsLoadError, setSkillsLoadError] = useState<string | null>(null);
   const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
+  const [squareSkills, setSquareSkills] = useState<DesktopSquareSkill[]>([]);
+  const [squareTags, setSquareTags] = useState<string[]>([]);
+  const [squareActiveTag, setSquareActiveTag] = useState<string | null>(null);
+  const [squareSearch, setSquareSearch] = useState("");
+  const [squareLoading, setSquareLoading] = useState(false);
+  const [squareError, setSquareError] = useState<string | null>(null);
+  const [squareInstallingSlug, setSquareInstallingSlug] = useState<string | null>(null);
+  const [selectedSquareSkill, setSelectedSquareSkill] = useState<{
+    slug: string;
+    name: string;
+    source: string;
+    content?: string;
+    zipBase64?: string;
+    /** Exact Gateway skill name returned by installation. */
+    installedName?: string;
+  } | null>(null);
+  const squareRequestGenerationRef = useRef(0);
+  const installedSkillsCacheRef = useRef<{ items: GatewaySkill[]; timestamp: number } | null>(null);
+  const [squarePage, setSquarePage] = useState(1);
+  const [squareTotal, setSquareTotal] = useState(0);
+  const [squareHasNext, setSquareHasNext] = useState(false);
+  const [squareSort, setSquareSort] = useState<"downloads" | "name" | "time">("downloads");
+  const [squareInstallFilter, setSquareInstallFilter] = useState<"all" | "installed" | "not_installed">("all");
+  const [squareLoadingMore, setSquareLoadingMore] = useState(false);
+  const squareSentinelRef = useRef<HTMLDivElement | null>(null);
+  // Square skills cache: reuse API response across menu opens (TTL 30 s).
+  const squareSkillsCacheRef = useRef<{
+    items: DesktopSquareSkill[];
+    tags: string[];
+    search: string;
+    tag: string | null;
+    sort: "downloads" | "name" | "time";
+    installFilter: "all" | "installed" | "not_installed";
+    page: number;
+    total: number;
+    hasNext: boolean;
+    timestamp: number;
+  } | null>(null);
+  // The main process applies the authoritative frontmatter/alias matching.
+  const isSquareSkillInstalled = useCallback((skill: DesktopSquareSkill): boolean => skill.installed, []);
   const [introMenuOpen, setIntroMenuOpen] = useState<"workspace" | "agent" | null>(null);
   const [introSearchQuery, setIntroSearchQuery] = useState("");
   const [forkQueueAgentSelections, setForkQueueAgentSelections] = useState<Record<number, string>>({});
@@ -859,6 +919,45 @@ function ChatWorkspaceImpl({
       e.stopPropagation();
       const dataTransfer = e.dataTransfer;
       if (!dataTransfer?.files.length) return;
+      if (isRemoteAgent) {
+        const isZh = language === "zh";
+        void (async () => {
+          const added: ComposerAttachment[] = [];
+          let totalBytes = attachmentsRef.current.reduce(
+            (sum, item) => sum + (item.sizeBytes ?? 0), 0);
+          for (const f of Array.from(dataTransfer.files)) {
+            if (f.size > REMOTE_ATTACHMENT_LIMIT_BYTES) {
+              window.alert(isZh
+                ? `文件 ${f.name} 超过远程附件 10 MB 上限。`
+                : `File ${f.name} exceeds the 10 MB remote attachment limit.`);
+              continue;
+            }
+            if (totalBytes + f.size > REMOTE_ATTACHMENT_LIMIT_BYTES) {
+              window.alert(isZh
+                ? "远程附件总量超过 10 MB 上限，已停止添加。"
+                : "Remote attachments exceed the 10 MB total limit; stopped adding files.");
+              break;
+            }
+            const dataUrl = await blobToDataUrl(f).catch(() => undefined);
+            if (!dataUrl) continue;
+            totalBytes += f.size;
+            added.push({
+              id: crypto.randomUUID(),
+              kind: "file",
+              path: `remote-file:${crypto.randomUUID()}`,
+              name: f.name || "unknown",
+              remoteDataUrl: dataUrl,
+              sizeBytes: f.size,
+              mimeType: f.type || "application/octet-stream",
+              ...(f.type.startsWith("image/") ? { screenshotDataUrl: dataUrl } : {}),
+            });
+          }
+          if (!added.length) return;
+          setAttachments((current) => [...current, ...added]);
+          setToolsOpen(false);
+        })();
+        return;
+      }
       const getPath = hasDesktopApi()
         ? (f: File): string => desktopApi.getPathForFile(f)
         : (f: File): string => `C:\\Users\\Demo\\Downloads\\${f.name}`;
@@ -979,6 +1078,7 @@ function ChatWorkspaceImpl({
 
   useEffect(() => {
     setTaskInteractionMode(defaultPlanMode);
+    setPrivateMode(false);
     setRespondedInputRequests(new Set());
     setInteractionDraft("");
     setForkQueueAgentSelections({});
@@ -987,7 +1087,12 @@ function ChatWorkspaceImpl({
   }, [conversationId, defaultPlanMode]);
 
   useEffect(() => {
-    if (!agentOptions.some((agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex")) setTaskInteractionMode("normal");
+    // Private Mode only exists for the local OpenDrSai Agent: switching to a
+    // remote agent (or Codex) must clear it rather than leak a stale toggle.
+    if (!agentOptions.some((agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex")) {
+      setTaskInteractionMode("normal");
+      setPrivateMode(false);
+    }
   }, [agentOptions, selectedAgentId]);
 
   async function respondToAgentInput(
@@ -1207,6 +1312,15 @@ function ChatWorkspaceImpl({
   const isLocalOpenDrSaiAgent = useMemo(() => agentOptions.some(
     (agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex",
   ), [agentOptions, selectedAgentId]);
+  const remoteAgentSkills = useMemo(() => (isRemoteAgent ? activeAgent?.remoteSkills ?? [] : []), [activeAgent, isRemoteAgent]);
+  const [selectedRemoteSkillId, setSelectedRemoteSkillId] = useState<string | null>(null);
+  const selectedRemoteSkill = remoteAgentSkills.find((skill) => skill.id === selectedRemoteSkillId) ?? null;
+  useEffect(() => {
+    // Reset the remote skill selection whenever the selected Agent changes so
+    // a remote {id, source} never leaks into another Agent's session.
+    setSelectedRemoteSkillId(null);
+    setSelectedSquareSkill(null);
+  }, [selectedAgentId]);
   const workspaceLocationLabel =
     workspaceLocation === "remote"
       ? zh
@@ -1228,6 +1342,7 @@ function ChatWorkspaceImpl({
     [modelOptions, selectedModelName, selectedModelProviderId],
   );
   const supportedThinkingEfforts = useMemo<ThinkingEffort[]>(() => {
+    if (isRemoteAgent) return [];
     if (!isLocalOpenDrSaiAgent) return THINKING_EFFORTS;
     if (!activeModelConfig?.operations?.includes("reasoning")) return [];
     const configured = activeModelConfig.reasoning_efforts ?? [];
@@ -1258,6 +1373,9 @@ function ChatWorkspaceImpl({
     : (zh ? "常规" : "Normal");
   const composerConfigurationSummary = [
     activeAgentName,
+    // Private Mode overrides the model for the turn, so the collapsed summary
+    // has to say so; otherwise it would keep naming a model that is ignored.
+    ...(privateMode ? [zh ? "私密模式" : "Private mode"] : []),
     compactModelName,
     ...(showThinkingEffort ? [thinkingEffortLabel] : []),
     taskInteractionModeLabel,
@@ -2247,6 +2365,15 @@ function ChatWorkspaceImpl({
       .filter((file) => file.type.startsWith("image/") || isImageFileName(file.name || ""))
       .slice(0, MAX_CLIPBOARD_IMAGE_COUNT);
     const text = clipboard.getData("text/plain");
+    if (isRemoteAgent) {
+      // Remote agents receive pasted images as Base64 payloads, never as
+      // local filesystem paths or clipboard staging references.
+      if (imageFiles.length) {
+        event.preventDefault();
+        void addRemoteClipboardFiles(imageFiles);
+      }
+      return;
+    }
     const pathMentionText = normalizePastedLocalPathMentions(text);
     if (!imageFiles.length && !pathMentionText) return;
 
@@ -2258,6 +2385,43 @@ function ChatWorkspaceImpl({
     } else {
       insertTextAtCursor(pathMentionText || text);
     }
+  }
+
+  async function addRemoteClipboardFiles(files: File[]): Promise<void> {
+    const added: ComposerAttachment[] = [];
+    let totalBytes = attachmentsRef.current.reduce(
+      (sum, item) => sum + (item.sizeBytes ?? 0), 0);
+    for (const [index, file] of files.entries()) {
+      if (file.size > REMOTE_ATTACHMENT_LIMIT_BYTES) {
+        window.alert(zh
+          ? `图片 ${file.name || `clipboard-image-${index + 1}`} 超过远程附件 10 MB 上限。`
+          : `Image ${file.name || `clipboard-image-${index + 1}`} exceeds the 10 MB remote attachment limit.`);
+        continue;
+      }
+      if (totalBytes + file.size > REMOTE_ATTACHMENT_LIMIT_BYTES) {
+        window.alert(zh
+          ? "远程附件总量超过 10 MB 上限，已停止添加。"
+          : "Remote attachments exceed the 10 MB total limit; stopped adding files.");
+        break;
+      }
+      const dataUrl = await blobToDataUrl(file).catch(() => undefined);
+      if (!dataUrl) continue;
+      totalBytes += file.size;
+      added.push({
+        id: crypto.randomUUID(),
+        kind: "file",
+        path: `remote-clipboard:${crypto.randomUUID()}`,
+        name: file.name?.trim() || `clipboard-image-${index + 1}`,
+        title: `Clipboard image: ${file.name || `clipboard-image-${index + 1}`}`,
+        remoteDataUrl: dataUrl,
+        sizeBytes: file.size,
+        mimeType: file.type || "image/png",
+        screenshotDataUrl: dataUrl,
+      });
+    }
+    if (!added.length) return;
+    setAttachments((current) => [...current, ...added]);
+    setToolsOpen(false);
   }
 
   function startEditAndResend(assistantMessageId: string): void {
@@ -2313,10 +2477,22 @@ function ChatWorkspaceImpl({
         agentId: selectedAgentId,
         agentName: activeAgentName,
         planMode: isLocalOpenDrSaiAgent && taskInteractionMode === "plan",
+        privateMode: isLocalOpenDrSaiAgent && privateMode,
         model: selectedModelName,
         replaceFromMessageId: user.id,
         runtimeMode: currentRuntimeMode,
-        skillName: selectedSkillName,
+        skillName: !isRemoteAgent ? (selectedSkillName ?? selectedSquareSkill?.installedName) : undefined,
+        remoteSkill: isRemoteAgent && (selectedRemoteSkill || selectedSquareSkill)
+          ? selectedRemoteSkill
+            ? { id: selectedRemoteSkill.id, source: selectedRemoteSkill.source }
+            : {
+                id: selectedSquareSkill!.slug,
+                source: selectedSquareSkill!.source,
+                name: selectedSquareSkill!.name,
+                ...(selectedSquareSkill!.zipBase64 ? { zipBase64: selectedSquareSkill!.zipBase64 } : {}),
+                ...(selectedSquareSkill!.content ? { content: selectedSquareSkill!.content } : {}),
+              }
+          : null,
         text: user.content,
         thinkingEffort: !isLocalOpenDrSaiAgent || thinkingEffortSupported ? thinkingEffort : undefined,
       },
@@ -2370,9 +2546,21 @@ function ChatWorkspaceImpl({
           agentOptions,
         ),
         planMode: isLocalOpenDrSaiAgent && taskInteractionMode === "plan",
+        privateMode: isLocalOpenDrSaiAgent && privateMode,
         model: selectedModelName,
         runtimeMode: currentRuntimeMode,
-        skillName: selectedSkillName,
+        skillName: !isRemoteAgent ? (selectedSkillName ?? selectedSquareSkill?.installedName) : undefined,
+        remoteSkill: isRemoteAgent && (selectedRemoteSkill || selectedSquareSkill)
+          ? selectedRemoteSkill
+            ? { id: selectedRemoteSkill.id, source: selectedRemoteSkill.source }
+            : {
+                id: selectedSquareSkill!.slug,
+                source: selectedSquareSkill!.source,
+                name: selectedSquareSkill!.name,
+                ...(selectedSquareSkill!.zipBase64 ? { zipBase64: selectedSquareSkill!.zipBase64 } : {}),
+                ...(selectedSquareSkill!.content ? { content: selectedSquareSkill!.content } : {}),
+              }
+          : null,
         thinkingEffort: !isLocalOpenDrSaiAgent || thinkingEffortSupported ? thinkingEffort : undefined,
         ...(!isVoiceSubmission ? { text: textDraft } : {}),
         ...(pendingReplaceFromMessageId ? { replaceFromMessageId: pendingReplaceFromMessageId } : {}),
@@ -2392,6 +2580,8 @@ function ChatWorkspaceImpl({
       setAttachments([]);
       onClearExternalAttachments?.();
       setSelectedSkillName(null);
+      setSelectedRemoteSkillId(null);
+      setSelectedSquareSkill(null);
       setPendingReplaceFromMessageId(null);
       editResendBackupRef.current = null;
       if (isVoiceSubmission) dispatchVoiceTurn({ type: "response_started" });
@@ -2851,16 +3041,21 @@ function ChatWorkspaceImpl({
   }
 
   function toggleMetaMenu(menu: "configuration" | "skill"): void {
-    setMetaMenuOpen((current) => {
-      const next = current === menu ? null : menu;
-      if (next === "skill") void loadInstalledSkillsForPicker();
-      setConfigurationSection(null);
-      return next;
-    });
+    const next = metaMenuOpen === menu ? null : menu;
+    setMetaMenuOpen(next);
+    setConfigurationSection(null);
+    // Do not put I/O in a React state updater: React may replay it.
+    if (next === "skill") {
+      if (!isRemoteAgent) void loadInstalledSkillsForPicker();
+      if (squareInstallFilter !== "installed") {
+        void loadSquareSkills({ search: squareSearch, tag: squareActiveTag, sort: squareSort, installFilter: squareInstallFilter });
+      }
+      void loadSquareSkillTags();
+    }
   }
 
   function revealConfigurationSection(
-    section: "agent" | "model" | "thinking" | "task",
+    section: "agent" | "model" | "thinking" | "task" | "private",
     anchor: HTMLButtonElement,
   ): void {
     const menu = anchor.closest<HTMLElement>(".composer-configuration-menu");
@@ -2885,14 +3080,22 @@ function ChatWorkspaceImpl({
   async function loadInstalledSkillsForPicker(): Promise<void> {
     if (!hasDesktopApi() || typeof desktopApi.listInstalledSkills !== "function") {
       setInstalledSkills([]);
-      setSkillsLoadError(zh ? "当前环境不支持读取 Skills。" : "Skills are unavailable in this environment.");
+      setSkillsLoadError(zh ? "当前环境不支持读取技能。" : "Skills are unavailable in this environment.");
+      return;
+    }
+    const cached = installedSkillsCacheRef.current;
+    if (cached && Date.now() - cached.timestamp < 30_000) {
+      setInstalledSkills(cached.items);
+      setSkillsLoadError(null);
       return;
     }
     setSkillsLoading(true);
     setSkillsLoadError(null);
     try {
       const skills = await desktopApi.listInstalledSkills();
-      setInstalledSkills(Array.isArray(skills) ? skills : []);
+      const items = Array.isArray(skills) ? skills : [];
+      installedSkillsCacheRef.current = { items, timestamp: Date.now() };
+      setInstalledSkills(items);
     } catch (error) {
       setInstalledSkills([]);
       setSkillsLoadError(userFacingFailureMessage(error, language, "operation"));
@@ -2900,6 +3103,212 @@ function ChatWorkspaceImpl({
       setSkillsLoading(false);
     }
   }
+
+  async function loadSquareSkillTags(): Promise<void> {
+    if (!hasDesktopApi() || typeof desktopApi.listSkillsSquareTags !== "function") return;
+    try {
+      const tags = await desktopApi.listSkillsSquareTags();
+      setSquareTags((tags ?? []).map((tag) => tag.name).filter((name) => name.trim().length > 0));
+    } catch {
+      // Tag listing needs an account email on some hosts; fall back to tags
+      // harvested from the loaded skills instead of surfacing an error.
+      setSquareTags((current) => (current.length ? current : []));
+    }
+  }
+
+  async function loadSquareSkills(options?: {
+    search?: string;
+    tag?: string | null;
+    page?: number;
+    append?: boolean;
+    sort?: "downloads" | "name" | "time";
+    installFilter?: "all" | "installed" | "not_installed";
+  }): Promise<void> {
+    if (!hasDesktopApi() || typeof desktopApi.listSkillsSquare !== "function") {
+      setSquareSkills([]);
+      setSquareError(zh ? "当前环境不支持读取公共技能。" : "Public skills are unavailable in this environment.");
+      return;
+    }
+    const search = options?.search?.trim() ?? "";
+    const tag = options?.tag ?? null;
+    const targetPage = options?.page ?? 1;
+    const append = options?.append ?? false;
+    const reqSort = options?.sort ?? squareSort;
+    const reqInstallFilter = options?.installFilter ?? squareInstallFilter;
+    // Cache hit: only for fresh first-page loads (never append).
+    if (!append && targetPage === 1) {
+      const cached = squareSkillsCacheRef.current;
+      if (
+        cached &&
+        cached.search === search &&
+        cached.tag === tag &&
+        cached.sort === reqSort &&
+        cached.installFilter === reqInstallFilter &&
+        Date.now() - cached.timestamp < 30_000
+      ) {
+        setSquareSkills(cached.items);
+        setSquarePage(cached.page);
+        setSquareTotal(cached.total);
+        setSquareHasNext(cached.hasNext);
+        if (!squareTags.length) setSquareTags(cached.tags);
+        setSquareError(null);
+        return;
+      }
+    }
+    const requestGeneration = ++squareRequestGenerationRef.current;
+    if (append) setSquareLoadingMore(true);
+    else setSquareLoading(true);
+    setSquareError(null);
+    try {
+      const result = await desktopApi.listSkillsSquare({
+        scope: "public",
+        page: targetPage,
+        pageSize: 20,
+        sort: reqSort,
+        ...(search ? { q: search } : {}),
+        ...(tag ? { tags: tag } : {}),
+        ...(reqInstallFilter !== "all" ? { installFilter: reqInstallFilter } : {}),
+      });
+      if (requestGeneration !== squareRequestGenerationRef.current) return;
+      const items = Array.isArray(result?.items) ? result.items : [];
+      if (append) {
+        setSquareSkills((prev) => [...prev, ...items]);
+      } else {
+        setSquareSkills(items);
+      }
+      setSquarePage(result?.page ?? targetPage);
+      setSquareTotal(result?.total ?? 0);
+      setSquareHasNext(result?.hasNext ?? false);
+      // Harvest tags from loaded skills on first fresh load.
+      if (!append && !squareTags.length) {
+        const harvested = new Set<string>();
+        for (const item of items) for (const t of item.tags ?? []) harvested.add(t);
+        setSquareTags([...harvested]);
+      }
+      // Write cache only for fresh page-1 loads.
+      if (!append && targetPage === 1) {
+        squareSkillsCacheRef.current = {
+          items,
+          tags: squareTags.length ? squareTags : [],
+          search,
+          tag,
+          sort: reqSort,
+          installFilter: reqInstallFilter,
+          page: result?.page ?? targetPage,
+          total: result?.total ?? 0,
+          hasNext: result?.hasNext ?? false,
+          timestamp: Date.now(),
+        };
+      }
+    } catch (error) {
+      if (requestGeneration !== squareRequestGenerationRef.current) return;
+      if (!append) setSquareSkills([]);
+      setSquareError(userFacingFailureMessage(error, language, "operation"));
+    } finally {
+      if (requestGeneration === squareRequestGenerationRef.current) {
+        setSquareLoading(false);
+        setSquareLoadingMore(false);
+      }
+    }
+  }
+
+  async function selectSquareSkill(skill: DesktopSquareSkill): Promise<void> {
+    const slug = skill.slug?.trim();
+    if (!slug) return;
+    const source = skill.source || "public";
+    const sameSelection = selectedSquareSkill?.slug === slug && selectedSquareSkill?.source === source;
+    // Update selection immediately; background installation must not block toggle-off.
+    if (sameSelection) {
+      setSelectedSquareSkill(null);
+      return;
+    }
+    setSelectedRemoteSkillId(null);
+    setSelectedSkillName(null);
+    setSelectedSquareSkill({ slug, name: skill.name || slug, source, ...(!isRemoteAgent ? { installedName: skill.name || slug } : {}) });
+    setSquareError(null);
+
+    if (isRemoteAgent) {
+      try {
+        if (typeof desktopApi.downloadSkillsSquare === "function") {
+          const zip = await desktopApi.downloadSkillsSquare({ slug });
+          if (zip?.base64) {
+            setSelectedSquareSkill((current) => current && current.slug === slug ? { ...current, zipBase64: zip.base64 } : current);
+            return;
+          }
+        }
+        if (typeof desktopApi.getSkillsSquareSkillMd === "function") {
+          const md = await desktopApi.getSkillsSquareSkillMd({ slug });
+          setSelectedSquareSkill((current) => current && current.slug === slug ? { ...current, content: md.content } : current);
+        }
+      } catch (error) {
+        setSquareError(userFacingFailureMessage(error, language, "operation"));
+      }
+      return;
+    }
+
+    if (skill.installed || typeof desktopApi.installSkillsSquare !== "function") return;
+    try {
+      setSquareInstallingSlug(slug);
+      const installed = await desktopApi.installSkillsSquare({ slug, name: skill.name });
+      setSelectedSquareSkill((current) => current && current.slug === slug ? { ...current, installedName: installed.name } : current);
+      installedSkillsCacheRef.current = null;
+      squareSkillsCacheRef.current = null;
+      setSquareSkills((items) => items.map((item) => item.slug === slug ? { ...item, installed: true } : item));
+      await loadInstalledSkillsForPicker();
+    } catch (error) {
+      setSquareError(userFacingFailureMessage(error, language, "operation"));
+    } finally {
+      setSquareInstallingSlug((current) => current === slug ? null : current);
+    }
+  }
+
+  // Debounced square-skill search.
+  const squareSearchTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  function handleSquareSearchChange(value: string): void {
+    setSquareSearch(value);
+    if (squareSearchTimerRef.current !== undefined) clearTimeout(squareSearchTimerRef.current);
+    squareSearchTimerRef.current = setTimeout(() => {
+      squareSearchTimerRef.current = undefined;
+      void loadSquareSkills({ search: value, tag: squareActiveTag, sort: squareSort, installFilter: squareInstallFilter });
+    }, 300);
+  }
+
+  // Sort and installation-filter helpers.
+  function handleSquareSortChange(sort: "downloads" | "name" | "time"): void {
+    if (sort === squareSort) return;
+    setSquareSort(sort);
+    void loadSquareSkills({ search: squareSearch, tag: squareActiveTag, sort, installFilter: squareInstallFilter });
+  }
+  function handleSquareInstallFilterChange(filter: "all" | "installed" | "not_installed"): void {
+    if (filter === squareInstallFilter) return;
+    setSquareInstallFilter(filter);
+    void loadSquareSkills({ search: squareSearch, tag: squareActiveTag, sort: squareSort, installFilter: filter });
+  }
+
+  // Infinite scroll: load the next page when the sentinel enters the viewport.
+  useEffect(() => {
+    const sentinel = squareSentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting && squareHasNext && !squareLoading && !squareLoadingMore) {
+          const nextPage = squarePage + 1;
+          void loadSquareSkills({
+            search: squareSearch,
+            tag: squareActiveTag,
+            sort: squareSort,
+            installFilter: squareInstallFilter,
+            page: nextPage,
+            append: true,
+          });
+        }
+      },
+      { rootMargin: "120px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [squareHasNext, squareLoading, squareLoadingMore, squarePage, squareSearch, squareActiveTag, squareSort, squareInstallFilter]);
 
   function stripSkillPrefixFromInput(value: string, skillName?: string | null): string {
     const specific = skillName?.trim()
@@ -2966,6 +3375,18 @@ function ChatWorkspaceImpl({
     textareaRef.current?.focus();
   }
 
+  function togglePrivateMode(): void {
+    setPrivateMode((current) => !current);
+    textareaRef.current?.focus();
+  }
+
+  function selectPrivateMode(enabled: boolean): void {
+    setPrivateMode(enabled);
+    setMetaMenuOpen(null);
+    setConfigurationSection(null);
+    textareaRef.current?.focus();
+  }
+
   function selectForkQueueAgent(queueIndex: number, agentId: string): void {
     setForkQueueAgentSelections((current) => {
       const next = { ...current };
@@ -2981,13 +3402,73 @@ function ChatWorkspaceImpl({
   async function addFiles(): Promise<void> {
     if (!onPickFiles) return;
     const result = await onPickFiles();
-    if (!result.canceled) addPickedFiles(result);
+    if (!result.canceled) {
+      if (isRemoteAgent) {
+        await addRemotePickedFiles(result.paths);
+        return;
+      }
+      addPickedFiles(result);
+    }
   }
 
   async function addFolder(): Promise<void> {
+    if (isRemoteAgent) {
+      window.alert(zh
+        ? "远程智能体不支持上传文件夹，请选择单个文件（每个最大 10 MB，总计不超过 10 MB）。"
+        : "Remote agents do not support folders. Attach individual files instead (up to 10 MB each, 10 MB total).");
+      return;
+    }
     if (!onPickFolder) return;
     const result = await onPickFolder();
     if (!result.canceled) await addFolderAttachments(result.paths);
+  }
+
+  async function addRemotePickedFiles(paths: string[]): Promise<void> {
+    if (!paths.length || !hasDesktopApi() || typeof desktopApi.readAttachmentDataUrl !== "function") return;
+    const added: ComposerAttachment[] = [];
+    const currentBytes = attachmentsRef.current.reduce(
+      (sum, item) => sum + (item.sizeBytes ?? 0), 0);
+    let totalBytes = currentBytes;
+    for (const path of paths) {
+      let payload;
+      try {
+        payload = await desktopApi.readAttachmentDataUrl(path);
+      } catch (error) {
+        window.alert(zh
+          ? `读取文件失败：${error instanceof Error ? error.message : String(error)}`
+          : `Failed to read file: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+      if (payload.sizeBytes > REMOTE_ATTACHMENT_LIMIT_BYTES) {
+        window.alert(zh
+          ? `文件 ${payload.name} 超过远程附件 10 MB 上限。`
+          : `File ${payload.name} exceeds the 10 MB remote attachment limit.`);
+        continue;
+      }
+      if (totalBytes + payload.sizeBytes > REMOTE_ATTACHMENT_LIMIT_BYTES) {
+        window.alert(zh
+          ? "远程附件总量超过 10 MB 上限，已停止添加。"
+          : "Remote attachments exceed the 10 MB total limit; stopped adding files.");
+        break;
+      }
+      totalBytes += payload.sizeBytes;
+      added.push({
+        id: crypto.randomUUID(),
+        kind: "file",
+        path,
+        name: payload.name,
+        remoteDataUrl: payload.dataUrl,
+        sizeBytes: payload.sizeBytes,
+        mimeType: payload.mimeType,
+        ...(payload.mimeType.startsWith("image/") ? { screenshotDataUrl: payload.dataUrl } : {}),
+      });
+    }
+    if (!added.length) return;
+    setAttachments((current) => {
+      const existing = new Set(current.map((item) => item.path));
+      return [...current, ...added.filter((item) => !existing.has(item.path))];
+    });
+    setToolsOpen(false);
   }
 
   function addPickedFiles(result: PickDialogResult): void {
@@ -3597,6 +4078,14 @@ function ChatWorkspaceImpl({
               ) : message.role === "user" && message.attachments?.length ? null : (
                 <StreamingStatus message={message} now={now} zh={zh} />
               )}
+              {message.role === "assistant" && message.errorPresentation ? (
+                <ChatErrorCard
+                  presentation={message.errorPresentation}
+                  messageId={message.id}
+                  zh={zh}
+                  onRecoveryAction={onRecoveryAction}
+                />
+              ) : null}
               {!message.structuredTurn && message.reasoningContent && (
                 <details className="chat-reasoning chat-event-reasoning">
                   <summary>
@@ -3613,7 +4102,7 @@ function ChatWorkspaceImpl({
                   </div>
                 </details>
               )}
-              {message.role === "assistant" && message.recoveryActions?.length && onRecoveryAction ? (
+              {message.role === "assistant" && !message.errorPresentation && message.recoveryActions?.length && onRecoveryAction ? (
                 <div className="chat-recovery-actions" role="group" aria-label={zh ? "恢复操作" : "Recovery actions"}>
                   {message.recoveryActions.map((action) => <button type="button" key={action.id}
                     onClick={() => void onRecoveryAction(message.id, action.id)}>{action.label}</button>)}
@@ -4432,11 +4921,251 @@ function ChatWorkspaceImpl({
                 </div>
               )}
               {isLocalOpenDrSaiAgent && (
+                <div className="composer-meta-item">
+                  <button
+                    className={`composer-meta-chip composer-meta-button composer-private-mode${privateMode ? " active" : ""}`}
+                    data-testid="composer-private-mode"
+                    type="button"
+                    aria-pressed={privateMode}
+                    aria-label={zh ? "私密模式" : "Private mode"}
+                    disabled={showStop}
+                    title={privateMode
+                      ? (zh
+                          ? "私密模式已开启：本轮固定使用私密模型，忽略当前所选模型，且不进行推理"
+                          : "Private mode is on: this turn uses the private model, ignores the selected model, and does not reason")
+                      : (zh
+                          ? "私密模式：本轮固定使用私密模型，忽略当前所选模型"
+                          : "Private mode: this turn uses the private model and ignores the selected model")}
+                    onClick={togglePrivateMode}
+                  >
+                    <ShieldCheck size={14} />
+                    {zh ? "私密模式" : "Private"}
+                    {privateMode ? <Check size={12} aria-hidden /> : null}
+                  </button>
+                </div>
+              )}
+              {isLocalOpenDrSaiAgent && (
                 <KnowledgeBaseSelector
                   agentId={selectedAgentId!}
                   language={language}
                 />
               )}
+                  <div className="composer-meta-item" data-meta-menu="skill">
+                 <button
+                   className={`composer-meta-chip composer-meta-button${selectedRemoteSkill || selectedSquareSkill ? " active" : ""}`}
+                   type="button"
+                   aria-expanded={metaMenuOpen === "skill"}
+                   aria-haspopup="dialog"
+                   onClick={() => toggleMetaMenu("skill")}
+                   title={zh ? "选择远程智能体技能或公共技能" : "Pick a remote Agent skill or a public skill"}
+                 >
+                   <Zap size={14} />
+                   {selectedRemoteSkill?.name || selectedRemoteSkill?.id
+                     || selectedSquareSkill?.name || selectedSquareSkill?.slug
+                     || (zh ? "技能" : "Skill")}
+                   <ChevronDown size={13} />
+                 </button>
+                 {metaMenuOpen === "skill" && (
+                   <div className="composer-meta-menu wide skill-picker" role="listbox" aria-label={zh ? "技能选择" : "Skill picker"}>
+                     {/* Remote agent skills, when available. */}
+                     {isRemoteAgent && remoteAgentSkills.length ? (
+                       <>
+                         {remoteAgentSkills.map((skill) => (
+                           <button
+                             key={`${skill.source}:${skill.id}`}
+                             type="button"
+                             role="option"
+                             className={skill.id === selectedRemoteSkillId ? "active" : ""}
+                             onClick={() => {
+                               setSelectedRemoteSkillId(skill.id === selectedRemoteSkillId ? null : skill.id);
+                               setSelectedSquareSkill(null);
+                               setMetaMenuOpen(null);
+                             }}
+                           >
+                             <span>{skill.name || skill.id}</span>
+                             <small>{skill.source}</small>
+                           </button>
+                         ))}
+                         {selectedRemoteSkillId ? (
+                           <button
+                             type="button"
+                             role="option"
+                             onClick={() => {
+                               setSelectedRemoteSkillId(null);
+                               setMetaMenuOpen(null);
+                             }}
+                           >
+                             <span>{zh ? "清除技能选择" : "Clear skill selection"}</span>
+                           </button>
+                         ) : null}
+                         <div className="composer-skill-square-divider" aria-hidden />
+                       </>
+                     ) : null}
+
+                     {/* Toolbar: count, sorting, and installation filter. */}
+                     <div className="composer-skill-square-toolbar">
+                       <span className="composer-skill-square-count">
+                         {squareTotal > 0
+                           ? (zh ? `共 ${squareTotal} 个技能` : `${squareTotal} skills`)
+                           : ""}
+                       </span>
+                       <div className="composer-skill-square-sort">
+                         <button
+                           type="button"
+                           className={squareSort === "downloads" ? "active" : ""}
+                           onClick={() => handleSquareSortChange("downloads")}
+                         >
+                           {zh ? "热门" : "Popular"}
+                         </button>
+                         <button
+                           type="button"
+                           className={squareSort === "name" ? "active" : ""}
+                           onClick={() => handleSquareSortChange("name")}
+                         >
+                           {zh ? "名称" : "Name"}
+                         </button>
+                         <button
+                           type="button"
+                           className={squareSort === "time" ? "active" : ""}
+                           onClick={() => handleSquareSortChange("time")}
+                         >
+                           {zh ? "最新" : "Latest"}
+                         </button>
+                       </div>
+                       <div className="composer-skill-square-filter-toggle">
+                         <button
+                           type="button"
+                           className={squareInstallFilter === "all" ? "active" : ""}
+                           onClick={() => handleSquareInstallFilterChange("all")}
+                         >
+                           {zh ? "全部" : "All"}
+                         </button>
+                         <button
+                           type="button"
+                           className={squareInstallFilter === "installed" ? "active" : ""}
+                           onClick={() => handleSquareInstallFilterChange("installed")}
+                         >
+                           {zh ? "已安装" : "Installed"}
+                         </button>
+                         <button
+                           type="button"
+                           className={squareInstallFilter === "not_installed" ? "active" : ""}
+                           onClick={() => handleSquareInstallFilterChange("not_installed")}
+                         >
+                           {zh ? "未安装" : "Not installed"}
+                         </button>
+                       </div>
+                     </div>
+
+                     {/* Search and tags. */}
+                     <div className="composer-skill-square-filter">
+                       <input
+                         type="text"
+                         value={squareSearch}
+                         onChange={(event) => handleSquareSearchChange(event.target.value)}
+                         placeholder={zh ? "搜索公共技能…" : "Search public skills…"}
+                       />
+                       {squareTags.length ? (
+                         <div className="composer-skill-square-tags">
+                           {squareTags.map((tag) => (
+                             <button
+                               key={tag}
+                               type="button"
+                               className={squareActiveTag === tag ? "active" : ""}
+                               onClick={() => {
+                                 const next = squareActiveTag === tag ? null : tag;
+                                 setSquareActiveTag(next);
+                                 void loadSquareSkills({ search: squareSearch, tag: next, sort: squareSort, installFilter: squareInstallFilter });
+                               }}
+                             >
+                               {tag}
+                             </button>
+                           ))}
+                         </div>
+                       ) : null}
+                     </div>
+
+                     {/* Clear selection button (always visible). */}
+                     <div className="composer-skill-square-clear">
+                       <button
+                         type="button"
+                         role="option"
+                         disabled={!selectedSquareSkill}
+                         onClick={() => {
+                           setSelectedSquareSkill(null);
+                         }}
+                       >
+                         {zh ? "清除公共技能选择" : "Clear public skill selection"}
+                       </button>
+                     </div>
+
+                     {/* Skills list. */}
+                     <div className="composer-skill-square-list">
+                       {squareLoading && !squareLoadingMore ? (
+                         <p className="composer-meta-menu-empty">{zh ? "正在加载公共技能…" : "Loading public skills…"}</p>
+                       ) : squareError ? (
+                         <p className="composer-meta-menu-empty">{squareError}</p>
+                        ) : squareInstallFilter === "installed" ? (
+                         skillsLoading ? <p className="composer-meta-menu-empty">{zh ? "正在加载本地技能…" : "Loading local skills…"}</p>
+                         : skillsLoadError ? <p className="composer-meta-menu-empty">{skillsLoadError}</p>
+                         : installedSkills.length ? <>
+                           {installedSkills.filter((skill) => !squareSearch.trim() || `${skill.name} ${skill.description}`.toLowerCase().includes(squareSearch.trim().toLowerCase())).map((skill) => (
+                             <button key={skill.path || skill.name} type="button" role="option" className={selectedSkillName === skill.name ? "active installed" : "installed"} onClick={() => {
+                               setSelectedSkillName((current) => current === skill.name ? null : skill.name);
+                               setSelectedSquareSkill(null);
+                               setSelectedRemoteSkillId(null);
+                             }}><span className="composer-skill-square-item-line"><span className="composer-skill-square-installed-badge">✓</span><span className="composer-skill-square-item-name">{skill.name}</span></span></button>
+                           ))}
+                         </> : <p className="composer-meta-menu-empty">{zh ? "还没有本地已安装技能。" : "No locally installed skills yet."}</p>
+                       ) : squareSkills.length ? (
+                         <>
+                           {squareSkills.map((skill) => (
+                             <button
+                               key={skill.slug}
+                               type="button"
+                               role="option"
+                               className={
+                                 (selectedSquareSkill?.slug === skill.slug ? "active " : "") +
+                                 (isSquareSkillInstalled(skill) ? "installed" : "")
+                               }
+                               aria-busy={squareInstallingSlug === skill.slug}
+                               onClick={() => void selectSquareSkill(skill)}
+                             >
+                               <span className="composer-skill-square-item-line">
+                                 {isSquareSkillInstalled(skill) ? (
+                                   <span className="composer-skill-square-installed-badge" title={zh ? "已安装" : "Installed"}>✓</span>
+                                 ) : null}
+                                 <span className="composer-skill-square-item-name">{skill.name || skill.slug}</span>
+                                 {skill.version ? <span className="composer-skill-square-item-version">v{skill.version}</span> : null}
+                                 {skill.downloads != null && skill.downloads > 0 ? (
+                                   <span className="composer-skill-square-item-downloads">↓{skill.downloads}</span>
+                                 ) : null}
+                               </span>
+                             </button>
+                           ))}
+                           {/* Infinite scroll sentinel */}
+                           {squareHasNext ? (
+                             <div ref={squareSentinelRef} className="composer-skill-square-sentinel">
+                               {squareLoadingMore
+                                 ? (zh ? "正在加载更多…" : "Loading more…")
+                                 : (zh ? "滚动加载更多" : "Scroll for more")}
+                             </div>
+                           ) : squareSkills.length > 0 ? (
+                             <p className="composer-skill-square-end">{zh ? "已显示全部技能" : "All skills shown"}</p>
+                           ) : null}
+                         </>
+                       ) : (
+                         <p className="composer-meta-menu-empty">
+                           {zh ? "暂无公共技能。可在技能广场浏览 opendrsai.ihep.ac.cn 的技能。" : "No public skills. Browse the Skills Square on opendrsai.ihep.ac.cn."}
+                         </p>
+                       )}
+                       {squareInstallingSlug ? (
+                         <p className="composer-meta-menu-empty">{zh ? "正在安装技能…" : "Installing skill…"}</p>
+                       ) : null}
+                     </div>
+                   </div>
+              )}
+                </div>
               <div className="composer-meta-item composer-configuration" data-meta-menu="configuration">
                 <button
                   className="composer-meta-chip composer-meta-button composer-configuration-trigger"
@@ -4466,26 +5195,39 @@ function ChatWorkspaceImpl({
                       <button type="button" aria-expanded={configurationSection === "model"} onMouseEnter={(event) => revealConfigurationSection("model", event.currentTarget)} onFocus={(event) => revealConfigurationSection("model", event.currentTarget)} onClick={(event) => revealConfigurationSection("model", event.currentTarget)}><span><strong>{zh ? "模型" : "Model"}</strong><small>{activeModelName}</small></span><ChevronRight size={14} /></button>
                       <button type="button" disabled={!showThinkingEffort} aria-expanded={configurationSection === "thinking"} onMouseEnter={(event) => revealConfigurationSection("thinking", event.currentTarget)} onFocus={(event) => revealConfigurationSection("thinking", event.currentTarget)} onClick={(event) => revealConfigurationSection("thinking", event.currentTarget)}><span><strong>{zh ? "推理强度" : "Reasoning effort"}</strong><small>{thinkingEffortMenuLabel}</small></span><ChevronRight size={14} /></button>
                       <button type="button" data-testid="composer-plan-mode" disabled={!isLocalOpenDrSaiAgent || showStop} aria-expanded={configurationSection === "task"} onMouseEnter={(event) => revealConfigurationSection("task", event.currentTarget)} onFocus={(event) => revealConfigurationSection("task", event.currentTarget)} onClick={(event) => revealConfigurationSection("task", event.currentTarget)}><span><strong>{zh ? "计划模式" : "Plan mode"}</strong><small>{taskInteractionModeLabel}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" data-testid="composer-private-mode-row" disabled={!isLocalOpenDrSaiAgent || showStop} aria-expanded={configurationSection === "private"} onMouseEnter={(event) => revealConfigurationSection("private", event.currentTarget)} onFocus={(event) => revealConfigurationSection("private", event.currentTarget)} onClick={(event) => revealConfigurationSection("private", event.currentTarget)}><span><strong>{zh ? "私密模式" : "Private mode"}</strong><small>{privateMode ? (zh ? "已开启" : "On") : (zh ? "已关闭" : "Off")}</small></span><ChevronRight size={14} /></button>
                     </div>
-                    {configurationSection ? <div className="composer-configuration-submenu" style={configurationSubmenuPosition} role="menu" aria-label={configurationSection === "model" ? (zh ? "选择模型" : "Choose model") : configurationSection === "thinking" ? (zh ? "选择推理强度" : "Choose reasoning effort") : (zh ? "选择计划模式" : "Choose plan mode")}>
+                    {configurationSection ? <div className="composer-configuration-submenu" style={configurationSubmenuPosition} role="menu" aria-label={configurationSection === "model" ? (zh ? "选择模型" : "Choose model") : configurationSection === "thinking" ? (zh ? "选择推理强度" : "Choose reasoning effort") : configurationSection === "private" ? (zh ? "选择私密模式" : "Choose private mode") : (zh ? "选择计划模式" : "Choose plan mode")}>
                       <div className="composer-configuration-options">
                         {configurationSection === "model" ? (hasModelOptions ? modelOptions.map((model) => {
                           const selected = (model.alias || model.model) === selectedModelName
                             && (!selectedModelProviderId || model.provider_id === selectedModelProviderId);
                           const primaryReady = supportsFullAgentPrimaryRuntime(model);
+                          const isRemoteDefault = isRemoteAgent
+                            && Boolean(activeAgent?.remoteDefaultModel)
+                            && (model.alias || model.model) === activeAgent?.remoteDefaultModel;
                           return (
                           <button key={`${model.provider_id || "backend"}:${model.alias || model.model}`} type="button" role="menuitemradio" aria-checked={selected} aria-disabled={!primaryReady} disabled={!primaryReady} className={selected ? "active" : ""} onClick={() => {
                             if (!primaryReady) return;
                             selectModel(model.alias || model.model || "", model.provider_id);
                           }}>
-                            <span><strong>{getModelOptionLabel(model)}</strong><small>{primaryReady ? getModelProviderLabel(model, zh) : (zh ? "不可作主模型 · 请在图像理解中配置" : "Not a primary model · use Image understanding")}</small></span>
+                            <span><strong>{getModelOptionLabel(model)}{isRemoteDefault ? (zh ? "（默认）" : " (Default)") : ""}</strong><small>{isRemoteAgent
+                              ? (zh ? "远程模型配置" : "Remote agent model")
+                              : primaryReady ? getModelProviderLabel(model, zh) : (zh ? "不可用作主模型 · 请在图像理解中配置" : "Not a primary model · use Image understanding")}</small></span>
                             {selected ? <Check size={14} aria-hidden /> : null}
                           </button>
                           );
-                        }) : <p className="composer-meta-menu-empty">{zh ? "暂无可用模型" : "No models available"}</p>) : configurationSection === "thinking" ? supportedThinkingEfforts.map((effort) => (
+                        }) : <p className="composer-meta-menu-empty">{isRemoteAgent
+                          ? (zh ? "远程智能体未返回模型配置，请刷新智能体列表后重试。" : "The remote agent returned no model configs. Refresh the agent list and retry.")
+                          : (zh ? "暂无可用模型" : "No models available")}</p>) : configurationSection === "thinking" ? supportedThinkingEfforts.map((effort) => (
                           <button key={effort} type="button" role="menuitemradio" aria-checked={effort === thinkingEffort} className={effort === thinkingEffort ? "active" : ""} onClick={() => selectThinkingEffort(effort)}>
                             <span><strong>{getThinkingEffortLabel(effort, zh)}</strong></span>
                             {effort === thinkingEffort ? <Check size={14} aria-hidden /> : null}
+                          </button>
+                        )) : configurationSection === "private" ? (["off", "on"] as const).map((state) => (
+                          <button key={state} type="button" role="menuitemradio" aria-checked={(state === "on") === privateMode} data-testid={`composer-private-mode-${state}`} disabled={showStop} className={(state === "on") === privateMode ? "active" : ""} onClick={() => selectPrivateMode(state === "on")}>
+                            <span><strong>{state === "on" ? (zh ? "开启" : "On") : (zh ? "关闭" : "Off")}</strong><small>{state === "on" ? (zh ? "本轮固定使用私密模型，忽略当前所选模型，且不进行推理" : "This turn uses the private model, ignores the selected model, and does not reason") : (zh ? "使用当前所选模型" : "Use the currently selected model")}</small></span>
+                            {(state === "on") === privateMode ? <Check size={14} aria-hidden /> : null}
                           </button>
                         )) : (["normal", "plan"] as const).map((mode) => (
                           <button key={mode} type="button" role="menuitemradio" aria-checked={mode === taskInteractionMode} data-testid={`composer-plan-mode-${mode}`} disabled={!isLocalOpenDrSaiAgent || showStop} className={mode === taskInteractionMode ? "active" : ""} onClick={() => selectTaskInteractionMode(mode)}>
@@ -5048,6 +5790,44 @@ function buildForkQueueAgentAssignments(
   return assignments.length ? assignments : undefined;
 }
 
+function ChatErrorCard({
+  presentation,
+  messageId,
+  zh,
+  onRecoveryAction,
+}: {
+  presentation: ChatErrorPresentation;
+  messageId: string;
+  zh: boolean;
+  onRecoveryAction?: (assistantMessageId: string, action: UserFacingRecoveryAction["id"]) => void | Promise<void>;
+}): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const primary = presentation.actions.find((action) => action.id !== "diagnostics");
+  const secondary = presentation.actions.filter((action) => action !== primary);
+  const invoke = (action: UserFacingRecoveryAction) => void onRecoveryAction?.(messageId, action.id);
+  const copyDetails = async () => {
+    try {
+      await copyTextSafely(`${presentation.title}\n${presentation.summary}\nCode: ${presentation.code}\nTrace ID: ${presentation.traceId}`);
+    } catch {
+      // Clipboard availability must not break progressive disclosure.
+    }
+  };
+  return <section className={`chat-error-card chat-error-card-${presentation.severity}`} role="alert">
+    <div className="chat-error-card-heading"><strong>{presentation.title}</strong></div>
+    <p>{presentation.summary}</p>
+    {presentation.partialContentPreserved ? <p className="chat-error-card-preserved">{zh ? "已生成内容已保留" : "Generated content has been preserved"}</p> : null}
+    <div className="chat-error-card-primary">
+      {primary && onRecoveryAction ? <button type="button" onClick={() => invoke(primary)}>{primary.id === "diagnostics" ? (zh ? "打开诊断" : "Open diagnostics") : primary.label}</button> : null}
+      <button type="button" className="chat-error-card-details-toggle" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>{expanded ? (zh ? "收起详情" : "Hide details") : (zh ? "查看详情" : "View details")}</button>
+    </div>
+    {expanded ? <div className="chat-error-card-details">
+      <dl><div><dt>{zh ? "错误代码" : "Code"}</dt><dd>{presentation.code}</dd></div><div><dt>{zh ? "跟踪 ID" : "Trace ID"}</dt><dd>{presentation.traceId}</dd></div></dl>
+      <button type="button" onClick={() => void copyDetails()}>{zh ? "复制脱敏错误信息" : "Copy redacted error details"}</button>
+      {secondary.length && onRecoveryAction ? <div className="chat-error-card-secondary" role="group" aria-label={zh ? "其他恢复操作" : "Other recovery actions"}>{secondary.map((action) => <button type="button" key={action.id} onClick={() => invoke(action)}>{action.id === "diagnostics" ? (zh ? "打开诊断" : "Open diagnostics") : action.label}</button>)}</div> : null}
+    </div> : null}
+  </section>;
+}
+
 function StreamingStatus({
   message,
   now,
@@ -5059,7 +5839,7 @@ function StreamingStatus({
 }): React.JSX.Element | null {
   if (!message.streaming) {
     // Empty completed shells are filtered elsewhere; never show the literal placeholder.
-    if (message.error) {
+    if (message.error && !message.errorPresentation) {
       return <p>{zh ? "回复失败。请查看调试信息。" : "Reply failed. View debug details."}</p>;
     }
     return null;

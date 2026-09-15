@@ -10,8 +10,8 @@ Environment defaults (override with ``OPENDRSAI_SKILLS_API_BASE_URL``):
 - test / development → ``https://drsaiv2.ihep.ac.cn``
 - production → ``https://opendrsai.ihep.ac.cn``
 
-Local installed skills remain on ``/v1/skills`` (skills_api). This module only
-covers the online marketplace surface.
+Local installed skills remain on ``/v1/skills`` (``routes/skills.py``). This
+module only covers the online marketplace surface.
 """
 
 from __future__ import annotations

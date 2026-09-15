@@ -5,7 +5,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import type { DesktopForkWorktreeRequest, DesktopForkWorktreeResult, DesktopWorktreeEventBatch, DesktopWorktreeEventRequest, DesktopWorktreeListRequest, DesktopWorktreeMigrationDiagnostic, DesktopWorktreeSummary } from "../api/desktopApi";
 import { DRSAI_HOME } from "./paths";
 import { requireAuthContext } from "./auth";
-import { connectRuntimeClientForWorkspace, isLocalRuntimeUnavailableError, LocalRuntimeClient, type RuntimeClient, type RuntimeWorktree } from "./runtimeClient";
+import { acquireLocalRuntimeClientLease, connectRuntimeClientForWorkspace, isLocalRuntimeUnavailableError, type RuntimeClient, type RuntimeWorktree } from "./runtimeClient";
 import { listThreads, updateThread } from "./threads";
 
 const FORK_ROOT = join(DRSAI_HOME, "desktop", "fork-worktrees");
@@ -14,10 +14,17 @@ const diagnostics = new Map<string, DesktopWorktreeMigrationDiagnostic[]>();
 export async function prepareForkWorktree(raw: unknown): Promise<DesktopForkWorktreeResult> {
   const request = validatePrepare(raw);
   if (process.env.OPENDRSAI_LEGACY_DESKTOP_WORKTREE === "1") return prepareLegacy(request);
-  const client = await LocalRuntimeClient.connect();
+  const lease = await acquireLocalRuntimeClientLease();
+  try {
+  // One lease spans both Runtime mutations: a concurrent last-reference release
+  // would otherwise dispose the shared transport between open and create.
+  const client = lease.client;
   const source = await client.openWorkspace(resolve(request.workspacePath));
   const created = await client.createWorktree(source.workspace_id, request.intent || "subtask", `desktop-${randomUUID()}`);
   return { worktreeId: created.worktree_id, sourceWorkspaceId: source.workspace_id, workspaceId: created.workspace_id, location: "local", sourceWorkspacePath: created.source_workspace_path, repoRoot: created.repo_root, worktreePath: created.worktree_path, branch: created.branch, baseRef: created.base_ref, sourceHasChanges: created.source_has_changes, sourceStatusSummary: created.source_status_summary || undefined };
+  } finally {
+    lease.release();
+  }
 }
 
 export async function listRuntimeWorktrees(request: DesktopWorktreeListRequest): Promise<DesktopWorktreeSummary[]> {

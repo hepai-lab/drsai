@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class WorkspaceOpenRequest(BaseModel):
@@ -67,12 +67,34 @@ class RunCreateRequest(BaseModel):
     agent_definition: str | None = None
 
 
+class RuntimeModelSelection(BaseModel):
+    """Structured model reference sent by the Desktop Runtime client."""
+
+    provider_id: str = Field(min_length=1)
+    model_id: str = Field(min_length=1)
+    catalog_revision: str | None = None
+
+
 class RunExecuteRequest(BaseModel):
+    # Fail closed on Desktop/Gateway contract drift instead of silently
+    # dropping a field and falling back to the default model.
+    model_config = ConfigDict(extra="forbid")
+
     prompt: str
     model_alias: str | None = None
-    # ``model`` is the Runtime client's spelling.  Keep both names accepted
-    # while the Desktop surface is migrated to the canonical model_alias name.
+    # ``model`` is the Runtime client's legacy spelling.  Keep it accepted
+    # while the Desktop surface migrates to the canonical model_alias name.
     model: str | None = None
+    # New Desktop clients send the structured catalog reference.  This must
+    # be declared here: Pydantic otherwise silently ignores the unknown field
+    # and the Agent Manager falls back to DEFAULT_CONFIG_NAME.
+    model_selection: RuntimeModelSelection | None = None
+    # Private Mode is an authoritative, per-turn model override owned by the
+    # Gateway: when true the Run ignores ``model``/``model_alias``/
+    # ``model_selection`` and always uses ``PRIVATE_MODEL_NAME`` (see
+    # ``drsai.config.model_defaults``).  It must be declared here because
+    # ``extra="forbid"`` would otherwise reject the field outright.
+    private_mode: bool = False
     user_id: str | None = None
     source_message_id: str | None = None
     reasoning_effort: str | None = None

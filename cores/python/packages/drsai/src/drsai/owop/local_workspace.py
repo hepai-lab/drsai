@@ -48,6 +48,12 @@ def _digest(data: bytes) -> str:
     return f"sha256:{hashlib.sha256(data).hexdigest()}"
 
 
+def _file_identity(info: os.stat_result) -> tuple[str, str]:
+    """Return the device/inode identity of a file-system object as decimal strings."""
+
+    return str(int(info.st_dev)), str(int(info.st_ino))
+
+
 class _ClosingConnection(sqlite3.Connection):
     def __exit__(self, exc_type, exc_value, traceback):
         try:
@@ -83,18 +89,61 @@ class WorkspaceWatchJournal:
                   relative_path TEXT NOT NULL,
                   kind TEXT NOT NULL,
                   digest TEXT,
-                  device INTEGER NOT NULL,
-                  inode INTEGER NOT NULL,
+                  device TEXT NOT NULL,
+                  inode TEXT NOT NULL,
                   created_at TEXT NOT NULL,
                   updated_at TEXT NOT NULL,
+                  last_state TEXT NOT NULL DEFAULT 'available',
                   PRIMARY KEY(workspace_id, file_id),
                   UNIQUE(workspace_id, relative_path)
                 );
                 """
             )
-            columns = {str(row[1]) for row in db.execute("PRAGMA table_info(owop_file_resources)")}
-            if "last_state" not in columns:
-                db.execute("ALTER TABLE owop_file_resources ADD COLUMN last_state TEXT NOT NULL DEFAULT 'available'")
+            self._normalize_file_resource_schema(db)
+
+    @staticmethod
+    def _normalize_file_resource_schema(db: sqlite3.Connection) -> None:
+        """Keep resource identity columns on TEXT and add missing state columns.
+
+        ``st_dev`` and ``st_ino`` are unsigned 64-bit values on Windows (for example
+        ``15615211651905627626``), which a SQLite ``INTEGER`` column cannot store, so
+        identities are persisted as decimal strings, matching the runtime identity
+        stores (``runtime_acl_projections``). Tables created before that change are
+        rebuilt once; identities that already fit an ``INTEGER`` round-trip unchanged.
+        """
+        columns = {str(row[1]): str(row[2]).upper() for row in db.execute("PRAGMA table_info(owop_file_resources)")}
+        if not columns:
+            return
+        if "last_state" not in columns:
+            db.execute("ALTER TABLE owop_file_resources ADD COLUMN last_state TEXT NOT NULL DEFAULT 'available'")
+        if columns.get("device", "").startswith("TEXT") and columns.get("inode", "").startswith("TEXT"):
+            return
+        db.executescript(
+            """
+            DROP TABLE IF EXISTS owop_file_resources_integer_identity;
+            ALTER TABLE owop_file_resources RENAME TO owop_file_resources_integer_identity;
+            CREATE TABLE owop_file_resources (
+              workspace_id TEXT NOT NULL,
+              file_id TEXT NOT NULL,
+              relative_path TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              digest TEXT,
+              device TEXT NOT NULL,
+              inode TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              last_state TEXT NOT NULL DEFAULT 'available',
+              PRIMARY KEY(workspace_id, file_id),
+              UNIQUE(workspace_id, relative_path)
+            );
+            INSERT INTO owop_file_resources
+              (workspace_id,file_id,relative_path,kind,digest,device,inode,created_at,updated_at,last_state)
+              SELECT workspace_id,file_id,relative_path,kind,digest,
+                     CAST(device AS TEXT),CAST(inode AS TEXT),created_at,updated_at,last_state
+              FROM owop_file_resources_integer_identity;
+            DROP TABLE owop_file_resources_integer_identity;
+            """
+        )
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.database, timeout=30, factory=_ClosingConnection)
@@ -149,10 +198,14 @@ class WorkspaceWatchJournal:
         *,
         kind: str,
         digest: str | None,
-        device: int,
-        inode: int,
+        device: str,
+        inode: str,
     ) -> dict[str, Any]:
-        """Return a stable, Workspace-scoped opaque id for a file-system object."""
+        """Return a stable, Workspace-scoped opaque id for a file-system object.
+
+        ``device`` and ``inode`` are decimal strings because file identities may be
+        unsigned 64-bit values that do not fit a SQLite ``INTEGER`` column.
+        """
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
@@ -476,13 +529,14 @@ class LocalWorkspaceOperations:
                 "operation",
                 details={"expected_digest": expected_digest, "actual_digest": current_digest},
             )
+        device, inode = _file_identity(info)
         record = self.journal.register_file_resource(
             self.workspace_id,
             relative,
             kind=kind,
             digest=current_digest,
-            device=int(info.st_dev),
-            inode=int(info.st_ino),
+            device=device,
+            inode=inode,
         )
         return {"resource": self._file_resource_descriptor(record["file_id"], relative, path, state="available")}
 
@@ -494,7 +548,7 @@ class LocalWorkspaceOperations:
         deadline: float,
     ) -> tuple[tuple[str, Path] | None, int, bool]:
         """Bounded repair helper; never called from foreground resolve."""
-        expected_identity = (int(record["device"]), int(record["inode"]))
+        expected_identity = (str(record["device"]), str(record["inode"]))
         scanned = 0
         for directory, names, files in os.walk(self.root):
             names[:] = [name for name in names if name not in IGNORED_DIRECTORIES]
@@ -510,7 +564,7 @@ class LocalWorkspaceOperations:
                 attributes = int(getattr(info, "st_file_attributes", 0))
                 if stat.S_ISLNK(info.st_mode) or attributes & int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)):
                     continue
-                if (int(info.st_dev), int(info.st_ino)) == expected_identity:
+                if _file_identity(info) == expected_identity:
                     relative = candidate.relative_to(self.root).as_posix()
                     return (relative, candidate), scanned, True
         return None, scanned, True

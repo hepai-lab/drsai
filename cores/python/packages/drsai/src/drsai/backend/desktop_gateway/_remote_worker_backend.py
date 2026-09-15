@@ -31,6 +31,7 @@ the DDF credential.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from typing import Any, Mapping, Optional
 
@@ -89,6 +90,8 @@ class RemoteWorkerBackend:
             )
 
         worker_config = _remote_worker_config(definition)
+        if context.model_override_requested and definition.model:
+            worker_config["model"] = definition.model
         if not worker_config["url"]:
             raise RuntimeExecutionError(
                 "remote_worker_unconfigured",
@@ -100,7 +103,7 @@ class RemoteWorkerBackend:
                 "The remote worker requires a HepAI credential that this Runtime does not have.",
             )
 
-        user_id = effective_user_id(None)
+        user_id = _remote_worker_user_id()
         cancellation = CancellationToken()
         self._cancellations[context.run_id] = cancellation
         translation = ConversationTranslationState()
@@ -174,9 +177,16 @@ class RemoteWorkerBackend:
 
     @staticmethod
     def _input_task(context: RuntimeRunContext, prompt: str) -> Any:
-        """Encode the prompt plus any attached resources the way the Agent expects."""
-        from drsai.backend.runtime.input_resources import autogen_input_task
+        """Encode remote input without exposing Desktop-local filesystem paths."""
+        if context.remote_files or context.remote_skills:
+            metadata: dict[str, str] = {}
+            if context.remote_files:
+                metadata["attached_files"] = json.dumps(list(context.remote_files), ensure_ascii=False)
+            if context.remote_skills:
+                metadata["skills"] = json.dumps(list(context.remote_skills), ensure_ascii=False)
+            return TextMessage(content=prompt, source="user", metadata=metadata)
 
+        from drsai.backend.runtime.input_resources import autogen_input_task
         try:
             return autogen_input_task(
                 prompt,
@@ -397,6 +407,27 @@ def _remote_worker_config(definition: AgentDefinition) -> dict[str, str]:
         "model": pick("defult_config_name", "default_config_name", "model_alias"),
         "api_key": pick("api_key", "apikey") or _platform_api_key(),
     }
+
+
+def _remote_worker_user_id() -> str:
+    """The user identity the remote DDF worker keys its users on.
+
+    Remote workers identify callers by the HepAI login email, not by the OIDC
+    subject UUID. Prefer the verified ``email`` claim from the platform auth
+    context, fall back to the desktop-supplied login email filled in by the
+    gateway middleware (X-OpenDrSai-User-Email), and finally to the gateway's
+    internal user key (offline mode returns "local").
+    """
+    from drsai.platform_auth import get_platform_auth
+
+    try:
+        auth = get_platform_auth()
+    except Exception:
+        auth = None
+    email = getattr(auth, "user_email", None) if auth is not None else None
+    if isinstance(email, str) and email.strip():
+        return email.strip()
+    return effective_user_id(None)
 
 
 def _platform_api_key() -> str:

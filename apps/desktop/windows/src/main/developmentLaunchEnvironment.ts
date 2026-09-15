@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { DEVELOPMENT_GATEWAY_PORT, PRODUCTION_GATEWAY_PORT } from "../../../shared/main/gatewayEnvironment";
 
 interface DevelopmentLaunchInput {
   defaultApp: boolean;
@@ -26,7 +27,7 @@ export function resolveDevelopmentLaunchEnvironment(input: DevelopmentLaunchInpu
     || input.environment.OPENDRSAI_DEV_GATEWAY_PORT?.trim();
   const port = explicitPort && /^\d+$/.test(explicitPort) && Number(explicitPort) >= 1 && Number(explicitPort) <= 65_535
     ? explicitPort
-    : production ? "18642" : "28642";
+    : production ? PRODUCTION_GATEWAY_PORT : DEVELOPMENT_GATEWAY_PORT;
   const appPath = input.argv[1]?.trim();
   const repositoryCandidate = appPath ? resolve(appPath, "..", "..", "..") : "";
   const repository = repositoryCandidate && existsSync(join(repositoryCandidate, "apps", "desktop", "windows"))

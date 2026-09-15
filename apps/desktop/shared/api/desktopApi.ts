@@ -80,6 +80,7 @@ import type {
   DiagnosticExportResult,
   DiagnosticQuery,
   DiagnosticSnapshot,
+  RedactedDiagnosticTrace,
   DiagnosticIssueUpdateRequest,
   DiagnosticIssueUpdateResult,
   InteractiveDebugBreakpointRequest,
@@ -117,6 +118,8 @@ export type {
   DiagnosticErrorCluster,
   DiagnosticQuery,
   DiagnosticSnapshot,
+  RedactedDiagnosticEvent,
+  RedactedDiagnosticTrace,
   DiagnosticSourceLocation,
   DiagnosticSourceContext,
   DiagnosticSourceContextRequest,
@@ -915,6 +918,10 @@ export interface ChatAttachment {
   kind: "file" | "folder" | "browser" | "terminal" | "selection";
   path: string;
   name: string;
+  /** Bounded in-memory payload used only for remote-agent delivery. */
+  remoteDataUrl?: string;
+  sizeBytes?: number;
+  mimeType?: string;
   url?: string;
   title?: string;
   visibleText?: string;
@@ -1042,6 +1049,11 @@ export interface ChatRequest {
   model?: string;
   reasoningEffort?: ThinkingEffort;
   planMode?: boolean;
+  /**
+   * Per-turn Private Mode. The Gateway — not the client — pins the Run to its
+   * private model and forces reasoning off, so the selected model is ignored.
+   */
+  privateMode?: boolean;
   workspacePath?: string;
   workspaceId?: string;
   workspaceName?: string;
@@ -3618,6 +3630,10 @@ export interface DesktopAgent {
   url?: string;
   model?: string;
   models?: string[];
+  /** DDF get_info model configuration; never merged with local providers. */
+  remoteDefaultModel?: string;
+  remoteModelConfigs?: Array<{ name: string; label?: string }>;
+  remoteSkills?: Array<{ id: string; source: string; name?: string }>;
   logo?: string;
   examples?: DesktopAgentExample[] | string;
   error?: string;
@@ -5513,6 +5529,14 @@ export interface PickDialogResult {
   files?: PickedFileDescriptor[];
 }
 
+export interface ReadAttachmentDataUrlResult {
+  path: string;
+  name: string;
+  sizeBytes: number;
+  mimeType: string;
+  dataUrl: string;
+}
+
 export type PickedFileCategory =
   | "pdf"
   | "word"
@@ -5836,6 +5860,7 @@ export interface DesktopApi {
   openSystemPermissionSettings(kind: DesktopSystemPermissionKind): Promise<boolean>;
   recordDiagnostic(event: DiagnosticEventInput): Promise<DiagnosticEvent>;
   getDiagnosticSnapshot(query?: DiagnosticQuery): Promise<DiagnosticSnapshot>;
+  getRedactedDiagnosticTrace(traceId: string): Promise<RedactedDiagnosticTrace | null>;
   clearDiagnostics(): Promise<DiagnosticClearResult>;
   exportDiagnostics(): Promise<DiagnosticExportResult>;
   onDiagnosticEvent(callback: (event: DiagnosticEvent) => void): () => void;
@@ -6197,6 +6222,7 @@ export interface DesktopApi {
   saveApiKey(apiKey: string): Promise<SaveApiKeyResult>;
   pickFiles(): Promise<PickDialogResult>;
   pickFolder(): Promise<PickDialogResult>;
+  readAttachmentDataUrl(path: string): Promise<ReadAttachmentDataUrlResult>;
   getPathForFile(file: File): string;
   checkBrowserUrl(url: string): Promise<BrowserUrlCheck>;
   requestBrowserAction(

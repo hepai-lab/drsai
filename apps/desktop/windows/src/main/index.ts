@@ -4671,6 +4671,9 @@ function registerIpc(): void {
   secureHandle("desktop:diagnostics-snapshot", (_event, query?: DiagnosticQuery) =>
     desktopDiagnostics.snapshot(query ?? {}),
   );
+  secureHandle("desktop:diagnostics-trace", (_event, traceId: string) =>
+    desktopDiagnostics.getRedactedTrace(traceId),
+  );
   secureHandle("desktop:diagnostics-clear", async () => {
     const removedEvents = await desktopDiagnostics.clear();
     return { cleared: true, removedEvents };
@@ -6759,6 +6762,32 @@ function registerIpc(): void {
       properties: ["openDirectory"],
     });
     return { canceled: result.canceled, paths: result.filePaths };
+  });
+  secureHandle("desktop:read-attachment-data-url", async (_event, rawPath: string) => {
+    const REMOTE_ATTACHMENT_LIMIT_BYTES = 10 * 1024 * 1024;
+    const path = typeof rawPath === "string" ? rawPath.trim() : "";
+    if (!path) throw new Error("A file path is required.");
+    const stat = await statFile(path);
+    if (!stat.isFile()) throw new Error(`Not a readable file: ${path}`);
+    if (stat.size > REMOTE_ATTACHMENT_LIMIT_BYTES) {
+      throw new Error(`File exceeds the 10 MB remote attachment limit.`);
+    }
+    const bytes = await readFile(path);
+    const extension = (path.split(".").pop() || "").toLowerCase();
+    const mimeType = extension === "png" ? "image/png"
+      : extension === "jpg" || extension === "jpeg" ? "image/jpeg"
+        : extension === "gif" ? "image/gif"
+          : extension === "webp" ? "image/webp"
+            : extension === "pdf" ? "application/pdf"
+              : extension === "txt" || extension === "md" ? "text/plain"
+                : "application/octet-stream";
+    return {
+      path,
+      name: path.split(/[\\/]/).pop() ?? path,
+      sizeBytes: stat.size,
+      mimeType,
+      dataUrl: `data:${mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
+    };
   });
   secureHandle("desktop:browser-check-url", (_event, rawUrl: string) => browserTaskService.checkUrl(rawUrl));
   secureHandle("desktop:browser-action-request", (_event, request) => browserTaskService.requestAction(request));

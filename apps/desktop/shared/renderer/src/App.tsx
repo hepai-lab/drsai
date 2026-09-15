@@ -24,6 +24,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Stethoscope,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -104,6 +105,7 @@ import { FeedbackAdminDialog } from "./components/FeedbackAdminDialog";
 import { KnowledgeBasePanel } from "./components/KnowledgeBasePanel";
 import { AppDecisionDialogHost, requestAppDecision, showAppNotice } from "./components/AppDecisionDialog";
 import { FilesContextPanel } from "./components/files/FilesContextPanel";
+import { ChatDiagnosticsPanel } from "./components/diagnostics/ChatDiagnosticsPanel";
 import { CitationSourcePanel } from "./components/files/CitationSourcePanel";
 import type { CitationPart } from "@shared/structuredConversation";
 import {
@@ -176,6 +178,7 @@ interface TerminalCommandProposal {
 
 const rightTabIcons: Record<RightTab, LucideIcon> = {
   files: FileText,
+  diagnostics: Stethoscope,
 };
 
 const WORKSPACE_SORT_STORAGE_KEY = "opendrsai.workspaceSortMode";
@@ -222,6 +225,7 @@ interface SidebarComponentVisibility {
 }
 interface RightSidebarComponentVisibility {
   files: boolean;
+  diagnostics: boolean;
 }
 interface AwaySummary {
   startedAt: string;
@@ -321,6 +325,7 @@ function AuthenticatedApp({
   ]);
   const [navHistoryIndex, setNavHistoryIndex] = useState(0);
   const [activeRightTab, setActiveRightTab] = useState<RightTab>("files");
+  const [selectedDiagnosticTraceId, setSelectedDiagnosticTraceId] = useState<string>();
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(() => loadRestoredWorkspaceId());
   const [storedWorkspaces, setStoredWorkspaces] = useState<WorkspaceProject[]>(
     [],
@@ -377,9 +382,13 @@ function AuthenticatedApp({
   const [threadsLoaded, setThreadsLoaded] = useState(false);
   const [activeThreadId, setActiveThreadId] = useState(() => loadRestoredThreadId());
   const activeThreadIdRef = useRef(activeThreadId);
+  // Latest thread list for async flows (loadChatChoices) that must not re-run
+  // whenever the thread catalog refreshes.
+  const threadsRef = useRef<DesktopThread[]>(threads);
+  useEffect(() => { threadsRef.current = threads; }, [threads]);
   // Deleted ids must ignore late abort/handoff/catalog upserts that would recreate the row.
   const deletedThreadIdsRef = useRef(new Set<string>());
-  useEffect(() => { activeThreadIdRef.current = activeThreadId; }, [activeThreadId]);
+  useEffect(() => { activeThreadIdRef.current = activeThreadId; }, [activeThreadId]);;
   const threadSnapshotStoreRef = useRef<ThreadSnapshotStore | null>(null);
   if (!threadSnapshotStoreRef.current) threadSnapshotStoreRef.current = new ThreadSnapshotStore();
   const threadSnapshotStore = threadSnapshotStoreRef.current;
@@ -441,6 +450,11 @@ function AuthenticatedApp({
   const [agentCatalogLoaded, setAgentCatalogLoaded] = useState(false);
   const [availableChatModels, setAvailableChatModels] = useState<MyDrSaiModelConfig[]>([]);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(() => loadOptionalSetting(DEFAULT_AGENT_STORAGE_KEY));
+  // Latest selection for effects that refresh the agent catalog without
+  // depending on selectedChatAgentId (adding it would re-run the whole
+  // catalog/model fetch on every agent switch).
+  const selectedChatAgentIdRef = useRef(selectedChatAgentId);
+  useEffect(() => { selectedChatAgentIdRef.current = selectedChatAgentId; }, [selectedChatAgentId]);
   const [selectedChatAgentName, setSelectedChatAgentName] = useState("OpenDrSai");
   const [selectedChatModel, setSelectedChatModel] = useState<string | null>(null);
   const [defaultThinkingEffort, setDefaultThinkingEffort] = useState<ThinkingEffort>(() => loadThinkingEffort());
@@ -1042,7 +1056,12 @@ function AuthenticatedApp({
   }, [sessionScope]);
 
   useEffect(() => {
-    persistOptionalSetting(DEFAULT_AGENT_STORAGE_KEY, selectedChatAgentId);
+    // The global default is for local workspaces. Remote agents are bound to
+    // their remote session and must not become the next local chat default.
+    persistOptionalSetting(
+      DEFAULT_AGENT_STORAGE_KEY,
+      selectedChatAgentId?.startsWith("platform:") ? null : selectedChatAgentId,
+    );
   }, [selectedChatAgentId]);
 
   useEffect(() => {
@@ -1186,6 +1205,52 @@ function AuthenticatedApp({
     workspacesLoaded,
   ]);
 
+
+  // One-shot per restored thread: the persisted selected agent may not match
+  // that thread's bound agent (e.g. a remote-agent session that would silently
+  // show the local OpenDrSai composer). Rebind the selection from the restored
+  // thread, mirroring handleThreadSelect. Remote bindings are stored either as
+  // the catalog id ("platform:<name>") or as the bare Runtime routable name, so
+  // match both and prefer the canonical catalog id — chat sends resolve the
+  // execution descriptor by that id. The local thread store loads faster than
+  // the platform catalog, so keep this armed until the binding is fully
+  // applied (id, name, model, examples); bind remote ids optimistically so the
+  // composer never falls back to the local agent while the catalog syncs.
+  const restoredAgentReboundRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!threadsLoaded || !activeThreadId) return;
+    if (restoredAgentReboundRef.current === activeThreadId) return;
+    const thread = threads.find((item) => item.id === activeThreadId);
+    const boundAgentId = thread?.boundAgentId?.trim();
+    if (!boundAgentId) return;
+    const boundAgent = availableChatAgents.find((agent) => agent.id === boundAgentId)
+      ?? availableChatAgents.find((agent) => agent.source === "remote" && isSameRemoteAgentBinding(agent.id, boundAgentId));
+    if (boundAgent) {
+      restoredAgentReboundRef.current = activeThreadId;
+      if (selectedChatAgentIdRef.current === boundAgent.id && selectedChatAgentName === boundAgent.name) return;
+      setSelectedChatAgentId(boundAgent.id);
+      setSelectedChatAgentName(boundAgent.name);
+      setSelectedChatModel(thread?.model
+        && (boundAgent.source !== "remote" || isRemoteModelAlias(boundAgent, thread?.model))
+        ? thread?.model
+        : boundAgent.source === "remote"
+          ? remoteAgentPreferredModel(boundAgent)
+          : boundAgent.model ?? boundAgent.models?.[0] ?? null);
+      if (boundAgent.examples) setSelectedChatExamples(boundAgent.examples);
+      return;
+    }
+    // Bare local names (e.g. "my-codex") must wait for the local catalog; the
+    // loadChatChoices preference arbitration covers that window. Remote
+    // bindings can be selected optimistically as their canonical platform: id.
+    const remoteBinding = boundAgentId.startsWith("platform:") || thread?.sessionScope === "remote_agent";
+    if (!remoteBinding) return;
+    const canonicalAgentId = boundAgentId.startsWith("platform:") ? boundAgentId : `platform:${boundAgentId}`;
+    if (selectedChatAgentIdRef.current === canonicalAgentId) return;
+    setSelectedChatAgentId(canonicalAgentId);
+    setSelectedChatAgentName(thread?.boundAgentName ?? boundAgentId);
+    setSelectedChatModel(thread?.model ?? null);
+  }, [activeThreadId, availableChatAgents, selectedChatAgentName, selectedChatAgentIdRef, threads, threadsLoaded]);
+
   // When switching workspaces, do not keep showing a conversation from another path.
   useEffect(() => {
     if (!threadsLoaded || !workspacesLoaded || !activeWorkspace.id || !activeWorkspace.path) return;
@@ -1229,6 +1294,12 @@ function AuthenticatedApp({
       setAgentCatalogLoaded(true);
       if (agents.length === 0) return;
       setSelectedChatAgentId((current) => {
+        // During early startup the cached catalog may not contain the remote
+        // platform agents yet. Keep a persisted "platform:" selection instead
+        // of downgrading it to the local agent before the full catalog loads.
+        if (current?.startsWith("platform:") && !agents.some((agent) => agent.id === current)) {
+          return current;
+        }
         const preferredAgent = agents.find((agent) => agent.id === current)
           ?? agents.find((agent) => agent.source === "local" && agent.id !== "my-codex")
           ?? agents.find((agent) => agent.status === "running")
@@ -1332,23 +1403,66 @@ function AuthenticatedApp({
           scheduleRetry();
         }
         if (cancelled || agents.length === 0) return;
+        const previousAgentId = selectedChatAgentIdRef.current;
+        // The conversation being viewed owns the composer: its bound agent
+        // overrides the workspace preference. Otherwise a restored
+        // remote-agent session is silently rebound to the local OpenDrSai agent
+        // whenever this (faster, local-first) catalog refresh lands while the
+        // platform catalog is still syncing.
+        const activeThread = threadsRef.current.find((item) => item.id === activeThreadIdRef.current);
+        // A remote platform agent can transiently vanish from the refreshed
+        // catalog. Keep it only while the active conversation is explicitly
+        // remote-bound; a fresh local chat must still recover a local agent.
+        const previousRemoteAgentMissing = previousAgentId !== null
+          && !agents.some((agent) => agent.id === previousAgentId)
+          && (previousAgentId.startsWith("platform:")
+            || availableChatAgents.find((agent) => agent.id === previousAgentId)?.source === "remote")
+          && (activeThread?.sessionScope === "remote_agent" || Boolean(activeThread?.boundAgentId));
+        if (previousRemoteAgentMissing) return;
+        const activeBindingId = activeThread?.boundAgentId?.trim() || null;
+        const boundAgent = activeBindingId
+          ? agents.find((agent) => agent.id === activeBindingId)
+            ?? agents.find((agent) => agent.source === "remote" && isSameRemoteAgentBinding(agent.id, activeBindingId))
+          : undefined;
+        if (activeBindingId && !boundAgent) {
+          // The bound agent is not in this catalog snapshot yet. Never fall
+          // back to the workspace preference here — the restore rebind effect
+          // (above) completes the binding once the catalog catches up.
+          return;
+        }
+        // A fresh/unbound local chat must never inherit the previous remote
+        // selection. Thread binding wins above; only local agents participate
+        // in workspace/previous-selection fallback for an unbound chat.
+        const localAgents = agents.filter((agent) => agent.source !== "remote");
         const defaultAgent =
-          agents.find((agent) => agent.isDefault) ??
-          agents.find((agent) => agent.id === agentModelPolicy.agent_id) ??
-          agents.find((agent) => agent.status === "running") ??
+          localAgents.find((agent) => agent.isDefault) ??
+          localAgents.find((agent) => agent.id === agentModelPolicy.agent_id) ??
+          localAgents.find((agent) => agent.status === "running") ??
+          localAgents[0] ??
           agents[0];
         const workspaceAgentId = loadWorkspaceAgentPreference(activeWorkspaceId);
-        const preferredAgent = agents.find((agent) => agent.id === workspaceAgentId)
-          ?? agents.find((agent) => agent.id === selectedChatAgentId)
+        const preferredAgent = boundAgent
+          ?? agents.find((agent) => agent.source !== "remote" && agent.id === workspaceAgentId)
+          ?? agents.find((agent) => agent.source !== "remote" && agent.id === previousAgentId)
           ?? defaultAgent;
         setSelectedChatAgentId(preferredAgent.id);
         setSelectedChatAgentName(preferredAgent.name);
         setSelectedChatModel((current) => {
-          const preferredModel = preferredAgent.id === agentModelPolicy.agent_id
-            ? agentModelPolicy.effective_ref?.model_id ?? null
-            : preferredAgent.model ?? preferredAgent.models?.[0] ?? null;
-          if (preferredAgent.id === agentModelPolicy.agent_id) return preferredModel;
-          return current ?? preferredModel;
+          if (preferredAgent.id === agentModelPolicy.agent_id) {
+            return agentModelPolicy.effective_ref?.model_id ?? null;
+          }
+          // Remote workers own their model namespace: the selected model must
+          // be one of the worker's declared config aliases, defaulting to the
+          // worker's default config rather than the routable worker name.
+          if (preferredAgent.source === "remote") {
+            if (current && isRemoteModelAlias(preferredAgent, current)) return current;
+            return remoteAgentPreferredModel(preferredAgent);
+          }
+          const localModels = [preferredAgent.model, ...(preferredAgent.models ?? [])]
+            .filter((model): model is string => Boolean(model?.trim()));
+          return current && localModels.includes(current)
+            ? current
+            : localModels[0] ?? null;
         });
         setSelectedChatExamples(preferredAgent.examples);
       } catch {
@@ -1741,6 +1855,7 @@ function AuthenticatedApp({
 
   async function handleNewChat(): Promise<void> {
     setRightPanelCollapsed(true);
+    resetComposerToLocalAgent();
     setActiveThreadId(createLocalThreadId());
     setComposerFocusRequest((current) => current + 1);
     navigateTo(MENU_IDS.currentSession);
@@ -1770,16 +1885,35 @@ function AuthenticatedApp({
   function handleThreadSelect(threadId: string, messageId?: string): void {
     const thread = threads.find((item) => item.id === threadId);
     if (thread?.boundAgentId) {
-      const boundAgent = availableChatAgents.find((agent) => agent.id === thread.boundAgentId);
+      const boundAgentId: string = thread.boundAgentId;
+      // Normalize both sides: the thread may store a bare routable name (e.g.
+      // "agent-ltsc") while the catalog agent's id has the "platform:" prefix.
+      const boundAgent = availableChatAgents.find((agent) => agent.id === boundAgentId)
+        ?? availableChatAgents.find((agent) => agent.source === "remote" && isSameRemoteAgentBinding(agent.id, boundAgentId));
       if (boundAgent) {
         setSelectedChatAgentId(boundAgent.id);
         setSelectedChatAgentName(boundAgent.name);
-        // Restore model from thread config first, then fall back to agent defaults
+        // Restore model from thread config first, then fall back to agent
+        // defaults. For remote agents a stale/non-alias thread model (e.g. the
+        // routable worker name saved by an older build) is ignored in favour
+        // of the worker's declared default config.
         setSelectedChatModel(thread.model
-          || (boundAgent.id === myDrSaiAgentModelPolicy?.agent_id
+          && (boundAgent.source !== "remote" || isRemoteModelAlias(boundAgent, thread.model))
+          ? thread.model
+          : boundAgent.id === myDrSaiAgentModelPolicy?.agent_id
             ? myDrSaiAgentModelPolicy?.effective_ref?.model_id ?? boundAgent.model ?? boundAgent.models?.[0] ?? null
-            : boundAgent.model || boundAgent.models?.[0] || null));
+            : boundAgent.source === "remote"
+              ? remoteAgentPreferredModel(boundAgent)
+              : boundAgent.model || boundAgent.models?.[0] || null);
         setSelectedChatExamples(boundAgent.examples);
+      } else if (thread.boundAgentId.startsWith("platform:") || thread.sessionScope === "remote_agent") {
+        // Remote agent not yet in catalog — set optimistically with canonical id
+        const canonicalAgentId = thread.boundAgentId.startsWith("platform:")
+          ? thread.boundAgentId
+          : `platform:${thread.boundAgentId}`;
+        setSelectedChatAgentId(canonicalAgentId);
+        setSelectedChatAgentName(thread.boundAgentName ?? thread.boundAgentId);
+        setSelectedChatModel(thread.model ?? null);
       }
     }
     // Restore reasoning effort and plan mode from thread config
@@ -1933,7 +2067,12 @@ function AuthenticatedApp({
     const key = `${assistantMessageId}:${action}`;
     await executeRecoveryActionOnce(recoveryActionInFlightRef.current, key, async () => {
       if (action === "diagnostics") {
-        setActiveRightTab("files"); setRightPanelCollapsed(false); return;
+        const diagnosticMessage = chat.messages.find((message) => message.id === assistantMessageId);
+        setSelectedDiagnosticTraceId(diagnosticMessage?.errorPresentation?.traceId ?? diagnosticMessage?.runtimeRunId);
+        setCitationSource(null);
+        setActiveRightTab("diagnostics");
+        setRightPanelCollapsed(false);
+        return;
       }
       if (action === "abandon") {
         chat.dismissRecoveryActions(assistantMessageId);
@@ -1990,14 +2129,81 @@ function AuthenticatedApp({
     });
   }
 
+  /**
+   * The model a remote agent should show by default: the worker's declared
+   * default LLM config (`defult_config_name` from get_info), then the first
+   * declared model config. `agent.model` is only the routable worker name —
+   * it is not a model config alias and must not shadow the declared default.
+   */
+  function remoteAgentPreferredModel(agent: DesktopAgent): string | null {
+    const configNames = (agent.remoteModelConfigs ?? [])
+      .map((config) => config.name)
+      .filter((name): name is string => Boolean(name?.trim()));
+    return agent.remoteDefaultModel?.trim() || configNames[0] || agent.model?.trim() || null;
+  }
+
+  /** True when a model id is a valid selectable alias for a remote agent. */
+  function isRemoteModelAlias(agent: DesktopAgent, model: string | null | undefined): boolean {
+    if (!model?.trim()) return false;
+    const normalized = model.trim();
+    if (agent.remoteDefaultModel?.trim() === normalized) return true;
+    return (agent.remoteModelConfigs ?? []).some((config) => config.name?.trim() === normalized);
+  }
+
   function applyChatAgent(agent: DesktopAgent): void {
     const configuration = agentConfigurations[agent.id];
     setSelectedChatAgentId(agent.id);
     setSelectedChatAgentName(agent.name);
-    setSelectedChatModel(configuration?.model || agent.model || agent.models?.[0] || selectedChatModel);
+    if (agent.source === "remote") {
+      // Remote workers own their model namespace: never inherit the previous
+      // local model selection. Prefer a saved remote choice, then the worker's
+      // declared default config, then the first declared model config.
+      const remoteModelNames = (agent.remoteModelConfigs ?? [])
+        .map((config) => config.name)
+        .filter((name): name is string => Boolean(name?.trim()));
+      // A saved choice is only honoured when it is still a valid remote alias
+      // (declared default or one of the worker's model configs); anything else
+      // (e.g. the routable worker name persisted by older builds) falls back
+      // to the declared default below.
+      const savedRemoteModel = isRemoteModelAlias(agent, configuration?.model)
+        ? configuration?.model
+        : undefined;
+      setSelectedChatModel(
+        savedRemoteModel
+          ?? agent.remoteDefaultModel?.trim()
+          ?? remoteModelNames[0]
+          ?? agent.model
+          ?? null,
+      );
+    } else {
+      setSelectedChatModel(configuration?.model || agent.model || agent.models?.[0] || selectedChatModel);
+    }
     setDefaultThinkingEffort(configuration?.thinkingEffort || loadThinkingEffort());
     setSelectedChatExamples(agent.examples);
-    persistWorkspaceAgentPreference(activeWorkspaceId, agent.id);
+    // A remote agent belongs to its remote session, not to the local
+    // workspace's default-agent preference.
+    if (agent.source !== "remote") {
+      persistWorkspaceAgentPreference(activeWorkspaceId, agent.id);
+    }
+  }
+
+  function resetComposerToLocalAgent(workspaceId: string = activeWorkspaceId): void {
+    const localAgents = availableChatAgents.filter((agent) => agent.source !== "remote");
+    if (localAgents.length === 0) return;
+    const workspaceAgentId = loadWorkspaceAgentPreference(workspaceId);
+    const agent = localAgents.find((item) => item.id === workspaceAgentId)
+      ?? localAgents.find((item) => item.isDefault)
+      ?? localAgents.find((item) => item.id === myDrSaiAgentModelPolicy?.agent_id)
+      ?? localAgents.find((item) => item.status === "running")
+      ?? localAgents[0];
+    if (!agent) return;
+    setSelectedChatAgentId(agent.id);
+    setSelectedChatAgentName(agent.name);
+    setSelectedChatModel(agent.id === myDrSaiAgentModelPolicy?.agent_id
+      ? myDrSaiAgentModelPolicy.effective_ref?.model_id ?? null
+      : agentConfigurations[agent.id]?.model ?? agent.model ?? agent.models?.[0] ?? null);
+    setSelectedChatExamples(agent.examples);
+    persistWorkspaceAgentPreference(workspaceId, agent.id);
   }
 
   function handleOpenWorkspaceResults(workspaceId: string): void {
@@ -2020,6 +2226,7 @@ function AuthenticatedApp({
   async function handleNewWorkspaceChat(workspace: WorkspaceProject): Promise<void> {
     setRightPanelCollapsed(true);
     setActiveWorkspaceId(workspace.id);
+    resetComposerToLocalAgent(workspace.id);
     setActiveThreadId(createLocalThreadId());
     navigateTo(MENU_IDS.currentSession);
   }
@@ -2417,7 +2624,17 @@ function AuthenticatedApp({
         id: snapshot.threadId,
         kind: existingThread?.kind ?? "chat",
         title: snapshot.title,
-        workspacePath: effectiveWorkspacePath,
+        // Remote-agent sessions own no workspace path: re-stamping the local
+        // effective workspace here would race the Runtime binding. Preserve
+        // the remote identity explicitly and let threads.ts keep
+        // workspacePath undefined for the remote_agent scope.
+        ...(existingThread?.sessionScope === "remote_agent"
+          ? {
+              sessionScope: "remote_agent" as const,
+              remoteWorkerId: existingThread.remoteWorkerId,
+              remoteWorkerName: existingThread.remoteWorkerName,
+            }
+          : { workspacePath: effectiveWorkspacePath }),
         boundAgentId: existingThread?.boundAgentId ?? selectedChatAgentId ?? undefined,
         boundAgentName: existingThread?.boundAgentName ?? selectedChatAgentName ?? undefined,
         status: nextStatus,
@@ -3343,6 +3560,19 @@ function AuthenticatedApp({
         language={language}
         onClose={() => setCitationSource(null)}
       />
+    ) : activeRightTab === "diagnostics" ? (
+      <ChatDiagnosticsPanel
+        language={language}
+        traceId={selectedDiagnosticTraceId}
+        onClose={() => {
+          setSelectedDiagnosticTraceId(undefined);
+          if (rightSidebarComponents.files) {
+            setActiveRightTab("files");
+          } else {
+            setRightPanelCollapsed(true);
+          }
+        }}
+      />
     ) : (
       <FilesContextPanel
         language={language}
@@ -4079,12 +4309,14 @@ function loadSidebarComponents(): SidebarComponentVisibility {
 function loadRightSidebarComponents(): RightSidebarComponentVisibility {
   const defaults: RightSidebarComponentVisibility = {
     files: true,
+    diagnostics: true,
   };
   try {
     const value = JSON.parse(window.localStorage.getItem(RIGHT_SIDEBAR_COMPONENTS_STORAGE_KEY) ?? "null") as Partial<RightSidebarComponentVisibility> | null;
     if (!value || typeof value !== "object") return defaults;
     return {
       files: typeof value.files === "boolean" ? value.files : defaults.files,
+      diagnostics: typeof value.diagnostics === "boolean" ? value.diagnostics : defaults.diagnostics,
     };
   } catch {
     return defaults;
@@ -4110,7 +4342,13 @@ function loadWorkspaceAgentPreference(workspaceId: string): string | null {
     const value = JSON.parse(window.localStorage.getItem(WORKSPACE_AGENT_STORAGE_KEY) ?? "null") as unknown;
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const selected = (value as Record<string, unknown>)[workspaceId];
-    return typeof selected === "string" && /^[A-Za-z0-9_.:-]{1,200}$/.test(selected) ? selected : null;
+    // Remote agents are session-bound and must never be restored as a local
+    // workspace default. Treat old persisted remote values as stale data.
+    return typeof selected === "string"
+      && !selected.startsWith("platform:")
+      && /^[A-Za-z0-9_.:-]{1,200}$/.test(selected)
+      ? selected
+      : null;
   } catch {
     return null;
   }
@@ -4131,6 +4369,27 @@ function persistWorkspaceAgentPreference(workspaceId: string, agentId: string): 
   }
   preferences[workspaceId] = agentId;
   window.localStorage.setItem(WORKSPACE_AGENT_STORAGE_KEY, JSON.stringify(preferences));
+}
+
+// Remote-agent threads store either the agent-square catalog id
+// ("platform:<routableName>") or the bare Runtime routable name written by
+// runtime-initiated sessions (chat.ts binds `requestedAgentName`). Normalize
+// both forms so a restored binding still matches the catalog, and canonical
+// ids sent to the Runtime resolve their execution descriptor.
+function normalizeRemoteAgentId(agentId: string): string {
+  return agentId.trim().replace(/^platform:/, "");
+}
+
+function isSameRemoteAgentBinding(left: string, right: string): boolean {
+  const a = left.trim();
+  const b = right.trim();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  // Only treat differing forms as equal when at least one side carries the
+  // platform: prefix — a local agent sharing a remote worker's name must not
+  // collide with the remote catalog entry.
+  if (!a.startsWith("platform:") && !b.startsWith("platform:")) return false;
+  return normalizeRemoteAgentId(a) === normalizeRemoteAgentId(b);
 }
 
 function loadThinkingEffort(): ThinkingEffort {

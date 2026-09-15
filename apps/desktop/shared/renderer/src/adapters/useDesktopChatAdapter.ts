@@ -43,7 +43,12 @@ import {
 } from "../chatCommands";
 import type { ChatSubmitOptions, UiMessage } from "../components/ChatWorkspace";
 import { desktopApi } from "../desktopApi";
-import { describeUserFacingError, type UserFacingRecoveryAction } from "../userFacingErrors";
+import { describeUserFacingError } from "../userFacingErrors";
+import {
+  applyChatTransportFailure,
+  createChatErrorPresentation,
+  type ChatErrorPresentation,
+} from "../chatErrorPresentation";
 import {
   formatRecentTerminalTestResult,
   readRecentTerminalTestResult,
@@ -565,6 +570,15 @@ export function useDesktopChatAdapter({
     // Skills are loaded from the local scan directory on demand by the agent.
     // Desktop no longer forces a per-turn selected_skill_id via composer chip.
     const skillName = options?.skillName?.trim() || undefined;
+    const remoteSkills = options?.remoteSkill
+      ? [{
+          id: options.remoteSkill.id,
+          source: options.remoteSkill.source,
+          ...(options.remoteSkill.name?.trim() ? { name: options.remoteSkill.name.trim() } : {}),
+          ...(options.remoteSkill.zipBase64 ? { zip_base64: options.remoteSkill.zipBase64 } : {}),
+          ...(options.remoteSkill.content?.trim() ? { content: options.remoteSkill.content } : {}),
+        }]
+      : undefined;
     const text = (options?.text ?? input).trim();
     if (!text) return false;
     const preserveComposer = options?.text !== undefined;
@@ -697,16 +711,15 @@ export function useDesktopChatAdapter({
           languageRef.current,
         );
         appendDebugLog("error", friendlyError.diagnosticCode, "chat");
+        const messageId = crypto.randomUUID();
         setMessages((current) => publishAndReturn([
           ...current,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: `${friendlyError.title} ${friendlyError.action}`,
-            error: true,
-            replyFailed: true,
+          applyChatTransportFailure({
+            id: messageId,
+            role: "assistant" as const,
+            content: "",
             lastEventAt: Date.now(),
-          },
+          }, createChatErrorPresentation(friendlyError, messageId)),
         ]));
         return false;
       }
@@ -768,10 +781,13 @@ export function useDesktopChatAdapter({
         model: options?.model?.trim() || undefined,
         reasoningEffort: options?.thinkingEffort,
         planMode: options?.planMode === true ? true : undefined,
+        privateMode: options?.privateMode === true ? true : undefined,
         metadata: {
           selected_agent_id: options?.agentId?.trim() || undefined,
           selected_skill_id: skillName || undefined,
+          remote_skills: remoteSkills,
           plan_mode: options?.planMode === true,
+          private_mode: options?.privateMode === true,
           workspace_instructions: workspaceInstructions || [],
           selected_agent: options?.agentName?.trim() || undefined,
           thinking_effort: options?.thinkingEffort,
@@ -1233,14 +1249,14 @@ export function useDesktopChatAdapter({
       const rawError = event.errorEnvelope ?? event.failureRecovery ?? { code: "unexpected_error", retryable: true };
       const friendlyError = describeUserFacingError(rawError, languageRef.current);
       const runtimeVisibleError = `${friendlyError.title} ${friendlyError.action}`;
+      const errorPresentation = createChatErrorPresentation(friendlyError, event.requestId);
       if (structuredRequests.current.has(event.requestId)) {
         const assistantId = streamingAssistantByRequest.current[event.requestId];
         setMessages((current) =>
           publishAndReturn(settleAssistantAfterHiddenError(
             current,
             assistantId,
-            runtimeVisibleError,
-            friendlyError.actions,
+            errorPresentation,
           )),
         );
         structuredRequests.current.delete(event.requestId);
@@ -1261,8 +1277,7 @@ export function useDesktopChatAdapter({
         publishAndReturn(settleAssistantAfterHiddenError(
           current,
           assistantId,
-          runtimeVisibleError,
-          friendlyError.actions,
+          errorPresentation,
         )),
       );
       delete streamingAssistantByRequest.current[event.requestId];
@@ -3255,25 +3270,19 @@ function updateAssistantByIdOrLatestStreaming(
   return next;
 }
 
-function settleAssistantAfterHiddenError(
+export function settleAssistantAfterHiddenError(
   messages: UiMessage[],
   assistantId: string | undefined,
-  visibleError?: string,
-  recoveryActions?: UserFacingRecoveryAction[],
+  presentation?: ChatErrorPresentation,
 ): UiMessage[] {
   const next = [...messages];
   const index = findAssistantIndex(next, assistantId);
   if (index === -1) return next;
   const message = next[index];
   if (!message.content.trim()) {
-    if (visibleError?.trim()) {
+    if (presentation) {
       next[index] = {
-        ...message,
-        content: visibleError,
-        replyFailed: false,
-        streaming: false,
-        error: true,
-        recoveryActions,
+        ...applyChatTransportFailure(message, presentation),
         structuredTurn: message.structuredTurn
           ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
           : undefined,
@@ -3293,10 +3302,9 @@ function settleAssistantAfterHiddenError(
     return next;
   }
   next[index] = {
-    ...message,
+    ...(presentation ? applyChatTransportFailure(message, presentation) : message),
     streaming: false,
     error: false,
-    recoveryActions,
     structuredTurn: message.structuredTurn
       ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
       : undefined,

@@ -1792,11 +1792,18 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 # Normalize the TUI's user-facing off/none values across
                 # provider-specific request protocols.
                 if param_type == "deepseek_reasoning_effort":
-                    # DeepSeek supports reasoning_effort via OpenAI-compatible
-                    # API; passing "thinking" (Anthropic-only) would cause
-                    # ValueError in the client.  Omit entirely to use model
-                    # default (no explicit reasoning).
-                    pass
+                    # DeepSeek supports reasoning_effort through the
+                    # OpenAI-compatible API; passing `thinking` (Anthropic-only)
+                    # raises ``ValueError: Extra create args are invalid`` in
+                    # the client, which is why this param_type exists.
+                    # "none" is part of the client's reasoning_effort enum and
+                    # is honoured by the HEPAI DeepSeek deployments (verified
+                    # against ai-dev.ihep.ac.cn: HTTP 200, no reasoning_content,
+                    # reasoning_tokens == 0).  Omitting the field instead would
+                    # silently fall back to the provider default, which *thinks*
+                    # -- so the user's "off/none" choice would be ignored while
+                    # the UI keeps showing "no reasoning".
+                    extra_create_args["reasoning_effort"] = "none"
                 elif param_type == "adaptive":
                     extra_create_args["thinking"] = {"type": "disabled"}
                 else:

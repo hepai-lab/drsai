@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, existsSync, mkdirSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import { createDesktopPathService } from "./desktopPaths";
@@ -30,18 +30,16 @@ if (PACKAGED_INSTALL_ROOT && DRSAI_REPO === PACKAGED_DRSAI_REPO) {
   const defaultsDir = join(PACKAGED_INSTALL_ROOT, "defaults");
   try {
     mkdirSync(DRSAI_HOME, { recursive: true });
-    for (const name of ["config.toml", ".env", "config.yaml"]) {
+    // The installer ships exactly one default home file: `config.toml`.
+    // `configs/**` (Agent, Provider, model catalog) is owned by the Runtime's
+    // own bootstrap (`drsai.config.ensure_desktop_runtime_config`, run from the
+    // desktop gateway lifespan), which keeps it in step with
+    // CURRENT_CONFIG_VERSION. Seeding a `configs/` tree here would shadow that
+    // bootstrap, because an existing Agent file is authoritative user config.
+    for (const name of ["config.toml"]) {
       const source = join(defaultsDir, name);
       const target = join(DRSAI_HOME, name);
       if (existsSync(source) && !existsSync(target)) copyFileSync(source, target);
-    }
-    const sourceConfigs = join(defaultsDir, "configs");
-    if (existsSync(sourceConfigs)) {
-      cpSync(sourceConfigs, join(DRSAI_HOME, "configs"), {
-        recursive: true,
-        force: false,
-        errorOnExist: false,
-      });
     }
   } catch {
     // First-run setup can still create missing user configuration interactively.

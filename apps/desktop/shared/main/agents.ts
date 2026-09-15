@@ -18,7 +18,13 @@ import {
   type PlatformAgentExecutionDescriptor,
 } from "./agentCatalog";
 import { recordAgentTelemetry } from "./agentTelemetry";
-import { LocalRuntimeClient, type RuntimeRemoteWorkerCatalog } from "./runtimeClient";
+import {
+  acquireLocalRuntimeClientLease,
+  acquireLocalRuntimeClientLeaseIfAvailable,
+  type LocalRuntimeClient,
+  type RuntimeClientLease,
+  type RuntimeRemoteWorkerCatalog,
+} from "./runtimeClient";
 import {
   getExternalAgentRuntimeDescriptor,
   listExternalAgentRuntimeAgents,
@@ -121,9 +127,13 @@ export async function recordAgentUsage(agentId: string): Promise<DesktopAgentPre
   }
   const descriptor = getPlatformAgentExecutionDescriptor(agentId);
   if (!descriptor) return { agentId, saved: false, message: "Agent not found in the platform catalog." };
-  const client = await LocalRuntimeClient.connect();
+  // Hold a reference for the duration of the call. This validates a worker
+  // against the shared Runtime client; closing it here would abort any OAEP
+  // stream that shares the same transport (and make every other in-flight
+  // request fail as generation-invalidated).
+  const lease = await acquireLocalRuntimeClientLease();
   try {
-    const selection = await client.selectRemoteWorker(descriptor.platformId, {
+    const selection = await lease.client.selectRemoteWorker(descriptor.platformId, {
       model: descriptor.model || descriptor.platformId,
     });
     if (!selection.agent_definition) {
@@ -132,7 +142,7 @@ export async function recordAgentUsage(agentId: string): Promise<DesktopAgentPre
     recordAgentTelemetry({ event: "agent_selected", agentId, source: "platform", status: selection.agent_definition });
     return { agentId, saved: true, message: "Remote worker compatibility validated by Runtime." };
   } finally {
-    client.close();
+    lease.release();
   }
 }
 
@@ -212,8 +222,13 @@ async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
   } catch {
     // Keep local Agent discovery available while policy diagnostics recover.
   }
+  let codexLease: RuntimeClientLease<LocalRuntimeClient> | undefined;
   try {
-    const client = await LocalRuntimeClient.connect();
+    // Agent catalog enrichment shares the Runtime client with live OAEP streams.
+    // Hold a lease for the reads and release it afterwards: this must never
+    // close the transport that a running conversation is streaming through.
+    codexLease = await acquireLocalRuntimeClientLease();
+    const client = codexLease.client;
     // Capabilities are authoritative. Do not probe optional Codex routes when
     // this Runtime does not register the backend; probing creates a noisy 404
     // on every Agent catalog refresh.
@@ -245,6 +260,8 @@ async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
     // Codex is a backend choice, not a required Agent Square entry. If an
     // already-running Runtime cannot describe it, omit it instead of turning
     // catalog browsing into a Runtime recovery workflow.
+  } finally {
+    codexLease?.release();
   }
   return agents;
 }
@@ -334,10 +351,14 @@ async function loadGatewayRemoteWorkerCatalog(refresh: boolean, force = false): 
   executionDescriptors: PlatformAgentExecutionDescriptor[];
   status: PlatformAgentStatus;
 } | null> {
-  let client: LocalRuntimeClient | null = null;
+  let lease: RuntimeClientLease<LocalRuntimeClient> | null = null;
   try {
-    client = await LocalRuntimeClient.connectIfAvailable();
-    if (!client) return null;
+    // Agent Square refreshes and the remote-worker catalog run concurrently with
+    // live conversations over the same shared Runtime client. Lease it for the
+    // read; closing it here used to abort the stream of an active chat.
+    lease = await acquireLocalRuntimeClientLeaseIfAvailable();
+    if (!lease) return null;
+    const client = lease.client;
     const catalog = await client.listRemoteWorkers(refresh, force);
     const agents = catalog.workers.map((worker): DesktopAgent => {
       const routableName = worker.worker?.trim() || worker.name.trim();
@@ -401,6 +422,13 @@ async function loadGatewayRemoteWorkerCatalog(refresh: boolean, force = false): 
         catalogGroup: "official",
         catalogState: "live",
         model: routableName,
+        models: worker.model_configs?.map((config) => config.name).filter(Boolean),
+        remoteDefaultModel: worker.defult_config_name?.trim() || undefined,
+        remoteModelConfigs: worker.model_configs?.map((config) => ({
+          name: config.name,
+          ...(typeof config.label === "string" && config.label.trim() ? { label: config.label.trim() } : {}),
+        })),
+        remoteSkills: worker.skills,
         logo: worker.logo?.trim() || undefined,
         examples: exampleList.length ? exampleList : undefined,
       };
@@ -428,7 +456,7 @@ async function loadGatewayRemoteWorkerCatalog(refresh: boolean, force = false): 
   } catch {
     return null;
   } finally {
-    client?.close();
+    lease?.release();
   }
 }
 

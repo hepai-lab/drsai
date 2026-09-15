@@ -128,7 +128,7 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         self._oidc_credential_pending = False
 
     async def create(self, *args: Any, **kwargs: Any):
-        self._bind_platform_auth()
+        await self._bind_platform_auth()
         # anthropic SDK ≥ 1.0 removed ``temperature``, ``top_p``, and
         # ``top_k`` from the typed signature of ``AsyncMessages.create()``.
         # The parent ``create()`` unconditionally adds ``temperature`` to

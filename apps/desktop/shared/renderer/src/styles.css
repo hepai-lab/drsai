@@ -10704,6 +10704,18 @@ button.structured-activity-detail:hover {
   cursor: not-allowed;
 }
 
+/* Private Mode: a per-turn "the Gateway picks the model" switch.  It only ever
+   renders for the local OpenDrSai Agent. */
+.composer-private-mode {
+  border: 1px solid transparent;
+}
+
+.composer-private-mode.active {
+  color: var(--app-success);
+  border-color: currentColor;
+  background: var(--app-accent-soft);
+}
+
 .composer-configuration-trigger {
   box-sizing: border-box;
   max-width: min(440px, 52vw);
@@ -10852,7 +10864,10 @@ button.structured-activity-detail:hover {
 }
 
 .composer-meta-menu.wide.skill-picker {
-  max-height: min(360px, 55vh);
+  max-height: min(380px, 60vh);
+  display: grid;
+  grid-template-rows: auto auto auto 1fr;
+  gap: 1px;
 }
 
 .composer-meta-menu-section {
@@ -14146,6 +14161,229 @@ button.structured-activity-detail:hover {
   padding: 12px 10px;
   color: var(--app-text-muted);
   font-size: 12px;
+  text-align: center;
+}
+
+/* ── Public skills square filter (Desktop skill picker) ─────────────── */
+.composer-skill-square-divider {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--app-panel-border);
+}
+
+.composer-skill-square-filter {
+  display: grid;
+  gap: 5px;
+  padding: 2px 2px 4px;
+}
+
+.composer-skill-square-filter input {
+  min-height: 28px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 7px;
+  background: var(--app-card-bg);
+  color: var(--app-text-primary);
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.composer-skill-square-filter input:focus {
+  border-color: var(--app-accent-border);
+  outline: none;
+}
+
+.composer-skill-square-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.composer-skill-square-tags button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--app-text-secondary);
+  padding: 1px 9px;
+  font-size: 11px;
+  text-align: center;
+}
+
+.composer-skill-square-tags button.active {
+  border-color: var(--app-accent-border);
+  background: var(--app-accent-soft);
+  color: var(--app-accent-strong);
+}
+
+/* ── Skills square toolbar (count, sort, install filter) ────────── */
+.composer-skill-square-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 2px 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--app-panel-border);
+}
+.composer-skill-square-count {
+  color: var(--app-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  margin-right: auto;
+}
+.composer-skill-square-sort,
+.composer-skill-square-filter-toggle {
+  display: inline-flex;
+  gap: 2px;
+}
+.composer-skill-square-sort button,
+.composer-skill-square-filter-toggle button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 1px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--app-text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.composer-skill-square-sort button.active,
+.composer-skill-square-filter-toggle button.active {
+  border-color: var(--app-accent-border);
+  background: var(--app-accent-soft);
+  color: var(--app-accent-strong);
+  opacity: 1;
+  font-weight: 600;
+}
+.composer-skill-square-sort button:hover,
+.composer-skill-square-filter-toggle button:hover {
+  background: var(--app-hover-bg);
+  opacity: 1;
+}
+
+/* ── Clear selection button ──────────────────────────────────────── */
+.composer-skill-square-clear {
+  padding: 2px 2px 3px;
+}
+.composer-skill-square-clear button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  width: 100%;
+  padding: 3px 9px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--app-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  justify-content: center;
+}
+.composer-skill-square-clear button:not(:disabled):hover {
+  border-color: var(--app-danger);
+  color: var(--app-danger);
+  background: var(--app-danger-soft);
+}
+.composer-skill-square-clear button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ── Skills list container (scrollable) ──────────────────────────── */
+.composer-skill-square-list {
+  display: grid;
+  gap: 0;
+  overflow-y: auto;
+  max-height: min(260px, 40vh);
+}
+.composer-skill-square-list button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 0;
+  border-bottom: 1px solid var(--app-panel-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--app-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.composer-skill-square-list button:last-child {
+  border-bottom: 0;
+}
+.composer-skill-square-list button:hover {
+  background: var(--app-hover-bg);
+  color: var(--app-text-primary);
+}
+.composer-skill-square-list button.active {
+  background: var(--app-accent-soft);
+  color: var(--app-accent-strong);
+  outline: 1px solid var(--app-accent-border);
+  outline-offset: -1px;
+  border-bottom-color: transparent;
+}
+.composer-skill-square-list button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.composer-skill-square-list button.installed {
+  border-left: 3px solid var(--app-accent-border);
+}
+
+/* ── Skill item one-line row ─────────────────────────────────────── */
+.composer-skill-square-item-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+}
+.composer-skill-square-installed-badge {
+  flex: 0 0 auto;
+  color: var(--app-success);
+  font-weight: 700;
+  font-size: 13px;
+}
+.composer-skill-square-item-name {
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-skill-square-item-version {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: var(--app-panel-border);
+  color: var(--app-text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.composer-skill-square-item-downloads {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--app-accent-strong);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ── Infinite scroll sentinel / end marker ───────────────────────── */
+.composer-skill-square-sentinel,
+.composer-skill-square-end {
+  padding: 8px 10px;
+  color: var(--app-text-muted);
+  font-size: 11px;
   text-align: center;
 }
 
@@ -31828,3 +32066,50 @@ button.structured-activity-compact:hover > span {
   font-size: 10px;
   font-weight: 700;
 }
+
+.chat-error-card {
+  margin-top: 10px; padding: 12px; border: 1px solid var(--app-danger-border); border-radius: 10px;
+  background: var(--app-danger-soft); color: var(--app-text-primary);
+}
+.chat-error-card-heading { display: flex; align-items: center; gap: 8px; }
+.chat-error-card p { margin: 6px 0; }
+.chat-error-card-preserved { color: var(--app-text-secondary); font-size: 12px; }
+.chat-error-card-primary, .chat-error-card-secondary { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.chat-error-card button { min-height: 32px; padding: 5px 10px; border: 1px solid var(--app-panel-border); border-radius: 8px; background: var(--app-card-bg); color: inherit; cursor: pointer; }
+.chat-error-card-primary > button:first-child { border-color: var(--app-accent); background: var(--app-accent-soft); }
+.chat-error-card-details-toggle { margin-left: auto; }
+.chat-error-card-details { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--app-panel-border); }
+.chat-error-card-details dl { display: grid; gap: 6px; margin: 0 0 10px; }
+.chat-error-card-details dl div { display: grid; grid-template-columns: minmax(90px, auto) 1fr; gap: 10px; }
+.chat-error-card-details dt { color: var(--app-text-secondary); }
+.chat-error-card-details dd { margin: 0; overflow-wrap: anywhere; font-family: var(--font-mono, monospace); }
+.chat-error-card button:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+
+/* Focused, redacted diagnostics for one chat run. */
+.chat-diagnostics-panel { height: 100%; min-height: 0; display: flex; flex-direction: column; background: var(--app-card-bg); color: var(--app-text-primary); }
+.chat-diagnostics-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--app-panel-border); }
+.chat-diagnostics-header > div { display: grid; gap: 3px; min-width: 0; }
+.chat-diagnostics-header small, .chat-diagnostics-muted { color: var(--app-text-secondary); }
+.chat-diagnostics-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 28px; text-align: center; color: var(--app-text-secondary); }
+.chat-diagnostics-empty p { max-width: 320px; margin: 0; }
+.chat-diagnostics-empty button, .chat-diagnostics-actions button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 5px 10px; border: 1px solid var(--app-panel-border); border-radius: 8px; background: var(--app-card-bg); color: inherit; cursor: pointer; }
+.chat-diagnostics-content { min-height: 0; overflow: auto; padding: 14px 16px 24px; }
+.chat-diagnostics-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.chat-diagnostics-summary { display: grid; gap: 8px; margin: 0; padding: 12px; border: 1px solid var(--app-panel-border); border-radius: 10px; background: var(--app-subtle-bg); }
+.chat-diagnostics-summary > div { display: grid; grid-template-columns: minmax(76px, auto) minmax(0, 1fr); gap: 10px; }
+.chat-diagnostics-summary dt { color: var(--app-text-secondary); }
+.chat-diagnostics-summary dd { margin: 0; overflow-wrap: anywhere; }
+.chat-diagnostics-summary dd[data-status="failed"] { color: var(--app-danger); font-weight: 600; }
+.chat-diagnostics-timeline { margin-top: 18px; }
+.chat-diagnostics-timeline h3 { margin: 0 0 12px; font-size: 13px; }
+.chat-diagnostics-timeline ol { list-style: none; margin: 0; padding: 0; }
+.chat-diagnostics-timeline li { position: relative; display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 8px; padding-bottom: 16px; }
+.chat-diagnostics-timeline li:not(:last-child)::before { content: ""; position: absolute; left: 4px; top: 10px; bottom: 0; width: 1px; background: var(--app-panel-border); }
+.chat-diagnostics-event-dot { position: relative; z-index: 1; width: 9px; height: 9px; margin-top: 4px; border-radius: 50%; background: var(--app-accent); }
+.chat-diagnostics-timeline li[data-level="error"] .chat-diagnostics-event-dot { background: var(--app-danger); }
+.chat-diagnostics-timeline li > div { min-width: 0; display: grid; gap: 3px; }
+.chat-diagnostics-timeline time { color: var(--app-text-secondary); font-size: 11px; }
+.chat-diagnostics-timeline strong { overflow-wrap: anywhere; font-size: 12px; }
+.chat-diagnostics-timeline p { margin: 0; overflow-wrap: anywhere; line-height: 1.45; }
+.chat-diagnostics-timeline code { width: fit-content; max-width: 100%; overflow-wrap: anywhere; color: var(--app-text-secondary); }
+.chat-diagnostics-panel button:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }

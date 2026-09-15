@@ -22,12 +22,16 @@ import {
   type DiagnosticResourceSample,
   type DiagnosticSnapshot,
   type DiagnosticStackFrame,
+  type RedactedDiagnosticEvent,
+  type RedactedDiagnosticTrace,
   type DiagnosticStatus,
   type DiagnosticTrace,
 } from "../api/diagnostics";
 import { redactSensitiveData } from "../api/sensitiveData";
 
 const MAX_EVENTS = 5_000;
+const MAX_REDACTED_TRACE_EVENTS = 300;
+const TRACE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const MAX_EVENT_BYTES = 64 * 1024;
 const MAX_STORAGE_BYTES = 10 * 1024 * 1024;
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -139,6 +143,26 @@ export class DesktopDiagnostics {
         });
       },
       cancel: (message = `${input.operation} cancelled`) => followup("cancelled", message),
+    };
+  }
+
+  async getRedactedTrace(traceId: string): Promise<RedactedDiagnosticTrace | null> {
+    if (typeof traceId !== "string" || !TRACE_ID_PATTERN.test(traceId)) {
+      throw new TypeError("Invalid diagnostic traceId.");
+    }
+    await this.initialize();
+    const matching = this.events.filter((event) => event.traceId === traceId);
+    if (matching.length === 0) return null;
+    const trace = buildTraces(matching)[0];
+    if (!trace || trace.traceId !== traceId) return null;
+    return {
+      traceId: trace.traceId,
+      startedAt: trace.startedAt,
+      ...(trace.endedAt ? { endedAt: trace.endedAt } : {}),
+      status: trace.status,
+      ...(trace.durationMs !== undefined ? { durationMs: trace.durationMs } : {}),
+      rootOperation: redactTraceText(trace.rootOperation, 200),
+      events: trace.events.slice(-MAX_REDACTED_TRACE_EVENTS).map(redactEventForRenderer),
     };
   }
 
@@ -711,6 +735,40 @@ function isHighVolumeChatDiagnosticNoise(event: Pick<DiagnosticEvent, "operation
     return true;
   }
   return false;
+}
+
+function redactEventForRenderer(event: DiagnosticEvent): RedactedDiagnosticEvent {
+  return {
+    id: event.id,
+    traceId: event.traceId,
+    spanId: event.spanId,
+    ...(event.parentSpanId ? { parentSpanId: event.parentSpanId } : {}),
+    timestamp: event.timestamp,
+    ...(event.endedAt ? { endedAt: event.endedAt } : {}),
+    ...(event.durationMs !== undefined ? { durationMs: event.durationMs } : {}),
+    kind: event.kind,
+    level: event.level,
+    status: event.status,
+    module: redactTraceText(event.module, 200),
+    component: redactTraceText(event.component, 200),
+    operation: redactTraceText(event.operation, 200),
+    message: redactTraceText(event.message, 2_000),
+    domain: event.domain,
+    visibility: event.visibility,
+    ...(event.agentPhase ? { agentPhase: event.agentPhase } : {}),
+    ...(event.errorCode ? { errorCode: redactTraceText(event.errorCode, 200) } : {}),
+    ...(event.sequence !== undefined ? { sequence: event.sequence } : {}),
+  };
+}
+
+// Re-apply text redaction at the renderer trust boundary. This deliberately does
+// not rely only on ingest-time sanitization or the configurable scanner.
+function redactTraceText(value: string, maxLength: number): string {
+  return redactText(String(value))
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[REDACTED EMAIL]")
+    .replace(/(?<!\d)1[3-9]\d{9}(?!\d)/g, "[REDACTED PHONE]")
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED API KEY]")
+    .slice(0, maxLength);
 }
 
 export function redactText(value: string): string {

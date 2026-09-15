@@ -419,11 +419,16 @@ export function WorkspaceShell({
   const workspaceItems = getEnabledNavItems(navSections, "workspace");
   const workspaceDetails = workspaces.find((workspace) => workspace.id === workspaceDetailsId) ?? null;
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0] ?? null;
+  // Threads written by the agent square carry the catalog id ("platform:<name>")
+  // while the Runtime binding writes the bare routable name. Normalize both to
+  // the bare name so one remote worker always renders as one sidebar group,
+  // including for threads persisted before this fix.
+  const normalizeRemoteWorkerKey = (workerId: string): string => workerId.replace(/^platform:/, "");
   const remoteWorkerGroups = useMemo(() => {
     const groups = new Map<string, { workerId: string; workerName: string; threads: WorkspaceThread[] }>();
     for (const thread of workspaceThreads) {
       if (thread.sessionScope !== "remote_agent" || !thread.remoteWorkerId) continue;
-      const workerId = thread.remoteWorkerId;
+      const workerId = normalizeRemoteWorkerKey(thread.remoteWorkerId);
       const entry = groups.get(workerId) ?? {
         workerId,
         workerName: thread.remoteWorkerName || workerId,

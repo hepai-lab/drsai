@@ -28,6 +28,7 @@ user key is a local profile name rather than an OIDC subject.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import re
 import uuid
 from contextlib import nullcontext
@@ -42,6 +43,8 @@ from drsai.platform_auth import (
     platform_auth_scope,
     verify_gateway_instance,
 )
+
+from . import _channel_auth
 
 _CORRELATION = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 DEFAULT_OFFLINE_USER_ID = "local"
@@ -95,8 +98,22 @@ def install(app) -> None:
                     correlation_id,
                     retryable=code == "token_expired",
                 )
+            if auth_context.user_email is None:
+                # The access token may not carry an ``email`` claim. The paired
+                # desktop main process sends the OIDC login email
+                # (auth.json user.email) in this header; the caller is already
+                # fully authenticated, so its self-reported email is accepted
+                # only as a fallback (a verified token claim always wins).
+                supplied_email = (request.headers.get("x-opendrsai-user-email") or "").strip()
+                if supplied_email:
+                    auth_context = dataclasses.replace(auth_context, user_email=supplied_email)
 
         request.state.auth_context = auth_context
+        # A long-lived channel worker (the WeChat polling task) is not a child
+        # of any request task, so it cannot inherit this scope.  Hand the
+        # verified context to the process-memory broker; the raw bearer token
+        # stays in this middleware.
+        _channel_auth.capture(auth_context)
         with platform_auth_scope(auth_context) if auth_context else nullcontext():
             response = await call_next(request)
         response.headers["X-Correlation-ID"] = correlation_id

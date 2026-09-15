@@ -1,7 +1,7 @@
 /**
  * Run a TypeScript test with no build step and no dependencies.
  *
- *     node shared/test-kit/run-typescript-test.mjs shared/test-kit/verify-desktop-surface.mts
+ *     node shared/test-kit/run-typescript-test.mjs shared/test-kit/verify-chat-error-presentation.mts
  *
  * `run-bundled-test.mjs` is the established runner and remains the one CI uses;
  * it needs `esbuild` from the desktop workspace's `node_modules`.  This one needs

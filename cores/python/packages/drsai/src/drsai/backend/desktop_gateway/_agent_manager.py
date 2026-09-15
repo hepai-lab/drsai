@@ -10,6 +10,8 @@ Kept:
   2. a per-key lock, so two windows cannot drive the same session at once
   3. ``load_state`` / ``save_state`` around every turn, so a restart resumes
   4. rebuild when the selected model alias changes (feature 3.2)
+  5. bounded waits around Agent construction and close, so one stalled
+     provider degrades a single turn instead of the whole gateway
 
 Dropped, and why:
   - Agent model policy / provider config resolution -- the alias comes from
@@ -30,7 +32,7 @@ import inspect
 import os
 import time
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 from loguru import logger
 
@@ -52,6 +54,32 @@ from ._artifacts import deliver_artifact
 from ._auth import effective_user_id
 
 _db_manager: DatabaseManager | None = None
+
+
+def _env_seconds(name: str, default: float) -> float:
+    """Read a positive timeout (in seconds), ignoring unset/invalid values."""
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Ignoring invalid {}={!r}; using {}s instead", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("Ignoring non-positive {}={!r}; using {}s instead", name, raw, default)
+        return default
+    return value
+
+
+# Building an Agent touches the provider catalog, the database and the tool
+# registry; closing one talks to the model client. Any of those can stall on the
+# network, and a stalled call used to hang the whole gateway with nothing in the
+# logs to explain it. Bound both directions: a stuck rebuild now fails visibly
+# (and retryably) instead of leaving the composer spinning forever.
+_AGENT_CREATE_TIMEOUT_SECONDS = _env_seconds("OPENDRSAI_AGENT_CREATE_TIMEOUT_SECONDS", 90.0)
+_AGENT_CLOSE_TIMEOUT_SECONDS = _env_seconds("OPENDRSAI_AGENT_CLOSE_TIMEOUT_SECONDS", 5.0)
+_AGENT_REBUILD_WAIT_TIMEOUT_SECONDS = _env_seconds("OPENDRSAI_AGENT_REBUILD_WAIT_TIMEOUT_SECONDS", 120.0)
 
 
 def _database() -> DatabaseManager:
@@ -248,7 +276,20 @@ class DesktopAgentManager:
         self._agents: dict[str, Any] = {}
         self._aliases: dict[str, str | None] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        # Guards the bookkeeping dicts above only -- never held across
+        # create_agent()/lazy_init()/load_state()/close(). Those are the slow,
+        # network-facing calls, and holding one process-wide lock across them
+        # meant a single stalled Agent froze *every* session in the gateway.
         self._global_lock = asyncio.Lock()
+        # Serializes Agent construction (create + init + state load). Separate
+        # from ``_global_lock`` so the expensive work happens outside the
+        # bookkeeping critical section, and acquired *with a timeout* so a
+        # wedged rebuild cannot block other sessions forever.
+        self._rebuild_lock = asyncio.Lock()
+        # Strong references for detached ``close()`` calls. asyncio only holds a
+        # weak reference to a running task, so a bare create_task() may be
+        # garbage-collected mid-flight and skip its cleanup.
+        self._closing_tasks: set[asyncio.Task[Any]] = set()
 
     @staticmethod
     def _key(user_id: str, session_id: str) -> str:
@@ -266,75 +307,192 @@ class DesktopAgentManager:
         user_id: str,
         *,
         model_alias: str | None = None,
+        model_provider: str | None = None,
+        model_id: str | None = None,
         work_dir: str | None = None,
     ) -> Any:
         uid = effective_user_id(user_id)
         key = self._key(uid, session_id)
-        alias = model_alias or DEFAULT_CONFIG_NAME
-        async with self._global_lock:
+        # Keep the structured provider/model identity intact for the factory.
+        # The alias remains only as a backward-compatible fallback and cache key.
+        alias = (
+            f"{model_provider}/{model_id}"
+            if model_provider and model_id
+            else model_alias or DEFAULT_CONFIG_NAME
+        )
+        # Fast path: an Agent already built for exactly this alias. No lock --
+        # the cache dicts are only mutated between awaits, so this read can
+        # never observe a torn state.
+        agent = self._agents.get(key)
+        if agent is not None and self._aliases.get(key) == alias:
+            return agent
+
+        # Slow path: build (or rebuild) the Agent. The wait for the rebuild lock
+        # is bounded, and so is the build itself, so one stalled Agent can no
+        # longer wedge every other session in the process.
+        try:
+            await asyncio.wait_for(
+                self._rebuild_lock.acquire(), timeout=_AGENT_REBUILD_WAIT_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            raise RuntimeExecutionError(
+                "agent_rebuild_busy",
+                "Another session is still preparing its Agent. Retry in a moment.",
+                retryable=True,
+            )
+        try:
+            # Someone else may have built this exact Agent while we waited.
             agent = self._agents.get(key)
             if agent is not None and self._aliases.get(key) == alias:
                 return agent
             previous = agent
-            logger.info(f"Creating agent: user={uid} session={session_id} model={alias}")
-            kwargs = dict(
-                thread_id=session_id,
-                user_id=uid,
-                db_manager=_database(),
-                # The alias is the model catalog key the renderer picked. It is
-                # the *only* model input -- there is no policy layer that
-                # could silently override it.
-                defult_config_name=alias,
-                work_dir=work_dir or os.getcwd(),
-                # Artifact delivery is a host capability, not a user-toggled
-                # tool: every Agent must be able to publish a file it created.
-                extra_tools=[deliver_artifact],
-                # ARCHIVED(2026-09-02): Desktop reuses the TUI legacy path.
-                # run_drsai_agent_factory sets _shared_agent_kernel=None for
-                # kernel_surface=="tui", so DrSaiAssistant.run_stream() falls
-                # back to its own tool loop and handles Delegate/subagents
-                # directly. The backend/runtime desktop-kernel middle layer
-                # (desktop_agent_kernel_adapter.py etc.) is archived and no
-                # longer executes for Desktop.
-                kernel_surface="tui",
+            logger.info(
+                "Creating agent: user=%s session=%s model=%s provider=%s model_id=%s",
+                uid, session_id, alias, model_provider, model_id,
             )
-            if inspect.iscoroutinefunction(create_agent):
-                agent = await create_agent(**kwargs)
-            else:
-                agent = await asyncio.to_thread(create_agent, **kwargs)
-            if hasattr(agent, "lazy_init"):
-                await agent.lazy_init()
+            # Detach the superseded Agent *before* the (slow) build so no other
+            # turn can pick it up, then stop its in-flight turn and hand its
+            # close() to a bounded background task. close() reaches the model
+            # client and used to be awaited right here, without any timeout --
+            # that is what turned a slow provider into a permanent hang.
+            self._agents.pop(key, None)
+            self._aliases.pop(key, None)
+            if previous is not None:
+                self._supersede(key, previous)
             try:
-                workbench = getattr(agent, "_workbench", None)
-                listed = list(getattr(workbench, "_tools", None) or getattr(agent, "_tools", []) or [])
-                tool_names = []
-                for tool in listed:
-                    name = getattr(tool, "name", None)
-                    if not isinstance(name, str) or not name:
-                        schema = getattr(tool, "schema", None)
-                        if isinstance(schema, Mapping):
-                            name = schema.get("name")
-                    if isinstance(name, str) and name:
-                        tool_names.append(name)
-                gfs_names = [name for name in tool_names if name.startswith("gfs_")]
-                logger.info(
-                    "Agent ready: user={} session={} tools={} gfs_tools={}",
-                    uid, session_id, len(tool_names), gfs_names,
+                agent = await asyncio.wait_for(
+                    self._build_agent(
+                        session_id=session_id,
+                        uid=uid,
+                        alias=alias,
+                        model_provider=model_provider,
+                        model_id=model_id,
+                        work_dir=work_dir,
+                    ),
+                    timeout=_AGENT_CREATE_TIMEOUT_SECONDS,
                 )
-            except Exception as exc:  # pragma: no cover - diagnostics only
-                logger.debug("Unable to list tools after create_agent: %s", exc)
-            state = await self._load_state(session_id, uid)
-            if state and hasattr(agent, "load_state"):
-                await agent.load_state(state)
-            await self._ensure_thread(session_id, uid, work_dir)
+            except asyncio.TimeoutError as exc:
+                raise RuntimeExecutionError(
+                    "agent_create_timeout",
+                    f"Preparing the Agent took longer than {_AGENT_CREATE_TIMEOUT_SECONDS:.0f}s.",
+                    retryable=True,
+                ) from exc
             self._agents[key] = agent
             self._aliases[key] = alias
-            if previous is not None and previous is not agent and hasattr(previous, "close"):
-                try:
-                    await previous.close()
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.debug(f"close() after model change failed for {key}: {exc}")
             return agent
+        finally:
+            self._rebuild_lock.release()
+
+    async def _build_agent(
+        self,
+        *,
+        session_id: str,
+        uid: str,
+        alias: str,
+        model_provider: str | None,
+        model_id: str | None,
+        work_dir: str | None,
+    ) -> Any:
+        """Create and initialize one Agent.
+
+        Runs outside ``_global_lock`` (see ``get_or_create``); the caller holds
+        ``_rebuild_lock`` and enforces the timeout.
+        """
+        kwargs = dict(
+            thread_id=session_id,
+            user_id=uid,
+            db_manager=_database(),
+            # The alias is the model catalog key the renderer picked. It is
+            # the *only* model input -- there is no policy layer that
+            # could silently override it.
+            defult_config_name=alias,
+            model_provider=model_provider,
+            model_id=model_id,
+            work_dir=work_dir or os.getcwd(),
+            # Artifact delivery is a host capability, not a user-toggled
+            # tool: every Agent must be able to publish a file it created.
+            extra_tools=[deliver_artifact],
+            # ARCHIVED(2026-09-02): Desktop reuses the TUI legacy path.
+            # run_drsai_agent_factory sets _shared_agent_kernel=None for
+            # kernel_surface=="tui", so DrSaiAssistant.run_stream() falls
+            # back to its own tool loop and handles Delegate/subagents
+            # directly. The backend/runtime desktop-kernel middle layer
+            # (desktop_agent_kernel_adapter.py etc.) is archived and no
+            # longer executes for Desktop.
+            kernel_surface="tui",
+        )
+        if inspect.iscoroutinefunction(create_agent):
+            agent = await create_agent(**kwargs)
+        else:
+            agent = await asyncio.to_thread(create_agent, **kwargs)
+        if hasattr(agent, "lazy_init"):
+            await agent.lazy_init()
+        try:
+            workbench = getattr(agent, "_workbench", None)
+            listed = list(getattr(workbench, "_tools", None) or getattr(agent, "_tools", []) or [])
+            tool_names = []
+            for tool in listed:
+                name = getattr(tool, "name", None)
+                if not isinstance(name, str) or not name:
+                    schema = getattr(tool, "schema", None)
+                    if isinstance(schema, Mapping):
+                        name = schema.get("name")
+                if isinstance(name, str) and name:
+                    tool_names.append(name)
+            gfs_names = [name for name in tool_names if name.startswith("gfs_")]
+            logger.info(
+                "Agent ready: user={} session={} tools={} gfs_tools={}",
+                uid, session_id, len(tool_names), gfs_names,
+            )
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            logger.debug("Unable to list tools after create_agent: %s", exc)
+        state = await self._load_state(session_id, uid)
+        if state and hasattr(agent, "load_state"):
+            await agent.load_state(state)
+        await self._ensure_thread(session_id, uid, work_dir)
+        return agent
+
+    def _supersede(self, key: str, agent: Any) -> None:
+        """Stop a replaced Agent's in-flight turn and close it off the hot path.
+
+        Deliberately synchronous and fire-and-forget: callers hold a lock, and
+        an unbounded ``await agent.close()`` under that lock is exactly the
+        stall this module used to have.
+        """
+        canceller = getattr(getattr(agent, "_cancellation_token", None), "cancel", None)
+        if callable(canceller):
+            try:
+                # close() would do this too, but only once it gets scheduled;
+                # cancelling first stops the previous turn immediately.
+                canceller()
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.debug("Cancelling superseded Agent turn failed for {}: {}", key, exc)
+        if not hasattr(agent, "close"):
+            return
+        task = asyncio.create_task(self._close_bounded(key, agent))
+        self._closing_tasks.add(task)
+        task.add_done_callback(self._closing_tasks.discard)
+
+    async def _close_bounded(self, key: str, agent: Any) -> None:
+        """Close one Agent, never waiting forever for it.
+
+        Used both when an Agent is superseded by a model switch and when the
+        gateway shuts down: an Agent whose model client never answers must not
+        be able to block either path.
+        """
+        try:
+            await asyncio.wait_for(agent.close(), timeout=_AGENT_CLOSE_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "close() for Agent {} did not finish within {}s; abandoning it "
+                "(a stuck model client must not block a rebuild or shutdown)",
+                key,
+                _AGENT_CLOSE_TIMEOUT_SECONDS,
+            )
+        except asyncio.CancelledError:  # pragma: no cover - shutdown
+            raise
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.debug("close() for superseded Agent failed for {}: {}", key, exc)
 
     async def run_stream(
         self,
@@ -343,6 +501,8 @@ class DesktopAgentManager:
         session_id: str,
         user_id: str,
         model_alias: str | None = None,
+        model_provider: str | None = None,
+        model_id: str | None = None,
         work_dir: str | None = None,
         workspace_id: str | None = None,
         cancellation_token: Any = None,
@@ -367,7 +527,12 @@ class DesktopAgentManager:
             )
         async with lock:
             agent = await self.get_or_create(
-                session_id, uid, model_alias=model_alias, work_dir=work_dir,
+                session_id,
+                uid,
+                model_alias=model_alias,
+                model_provider=model_provider,
+                model_id=model_id,
+                work_dir=work_dir,
             )
             # Apply plan mode + composer skill selection every turn so a prior
             # turn cannot leak into a normal turn (the Agent is cached per key).
@@ -423,14 +588,22 @@ class DesktopAgentManager:
         return {"agents": len(self._agents), "sessions": sorted(self._agents)}
 
     async def close(self) -> None:
-        for agent in list(self._agents.values()):
-            if hasattr(agent, "close"):
-                try:
-                    await agent.close()
-                except Exception:  # pragma: no cover - shutdown best effort
-                    pass
+        # Shutdown must always finish: a stalled model client used to make this
+        # loop hang, which is why closing the desktop left the Runtime behind.
+        # The closes run concurrently and each is bounded by _close_bounded, so
+        # the whole teardown costs one timeout no matter how many Agents hang.
+        detached = list(self._agents.items())
         self._agents.clear()
         self._aliases.clear()
+        if detached:
+            await asyncio.gather(*(self._close_bounded(key, agent) for key, agent in detached))
+        # Let detached close() calls finish (bounded) instead of logging
+        # "Task was destroyed but it is pending" at shutdown.
+        if self._closing_tasks:
+            try:
+                await asyncio.wait(set(self._closing_tasks), timeout=_AGENT_CLOSE_TIMEOUT_SECONDS)
+            except Exception:  # pragma: no cover - shutdown best effort
+                pass
 
     # ── Thread persistence ───────────────────────────────────────────────
 
@@ -485,33 +658,38 @@ class DesktopAgentManager:
         thread.updated_at = time.time()
         _database().upsert(thread)
 
-    async def _close_cached(self, key: str, agent: Any) -> None:
-        self._aliases.pop(key, None)
-        if agent is not None and hasattr(agent, "close"):
-            try:
-                await agent.close()
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.debug("close() during agent eviction failed for {}: {}", key, exc)
+    def _detach(self, keys: Iterable[str]) -> list[tuple[str, Any]]:
+        """Drop ``keys`` from the cache and return the Agents that were there.
+
+        Synchronous on purpose: the caller must not hold ``_global_lock`` (or
+        ``_rebuild_lock``) across the ``close()`` that follows.
+        """
+        detached: list[tuple[str, Any]] = []
+        for key in keys:
+            agent = self._agents.pop(key, None)
+            self._aliases.pop(key, None)
+            if agent is not None:
+                detached.append((key, agent))
+        return detached
 
     async def evict_user(self, user_id: str | None = None) -> None:
         """Drop cached agents for one user so skill/tool registry changes take effect."""
         uid = effective_user_id(user_id)
         prefix = f"{uid}::"
         async with self._global_lock:
-            for key in list(self._agents):
-                if not key.startswith(prefix):
-                    continue
-                agent = self._agents.pop(key, None)
-                await self._close_cached(key, agent)
+            detached = self._detach([key for key in self._agents if key.startswith(prefix)])
+        # close() reaches the model client; keeping it out of the lock and
+        # bounded means toggling a skill can never freeze other sessions.
+        for key, agent in detached:
+            self._supersede(key, agent)
 
     async def evict_all(self) -> int:
         """Drop every cached Agent (process-wide tool/config changes such as GFS)."""
         async with self._global_lock:
-            keys = list(self._agents)
-            for key in keys:
-                agent = self._agents.pop(key, None)
-                await self._close_cached(key, agent)
-            return len(keys)
+            detached = self._detach(list(self._agents))
+        for key, agent in detached:
+            self._supersede(key, agent)
+        return len(detached)
 
 
 __all__ = ["DesktopAgentManager"]
