@@ -146,7 +146,6 @@ export const useAgentInfo = (userIdProp?: string) => {
             setAgentInfo(byId as Partial<Agent>);
             return;
           }
-          const userDefaultId = userDefault?.stored_default_agent_id ?? null;
           const platformPolicy = {
             auto_load_default_agent: userDefault?.auto_load_default_agent,
             default_agent_name: userDefault?.default_agent_name ?? null,
@@ -154,7 +153,6 @@ export const useAgentInfo = (userIdProp?: string) => {
           };
           const preferred = pickAgentForSessionStart(
             agents || [],
-            userDefaultId,
             platformPolicy,
           );
           if (

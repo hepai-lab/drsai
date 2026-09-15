@@ -697,7 +697,7 @@ class HepAIWorkerAgent(DrSaiAgent):
             try:
                 async for chunk in self.async_stream_generator(stream, timeout=self._stream_timeout):
                     if self.is_paused:
-                        logger.info(f"[trace={trace_id}] {self.name} was paused, handling gracefully")
+                        logger.info(f"{self.name} was paused, handling gracefully")
                         raise asyncio.CancelledError("Agent paused during streaming")
                     message_type = chunk.get("type", None)
                     if message_type in self._message_factory._message_types:
@@ -738,17 +738,15 @@ class HepAIWorkerAgent(DrSaiAgent):
                         break
             except asyncio.CancelledError:
                 if self.is_paused:
-                    logger.info(
-                        f"[trace={trace_id}] {self.name} was paused, handling gracefully"
-                    )
+                    logger.info(f"{self.name} was paused, handling gracefully")
                 raise
             except Exception as e:
                 if self.is_paused and "peer closed connection" in str(e).lower():
                     logger.info(
-                        f"[trace={trace_id}] Connection closed due to pause for {self.name}, handling as cancellation"
+                        f"Connection closed due to pause for {self.name}, handling as cancellation"
                     )
                     raise asyncio.CancelledError("Agent paused")
-                logger.error(f"[trace={trace_id}] Error during streaming: {e}")
+                logger.error(f"Error during streaming: {e}")
                 raise
 
             # full_response_str = ""

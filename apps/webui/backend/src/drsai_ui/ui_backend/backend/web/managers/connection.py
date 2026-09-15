@@ -46,11 +46,15 @@ from ...datamodel import (
     Settings,
     SettingsConfig,
     TeamResult,
-    UserAgents,
 )
 from ...teammanager import TeamManager
 from ...utils.utils import compress_state, decompress_state
 from ..model_resolve import settings_config_from_input_response
+from ..auth_source import get_user_source
+from drsai_ui.agent_factory.agent_mode_cofigs import (
+    assemble_catalog_agents,
+    find_catalog_agent,
+)
 from autogen_agentchat.messages import ThoughtEvent, UserInputRequestedEvent
 
 logger = logging.getLogger(__name__)
@@ -491,7 +495,7 @@ class WebSocketManager:
                     f"user_id={run.user_id}. Frontend will be told to create new session!"
                 )
                 raise ValueError(
-                    f"No agent config found for agent_id {agent_id} in UserAgents,"
+                    f"No agent config found for agent_id {agent_id} in catalog "
                     f"(user_id={run.user_id}). Please create a new session!"
                 )
 
@@ -2175,27 +2179,25 @@ class WebSocketManager:
         return response.data[0] if response.status and response.data else None
 
     async def _get_agent_mode_config(self, user_id: str, agent_id: str) -> Optional[Dict]:
-        """Resolve the selected agent config from UserAgents as single source of truth."""
-        updated_agent = None
-        response = self.db_manager.get(UserAgents, filters={"user_id": user_id}, return_json=False)
-        if response.status and response.data:
-            # Use the user's agent list as the only runtime lookup source.
-            user_agents: UserAgents = response.data[0]
-            agents_list = user_agents.agents or []
-            for agent in agents_list:
-                if agent["id"] == agent_id:
-                    updated_agent = agent
-                    break
-            if updated_agent is None:
-                logger.warning(f"Agent config not found in UserAgents for user_id={user_id}, agent_id={agent_id}")
+        """Resolve the selected agent from platform defaults + DDF cache + user remotes."""
+        if not agent_id:
+            return None
+        user_source = get_user_source(self.db_manager, user_id)
+        updated_agent = find_catalog_agent(
+            user_id, agent_id, self.db_manager, user_source=user_source
+        )
+        if updated_agent is None:
+            logger.warning(
+                f"Agent config not found in catalog for user_id={user_id}, agent_id={agent_id}"
+            )
         return updated_agent
 
     def _resolve_default_agent_id(self, user_id: str) -> Optional[str]:
-        """When the client omits agent_id, pick default / first agent from UserAgents."""
-        response = self.db_manager.get(UserAgents, filters={"user_id": user_id}, return_json=False)
-        if not response.status or not response.data:
-            return None
-        agents_list = response.data[0].agents or []
+        """When the client omits agent_id, pick default / first agent from live catalog."""
+        user_source = get_user_source(self.db_manager, user_id)
+        agents_list = assemble_catalog_agents(
+            user_id, self.db_manager, user_source=user_source
+        )
         for agent in agents_list:
             if not isinstance(agent, dict):
                 continue

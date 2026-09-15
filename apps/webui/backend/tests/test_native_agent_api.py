@@ -248,21 +248,32 @@ def test_native_chat_endpoint_reuses_run_and_streams_public_sse(mode, monkeypatc
     async def allow_test_target(agent):
         return {"aiapi.ihep.ac.cn" if agent.get("mode") == "ddf" else "agents.example.com"}
     monkeypatch.setattr(native_routes, "resolve_and_validate_agent_execution_targets", allow_test_target)
+
+    agent = {
+        "id": "ddf-1",
+        "name": "DDF Agent",
+        "mode": mode,
+        "config": {
+            "api_key": "MUST_NOT_STREAM",
+            "base_url": "https://aiapi.ihep.ac.cn/apiv2"
+            if mode == "ddf"
+            else "https://agents.example.com/v1",
+        },
+    }
+    monkeypatch.setattr(
+        native_routes,
+        "find_catalog_agent",
+        lambda user_id, agent_id, db, **_kwargs: agent if agent_id == "ddf-1" else None,
+    )
+
     class FakeDb:
         def __init__(self):
             self.sessions = []
             self.runs = []
-            self.agent = {
-                "id": "ddf-1",
-                "name": "DDF Agent",
-                "mode": mode,
-                "config": {"api_key": "MUST_NOT_STREAM", "base_url": "https://aiapi.ihep.ac.cn/apiv2" if mode == "ddf" else "https://agents.example.com/v1"},
-            }
+            self.agent = agent
 
         def get(self, model, filters=None, **_kwargs):
             filters = filters or {}
-            if model.__name__ == "UserAgents":
-                return SimpleNamespace(status=True, data=[SimpleNamespace(agents=[self.agent])])
             rows = self.sessions if model.__name__ == "Session" else self.runs
             selected = [row for row in rows if all(getattr(row, key, None) == value for key, value in filters.items())]
             return SimpleNamespace(status=True, data=selected)
@@ -386,16 +397,26 @@ def test_native_chat_disconnect_stops_runtime(monkeypatch, tmp_path):
     async def allow_test_target(_agent):
         return {"aiapi.ihep.ac.cn"}
     monkeypatch.setattr(native_routes, "resolve_and_validate_agent_execution_targets", allow_test_target)
+    agent = {
+        "id": "ddf-1",
+        "name": "DDF",
+        "mode": "ddf",
+        "config": {"base_url": "https://aiapi.ihep.ac.cn/apiv2", "api_key": "secret"},
+    }
+    monkeypatch.setattr(
+        native_routes,
+        "find_catalog_agent",
+        lambda user_id, agent_id, db, **_kwargs: agent if agent_id == "ddf-1" else None,
+    )
+
     class FakeDb:
         def __init__(self):
             self.sessions = []
             self.runs = []
-            self.agent = {"id": "ddf-1", "name": "DDF", "mode": "ddf", "config": {"base_url": "https://aiapi.ihep.ac.cn/apiv2", "api_key": "secret"}}
+            self.agent = agent
 
         def get(self, model, filters=None, **_kwargs):
             filters = filters or {}
-            if model.__name__ == "UserAgents":
-                return SimpleNamespace(status=True, data=[SimpleNamespace(agents=[self.agent])])
             rows = self.sessions if model.__name__ == "Session" else self.runs
             return SimpleNamespace(status=True, data=[row for row in rows if all(getattr(row, key, None) == value for key, value in filters.items())])
 

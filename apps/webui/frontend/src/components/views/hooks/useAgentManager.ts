@@ -95,14 +95,12 @@ export const useAgentManager = (userEmail: string | undefined) => {
       }
     };
 
-    let userDefaultAgentId: string | null | undefined;
     let platformPolicy: PlatformAgentPolicy | null = null;
     let isBrandNewUser = false;
 
     try {
       try {
         const userDefault = await agentWorkerAPI.getUserDefaultAgent(userEmail).catch(() => null);
-        userDefaultAgentId = userDefault?.stored_default_agent_id ?? null;
         platformPolicy = {
           auto_load_default_agent: userDefault?.auto_load_default_agent,
           default_agent_name: userDefault?.default_agent_name ?? null,
@@ -110,14 +108,12 @@ export const useAgentManager = (userEmail: string | undefined) => {
         };
         setPlatformAgentPolicy(platformPolicy);
       } catch {
-        userDefaultAgentId = undefined;
         setPlatformAgentPolicy(null);
       }
 
       const { selectedAgent, agentId, mode } = useModeConfigStore.getState();
       const recentFirstId = getFirstRecentAgentId();
       isBrandNewUser = shouldRefreshAgentCatalog({
-        storedDefaultAgentId: userDefaultAgentId,
         agentId,
         mode,
       });
@@ -227,7 +223,7 @@ export const useAgentManager = (userEmail: string | undefined) => {
         }
       } catch { /* URL 解析失败不影响正常流程 */ }
 
-      const policyDefault = pickAgentForSessionStart(res, userDefaultAgentId, platformPolicy);
+      const policyDefault = pickAgentForSessionStart(res, platformPolicy);
       const fallbackAgent = policyDefault;
 
       const resolveLastUsedFromPersist = (): Agent | undefined => {

@@ -27,6 +27,36 @@ function toHtmlWithLineBreaks(rawHtml: string): string {
   return rawHtml.replace(/\r?\n/g, "<br />");
 }
 
+/** Only remote / embedded image URLs. Local `/files/user/...` copies are not loadable. */
+function isOriginalImageSrc(src: string | undefined | null): boolean {
+  if (!src || typeof src !== "string") return false;
+  const trimmed = src.trim();
+  if (!trimmed) return false;
+  if (/^data:image\//i.test(trimmed)) return true;
+  if (/^https?:\/\//i.test(trimmed)) return true;
+  if (/^\/\//.test(trimmed)) return true;
+  return false;
+}
+
+function MarkdownImage({
+  src,
+  alt,
+  node: _node,
+  ...rest
+}: React.ComponentPropsWithoutRef<"img"> & ExtraProps) {
+  if (!isOriginalImageSrc(src)) return null;
+  return <img src={src} alt={alt || ""} {...rest} />;
+}
+
+function keepOriginalImageSrcs(html: string): string {
+  return html.replace(/<img\b([^>]*)>/gi, (tag, attrs: string) => {
+    const quoted = attrs.match(/\bsrc\s*=\s*(["'])([\s\S]*?)\1/i);
+    const unquoted = quoted ? null : attrs.match(/\bsrc\s*=\s*([^\s>]+)/i);
+    const src = quoted?.[2] ?? unquoted?.[1] ?? "";
+    return isOriginalImageSrc(src) ? tag : "";
+  });
+}
+
 function MarkdownFencePre(
   props: React.ComponentPropsWithoutRef<"pre"> & ExtraProps
 ) {
@@ -450,6 +480,7 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
                 remarkPlugins={[remarkGfm]}
                 components={{
                   pre: MarkdownFencePre,
+                  img: MarkdownImage,
                   p: ({ children }) => (
                     <p
                       style={{
@@ -709,7 +740,9 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                   key={`html-text-${index}`}
                   dangerouslySetInnerHTML={{
                     __html: toHtmlWithLineBreaks(
-                      part.content.replace(/<think>(.*?)<\/think>/gs, "")
+                      keepOriginalImageSrcs(
+                        part.content.replace(/<think>(.*?)<\/think>/gs, "")
+                      )
                     ),
                   }}
                 />
@@ -734,7 +767,9 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           }}
           dangerouslySetInnerHTML={{
             __html: toHtmlWithLineBreaks(
-              contentForThinkParsing.replace(/<think>(.*?)<\/think>/gs, "")
+              keepOriginalImageSrcs(
+                contentForThinkParsing.replace(/<think>(.*?)<\/think>/gs, "")
+              )
             ),
           }}
         />
@@ -791,6 +826,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                 rehypePlugins={[]}
                 components={{
                   pre: MarkdownFencePre,
+                  img: MarkdownImage,
                   h1: ({ children }) => (
                     <h1
                       style={{
@@ -910,6 +946,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         rehypePlugins={[]}
         components={{
           pre: MarkdownFencePre,
+          img: MarkdownImage,
           h1: ({ children }) => (
             <h1
               style={{

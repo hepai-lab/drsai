@@ -10,7 +10,11 @@ from pydantic import BaseModel
 
 from .....drsai_adapter.sso.jwt import ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS, create_jwt_token, get_current_user_id
 from ...datamodel import Message, Run, RunStatus, Session
-from ...datamodel.db import AgentModeSettings, UserAgents
+from ...datamodel.db import AgentModeSettings
+from .....agent_factory.agent_mode_cofigs import (
+    assemble_catalog_agents,
+    find_catalog_agent,
+)
 from ..deps import get_db, get_websocket_manager
 
 router = APIRouter()
@@ -69,11 +73,7 @@ def _owned_run(db, run_id: int, user_id: str) -> Run:
 
 @router.get("/agents")
 async def list_agents(user_id: str = Depends(get_current_user_id), db=Depends(get_db)) -> dict:
-    result = db.get(UserAgents, filters={"user_id": user_id}, return_json=False)
-    agents = list(result.data[0].agents or []) if result.status and result.data else []
-    if not agents:
-        from .....agent_factory.agent_mode_cofigs import get_default_agent_mode_config
-        agents = list(get_default_agent_mode_config(user_id=user_id) or [])
+    agents = assemble_catalog_agents(user_id, db)
     settings = db.get(AgentModeSettings, filters={"user_id": user_id}, return_json=False)
     default_id = getattr(settings.data[0], "default_agent_id", None) if settings.status and settings.data else None
     for agent in agents:
@@ -84,9 +84,7 @@ async def list_agents(user_id: str = Depends(get_current_user_id), db=Depends(ge
 
 @router.put("/agents/default")
 async def set_default_agent(payload: SetDefaultAgent, user_id: str = Depends(get_current_user_id), db=Depends(get_db)) -> dict:
-    owned = db.get(UserAgents, filters={"user_id": user_id}, return_json=False)
-    ids = {str(a.get("id")) for a in (owned.data[0].agents or [])} if owned.status and owned.data else set()
-    if payload.agent_id not in ids:
+    if not find_catalog_agent(user_id, payload.agent_id, db):
         raise HTTPException(status_code=404, detail="Agent not available")
     result = db.get(AgentModeSettings, filters={"user_id": user_id}, return_json=False)
     if result.status and result.data:

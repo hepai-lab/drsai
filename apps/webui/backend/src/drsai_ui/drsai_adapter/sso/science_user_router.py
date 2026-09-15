@@ -267,7 +267,7 @@ async def _persist_embed_user(user_id: str, user_source: str) -> None:
     the iPanda default.
     """
     from drsai_ui.ui_backend.backend.web.deps import get_db
-    from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, UserAgents
+    from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings
     from drsai_ui.agent_factory.agent_mode_cofigs import (
         find_agent_by_name,
         get_default_agent_mode_config,
@@ -322,14 +322,15 @@ async def _persist_embed_user(user_id: str, user_source: str) -> None:
     else:
         agents_list = get_default_agent_mode_config(user_id, user_source=user_source)
 
+    # Prefer empty agents_mode — live catalog is assembled on list; keep row as
+    # first-login gate + default_agent_id store.
     db.upsert(
         AgentModeSettings(
             user_id=user_id,
-            agents_mode=agents_list,
+            agents_mode=[],
             default_agent_id=default_agent_id,
         )
     )
-    db.upsert(UserAgents(user_id=user_id, agents=agents_list))
 
 
 async def _issue_embed_session(user_id: str, user_source: str) -> JSONResponse:

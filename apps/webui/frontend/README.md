@@ -1,32 +1,33 @@
-## 🚀 Running UI in Dev Mode
+# OpenDrSai WebUI 前端
 
-Run the UI in dev mode (make changes and see them reflected in the browser with hotreloading):
+基于 Gatsby 的 Web 前端。克隆仓库后如何同时跑前后端，见仓库文档：
 
-- Ensure yarn is installed.
-- `yarn install`
-- `yarn start`
+**[docs/webui/local-dev.md](../../../docs/webui/local-dev.md)**
 
-This should start the server on port 8000.
+## 本地开发
 
-## Design Elements
+```bash
+cp .env.example .env.development   # 不要设置 GATSBY_API_URL
+yarn install --legacy-peer-deps
+yarn dev                           # http://localhost:8000
+```
 
-- **Gatsby**: The app is created in Gatsby. A guide on bootstrapping a Gatsby app can be found here - https://www.gatsbyjs.com/docs/quick-start/.
-  This provides an overview of the project file structure include functionality of files like `gatsby-config.js`, `gatsby-node.js`, `gatsby-browser.js` and `gatsby-ssr.js`.
-- **TailwindCSS**: The app uses TailwindCSS for styling. A guide on using TailwindCSS with Gatsby can be found here - https://tailwindcss.com/docs/guides/gatsby.https://tailwindcss.com/docs/guides/gatsby . This will explain the functionality in tailwind.config.js and postcss.config.js.
+开发模式下浏览器请求同源 `/api`，由 `gatsby-node.ts` 代理到 `127.0.0.1:${GATSBY_DEV_API_PORT:-8086}`。后端请用：
 
-## Modifying the UI, Adding Pages
+```bash
+drsai-ui ui --host 0.0.0.0 --port 8086 --reload
+```
 
-The core of the app can be found in the `src` folder. To add pages, add a new folder in `src/pages` and add a `index.js` file. This will be the entry point for the page. For example to add a route in the app like `/about`, add a folder `about` in `src/pages` and add a `index.tsx` file. You can follow the content style in `src/pages/index.tsx` to add content to the page.
+## 环境变量
 
-Core logic for each component should be written in the `src/components` folder and then imported in pages as needed.
+- 开发：`.env.development`（从 `.env.example` 复制）
+- 生产构建：`.env.production`
 
-## connecting to front end
+模板里把 `GATSBY_API_URL` 注释掉。写死远程地址会让本地登录打到错误环境。
 
-the front end makes request to the backend api and expects it at `http://localhost:8081/api`
+## 打包
 
-## setting env variables for the UI
-
-- please look at `.env.default`
-- make a copy of this file and name it `.env.development`
-- set the values for the variables in this file
-  - The main variable here is `GATSBY_API_URL` which should be set to `http://localhost:8081/api` for local development. This tells the UI where to make requests to the backend.
+```bash
+yarn build        # 生产静态资源，同步到 ../backend/.../web/ui/
+yarn build:dev    # 开发模式构建（不压缩）
+```

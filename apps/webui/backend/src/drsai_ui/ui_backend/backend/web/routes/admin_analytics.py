@@ -17,6 +17,7 @@ from ...datamodel.db import (
     UserAgentUsage,
     UserAgents,
     UserDDFAgents,
+    UserRemoteAgent,
     UserRemoteAgents,
 )
 from ..authz import get_is_platform_admin
@@ -379,6 +380,19 @@ def _collect_agent_labels(db_engine: Any, agent_ids: List[str]) -> Dict[str, str
                         remain.discard(aid)
                     if not remain:
                         break
+                if not remain:
+                    break
+
+        if remain:
+            for row in s.exec(select(UserRemoteAgent)).all():
+                aid = str(getattr(row, "agent_id", None) or "").strip()
+                if aid not in remain:
+                    continue
+                payload = getattr(row, "payload", None) if isinstance(getattr(row, "payload", None), dict) else {}
+                label = _agent_display_name(payload) or str(getattr(row, "name", "") or "").strip()
+                if label:
+                    out[aid] = label
+                    remain.discard(aid)
                 if not remain:
                     break
 
