@@ -3676,6 +3676,14 @@ class RuntimeEngine:
                 if event_type in {"tool.complete", "tool.completed"}
                 else ("failed" if event_type == "tool.failed" else "running")
             )
+        # ``payload`` here is the accumulated Item payload: it must be persisted in
+        # ``runtime_conversation_items`` so the Item projection can advance.  For
+        # delta events the Journal stores only the incremental chunk instead of a
+        # second copy of the accumulation (see
+        # ``ConversationJournal.upsert_item_in_transaction``), which keeps
+        # ``runtime_session_journal`` linear in the answer length instead of
+        # quadratic.  Every delta branch above sets ``payload["delta"]``, so the
+        # chunk survives the reduction.
         self.conversation_journal.upsert_item_in_transaction(
             db,
             session_id,

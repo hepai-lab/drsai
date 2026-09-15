@@ -43,11 +43,10 @@ import {
 } from "../chatCommands";
 import type { ChatSubmitOptions, UiMessage } from "../components/ChatWorkspace";
 import { desktopApi } from "../desktopApi";
-import { describeUserFacingError } from "../userFacingErrors";
+import { describeUserFacingError, type UserFacingRecoveryAction } from "../userFacingErrors";
 import {
   applyChatTransportFailure,
   createChatErrorPresentation,
-  type ChatErrorPresentation,
 } from "../chatErrorPresentation";
 import {
   formatRecentTerminalTestResult,
@@ -1249,14 +1248,14 @@ export function useDesktopChatAdapter({
       const rawError = event.errorEnvelope ?? event.failureRecovery ?? { code: "unexpected_error", retryable: true };
       const friendlyError = describeUserFacingError(rawError, languageRef.current);
       const runtimeVisibleError = `${friendlyError.title} ${friendlyError.action}`;
-      const errorPresentation = createChatErrorPresentation(friendlyError, event.requestId);
       if (structuredRequests.current.has(event.requestId)) {
         const assistantId = streamingAssistantByRequest.current[event.requestId];
         setMessages((current) =>
           publishAndReturn(settleAssistantAfterHiddenError(
             current,
             assistantId,
-            errorPresentation,
+            runtimeVisibleError,
+            friendlyError.actions,
             { exactAssistantId: true },
           )),
         );
@@ -1278,8 +1277,9 @@ export function useDesktopChatAdapter({
         publishAndReturn(settleAssistantAfterHiddenError(
           current,
           assistantId,
-            errorPresentation,
-            { exactAssistantId: true },
+          runtimeVisibleError,
+          friendlyError.actions,
+          { exactAssistantId: true },
         )),
       );
       delete streamingAssistantByRequest.current[event.requestId];
@@ -3286,10 +3286,11 @@ function updateAssistantByIdExact(
   return next;
 }
 
-export function settleAssistantAfterHiddenError(
+function settleAssistantAfterHiddenError(
   messages: UiMessage[],
   assistantId: string | undefined,
-  presentation?: ChatErrorPresentation,
+  visibleError?: string,
+  recoveryActions?: UserFacingRecoveryAction[],
   options?: { exactAssistantId?: boolean },
 ): UiMessage[] {
   const next = [...messages];
@@ -3299,9 +3300,14 @@ export function settleAssistantAfterHiddenError(
   if (index === -1) return next;
   const message = next[index];
   if (!message.content.trim()) {
-    if (presentation) {
+    if (visibleError?.trim()) {
       next[index] = {
-        ...applyChatTransportFailure(message, presentation),
+        ...message,
+        content: visibleError,
+        replyFailed: false,
+        streaming: false,
+        error: true,
+        recoveryActions,
         structuredTurn: message.structuredTurn
           ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
           : undefined,
@@ -3321,9 +3327,10 @@ export function settleAssistantAfterHiddenError(
     return next;
   }
   next[index] = {
-    ...(presentation ? applyChatTransportFailure(message, presentation) : message),
+    ...message,
     streaming: false,
     error: false,
+    recoveryActions,
     structuredTurn: message.structuredTurn
       ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
       : undefined,
