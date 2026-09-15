@@ -65,6 +65,7 @@ const config: GatsbyConfig = {
           "**/panels/**",
           "**/components/**",
           "**/utils/**",
+          "**/skills-square/**",
           "**/types.*",
           "**/*.d.ts",
         ],

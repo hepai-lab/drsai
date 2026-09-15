@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "feature_id": "M04-F06",
+  "acceptance_run_id": "p10-round-021-run-outcomes",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "outcomes": ["completed", "failed", "cancelled", "partial", "recoverable"],
+  "invariants": {
+    "one_assistant_turn_per_run": true,
+    "one_visible_outcome_per_run": true,
+    "derived_from_oaep_snapshot_run_status": true,
+    "partial_requires_completed_run_with_failed_item_or_step": true,
+    "recoverable_requires_waiting_paused_or_recovering": true
+  },
+  "tests": {
+    "testDebugUnitTest": "678 tests, 0 failures, 2 skipped",
+    "OaepProjectionTest": "all passed",
+    "OaepToolVisibilityUiTest_API35": "2 passed"
+  }
+}

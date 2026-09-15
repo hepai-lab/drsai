@@ -21,17 +21,12 @@ from .model_catalog import AgentModelPolicy, AgentModelSelection, ModelRef
 from .writer import update_current_agent, update_model_selection, upsert_provider
 
 
-HEPAI_PRODUCT_MODELS: dict[str, dict[str, object]] = {
-    "deepseek-v4-flash": {
-        "input_modalities": ["text"], "output_modalities": ["text"],
-        "api_protocol": "openai", "enabled": True,
-        "capabilities": ["chat", "tool_calling", "reasoning"],
-    },
-    "deepseek-v4-pro": {
-        "input_modalities": ["text"], "output_modalities": ["text"],
-        "api_protocol": "openai", "enabled": True,
-        "capabilities": ["chat", "tool_calling", "reasoning"],
-    },
+# ── Specialised product models (not in DEFAULT_LLM_MODE_CONFIG) ─────────────
+# These models serve non-chat roles (image generation, TTS, STT, and the
+# image-understanding model gpt-5.6-luna).  They are merged into the product
+# catalog alongside the chat models that are dynamically discovered from
+# ``run_drsai_agent_factory.DEFAULT_LLM_MODE_CONFIG``.
+_SPECIALIZED_PRODUCT_MODELS: dict[str, dict[str, object]] = {
     "gpt-5.6-luna": {
         "input_modalities": ["text", "image"], "output_modalities": ["text"],
         "api_protocol": "openai", "enabled": True,
@@ -54,6 +49,68 @@ HEPAI_PRODUCT_MODELS: dict[str, dict[str, object]] = {
         "capabilities": ["speech_to_text"],
     },
 }
+
+
+def _build_product_models() -> dict[str, dict[str, object]]:
+    """Build the HepAI product model catalog from ``DEFAULT_LLM_MODE_CONFIG``.
+
+    Chat-capable models are dynamically discovered from the agent factory's
+    LLM catalog (``run_drsai_agent_factory.DEFAULT_LLM_MODE_CONFIG``) so the
+    desktop model picker stays in sync with the backend's source of truth.
+
+    Specialised models (TTS, STT, image generation, gpt-5.6-luna) are merged in
+    from ``_SPECIALIZED_PRODUCT_MODELS`` because they serve non-chat roles
+    and are not part of the LLM catalog.
+
+    The import is deferred to avoid a circular import:
+    ``drsai.config`` → ``drsai.backend.run_drsai_agent_factory`` → ``drsai.config``.
+    By the time this function runs (called from ``ensure_desktop_runtime_config``
+    during gateway lifespan), all modules are fully loaded.
+    """
+    product_models: dict[str, dict[str, object]] = {}
+
+    try:
+        from drsai.backend.run_drsai_agent_factory import DEFAULT_LLM_MODE_CONFIG  # noqa: WPS433
+
+        for alias, entry in DEFAULT_LLM_MODE_CONFIG.items():
+            input_modalities: list[str] = ["text"]
+            if getattr(entry, "vision", False):
+                input_modalities.append("image")
+
+            capabilities = ["chat", "tool_calling"]
+            reasoning = getattr(entry, "reasoning", None)
+            if reasoning is not None and getattr(reasoning, "supported", False):
+                capabilities.append("reasoning")
+
+            client_type = getattr(entry, "client_type", "auto")
+            api_protocol = client_type if client_type != "auto" else "openai"
+
+            product_models[alias] = {
+                "input_modalities": input_modalities,
+                "output_modalities": ["text"],
+                "api_protocol": api_protocol,
+                "enabled": True,
+                "capabilities": capabilities,
+            }
+    except Exception:  # pragma: no cover — fallback if factory import fails
+        # Minimal fallback so the desktop still boots with a basic catalog.
+        product_models = {
+            "deepseek-v4-flash": {
+                "input_modalities": ["text"], "output_modalities": ["text"],
+                "api_protocol": "openai", "enabled": True,
+                "capabilities": ["chat", "tool_calling", "reasoning"],
+            },
+            "deepseek-v4-pro": {
+                "input_modalities": ["text"], "output_modalities": ["text"],
+                "api_protocol": "openai", "enabled": True,
+                "capabilities": ["chat", "tool_calling", "reasoning"],
+            },
+        }
+
+    # Merge specialised models (non-chat roles) — they take precedence on key
+    # conflicts because they carry domain-specific capabilities.
+    product_models.update(_SPECIALIZED_PRODUCT_MODELS)
+    return product_models
 
 
 @dataclass(frozen=True)
@@ -86,6 +143,11 @@ def ensure_desktop_runtime_config(
         provider = config.model_provider or DEFAULT_PROVIDER
         model = config.model or DEFAULT_MODEL
 
+        # Build the product model catalog from the agent factory's
+        # DEFAULT_LLM_MODE_CONFIG (chat models) plus specialised non-chat
+        # models (TTS, STT, image generation).
+        product_models = _build_product_models()
+
         if _is_packaged_legacy_hepai(config):
             provider = DEFAULT_PROVIDER
             upsert_provider(
@@ -116,23 +178,23 @@ def ensure_desktop_runtime_config(
             config = load_user_config(target)
 
         # Every desktop user receives the product-owned HepAI catalog. Merge it
-        # with local additions, while keeping the six supported product models
-        # authoritative and free of static credentials.
+        # with local additions, while keeping the product models authoritative
+        # and free of static credentials.
         existing_hepai = config.providers.get(DEFAULT_PROVIDER)
         existing_models = dict(existing_hepai.model_configs) if existing_hepai else {}
         merged_models = {
             **{model_id: _model_config_values(value) for model_id, value in existing_models.items()},
-            **HEPAI_PRODUCT_MODELS,
+            **product_models,
         }
         needs_catalog = (
             existing_hepai is None
             or existing_hepai.requires_api_key
             or existing_hepai.base_url.rstrip("/") != openai_base_url.rstrip("/")
             or (existing_hepai.anthropic_base_url or "").rstrip("/") != anthropic_base_url.rstrip("/")
-            or any(model_id not in existing_models for model_id in HEPAI_PRODUCT_MODELS)
+            or any(model_id not in existing_models for model_id in product_models)
             or any(
                 _model_config_values(existing_models[model_id]) != definition
-                for model_id, definition in HEPAI_PRODUCT_MODELS.items()
+                for model_id, definition in product_models.items()
                 if model_id in existing_models
             )
         )
@@ -168,7 +230,11 @@ def ensure_desktop_runtime_config(
                 effective_provider = config.model_provider or provider or DEFAULT_PROVIDER
                 effective_model = config.model or model or DEFAULT_MODEL
                 commit_agent_model_policy(
-                    _default_agent_model_policy(effective_provider, effective_model),
+                    _default_agent_model_policy(
+                        effective_provider,
+                        effective_model,
+                        product_models,
+                    ),
                     expected_revision=None,
                     path=agent_path,
                 )
@@ -207,9 +273,14 @@ def _is_packaged_legacy_hepai(config: object) -> bool:
     return is_hepai_url and is_non_anthropic_model and api_key_env in {"", "ANTHROPIC_API_KEY"}
 
 
-def _default_agent_model_policy(provider: str, primary_model: str) -> AgentModelPolicy:
+def _default_agent_model_policy(
+    provider: str,
+    primary_model: str,
+    product_models: dict[str, dict[str, object]] | None = None,
+) -> AgentModelPolicy:
     explicit = lambda model: AgentModelSelection("explicit", ModelRef(provider, model))
-    if provider != DEFAULT_PROVIDER or primary_model not in HEPAI_PRODUCT_MODELS:
+    product_models = product_models if product_models is not None else _build_product_models()
+    if provider != DEFAULT_PROVIDER or primary_model not in product_models:
         return AgentModelPolicy(agent_id=DEFAULT_AGENT, primary_model=explicit(primary_model))
     return AgentModelPolicy(
         agent_id=DEFAULT_AGENT,

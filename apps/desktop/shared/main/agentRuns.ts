@@ -32,6 +32,7 @@ import {
 } from "./networkRecovery";
 import { listRecordedAgentRunEvents, recordAgentRunEvent } from "./agentRunJournal";
 import { BoundedEventDispatcher } from "./boundedEventDispatcher";
+import { BackpressureController } from "./backpressureController";
 import { cancelChatTurn, startChat } from "./chat";
 import { createOaepAgentRunBridge } from "./oaepAgentRunBridge";
 
@@ -41,8 +42,12 @@ const MAX_TASK_CHARS = 80_000;
 const MAX_WORKSPACE_PATH_CHARS = 2048;
 const MAX_SSE_BUFFER_CHARS = 1_000_000;
 const MAX_ERROR_BODY_BYTES = 64_000;
-const AGENT_RUN_TIMEOUT_MS = getPositiveIntEnv("OPENDRSAI_AGENT_RUN_TIMEOUT_MS", 300_000);
-const NETWORK_RECOVERY_WINDOW_MS = getPositiveIntEnv("OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS", 180_000);
+// Execution time limits disabled: the backend has its own safeguards
+// (DEFAULT_MAX_TOOL_ROUNDS, max_turn_count, etc.). Frontend total-time
+// limits caused premature session interruption at ~50-68 operations.
+// Set OPENDRSAI_AGENT_RUN_TIMEOUT_MS > 0 to re-enable the absolute timeout.
+const AGENT_RUN_TIMEOUT_MS = getPositiveIntEnv("OPENDRSAI_AGENT_RUN_TIMEOUT_MS", 0);
+const NETWORK_RECOVERY_WINDOW_MS = getPositiveIntEnv("OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS", Number.MAX_SAFE_INTEGER);
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const RUN_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
 interface ActiveAgentRun {
@@ -56,24 +61,119 @@ type AgentRunLifecycleListener = (event: AgentRunEvent, request: AgentRunRequest
 const activeRuns = new Map<string, ActiveAgentRun>();
 const lifecycleListeners = new Set<AgentRunLifecycleListener>();
 const agentEventDispatchers = new WeakMap<WebContents, BoundedEventDispatcher<AgentRunEvent>>();
+const agentBackpressureControllers = new WeakMap<WebContents, BackpressureController>();
+/**
+ * WebContents whose renderer frame is being replaced. While quarantined,
+ * getAgentEventDispatcher() returns a permanently-closed no-op dispatcher
+ * so background runs don't create real dispatchers that spam
+ * "Render frame was disposed" errors during the reload gap.
+ */
+const agentQuarantinedWebContents = new WeakSet<WebContents>();
+const QUARANTINED_AGENT_DISPATCHER = new BoundedEventDispatcher<AgentRunEvent>({
+  capacity: 0,
+  deliver: () => {},
+  shouldClose: () => true,
+});
+QUARANTINED_AGENT_DISPATCHER.close();
 
 function getAgentEventDispatcher(webContents: WebContents): BoundedEventDispatcher<AgentRunEvent> {
+  // During renderer reload, do not create new dispatchers — the frame is
+  // disposed and sends will throw "Render frame was disposed" forever.
+  if (agentQuarantinedWebContents.has(webContents)) return QUARANTINED_AGENT_DISPATCHER;
   const existing = agentEventDispatchers.get(webContents);
-  if (existing) return existing;
+  // A renderer reload can dispose the current frame without destroying the
+  // WebContents object. The old dispatcher is permanently closed after the
+  // first send failure, so it must not be reused after recovery.
+  if (existing && !existing.closed) return existing;
+  // P1: Per-window backpressure controller — adjusts flush delay based on
+  // renderer FPS health reports (healthy=0ms, degraded=100ms, critical=200ms)
+  let controller = agentBackpressureControllers.get(webContents);
+  if (!controller) {
+    controller = new BackpressureController();
+    agentBackpressureControllers.set(webContents, controller);
+  }
   const dispatcher = new BoundedEventDispatcher<AgentRunEvent>({
     capacity: 256,
-    deliver: (event) => { if (!webContents.isDestroyed()) webContents.send("desktop:agent-run-event", event); },
+    deliver: (event) => {
+      // Do not swallow renderer/frame disposal errors here. A WebContents can
+      // remain alive while its current render frame is being replaced; in that
+      // state isDestroyed() is false but send() throws. Let flush() observe the
+      // exception and close this dispatcher, otherwise every later event keeps
+      // hitting the disposed frame and Electron logs the same error forever.
+      if (!webContents.isDestroyed()) {
+        webContents.send("desktop:agent-run-event", event);
+      }
+    },
     merge: (previous, next) => previous.requestId === next.requestId && previous.type === "chunk" && next.type === "chunk"
       && previous.oaepItemId === next.oaepItemId
       ? { ...next, content: `${previous.content ?? ""}${next.content ?? ""}` }
       : null,
+    schedule: controller.createAdaptiveScheduler(),
+    shouldClose: () => webContents.isDestroyed(),
   });
   agentEventDispatchers.set(webContents, dispatcher);
   return dispatcher;
 }
 
+/**
+ * P1: Handle renderer health reports and update the backpressure controller.
+ * Called from the main process IPC handler for "desktop:render-health".
+ */
+export function handleRenderHealthReport(webContents: WebContents, fps: number, tier: "healthy" | "degraded" | "critical"): void {
+  const controller = agentBackpressureControllers.get(webContents);
+  if (controller) {
+    controller.update(fps, tier);
+  }
+}
+
 export function hasActiveAgentRuns(): boolean {
   return activeRuns.size > 0;
+}
+
+/**
+ * Quarantine a WebContents whose renderer frame is being replaced (reload,
+ * HMR). While quarantined, getAgentEventDispatcher() returns a closed no-op
+ * so no new dispatchers are created during the reload gap. Call
+ * releaseAgentQuarantine() when the new frame is ready (did-finish-load).
+ */
+export function quarantineAgentDispatcher(webContents: WebContents): void {
+  agentQuarantinedWebContents.add(webContents);
+  disposeAgentEventDispatcher(webContents);
+}
+
+/**
+ * Release the reload quarantine and clear any closed dispatcher so the next
+ * emit() creates a fresh dispatcher bound to the new frame.
+ */
+export function releaseAgentQuarantine(webContents: WebContents): void {
+  agentQuarantinedWebContents.delete(webContents);
+  agentEventDispatchers.delete(webContents);
+}
+
+/**
+ * Drop the cached event dispatcher for a WebContents whose renderer frame is
+ * about to be replaced.  Closing here stops BoundedEventDispatcher from
+ * spamming "Render frame was disposed" during the reload gap.  Active Runs
+ * keep running; the next emit() after the new frame attaches creates a fresh
+ * dispatcher.
+ */
+export function disposeAgentEventDispatcher(webContents: WebContents): void {
+  agentEventDispatchers.get(webContents)?.close();
+  agentEventDispatchers.delete(webContents);
+  agentBackpressureControllers.delete(webContents);
+}
+
+/**
+ * Same as disposeAgentEventDispatcher plus releasing run records whose owner
+ * WebContents is permanently destroyed.  Runs are not cancelled; they are
+ * recoverable on the next window.
+ */
+export function disposeAllAgentRunsForTarget(webContents: WebContents): void {
+  disposeAgentEventDispatcher(webContents);
+  for (const [requestId, active] of [...activeRuns]) {
+    if (active.webContents !== webContents) continue;
+    activeRuns.delete(requestId);
+  }
 }
 
 export function subscribeAgentRunLifecycle(listener: AgentRunLifecycleListener): () => void {
@@ -271,6 +371,13 @@ function validateAgentRunRequest(rawRequest: unknown): AgentRunRequest {
   };
 }
 
+/**
+ * @deprecated V1 legacy chat-completions path. This function is disabled
+ * by `legacyAgentRuntimeDisabled()` and will throw. The V2 OAEP path
+ * (`startAgentRun` → `startRuntimeAgentSurface` → `startChat` →
+ * `runRuntimeBackendChat`) is the authoritative chat flow. This function
+ * is retained only as a compatibility shim and should not be called.
+ */
 export async function runLegacyAgentCompatibility(
   webContents: WebContents,
   requestId: string,
@@ -298,7 +405,10 @@ export async function runLegacyAgentCompatibility(
     await new Promise<void>((_resolve, reject) => controller.signal.addEventListener("abort", () => reject(new DOMException("Packaged Agent crash fixture aborted.", "AbortError")), { once: true }));
   }
 
-  const timeout = setTimeout(() => controller.abort("timeout"), AGENT_RUN_TIMEOUT_MS);
+  // Timeout disabled when AGENT_RUN_TIMEOUT_MS = 0 (default). The backend has
+  // its own execution limits; the frontend no longer enforces a total
+  // wall-clock timeout that prematurely aborts long agent sessions.
+  const timeout = AGENT_RUN_TIMEOUT_MS > 0 ? setTimeout(() => controller.abort("timeout"), AGENT_RUN_TIMEOUT_MS) : null;
   const changeSetCheckpointId = await prepareAgentChangeSetCheckpoint(request, runId);
   const beforeFiles = await readWorkspaceFileSnapshot(request.workspacePath);
   try {
@@ -320,6 +430,7 @@ export async function runLegacyAgentCompatibility(
           "X-OpenDrSai-Auth-Mode": authContext.authMode,
           ...(request.workspacePath ? { "X-OpenDrSai-Workspace": encodeURIComponent(request.workspacePath) } : {}),
           ...(authContext.accessToken ? { Authorization: `Bearer ${authContext.accessToken}` } : {}),
+          ...(authContext.refreshToken ? { "X-OpenDrSai-Refresh-Token": authContext.refreshToken } : {}),
           "Idempotency-Key": `desktop-agent-${requestId}`,
         },
         body: JSON.stringify({
@@ -429,7 +540,7 @@ export async function runLegacyAgentCompatibility(
     await emitWorkspaceSnapshotEvents(webContents, requestId, sessionId, runId, request.workspacePath, beforeFiles);
     throw error;
   } finally {
-    clearTimeout(timeout);
+    if (timeout) clearTimeout(timeout);
   }
   /* c8 ignore stop */
 }

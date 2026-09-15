@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import traceback
 import time
@@ -134,6 +135,8 @@ class WebSocketManager:
         self._team_op_locks: Dict[int, asyncio.Lock] = {}
         # Second-turn loading diagnosis: timestamps keyed by run_id.
         self._chat_turn_marks: Dict[int, dict[str, float]] = {}
+        # In-memory TextMessage dedup so streaming does not SELECT * FROM message.
+        self._saved_text_keys: Dict[int, set[str]] = {}
         self._cancel_message = TeamResult(
             task_result=TaskResult(
                 messages=[TextMessage(source="user", content="Run cancelled by user")],
@@ -1024,6 +1027,7 @@ class WebSocketManager:
                 self._chunk_buffers.pop(run_id, None)
                 self._cancellation_tokens.pop(run_id, None)
                 self._team_managers.pop(run_id, None)
+                self._saved_text_keys.pop(run_id, None)
 
     async def _persist_v2_hop(self, run_id: int, event: dict[str, Any]) -> None:
         """Persist a sealed v2 hop (completed or interrupted).
@@ -1119,27 +1123,25 @@ class WebSocketManager:
                 )
                 new_content = getattr(message, "content", None)
                 new_source = getattr(message, "source", "")
+                # Skip content-hash dedup when stream v2 already stamped message_id.
                 if (
                     not protocol_message_id
                     and new_content
                     and isinstance(new_content, str)
                     and len(new_content) > 20
                 ):
-                    try:
-                        existing = self.db_manager.get(
-                            Message, filters={"run_id": run_id}, return_json=False
-                        )
-                        if existing.status and existing.data:
-                            for em in existing.data:
-                                cfg = getattr(em, "config", {}) or {}
-                                if isinstance(cfg, dict):
-                                    if (cfg.get("source") == new_source
-                                        and cfg.get("content") == new_content
-                                        and cfg.get("type") == "TextMessage"):
-                                        should_save = False
-                                        break
-                    except Exception:
-                        pass
+                    digest = hashlib.sha256(
+                        new_content.encode("utf-8", errors="ignore")
+                    ).hexdigest()
+                    dedup_key = f"{new_source}:{digest}"
+                    seen = self._saved_text_keys.setdefault(run_id, set())
+                    if dedup_key in seen:
+                        should_save = False
+                    else:
+                        seen.add(dedup_key)
+                        if len(seen) > 512:
+                            seen.clear()
+                            seen.add(dedup_key)
 
             message = self._with_turn_plane(message)
 

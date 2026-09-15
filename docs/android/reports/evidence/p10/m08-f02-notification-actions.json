@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "feature_id": "M08-F02",
+  "acceptance_run_id": "p10-round-040-notification-actions",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "continue_and_cancel_bind_account_run_session": true,
+    "approval_and_result_require_interaction_scope": true,
+    "cross_account_run_session_interaction_rejected": true,
+    "external_activity_does_not_forward_control_actions": true,
+    "notification_open_uses_exact_oaep_scope": true
+  },
+  "tests": {
+    "RunNotificationActionPolicyTest": "3 tests, 0 failures",
+    "OaepRunNotificationIntentTest_API35": "3 tests, 0 failures",
+    "testDebugUnitTest": "715 tests, 0 failures, 2 skipped"
+  }
+}

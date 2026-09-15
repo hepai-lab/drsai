@@ -47,6 +47,7 @@ class OidcClientConfig:
     scope: str
     session_secret: str
     allowed_redirect_uris: tuple[str, ...]
+    redirect_uri: str = ""
 
     @property
     def discovery_url(self) -> str:
@@ -89,13 +90,16 @@ def load_oidc_config(env: Mapping[str, str] | None = None) -> OidcClientConfig:
     )
     if not session_secret:
         raise OidcError("SESSION_SECRET is not set")
+    allowed = _allowed_redirect_uris(source)
+    preferred = _strip_env(source.get("OIDC_REDIRECT_URI"))
     return OidcClientConfig(
         issuer=issuer.rstrip("/"),
         client_id=client_id,
         client_secret=client_secret,
         scope=scope,
         session_secret=session_secret,
-        allowed_redirect_uris=_allowed_redirect_uris(source),
+        allowed_redirect_uris=allowed,
+        redirect_uri=preferred if preferred in allowed else "",
     )
 
 
@@ -255,7 +259,13 @@ def public_base_parts(request: Request) -> tuple[str, str]:
     return proto, host
 
 
-def callback_redirect_uri(request: Request, allowed: tuple[str, ...]) -> str:
+def callback_redirect_uri(
+    request: Request,
+    allowed: tuple[str, ...],
+    preferred: str = "",
+) -> str:
+    if preferred and preferred in allowed:
+        return preferred
     proto, host = public_base_parts(request)
     candidate = f"{proto}://{host}{CALLBACK_PATH}"
     if candidate in allowed:

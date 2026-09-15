@@ -6,7 +6,7 @@ interface QueuedPatch {
   deltaChars?: number;
 }
 
-const MAX_COALESCED_DELTA_CHARS = 1024 * 1024;
+const MAX_COALESCED_DELTA_CHARS = 256 * 1024;
 
 /**
  * Preserve global patch order while coalescing only adjacent, contiguous

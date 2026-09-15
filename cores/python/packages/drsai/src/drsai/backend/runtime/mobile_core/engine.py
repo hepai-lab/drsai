@@ -20,7 +20,7 @@ else:
 from .protocol import MessageType, RuntimeEnvelope
 from .plan_state import event_kind as plan_event_kind, normalize_plan_state, normalize_plan_update
 from .subagents import build_subagent_scheduling_policy
-from .context import assemble_mobile_context, build_citation_evidence, build_context_observability, build_execution_tool_registry, build_memory_policy, build_prompt_layer_diagnostics, build_run_capability_snapshot, build_tool_choice_policy, build_tool_decision_requirement, classify_tool_error, completed_tool_decision_domains, execution_tool_record, freeze_model_tool_snapshot, normalize_citation_evidence, normalize_context_budget, normalize_kernel_host_port, normalize_memory_policy, normalize_memory_selection, normalize_model_route_snapshot, normalize_tool_loop_policy, normalize_tool_output, resolve_tool_decision, select_relevant_memories, validate_context_within_budget, validate_conversation_context, validate_memory_tool_call, validate_tool_call_batch, verify_model_tool_calls, verify_run_capability_snapshot
+from .context import assemble_mobile_context, build_citation_evidence, build_claim_support, build_context_observability, build_execution_tool_registry, build_memory_policy, build_prompt_layer_diagnostics, build_run_capability_snapshot, build_tool_choice_policy, build_tool_decision_requirement, classify_tool_error, completed_tool_decision_domains, execution_tool_record, freeze_model_tool_snapshot, normalize_citation_evidence, normalize_context_budget, normalize_kernel_host_port, normalize_memory_policy, normalize_memory_selection, normalize_model_route_snapshot, normalize_tool_loop_policy, normalize_tool_output, resolve_tool_decision, select_relevant_memories, validate_context_within_budget, validate_conversation_context, validate_memory_tool_call, validate_tool_call_batch, verify_model_tool_calls, verify_run_capability_snapshot
 
 
 class RunPhase(StrEnum):
@@ -35,7 +35,9 @@ class RunPhase(StrEnum):
 
 
 TERMINAL_PHASES = {RunPhase.COMPLETED, RunPhase.CANCELLED, RunPhase.FAILED}
-WEB_SEARCH_MAX_ATTEMPTS = 3
+WEB_SEARCH_MAX_ATTEMPTS = 100_000
+# Keep in sync with agent_kernel.DEFAULT_MAX_MESSAGES
+DEFAULT_MAX_MESSAGES = 1000_000
 
 
 def _public_retrieval_source_urls(messages: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -83,6 +85,44 @@ def _public_retrieval_source_urls(messages: Sequence[Mapping[str, Any]]) -> list
             continue
         collect(message.get("content", {}), "content")
     return [url for url, _ in sorted(candidates.items(), key=lambda item: (-item[1][0], item[1][1]))]
+
+
+def _grounded_evidence_rows(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Rebuild the evidence blocks in the order the model was shown them.
+
+    The grounded contract asks for ``[E<n>]`` where n is the number of the
+    evidence block, so the numbering here has to match what the tool result
+    presented, across every retrieval call in the turn.
+    """
+
+    rows: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") != "tool" or message.get("succeeded") is False:
+            continue
+        if str(message.get("name", "")).casefold() != "knowledge_search":
+            continue
+        content = message.get("content")
+        for _ in range(3):
+            if isinstance(content, str):
+                try:
+                    content = json.loads(content)
+                except (TypeError, json.JSONDecodeError):
+                    break
+            # The Desktop host returns the production result wrapped as
+            # {"content": "<json>"} while the controlled path returns the
+            # result directly. Reading only the outer shape found no evidence
+            # at all, so every citation looked fabricated and a correct answer
+            # was reported as unverifiable.
+            elif isinstance(content, Mapping) and "evidence" not in content and "content" in content:
+                content = content["content"]
+            else:
+                break
+        if not isinstance(content, Mapping):
+            continue
+        evidence = content.get("evidence")
+        if isinstance(evidence, Sequence) and not isinstance(evidence, (str, bytes)):
+            rows.extend(dict(row) for row in evidence if isinstance(row, Mapping))
+    return rows
 
 
 def _knowledge_retrieval_sources(messages: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -205,6 +245,10 @@ class MobileRunState:
     verification_retry_count: int = 0
     citation_retry_count: int = 0
     citation_evidence: dict[str, Any] = field(default_factory=dict)
+    # Set from the Agent config when this turn must answer only from supplied
+    # material. Every other turn leaves it False and takes the unchanged path.
+    grounded: bool = False
+    claim_support: dict[str, Any] = field(default_factory=dict)
     tool_round_count: int = 0
     tool_execution_disabled: bool = False
     web_search_queries: list[str] = field(default_factory=list)
@@ -216,6 +260,10 @@ class MobileRunState:
     subagent_failures: dict[str, dict[str, Any]] = field(default_factory=dict)
     delegate_call_id: str | None = None
     plan_state: dict[str, Any] = field(default_factory=dict)
+    # Set True for child kernels created by _start_subagents so the
+    # bounded reasoning worker skips citation/retrieval validation that
+    # would otherwise block its MODEL_COMPLETED with a citation retry.
+    skip_citation_checks: bool = False
 
     @property
     def terminal(self) -> bool:
@@ -293,6 +341,9 @@ class DrSaiAgentKernel:
             raise ValueError("run_host_capabilities_invalid")
         if not isinstance(raw_diagnostics, Mapping):
             raise ValueError("run_capability_diagnostics_invalid")
+        artifacts = command.payload.get("artifacts", [])
+        if not isinstance(artifacts, list) or any(not isinstance(value, str) or not value for value in artifacts):
+            raise ValueError("artifacts_invalid")
         raw_blocked = raw_diagnostics.get("blocked", [])
         raw_remote = raw_diagnostics.get("remote_available", [])
         if not isinstance(raw_blocked, list) or not all(isinstance(value, Mapping) for value in raw_blocked):
@@ -387,6 +438,8 @@ class DrSaiAgentKernel:
             if effective_agent.get("memory_summary"):
                 raise ValueError("memory_summary_host_conflict")
             effective_agent["memory_summary"] = state.memory_selection["summary"]
+        state.grounded = bool(effective_agent.get("grounded"))
+        state.skip_citation_checks = bool(command.payload.get("skip_citation_checks", False))
         state.prompt_layer_diagnostics = build_prompt_layer_diagnostics(effective_agent, state.skills)
         state.lifecycle_state = str(command.payload.get("lifecycle_state", "foreground"))
         state.subagent_scheduling_policy = build_subagent_scheduling_policy(
@@ -448,9 +501,6 @@ class DrSaiAgentKernel:
         prefix = [started]
         if state.lifecycle_state in {"background", "low_memory", "thermal_limited"}:
             prefix.append(self._event(state, "runtime.degraded", {"reason": state.lifecycle_state, "max_parallel_agents": 1}))
-        artifacts = command.payload.get("artifacts", [])
-        if not isinstance(artifacts, list) or any(not isinstance(value, str) or not value for value in artifacts):
-            raise ValueError("artifacts_invalid")
         if artifacts:
             state.phase = RunPhase.WAITING_ARTIFACT
             state.pending_artifacts = {value: {"phase": "describe"} for value in artifacts}
@@ -525,6 +575,9 @@ class DrSaiAgentKernel:
             tool_decision_requirement=dict(raw.get("tool_decision_requirement", {})),
             verification_retry_count=int(raw.get("verification_retry_count", 0)),
             citation_retry_count=int(raw.get("citation_retry_count", 0)),
+            grounded=bool(raw.get("grounded", False)),
+            skip_citation_checks=bool(raw.get("skip_citation_checks", False)),
+            claim_support=dict(raw.get("claim_support") or {}),
             citation_evidence=normalize_citation_evidence(raw.get("citation_evidence")),
             prompt_layer_diagnostics=[dict(value) for value in raw.get("prompt_layer_diagnostics", [])],
             context_budget=normalize_context_budget(raw.get("context_budget")),
@@ -698,20 +751,19 @@ class DrSaiAgentKernel:
         details: Mapping[str, Any],
     ) -> Sequence[RuntimeEnvelope]:
         """Stop admitting tools but give the model one tool-free turn to deliver the result."""
-
         state.tool_execution_disabled = True
         instruction = (
             "The tool-execution budget for this turn is exhausted. Do not call more tools. "
             "Complete the user's request now from the evidence and artifacts already available. "
-            "Be explicit about any remaining limitation instead of asking the user to restart."
+            "Be explicit about any remaining limitation instead of asking the user to restart.\n"
+            "IMPORTANT: Do not output raw tool-call markup, DSML, XML tags, code fences containing "
+            "invoke/tool_calls/parameter patterns, or any text that resembles a tool invocation. "
+            "Respond only in plain natural language."
         )
-        maximum_messages = int(state.context_budget.get("max_messages", 20))
+        maximum_messages = int(state.context_budget.get("max_messages", DEFAULT_MAX_MESSAGES))
         if len(state.messages) < maximum_messages:
             state.messages.append({"role": "system", "content": instruction})
         else:
-            # Preserve every completed Tool call/result pair when the message
-            # budget is exactly full; fold the finalization directive into the
-            # authoritative system message instead of splitting a Tool chain.
             state.messages[0] = {
                 **state.messages[0],
                 "content": f"{state.messages[0].get('content', '')}\n\n{instruction}",
@@ -721,18 +773,12 @@ class DrSaiAgentKernel:
             *reasoning_events,
             decision_event,
             self._event(state, "tool.budget_exhausted", {
-                "code": code,
-                "retryable": False,
-                "action": "finalize_without_tools",
-                **dict(details),
+                "code": code, "retryable": False, "action": "finalize_without_tools", **dict(details),
             }),
             self._checkpoint(state, "before_budget_finalization"),
             self._request(state, MessageType.MODEL_REQUEST, {
-                "model_id": state.model_id,
-                "messages": state.messages,
-                "tools": [],
-                "skills": state.skills,
-                "capability_snapshot_sha256": state.capability_snapshot["sha256"],
+                "model_id": state.model_id, "messages": state.messages, "tools": [],
+                "skills": state.skills, "capability_snapshot_sha256": state.capability_snapshot["sha256"],
             }, "budget_finalization"),
         )
 
@@ -746,7 +792,6 @@ class DrSaiAgentKernel:
         decision_event: RuntimeEnvelope,
     ) -> Sequence[RuntimeEnvelope]:
         """Close the model's Tool protocol while enforcing a per-turn search circuit breaker."""
-
         normalized_calls = [
             {
                 "call_id": self._required_string(call, "call_id"),
@@ -824,7 +869,7 @@ class DrSaiAgentKernel:
                 {
                     "model_id": state.model_id,
                     "messages": state.messages,
-                    "tools": state.tools,
+                    "tools": [tool for tool in state.tools if tool.get("name") != "web_search"],
                     "skills": state.skills,
                     "capability_snapshot_sha256": state.capability_snapshot["sha256"],
                     "tool_choice": build_tool_choice_policy(
@@ -886,6 +931,9 @@ class DrSaiAgentKernel:
         reasoning_summary = command.payload.get("reasoning_summary", "")
         if not isinstance(reasoning_summary, str):
             raise ValueError("model_reasoning_summary_invalid")
+        provider_reasoning_content = command.payload.get("provider_reasoning_content", "")
+        if not isinstance(provider_reasoning_content, str) or len(provider_reasoning_content) > 262_144:
+            raise ValueError("model_provider_reasoning_content_invalid")
         reasoning_events = () if not reasoning_summary else (self._event(state, "reasoning.completed", {
             "item_id": f"{state.run_id}:reasoning", "segments": [
                 {"id": "summary-1", "text": reasoning_summary},
@@ -960,7 +1008,7 @@ class DrSaiAgentKernel:
         # required_tool_unavailable above still surfaces a friendly limitation.
         # A model that omits/miss-picks a tool now proceeds to normal completion.
         if tool_calls:
-            max_messages = int(state.context_budget.get("max_messages", 20))
+            max_messages = int(state.context_budget.get("max_messages", DEFAULT_MAX_MESSAGES))
             # Reserve one message for a policy instruction or final answer.
             # This guards the next model request before mutating the active
             # chain, instead of letting validation raise after Tool execution.
@@ -988,24 +1036,56 @@ class DrSaiAgentKernel:
                         "max_tool_rounds": state.tool_loop_policy["max_tool_rounds"],
                     },
                 )
-            validate_tool_call_batch(
-                state.execution_tool_registry,
-                tool_calls,
-                max_parallel_tool_calls=state.tool_loop_policy["max_parallel_tool_calls"],
-            )
+            deferred_approval_calls: list[Mapping[str, Any]] = []
+            try:
+                validate_tool_call_batch(
+                    state.execution_tool_registry,
+                    tool_calls,
+                    max_parallel_tool_calls=state.tool_loop_policy["max_parallel_tool_calls"],
+                    allow_homogeneous_approval_batch=True,
+                )
+            except ValueError as exc:
+                error_code = str(exc).partition(":")[0]
+                if error_code != "approval_tool_must_be_single" or len(tool_calls) <= 1:
+                    raise
+                # Models sometimes batch an approval-gated tool with others.
+                # Keep the first call; close the remainder with actionable errors
+                # so the session is not left stuck in an active run.
+                deferred_approval_calls = [
+                    value for value in tool_calls[1:] if isinstance(value, Mapping)
+                ]
+                tool_calls = tool_calls[:1]
+                validate_tool_call_batch(
+                    state.execution_tool_registry,
+                    tool_calls,
+                    max_parallel_tool_calls=state.tool_loop_policy["max_parallel_tool_calls"],
+                    allow_homogeneous_approval_batch=True,
+                )
             for raw_call in tool_calls:
                 call_id = self._required_string(raw_call, "call_id")
                 if call_id in state.pending_tool_calls or call_id in state.completed_side_effects:
                     raise ValueError("tool_call_duplicate")
             state.tool_round_count += 1
+        else:
+            deferred_approval_calls = []
         citation_event: tuple[RuntimeEnvelope, ...] = ()
-        if not tool_calls:
+        if not tool_calls and not state.skip_citation_checks:
             citation = build_citation_evidence(
                 state.messages, content,
                 retrieval_required="retrieval" in state.tool_decision_requirement.get("required_domains", ()),
             )
             state.citation_evidence = citation
-            if not citation["valid"]:
+            # Whole-answer citation checking accepts an answer that cites a real
+            # document and then states something the document never says, which
+            # is exactly the failure grounded answering exists to stop. Only a
+            # grounded turn pays for the per-sentence check; every other turn
+            # takes the same path it always did.
+            if state.grounded:
+                state.claim_support = build_claim_support(
+                    content, _grounded_evidence_rows(state.messages),
+                )
+            unsupported_claims = state.grounded and not state.claim_support.get("valid", True)
+            if not citation["valid"] or unsupported_claims:
                 if state.citation_retry_count >= 1:
                     # The retrieval itself succeeded, so a model formatting miss
                     # must not discard an otherwise useful answer. When the only
@@ -1029,7 +1109,10 @@ class DrSaiAgentKernel:
                             retrieval_required="retrieval" in state.tool_decision_requirement.get("required_domains", ()),
                         )
                         state.citation_evidence = citation
-                    if not citation["valid"]:
+                    # Appending trusted sources cannot repair a sentence that
+                    # cites a passage not stating it, so a grounded failure
+                    # falls through to the warning rather than being papered over.
+                    if not citation["valid"] or unsupported_claims:
                         warning = (
                             "\n\n> Note: Retrieved information was available, but some source citations "
                             "could not be fully verified. Review the listed sources before relying on sensitive details."
@@ -1061,7 +1144,15 @@ class DrSaiAgentKernel:
                     state.citation_retry_count += 1
                     state.messages.append({
                         "role": "system",
-                        "content": "Your answer must cite at least one exact source reference from the successful retrieval "
+                        "content": (
+                            # Telling a model to "cite a source" does not help when it did
+                            # cite one and the passage does not say what the sentence says.
+                            "Every factual sentence must carry an [E<n>] marker whose evidence block "
+                            "states that sentence, including any figure in it. If no block states a "
+                            "claim, remove the claim or say the material does not contain it. "
+                            "Do not add a figure that is absent from the cited block. Revise the answer now."
+                        ) if unsupported_claims else
+                        "Your answer must cite at least one exact source reference from the successful retrieval "
                                    "tool results (an HTTPS URL, an internal knowledge source URI, or every exact "
                                    "[memory:<id>] marker returned by memory search) and must not invent sources. "
                                    "For conflicting memory results, state the conflict rather than silently choosing one. Revise the answer now.",
@@ -1139,16 +1230,24 @@ class DrSaiAgentKernel:
                     reasoning_events=reasoning_events,
                     decision_event=decision_event,
                 )
+        # ARCHIVED(2026-09-02): the shared desktop-kernel subagent machinery is
+        # archived for Desktop (Delegate handled directly by DrSaiAssistant).
+        # This delegate branch is retained for the mobile surface and for
+        # legacy importers of the archived Desktop adapters.
         delegate_calls = [value for value in tool_calls if isinstance(value, Mapping) and value.get("name") == "delegate"]
         if delegate_calls:
             if len(tool_calls) != 1:
                 raise ValueError("delegate_must_be_single")
-            return (*reasoning_events, decision_event, *self._start_subagents(state, delegate_calls[0], content))
+            return (*reasoning_events, decision_event, *self._start_subagents(
+                state, delegate_calls[0], content, provider_reasoning_content,
+            ))
         core_calls = [value for value in tool_calls if isinstance(value, Mapping) and value.get("name") in {"core.text_stats", "core.data_compute", "core.update_plan"}]
         if core_calls:
             if len(core_calls) != len(tool_calls):
                 raise ValueError("core_and_host_tools_cannot_mix")
-            return (*reasoning_events, decision_event, *self._execute_core_tools(state, core_calls, content))
+            return (*reasoning_events, decision_event, *self._execute_core_tools(
+                state, core_calls, content, provider_reasoning_content,
+            ))
         if content and not tool_calls:
             state.messages.append({"role": "assistant", "content": content})
         if not tool_calls:
@@ -1209,13 +1308,55 @@ class DrSaiAgentKernel:
                     "execution_registry_sha256": normalized["execution_registry_sha256"],
                 }))
                 replies.append(self._request(state, MessageType.TOOL_CALL_REQUEST, normalized, f"tool:{call_id}"))
+        deferred_tool_calls = []
+        for raw_call in deferred_approval_calls:
+            call_id = self._required_string(raw_call, "call_id")
+            name = self._required_string(raw_call, "name")
+            arguments = raw_call.get("arguments", {})
+            if not isinstance(arguments, Mapping):
+                raise ValueError("tool_arguments_invalid")
+            deferred_tool_calls.append({
+                "call_id": call_id,
+                "name": name,
+                "arguments": dict(arguments),
+            })
         state.messages.append(
             {
                 "role": "assistant",
                 "content": content,
-                "tool_calls": [dict(value) for value in state.pending_tool_calls.values()],
+                "tool_calls": [
+                    *[dict(value) for value in state.pending_tool_calls.values()],
+                    *deferred_tool_calls,
+                ],
+                **({"reasoning_content": provider_reasoning_content} if provider_reasoning_content else {}),
             }
         )
+        for deferred in deferred_tool_calls:
+            error = classify_tool_error("invalid_request", "sensitive")
+            error = {
+                **error,
+                "actionable": (
+                    "Tools that require approval cannot be combined with other tools "
+                    "in the same turn. Re-issue this tool call alone in the next turn."
+                ),
+            }
+            state.messages.append({
+                "role": "tool",
+                "tool_call_id": deferred["call_id"],
+                "name": deferred["name"],
+                "content": {"error": error},
+                "succeeded": False,
+            })
+            state.completed_side_effects.add(deferred["call_id"])
+            replies.append(self._event(state, "tool.error", {
+                "item_id": f"{state.run_id}:tool:{deferred['call_id']}",
+                "call_id": deferred["call_id"],
+                "name": deferred["name"],
+                "tool_kind": "host",
+                "succeeded": False,
+                "policy_blocked": True,
+                **error,
+            }))
         if approval_call is not None:
             state.phase = RunPhase.WAITING_APPROVAL
             call_id = self._required_string(approval_call, "call_id")
@@ -1440,6 +1581,10 @@ class DrSaiAgentKernel:
         call = state.pending_tool_calls.get(call_id)
         if call is None:
             raise ValueError("tool_call_not_pending")
+        # Kernel-owned proof: model-provided call metadata was removed when
+        # ``pending_tool_calls`` was normalized. Persist it before execution
+        # so recovery retains the exact approval decision as well.
+        call["runtime_approval_granted"] = True
         return (
             self._event(state, "approval.decided", {"decision": decision, "call_id": call_id}),
             self._checkpoint(state, "after_approval"),
@@ -1490,8 +1635,12 @@ class DrSaiAgentKernel:
             ),
         )
 
+    # ARCHIVED(2026-09-02): the shared desktop-kernel subagent machinery is
+    # archived for Desktop (Delegate handled directly by DrSaiAssistant). This
+    # method remains for the mobile surface and legacy importers only.
     def _start_subagents(
         self, state: MobileRunState, raw_call: Mapping[str, Any], content: str,
+        provider_reasoning_content: str = "",
     ) -> Sequence[RuntimeEnvelope]:
         call_id = self._required_string(raw_call, "call_id")
         arguments = raw_call.get("arguments", {})
@@ -1557,6 +1706,16 @@ class DrSaiAgentKernel:
                 MessageType.START_RUN, f"{child_run_id}:start", child_run_id, child_session_id, 0,
                 f"{child_run_id}:start", {
                     "input": prompt, "model_id": state.model_id, "tools": safe_tools, "skills": child_skills,
+                    # A child kernel is a bounded reasoning worker — the parent
+                    # has already decided which capability domains are needed.
+                    # Pre-satisfying all domains prevents build_tool_decision_requirement
+                    # from blocking the child's MODEL_COMPLETED with citation/retrieval
+                    # checks (which would raise subagent_kernel_did_not_complete).
+                    "satisfied_capability_domains": [
+                        "retrieval", "workspace", "process", "device", "time",
+                        "memory", "plan", "image_generation", "image_edit",
+                    ],
+                    "skip_citation_checks": True,
                     "host_port": {
                         "schema_version": 1,
                         "protocol_version": "p9-host-port-v1",
@@ -1581,7 +1740,10 @@ class DrSaiAgentKernel:
                 "child_run_id": child_run_id, "child_session_id": child_session_id,
                 "child_state": child.snapshot(child_run_id), "model_request": dict(child_model.payload),
             }
-        state.messages.append({"role": "assistant", "content": content, "tool_calls": [dict(raw_call)]})
+        state.messages.append({
+            "role": "assistant", "content": content, "tool_calls": [dict(raw_call)],
+            **({"reasoning_content": provider_reasoning_content} if provider_reasoning_content else {}),
+        })
         state.pending_subagents = pending
         state.subagent_results = {}
         state.delegate_call_id = call_id
@@ -1614,6 +1776,7 @@ class DrSaiAgentKernel:
 
     def _execute_core_tools(
         self, state: MobileRunState, calls: Sequence[Mapping[str, Any]], content: str,
+        provider_reasoning_content: str = "",
     ) -> Sequence[RuntimeEnvelope]:
         replies: list[RuntimeEnvelope] = []
         normalized = []
@@ -1646,7 +1809,10 @@ class DrSaiAgentKernel:
                 normalized.append({"call_id": call_id, "name": name, "arguments": plan})
             else:
                 raise ValueError("core_tool_unknown")
-        state.messages.append({"role": "assistant", "content": content, "tool_calls": normalized})
+        state.messages.append({
+            "role": "assistant", "content": content, "tool_calls": normalized,
+            **({"reasoning_content": provider_reasoning_content} if provider_reasoning_content else {}),
+        })
         for call in normalized:
             if call["name"] == "core.text_stats":
                 text = call["arguments"]["text"]
@@ -1684,6 +1850,9 @@ class DrSaiAgentKernel:
         )
         return replies
 
+    # ARCHIVED(2026-09-02): desktop-kernel subagent lifecycle is archived for
+    # Desktop (Delegate handled directly by DrSaiAssistant). Retained for the
+    # mobile surface and legacy importers only.
     def _subagent_completed(
         self, state: MobileRunState, subagent_id: str, content: str,
     ) -> Sequence[RuntimeEnvelope]:
@@ -1766,12 +1935,19 @@ class DrSaiAgentKernel:
             self._checkpoint(state, "terminal"),
         )
 
+    # ARCHIVED(2026-09-02): desktop-kernel subagent lifecycle is archived for
+    # Desktop (Delegate handled directly by DrSaiAssistant). Retained for the
+    # mobile surface and legacy importers only.
     def _subagent_failed(
         self, state: MobileRunState, subagent_id: str, code: str, retryable: bool,
     ) -> Sequence[RuntimeEnvelope]:
         task = state.pending_subagents.pop(subagent_id, None)
         if task is None:
-            raise ValueError("subagent_not_pending")
+            # The subagent was already completed or cancelled (e.g. due to a
+            # race between MODEL_COMPLETED and MODEL_FAILED, or a double-
+            # completion). Do not crash the parent run — return empty so the
+            # kernel continues with its existing state.
+            return ()
         failure = {"code": code, "retryable": retryable, "status": "failed"}
         state.subagent_failures[subagent_id] = failure
         failed = self._event(state, "subagent.failed", {
@@ -1889,8 +2065,16 @@ class DrSaiAgentKernel:
             self._checkpoint(state, "terminal"),
         )
 
+    def active_run_id_for_session(self, session_id: str) -> str | None:
+        active = self._active_run_by_session.get(session_id)
+        return active if isinstance(active, str) and active else None
+
     def snapshot(self, run_id: str) -> dict[str, Any]:
         state = self._runs[run_id]
+        checkpoint_messages = [
+            {key: value for key, value in message.items() if key != "reasoning_content"}
+            for message in state.messages
+        ]
         return {
             "run_id": state.run_id,
             "session_id": state.session_id,
@@ -1898,7 +2082,7 @@ class DrSaiAgentKernel:
             "model_route_snapshot": dict(state.model_route_snapshot),
             "phase": state.phase.value,
             "outbound_sequence": state.outbound_sequence,
-            "messages": state.messages,
+            "messages": checkpoint_messages,
             "completed_side_effects": sorted(state.completed_side_effects),
             "pending_tool_calls": dict(state.pending_tool_calls),
             "pending_artifacts": dict(state.pending_artifacts),
@@ -1914,6 +2098,9 @@ class DrSaiAgentKernel:
             "tool_decision_requirement": dict(state.tool_decision_requirement),
             "verification_retry_count": state.verification_retry_count,
             "citation_retry_count": state.citation_retry_count,
+            "grounded": state.grounded,
+            "skip_citation_checks": state.skip_citation_checks,
+            "claim_support": dict(state.claim_support),
             "citation_evidence": dict(state.citation_evidence),
             "prompt_layer_diagnostics": list(state.prompt_layer_diagnostics),
             "context_budget": dict(state.context_budget),
@@ -1921,7 +2108,7 @@ class DrSaiAgentKernel:
             "memory_policy": dict(state.memory_policy),
             "memory_selection": dict(state.memory_selection),
             "conversation_context": validate_conversation_context(
-                state.messages, require_complete_tool_calls=not bool(
+                checkpoint_messages, require_complete_tool_calls=not bool(
                     state.pending_tool_calls or state.pending_subagents or state.delegate_call_id
                 ),
             ),
@@ -1981,7 +2168,18 @@ class DrSaiAgentKernel:
             if not isinstance(messages, list) or not all(isinstance(value, Mapping) for value in messages):
                 raise ValueError("model_request_messages_invalid")
             request_payload["context_budget"] = validate_context_within_budget(messages, state.context_budget)
-            request_payload["conversation_context"] = validate_conversation_context(messages)
+            # Relax require_complete_tool_calls when delegate/subagent state is
+            # in flight — the tool result is appended only in _subagent_completed
+            # (or _subagent_failed), so a strict check here would crash mid-run
+            # and on any resumed history that still carries an orphaned delegate
+            # tool_call.  Mirrors the relaxed check already used at restore (L596)
+            # and snapshot (L2000).
+            request_payload["conversation_context"] = validate_conversation_context(
+                messages,
+                require_complete_tool_calls=not bool(
+                    state.pending_tool_calls or state.pending_subagents or state.delegate_call_id
+                ),
+            )
             visible_tools = request_payload.get("tools", [])
             if not isinstance(visible_tools, list):
                 raise ValueError("model_request_tools_invalid")

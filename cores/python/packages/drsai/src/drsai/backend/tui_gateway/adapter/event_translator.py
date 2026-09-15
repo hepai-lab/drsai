@@ -9,12 +9,12 @@ Event mapping (matches design doc Section "关键事件翻译表"):
 
 | autogen                              | gateway              | notes |
 |--------------------------------------|----------------------|-------|
-| ModelClientStreamingChunkEvent       | message.delta        | source.startswith("sub:") → subagent.thinking |
+| ModelClientStreamingChunkEvent       | message.delta        | source.startswith("sub:") → subagent.markdown |
 | TextMessage (assistant)              | message.complete or skip if streamed | metadata.internal="yes" skips |
 | TextMessage (user)                   | (skipped)            | UI already showed the prompt |
 | ToolCallRequestEvent                 | tool.start (per call) | args parsed from JSON-string |
 | ToolCallExecutionEvent               | tool.complete (per call) |   |
-| ToolCallSummaryMessage               | tool.complete (fallback) | DrSaiAgent path |
+| ToolCallSummaryMessage               | (archived — see comment below) | DrSaiAgent path |
 | Response                             | message.complete + usage.update | usage.update emitted when tokens captured |
 | TaskResult                           | (turn boundary)      | swept for usage |
 | AgentLogEvent                        | status.update kind=log |   |
@@ -165,6 +165,21 @@ def _capture_usage(message: Any, state: TurnState) -> bool:
 
 def _is_subagent_source(source: str | None) -> bool:
     return bool(source) and source.startswith("sub:")
+
+
+def _recover_pending_tool_id(state: TurnState, name: str) -> str:
+    """Map a tool result without call_id back onto a pending tool.start id."""
+    pending = state.pending_tool_calls
+    if not pending:
+        return ""
+    if name:
+        for pending_id, (pname, _pargs, _started) in pending.items():
+            bare = pname.rsplit("] ", 1)[-1] if "] " in pname else pname
+            if pname == name or bare == name:
+                return pending_id
+    if len(pending) == 1:
+        return next(iter(pending))
+    return ""
 
 
 def extract_citation_payloads(metadata: Any, state: TurnState) -> list[dict[str, Any]]:
@@ -354,7 +369,15 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         if source:
             state.streamed_sources.add(source)
         if _is_subagent_source(source):
-            out.append(("subagent.thinking", {"text": content, "source": source}))
+            # Streaming chunks from a subagent are visible answer content,
+            # not hidden reasoning. Keep them separate so the structured
+            # projector can render the child output inside its SubtaskPart
+            # instead of placing it in the parent markdown stream.
+            out.append(("subagent.markdown", {
+                "text": content,
+                "source": source,
+                "subagent_id": source[4:],
+            }))
             return out
         state.streamed_visible = True
         out.append(("message.delta", {"text": content}))
@@ -369,7 +392,12 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         if text.strip():
             state.last_reasoning = text
         if _is_subagent_source(source):
-            out.append(("subagent.thinking", {"text": text, "source": source}))
+            out.append(("subagent.thinking", {
+                "text": text,
+                "source": source,
+                "segment_id": f"{source}:reasoning",
+                "subagent_id": source[4:],
+            }))
         else:
             out.append(("thinking.delta", {"text": text}))
         return out
@@ -397,7 +425,9 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         for call in calls:
             if not isinstance(call, FunctionCall):
                 continue
-            tool_id = getattr(call, "id", None) or f"tool-{int(time.time() * 1000)}"
+            # Some providers (esp. skill/tool paths) omit FunctionCall.id; Runtime
+            # requires a non-empty call identity on every tool event.
+            tool_id = str(getattr(call, "id", None) or "").strip() or f"tool-{int(time.time() * 1000)}"
             name = getattr(call, "name", "?")
             args = _parse_tool_args(getattr(call, "arguments", {}))
             state.pending_tool_calls[tool_id] = (name, args, time.time())
@@ -408,6 +438,7 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
             }
             if is_sub:
                 payload["source"] = msg_source
+                payload["subagent_id"] = msg_source[4:]
                 payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
             out.append(("tool.start", payload))
         return out
@@ -418,18 +449,24 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         is_sub = _is_subagent_source(msg_source)
         results = message.content or []
         for r in results:
-            tool_id = getattr(r, "call_id", None) or getattr(r, "id", None) or ""
+            tool_id = str(getattr(r, "call_id", None) or getattr(r, "id", None) or "").strip()
             name = getattr(r, "name", "") or ""
             content = getattr(r, "content", None)
             result_str = _safe_str(content)
             duration_ms = 0
             args: dict = {}
+            if not tool_id:
+                # Results sometimes omit call_id even when the matching start used
+                # a synthesised id (common when loading skills). Recover from pending.
+                tool_id = _recover_pending_tool_id(state, name)
             if tool_id and tool_id in state.pending_tool_calls:
                 pname, pargs, started = state.pending_tool_calls.pop(tool_id)
                 if not name:
                     name = pname
                 args = pargs
                 duration_ms = int((time.time() - started) * 1000)
+            if not tool_id:
+                tool_id = f"tool-orphan-{int(time.time() * 1000)}"
             payload = {
                 "tool_id": tool_id,
                 "name": name,
@@ -446,46 +483,54 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
                 payload["inspection"] = dict(decoded_result["_inspection"])
             if is_sub:
                 payload["source"] = msg_source
+                payload["subagent_id"] = msg_source[4:]
                 payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
             out.append(("tool.complete", payload))
         return out
 
     # ── Tool call summary (DrSaiAgent path) ──────────────────────────
-    if isinstance(message, ToolCallSummaryMessage):
-        msg_source = getattr(message, "source", "") or ""
-        is_sub = _is_subagent_source(msg_source)
-        # Drain any pending tool calls without explicit ExecutionEvent.
-        content = getattr(message, "content", None)
-        result_str = _safe_str(content)
-        if state.pending_tool_calls:
-            for tool_id, (name, args, started) in list(state.pending_tool_calls.items()):
-                duration_ms = int((time.time() - started) * 1000)
-                payload = {
-                    "tool_id": tool_id,
-                    "name": name,
-                    "args": args,
-                    "result": result_str,
-                    "duration_ms": duration_ms,
-                }
-                if is_sub:
-                    payload["source"] = msg_source
-                    payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
-                out.append(("tool.complete", payload))
-                state.pending_tool_calls.pop(tool_id, None)
-        else:
-            name = getattr(message, "source", "") or "tool"
-            payload = {
-                "tool_id": "",
-                "name": name,
-                "args": {},
-                "result": result_str,
-                "duration_ms": 0,
-            }
-            if is_sub:
-                payload["source"] = msg_source
-                payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
-            out.append(("tool.complete", payload))
-        return out
+    # ARCHIVED: drsai_assistant.py already emits paired ToolCallRequestEvent
+    # + ToolCallExecutionEvent for every tool call, so the summary message is
+    # not a tool-completion signal. Translating it into a tool.complete event
+    # either duplicated the completion (pending_tool_calls already drained by
+    # ToolCallExecutionEvent) or — when no pending calls existed — emitted a
+    # tool.complete with tool_id="" that _normalize_event rejects with
+    # "tool_identity_missing". Drop the message entirely.
+    # if isinstance(message, ToolCallSummaryMessage):
+    #     msg_source = getattr(message, "source", "") or ""
+    #     is_sub = _is_subagent_source(msg_source)
+    #     # Drain any pending tool calls without explicit ExecutionEvent.
+    #     content = getattr(message, "content", None)
+    #     result_str = _safe_str(content)
+    #     if state.pending_tool_calls:
+    #         for tool_id, (name, args, started) in list(state.pending_tool_calls.items()):
+    #             duration_ms = int((time.time() - started) * 1000)
+    #             payload = {
+    #                 "tool_id": tool_id,
+    #                 "name": name,
+    #                 "args": args,
+    #                 "result": result_str,
+    #                 "duration_ms": duration_ms,
+    #             }
+    #             if is_sub:
+    #                 payload["source"] = msg_source
+    #                 payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
+    #             out.append(("tool.complete", payload))
+    #             state.pending_tool_calls.pop(tool_id, None)
+    #     else:
+    #         name = getattr(message, "source", "") or "tool"
+    #         payload = {
+    #             "tool_id": "",
+    #             "name": name,
+    #             "args": {},
+    #             "result": result_str,
+    #             "duration_ms": 0,
+    #         }
+    #         if is_sub:
+    #             payload["source"] = msg_source
+    #             payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
+    #         out.append(("tool.complete", payload))
+    #     return out
 
     # ── TextMessage ──────────────────────────────────────────────────
     if isinstance(message, TextMessage):
@@ -505,6 +550,19 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
 
         out.extend(("citation.added", payload) for payload in extract_citation_payloads(metadata, state))
 
+        # Subagent final text must be handled before the generic streamed
+        # duplicate guard. Its chunks belong to the child SubtaskPart and the
+        # terminal event is still needed to close that part, even when the
+        # child emitted streaming content first.
+        text = getattr(message, "content", "") or ""
+        if _is_subagent_source(source):
+            out.append(("subagent.complete", {
+                "text": text,
+                "source": source,
+                "subagent_id": source[4:],
+            }))
+            return out
+
         # Skip if we've already streamed this turn's visible content — the
         # final TextMessage is just a duplicate from the assistant.
         if state.streamed_visible and (
@@ -512,17 +570,19 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         ):
             return out
 
-        # Subagent final text
-        text = getattr(message, "content", "") or ""
-        if _is_subagent_source(source):
-            out.append(("subagent.complete", {"text": text, "source": source}))
-            return out
-
         if not text:
             return out
 
         # Otherwise treat as a delayed message.complete-ish chunk.
-        out.append(("message.delta", {"text": text}))
+        delta_payload: dict = {"text": text}
+        # Pass through error/warning/paused/cancelled metadata flags so
+        # downstream consumers (desktop gateway, TUI, frontend) can
+        # differentiate rendering (red error style, recovery buttons, etc.).
+        for _flag in ("error", "warning", "paused", "cancelled"):
+            _val = metadata.get(_flag)
+            if _val is not None:
+                delta_payload[_flag] = _val
+        out.append(("message.delta", delta_payload))
         state.streamed_visible = True
         return out
 
@@ -535,14 +595,29 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
             chat_src = getattr(chat, "source", "") or ""
             metadata = getattr(chat, "metadata", None) or {}
             out.extend(("citation.added", payload) for payload in extract_citation_payloads(metadata, state))
-            if (
+            if _is_subagent_source(chat_src):
+                # Response.chat_message is the terminal child result. It must
+                # close the child task, never become parent markdown.
+                out.append(("subagent.complete", {
+                    "text": getattr(chat, "content", "") or "",
+                    "source": chat_src,
+                    "subagent_id": chat_src[4:],
+                }))
+            elif (
                 chat_src.lower() != "user"
                 and metadata.get("internal") != "yes"
-                and not _is_subagent_source(chat_src)
             ):
                 text = getattr(chat, "content", "") or ""
                 if text and not state.streamed_visible:
-                    out.append(("message.delta", {"text": text}))
+                    delta_payload: dict = {"text": text}
+                    # Pass through error/warning/paused/cancelled metadata
+                    # flags so downstream consumers can differentiate
+                    # rendering (red error style, recovery buttons, etc.).
+                    for _flag in ("error", "warning", "paused", "cancelled"):
+                        _val = metadata.get(_flag)
+                        if _val is not None:
+                            delta_payload[_flag] = _val
+                    out.append(("message.delta", delta_payload))
                     state.streamed_visible = True
         else:
             captured2 = False
@@ -560,6 +635,58 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
     if AgentLogEvent is not None and isinstance(message, AgentLogEvent):
         content = getattr(message, "content", None) or getattr(message, "message", None)
         log_text = _safe_str(content)
+        metadata = getattr(message, "metadata", None) or {}
+        content_type = getattr(message, "content_type", "") or ""
+        kernel_event = str(metadata.get("kernel_event") or "")
+
+        # ── Subagent lifecycle events ──
+        # When the desktop kernel emits subagent.started / subagent.completed /
+        # subagent.failed / subagent.cancelled, translate_kernel_event() wraps
+        # them in AgentLogEvent with content_type="subagent".  Route them to the
+        # conversation projector's subagent.* handlers instead of the generic
+        # status.update path.
+        if content_type == "subagent" or kernel_event.startswith("subagent."):
+            subagent_id = str(metadata.get("subagent_id") or "")
+            _sub_source = f"sub:{getattr(message, 'source', '') or 'subagent'}"
+            if kernel_event == "subagent.started":
+                out.append(("subagent.thinking", {
+                    "text": "",
+                    "source": _sub_source,
+                    "title": log_text,
+                    "subagent_id": subagent_id,
+                }))
+                return out
+            if kernel_event in {"subagent.completed", "subagent.complete"}:
+                out.append(("subagent.complete", {
+                    "text": log_text,
+                    "source": _sub_source,
+                    "subagent_id": subagent_id,
+                }))
+                return out
+            if kernel_event == "subagent.failed":
+                out.append(("subagent.complete", {
+                    "text": f"Subagent failed: {metadata.get('code', '')}",
+                    "source": _sub_source,
+                    "subagent_id": subagent_id,
+                    "status": "error",
+                }))
+                return out
+            if kernel_event == "subagent.cancelled":
+                out.append(("subagent.complete", {
+                    "text": "Subagent cancelled",
+                    "source": _sub_source,
+                    "subagent_id": subagent_id,
+                    "status": "cancelled",
+                }))
+                return out
+            # Unknown subagent.* event — still route as thinking (delta)
+            out.append(("subagent.thinking", {
+                "text": log_text,
+                "source": _sub_source,
+                "subagent_id": subagent_id,
+            }))
+            return out
+
         # Truncate long log texts (e.g. FunctionCall with big arguments)
         # to avoid flooding the TUI status bar.  Max ~3 terminal lines ≈ 300 chars.
         MAX_LOG_CHARS = 300

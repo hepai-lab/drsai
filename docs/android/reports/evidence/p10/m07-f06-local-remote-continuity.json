@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "feature_id": "M07-F06",
+  "acceptance_run_id": "p10-round-038-local-remote-continuity",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "target_not_bound_before_user_selection": true,
+    "session_source_and_target_run_links_preserved": true,
+    "messages_and_artifacts_deduplicated": true,
+    "first_approval_terminal_decision_wins": true,
+    "side_effect_receipts_deduplicated": true,
+    "association_mismatch_fails_closed": true
+  },
+  "tests": {
+    "testDebugUnitTest": "708 tests, 0 failures, 2 skipped",
+    "AndroidOaepRelayLocalE2ETest_API35": "task passed; live Relay scenario skipped because external arguments were absent"
+  }
+}

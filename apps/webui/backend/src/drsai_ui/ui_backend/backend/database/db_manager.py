@@ -4,7 +4,8 @@ from pathlib import Path
 from typing import Any, List, Optional, Union, Dict
 
 from loguru import logger
-from sqlalchemy import exc, inspect, text
+from sqlalchemy import event, exc, inspect, text
+from sqlalchemy.pool import QueuePool
 from sqlmodel import Session, SQLModel, and_, create_engine, select
 
 from ..datamodel import DatabaseModel, Response, Team
@@ -24,18 +25,56 @@ class DatabaseManager:
             engine_uri (str): Database connection URI (e.g. sqlite:///db.sqlite3)
             base_dir (Path, optional): Base directory for migration files. If None, uses current directory. Default: None.
         """
-        connection_args = {"check_same_thread": False} if "sqlite" in engine_uri else {}
-
-        self.engine = create_engine(
-            engine_uri,
-            connect_args=connection_args,
-            pool_size=1,
-            max_overflow=0,
+        is_sqlite = "sqlite" in engine_uri
+        connect_args = (
+            {"check_same_thread": False, "timeout": 30} if is_sqlite else {}
         )
+        engine_kwargs: Dict[str, Any] = {"connect_args": connect_args}
+        if is_sqlite:
+            # WAL is set once at init. Per-connect journal_mode=WAL on NullPool
+            # reopened the file for every request and added seconds of TTFB.
+            engine_kwargs.update(
+                poolclass=QueuePool,
+                pool_size=8,
+                max_overflow=16,
+                pool_pre_ping=True,
+                pool_recycle=3600,
+            )
+        else:
+            engine_kwargs.update(pool_size=8, max_overflow=16, pool_pre_ping=True)
+
+        self.engine = create_engine(engine_uri, **engine_kwargs)
+        self._is_sqlite = is_sqlite
+        if is_sqlite:
+            @event.listens_for(self.engine, "connect")
+            def _sqlite_connect(dbapi_connection, _connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA busy_timeout=30000")
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
+
         self.schema_manager = SchemaManager(
             engine=self.engine,
             base_dir=base_dir,
         )
+
+    def _ensure_sqlite_indexes(self) -> None:
+        """Create hot-path indexes even when Alembic auto-upgrade is off."""
+        if not getattr(self, "_is_sqlite", False) and "sqlite" not in str(self.engine.url):
+            return
+        statements = (
+            "CREATE INDEX IF NOT EXISTS ix_message_run_id ON message (run_id)",
+            "CREATE INDEX IF NOT EXISTS ix_message_session_id ON message (session_id)",
+            "CREATE INDEX IF NOT EXISTS ix_session_user_id ON session (user_id)",
+            "CREATE INDEX IF NOT EXISTS ix_run_session_id ON run (session_id)",
+        )
+        try:
+            with self.engine.begin() as conn:
+                for stmt in statements:
+                    conn.execute(text(stmt))
+            logger.info("Ensured SQLite chat hot-path indexes")
+        except Exception as e:
+            logger.warning(f"Failed to ensure SQLite indexes: {e}")
 
     def _should_auto_upgrade(self) -> bool:
         """
@@ -62,13 +101,16 @@ class DatabaseManager:
         try:
             # Enable foreign key constraints for SQLite
             if "sqlite" in str(self.engine.url):
-                with self.engine.connect() as conn:
+                with self.engine.begin() as conn:
+                    conn.execute(text("PRAGMA journal_mode=WAL"))
+                    conn.execute(text("PRAGMA synchronous=NORMAL"))
                     conn.execute(text("PRAGMA foreign_keys=ON"))
             inspector = inspect(self.engine)
             tables_exist = inspector.get_table_names()
             if not tables_exist:
                 logger.info("Creating database tables...")
                 SQLModel.metadata.create_all(self.engine)
+                self._ensure_sqlite_indexes()
 
                 if self.schema_manager.initialize_migrations(force=force_init_alembic):
                     return Response(
@@ -80,11 +122,13 @@ class DatabaseManager:
             if auto_upgrade or self._should_auto_upgrade():
                 logger.info("Checking database schema...")
                 if self.schema_manager.ensure_schema_up_to_date():
+                    self._ensure_sqlite_indexes()
                     return Response(
                         message="Database schema is up to date", status=True
                     )
                 return Response(message="Database upgrade failed", status=False)
 
+            self._ensure_sqlite_indexes()
             return Response(message="Database is ready", status=True)
 
         except Exception as e:

@@ -58,7 +58,19 @@ export interface TextContentPart {
   text: string
 }
 
-export type ContentPart = TextContentPart | { kind: 'tool'; id: string; toolId: string }
+export interface ArtifactContentPart {
+  kind: 'artifact'
+  id: string
+  artifactId: string
+  name: string
+  path?: string
+  size?: number
+  previewable?: boolean
+  downloadable?: boolean
+  resourceRef?: import('../gatewayTypes.js').OaepResourceRef
+}
+
+export type ContentPart = TextContentPart | { kind: 'tool'; id: string; toolId: string } | ArtifactContentPart
 
 /**
  * Get the full text of a text ContentPart. If the part was streamed

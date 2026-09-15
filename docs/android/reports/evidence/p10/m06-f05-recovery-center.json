@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "feature_id": "M06-F05",
+  "acceptance_run_id": "p10-round-031-recovery-center",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "current_account_only": true,
+    "expired_and_archived_excluded": true,
+    "stale_running_atomically_paused": true,
+    "no_permanent_running": true,
+    "continue_cancel_archive_are_state_scoped": true,
+    "cross_account_archive_denied": true
+  },
+  "tests": {
+    "testDebugUnitTest": "697 tests, 0 failures, 2 skipped",
+    "LocalStoreTest_API35": "42 passed",
+    "MainInterfaceTest_API35": "32 passed"
+  },
+  "environment_note": "The first combined API 35 run lost the emulator process at 38/62 with 0 failures. After a cold emulator restart, LocalStoreTest and MainInterfaceTest completed independently with 0 failures."
+}

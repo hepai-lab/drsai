@@ -4,6 +4,11 @@ import ai.drsai.remote.BuildConfig
 import ai.drsai.remote.remote.model.RemoteTranscriptMessage
 import ai.drsai.remote.remote.model.OaepTimelineEntry
 import org.json.JSONObject
+import ai.drsai.remote.runtime.readiness.AgentReadiness
+import ai.drsai.remote.runtime.readiness.AgentReadinessInput
+import ai.drsai.remote.runtime.readiness.AgentReadinessPolicy
+import ai.drsai.remote.runtime.setup.SetupJourney
+import ai.drsai.remote.runtime.security.SensitiveDataRedactor
 
 data class User(val id: String, val name: String = id, val avatarUrl: String? = null)
 
@@ -184,6 +189,7 @@ data class RuntimeMessage(
     val toolCallId: String? = null,
     val toolCalls: List<CompletedToolCall> = emptyList(),
     val images: List<RuntimeImage> = emptyList(),
+    val providerReasoningContent: String? = null,
 )
 
 data class RuntimeImage(val mimeType: String, val dataUrl: String)
@@ -195,6 +201,7 @@ data class ModelDelta(
     val toolCalls: List<ToolCallDelta>,
     val finishReason: String?,
     val reasoningSummary: String? = null,
+    val providerReasoningContent: String? = null,
 )
 
 sealed interface RuntimeEvent {
@@ -215,9 +222,9 @@ val DEFAULT_AGENT = Agent(
     id = "local:opendrsai",
     name = "OpenDrSai",
     description = if (BuildConfig.DESKTOP_AGENT_PARITY_COMPLETE) {
-        "运行在 Android 本机、已通过 Desktop 能力对等验收的 Agent Runtime"
+        "Agent Runtime running locally on Android with Desktop capability parity accepted"
     } else {
-        "运行在 Android 本机的 Android Agent Runtime Preview（Desktop 能力对等尚未完成）"
+        "Android Agent Runtime Preview running locally; Desktop capability parity is not complete"
     },
     systemPrompt = """
         You are OpenDrSai for Android, a concise and capable personal AI agent.
@@ -245,7 +252,7 @@ internal fun selectLocalModelForAttachments(
 
 data class AgentCatalogStatus(
     val state: String = "loading",
-    val message: String = "正在加载平台智能体",
+    val message: String = "Loading platform agents",
     val apiVersion: String? = null,
     val capabilities: Set<String> = emptySet(),
     val cached: Boolean = false,
@@ -258,6 +265,22 @@ data class ApprovalUiItem(
     val runtimeId: String,
     val sessionId: String,
     val expiresAt: String,
+    val title: String = operation,
+    val reason: String = "Your confirmation is required to continue",
+    val objectLabel: String = "Task target",
+    val changeSummary: String = "The approved operation will be executed",
+    val riskSummary: String = "This may affect data or an external system",
+    val reversibleLabel: String = "Usually not reversible",
+    val advancedDetail: String = "",
+)
+
+data class ApprovalGrantUiItem(
+    val stableId: String,
+    val title: String,
+    val objectLabel: String,
+    val runtimeId: String,
+    val sessionId: String,
+    val toolId: String,
 )
 
 data class WorkbenchSessionItem(
@@ -312,18 +335,23 @@ data class WorkbenchArtifactItem(
     val sessionId: String,
     val runId: String? = null,
     val source: String,
+    val failureCode: String? = null,
 )
 
 data class DesktopHandoffUi(
     val handoffId: String,
-    val targetRuntimeId: String,
-    val targetName: String,
+    val targetRuntimeId: String?,
+    val targetName: String?,
     val requiredCapabilities: List<String>,
     val message: String,
     val executionLocation: String = "Desktop Runtime",
     val transport: String? = null,
     val resourceId: String? = null,
+    val targets: List<DesktopHandoffTargetUi> = emptyList(),
+    val transferSummary: String = "Task details",
 )
+
+data class DesktopHandoffTargetUi(val runtimeId: String, val name: String, val online: Boolean = true)
 
 data class WorkbenchSearchItem(
     val session: WorkbenchSessionItem,
@@ -407,8 +435,10 @@ data class FullRuntimeDiagnosticUi(
     val modelSupportsTools: Boolean? = null,
     val modelSupportsParallelTools: Boolean? = null,
     val modelSupportsReasoning: Boolean? = null,
+    val activeRunId: String? = null,
+    val errorId: String? = null,
 ) {
-    fun exportText(): String = buildString {
+    fun exportText(): String = SensitiveDataRedactor.redact(buildString {
         append("OpenDrSai Android Full Runtime diagnostic\n")
         append("build_enabled=").append(buildEnabled).append('\n')
         append("desktop_parity_complete=").append(desktopParityComplete).append('\n')
@@ -445,7 +475,9 @@ data class FullRuntimeDiagnosticUi(
         append("model_unsupported_tools=").append(modelUnsupportedTools.joinToString(",")).append('\n')
         append("available_skills=").append(availableSkills.joinToString(",")).append('\n')
         append("permission_required_skills=").append(permissionRequiredSkills.joinToString(","))
-    }
+        activeRunId?.let { append('\n').append("run_id=").append(it) }
+        errorId?.let { append('\n').append("error_id=").append(it) }
+    })
 }
 
 sealed interface AppDestination {
@@ -455,6 +487,7 @@ sealed interface AppDestination {
 }
 
 enum class AssociationState { IDLE, PENDING_LOGIN, ASSOCIATING, ASSOCIATED, AUTH_REQUIRED, FAILED }
+enum class ModelConfigurationMessageKind { SUCCESS, INFO, ERROR }
 
 data class AppState(
     val destination: AppDestination = AppDestination.Splash,
@@ -468,6 +501,7 @@ data class AppState(
     val discoveredProviderModels: List<String> = emptyList(),
     val modelConfigurationBusy: Boolean = false,
     val modelConfigurationMessage: String? = null,
+    val modelConfigurationMessageKind: ModelConfigurationMessageKind? = null,
     val conversations: List<Conversation> = emptyList(),
     val currentConversation: Conversation? = null,
     val messages: List<ChatMessage> = emptyList(),
@@ -485,16 +519,27 @@ data class AppState(
     val historyOpen: Boolean = false,
     val profileOpen: Boolean = false,
     val error: String? = null,
+    val capabilityRepair: ai.drsai.remote.runtime.errors.CapabilityRepair? = null,
     val diagnostic: RuntimeDiagnosticUi? = null,
     val runtimeStatus: String? = null,
     val runtimePolicyDiagnostic: RuntimePolicyDiagnosticUi? = null,
     val fullRuntimeDiagnostic: FullRuntimeDiagnosticUi = FullRuntimeDiagnosticUi(),
+    val capabilityGuidance: List<ai.drsai.remote.runtime.readiness.CapabilityGuidanceItem> = emptyList(),
+    val agentReadiness: AgentReadiness = AgentReadinessPolicy.evaluate(
+        AgentReadinessInput(false, false, false, null, "UNINITIALIZED", false),
+    ),
+    val setupJourney: SetupJourney = SetupJourney(),
     val toolDowngraded: Boolean = false,
     val agentCatalogStatus: AgentCatalogStatus = AgentCatalogStatus(),
     val darkTheme: Boolean? = null,
     val attachmentDrafts: List<AttachmentDraft> = emptyList(),
     val pendingApprovals: List<ApprovalUiItem> = emptyList(),
+    val approvalGrants: List<ApprovalGrantUiItem> = emptyList(),
+    val recoveryRuns: List<ai.drsai.remote.runtime.reliability.RecoveryRunItem> = emptyList(),
+    val workspaceAuthorization: ai.drsai.remote.runtime.device.WorkspaceAuthorizationJourney =
+        ai.drsai.remote.runtime.device.WorkspaceAuthorizationJourney(),
     val localWorkspaceGranted: Boolean = false,
+    val localWorkspaceName: String? = null,
     val workbenchWorkspaces: List<WorkbenchWorkspaceItem> = emptyList(),
     val memories: List<MemoryUiItem> = emptyList(),
     val memoryEnabled: Boolean = true,

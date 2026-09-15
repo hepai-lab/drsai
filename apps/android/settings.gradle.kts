@@ -5,3 +5,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "OpenDrSaiForAndroid"
 include(":app")
+include(":benchmark")

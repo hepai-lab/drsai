@@ -3,6 +3,13 @@ export interface BoundedEventDispatcherOptions<T> {
   deliver: (event: T) => void;
   merge?: (previous: T, next: T) => T | null;
   schedule?: (flush: () => void) => unknown;
+  /**
+   * Called before each deliver() in flush() and on every enqueue().
+   * If it returns true the dispatcher closes immediately and stops
+   * sending to a disposed / destroyed renderer, preventing error spam
+   * from Electron's internal "Render frame was disposed" log.
+   */
+  shouldClose?: () => boolean;
 }
 
 /**
@@ -14,6 +21,7 @@ export class BoundedEventDispatcher<T> {
   readonly #deliver: (event: T) => void;
   readonly #merge?: (previous: T, next: T) => T | null;
   readonly #schedule: (flush: () => void) => unknown;
+  readonly #shouldClose?: () => boolean;
   #queue: T[] = [];
   #scheduled = false;
   #closed = false;
@@ -23,10 +31,15 @@ export class BoundedEventDispatcher<T> {
     this.#deliver = options.deliver;
     this.#merge = options.merge;
     this.#schedule = options.schedule ?? ((flush) => setImmediate(flush));
+    this.#shouldClose = options.shouldClose;
   }
 
   enqueue(event: T): void {
     if (this.#closed) return;
+    if (this.#shouldClose?.()) {
+      this.close();
+      return;
+    }
     const previous = this.#queue.at(-1);
     const merged = previous === undefined ? null : this.#merge?.(previous, event) ?? null;
     if (merged !== null) this.#queue[this.#queue.length - 1] = merged;
@@ -45,7 +58,23 @@ export class BoundedEventDispatcher<T> {
     this.#scheduled = false;
     const batch = this.#queue;
     this.#queue = [];
-    for (const event of batch) this.#deliver(event);
+    try {
+      for (const event of batch) {
+        if (this.#shouldClose?.()) {
+          this.close();
+          return;
+        }
+        this.#deliver(event);
+      }
+    } catch (err) {
+      // Render frame disposal or WebContents destruction should not propagate
+      // to the setImmediate callback and crash the main process.
+      if (!/destroy|disposed/i.test(String(err))) {
+        // eslint-disable-next-line no-console
+        console.error("[BoundedEventDispatcher] flush error:", err);
+      }
+      this.close();
+    }
   }
 
   close(options: { flush?: boolean } = {}): void {
@@ -55,4 +84,7 @@ export class BoundedEventDispatcher<T> {
   }
 
   get pendingCount(): number { return this.#queue.length; }
+
+  /** True after the dispatcher permanently stopped delivering events. */
+  get closed(): boolean { return this.#closed; }
 }

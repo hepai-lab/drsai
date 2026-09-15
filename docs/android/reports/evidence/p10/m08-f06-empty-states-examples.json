@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "feature_id": "M08-F06",
+  "acceptance_run_id": "p10-round-044-empty-states-examples",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "no_sessions_results_network_model_capability_change_covered": true,
+    "exactly_one_recommended_primary_action": true,
+    "examples_filtered_by_current_capabilities": true,
+    "drawer_and_results_use_shared_empty_state_component": true
+  },
+  "tests": {
+    "UserFriendlyEmptyStatePolicyTest": "2 tests, 0 failures",
+    "MainInterfaceTest_API35": "1 empty-state UI test, 0 failures",
+    "testDebugUnitTest": "723 tests, 0 failures, 2 skipped"
+  }
+}

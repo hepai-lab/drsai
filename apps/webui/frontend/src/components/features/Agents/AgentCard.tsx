@@ -1,5 +1,6 @@
 import { Network, Pencil, X } from "lucide-react";
 import React from "react";
+import { Tooltip } from "antd";
 import { useModeConfigStore } from "@/store/modeConfig";
 import { useLang } from "../../../i18n/useLang";
 import { getLocalizedDescription } from "../../utils";

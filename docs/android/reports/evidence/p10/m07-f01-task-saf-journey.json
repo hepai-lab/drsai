@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "feature_id": "M07-F01",
+  "acceptance_run_id": "p10-round-033-task-saf-journey",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "scope_explained_before_system_picker": true,
+    "selected_directory_only": true,
+    "denial_preserves_original_run": true,
+    "revocation_can_reenter_journey": true,
+    "successful_grant_continues_same_run": true,
+    "no_new_run_on_grant": true
+  },
+  "tests": {
+    "testDebugUnitTest": "701 tests, 0 failures, 2 skipped",
+    "MainInterfaceTest_API35": "33 passed"
+  }
+}

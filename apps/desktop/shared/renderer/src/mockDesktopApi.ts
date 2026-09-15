@@ -15,6 +15,7 @@ import type {
   DesktopChannelOutboundDelivery,
   DesktopChannelOutboundDraftResult,
   DesktopChannelSnapshotSyncResult,
+  DesktopWeChatChannelStatus,
   DesktopExternalConnectionReadinessResult,
   DiagnosticEvent,
   DesktopApi,
@@ -48,7 +49,7 @@ import type {
   DesktopTrustStatus,
   DesktopVoiceTranscriptHandoffResult,
   DesktopVoiceTranscriptionEvent,
-  DesktopStreamingVoiceTranscriptionEvent,
+  DesktopVoicePreferences,
   DesktopDuplexVoiceEvent,
   DesktopVoiceSynthesisEvent,
   DesktopWorkflowRun,
@@ -83,6 +84,7 @@ import type {
   WorkspaceGitDiffResult,
   WorkspaceProject,
   GatewaySkill,
+  ConversationResourceDownloadProgressEvent,
 } from "@shared/desktopApi";
 import {
   DEFAULT_WORKSPACE_DISPLAY_NAME,
@@ -179,6 +181,19 @@ const anonymousSession: AuthSession = {
   authMode: null,
 };
 
+let mockWeChatStatus: DesktopWeChatChannelStatus = {
+  configured: false,
+  credentialState: "missing" as const,
+  runtimeState: "stopped" as const,
+  modelPolicy: {
+    primary: { providerId: "hepai", modelId: "deepseek-v4-flash" },
+    imageUnderstanding: { providerId: "hepai", modelId: "gpt-5.6-luna" },
+    imageGeneration: { providerId: "hepai", modelId: "gemini-3.1-flash-lite-image" },
+  },
+  mediaCapabilities: { imageUnderstanding: true, imageGeneration: true },
+};
+let mockWeChatPolls = 0;
+
 const mockChannelAdapters: DesktopChannelAdapterListResult = {
   generatedAt: new Date().toISOString(),
   configuredCount: 5,
@@ -204,11 +219,24 @@ const mockChannelAdapters: DesktopChannelAdapterListResult = {
         "Use the dedicated Mobile Pairing flow for device authorization; reviewed .drsai/mobile-context.json remains the Channel handoff contract.",
     },
     {
+      id: "wechat-chat",
+      name: "WeChat",
+      provider: "wechat",
+      kind: "chat",
+      status: "config_required",
+      direction: "bidirectional",
+      configured: false,
+      requiresApproval: true,
+      capabilities: ["QR login", "Receive text messages", "Isolated Agent sessions", "Bounded text replies"],
+      description: "Runtime-owned WeChat ilink Bot connection with QR login and isolated Agent sessions.",
+      setupHint: "Connect and explicitly enable WeChat. Provider credentials stay inside the trusted Runtime.",
+    },
+    {
       id: "slack-chat",
       name: "Slack channel adapter",
       provider: "slack",
       kind: "chat",
-      status: "config_required",
+      status: "planned",
       direction: "bidirectional",
       configured: false,
       requiresApproval: true,
@@ -364,7 +392,7 @@ const mockExternalConnectionReadiness: DesktopExternalConnectionReadinessResult 
   workspacePath: "C:\\Users\\Demo\\Project",
   generatedAt: new Date().toISOString(),
   readyCount: 1,
-  partialCount: 9,
+  partialCount: 10,
   plannedCount: 0,
   message: "External connection readiness was assembled from local desktop contracts.",
   verification:
@@ -381,6 +409,18 @@ const mockExternalConnectionReadiness: DesktopExternalConnectionReadinessResult 
       gaps: ["Live mobile device pairing", "Push notification routing"],
       approvalBoundary: "Mobile readiness starts no device session, push service, or remote send.",
       verification: "Mock readiness performs no mobile device or push-provider access.",
+    },
+    {
+      id: "wechat",
+      name: "WeChat",
+      status: "partial",
+      configured: false,
+      readOnly: false,
+      capabilitySources: ["wechat-chat", "Runtime-owned QR authorization", "isolated Agent sessions"],
+      evidence: ["Typed Desktop bridge is available", "Provider credentials stay in the Runtime"],
+      gaps: ["Real-account packaged acceptance", "Non-text messages"],
+      approvalBoundary: "Protected Agent actions keep the Runtime approval boundary.",
+      verification: "Mock readiness performs no provider request and stores no QR or credential.",
     },
     {
       id: "github",
@@ -813,9 +853,60 @@ export function installMockDesktopApi(): void {
   const resultProvenanceFixture = new URLSearchParams(window.location.search).get("resultProvenance") === "1";
   const runInspectionSafetyFixture = new URLSearchParams(window.location.search).get("runInspectionSafety") === "1";
   const operationalStateFixture = new URLSearchParams(window.location.search).get("operationalStateFixture") === "1";
+  const conversationResourceFixture = new URLSearchParams(window.location.search).get("conversationResourceFixture") === "1";
+  const conversationResourceNonInlineFixture = new URLSearchParams(window.location.search).get("conversationResourceNonInline") === "1";
+  const conversationResourceDownloadListeners = new Set<(event: ConversationResourceDownloadProgressEvent) => void>();
+  const cancelledConversationResourceDownloads = new Set<string>();
   let resultFirstCompletionPoll = 0;
   const comparisonEvaluations: RunComparisonEvaluation[] = [];
   let recoveredExperimentDeleted = false;
+  if (conversationResourceFixture) {
+    const now = new Date().toISOString();
+    const workspacePath = "C:\\Users\\Demo\\Projects\\workspace";
+    const threadId = "mock-conversation-resource-thread";
+    const sessionId = "oaep-session-composer-resource";
+    workspaces = [{
+      id: "mock-workspace", name: "workspace", path: workspacePath, location: "local", type: "local",
+      createdAt: now, updatedAt: now, lastOpenedAt: now, trusted: true, hasAgentInstructions: false,
+      metadata: { managedDefault: true, defaultWorkspaceVersion: DEFAULT_WORKSPACE_VERSION },
+    }];
+    threads = [{
+      id: threadId, kind: "chat", title: "P2 resource fixture", workspacePath,
+      createdAt: now, updatedAt: now, runtimeSessionId: sessionId,
+      boundAgentId: "opendrsai", boundAgentName: "OpenDrSai", messageCount: 1,
+    }];
+    threadSnapshots = { [threadId]: {
+      threadId, title: "P2 resource fixture", updatedAt: Date.now(), messageCount: 1,
+      history: { state: "ready", source: "opendrsai", syncedAt: now, loadedRuns: 1, totalRuns: 1, loadedItems: 1, totalItems: 1 },
+      messages: [{
+        id: "p2-composer-resource-message", role: "user", content: "Review  then summarize it.",
+        attachments: [{
+          kind: "file", path: "", name: "引用资料.md", sessionId,
+          associationId: "association-composer-resource",
+        }, {
+          kind: "file", path: "", name: "已删除资料.md", sessionId,
+          associationId: "association-deleted-resource",
+        }, {
+          kind: "file", path: "", name: "离线资料.md", sessionId,
+          associationId: "association-offline-resource",
+        }, {
+          kind: "file", path: "", name: "已移动资料\u202Ecod.exe.md", sessionId,
+          associationId: "association-moved-resource",
+        }],
+        draftParts: [
+          { type: "text", text: "Review " },
+          { type: "attachment", attachmentIndex: 0 },
+          { type: "text", text: ", compare " },
+          { type: "attachment", attachmentIndex: 1 },
+          { type: "text", text: ", then check " },
+          { type: "attachment", attachmentIndex: 2 },
+          { type: "text", text: ", and open " },
+          { type: "attachment", attachmentIndex: 3 },
+          { type: "text", text: "." },
+        ],
+      }],
+    } };
+  }
   if (resultProvenanceFixture) {
     const now = new Date().toISOString();
     threads = [{
@@ -877,11 +968,12 @@ export function installMockDesktopApi(): void {
       turnId,
       status: "completed",
       parts: [
-        { id: `${turnId}:markdown`, kind: "markdown", status: "completed", markdown: "## Core result\n\nThe 10,000-item task completed and the requested report is ready." },
+        { id: `${turnId}:markdown`, kind: "markdown", status: "completed", markdown: "## Core result\n\nThe 10,000-item task completed and the requested report is ready.", channel: "answer", final: true },
         { id: `${turnId}:progress`, kind: "progress", status: "completed", summary: "All business operations completed", completed: structuredActivityFixtureItems, total: structuredActivityFixtureItems },
         { id: `${turnId}:approval`, kind: "interaction", status: "pending", requestId: "approval-10k", interactionType: "approval", prompt: "Approve publishing the generated report?", options: [{ id: "approve", label: "Approve" }, { id: "decline", label: "Decline" }] },
       ],
       activities,
+      processTimeline: [],
       lastSequence: structuredActivityFixtureItems + 3,
       seenDedupeKeys: [],
       protocolIssues: [],
@@ -937,10 +1029,15 @@ export function installMockDesktopApi(): void {
   const chatListeners = new Set<Listener<ChatEvent>>();
   const completionNotificationClickListeners = new Set<Listener<CompletionNotificationClickEvent>>();
   const voiceTranscriptionListeners = new Set<Listener<DesktopVoiceTranscriptionEvent>>();
-  const streamingVoiceTranscriptionListeners = new Set<Listener<DesktopStreamingVoiceTranscriptionEvent>>();
   const duplexVoiceListeners = new Set<Listener<DesktopDuplexVoiceEvent[]>>();
+  const voicePreferencesListeners = new Set<Listener<DesktopVoicePreferences>>();
+  let mockVoicePreferences: DesktopVoicePreferences = {
+    schemaVersion: 11, revision: 0, realtimeOptIn: false, selectedMode: "serial",
+    serial: { inputDeviceId: "", language: "auto", confirmBeforeSend: true },
+    duplex: { inputDeviceId: "", outputDeviceId: "", language: "auto", voice: "", volume: 1, autoRecovery: true, transcriptPolicy: "stable", disclosureFingerprint: "" },
+    playback: { autoReadResponses: false, playbackRate: 1, remoteSttConsent: false, remoteTtsConsent: false, synthesisMode: "system", voiceName: "" },
+  };
   const voiceSynthesisListeners = new Set<Listener<DesktopVoiceSynthesisEvent>>();
-  const streamingVoiceSessions = new Map<string, { turnId: string; eventSequence: number; partialSent: boolean }>();
   const voiceFixtureTimers = new Map<string, number>();
   const voiceSynthesisFixtureTimers = new Map<string, number>();
   const agentRunListeners = new Set<Listener<AgentRunEvent>>();
@@ -1358,6 +1455,8 @@ export function installMockDesktopApi(): void {
 
   const api: DesktopApi = {
     listPerceptors: async () => [],
+    getWebSearchProviderPolicy: async () => ({ mode: "auto", provider: null, available: false, error: "configuration_required" }),
+    updateWebSearchProviderPolicy: async (mode) => ({ mode, provider: mode === "managed" ? "hai_managed_tavily" : mode === "byok" ? "tavily" : null, available: mode !== "none", error: null }),
     savePerceptor: async (request) => ({ ...request, revision: "sha256:mock" }),
     updatePerceptor: async (_perceptorId, request) => ({ ...request, revision: "sha256:mock-updated" }),
     testPerceptor: async (perceptorId, capability = "search") => ({ ok: true, perceptor_id: perceptorId, status: "available", tested: capability, result_count: capability === "search" ? 3 : undefined }),
@@ -1443,6 +1542,29 @@ export function installMockDesktopApi(): void {
     previewDiagnosticPackage: async () => ({ formatVersion: 1, encrypted: true, eventCount: diagnosticEvents.length, byteLength: 0, sensitiveMatchesRemoved: 0, sections: ["manifest", "snapshot"], integritySha256: "mock-sha256", warnings: [] }),
     exportProductionDiagnosticPackage: async () => ({ ok: false, preview: await api.previewDiagnosticPackage(), message: "Mock package export is not written to disk." }),
     importProductionDiagnosticPackage: async () => null,
+    previewFeedback: async (draft) => ({
+      client_feedback_id: draft.client_feedback_id,
+      category: draft.category,
+      source: draft.source,
+      data_categories: ["feedback", "app_environment", "correlation_ids", ...(draft.consent.diagnostics ? ["redacted_diagnostics"] : [])],
+      attachment_manifest: [],
+      estimated_byte_length: 0,
+      sensitive_matches_removed: 0,
+      retention_days: 30,
+      includes_screenshot: draft.consent.screenshot,
+      includes_conversation_context: draft.consent.conversation_context,
+      warnings: [],
+    }),
+    submitFeedback: async (draft) => ({ client_feedback_id: draft.client_feedback_id, feedback_id: `FB-MOCK-${Date.now()}`, status: "received", queued: false, idempotent_replay: false, message: "Feedback received. Thank you." }),
+    listPendingFeedback: async () => [],
+    retryPendingFeedback: async () => ({ sent: 0, remaining: 0 }),
+    deletePendingFeedback: async () => false,
+    getPendingCrashFeedback: async () => null,
+    clearPendingCrashFeedback: async () => false,
+    captureFeedbackScreenshot: async () => ({ data_url: "data:image/png;base64,iVBORw0KGgo=", width: 1, height: 1, byte_length: 8 }),
+    listFeedbackAdmin: async () => [],
+    updateFeedbackAdmin: async (feedbackId, update) => ({ feedback_id: feedbackId, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), category: "bug", source: "global", user_description: "", context: { module: "mock", page: "mock", app_version: "mock", runtime_version: "mock", electron_version: "mock", platform: "mock", locale: "en", breadcrumbs: [] }, diagnostics: { attached: false, byte_length: 0, sensitive_matches_removed: 0 }, status: update.status, contact_allowed: false }),
+    deleteFeedbackAdmin: async () => true,
     getDiagnosticSourceContext: async (request) => {
       const highlightLine = Math.max(1, request.source.line ?? 2);
       const startLine = Math.max(1, highlightLine - 1);
@@ -1894,6 +2016,7 @@ export function installMockDesktopApi(): void {
       revoked_at: new Date().toISOString(),
     }),
     listSshHosts: async () => [],
+    saveSshHost: async (host) => ({ alias: host.alias, hostname: host.hostname, ...(host.user ? { user: host.user } : {}), port: host.port || 22, identityFiles: host.identityFile ? [host.identityFile] : [], ...(host.proxyJump ? { proxyJump: host.proxyJump } : {}), connected: false, managed: true }),
     diagnoseSshHost: async (hostAlias) => ({ hostAlias, state: "reachable", elapsedMs: 1 }),
     inspectSshHostKeys: async (hostAlias) => [{ hostAlias, hostname: "127.0.0.1", port: 22, algorithm: "ssh-ed25519", fingerprint: "SHA256:mock" }],
     testSshHost: async () => true,
@@ -2110,7 +2233,25 @@ export function installMockDesktopApi(): void {
       workspaces = next;
       return deleted;
     },
-    listThreads: async () => threads,
+    listThreads: async (request) => {
+      const pathKey = (value?: string): string => (value ?? "").replace(/[\\/]+/g, "/").toLocaleLowerCase();
+      const scoped = request?.workspacePath
+        ? threads.filter((thread) => pathKey(thread.workspacePath) === pathKey(request.workspacePath))
+        : threads;
+      if (!request) return scoped;
+      const limit = Math.max(1, Math.min(200, Math.trunc(request.limit ?? 50)));
+      const offset = Math.max(0, Math.trunc(request.offset ?? 0));
+      const required = new Set(request.requiredThreadIds ?? []);
+      const allProtectedThreads = scoped.filter((thread) => !thread.archived
+        && (required.has(thread.id) || thread.pinned || thread.status === "running"));
+      const protectedThreads = offset === 0 ? allProtectedThreads : [];
+      const protectedIds = new Set(allProtectedThreads.map((thread) => thread.id));
+      const active = scoped.filter((thread) => !thread.archived && !protectedIds.has(thread.id)).slice(offset, offset + limit);
+      const archived = request.includeArchived
+        ? scoped.filter((thread) => thread.archived).slice(offset, offset + limit)
+        : [];
+      return [...new Map([...protectedThreads, ...active, ...archived].map((thread) => [thread.id, thread])).values()];
+    },
     listAgents: async (): Promise<DesktopAgent[]> => [
       {
         id: "opendrsai",
@@ -2194,6 +2335,28 @@ export function installMockDesktopApi(): void {
       saved: true,
       message: "Mock agent usage recorded.",
     }),
+    getAgentPreferences: async () => ({
+      defaultAgentId: null,
+      recentAgentIds: [],
+    }),
+    testRemoteAgent: async () => ({
+      ok: true,
+      message: "Mock remote agent connection verified.",
+      agentInfo: { id: "mock-remote", owner: "Mock", description: "Mock remote agent" },
+    }),
+    saveRemoteAgent: async (request) => ({
+      id: `device-remote:mock`,
+      name: request.name,
+      description: "Mock remote agent",
+      owner: "Mock",
+      source: "remote" as const,
+      status: "running" as const,
+      mode: "remote",
+      available: true,
+      catalogGroup: "mine" as const,
+      url: request.url,
+    }),
+    removeRemoteAgent: async () => ({ removed: true }),
     getPlatformAgentStatus: async () => ({
       state: "ready",
       apiVersion: "fixture-v1",
@@ -2253,7 +2416,7 @@ export function installMockDesktopApi(): void {
         input_modalities: ["text"],
         output_modalities: ["text"],
         operations: ["chat", "tool_calling", "reasoning"],
-        reasoning_efforts: ["high", "max"],
+        reasoning_efforts: ["none", "high", "max"],
         token_limit: 1_048_576,
         max_output_tokens: 64_000,
         availability: "configured_unverified",
@@ -2261,7 +2424,7 @@ export function installMockDesktopApi(): void {
         capability_confidence: "inferred",
       }],
     }),
-    getMyDrSaiAgentModelPolicy: async (agentId = "opendrsai") => ({ agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model } }, image_understanding_model: null, image_generation_model: null, text_to_speech_model: null, realtime_voice_model: null, speech_to_text_model: null, reasoning_effort: "high", effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model }, revision: `sha256:${"a".repeat(64)}`, valid: true }),
+    getMyDrSaiAgentModelPolicy: async (agentId = "opendrsai") => ({ agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model } }, image_understanding_model: null, image_generation_model: null, text_to_speech_model: null, realtime_voice_model: null, speech_to_text_model: null, reasoning_effort: null, effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model }, revision: `sha256:${"a".repeat(64)}`, valid: true }),
     getMyDrSaiAgentToolPolicy: async (agentId) => ({ agent_id: agentId, mode: "inherit", enabled: [], disabled: [], require_approval: [], revision: `sha256:${"d".repeat(64)}` }),
     updateMyDrSaiAgentToolPolicy: async (agentId, policy) => ({ ...policy, agent_id: agentId, revision: `sha256:${"e".repeat(64)}` }),
     previewMyDrSaiAgentTools: async (agentId) => ({ agent_id: agentId, mode: "inherit", tools: [{ tool_id: "builtin.image_generation", status: "available", capabilities: ["tool.call", "builtin"], selected: true }, { tool_id: "builtin.web-search", status: "available", capabilities: ["tool.call", "builtin", "network.public_https"], selected: true }], missing_ids: [], disabled_ids: [], agent_revision: `sha256:${"d".repeat(64)}`, registry_revision: `sha256:${"f".repeat(64)}` }),
@@ -2279,6 +2442,11 @@ export function installMockDesktopApi(): void {
     createKnowledgeBase: async (request) => ({ ...request, status: "not_indexed" }),
     deleteKnowledgeBase: async () => ({ status: "ok" }),
     getMyDrSaiAgentModelCapabilityStatus: async (agentId = "opendrsai") => ({ agent_id: agentId, capabilities: [] }),
+    discoverRagflowDatasets: async (credential) => ({ datasets: [{ id: "ds-1", name: "Mock Dataset", chunk_count: 100, document_count: 5, status: "ready" }] }),
+    rediscoverRagflowDatasets: async () => ({ datasets: [] }),
+    listKnowledgeBaseFiles: async (knowledgeId) => ({ knowledge_id: knowledgeId, data: [] }),
+    checkKnowledgeBaseStale: async (knowledgeId) => ({ knowledge_id: knowledgeId, stale: false, changed: [], added: [], removed: [] }),
+    refreshKnowledgeBaseIfStale: async (knowledgeId) => ({ knowledge_id: knowledgeId, stale: false, status: "unchanged" }),
     updateMyDrSaiAgentModelPolicy: async (agentId, policy) => ({ ...policy, agent_id: agentId, effective_ref: policy.primary_model.ref, revision: `sha256:${"b".repeat(64)}`, valid: true }),
     migrateMyDrSaiAgentModelPolicy: async (agentId, legacyModel) => ({ agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: legacyModel } }, image_understanding_model: null, image_generation_model: null, text_to_speech_model: null, realtime_voice_model: null, speech_to_text_model: null, effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: legacyModel }, revision: `sha256:${"c".repeat(64)}`, valid: true, migrated: true }),
     updateMyDrSaiConfig: async (request): Promise<MyDrSaiConfig> => {
@@ -2515,28 +2683,122 @@ export function installMockDesktopApi(): void {
     revealThreadShare: async () => true,
     listInstalledSkills: async () =>
       mockInstalledSkills.map(({ content: _content, ...skill }) => skill),
-    listAvailableSkills: async () => [],
+    listAvailableSkills: async (request) => {
+      const installed = new Set(mockInstalledSkills.map((skill) => skill.name));
+      const catalog = [
+        {
+          name: "pptx",
+          bundledId: "pptx",
+          category: "skills",
+          description: "Create and edit PowerPoint presentations.",
+          path: "",
+          source: "skills",
+          installed: installed.has("pptx"),
+        },
+        {
+          name: "docx",
+          bundledId: "docx",
+          category: "skills",
+          description: "Create and edit Word documents.",
+          path: "",
+          source: "skills",
+          installed: installed.has("docx"),
+        },
+        {
+          name: "ragflow-knowledge",
+          bundledId: "ragflow-knowledge",
+          category: "skills",
+          description: "RAGFlow knowledge base management.",
+          path: "",
+          source: "skills",
+          installed: installed.has("ragflow-knowledge"),
+        },
+        {
+          name: "ihep-gfs-skill",
+          category: "skills",
+          description: "操作高能所 GFS 对象存储（jcli）。",
+          path: "",
+          source: "skills",
+          installed: installed.has("ihep-gfs-skill"),
+        },
+        {
+          name: "academic-search",
+          category: "skills",
+          description: "学术文献检索与整理。",
+          path: "",
+          source: "skills",
+          installed: installed.has("academic-search"),
+        },
+        {
+          name: "download-skills",
+          category: "skills",
+          description: "从 clawhub.ai 下载技能到本地目录。",
+          path: "",
+          source: "skills",
+          installed: installed.has("download-skills"),
+        },
+      ];
+      if (request?.coreOnly) {
+        return catalog.filter((item) => item.bundledId === "pptx" || item.bundledId === "docx" || item.bundledId === "ragflow-knowledge");
+      }
+      return catalog;
+    },
     getSkillContent: async (request) => {
       const skill = mockInstalledSkills.find((item) => item.path === request.skillPath || item.name === request.skillPath);
       if (!skill) throw new Error(`Skill not found: ${request.skillPath}`);
       return { path: `${skill.path}/SKILL.md`, content: skill.content };
     },
     installSkill: async (request) => {
-      if (mockInstalledSkills.some((skill) => skill.name === request.name)) {
-        throw new Error(`skill '${request.name}' already exists`);
+      const existing = mockInstalledSkills.find((skill) => skill.name === request.name);
+      if (existing) {
+        if (request.content) {
+          existing.content = request.content;
+          existing.size = request.content.length;
+          existing.mtime = Date.now() / 1000;
+        }
+        return { status: "ok", name: existing.name, path: existing.path };
       }
       const content = request.content || defaultMockSkillContent(request.name);
       const path = `mock://skills/${request.name}`;
       mockInstalledSkills.push({
         name: request.name,
-        category: "user",
-        description: "",
+        category: request.source || "user",
+        description: request.source ? `Installed from ${request.source}` : "",
         path,
         size: content.length,
         mtime: Date.now() / 1000,
         content,
       });
       return { status: "ok", name: request.name, path };
+    },
+    importSkillFolder: async (request) => {
+      const name = request.name || "imported_skill";
+      const path = `mock://skills/${name}`;
+      mockInstalledSkills.push({
+        name,
+        category: "import",
+        description: `Imported from ${request.folderPath}`,
+        path,
+        size: 128,
+        mtime: Date.now() / 1000,
+        content: defaultMockSkillContent(name),
+      });
+      return { status: "ok", name, path, files: 3 };
+    },
+    installSkillZip: async (request) => {
+      const base = request.zipPath.split(/[\\/]/).pop()?.replace(/\.zip$/i, "") || "zip_skill";
+      const name = request.name || base;
+      const path = `mock://skills/${name}`;
+      mockInstalledSkills.push({
+        name,
+        category: "zip",
+        description: `Installed from ${request.zipPath}`,
+        path,
+        size: 256,
+        mtime: Date.now() / 1000,
+        content: defaultMockSkillContent(name),
+      });
+      return { status: "ok", name, path, files: 4 };
     },
     updateSkill: async (request) => {
       const skill = mockInstalledSkills.find((item) => item.name === request.name);
@@ -2551,6 +2813,83 @@ export function installMockDesktopApi(): void {
       return { status: "ok", name: request.name };
     },
     reloadSkills: async () => ({ ok: true, reloaded: true }),
+    getSkillsSquareStatus: async () => ({
+      state: "ready" as const,
+      message: "Mock skills square ready (OIDC)",
+      authMode: "oidc" as const,
+      lastCheckedAt: new Date().toISOString(),
+      portalUrl: "https://opendrsai.ihep.ac.cn",
+    }),
+    listSkillsSquare: async (request) => ({
+      items: [],
+      page: request?.page ?? 1,
+      pageSize: request?.pageSize ?? 20,
+      total: 0,
+      hasNext: false,
+      installedCount: 0,
+      notInstalledCount: 0,
+      status: {
+        state: "ready" as const,
+        message: "Mock empty catalog",
+        authMode: "oidc" as const,
+        lastCheckedAt: new Date().toISOString(),
+      },
+    }),
+    getSkillsSquareDetail: async (request) => ({
+      slug: request.slug,
+      name: request.slug,
+      description: "",
+      body: "",
+      installed: false,
+      isCollected: false,
+    }),
+    getSkillsSquareSkillMd: async () => ({ content: "" }),
+    getSkillsSquareStats: async () => ({
+      totalSkills: 0,
+      publicSkills: 0,
+      totalDownloads: 0,
+      totalCollects: 0,
+    }),
+    listSkillsSquareTags: async () => [],
+    createSkillsSquareTag: async (request) => ({
+      id: 1,
+      name: request.name,
+      sortOrder: request.sortOrder ?? 0,
+    }),
+    updateSkillsSquareTag: async (request) => ({
+      id: request.tagId,
+      name: request.name ?? `tag-${request.tagId}`,
+      sortOrder: request.sortOrder ?? 0,
+    }),
+    deleteSkillsSquareTag: async (request) => ({ id: request.tagId }),
+    installSkillsSquare: async (request) => ({
+      status: "ok",
+      name: request.name || request.slug,
+      path: `/mock/skills/${request.slug}`,
+      files: 1,
+    }),
+    downloadSkillsSquare: async (request) => ({
+      fileName: `${request.slug}.zip`,
+      base64: "",
+    }),
+    uploadSkillsSquare: async () => ({ status: true }),
+    updateSkillsSquare: async () => ({ status: true }),
+    deleteSkillsSquare: async (request) => ({ slug: request.slug }),
+    toggleSkillsSquareVisibility: async (request) => ({
+      slug: request.slug,
+      visibility: request.visibility,
+    }),
+    collectSkillsSquare: async () => ({ status: true }),
+    createSkillsSquareShare: async (request) => ({
+      shareId: "mock-share",
+      skillSlug: request.slug,
+      hasPassword: Boolean(request.password),
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      createdAt: new Date().toISOString(),
+      shareUrl: "https://opendrsai.ihep.ac.cn/share/skill/mock-share",
+    }),
+    listSkillsSquareShares: async () => [],
+    revokeSkillsSquareShare: async () => undefined,
     gfsList: async () => ({ items: [], prefix: "", truncated: false }),
     gfsStat: async (request) => ({
       path: request.path,
@@ -2562,13 +2901,50 @@ export function installMockDesktopApi(): void {
     gfsRead: async (request) => ({ path: request.path, content: "" }),
     gfsWrite: async (request) => ({ path: request.path, etag: "mock" }),
     gfsUploadFile: async (request) => ({ path: request.remotePath, size: 0 }),
+    gfsUploadContent: async (request) => ({ path: request.remotePath, size: 0 }),
     gfsDownloadFile: async (request) => ({ localPath: request.localPath, size: 0 }),
+    gfsDownloadToDisk: async (request) => ({
+      canceled: false,
+      localPath: `/tmp/${request.path.split("/").pop() ?? "gfs-download"}`,
+      size: 0,
+    }),
     gfsDelete: async (request) => ({ path: request.path }),
     gfsShareUrl: async () => ({
       url: "https://example.invalid/mock-gfs-share",
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),
     }),
-    gfsHealthcheck: async () => ({ ok: true, mode: "mock" }),
+    gfsHealthcheck: async () => ({ ok: true, mode: "mock", needsSetup: false }),
+    gfsGetConfig: async () => ({
+      configured: true,
+      enabled: true,
+      needsSetup: false,
+      mode: "mock",
+      bucket: "mock-bucket",
+      email: "mock@example.com",
+      accessKeyMasked: "***mock",
+      secretKeyMasked: "***key",
+      portalUrl: "https://gfs.ihep.ac.cn/",
+      homeEnvPath: "~/.drsai/.env",
+      cliConfigPath: "~/.drsai/configs/cli_config.json",
+    }),
+    gfsSaveConfig: async () => ({
+      ok: true,
+      configured: true,
+      enabled: true,
+      needsSetup: false,
+      mode: "mock",
+      portalUrl: "https://gfs.ihep.ac.cn/",
+      message: "mock saved",
+    }),
+    gfsClearConfig: async () => ({
+      ok: true,
+      configured: false,
+      enabled: false,
+      needsSetup: true,
+      mode: "mock",
+      portalUrl: "https://gfs.ihep.ac.cn/",
+      message: "mock cleared",
+    }),
     prepareForkWorktree: async (request) => {
       const slug = (request.intent || "subtask")
         .toLowerCase()
@@ -2588,8 +2964,8 @@ export function installMockDesktopApi(): void {
     startChat: async (request) => {
       const requestId = request.requestId || crypto.randomUUID();
       const turnId = request.runId || requestId;
-      const visualFixture = request.messages.some((message) => message.content.includes("__STRUCTURED_VISUAL_FIXTURE__"));
-      const goalFixture = request.metadata?.goal_confirmation_required === true
+      const visualFixture = [...request.messages].reverse().find((message) => message.role === "user")?.content.includes("__STRUCTURED_VISUAL_FIXTURE__") === true;
+      const goalFixture = request.metadata?.plan_mode === true
         && request.messages.some((message) => message.content.includes("__GOAL_CONFIRMATION_FIXTURE__"));
       if (visualFixture) {
         const runtimeBase = {
@@ -2695,6 +3071,7 @@ export function installMockDesktopApi(): void {
           id: `${turnId}:artifact:report`, kind: "artifact", status: "completed",
           artifactId: "mock-report", artifactType: "report", name: "README.md",
           summary: "Generated workspace report", path: `${workspacePath}\\README.md`, citationIds: ["mock-docs"],
+          sessionId: "oaep-session-visual", associationId: "association-mock-report",
         },
       });
       sendStructured({
@@ -2730,6 +3107,7 @@ export function installMockDesktopApi(): void {
         type: "part.completed",
         part: {
           id: `${turnId}:markdown`, kind: "markdown", status: "completed",
+          channel: "answer", final: true,
           markdown: markdownContent,
           citationIds: ["mock-docs"],
         },
@@ -2868,7 +3246,7 @@ export function installMockDesktopApi(): void {
     appendDuplexVoiceHistory: async (request) => {
       const current = threadSnapshots[request.threadId] ?? { threadId: request.threadId, title: request.threadId, messages: [], updatedAt: Date.now(), messageCount: 0 };
       const merged = new Map(current.messages.map((message) => [message.id, message]));
-      for (const message of request.messages) merged.set(message.id, { ...merged.get(message.id), ...message });
+      for (const message of request.messages) { const existing = merged.get(message.id); const currentRevision = existing?.voice?.revision ?? 0; if (message.revision === currentRevision) continue; if (message.expectedRevision !== currentRevision || message.revision !== currentRevision + 1) throw new Error("Duplex voice history revision conflict."); const { expectedRevision: _expectedRevision, ...value } = message; merged.set(message.id, { ...existing, ...value, voice: { ...message.voice, revision: message.revision } }); }
       const messages = [...merged.values()];
       const next = { ...current, messages, messageCount: messages.length, updatedAt: Date.now() };
       threadSnapshots = { ...threadSnapshots, [request.threadId]: next };
@@ -2976,129 +3354,39 @@ export function installMockDesktopApi(): void {
       providerDisclosure: "Fixture transcription is active in the development renderer.",
       message: "Fixture voice runtime is ready.",
     }),
-    getStreamingVoiceCapabilities: async () => ({
-      serialStt: true,
-      serialTts: true,
-      streamingStt: true,
-      streamingTts: true,
-      audioEncodings: ["pcm_s16le"],
-      sampleRatesHz: [16_000, 24_000, 48_000],
-      supportsPartialTranscripts: true,
-      supportsProviderEndpointing: true,
-      supportsSessionResume: false,
-      supportsAdaptiveEndpointing: true,
-      supportsContextualRepair: true,
-      supportsProviderFailover: false,
-      protocolVersion: 2,
-      maxBufferedAudioMs: 2_000,
-    }),
+    getVoicePreferences: async () => structuredClone(mockVoicePreferences),
+    updateVoicePreferences: async (request) => {
+      if (request.expectedRevision !== mockVoicePreferences.revision) throw new Error("Voice preferences changed in another window.");
+      mockVoicePreferences = { ...structuredClone(request.preferences), revision: request.expectedRevision + 1 };
+      emit(voicePreferencesListeners, mockVoicePreferences);
+      return structuredClone(mockVoicePreferences);
+    },
     getDuplexVoiceCapabilities: async () => ({
-      protocolVersion: 1, inputAudioEncodings: ["pcm_s16le"], outputAudioEncodings: ["pcm_s16le"],
+      protocolVersion: 2, inputAudioEncodings: ["pcm_s16le"], outputAudioEncodings: ["pcm_s16le"],
       inputSampleRatesHz: [24_000], outputSampleRatesHz: [24_000], supportsInputTranscription: true,
       supportsOutputTranscription: true, supportsServerVad: true, supportsResponseCancel: true,
       supportsConversationTruncation: true, supportsToolCalling: true, supportsSessionResume: false,
       maxUplinkBufferedAudioMs: 2_000, maxPlaybackBufferedAudioMs: 3_000, maxSessionDurationSeconds: 1_800,
     }),
-    startDuplexVoiceSession: async (request) => ({ sessionId: request.sessionId, acceptedAt: new Date().toISOString(), runtimeId: "mock-local", providerId: request.providerId, modelId: request.modelId, capabilities: await api.getDuplexVoiceCapabilities() }),
-    sendDuplexVoiceAudioChunk: (chunk) => { emit(duplexVoiceListeners, [{ protocolVersion: 1, sessionId: chunk.sessionId, sequence: chunk.sequence, type: "input_audio_ack", acknowledgedSequence: chunk.sequence, bufferedAudioMs: 0 }]); return true; },
+    getDuplexVoiceReadiness: async () => ({
+      available: true, reasonCode: "ready", message: "Realtime voice is ready.", providerId: "zhizengzeng", modelId: "gpt-realtime-2", checkedAt: new Date().toISOString(),
+      checks: (["rollout", "gateway", "credential", "model", "provider", "capability"] as const).map((id) => ({ id, ready: true, reasonCode: "ready", message: `${id} is ready.` })),
+      capabilities: await api.getDuplexVoiceCapabilities(),
+    }),
+    getDuplexVoiceOccupancy: async () => ({ occupied: false, sessionId: null, ownerWindowId: null, ownerLabel: null, startedAt: null, ownedByCaller: false }),
+    startDuplexVoiceSession: async (request) => ({ sessionId: request.sessionId, acceptedAt: new Date().toISOString(), runtimeId: "mock-local", providerId: request.providerId, modelId: request.modelId, capabilities: await api.getDuplexVoiceCapabilities(), uplinkCredit: { frames: 100, bytes: 96_000, audioMs: 2_000, acknowledgedSequence: -1 } }),
+    takeOverDuplexVoiceSession: async (request) => ({ sessionId: request.session.sessionId, acceptedAt: new Date().toISOString(), runtimeId: "mock-local", providerId: request.session.providerId, modelId: request.session.modelId, capabilities: await api.getDuplexVoiceCapabilities(), uplinkCredit: { frames: 100, bytes: 96_000, audioMs: 2_000, acknowledgedSequence: -1 } }),
+    sendDuplexVoiceAudioChunk: (chunk) => { emit(duplexVoiceListeners, [{ protocolVersion: 2, sessionId: chunk.sessionId, sequence: chunk.sequence, type: "input_audio_ack", acknowledgedSequence: chunk.sequence, bufferedAudioMs: 0 }, { protocolVersion: 2, sessionId: chunk.sessionId, sequence: chunk.sequence + 1, type: "uplink_credit", credit: { frames: 100, bytes: 96_000, audioMs: 2_000, acknowledgedSequence: chunk.sequence }, reason: "ack" }]); return true; },
+    sendDuplexVoicePlaybackAck: () => true,
     updateDuplexVoiceSession: async () => true,
-    interruptDuplexVoiceSession: async (request) => { emit(duplexVoiceListeners, [{ protocolVersion: 1, sessionId: request.sessionId, sequence: 0, type: "interrupted", responseId: request.responseId, playedAudioMs: request.playedAudioMs, reason: request.reason }]); return true; },
+    interruptDuplexVoiceSession: async (request) => { emit(duplexVoiceListeners, [{ protocolVersion: 2, sessionId: request.sessionId, sequence: 0, type: "interrupted", interruptId: request.interruptId, responseId: request.responseId, playedAudioMs: request.playedAudioMs, reason: request.reason }]); return true; },
     submitDuplexVoiceToolResult: async () => true,
-    stopDuplexVoiceSession: async (sessionId) => { emit(duplexVoiceListeners, [{ protocolVersion: 1, sessionId, sequence: 0, type: "completed", terminal: "completed" }]); return true; },
-    cancelDuplexVoiceSession: async (sessionId) => { emit(duplexVoiceListeners, [{ protocolVersion: 1, sessionId, sequence: 0, type: "cancelled", terminal: "cancelled" }]); return true; },
+    requestDuplexVoiceToolApproval: async (request) => ({ queued: true, approval: { id: `approval:${request.callId}`, source: "connector", actionKind: "external.service", title: request.name, detail: request.argumentsSummary, createdAt: new Date().toISOString(), risk: request.risk ?? "high" }, allowed: true, requiresApproval: true, blocked: false, reason: "Mock approval queued." }),
+    submitDuplexVoiceTextInput: async () => true,
+    stopDuplexVoiceSession: async (sessionId) => { emit(duplexVoiceListeners, [{ protocolVersion: 2, sessionId, sequence: 0, type: "completed", terminal: "completed" }]); return true; },
+    finishDuplexVoiceTurn: async () => true,
+    cancelDuplexVoiceSession: async (sessionId) => { emit(duplexVoiceListeners, [{ protocolVersion: 2, sessionId, sequence: 0, type: "cancelled", terminal: "cancelled" }]); return true; },
     disposeDuplexVoiceSession: async () => true,
-    startStreamingVoiceTranscription: async (request) => {
-      const sessionId = `fixture-streaming-${Date.now()}`;
-      streamingVoiceSessions.set(sessionId, { turnId: request.turnId, eventSequence: 1, partialSent: false });
-      emit(streamingVoiceTranscriptionListeners, {
-        sessionId,
-        turnId: request.turnId,
-        sequence: 0,
-        type: "accepted",
-        runtimeId: "mock-local",
-      });
-      return {
-        sessionId,
-        turnId: request.turnId,
-        acceptedAt: new Date().toISOString(),
-        capabilities: await api.getStreamingVoiceCapabilities(),
-      };
-    },
-    sendStreamingVoiceAudioChunk: (chunk) => {
-      const session = streamingVoiceSessions.get(chunk.sessionId);
-      if (!session || session.turnId !== chunk.turnId) return false;
-      if ((window as Window & { __voiceFixtureStreamingError?: boolean }).__voiceFixtureStreamingError) {
-        emit(streamingVoiceTranscriptionListeners, {
-          sessionId: chunk.sessionId,
-          turnId: chunk.turnId,
-          sequence: session.eventSequence++,
-          type: "failed",
-          error: { code: "network_error", message: "Streaming transcription connection failed. Retry streaming or use serial next turn.", retryable: true },
-        });
-        streamingVoiceSessions.delete(chunk.sessionId);
-        return false;
-      }
-      emit(streamingVoiceTranscriptionListeners, {
-        sessionId: chunk.sessionId,
-        turnId: chunk.turnId,
-        sequence: session.eventSequence++,
-        type: "audio_ack",
-        ack: {
-          sessionId: chunk.sessionId,
-          turnId: chunk.turnId,
-          acknowledgedSequence: chunk.sequence,
-          bufferedAudioMs: 0,
-          receivedAt: new Date().toISOString(),
-        },
-      });
-      if ((window as Window & { __voiceFixtureSlowNetwork?: boolean }).__voiceFixtureSlowNetwork && !session.partialSent) {
-        emit(streamingVoiceTranscriptionListeners, {
-          sessionId: chunk.sessionId,
-          turnId: chunk.turnId,
-          sequence: session.eventSequence++,
-          type: "flow_control",
-          paused: true,
-          bufferedAudioMs: 1_500,
-          reason: "high_watermark",
-        });
-      }
-      if (!session.partialSent) {
-        session.partialSent = true;
-        const emitPartial = () => emit(streamingVoiceTranscriptionListeners, {
-            sessionId: chunk.sessionId,
-            turnId: chunk.turnId,
-            sequence: session.eventSequence++,
-            type: "partial",
-            segment: { text: "Fixture live…", revision: 1, confidence: 0.92 },
-          });
-        if ((window as Window & { __voiceFixtureHoldPartial?: boolean }).__voiceFixtureHoldPartial) window.setTimeout(emitPartial, 200);
-        else emitPartial();
-      }
-      return true;
-    },
-    stopStreamingVoiceTranscription: async (sessionId, reason = "manual") => {
-      const session = streamingVoiceSessions.get(sessionId);
-      if (!session) return false;
-      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "endpoint", reason });
-      const repairFixture = (window as Window & { __voiceFixtureTranscriptRepair?: boolean }).__voiceFixtureTranscriptRepair;
-      emit(streamingVoiceTranscriptionListeners, {
-        sessionId,
-        turnId: session.turnId,
-        sequence: session.eventSequence++,
-        type: "final",
-        segment: { text: repairFixture ? "检查留是语音模块" : "Fixture streaming transcript.", revision: 1, confidence: 1 },
-      });
-      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "completed" });
-      streamingVoiceSessions.delete(sessionId);
-      return true;
-    },
-    cancelStreamingVoiceTranscription: async (sessionId) => {
-      const session = streamingVoiceSessions.get(sessionId);
-      if (!session) return false;
-      emit(streamingVoiceTranscriptionListeners, { sessionId, turnId: session.turnId, sequence: session.eventSequence++, type: "cancelled" });
-      streamingVoiceSessions.delete(sessionId);
-      return true;
-    },
     startVoiceSynthesis: async () => {
       const requestId = `fixture-tts-${Date.now()}`;
       const timer = window.setTimeout(() => {
@@ -3246,7 +3534,7 @@ export function installMockDesktopApi(): void {
     getWorkspaceContextOverview: async (workspacePath) =>
       createMockWorkspaceOverview(workspacePath),
     listWorkspaceFiles: async (request) =>
-      createMockWorkspaceFiles(request.workspacePath, request.query),
+      createMockWorkspaceFiles(request.workspacePath, request.query, request.directoryPath),
     summarizeWorkspaceFolder: async (request) =>
       createMockWorkspaceFolderSummary(request.path),
     analyzeMaterialRoles: async (request) => ({
@@ -3302,6 +3590,64 @@ export function installMockDesktopApi(): void {
     }),
     previewWorkspaceFile: async (request) =>
       createMockWorkspacePreview(request.workspacePath, request.path, request.mode),
+    resolveConversationResource: async (request) => { const resourceRef = request.resourceRef; const p2 = request.sessionId && request.associationId; const p2File = Boolean(request.associationId?.includes("composer") || request.associationId?.includes("resource")); const fixtureState = request.associationId?.includes("deleted") ? "deleted" : request.associationId?.includes("offline") ? "offline" : request.associationId?.includes("moved") ? "moved" : p2 && !p2File ? "changed" : "available"; if (!resourceRef && !p2) throw new Error("conversation_resource_request_invalid"); return ({
+      workspaceId: resourceRef?.workspace_id || "mock-workspace",
+      resourceId: resourceRef?.resource_id || request.associationId!,
+      resourceType: resourceRef?.resource_type === "file" || p2File ? "file" : "artifact",
+      state: fixtureState,
+      path: resourceRef ? `mock/${resourceRef.label || resourceRef.resource_id}` : undefined,
+      logicalPath: p2 ? (p2File ? (conversationResourceNonInlineFixture ? "docs/brief.docx" : "docs/引用资料.md") : "artifacts/README.md") : undefined,
+      name: resourceRef?.label || (request.associationId?.includes("deleted") ? "已删除资料.md" : request.associationId?.includes("offline") ? "离线资料.md" : request.associationId?.includes("moved") ? "已移动资料\u202Ecod.exe.md" : p2File ? (conversationResourceNonInlineFixture ? "brief.docx" : "引用资料.md") : "Mock Runtime artifact"),
+      observedVersionAvailable: Boolean(p2 && !p2File && fixtureState === "changed"),
+      capabilities: { read: !["deleted", "offline"].includes(fixtureState), preview: !["deleted", "offline"].includes(fixtureState) && !(conversationResourceNonInlineFixture && p2File), download: !["deleted", "offline"].includes(fixtureState), reveal: !["deleted", "offline"].includes(fixtureState) && Boolean(resourceRef || p2File), openExternal: false, copyLogicalPath: Boolean(p2) },
+    }); },
+    previewConversationResource: async (request) => { const resourceRef = request.resourceRef; const p2 = request.sessionId && request.associationId; if (!resourceRef && !p2) throw new Error("conversation_resource_request_invalid"); return ({
+      workspacePath: request.workspacePath,
+      path: resourceRef ? `artifact://${resourceRef.workspace_id}/${resourceRef.resource_id}` : `resource://${request.sessionId}/${request.associationId}`,
+      relativePath: resourceRef?.label || request.associationId!,
+      name: resourceRef?.label || "Mock Runtime artifact",
+      kind: "text",
+      mime: "text/plain",
+      size: 29,
+      modifiedAt: "2026-08-16T00:00:00Z",
+      truncated: false,
+      content: request.version === "observed" ? "Mock cited-version preview." : "Mock Runtime artifact preview.",
+      metadata: { runtimeOwned: true },
+    }); },
+    revealConversationResource: async (request) => Boolean(request.resourceRef || (request.sessionId && request.associationId)),
+    copyConversationResourceLogicalPath: async () => "docs/Plan.md",
+    downloadConversationResource: async (request) => {
+      const resourceRef = request.resourceRef; const p2 = request.sessionId && request.associationId;
+      if (!resourceRef && !p2) throw new Error("conversation_resource_request_invalid");
+      const operationId = request.operationId || "mock-download-operation";
+      const name = request.suggestedName || resourceRef?.label || "artifact.bin";
+      const emit = (phase: ConversationResourceDownloadProgressEvent["phase"], transferredBytes: number) => {
+        const event = { operationId, phase, name, transferredBytes, totalBytes: 100, percent: transferredBytes } as const;
+        conversationResourceDownloadListeners.forEach((listener) => listener(event));
+      };
+      emit("preparing", 0);
+      for (const transferred of [25, 50, 75, 100]) {
+        await new Promise((resolveDelay) => window.setTimeout(resolveDelay, 150));
+        if (cancelledConversationResourceDownloads.delete(operationId)) {
+          emit("cancelled", transferred - 25);
+          return { canceled: true, name };
+        }
+        emit("downloading", transferred);
+      }
+      emit("completed", 100);
+      return { canceled: false, destinationPath: `C:\\Users\\Demo\\Downloads\\${name}`, name, size: 100, digest: "sha256:mock-runtime-artifact" };
+    },
+    cancelConversationResourceDownload: async (operationId) => {
+      cancelledConversationResourceDownloads.add(operationId);
+      return true;
+    },
+    onConversationResourceDownloadProgress: (callback) => {
+      conversationResourceDownloadListeners.add(callback);
+      return () => conversationResourceDownloadListeners.delete(callback);
+    },
+    startConversationResourceSubscription: async () => "mock-resource-subscription",
+    stopConversationResourceSubscription: async () => true,
+    onConversationResourceStateEvent: () => () => undefined,
     saveWorkspaceFileAs: async (request) => ({
       canceled: false,
       sourcePath: request.path,
@@ -5087,6 +5433,40 @@ export function installMockDesktopApi(): void {
       return result;
     },
     getScheduledTaskWorkerStatus: async () => ({ ...mockScheduledWorkerStatus }),
+    getWeChatChannelStatus: async () => ({ ...mockWeChatStatus }),
+    startWeChatLogin: async () => {
+      mockWeChatPolls = 0;
+      return {
+        operationId: "wechat-login:mock_operation_1234567890",
+        qrContent: "https://qr.example/mock-wechat-login",
+        status: "waiting" as const,
+        expiresAt: new Date(Date.now() + 120_000).toISOString(),
+        pollIntervalSeconds: 1,
+      };
+    },
+    pollWeChatLogin: async (request) => {
+      mockWeChatPolls += 1;
+      if (mockWeChatPolls < 2) return { operationId: request.operationId, status: "scanned" as const, pollIntervalSeconds: 1 };
+      mockWeChatStatus = { configured: true, credentialState: "valid" as const, runtimeState: "stopped" as const };
+      return { operationId: request.operationId, status: "confirmed" as const, accountLabel: "bot…456" };
+    },
+    cancelWeChatLogin: async (request) => ({ operationId: request.operationId, status: "cancelled" as const, cancelled: true }),
+    startWeChatChannel: async () => {
+      if (!mockWeChatStatus.configured) throw new Error("WeChat login is required.");
+      mockWeChatStatus = { configured: true, credentialState: "valid" as const, runtimeState: "running" as const };
+      return { ...mockWeChatStatus, accountLabel: "bot…456", startedAt: new Date().toISOString() };
+    },
+    stopWeChatChannel: async () => {
+      mockWeChatStatus = { ...mockWeChatStatus, runtimeState: "stopped" as const };
+      return { ...mockWeChatStatus };
+    },
+    logoutWeChatChannel: async () => {
+      mockWeChatStatus = { configured: false, credentialState: "missing" as const, runtimeState: "stopped" as const };
+      return { ...mockWeChatStatus };
+    },
+    getWeChatSessionSummary: async () => ({ count: mockWeChatStatus.configured ? 1 : 0 }),
+    getWeChatReplyCapability: async () => ({ available: mockWeChatStatus.runtimeState === "running", ...(mockWeChatStatus.runtimeState === "running" ? {} : { reason: "channel_not_running" as const }) }),
+    sendToWeChat: async (request) => ({ deliveryId: `mock-wechat-${request.idempotencyKey}`, sessionId: request.sessionId, status: "sent", attemptCount: 1 }),
     listChannelAdapters: async (_workspacePath?: string) => ({
       ...mockChannelAdapters,
       generatedAt: new Date().toISOString(),
@@ -5582,7 +5962,7 @@ export function installMockDesktopApi(): void {
       const workspacePath = request.workspacePath || "C:\\Users\\Demo\\Projects\\workspace";
       const adapterIds = (request.adapterIds?.length
         ? request.adapterIds
-        : ["mobile-chat", "slack-chat", "github-connector", "docs-connector", "calendar-connector", "database-connector", "logs-monitor"]
+        : ["mobile-chat", "github-connector", "docs-connector", "calendar-connector", "database-connector", "logs-monitor"]
       ).filter((adapterId, index, all) => all.indexOf(adapterId) === index);
       const results: DesktopChannelContextImportResult[] = [];
       const skippedAdapterIds: string[] = [];
@@ -6362,12 +6742,14 @@ export function installMockDesktopApi(): void {
     },
     onInstallProgress: (callback) => subscribe(installListeners, callback),
     onAuthSessionInvalidated: () => () => undefined,
+    onAuthSessionRestored: () => () => undefined,
     onOidcLoginDebug: (callback) =>
       subscribe(oidcLoginDebugListeners, callback),
     onChatEvent: (callback) => subscribe(chatListeners, callback),
     onVoiceTranscriptionEvent: (callback) => subscribe(voiceTranscriptionListeners, callback),
-    onStreamingVoiceTranscriptionEvent: (callback) => subscribe(streamingVoiceTranscriptionListeners, callback),
+    onVoicePreferencesChanged: (callback) => subscribe(voicePreferencesListeners, callback),
     onDuplexVoiceEvents: (callback) => subscribe(duplexVoiceListeners, callback),
+    onDuplexVoiceToolApprovalDecision: () => () => undefined,
     onVoiceSynthesisEvent: (callback) => subscribe(voiceSynthesisListeners, callback),
     onAgentRunEvent: (callback) => subscribe(agentRunListeners, callback),
     onUpdateStatus: (callback) => subscribe(updateListeners, callback),
@@ -6375,6 +6757,9 @@ export function installMockDesktopApi(): void {
     onTerminalExit: () => () => undefined,
     onBrowserTaskEvent: (callback) =>
       subscribe(browserTaskListeners, callback),
+    sendRenderHealthReport: () => {
+      // Mock: no-op — backpressure control is only active in production
+    },
   };
 
   window.openDrSai = api;
@@ -6431,7 +6816,8 @@ function createStructuredVisualFixtureMarkdown(imageUrl: string): string {
     `${codeLines.join("\n")}\n`,
     "```\n\n",
     `![OpenDrSai visual fixture](${imageUrl})\n\n`,
-    "The table and code block scroll within the response, while the image remains bounded by the readable column.",
+    "The table and code block scroll within the response, while the image remains bounded by the readable column.\n\n",
+    "Generated file: `README.md`.",
   ].join("");
 }
 
@@ -6529,18 +6915,49 @@ function createMockWorkspaceFolderSummary(path: string): WorkspaceFolderSummaryR
 function createMockWorkspaceFiles(
   workspacePath: string,
   query?: string,
+  directoryPath?: string,
 ): WorkspaceFileTreeResult {
-  const nodes = createMockWorkspaceNodes(workspacePath);
+  const allNodes = createMockWorkspaceNodes(workspacePath);
   const normalizedQuery = query?.trim().toLowerCase();
+
+  // If directoryPath is provided, find that directory in the mock tree and
+  // return only its direct children (simulating per-directory lazy loading).
+  if (directoryPath) {
+    const dirNode = findMockNodeByPath(allNodes, directoryPath);
+    const children = dirNode?.children ?? [];
+    return {
+      workspacePath,
+      nodes: children,
+      totalEntries: children.length,
+      truncated: false,
+      flat: false,
+      scanLimit: 500,
+    };
+  }
+
   const filteredNodes = normalizedQuery
-    ? filterMockNodes(nodes, normalizedQuery)
-    : nodes;
+    ? filterMockNodes(allNodes, normalizedQuery)
+    : allNodes;
   return {
     workspacePath,
     nodes: filteredNodes,
     totalEntries: countMockNodes(filteredNodes),
     truncated: false,
+    flat: false,
+    scanLimit: 500,
   };
+}
+
+/** Find a node by its path anywhere in the mock tree. */
+function findMockNodeByPath(nodes: WorkspaceFileNode[], path: string): WorkspaceFileNode | null {
+  for (const node of nodes) {
+    if (node.path === path) return node;
+    if (node.children) {
+      const found = findMockNodeByPath(node.children, path);
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
@@ -6562,6 +6979,7 @@ function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
       path: `${workspacePath}\\src`,
       relativePath: "src",
       type: "directory",
+      hasChildren: true,
       modifiedAt: now,
       gitStatus: "clean",
       children: [
@@ -6616,6 +7034,7 @@ function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
       path: `${workspacePath}\\data`,
       relativePath: "data",
       type: "directory",
+      hasChildren: true,
       modifiedAt: now,
       gitStatus: "clean",
       children: [
@@ -6648,6 +7067,7 @@ function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
       path: `${workspacePath}\\docs`,
       relativePath: "docs",
       type: "directory",
+      hasChildren: true,
       modifiedAt: now,
       gitStatus: "clean",
       children: [
@@ -6691,6 +7111,7 @@ function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
       path: `${workspacePath}\\assets`,
       relativePath: "assets",
       type: "directory",
+      hasChildren: true,
       modifiedAt: now,
       gitStatus: "clean",
       children: [

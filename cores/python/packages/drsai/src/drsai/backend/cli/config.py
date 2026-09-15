@@ -28,9 +28,12 @@ DEFAULT_CONFIG: dict = {
     # Plan mode: 启用后 AI 会先访谈用户确认计划再执行
     "plan_mode": False,
     # Workspace restriction: 启用后文件/Shell 操作限制在工作目录内
-    "workspace_enabled": True,
+    # Desktop 默认关闭(False)：桌面版是个人使用，用户已有完整系统权限，
+    # 限制 workspace 反而阻碍 agent 工作。CLI 可通过 /workspace 命令开启。
+    "workspace_enabled": False,
     # Dangerous command: 启用后允许 sudo/rm -rf/python/bash/sh 等危险命令
-    "dangerous_allowed": False,
+    # Desktop 默认开启(True)：桌面版个人使用，用户自行承担风险。
+    "dangerous_allowed": True,
     # Subagent concurrency: 子智能体并行执行的最大并发数
     "max_agent_concurrent": 5,
     # ── API Keys (persisted for packaged app convenience) ─────────────────

@@ -15,6 +15,58 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from drsai.backend.runtime.security import redact_sensitive
+from drsai.backend.runtime.security_boundary.models import (
+    ActionProposal,
+    ResolvedCapabilityProfile,
+    canonical_digest,
+)
+from drsai.backend.runtime.security_boundary.storage import SecurityBoundaryStore
+from drsai.backend.runtime.security_boundary.metrics import SecurityMetricsCollector
+from drsai.backend.runtime.authorization.approval_service import (
+    ApprovalDecision as AuthorizationApprovalDecision,
+    ApprovalRequest as AuthorizationApprovalRequest,
+    ApprovalService as AuthorizationApprovalService,
+)
+from drsai.backend.runtime.authorization.grant_service import GrantService as AuthorizationGrantService
+from drsai.backend.runtime.authorization.migration import (
+    LegacyApprovalMigrationReport,
+    LegacyApprovalMigrationService,
+    LegacyApprovalRetirementStatus,
+)
+from drsai.backend.runtime.security_boundary.grants import AuthorizationGrant, AuthorizationGrantStore
+from drsai.backend.runtime.security_boundary.filesystem_execution import AuthorizedFilesystemExecutionService
+from drsai.backend.runtime.security_boundary.isolation_leases import IsolationAttestationLeaseStore
+from drsai.backend.runtime.security_boundary.isolated_effect_execution import (
+    IsolatedEffectExecutionService,
+)
+from drsai.backend.runtime.security_boundary.isolated_worker_artifact import (
+    AuthenticodeEvidence,
+    IsolatedWorkerArtifactResolver,
+)
+from drsai.backend.runtime.security_boundary.windows_isolated_session import (
+    WindowsIsolatedExecutionSessionService,
+)
+from drsai.backend.runtime.permission_modes import (
+    AdministratorPolicy,
+    ModeSelection,
+    ModeTransitionResult,
+    PermissionModeService,
+    PlatformBoundary,
+    WorkspaceContext,
+    LegacyPermissionConfigMigrationService,
+    LegacyPermissionMigrationResult,
+    ChildPermissionInheritance,
+    ChildPermissionResolver,
+    EffectivePermissionProfile,
+    AutoReviewCoordinator,
+    AutoReviewRouteResult,
+    AutoReviewerConfig,
+    AutoReviewerService,
+    KillSwitchResult,
+    PermissionKillSwitchService,
+    mode_descriptors,
+    get_mode,
+)
 from drsai.backend.runtime.goals import normalize_goal
 from drsai.backend.runtime.journal import RuntimeConversationJournal
 from drsai.backend.runtime.experiments import RuntimeExperimentStore
@@ -132,6 +184,38 @@ def _timestamp(value: str | None) -> float:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
     except (TypeError, ValueError):
         return 0.0
+
+
+def _public_input_evidence(
+    manifest_payload: Mapping[str, Any], timeline: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Expose attachment/image admission facts without OCR-injected prompt text."""
+    stored = manifest_payload.get("input_evidence") if isinstance(manifest_payload.get("input_evidence"), Mapping) else {}
+    attachments = stored.get("attachments") if isinstance(stored.get("attachments"), list) else None
+    if attachments is None:
+        raw_attachments = manifest_payload.get("attachments")
+        attachments = list(raw_attachments) if isinstance(raw_attachments, list) else []
+    has_image_part = False
+    for item in timeline:
+        if str(item.get("type") or "") != "message":
+            continue
+        content = item.get("content") if isinstance(item.get("content"), dict) else {}
+        if str(content.get("role") or item.get("role") or "") != "user":
+            continue
+        parts = content.get("parts") if isinstance(content.get("parts"), list) else []
+        if any(isinstance(part, dict) and str(part.get("type") or "") == "image" for part in parts):
+            has_image_part = True
+            break
+    return {
+        "attachments": [dict(item) for item in attachments if isinstance(item, Mapping)],
+        "require_manifest_reference": bool(
+            stored.get("require_manifest_reference", bool(attachments))
+        ),
+        "require_oaep_user_message_part": bool(
+            stored.get("require_oaep_user_message_part", has_image_part)
+        ),
+        "forbid_ocr_text_injection": bool(stored.get("forbid_ocr_text_injection", True)),
+    }
 
 
 class _CheckpointCipher:
@@ -252,6 +336,16 @@ class RuntimeEngine:
             "response_bytes_max": 0,
         }
         self._initialize()
+        self.security_boundary = SecurityBoundaryStore(self.database)
+        self.security_metrics = SecurityMetricsCollector(self.database)
+        self.authorization_approvals = AuthorizationApprovalService(self.database)
+        self.authorization_grants = AuthorizationGrantService(self.database)
+        self.authorization_migration = LegacyApprovalMigrationService(self.database)
+        self.permission_modes = PermissionModeService(self.database)
+        self.permission_config_migration = LegacyPermissionConfigMigrationService(self.database)
+        self.permission_kill_switches = PermissionKillSwitchService(self.database)
+        self.isolation_attestation_leases = IsolationAttestationLeaseStore(self.database)
+        self.child_permissions = ChildPermissionResolver(self.database)
         with self._connect() as metrics_db:
             metrics_row = metrics_db.execute("SELECT * FROM runtime_inspection_metrics WHERE metric_id=1").fetchone()
         if metrics_row is not None:
@@ -263,6 +357,7 @@ class RuntimeEngine:
         self.conversation_journal = RuntimeConversationJournal(
             self.database, self.identity.runtime_id, self.observability
         )
+        self.reconcile_channel_deliveries()
         self.experiments = RuntimeExperimentStore(
             self.database,
             self._checkpoint_cipher.encrypt,
@@ -301,6 +396,13 @@ class RuntimeEngine:
         self.replay_executions.reconcile_interrupted()
         self.reconcile_terminal_run_manifests()
 
+    def authorized_filesystem_execution(self, workspace_root: Path) -> AuthorizedFilesystemExecutionService:
+        """Return the Runtime-owned file adapter without changing client protocols."""
+
+        return AuthorizedFilesystemExecutionService.for_windows(
+            Path(workspace_root), AuthorizationGrantStore(self.database),
+        )
+
     def mark_replay_execution_phase(self, run_id: str, phase: str) -> None:
         self.replay_executions.mark_phase(run_id, phase)
 
@@ -319,15 +421,57 @@ class RuntimeEngine:
                   session_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, worktree_id TEXT, title TEXT NOT NULL,
                   archived INTEGER NOT NULL DEFAULT 0, lifecycle TEXT NOT NULL DEFAULT 'active',
                   revision INTEGER NOT NULL DEFAULT 1, agent_definition TEXT, backend_id TEXT,
-                  removed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                  model TEXT, reasoning_effort TEXT, plan_mode INTEGER,
+                  removed_at TEXT, origin_kind TEXT, origin_provider TEXT, origin_binding_id TEXT,
+                  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_runtime_sessions_workspace ON runtime_sessions(workspace_id, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS runtime_channel_bindings (
+                  binding_id TEXT PRIMARY KEY,
+                  provider TEXT NOT NULL,
+                  account_fingerprint TEXT NOT NULL,
+                  provider_user_key TEXT NOT NULL,
+                  display_index INTEGER NOT NULL,
+                  active_session_id TEXT NOT NULL REFERENCES runtime_sessions(session_id),
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  UNIQUE(provider,account_fingerprint,provider_user_key),
+                  UNIQUE(provider,account_fingerprint,display_index)
+                );
+                CREATE INDEX IF NOT EXISTS idx_runtime_channel_bindings_session
+                  ON runtime_channel_bindings(active_session_id);
+                CREATE TABLE IF NOT EXISTS runtime_channel_deliveries (
+                  delivery_id TEXT PRIMARY KEY,
+                  session_id TEXT NOT NULL REFERENCES runtime_sessions(session_id),
+                  item_id TEXT NOT NULL UNIQUE,
+                  provider TEXT NOT NULL,
+                  idempotency_key TEXT NOT NULL UNIQUE,
+                  request_digest TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  attempt_count INTEGER NOT NULL DEFAULT 0,
+                  error_code TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_runtime_channel_deliveries_session
+                  ON runtime_channel_deliveries(session_id,created_at);
+                CREATE TABLE IF NOT EXISTS runtime_channel_migrations (
+                  migration_id TEXT PRIMARY KEY,
+                  provider TEXT NOT NULL,
+                  source_version TEXT NOT NULL,
+                  source_digest TEXT NOT NULL,
+                  record_count INTEGER NOT NULL,
+                  status TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  UNIQUE(provider,source_digest)
+                );
                 CREATE TABLE IF NOT EXISTS runtime_runs (
                   run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES runtime_sessions(session_id),
                   workspace_id TEXT NOT NULL, worktree_id TEXT, runtime_id TEXT NOT NULL, instance_id TEXT NOT NULL,
                   agent_definition TEXT NOT NULL, backend_id TEXT NOT NULL, status TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE,
                   input_message TEXT NOT NULL DEFAULT '', attachment_refs_json TEXT NOT NULL DEFAULT '[]',
                   input_resources_json TEXT NOT NULL DEFAULT '[]',
+                  input_parts_json TEXT NOT NULL DEFAULT '[]',
                   correlation_id TEXT, parent_run_id TEXT REFERENCES runtime_runs(run_id),
                   backend_run_id TEXT, backend_run_index INTEGER,
                   created_at TEXT NOT NULL, started_at TEXT, completed_at TEXT, cancel_requested_at TEXT
@@ -436,8 +580,26 @@ class RuntimeEngine:
                 db.execute("ALTER TABLE runtime_sessions ADD COLUMN agent_definition TEXT")
             if "backend_id" not in session_columns:
                 db.execute("ALTER TABLE runtime_sessions ADD COLUMN backend_id TEXT")
+            if "model" not in session_columns:
+                db.execute("ALTER TABLE runtime_sessions ADD COLUMN model TEXT")
+            if "reasoning_effort" not in session_columns:
+                db.execute("ALTER TABLE runtime_sessions ADD COLUMN reasoning_effort TEXT")
+            if "plan_mode" not in session_columns:
+                db.execute("ALTER TABLE runtime_sessions ADD COLUMN plan_mode INTEGER")
             if "removed_at" not in session_columns:
                 db.execute("ALTER TABLE runtime_sessions ADD COLUMN removed_at TEXT")
+            if "origin_kind" not in session_columns:
+                db.execute("ALTER TABLE runtime_sessions ADD COLUMN origin_kind TEXT")
+            if "origin_provider" not in session_columns:
+                db.execute("ALTER TABLE runtime_sessions ADD COLUMN origin_provider TEXT")
+            if "origin_binding_id" not in session_columns:
+                db.execute("ALTER TABLE runtime_sessions ADD COLUMN origin_binding_id TEXT")
+            delivery_columns = {
+                str(row["name"])
+                for row in db.execute("PRAGMA table_info(runtime_channel_deliveries)").fetchall()
+            }
+            if "request_digest" not in delivery_columns:
+                db.execute("ALTER TABLE runtime_channel_deliveries ADD COLUMN request_digest TEXT NOT NULL DEFAULT ''")
             db.execute(
                 "UPDATE runtime_sessions SET lifecycle=CASE WHEN archived=0 THEN 'active' ELSE 'archived' END "
                 "WHERE lifecycle IS NULL OR lifecycle NOT IN ('active','archived','removed') "
@@ -453,6 +615,8 @@ class RuntimeEngine:
                 db.execute("ALTER TABLE runtime_runs ADD COLUMN attachment_refs_json TEXT NOT NULL DEFAULT '[]'")
             if "input_resources_json" not in columns:
                 db.execute("ALTER TABLE runtime_runs ADD COLUMN input_resources_json TEXT NOT NULL DEFAULT '[]'")
+            if "input_parts_json" not in columns:
+                db.execute("ALTER TABLE runtime_runs ADD COLUMN input_parts_json TEXT NOT NULL DEFAULT '[]'")
             if "correlation_id" not in columns:
                 db.execute("ALTER TABLE runtime_runs ADD COLUMN correlation_id TEXT")
             if "parent_run_id" not in columns:
@@ -698,6 +862,9 @@ class RuntimeEngine:
         *,
         agent_definition: str | None = None,
         backend_id: str | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+        plan_mode: bool | None = None,
     ) -> dict[str, Any]:
         if not workspace_id or not self.workspace_exists(workspace_id):
             raise KeyError("Unknown or closed Workspace")
@@ -708,10 +875,11 @@ class RuntimeEngine:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 "INSERT INTO runtime_sessions(session_id,workspace_id,worktree_id,title,archived,lifecycle,"
-                "revision,agent_definition,backend_id,removed_at,created_at,updated_at) "
-                "VALUES(?,?,?,?,0,'active',1,?,?,NULL,?,?)",
+                "revision,agent_definition,backend_id,model,reasoning_effort,plan_mode,removed_at,created_at,updated_at) "
+                "VALUES(?,?,?,?,0,'active',1,?,?,?,?,?,NULL,?,?)",
                 (session_id, workspace_id, worktree_id, title[:240] or "New session",
-                 agent_definition, backend_id, now, now),
+                 agent_definition, backend_id, model, reasoning_effort,
+                 None if plan_mode is None else int(plan_mode), now, now),
             )
             self.conversation_journal.append_event_in_transaction(
                 db,
@@ -728,6 +896,435 @@ class RuntimeEngine:
             db.commit()
         self.conversation_journal.notify_committed()
         return self.get_session(session_id)
+
+    def resolve_or_create_channel_session(
+        self,
+        workspace_id: str,
+        *,
+        provider: str,
+        account_fingerprint: str,
+        provider_user_key: str,
+        title_prefix: str,
+    ) -> tuple[dict[str, Any], bool]:
+        """Resolve a channel binding or atomically create its first Session.
+
+        Provider identifiers must be transformed before this boundary.  The
+        Runtime stores only installation-scoped opaque keys and never receives
+        the raw channel user identifier.
+        """
+        if not workspace_id or not self.workspace_exists(workspace_id):
+            raise KeyError("Unknown or closed Workspace")
+        if not all((provider, account_fingerprint, provider_user_key, title_prefix)):
+            raise ValueError("Channel binding fields are required")
+        now = _now()
+        worktree_id = self.worktree_for_workspace(workspace_id)
+        created = False
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            binding = db.execute(
+                "SELECT * FROM runtime_channel_bindings WHERE provider=? "
+                "AND account_fingerprint=? AND provider_user_key=?",
+                (provider, account_fingerprint, provider_user_key),
+            ).fetchone()
+            if binding is not None:
+                session_id = str(binding["active_session_id"])
+                row = db.execute(
+                    "SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)
+                ).fetchone()
+                if row is None:
+                    db.rollback()
+                    raise RuntimeError("Channel binding references a missing Session")
+                if str(row["lifecycle"]) == "removed":
+                    db.rollback()
+                    raise RuntimeError("Channel binding references a removed Session")
+                if str(row["lifecycle"]) == "archived":
+                    revision = int(row["revision"]) + 1
+                    db.execute(
+                        "UPDATE runtime_sessions SET archived=0,lifecycle='active',revision=?,updated_at=? "
+                        "WHERE session_id=?",
+                        (revision, now, session_id),
+                    )
+                    self.conversation_journal.append_event_in_transaction(
+                        db,
+                        session_id,
+                        "session.updated",
+                        {
+                            "title": str(row["title"]),
+                            "lifecycle": "active",
+                            "revision": revision,
+                            "origin": {"kind": "channel", "provider": provider},
+                        },
+                        dedupe_key=f"session-revision:{session_id}:{revision}",
+                        created_at=now,
+                    )
+                db.execute(
+                    "UPDATE runtime_channel_bindings SET updated_at=? WHERE binding_id=?",
+                    (now, str(binding["binding_id"])),
+                )
+                db.commit()
+            else:
+                display_index = int(db.execute(
+                    "SELECT COALESCE(MAX(display_index),0)+1 FROM runtime_channel_bindings "
+                    "WHERE provider=? AND account_fingerprint=?",
+                    (provider, account_fingerprint),
+                ).fetchone()[0])
+                binding_id = f"wcb-{uuid.uuid4()}"
+                session_id = f"session-{uuid.uuid4()}"
+                title = f"{title_prefix} {display_index}"[:240]
+                db.execute(
+                    "INSERT INTO runtime_sessions(session_id,workspace_id,worktree_id,title,archived,lifecycle,"
+                    "revision,agent_definition,backend_id,removed_at,origin_kind,origin_provider,origin_binding_id,"
+                    "created_at,updated_at) VALUES(?,?,?,?,0,'active',1,NULL,NULL,NULL,'channel',?,?,?,?)",
+                    (session_id, workspace_id, worktree_id, title, provider, binding_id, now, now),
+                )
+                db.execute(
+                    "INSERT INTO runtime_channel_bindings(binding_id,provider,account_fingerprint,"
+                    "provider_user_key,display_index,active_session_id,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
+                    (binding_id, provider, account_fingerprint, provider_user_key, display_index,
+                     session_id, now, now),
+                )
+                self.conversation_journal.append_event_in_transaction(
+                    db,
+                    session_id,
+                    "session.updated",
+                    {
+                        "title": title,
+                        "lifecycle": "active",
+                        "revision": 1,
+                        "origin": {"kind": "channel", "provider": provider},
+                    },
+                    dedupe_key=f"session-created:{session_id}",
+                    created_at=now,
+                )
+                db.commit()
+                created = True
+        self.conversation_journal.notify_committed()
+        return self.get_session(session_id), created
+
+    def rotate_channel_session(self, binding_id: str, *, title_prefix: str) -> dict[str, Any]:
+        """Create a fresh Session and atomically make it active for a binding."""
+        if not binding_id or not title_prefix:
+            raise ValueError("Channel binding and title prefix are required")
+        now = _now()
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            binding = db.execute(
+                "SELECT * FROM runtime_channel_bindings WHERE binding_id=?", (binding_id,)
+            ).fetchone()
+            if binding is None:
+                db.rollback()
+                raise KeyError("Channel binding not found")
+            previous = db.execute(
+                "SELECT * FROM runtime_sessions WHERE session_id=?",
+                (str(binding["active_session_id"]),),
+            ).fetchone()
+            if previous is None:
+                db.rollback()
+                raise RuntimeError("Channel binding references a missing Session")
+            display_index = int(db.execute(
+                "SELECT COALESCE(MAX(display_index),0)+1 FROM runtime_channel_bindings "
+                "WHERE provider=? AND account_fingerprint=?",
+                (str(binding["provider"]), str(binding["account_fingerprint"])),
+            ).fetchone()[0])
+            session_id = f"session-{uuid.uuid4()}"
+            title = f"{title_prefix} {display_index}"[:240]
+            db.execute(
+                "INSERT INTO runtime_sessions(session_id,workspace_id,worktree_id,title,archived,lifecycle,"
+                "revision,agent_definition,backend_id,removed_at,origin_kind,origin_provider,origin_binding_id,"
+                "created_at,updated_at) VALUES(?,?,?,?,0,'active',1,?,?,NULL,'channel',?,?,?,?)",
+                (session_id, str(previous["workspace_id"]), previous["worktree_id"], title,
+                 previous["agent_definition"], previous["backend_id"], str(binding["provider"]),
+                 binding_id, now, now),
+            )
+            db.execute(
+                "UPDATE runtime_channel_bindings SET active_session_id=?,display_index=?,updated_at=? "
+                "WHERE binding_id=?",
+                (session_id, display_index, now, binding_id),
+            )
+            self.conversation_journal.append_event_in_transaction(
+                db, session_id, "session.updated",
+                {"title": title, "lifecycle": "active", "revision": 1,
+                 "origin": {"kind": "channel", "provider": str(binding["provider"])}},
+                dedupe_key=f"session-created:{session_id}", created_at=now,
+            )
+            db.commit()
+        self.conversation_journal.notify_committed()
+        return self.get_session(session_id)
+
+    def channel_binding_for_session(self, session_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT binding_id,provider,display_index,active_session_id,created_at,updated_at "
+                "FROM runtime_channel_bindings WHERE active_session_id=?", (session_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_channel_sessions(self, binding_id: str) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM runtime_sessions WHERE origin_kind='channel' AND origin_binding_id=? "
+                "AND lifecycle<>'removed' ORDER BY created_at,session_id",
+                (binding_id,),
+            ).fetchall()
+        return [self._session(row) for row in rows]
+
+    def channel_session_count(self, provider: str) -> int:
+        with self._connect() as db:
+            return int(db.execute(
+                "SELECT COUNT(*) FROM runtime_sessions WHERE origin_kind='channel' "
+                "AND origin_provider=? AND lifecycle<>'removed'", (provider,),
+            ).fetchone()[0])
+
+    def record_channel_migration(
+        self, *, provider: str, source_version: str, source_digest: str,
+        record_count: int, status: str,
+    ) -> dict[str, Any]:
+        if status not in {"no_records", "unable_to_correlate", "completed"}:
+            raise ValueError("Invalid channel migration status")
+        now = _now()
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM runtime_channel_migrations WHERE provider=? AND source_digest=?",
+                (provider, source_digest),
+            ).fetchone()
+            if existing is not None:
+                db.commit()
+                return dict(existing)
+            migration_id = f"migration-{uuid.uuid4()}"
+            db.execute(
+                "INSERT INTO runtime_channel_migrations(migration_id,provider,source_version,"
+                "source_digest,record_count,status,created_at) VALUES(?,?,?,?,?,?,?)",
+                (migration_id, provider, source_version[:80], source_digest[:128],
+                 max(0, record_count), status, now),
+            )
+            db.commit()
+        return {
+            "migration_id": migration_id, "provider": provider,
+            "source_version": source_version[:80], "source_digest": source_digest[:128],
+            "record_count": max(0, record_count), "status": status, "created_at": now,
+        }
+
+    def activate_channel_session(self, binding_id: str, session_id: str) -> dict[str, Any]:
+        now = _now()
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            binding = db.execute(
+                "SELECT * FROM runtime_channel_bindings WHERE binding_id=?", (binding_id,)
+            ).fetchone()
+            session = db.execute(
+                "SELECT * FROM runtime_sessions WHERE session_id=? AND origin_binding_id=?",
+                (session_id, binding_id),
+            ).fetchone()
+            if binding is None or session is None or str(session["lifecycle"]) == "removed":
+                db.rollback()
+                raise KeyError("Channel Session not found")
+            if str(session["lifecycle"]) == "archived":
+                revision = int(session["revision"]) + 1
+                db.execute(
+                    "UPDATE runtime_sessions SET archived=0,lifecycle='active',revision=?,updated_at=? "
+                    "WHERE session_id=?", (revision, now, session_id),
+                )
+                self.conversation_journal.append_event_in_transaction(
+                    db, session_id, "session.updated",
+                    {"title": str(session["title"]), "lifecycle": "active", "revision": revision,
+                     "origin": {"kind": "channel", "provider": str(binding["provider"])}},
+                    dedupe_key=f"session-revision:{session_id}:{revision}", created_at=now,
+                )
+            db.execute(
+                "UPDATE runtime_channel_bindings SET active_session_id=?,updated_at=? WHERE binding_id=?",
+                (session_id, now, binding_id),
+            )
+            db.commit()
+        self.conversation_journal.notify_committed()
+        return self.get_session(session_id)
+
+    def begin_channel_delivery(
+        self, session_id: str, *, provider: str, idempotency_key: str, text: str
+    ) -> tuple[dict[str, Any], bool]:
+        if not idempotency_key or len(idempotency_key) > 200:
+            raise ValueError("A valid channel delivery Idempotency-Key is required")
+        if not text.strip() or len(text) > 20_000:
+            raise ValueError("Channel outbound text is invalid")
+        now = _now()
+        normalized_text = text.strip()
+        request_digest = hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()
+        delivery_id = f"delivery-{uuid.uuid4()}"
+        item_id = f"channel-outbound-{uuid.uuid4()}"
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM runtime_channel_deliveries WHERE idempotency_key=?",
+                (idempotency_key,),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    str(existing["session_id"]) != session_id
+                    or str(existing["provider"]) != provider
+                    or str(existing["request_digest"]) != request_digest
+                ):
+                    db.rollback()
+                    raise ValueError("Channel delivery Idempotency-Key identity conflict")
+                db.commit()
+                return dict(existing), False
+            session = db.execute(
+                "SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)
+            ).fetchone()
+            if session is None or str(session["origin_provider"] or "") != provider:
+                db.rollback()
+                raise KeyError("Channel Session not found")
+            db.execute(
+                "INSERT INTO runtime_channel_deliveries(delivery_id,session_id,item_id,provider,"
+                "idempotency_key,request_digest,status,attempt_count,error_code,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,'pending',0,NULL,?,?)",
+                (delivery_id, session_id, item_id, provider, idempotency_key, request_digest, now, now),
+            )
+            self.conversation_journal.upsert_item_in_transaction(
+                db, session_id,
+                item_id=item_id, kind="message", role="assistant", revision=1,
+                source_client="windows", source_message_id=f"{provider}-outbound:{idempotency_key}",
+                payload={
+                    "text": normalized_text, "phase": "final", "author": "desktop",
+                    "channel_delivery": {"provider": provider, "status": "pending"},
+                },
+                event_kind="conversation.item.upsert", created_at=now, updated_at=now,
+            )
+            db.commit()
+        self.conversation_journal.notify_committed()
+        return self.get_channel_delivery(delivery_id), True
+
+    def complete_channel_delivery(
+        self, delivery_id: str, *, status: str, error_code: str | None = None
+    ) -> dict[str, Any]:
+        if status not in {"sent", "failed", "unknown"}:
+            raise ValueError("Invalid channel delivery status")
+        now = _now()
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM runtime_channel_deliveries WHERE delivery_id=?", (delivery_id,)
+            ).fetchone()
+            if row is None:
+                db.rollback()
+                raise KeyError("Channel delivery not found")
+            current = str(row["status"])
+            if current == "sent":
+                db.commit()
+                return dict(row)
+            if current not in {"pending", "failed", "unknown"}:
+                db.rollback()
+                raise ValueError("Channel delivery cannot transition")
+            db.execute(
+                "UPDATE runtime_channel_deliveries SET status=?,attempt_count=attempt_count+1,"
+                "error_code=?,updated_at=? WHERE delivery_id=?",
+                (status, error_code[:120] if error_code else None, now, delivery_id),
+            )
+            item_row = db.execute(
+                "SELECT * FROM runtime_conversation_items WHERE item_id=?", (str(row["item_id"]),)
+            ).fetchone()
+            item = dict(item_row) if item_row is not None else None
+            if item is not None:
+                payload = json.loads(str(item.get("payload_json") or "{}"))
+                # Agent-produced OAEP items are immutable after reaching a
+                # terminal state. Their provider delivery is authoritative in
+                # runtime_channel_deliveries; only the separate Desktop-authored
+                # outbound item carries a projected delivery status.
+                if payload.get("author") != "desktop":
+                    db.commit()
+                    return self.get_channel_delivery(delivery_id)
+                payload["channel_delivery"] = {
+                    "provider": str(row["provider"]), "status": status,
+                    **({"error_code": error_code[:120]} if error_code else {}),
+                }
+                self.conversation_journal.upsert_item_in_transaction(
+                    db, str(row["session_id"]), item_id=str(row["item_id"]), kind=str(item["item_kind"]),
+                    role=item["role"], revision=int(item["revision"]) + 1,
+                    source_client=str(item["source_client"]),
+                    run_id=item.get("run_id"),
+                    source_message_id=item.get("source_message_id"), payload=payload,
+                    event_kind="conversation.item.upsert", created_at=str(item["created_at"]),
+                    updated_at=now,
+                )
+            db.commit()
+        self.conversation_journal.notify_committed()
+        return self.get_channel_delivery(delivery_id)
+
+    def begin_existing_item_channel_delivery(
+        self,
+        session_id: str,
+        *,
+        item_id: str,
+        provider: str,
+        idempotency_key: str,
+        text: str,
+    ) -> tuple[dict[str, Any], bool]:
+        """Attach a provider delivery to an existing authoritative message Item."""
+        if not idempotency_key or len(idempotency_key) > 200:
+            raise ValueError("A valid channel delivery Idempotency-Key is required")
+        normalized_text = text.strip()
+        if not normalized_text or len(normalized_text) > 200_000:
+            raise ValueError("Channel delivery text is invalid")
+        request_digest = hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()
+        now = _now()
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM runtime_channel_deliveries WHERE idempotency_key=?",
+                (idempotency_key,),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    str(existing["session_id"]) != session_id
+                    or str(existing["item_id"]) != item_id
+                    or str(existing["provider"]) != provider
+                    or str(existing["request_digest"]) != request_digest
+                ):
+                    db.rollback()
+                    raise ValueError("Channel delivery Idempotency-Key identity conflict")
+                db.commit()
+                return dict(existing), False
+            session = db.execute(
+                "SELECT origin_provider FROM runtime_sessions WHERE session_id=?", (session_id,)
+            ).fetchone()
+            item_row = db.execute(
+                "SELECT * FROM runtime_conversation_items WHERE item_id=? AND session_id=?",
+                (item_id, session_id),
+            ).fetchone()
+            if session is None or str(session["origin_provider"] or "") != provider or item_row is None:
+                db.rollback()
+                raise KeyError("Channel Session Item not found")
+            delivery_id = f"delivery-{uuid.uuid4()}"
+            db.execute(
+                "INSERT INTO runtime_channel_deliveries(delivery_id,session_id,item_id,provider,"
+                "idempotency_key,request_digest,status,attempt_count,error_code,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,'pending',0,NULL,?,?)",
+                (delivery_id, session_id, item_id, provider, idempotency_key, request_digest, now, now),
+            )
+            db.commit()
+        self.conversation_journal.notify_committed()
+        return self.get_channel_delivery(delivery_id), True
+
+    def get_channel_delivery(self, delivery_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM runtime_channel_deliveries WHERE delivery_id=?", (delivery_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError("Channel delivery not found")
+        return dict(row)
+
+    def reconcile_channel_deliveries(self) -> int:
+        """Fail closed after restart: an interrupted send has an unknown outcome."""
+        with self._connect() as db:
+            pending = [str(row["delivery_id"]) for row in db.execute(
+                "SELECT delivery_id FROM runtime_channel_deliveries WHERE status='pending'"
+            ).fetchall()]
+        for delivery_id in pending:
+            self.complete_channel_delivery(
+                delivery_id, status="unknown", error_code="runtime_restarted_during_delivery"
+            )
+        return len(pending)
 
     def import_session(
         self,
@@ -753,6 +1350,9 @@ class RuntimeEngine:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute("SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)).fetchone()
             if existing is not None:
+                if str(existing["lifecycle"]) == "removed":
+                    db.rollback()
+                    return self._session(existing), False
                 if str(existing["workspace_id"]) != workspace_id:
                     db.rollback()
                     raise ValueError("Imported Session identity is already bound to another Workspace")
@@ -878,6 +1478,9 @@ class RuntimeEngine:
         title: str | None = None,
         archived: bool | None = None,
         lifecycle: str | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+        plan_mode: bool | None = None,
     ) -> dict[str, Any]:
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -900,16 +1503,26 @@ class RuntimeEngine:
                 db.rollback()
                 raise ValueError("Removed Session lifecycle is terminal")
             normalized_title = title[:240] if title is not None else current["title"]
-            if current["title"] == normalized_title and current["lifecycle"] == wanted:
+            next_model = model if model is not None else current.get("model")
+            next_reasoning_effort = reasoning_effort if reasoning_effort is not None else current.get("reasoning_effort")
+            next_plan_mode = plan_mode if plan_mode is not None else current.get("plan_mode")
+            if (
+                current["title"] == normalized_title
+                and current["lifecycle"] == wanted
+                and current.get("model") == next_model
+                and current.get("reasoning_effort") == next_reasoning_effort
+                and current.get("plan_mode") == next_plan_mode
+            ):
                 db.rollback()
                 return current
             removed_at = current["removed_at"] or (_now() if wanted == "removed" else None)
             updated_at = _now()
             db.execute(
-                "UPDATE runtime_sessions SET title=?, archived=?, lifecycle=?, revision=revision+1, "
+                "UPDATE runtime_sessions SET title=?, archived=?, lifecycle=?, model=?, reasoning_effort=?, plan_mode=?, revision=revision+1, "
                 "removed_at=?, updated_at=? WHERE session_id=?",
-                (normalized_title, int(wanted != "active"),
-                 wanted, removed_at, updated_at, session_id),
+                (normalized_title, int(wanted != "active"), wanted, next_model,
+                 next_reasoning_effort, None if next_plan_mode is None else int(next_plan_mode),
+                 removed_at, updated_at, session_id),
             )
             revision = int(current["revision"]) + 1
             event_kind = (
@@ -927,6 +1540,9 @@ class RuntimeEngine:
                     "title": normalized_title,
                     "lifecycle": wanted,
                     "revision": revision,
+                    "model": next_model,
+                    "reasoning_effort": next_reasoning_effort,
+                    "plan_mode": next_plan_mode,
                 },
                 dedupe_key=f"session-revision:{session_id}:{revision}",
                 created_at=updated_at,
@@ -993,13 +1609,13 @@ class RuntimeEngine:
             db.execute(
                 """INSERT INTO runtime_runs(
                     run_id, session_id, workspace_id, worktree_id, runtime_id, instance_id, agent_definition,
-                    backend_id, status, idempotency_key, input_message, attachment_refs_json, input_resources_json, correlation_id,
+                    backend_id, status, idempotency_key, input_message, attachment_refs_json, input_resources_json, input_parts_json, correlation_id,
                     parent_run_id, created_at, started_at, completed_at, cancel_requested_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     run_id, session_id, session["workspace_id"], session["worktree_id"], self.identity.runtime_id,
                     self.identity.instance_id, agent_definition, backend_id, "queued",
-                    idempotency_key, "", "[]", "[]", None, parent_run_id, now, None, None, None,
+                    idempotency_key, "", "[]", "[]", "[]", None, parent_run_id, now, None, None, None,
                 ),
             )
             manifest = initial_manifest(
@@ -1240,12 +1856,12 @@ class RuntimeEngine:
             agent_definition = str(session.get("agent_definition") or f"{backend_id}@1")
             db.execute(
                 "INSERT INTO runtime_runs(run_id,session_id,workspace_id,worktree_id,runtime_id,instance_id,"
-                "agent_definition,backend_id,status,idempotency_key,input_message,attachment_refs_json,input_resources_json,"
+                "agent_definition,backend_id,status,idempotency_key,input_message,attachment_refs_json,input_resources_json,input_parts_json,"
                 "correlation_id,parent_run_id,backend_run_id,backend_run_index,created_at,started_at,completed_at,cancel_requested_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (run_id, session_id, session["workspace_id"], session.get("worktree_id"),
                  self.identity.runtime_id, self.identity.instance_id, agent_definition, backend_id,
-                 runtime_status, idempotency_key, "", "[]", "[]", None, None, backend_run_id, backend_run_index,
+                 runtime_status, idempotency_key, "", "[]", "[]", "[]", None, None, backend_run_id, backend_run_index,
                  created, created, completed, None),
             )
             db.execute(
@@ -1718,6 +2334,7 @@ class RuntimeEngine:
         *,
         attachment_refs: list[str] | None = None,
         input_resources: list[Mapping[str, Any]] | None = None,
+        input_parts: list[Mapping[str, Any]] | None = None,
         correlation_id: str | None = None,
         source_client: str = "runtime",
         source_message_id: str | None = None,
@@ -1726,12 +2343,22 @@ class RuntimeEngine:
     ) -> dict[str, Any]:
         run = self.get_run(run_id)
         safe_message = str(redact_sensitive(redact_secrets(message), "", "content"))
-        from drsai.backend.runtime.input_resources import normalize_input_resources, serializable_input_resources
+        from drsai.backend.runtime.input_resources import (
+            normalize_input_parts, normalize_input_resources, serializable_input_resources,
+        )
         normalized_resources = normalize_input_resources(input_resources or [])
+        normalized_parts = normalize_input_parts(input_parts, normalized_resources, fallback_text=safe_message)
+        serializable_parts = [
+            {"type": "text", "text": str(redact_sensitive(redact_secrets(str(part["text"])), "", "content"))}
+            if part["type"] == "text"
+            else {"type": "resource", "resource_id": str(part["resource_id"])}
+            for part in normalized_parts
+        ]
         encoded = json.dumps(redact_sensitive(attachment_refs or [], "", "content"), separators=(",", ":"))
         encoded_resources = json.dumps(
             serializable_input_resources(normalized_resources), ensure_ascii=False, separators=(",", ":"),
         )
+        encoded_parts = json.dumps(serializable_parts, ensure_ascii=False, separators=(",", ":"))
         # A Run owns exactly one immutable user input. HTTP retries and
         # recoverable capability configuration may enter this method again,
         # but they must never revise the user Item or rebind request-scoped
@@ -1743,6 +2370,7 @@ class RuntimeEngine:
                 or json.dumps(
                     run.get("input_resources") or [], ensure_ascii=False, separators=(",", ":"),
                 ) != encoded_resources
+                or json.dumps(run.get("input_parts") or [], ensure_ascii=False, separators=(",", ":")) != encoded_parts
             ):
                 raise ValueError("Runtime Run input is immutable")
             return run
@@ -1766,15 +2394,67 @@ class RuntimeEngine:
             "attachments_recorded": True,
             **(dict(declarations) if isinstance(declarations, Mapping) else {}),
         }
+        parts: list[dict[str, Any]] = []
+        image_attachments: list[dict[str, Any]] = []
+        resources_by_id = {str(resource["resource_id"]): resource for resource in normalized_resources}
+        for input_part in serializable_parts:
+            if input_part["type"] == "text":
+                parts.append({"type": "text", "text": input_part["text"]})
+                continue
+            resource = resources_by_id[str(input_part["resource_id"])]
+            mime = str(resource.get("mime") or "")
+            resource_ref = resource.get("resource_ref")
+            part: dict[str, Any] = {
+                "type": (
+                    "image" if resource.get("kind") == "file" and mime.startswith("image/")
+                    else "resource_ref" if isinstance(resource_ref, Mapping)
+                    else "file"
+                ),
+                "name": resource.get("name"),
+            }
+            if isinstance(resource_ref, Mapping):
+                part["resource_ref"] = dict(resource_ref)
+            if resource.get("url"):
+                part["url"] = resource["url"]
+            if mime:
+                part["mime_type"] = mime
+            if resource.get("sha256"):
+                part["sha256"] = resource["sha256"]
+            parts.append(part)
+            if part["type"] != "image":
+                continue
+            image_attachments.append({
+                "type": "image",
+                "mime_type": mime,
+                "sha256": resource.get("sha256"),
+                "resource_id": resource["resource_id"],
+                "ref": resource.get("reference"),
+                "name": resource.get("name"),
+            })
+        supplied_attachments = manifest_evidence.get("attachments")
+        if isinstance(supplied_attachments, list) and supplied_attachments:
+            manifest_evidence["attachments"] = supplied_attachments
+        elif image_attachments:
+            manifest_evidence["attachments"] = image_attachments
+        else:
+            manifest_evidence.setdefault(
+                "attachments",
+                [{"ref": ref, "ref_sha256": text_digest(ref)} for ref in (attachment_refs or [])],
+            )
         manifest_evidence.setdefault(
-            "attachments",
-            [{"ref": ref, "ref_sha256": text_digest(ref)} for ref in (attachment_refs or [])],
+            "input_evidence",
+            {
+                "attachments": list(manifest_evidence.get("attachments") or []),
+                "require_manifest_reference": bool(manifest_evidence.get("attachments")),
+                "require_oaep_user_message_part": any(part.get("type") == "image" for part in parts),
+                "forbid_ocr_text_injection": True,
+            },
         )
         already_bound = False
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             current = db.execute(
-                "SELECT input_message,attachment_refs_json,input_resources_json FROM runtime_runs WHERE run_id=?",
+                "SELECT input_message,attachment_refs_json,input_resources_json,input_parts_json FROM runtime_runs WHERE run_id=?",
                 (run_id,),
             ).fetchone()
             if current is None:
@@ -1784,15 +2464,16 @@ class RuntimeEngine:
                     str(current["input_message"]) != safe_message
                     or str(current["attachment_refs_json"]) != encoded
                     or str(current["input_resources_json"]) != encoded_resources
+                    or str(current["input_parts_json"]) != encoded_parts
                 ):
                     raise ValueError("Runtime Run input is immutable")
                 already_bound = True
                 journal_created = False
             else:
                 db.execute(
-                    "UPDATE runtime_runs SET input_message=?, attachment_refs_json=?, input_resources_json=?, "
+                    "UPDATE runtime_runs SET input_message=?, attachment_refs_json=?, input_resources_json=?, input_parts_json=?, "
                     "correlation_id=COALESCE(correlation_id,?) WHERE run_id=?",
-                    (safe_message, encoded, encoded_resources, correlation_id, run_id),
+                    (safe_message, encoded, encoded_resources, encoded_parts, correlation_id, run_id),
                 )
                 self._merge_run_manifest_in_transaction(
                     db,
@@ -1811,7 +2492,7 @@ class RuntimeEngine:
                     payload={
                         "content": safe_message,
                         "text": safe_message,
-                        "parts": [{"type": "text", "text": safe_message}] if safe_message else [],
+                        "parts": parts,
                         "phase": "final",
                         "status": "completed",
                         "attachment_refs": json.loads(encoded),
@@ -1819,6 +2500,10 @@ class RuntimeEngine:
                             {
                                 "resource_id": value["resource_id"], "kind": value["kind"],
                                 "name": value["name"], "status": value["status"],
+                                **({"mime": value["mime"]} if value.get("mime") else {}),
+                                **({"sha256": value["sha256"]} if value.get("sha256") else {}),
+                                **({"reference": value["reference"]} if value.get("reference") else {}),
+                                **({"resource_ref": dict(value["resource_ref"])} if isinstance(value.get("resource_ref"), Mapping) else {}),
                             }
                             for value in normalized_resources
                         ],
@@ -1939,6 +2624,7 @@ class RuntimeEngine:
             },
             "timeline": public_page,
             "manifest": manifest_view,
+            "input_evidence": _public_input_evidence(manifest_payload, public_page),
             "page": {
                 "next_cursor": (
                     encode_timeline_cursor(
@@ -3070,15 +3756,23 @@ class RuntimeEngine:
                 "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) VALUES(?,?,?,?,?,?,NULL)",
                 (event_id, run_id, sequence, event_type, json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created),
             )
-            self.conversation_journal.append_event_in_transaction(
-                db,
-                str(run["session_id"]),
-                _session_event_kind(event_type),
-                {"runtime_event_id": event_id, "type": event_type, "data": safe_data},
-                run_id=run_id,
-                dedupe_key=f"runtime-event:{event_id}",
-                created_at=created,
-            )
+            # Message/thinking deltas are projected solely through the canonical
+            # Item journal path. Mirroring the raw Runtime Event as a second
+            # conversation.item.delta (without item_id) used to flood OAEP with
+            # fake event.run.resumed envelopes.
+            item_owns_journal = event_type in {
+                "message.delta", "agent.message.delta", "thinking.delta",
+            } or event_type.startswith("oaep.item.")
+            if not item_owns_journal:
+                self.conversation_journal.append_event_in_transaction(
+                    db,
+                    str(run["session_id"]),
+                    _session_event_kind(event_type),
+                    {"runtime_event_id": event_id, "type": event_type, "data": safe_data},
+                    run_id=run_id,
+                    dedupe_key=f"runtime-event:{event_id}",
+                    created_at=created,
+                )
             self._record_runtime_event_item_in_transaction(
                 db,
                 session_id=str(run["session_id"]),
@@ -3118,8 +3812,10 @@ class RuntimeEngine:
                 (event_id, run_id, sequence, event_type,
                  json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created, backend_event_key),
             )
-            canonical_item_event = event_type.startswith("oaep.item.")
-            if not canonical_item_event:
+            item_owns_journal = event_type in {
+                "message.delta", "agent.message.delta", "thinking.delta",
+            } or event_type.startswith("oaep.item.")
+            if not item_owns_journal:
                 self.conversation_journal.append_event_in_transaction(
                     db,
                     str(run["session_id"]),
@@ -3144,7 +3840,7 @@ class RuntimeEngine:
             )
             row = db.execute("SELECT * FROM runtime_events WHERE event_id=?", (event_id,)).fetchone()
             db.commit()
-        if not canonical_item_event or item_created:
+        if not item_owns_journal or item_created:
             self.conversation_journal.notify_committed()
         return self._event(row)
 
@@ -3157,6 +3853,7 @@ class RuntimeEngine:
         """Persist normalized semantics canonically, then write a legacy projection."""
         from drsai.backend.runtime.normalized_writer import (
             normalized_canonical_item,
+            normalized_journal_item_payload,
             normalized_runtime_write,
         )
         from drsai.backend.runtime.normalized_events import NormalizedEventKind
@@ -3252,6 +3949,9 @@ class RuntimeEngine:
                     prior,
                     dict(audit or {}),
                 )
+                journal_payload = normalized_journal_item_payload(
+                    event, dict(audit or {}),
+                )
                 revision = int(existing_item["revision"]) + 1 if existing_item is not None else 1
                 _item, _journal_event, journal_created = self.conversation_journal.upsert_item_in_transaction(
                     db,
@@ -3262,6 +3962,7 @@ class RuntimeEngine:
                     revision=revision,
                     source_client="runtime",
                     payload=payload,
+                    event_payload_override=journal_payload,
                     run_id=run_id,
                     event_kind=item_event_kind,
                     updated_at=created,
@@ -3527,11 +4228,35 @@ class RuntimeEngine:
                 json.dumps(safe_request, separators=(",", ":"), sort_keys=True),
                 None, deadline_at, created, None,
             ))
+            self.security_metrics.journal.append_in_transaction(
+                db, "approval.legacy_requested", approval_id,
+                {"status": "pending", "compatibility_version": "legacy-approval/1"},
+                now=time.time(),
+            )
             operation = str(safe_request.get("operation") or "").strip()
             if operation:
-                request_digest = "sha256:" + hashlib.sha256(
-                    json.dumps(safe_request, separators=(",", ":"), sort_keys=True).encode("utf-8")
-                ).hexdigest()
+                raw_capabilities = request.get("required_capabilities") or ()
+                if not isinstance(raw_capabilities, (list, tuple, set, frozenset)):
+                    db.rollback()
+                    raise ValueError("Approval required_capabilities must be a sequence")
+                raw_categories = request.get("effect_categories") or ()
+                if not isinstance(raw_categories, (list, tuple, set, frozenset)):
+                    db.rollback()
+                    raise ValueError("Approval effect_categories must be a sequence")
+                proposal = ActionProposal.create(
+                    proposal_id=approval_id,
+                    run_id=run_id,
+                    operation=operation,
+                    payload=request,
+                    risk=str(request.get("risk") or "sensitive"),
+                    required_capabilities=tuple(str(value) for value in raw_capabilities),
+                    effect_categories=tuple(str(value) for value in raw_categories),
+                )
+                self.security_boundary.save_proposal_in_transaction(db, proposal, now=time.time())
+                # Bind execution to the original request, never to its audit-
+                # redacted projection. Distinct commands/arguments must not
+                # collapse to the same approval identity.
+                request_digest = canonical_digest(request)
                 db.execute(
                     "INSERT INTO runtime_side_effects("
                     "effect_id,approval_id,run_id,idempotency_key,operation,request_digest,status,requested_at"
@@ -3603,7 +4328,8 @@ class RuntimeEngine:
                 source_client="runtime",
                 payload={
                     "approval_id": approval_id,
-                    "status": "pending",
+                    # OAEP interaction status: Desktop binds approvalId on waiting/pending.
+                    "status": "waiting",
                     "request": safe_request,
                     "deadline_at": deadline_at,
                 },
@@ -3613,6 +4339,362 @@ class RuntimeEngine:
             db.commit()
         self.conversation_journal.notify_committed()
         return self.get_approval(approval_id)
+
+    def get_action_proposal(self, approval_id: str) -> ActionProposal:
+        """Return the immutable security proposal associated with an Approval."""
+
+        return self.security_boundary.get_proposal(approval_id)
+
+    def bind_run_security_profile(
+        self,
+        run_id: str,
+        profile: ResolvedCapabilityProfile,
+        *,
+        reason: str,
+    ) -> ResolvedCapabilityProfile:
+        """Bind a new, monotonically versioned capability profile to a Run."""
+
+        self.get_run(run_id)
+        self.security_boundary.bind_run_profile(run_id, profile, reason=reason)
+        return self.security_boundary.active_profile(run_id)
+
+    def get_run_security_profile(self, run_id: str) -> ResolvedCapabilityProfile:
+        self.get_run(run_id)
+        return self.security_boundary.active_profile(run_id)
+
+    def security_metrics_snapshot(self) -> list[dict[str, Any]]:
+        """Return low-cardinality internal security metrics without client identifiers."""
+
+        return [
+            {"name": metric.name, "labels": dict(metric.labels), "value": metric.value}
+            for metric in self.security_metrics.snapshot()
+        ]
+
+    @staticmethod
+    def permission_mode_descriptors() -> list[dict[str, object]]:
+        """Return the sole versioned descriptor set shared by future clients."""
+
+        return mode_descriptors()
+
+    def apply_permission_mode(
+        self,
+        run_id: str,
+        selection: ModeSelection,
+        *,
+        administrator: AdministratorPolicy,
+        platform: PlatformBoundary,
+        workspace: WorkspaceContext,
+        fault_after: str | None = None,
+    ) -> ModeTransitionResult:
+        """Resolve and bind a mode internally without changing client protocols."""
+
+        self.get_run(run_id)
+        def stage_authority(db, effective: EffectivePermissionProfile, changed_at: float) -> None:
+            if effective.mode.mode_id == "isolated_full_access":
+                if platform.isolation_attestation is None:
+                    raise ValueError("Isolated full access cannot commit without an attestation")
+                lease = self.isolation_attestation_leases.bind_in_transaction(
+                    db, run_id, workspace.workspace_root, effective.capability_profile,
+                    platform.isolation_attestation, now=changed_at,
+                )
+                self.isolation_attestation_leases.revoke_run_in_transaction(
+                    db, run_id, reason_code="permission_mode_rebound", now=changed_at,
+                    keep_lease_id=lease.lease_id,
+                )
+            else:
+                self.isolation_attestation_leases.revoke_run_in_transaction(
+                    db, run_id, reason_code="permission_mode_changed", now=changed_at,
+                )
+
+        return self.permission_modes.apply(
+            run_id, selection, administrator=administrator, platform=platform, workspace=workspace,
+            fault_after=fault_after, commit_hook=stage_authority,
+        )
+
+    def effective_permission_descriptor(self, run_id: str) -> dict[str, object] | None:
+        self.get_run(run_id)
+        return self.permission_modes.current_descriptor(run_id)
+
+    def effective_permission_profile(self, run_id: str) -> EffectivePermissionProfile:
+        """Rehydrate the durable mode descriptor without rerunning policy resolution."""
+
+        self.get_run(run_id)
+        descriptor = self.permission_modes.current_descriptor(run_id)
+        if not isinstance(descriptor, dict):
+            raise ValueError("Runtime Run has no effective Permission Mode")
+        profile = self.security_boundary.active_profile(run_id)
+        if str(descriptor.get("profile_digest")) != profile.digest:
+            raise ValueError("Permission Mode descriptor and active Profile disagree")
+        mode = get_mode(
+            str(descriptor.get("mode_id")),
+            schema_version=str(descriptor.get("mode_version")),
+        )
+        if str(descriptor.get("mode_digest")) != mode.digest:
+            raise ValueError("Permission Mode descriptor is not canonical")
+        effective = EffectivePermissionProfile(
+            schema_version=str(descriptor.get("schema_version")),
+            mode=mode,
+            capability_profile=profile,
+            reviewer_route=str(descriptor.get("reviewer_route")),
+            mandatory_human_categories=frozenset(
+                str(value) for value in descriptor.get("mandatory_human_categories", [])
+            ),
+            limitations=tuple(str(value) for value in descriptor.get("limitations", [])),
+            selection_source=str(descriptor.get("selection_source")),
+            administrator_policy=str(descriptor.get("administrator_policy")),
+            isolation_attestation_digest=(
+                str(descriptor["isolation_attestation_digest"])
+                if descriptor.get("isolation_attestation_digest") is not None else None
+            ),
+        )
+        if canonical_digest(effective.as_descriptor()) != canonical_digest(descriptor):
+            raise ValueError("Permission Mode descriptor cannot be reconstructed exactly")
+        return effective
+
+    def assert_isolated_full_access_authority(
+        self,
+        run_id: str,
+        *,
+        workspace_root: str,
+        profile_digest: str,
+        attestation_digest: str,
+    ):
+        """Recheck the live OS-isolation lease at an execution boundary."""
+
+        self.get_run(run_id)
+        return self.isolation_attestation_leases.assert_active(
+            run_id,
+            workspace_root=workspace_root,
+            profile_digest=profile_digest,
+            attestation_digest=attestation_digest,
+        )
+
+    def revoke_isolated_full_access_authority(
+        self,
+        run_id: str,
+        *,
+        reason_code: str,
+    ) -> int:
+        """Revoke a Run's isolation authority after worker or boundary loss."""
+
+        self.get_run(run_id)
+        if not reason_code.strip():
+            raise ValueError("Isolation authority revocation requires a reason code")
+        return self.isolation_attestation_leases.revoke_run(
+            run_id,
+            reason_code=reason_code,
+        )
+
+    def create_windows_isolated_execution_session_service(
+        self,
+        **options: Any,
+    ) -> WindowsIsolatedExecutionSessionService:
+        """Create the Runtime-owned worker service with automatic lease revocation."""
+
+        if "authority_revoker" in options:
+            raise ValueError("Runtime owns the isolation authority revoker")
+        return WindowsIsolatedExecutionSessionService(
+            self.database,
+            authority_revoker=lambda run_id, reason_code: (
+                self.revoke_isolated_full_access_authority(
+                    run_id,
+                    reason_code=reason_code,
+                )
+            ),
+            **options,
+        )
+
+    def create_isolated_effect_execution_service(
+        self,
+        *,
+        artifact_manifest: Path,
+        expected_manifest_digest: str,
+        trusted_publisher_subjects: tuple[str, ...],
+        signature_verifier: Callable[[Path], AuthenticodeEvidence] | None = None,
+        **session_options: Any,
+    ) -> IsolatedEffectExecutionService:
+        """Build the only executor allowed to consume isolated-full Effects."""
+
+        resolver_options: dict[str, Any] = {
+            "expected_manifest_digest": expected_manifest_digest,
+            "trusted_publisher_subjects": trusted_publisher_subjects,
+        }
+        if signature_verifier is not None:
+            resolver_options["signature_verifier"] = signature_verifier
+        artifact = IsolatedWorkerArtifactResolver(**resolver_options).resolve(artifact_manifest)
+        sessions = self.create_windows_isolated_execution_session_service(**session_options)
+        return IsolatedEffectExecutionService(
+            self.database,
+            self.isolation_attestation_leases,
+            sessions,
+            worker_argv_prefix=(str(artifact.executable_path),),
+            expected_worker_sha256=artifact.executable_digest,
+        )
+
+    def route_auto_authorization_review(
+        self,
+        proposal: ActionProposal,
+        profile: ResolvedCapabilityProfile,
+        *,
+        idempotency_key: str,
+        human_deadline_seconds: float = 300,
+    ) -> AutoReviewRouteResult:
+        """Create and apply an auto Decision; Grant issuance remains separate."""
+
+        effective = self.effective_permission_profile(proposal.run_id)
+        if effective.reviewer_route != "auto" or effective.capability_profile.digest != profile.digest:
+            raise ValueError("Runtime Run is not bound to this AutoReviewer profile")
+        request = self.request_authorization_review(
+            proposal, profile, reviewer_kind="auto",
+            reason_code="permission_mode_auto_review",
+            idempotency_key=f"auto-request:{idempotency_key}",
+        )
+        reviewer = AutoReviewerService(
+            self.database, AutoReviewerConfig(enabled=True), model=None,
+        )
+        return AutoReviewCoordinator(self.database, reviewer).process(
+            request.request_id, effective,
+            idempotency_key=f"auto-route:{idempotency_key}",
+            human_deadline_seconds=human_deadline_seconds,
+        )
+
+    def migrate_legacy_permission_config(
+        self,
+        migration_key: str,
+        values_by_source: Mapping[str, object],
+    ) -> LegacyPermissionMigrationResult:
+        """Conservatively map old settings without applying a mode to a Run."""
+
+        return self.permission_config_migration.migrate(migration_key, values_by_source)
+
+    def acknowledge_permission_config_migration(self, migration_key: str) -> LegacyPermissionMigrationResult:
+        return self.permission_config_migration.acknowledge(migration_key)
+
+    def set_permission_kill_switch(
+        self,
+        switch_name: str,
+        *,
+        active: bool,
+        reason_code: str,
+    ) -> KillSwitchResult:
+        result = self.permission_kill_switches.set(
+            switch_name, active=active, reason_code=reason_code,
+        )
+        if switch_name == "isolated_full_access" and active:
+            with self._connect() as db:
+                run_ids = [str(row[0]) for row in db.execute(
+                    "SELECT DISTINCT run_id FROM runtime_isolation_attestation_leases",
+                ).fetchall()]
+            for run_id in run_ids:
+                self.isolation_attestation_leases.revoke_run(
+                    run_id, reason_code="permission_kill_switch_active",
+                )
+        return result
+
+    def inherit_child_permissions(
+        self,
+        parent_run_id: str,
+        child_run_id: str,
+        parent: EffectivePermissionProfile,
+        child_selection: ModeSelection,
+        *,
+        administrator: AdministratorPolicy,
+        platform: PlatformBoundary,
+        workspace: WorkspaceContext,
+        profile_version: int = 1,
+    ) -> ChildPermissionInheritance:
+        self.get_run(parent_run_id)
+        self.get_run(child_run_id)
+        return self.child_permissions.derive_and_bind(
+            parent_run_id, child_run_id, parent, child_selection,
+            administrator=administrator, platform=platform, workspace=workspace,
+            profile_version=profile_version,
+        )
+
+    def request_authorization_review(
+        self,
+        proposal: ActionProposal,
+        profile: ResolvedCapabilityProfile,
+        *,
+        reviewer_kind: str,
+        reason_code: str,
+        idempotency_key: str,
+        deadline_at: float | None = None,
+    ) -> AuthorizationApprovalRequest:
+        """Create a P1 operation-level review without changing Run status."""
+
+        self.get_run(proposal.run_id)
+        return self.authorization_approvals.create_request(
+            proposal,
+            profile_digest=profile.digest,
+            policy_version="authorization-policy/1",
+            reviewer_kind=reviewer_kind,
+            reason_code=reason_code,
+            idempotency_key=idempotency_key,
+            deadline_at=deadline_at,
+        )
+
+    def decide_authorization_review(
+        self,
+        request_id: str,
+        decision: str,
+        *,
+        reviewer_kind: str,
+        reviewer_id: str,
+        reason_code: str,
+        idempotency_key: str,
+    ) -> AuthorizationApprovalDecision:
+        """Record a P1 Decision fact without cancelling/resuming its Run."""
+
+        return self.authorization_approvals.decide(
+            request_id,
+            decision,
+            reviewer_kind=reviewer_kind,
+            reviewer_id=reviewer_id,
+            reason_code=reason_code,
+            idempotency_key=idempotency_key,
+        )
+
+    def issue_authorization_grant(
+        self,
+        request_id: str,
+        profile: ResolvedCapabilityProfile,
+        *,
+        review_requirement: str,
+        ttl_seconds: float = 300,
+    ) -> AuthorizationGrant:
+        """Issue the sole Grant after revalidating an approved operation review.
+
+        This is an internal P1 compatibility path.  Existing client approval APIs
+        remain unchanged and cannot invoke the Grant store directly.
+        """
+
+        request = self.authorization_approvals.get_request(request_id)
+        self.get_run(request.run_id)
+        active_profile = self.security_boundary.active_profile(request.run_id)
+        if active_profile.digest != profile.digest:
+            raise ValueError("Active capability profile does not match the reviewed profile")
+        return self.authorization_grants.issue_for_approved_request(
+            request_id,
+            active_profile,
+            review_requirement=review_requirement,
+            ttl_seconds=ttl_seconds,
+        )
+
+    def migrate_legacy_approvals(self, *, limit: int | None = None) -> LegacyApprovalMigrationReport:
+        """Incrementally project legacy approvals without changing legacy clients."""
+
+        return self.authorization_migration.migrate(limit=limit)
+
+    def approval_compatibility_rows(self) -> list[dict[str, object]]:
+        """Return the read-only dual-control-plane compatibility projection."""
+
+        return self.authorization_migration.compatibility_rows()
+
+    def legacy_approval_retirement_status(self, *, quiet_since: float) -> LegacyApprovalRetirementStatus:
+        """Return the explicit, fail-closed gate for deleting the legacy path."""
+
+        return self.authorization_migration.retirement_status(quiet_since=quiet_since)
 
     def get_approval(self, approval_id: str) -> dict[str, Any]:
         with self._connect() as db:
@@ -3654,7 +4736,15 @@ class RuntimeEngine:
             ).fetchall()
         return [self._side_effect(row) for row in rows]
 
-    def claim_side_effect(self, approval_id: str, run_id: str, operation: str, *, recovered: bool = False) -> dict[str, Any]:
+    def claim_side_effect(
+        self,
+        approval_id: str,
+        run_id: str,
+        operation: str,
+        *,
+        recovered: bool = False,
+        actual_request: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         claimed_at = _now()
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -3672,6 +4762,9 @@ class RuntimeEngine:
             if str(row["run_id"]) != run_id or str(row["operation"]) != operation:
                 db.rollback()
                 raise ValueError("Side effect approval does not match this operation")
+            if actual_request is not None and str(row["request_digest"]) != canonical_digest(actual_request):
+                db.rollback()
+                raise ValueError("Side effect request differs from the approved proposal")
             if str(row["status"]) == "completed":
                 db.rollback()
                 raise ValueError("Side effect idempotency key already completed")
@@ -3771,6 +4864,11 @@ class RuntimeEngine:
             if approval_update.rowcount != 1:
                 db.rollback()
                 raise ValueError("Approval decision is invalid")
+            self.security_metrics.journal.append_in_transaction(
+                db, "approval.legacy_resolved", approval_id,
+                {"status": decision, "compatibility_version": "legacy-approval/1"},
+                now=time.time(),
+            )
             db.execute(
                 "UPDATE runtime_side_effects SET status=?,approved_at=? "
                 "WHERE approval_id=? AND status='requested'",
@@ -3931,16 +5029,26 @@ class RuntimeEngine:
         lifecycle = str(row["lifecycle"]) if "lifecycle" in row.keys() else (
             "archived" if bool(row["archived"]) else "active"
         )
-        return {
+        result = {
             "session_id": row["session_id"], "workspace_id": row["workspace_id"],
             "worktree_id": row["worktree_id"], "title": row["title"],
             "archived": lifecycle != "active", "lifecycle": lifecycle,
             "revision": int(row["revision"]) if "revision" in row.keys() else 1,
             "agent_definition": row["agent_definition"] if "agent_definition" in row.keys() else None,
             "backend_id": row["backend_id"] if "backend_id" in row.keys() else None,
+            "model": row["model"] if "model" in row.keys() else None,
+            "reasoning_effort": row["reasoning_effort"] if "reasoning_effort" in row.keys() else None,
+            "plan_mode": bool(row["plan_mode"]) if "plan_mode" in row.keys() and row["plan_mode"] is not None else None,
             "removed_at": row["removed_at"] if "removed_at" in row.keys() else None,
             "created_at": row["created_at"], "updated_at": row["updated_at"],
         }
+        if "origin_kind" in row.keys() and row["origin_kind"] is not None:
+            result["origin"] = {
+                "kind": str(row["origin_kind"]),
+                "provider": str(row["origin_provider"]),
+                "binding_id": str(row["origin_binding_id"]),
+            }
+        return result
 
     @staticmethod
     def _run(row: sqlite3.Row) -> dict[str, Any]:
@@ -3955,6 +5063,8 @@ class RuntimeEngine:
             result["attachment_refs"] = json.loads(str(row["attachment_refs_json"] or "[]"))
         if "input_resources_json" in row.keys():
             result["input_resources"] = json.loads(str(row["input_resources_json"] or "[]"))
+        if "input_parts_json" in row.keys():
+            result["input_parts"] = json.loads(str(row["input_parts_json"] or "[]"))
         return result
 
     @staticmethod

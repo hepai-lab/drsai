@@ -1,5 +1,8 @@
 package ai.drsai.remote.remote.data
 
+import ai.drsai.remote.R
+import androidx.annotation.StringRes
+
 enum class RemoteDeliveryState {
     OPTIMISTIC, SENDING, ACCEPTED, RUNNING, COMPLETED, UNCERTAIN, FAILED,
 }
@@ -27,14 +30,14 @@ fun deliveryFailureState(
     RemoteDeliveryState.FAILED
 }
 
-fun RemoteDeliveryState.userLabel(): String = when (this) {
-    RemoteDeliveryState.OPTIMISTIC -> "准备发送"
-    RemoteDeliveryState.SENDING -> "发送中"
-    RemoteDeliveryState.ACCEPTED -> "已接收"
-    RemoteDeliveryState.RUNNING -> "运行中"
-    RemoteDeliveryState.COMPLETED -> "已完成"
-    RemoteDeliveryState.UNCERTAIN -> "结果待确认"
-    RemoteDeliveryState.FAILED -> "发送失败"
+@StringRes fun RemoteDeliveryState.labelResource(): Int = when (this) {
+    RemoteDeliveryState.OPTIMISTIC -> R.string.remote_delivery_optimistic
+    RemoteDeliveryState.SENDING -> R.string.remote_delivery_sending
+    RemoteDeliveryState.ACCEPTED -> R.string.remote_delivery_accepted
+    RemoteDeliveryState.RUNNING -> R.string.remote_delivery_running
+    RemoteDeliveryState.COMPLETED -> R.string.remote_delivery_completed
+    RemoteDeliveryState.UNCERTAIN -> R.string.remote_delivery_uncertain
+    RemoteDeliveryState.FAILED -> R.string.remote_delivery_failed
 }
 
 enum class RemoteApprovalDecisionState { PENDING, DECIDING, APPROVED, DENIED, CANCELLED, EXPIRED }
@@ -67,13 +70,13 @@ fun approvalDecisionState(statusOrAction: String?): RemoteApprovalDecisionState?
     else -> null
 }
 
-fun RemoteApprovalDecisionState.userLabel(): String = when (this) {
-    RemoteApprovalDecisionState.PENDING -> "等待确认"
-    RemoteApprovalDecisionState.DECIDING -> "正在提交决定…"
-    RemoteApprovalDecisionState.APPROVED -> "已同意"
-    RemoteApprovalDecisionState.DENIED -> "已拒绝"
-    RemoteApprovalDecisionState.CANCELLED -> "已取消"
-    RemoteApprovalDecisionState.EXPIRED -> "已过期"
+@StringRes fun RemoteApprovalDecisionState.labelResource(): Int = when (this) {
+    RemoteApprovalDecisionState.PENDING -> R.string.remote_approval_pending
+    RemoteApprovalDecisionState.DECIDING -> R.string.remote_approval_deciding
+    RemoteApprovalDecisionState.APPROVED -> R.string.remote_approval_approved
+    RemoteApprovalDecisionState.DENIED -> R.string.remote_approval_denied
+    RemoteApprovalDecisionState.CANCELLED -> R.string.remote_approval_cancelled
+    RemoteApprovalDecisionState.EXPIRED -> R.string.remote_approval_expired_label
 }
 
 enum class RemoteRunControlState { IDLE, CANCELLING, RETRYING, RECONCILING }

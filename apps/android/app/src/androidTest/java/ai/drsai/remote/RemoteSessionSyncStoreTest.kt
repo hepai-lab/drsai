@@ -199,7 +199,7 @@ class RemoteSessionSyncStoreTest {
             "user", "", "rt", "ws",
             OaepSnapshot(
                 "1.0", session, listOf(run), listOf(oaepMessageItem("completed")), 30,
-                checkpoint, OaepSnapshotWindow(1, true, "older-page"),
+                checkpoint = checkpoint, window = OaepSnapshotWindow(1, true, "older-page"),
             ),
             1,
         )
@@ -213,7 +213,7 @@ class RemoteSessionSyncStoreTest {
             "user", "", "rt", "ws",
             OaepSnapshot(
                 "1.0", session, listOf(run), listOf(older), 30,
-                checkpoint, OaepSnapshotWindow(1, false, null),
+                checkpoint = checkpoint, window = OaepSnapshotWindow(1, false, null),
             ),
         )
 
@@ -238,7 +238,7 @@ class RemoteSessionSyncStoreTest {
             "user", "", "rt", "ws",
             OaepSnapshot(
                 "1.0", session, listOf(run), listOf(oaepMessageItem("running")), 30,
-                checkpoint(30, 2), OaepSnapshotWindow(1, true, "older-page"),
+                checkpoint = checkpoint(30, 2), window = OaepSnapshotWindow(1, true, "older-page"),
             ),
             1,
         )
@@ -250,7 +250,7 @@ class RemoteSessionSyncStoreTest {
             "user", "", "rt", "ws",
             OaepSnapshot(
                 "1.0", session, listOf(run), listOf(older), 30,
-                checkpoint(30, 2), OaepSnapshotWindow(1, false, null),
+                checkpoint = checkpoint(30, 2), window = OaepSnapshotWindow(1, false, null),
             ),
         )
 
@@ -259,7 +259,7 @@ class RemoteSessionSyncStoreTest {
             "user", "", "rt", "ws",
             OaepSnapshot(
                 "1.0", session, listOf(run.copy(status = "completed")), listOf(refreshed), 31,
-                checkpoint(31, 2), OaepSnapshotWindow(1, true, "older-page-2"),
+                checkpoint = checkpoint(31, 2), window = OaepSnapshotWindow(1, true, "older-page-2"),
             ),
             2,
         )
@@ -297,8 +297,8 @@ class RemoteSessionSyncStoreTest {
         val checkpoint = OaepSnapshotCheckpoint(1, digest, 1)
         store.replaceOaepSnapshot(
             "user", "", "rt", "ws",
-            OaepSnapshot("1.0", session, listOf(run), listOf(item), 1, checkpoint,
-                OaepSnapshotWindow(100, false, null)),
+            OaepSnapshot("1.0", session, listOf(run), listOf(item), 1, checkpoint = checkpoint,
+                window = OaepSnapshotWindow(100, false, null)),
             1,
         )
         store.verifyOaepProjectionCheckpoint("user", "", "rt", "session", checkpoint)

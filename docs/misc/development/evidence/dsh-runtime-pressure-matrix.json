@@ -1,0 +1,19 @@
+{
+  "checks": {
+    "all_events_durable_after_restart": true,
+    "bounded_page_enforced": true,
+    "cursor_reports_more": true,
+    "within_time_budget": true
+  },
+  "covered_fault_tests": [
+    "test_process.py",
+    "test_jsonrpc.py",
+    "test_reconcile.py"
+  ],
+  "elapsed_seconds": 7.8784,
+  "event_count": 10000,
+  "events_per_second": 1269.29,
+  "max_seconds": 60.0,
+  "passed": true,
+  "schema_version": 1
+}

@@ -23,6 +23,7 @@ data class HostModelChunk(
     val finishReason: String? = null,
     val toolCalls: JSONArray = JSONArray(),
     val reasoningSummary: String = "",
+    val providerReasoningContent: String = "",
 )
 
 data class HostToolCall(

@@ -90,6 +90,7 @@ let pendingOidcLoginDebug: OidcLoginDebugSink | null = null;
 let oidcJwksCache: { keys: JsonWebKey[]; fetchedAt: number } | null = null;
 let oidcMetadataCache: { metadata: OidcProviderMetadata; fetchedAt: number } | null = null;
 let oidcRefreshPromise: Promise<StoredAuthSession | null> | null = null;
+let logoutInProgress = false;
 
 type OidcLoginDebugSink = (event: OidcLoginDebugEvent) => void;
 
@@ -97,13 +98,61 @@ export interface AuthContext {
   session: AuthSession;
   userId: string;
   accessToken?: string;
+  refreshToken?: string;
   authMode: NonNullable<AuthSession["authMode"]>;
   issuer?: string;
+}
+
+/**
+ * Structured error thrown when the HepAI auth session is missing, expired, or
+ * cannot be refreshed. IPC handlers and gateway callers can use
+ * `instanceof AuthSessionError` to detect auth failures and notify the
+ * renderer to prompt the user to sign in again.
+ */
+export class AuthSessionError extends Error {
+  readonly code:
+    | "session_missing"
+    | "session_expired"
+    | "refresh_failed"
+    | "refresh_unavailable";
+  constructor(
+    code: AuthSessionError["code"],
+    message: string,
+  ) {
+    super(message);
+    this.name = "AuthSessionError";
+    this.code = code;
+  }
+}
+
+/**
+ * Platform callback invoked whenever the auth session is invalidated.
+ * Registered by the Electron main process to broadcast
+ * `desktop:auth-session-invalidated` to all renderer windows.
+ */
+let authSessionInvalidatedNotifier: (() => void) | null = null;
+
+export function setAuthSessionInvalidatedNotifier(
+  notifier: (() => void) | null,
+): void {
+  authSessionInvalidatedNotifier = notifier;
+}
+
+function notifyAuthSessionInvalidated(): void {
+  try {
+    authSessionInvalidatedNotifier?.();
+  } catch {
+    // notifier is best-effort; never let it block the throw path
+  }
 }
 
 export async function getAuthSession(): Promise<AuthSession> {
   const stored = readStoredSession();
   if (!stored) return anonymousSession();
+  if (isDisallowedOfflineSession(stored)) {
+    clearStoredSession(false);
+    return anonymousSession();
+  }
   if (isExpired(stored)) {
     clearStoredSession(false);
     return anonymousSession();
@@ -115,7 +164,7 @@ export async function getAuthSession(): Promise<AuthSession> {
 
 export async function refreshAuthSession(): Promise<AuthSession> {
   const stored = readStoredSession();
-  if (!stored || isExpired(stored)) {
+  if (!stored || isExpired(stored) || isDisallowedOfflineSession(stored)) {
     clearStoredSession(false);
     return anonymousSession();
   }
@@ -134,18 +183,28 @@ export async function refreshAuthSession(): Promise<AuthSession> {
 
 export async function requireAuthContext(): Promise<AuthContext> {
   const stored = readStoredSession();
-  if (!stored || isExpired(stored)) {
+  if (!stored || isExpired(stored) || isDisallowedOfflineSession(stored)) {
     clearStoredSession(false);
-    throw new Error("Sign in before sending a request to OpenDrSai Agent.");
+    notifyAuthSessionInvalidated();
+    throw new AuthSessionError(
+      !stored ? "session_missing" : "session_expired",
+      "Sign in before sending a request to OpenDrSai Agent.",
+    );
   }
   const refreshed = await refreshSsoSessionIfNeeded(stored, true);
   if (!refreshed || !refreshed.user || !refreshed.authMode) {
-    throw new Error("Sign in before sending a request to OpenDrSai Agent.");
+    clearStoredSession(false);
+    notifyAuthSessionInvalidated();
+    throw new AuthSessionError(
+      "refresh_failed",
+      "The HepAI session could not be refreshed. Sign in again.",
+    );
   }
   return {
     session: toPublicSession(refreshed),
     userId: refreshed.user.id || refreshed.user.email,
     accessToken: refreshed.accessToken,
+    refreshToken: refreshed.refreshToken,
     authMode: refreshed.authMode,
     issuer: refreshed.issuer,
   };
@@ -371,10 +430,23 @@ export function cancelOidcLogin(): boolean {
 export async function logout(rawOptions?: unknown): Promise<{ ok: boolean; message: string }> {
   const options = normalizeLogoutOptions(rawOptions);
   const stored = readStoredSession();
-  if (stored?.authMode === "oidc" && stored.refreshToken) {
-    await revokeOidcRefreshToken(stored.refreshToken);
-  }
+  logoutInProgress = true;
+  // Remove local credentials before performing network revocation so a slow
+  // or unavailable issuer cannot leave the UI anonymous while reusable tokens
+  // remain on disk. An already-running refresh is prevented from writing its
+  // result back and is allowed to settle before the final cleanup pass.
   clearStoredSession(Boolean(options.clearLocalData));
+  try {
+    if (stored?.authMode === "oidc" && stored.refreshToken) {
+      await revokeOidcRefreshToken(stored.refreshToken);
+    }
+    if (oidcRefreshPromise) {
+      try { await oidcRefreshPromise; } catch { /* cleanup below is authoritative */ }
+    }
+  } finally {
+    clearStoredSession(Boolean(options.clearLocalData));
+    logoutInProgress = false;
+  }
   return {
     ok: true,
     message: options.clearLocalData ? "Signed out and cleared local auth data." : "Signed out.",
@@ -586,12 +658,18 @@ function createDeveloperSession(rememberMe = true): StoredAuthSession {
 }
 
 function isDeveloperBypassAllowed(): boolean {
-  return (
-    IS_DESKTOP_DEV ||
+  const explicitFixture = (
     Boolean(process.env.OPENDRSAI_E2E_OIDC_HS256_SECRET?.trim()) ||
     process.env.OPENDRSAI_DEV_AUTH_BYPASS === "1" ||
     process.env.OPENDRSAI_E2E_F2_APPROVALS === "1"
   );
+  return explicitFixture || (IS_DESKTOP_DEV && process.env.OPENDRSAI_OIDC_ONLY !== "1");
+}
+
+function isDisallowedOfflineSession(session: StoredAuthSession): boolean {
+  return session.authMode === "offline"
+    && process.env.OPENDRSAI_OIDC_ONLY === "1"
+    && !isDeveloperBypassAllowed();
 }
 
 function getExpiryDate(days: number): string {
@@ -640,6 +718,7 @@ function readStoredSession(): StoredAuthSession | null {
 }
 
 function writeStoredSession(session: StoredAuthSession): void {
+  if (logoutInProgress) return;
   mkdirSync(dirname(AUTH_SESSION_FILE), { recursive: true });
   const temporaryFile = `${AUTH_SESSION_FILE}.${process.pid}.${randomUUID()}.tmp`;
   const previousReferences = readCredentialReferences(AUTH_SESSION_FILE);
@@ -917,7 +996,11 @@ export async function refreshAuthContextAfterUnauthorized(): Promise<AuthContext
   const stored = readStoredSession();
   if (!stored || stored.authMode !== "oidc" || !stored.refreshToken) {
     clearStoredSession(false);
-    throw new Error("The HepAI session cannot be refreshed. Sign in again.");
+    notifyAuthSessionInvalidated();
+    throw new AuthSessionError(
+      "refresh_unavailable",
+      "The HepAI session cannot be refreshed. Sign in again.",
+    );
   }
   try {
     const token = await exchangeOidcRefreshToken(stored.refreshToken);
@@ -933,17 +1016,23 @@ export async function refreshAuthContextAfterUnauthorized(): Promise<AuthContext
       session: toPublicSession(refreshed),
       userId: refreshed.user.id || refreshed.user.email,
       accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken,
       authMode: refreshed.authMode,
       issuer: refreshed.issuer,
     };
   } catch {
     clearStoredSession(false);
-    throw new Error("The HepAI session refresh failed. Sign in again.");
+    notifyAuthSessionInvalidated();
+    throw new AuthSessionError(
+      "refresh_failed",
+      "The HepAI session refresh failed. Sign in again.",
+    );
   }
 }
 
 export function invalidateAuthSession(): void {
   clearStoredSession(false);
+  notifyAuthSessionInvalidated();
 }
 
 async function refreshOidcSession(

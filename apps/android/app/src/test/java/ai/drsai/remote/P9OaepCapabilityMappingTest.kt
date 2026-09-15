@@ -76,6 +76,7 @@ class P9OaepCapabilityMappingTest {
         val handoff = DesktopHandoffOaep.offered(
             "run", "handoff", DesktopHandoffDecision(
                 DesktopHandoffState.OFFER, setOf(RuntimeCapability.SHELL), target, "Confirm Desktop execution",
+                targets = listOf(target),
             ),
         )[1] as NormalizedAgentEvent.ItemCreated
         assertEquals("handoff", (handoff.content as OaepInteractionContent).interactionType)

@@ -7,7 +7,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import ai.drsai.remote.remote.data.RemoteAuditEntry
 import ai.drsai.remote.remote.data.RemoteWorkspaceContainer
-import ai.drsai.remote.remote.data.safeRemoteFailureMessage
 import ai.drsai.remote.remote.model.RunId
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
@@ -44,7 +43,7 @@ class RemoteAuditViewModel(
         mutableState.update { it.copy(loading = true, error = null) }
         runCatching { repository.audit(runtimeId, workspaceId, runId) }
             .onSuccess { entries -> mutableState.update { it.copy(entries = entries, loading = false) } }
-            .onFailure { failure -> mutableState.update { it.copy(loading = false, error = safeRemoteFailureMessage(failure)) } }
+            .onFailure { failure -> mutableState.update { it.copy(loading = false, error = safeRemoteFailureMessage(getApplication(), failure)) } }
     }
 
     companion object {

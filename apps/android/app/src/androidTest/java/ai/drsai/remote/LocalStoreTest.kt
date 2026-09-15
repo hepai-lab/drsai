@@ -25,6 +25,7 @@ import ai.drsai.remote.data.MIGRATION_11_12
 import ai.drsai.remote.data.MIGRATION_12_13
 import ai.drsai.remote.data.MIGRATION_13_14
 import ai.drsai.remote.data.MIGRATION_14_15
+import ai.drsai.remote.data.MIGRATION_15_16
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.remote.data.RemoteCacheRepository
 import ai.drsai.remote.remote.data.RemoteRuntimeEntity
@@ -71,12 +72,17 @@ import ai.drsai.remote.runtime.oaep.AndroidOaepScope
 import ai.drsai.remote.runtime.oaep.AndroidOaepWriter
 import ai.drsai.remote.runtime.oaep.NormalizedAgentEvent
 import ai.drsai.remote.runtime.oaep.RoomAndroidOaepStore
+import ai.drsai.remote.runtime.reliability.RecoveryCenterRepository
+import ai.drsai.remote.workbench.data.WorkbenchRunEntity
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -416,10 +422,76 @@ class LocalStoreTest {
         assertTrue(repository.decide(granted, ApprovalDecision.ALLOW_SESSION, 2) is ApprovalDecisionResult.Applied)
         assertTrue(repository.isSessionGranted("alice", "ihep", WorkbenchId("android-local"), WorkbenchId("session-a"), "files.write", 3))
         assertTrue(!repository.isSessionGranted("alice", "ihep", WorkbenchId("android-local"), WorkbenchId("session-b"), "files.write", 3))
+        assertTrue(!repository.isSessionGranted("bob", "ihep", WorkbenchId("android-local"), WorkbenchId("session-a"), "files.write", 3))
+        assertTrue(!repository.isSessionGranted("alice", "other", WorkbenchId("android-local"), WorkbenchId("session-a"), "files.write", 3))
+        assertTrue(!repository.isSessionGranted("alice", "ihep", WorkbenchId("desktop"), WorkbenchId("session-a"), "files.write", 3))
+        assertTrue(!repository.isSessionGranted("alice", "ihep", WorkbenchId("android-local"), WorkbenchId("session-a"), "browser.submit", 3))
+
+        val once = command("approval-once", "session-a")
+        repository.request(once, 1)
+        assertTrue(repository.decide(once, ApprovalDecision.ALLOW_ONCE, 2) is ApprovalDecisionResult.Applied)
+        assertEquals(1, repository.sessionGrants("alice").size)
+
+        val storedGrant = repository.sessionGrants("alice").single()
+        assertTrue(repository.revokeSessionGrant(storedGrant))
+        assertFalse(repository.isSessionGranted("alice", "ihep", WorkbenchId("android-local"), WorkbenchId("session-a"), "files.write", 3))
 
         val expired = command("approval-expired", "session-a", expires = 5)
         repository.request(expired, 1)
         assertEquals(ApprovalDecisionResult.Expired, repository.decide(expired, ApprovalDecision.ALLOW_ONCE, 6))
+    }
+
+    @Test fun approval_persists_only_sanitized_target_summary_and_receipt_binding() = runBlocking {
+        val repository = ApprovalRepository(database)
+        val rawPreview = org.json.JSONObject()
+            .put("operation", "create")
+            .put("path", "notes/result.txt")
+            .put("before_sha256", "missing")
+            .put("after_sha256", "a".repeat(64))
+            .put("diff", "+api_key=sk-secret-secret")
+            .put("mutation_token", "approved-token")
+            .toString()
+        val binding = ApprovalBinding.create(
+            WorkbenchId("run-preview"), "call-preview", "workspace.write", rawPreview, "once",
+        )
+        val command = CreateApprovalCommand(
+            "alice", "ihep", WorkbenchId("android-local"), WorkbenchId("session"),
+            WorkbenchId("approval-preview"), binding, expiresAtMillis = 100, previewJson = rawPreview,
+        )
+        val stored = repository.request(command, 1)
+        val safe = org.json.JSONObject(stored.previewJson)
+        assertEquals("notes/result.txt", safe.getString("target"))
+        assertEquals("approved-token", safe.getString("receipt_binding"))
+        assertFalse(stored.previewJson.contains("sk-secret"))
+        assertFalse(stored.previewJson.contains("after_sha256"))
+    }
+
+    @Test fun session_grant_survives_process_style_database_reconstruction_and_can_be_revoked() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "approval-grant-reconstruction.db"
+        context.deleteDatabase(name)
+        val first = Room.databaseBuilder(context, ChatDatabase::class.java, name).allowMainThreadQueries().build()
+        val command = CreateApprovalCommand(
+            "alice", "ihep", WorkbenchId("android-local"), WorkbenchId("session-a"), WorkbenchId("approval-rebuild"),
+            ApprovalBinding.create(WorkbenchId("run-rebuild"), "call-rebuild", "workspace.write", "{\"path\":\"a\"}", "session"),
+            expiresAtMillis = 100,
+        )
+        ApprovalRepository(first).apply {
+            request(command, 1)
+            assertTrue(decide(command, ApprovalDecision.ALLOW_SESSION, 2) is ApprovalDecisionResult.Applied)
+        }
+        first.close()
+
+        val reconstructed = Room.databaseBuilder(context, ChatDatabase::class.java, name).allowMainThreadQueries().build()
+        try {
+            val repository = ApprovalRepository(reconstructed)
+            assertTrue(repository.isSessionGranted("alice", "ihep", WorkbenchId("android-local"), WorkbenchId("session-a"), "workspace.write", 3))
+            assertTrue(repository.revokeSessionGrant(repository.sessionGrants("alice").single()))
+            assertFalse(repository.isSessionGranted("alice", "ihep", WorkbenchId("android-local"), WorkbenchId("session-a"), "workspace.write", 3))
+        } finally {
+            reconstructed.close()
+            context.deleteDatabase(name)
+        }
     }
 
     @Test fun auditRowsAreAppendOnlyAndDuplicateIdsCannotReplaceHistory() = runBlocking {
@@ -631,7 +703,7 @@ class LocalStoreTest {
         }
 
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
             .allowMainThreadQueries()
             .build()
         try {
@@ -669,7 +741,7 @@ class LocalStoreTest {
             legacy.version = 3
         }
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
             .allowMainThreadQueries()
             .build()
         try {
@@ -723,7 +795,7 @@ class LocalStoreTest {
             legacy.version = 10
         }
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15).allowMainThreadQueries().build()
+            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16).allowMainThreadQueries().build()
         try {
             assertEquals(
                 "legacy-item",
@@ -766,7 +838,7 @@ class LocalStoreTest {
         }
 
         val migrated = Room.databaseBuilder(context, ChatDatabase::class.java, name)
-            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15).allowMainThreadQueries().build()
+            .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16).allowMainThreadQueries().build()
         try {
             assertEquals("preserve me", migrated.dao().visibleMessageSnapshot("legacy-session").single().content)
             assertEquals(
@@ -822,5 +894,62 @@ class LocalStoreTest {
             "REMOTE_RUNTIME", null, false, false, false, 1,
         )))
         assertEquals(SessionMutationResult.RemoteAuthorityRequired, repository.rename("alice", "remote-session", "bad", 7))
+
+        database.workbenchDao().saveRun(WorkbenchRunEntity(
+            subject = "alice", organization = "", runtimeId = "android-local", workspaceId = "local",
+            sessionId = "alice-session", runId = "finished-run", backendId = "opendrsai", authority = "LOCAL_DEVICE",
+            status = "COMPLETED", lastSequence = 2, idempotencyKey = "finished-key", input = "history",
+            updatedAt = 8,
+        ))
+        assertEquals(SessionMutationResult.Applied, repository.delete("alice", "alice-session"))
+        assertNull(database.workbenchDao().session("alice", "alice-session"))
+        assertTrue(database.dao().conversationSnapshot("alice").isEmpty())
+        assertTrue(database.workbenchDao().sessionRuns("alice", "", "alice-session").isEmpty())
+        assertEquals("bob-session", database.dao().conversationSnapshot("bob").single().id)
+
+        val activeConversation = ConversationEntity("active-session", "alice", "Active", "local:opendrsai", modelId = "m", createdAt = 9, updatedAt = 9)
+        database.dao().saveConversation(activeConversation)
+        projection.projectLocalConversation(activeConversation)
+        database.workbenchDao().saveRun(WorkbenchRunEntity(
+            subject = "alice", organization = "", runtimeId = "android-local", workspaceId = "local",
+            sessionId = "active-session", runId = "active-run", backendId = "opendrsai", authority = "LOCAL_DEVICE",
+            status = "RUNNING", lastSequence = 1, idempotencyKey = "active-key", input = "active", updatedAt = 10,
+        ))
+        assertEquals(SessionMutationResult.ActiveRun, repository.delete("alice", "active-session"))
+        assertNotNull(database.workbenchDao().session("alice", "active-session"))
+    }
+
+    @Test fun recoveryCenterScopesCandidatesRecoversStaleRunsAndArchivesSafely() = runBlocking {
+        val now = 40L * 24 * 60 * 60 * 1_000
+        val day = 24L * 60 * 60 * 1_000
+        fun run(subject: String, id: String, status: String, updatedAt: Long) = WorkbenchRunEntity(
+            subject = subject, organization = "", runtimeId = "android-local", workspaceId = "local",
+            sessionId = "session-$id", runId = id, backendId = "android-agent", authority = "LOCAL_DEVICE",
+            status = status, lastSequence = 1, idempotencyKey = "$subject-key-$id", input = "private",
+            failureCode = if (status == "FAILED") "provider_429" else null, updatedAt = updatedAt,
+        )
+        val dao = database.workbenchDao()
+        listOf(
+            run("alice", "paused", "PAUSED", now - 1),
+            run("alice", "waiting", "WAITING_APPROVAL", now - 2),
+            run("alice", "failed", "FAILED", now - 3),
+            run("alice", "stale", "RUNNING", now - 20 * 60 * 1_000),
+            run("alice", "expired", "PAUSED", now - 31 * day),
+            run("bob", "bob-paused", "PAUSED", now - 1),
+        ).forEach { dao.saveRun(it) }
+        var audit = 0
+        val repository = RecoveryCenterRepository(database, auditId = { "archive-${audit++}" })
+
+        val candidates = repository.candidates("alice", now)
+        assertEquals(setOf("paused", "waiting", "failed", "stale"), candidates.map { it.runId }.toSet())
+        assertEquals("PAUSED", candidates.single { it.runId == "stale" }.status)
+        assertEquals("stale_running_recovered", candidates.single { it.runId == "stale" }.failureCode)
+        assertTrue(candidates.none { it.status == "RUNNING" })
+        assertTrue(candidates.single { it.runId == "paused" }.canContinue)
+        assertFalse(candidates.single { it.runId == "failed" }.canCancel)
+        assertFalse(repository.archive("alice", "bob-paused", now))
+        assertTrue(repository.archive("alice", "failed", now))
+        assertFalse(repository.archive("alice", "failed", now + 1))
+        assertEquals(setOf("paused", "waiting", "stale"), repository.candidates("alice", now + 1).map { it.runId }.toSet())
     }
 }

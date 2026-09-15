@@ -64,6 +64,20 @@ class FullRuntimeBindingCoordinatorTest {
         assertEquals("alice", coordinator.state.value.accountSubject)
     }
 
+    @Test fun `runtime process reclaim uses bounded rebind and becomes explicit unavailable`() = runTest {
+        val transport = FakeTransport()
+        val coordinator = FullRuntimeBindingCoordinator(this, transport, maxAttempts = 2, retryDelayMs = 1)
+        coordinator.bind("alice")
+        transport.failures = 2
+
+        transport.listener?.onConnectionLost("runtime_process_lost")
+        advanceUntilIdle()
+
+        assertEquals(3, transport.binds)
+        assertEquals(FullRuntimeBindingState.UNAVAILABLE, coordinator.state.value.state)
+        assertEquals("alice", coordinator.state.value.accountSubject)
+    }
+
     @Test fun `failed bind is explicit unavailable and never changes authority`() = runTest {
         val transport = FakeTransport(failures = 2)
         val coordinator = FullRuntimeBindingCoordinator(this, transport, maxAttempts = 2, retryDelayMs = 1)
@@ -104,7 +118,7 @@ class FullRuntimeBindingCoordinatorTest {
     )
 
     private class FakeTransport(
-        private var failures: Int = 0,
+        var failures: Int = 0,
         private val identity: FullRuntimeIdentity? = null,
         private val bindDelayMs: Long = 10,
     ) : FullRuntimeBindingTransport {

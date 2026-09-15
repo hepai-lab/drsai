@@ -1,5 +1,10 @@
 package ai.drsai.remote.remote.ui
 
+import ai.drsai.remote.R
+import ai.drsai.remote.ui.LocalizedText
+import ai.drsai.remote.ui.resolve
+import ai.drsai.remote.ui.localizedDateTime
+
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -56,6 +61,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
@@ -74,6 +81,22 @@ import ai.drsai.remote.remote.data.RemoteActionableState
 import ai.drsai.remote.remote.data.RemoteRecoveryAction
 import ai.drsai.remote.remote.data.remoteActionableState
 import ai.drsai.remote.remote.data.RemoteSearchResult
+import ai.drsai.remote.remote.data.RemoteSearchKind
+import ai.drsai.remote.remote.data.RemoteSearchSource
+
+@Composable
+private fun remoteSearchContext(result: RemoteSearchResult): String = stringResource(when (result.kind) {
+    RemoteSearchKind.HOST -> R.string.computer
+    RemoteSearchKind.WORKSPACE -> R.string.workspace
+    RemoteSearchKind.SESSION -> R.string.conversation
+    RemoteSearchKind.MESSAGE -> R.string.cached_message_match
+})
+
+@Composable
+private fun remoteSearchSource(source: RemoteSearchSource): String = stringResource(when (source) {
+    RemoteSearchSource.ONLINE -> R.string.online
+    RemoteSearchSource.CACHE -> R.string.local_cache
+})
 
 data class RemoteComputerUi(
     val runtimeId: RuntimeId,
@@ -90,6 +113,9 @@ data class RemoteComputerUi(
     val lastSyncedAtMillis: Long? = null,
     val workspaceSyncStatus: String? = null,
     val workspaceSyncFailed: Boolean = false,
+    val workspaceSyncSucceeded: Boolean = false,
+    val lastSeenText: LocalizedText? = null,
+    val workspaceSyncText: LocalizedText? = null,
 )
 
 data class RemoteHomeUiState(
@@ -99,6 +125,7 @@ data class RemoteHomeUiState(
     val refreshing: Boolean = false,
     val stale: Boolean = false,
     val error: String? = null,
+    val errorText: LocalizedText? = null,
     val actionableError: RemoteActionableState? = null,
     val recentlyAssociatedRuntimeId: RuntimeId? = null,
     val refreshingRuntimeIds: Set<RuntimeId> = emptySet(),
@@ -175,45 +202,47 @@ fun RemoteHomeScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             FloatingPageHeader(
-                title = "远程工作区",
+                title = stringResource(R.string.remote_workspaces),
                 onBack = onBack,
                 onAssociate = onAssociate,
                 onRefresh = onRefresh,
                 onDiagnose = onDiagnose,
                 refreshing = state.refreshing,
             )
+            val workspaceSearchDescription = stringResource(R.string.search_remote_workspaces_a11y)
             OutlinedTextField(
                 value = state.query,
                 onValueChange = onQueryChange,
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "搜索远程工作区" },
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = workspaceSearchDescription },
                 singleLine = true,
                 shape = RoundedCornerShape(20.dp),
                 leadingIcon = { Icon(Icons.Default.Search, null) },
-                placeholder = { Text("搜索计算机或工作区") },
+            placeholder = { Text(stringResource(R.string.search_computer_workspace)) },
             )
-            if (state.stale) RemoteStatusBanner("当前显示上次同步内容")
+            if (state.stale) RemoteStatusBanner(stringResource(R.string.showing_last_synced_content))
             when (state.pairing.stage) {
                 ai.drsai.remote.remote.data.RemotePairingStage.SCANNING ->
-                    RemoteStatusBanner("请扫描电脑上显示的一次性二维码")
+                    RemoteStatusBanner(stringResource(R.string.scan_one_time_qr_code))
                 ai.drsai.remote.remote.data.RemotePairingStage.CONNECTING ->
-                    RemoteStatusBanner("正在安全连接电脑…")
+                    RemoteStatusBanner(stringResource(R.string.securely_connecting_computer))
                 ai.drsai.remote.remote.data.RemotePairingStage.COMPLETE ->
-                    RemoteStatusBanner("电脑已连接，可以选择工作区")
+                    RemoteStatusBanner(stringResource(R.string.computer_connected_choose_workspace))
                 else -> Unit
             }
             if (state.computers.isNotEmpty() && state.notificationState != RemoteNotificationReadiness.READY) {
                 RemoteNotificationReadinessCard(state.notificationState, onEnableNotifications)
             }
             state.diagnostic?.let { rawDiagnostic ->
-                val diagnostic = diagnoseRemoteConnection(rawDiagnostic.checks, uiLanguage)
+                val diagnostic = remoteConnectionDiagnosticPresentation(rawDiagnostic)
+                val diagnosticDescription = stringResource(
+                    R.string.connection_check_a11y,
+                    diagnostic.title,
+                    diagnostic.reason,
+                )
                 Surface(
                     modifier = Modifier.fillMaxWidth().semantics {
                         liveRegion = LiveRegionMode.Polite
-                        contentDescription = if (uiLanguage == RemoteUiLanguage.ZH) {
-                            "连接检查：${diagnostic.title}。${diagnostic.reason}"
-                        } else {
-                            "Connection check: ${diagnostic.title}. ${diagnostic.reason}"
-                        }
+                        contentDescription = diagnosticDescription
                     },
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
@@ -227,12 +256,12 @@ fun RemoteHomeScreen(
                             Text(diagnostic.reason, style = MaterialTheme.typography.bodySmall)
                         }
                         diagnostic.actionLabel?.let { label ->
-                            TextButton(onClick = { onDiagnosticAction(diagnostic.action) }) { Text(label) }
+                            TextButton(onClick = { onDiagnosticAction(rawDiagnostic.action) }) { Text(label) }
                         }
                     }
                 }
             }
-            state.error?.let {
+            (state.errorText?.resolve() ?: state.error)?.let {
                 RemoteActionableStateCard(
                     state.actionableError ?: remoteActionableState(state.lifecycleState) ?: return@let,
                     language = uiLanguage,
@@ -254,8 +283,7 @@ private fun RemoteNotificationReadinessCard(
     state: RemoteNotificationReadiness,
     onEnableNotifications: () -> Unit,
 ) {
-    val language = currentRemoteUiLanguage()
-    val presentation = remoteNotificationPresentation(state, language) ?: return
+    val presentation = remoteNotificationPresentation(state) ?: return
     Surface(
         modifier = Modifier.semantics {
             liveRegion = LiveRegionMode.Polite
@@ -288,14 +316,15 @@ fun RemoteActionableStateCard(
     modifier: Modifier = Modifier,
     language: RemoteUiLanguage? = null,
 ) {
-    val resolvedLanguage = language ?: currentRemoteUiLanguage()
-    val presentation = localizedRemoteActionableState(state, resolvedLanguage)
+    val presentation = localizedRemoteActionableState(state)
+    val actionableAccessibility = stringResource(
+        R.string.remote_status_accessibility,
+        presentation.title,
+        presentation.reason.trimEnd('。', '.'),
+    ) + (presentation.actionLabel?.let { stringResource(R.string.remote_status_action_accessibility, it) } ?: "")
     Surface(modifier.fillMaxWidth().semantics {
         liveRegion = LiveRegionMode.Polite
-        contentDescription = RemoteHostStatusPresentation(
-            presentation.title, presentation.reason, presentation.action,
-            presentation.actionLabel, resolvedLanguage,
-        ).accessibilityDescription
+        contentDescription = actionableAccessibility
     }, shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.errorContainer) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -321,12 +350,15 @@ fun FloatingPageHeader(
     modifier: Modifier = Modifier,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val backDescription = stringResource(R.string.back)
+    val moreDescription = stringResource(R.string.more)
+    val associateMenuDescription = stringResource(R.string.scan_link_menu_item_a11y)
     val controlColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.60f)
         .compositeOver(MaterialTheme.colorScheme.background)
     Box(modifier.fillMaxWidth().heightIn(min = 52.dp)) {
         HeaderControl(Modifier.align(Alignment.CenterStart)) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, backDescription)
             }
         }
         Surface(
@@ -350,23 +382,23 @@ fun FloatingPageHeader(
         }
         Box(Modifier.align(Alignment.CenterEnd)) {
             HeaderControl {
-                IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, "更多") }
+                IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, moreDescription) }
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(
-                    modifier = Modifier.semantics { contentDescription = "扫码关联菜单项" },
-                    text = { Text("扫码关联已有计算机") },
+                    modifier = Modifier.semantics { contentDescription = associateMenuDescription },
+                        text = { Text(stringResource(R.string.scan_link_computer)) },
                     leadingIcon = { Icon(Icons.Default.QrCodeScanner, null) },
                     onClick = { menuOpen = false; onAssociate() },
                 )
                 DropdownMenuItem(
-                    text = { Text(if (refreshing) "正在刷新" else "刷新") },
+                    text = { Text(stringResource(if (refreshing) R.string.refreshing else R.string.refresh)) },
                     leadingIcon = { Icon(Icons.Default.Refresh, null) },
                     enabled = !refreshing,
                     onClick = { menuOpen = false; onRefresh() },
                 )
                 DropdownMenuItem(
-                    text = { Text("检查连接") },
+                        text = { Text(stringResource(R.string.check_connection)) },
                     leadingIcon = { Icon(Icons.Default.Computer, null) },
                     onClick = { menuOpen = false; onDiagnose() },
                 )
@@ -393,34 +425,35 @@ private fun HeaderControl(modifier: Modifier = Modifier, content: @Composable ()
 
 @Composable
 private fun RemoteEmptyState(onAssociate: () -> Unit, modifier: Modifier = Modifier) {
+    val associateButtonDescription = stringResource(R.string.scan_link_primary_button_a11y)
     Column(
         modifier.padding(horizontal = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(Icons.Default.Computer, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(16.dp))
-        Text("还没有关联的计算机", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.no_linked_computers), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         Text(
-            "请先在电脑端启用远程访问，再扫描一次性二维码完成关联。",
+            stringResource(R.string.enable_remote_access_then_scan),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(20.dp))
         Button(
             onClick = onAssociate,
-            modifier = Modifier.semantics { contentDescription = "扫码关联主按钮" },
+            modifier = Modifier.semantics { contentDescription = associateButtonDescription },
         ) {
             Icon(Icons.Default.QrCodeScanner, null)
             Spacer(Modifier.width(8.dp))
-            Text("扫码关联已有计算机")
+                Text(stringResource(R.string.scan_link_computer))
         }
     }
 }
 
 @Composable
 private fun RemoteLoadingState(modifier: Modifier = Modifier) {
-    Text("正在读取远程工作区…", modifier, style = MaterialTheme.typography.bodyLarge)
+        Text(stringResource(R.string.loading_remote_workspaces), modifier, style = MaterialTheme.typography.bodyLarge)
 }
 
 @Composable
@@ -440,7 +473,7 @@ private fun RemoteComputerList(
         if (state.query.isNotBlank() && state.searchResults.isNotEmpty()) {
             item(key = "unified-search-results") {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("搜索结果", fontWeight = FontWeight.SemiBold)
+        Text(stringResource(R.string.search_results), fontWeight = FontWeight.SemiBold)
                     state.searchResults.forEach { result ->
                         Surface(
                             Modifier.fillMaxWidth().clickable { onOpenSearchResult(result) },
@@ -450,9 +483,9 @@ private fun RemoteComputerList(
                             Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text(result.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(result.context, style = MaterialTheme.typography.labelSmall)
+                                    Text(remoteSearchContext(result), style = MaterialTheme.typography.labelSmall)
                                 }
-                                Text(result.source.label, style = MaterialTheme.typography.labelSmall,
+                                Text(remoteSearchSource(result.source), style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.primary)
                             }
                         }
@@ -486,9 +519,12 @@ private fun RemoteComputerCard(
     onHostAction: (RemoteRecoveryAction, RuntimeId) -> Unit,
     refreshingWorkspaces: Boolean,
 ) {
-    val status = remoteHostStatusPresentation(
-        computer.state, computer.lastSeenLabel, currentRemoteUiLanguage(),
-    )
+    val status = remoteHostStatusPresentation(computer.state, computer.lastSeenLabel)
+    val refreshWorkspacesDescription = stringResource(R.string.refresh_computer_workspaces_a11y, computer.displayName)
+    val collapseWorkspacesDescription = stringResource(R.string.collapse_workspaces)
+    val expandWorkspacesDescription = stringResource(R.string.expand_workspaces)
+    val computerActionsDescription = stringResource(R.string.computer_actions)
+    val unlinkComputerDescription = stringResource(R.string.unlink_computer_a11y, computer.displayName)
     var expanded by remember(computer.runtimeId) { mutableStateOf(true) }
     var menuOpen by remember(computer.runtimeId) { mutableStateOf(false) }
     var confirmRevoke by remember(computer.runtimeId) { mutableStateOf(false) }
@@ -509,7 +545,7 @@ private fun RemoteComputerCard(
                 Column(Modifier.weight(1f)) {
                     Text(computer.displayName, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (recentlyAssociated) {
-                        Text("刚刚关联", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        Text(stringResource(R.string.just_linked), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
                     RemoteConnectionIndicator(computer.state, status)
                     Text(status.reason, style = MaterialTheme.typography.labelSmall,
@@ -519,8 +555,13 @@ private fun RemoteComputerCard(
                     }
                     if (computer.workspacesCached && computer.state !in setOf(RemoteConnectionState.OFFLINE, RemoteConnectionState.PAUSED)) {
                         Text(
-                            computer.lastSeenLabel.takeIf(String::isNotBlank)
-                                ?: "缓存的工作区目录",
+                            if (computer.workspacesCached && computer.lastSyncedAtMillis != null) {
+                                stringResource(
+                                    R.string.remote_cached_last_synced,
+                                    localizedDateTime(computer.lastSyncedAtMillis),
+                                )
+                            } else computer.lastSeenText?.resolve() ?: computer.lastSeenLabel.takeIf(String::isNotBlank)
+                                ?: stringResource(R.string.cached_workspace_directory),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -532,7 +573,9 @@ private fun RemoteComputerCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    computer.workspaceSyncStatus?.let { status ->
+                    (if (computer.workspaceSyncSucceeded && computer.lastSyncedAtMillis != null) {
+                        stringResource(R.string.remote_synced_at, localizedDateTime(computer.lastSyncedAtMillis))
+                    } else computer.workspaceSyncText?.resolve() ?: computer.workspaceSyncStatus)?.let { status ->
                         Text(
                             status,
                             style = MaterialTheme.typography.labelSmall,
@@ -545,15 +588,15 @@ private fun RemoteComputerCard(
                     }
                 }
                 if (computer.pendingApprovalCount > 0) {
-                    Text("待确认 ${computer.pendingApprovalCount}", color = MaterialTheme.colorScheme.error)
+                        Text(pluralStringResource(R.plurals.pending_confirmation_count, computer.pendingApprovalCount, computer.pendingApprovalCount), color = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.width(8.dp))
                 }
                 if (computer.unreadTurnCount > 0) {
-                    Text("未读 ${computer.unreadTurnCount}", color = MaterialTheme.colorScheme.primary)
+                        Text(pluralStringResource(R.plurals.unread_count, computer.unreadTurnCount, computer.unreadTurnCount), color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
                 }
                 if (computer.runningRunCount > 0) {
-                    Text("运行中 ${computer.runningRunCount}", color = MaterialTheme.colorScheme.tertiary)
+                        Text(pluralStringResource(R.plurals.running_count, computer.runningRunCount, computer.runningRunCount), color = MaterialTheme.colorScheme.tertiary)
                     Spacer(Modifier.width(8.dp))
                 }
                 IconButton(
@@ -568,19 +611,19 @@ private fun RemoteComputerCard(
                     } else {
                         Icon(
                             Icons.Default.Refresh,
-                            "刷新 ${computer.displayName} 的工作区",
+                            refreshWorkspacesDescription,
                         )
                     }
                 }
                 IconButton(onClick = { expanded = !expanded }) {
                     Icon(
                         if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        if (expanded) "收起工作区" else "展开工作区",
+                        if (expanded) collapseWorkspacesDescription else expandWorkspacesDescription,
                     )
                 }
                 Box {
                     IconButton(onClick = { menuOpen = true }) {
-                        Icon(Icons.Default.MoreVert, "计算机操作")
+                        Icon(Icons.Default.MoreVert, computerActionsDescription)
                     }
                     DropdownMenu(
                         expanded = menuOpen,
@@ -588,9 +631,9 @@ private fun RemoteComputerCard(
                     ) {
                         DropdownMenuItem(
                             modifier = Modifier.semantics {
-                                contentDescription = "解除 ${computer.displayName} 的关联"
+                                contentDescription = unlinkComputerDescription
                             },
-                            text = { Text("解除关联") },
+                    text = { Text(stringResource(R.string.unlink)) },
                             leadingIcon = { Icon(Icons.Default.DeleteForever, null) },
                             onClick = {
                                 menuOpen = false
@@ -623,12 +666,12 @@ private fun RemoteComputerCard(
     if (confirmRevoke) {
         AlertDialog(
             onDismissRequest = { confirmRevoke = false },
-            title = { Text("解除关联？") },
+            title = { Text(stringResource(R.string.unlink_question)) },
             text = { Column {
-                Text("解除后，这台设备将立即停止接收 ${computer.displayName} 的会话和事件。重新扫码可以恢复访问。")
+                    Text(stringResource(R.string.unlink_detail, computer.displayName))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(clearLocalCache, { clearLocalCache = it })
-                    Text("同时清除本机缓存、草稿和历史投影")
+                        Text(stringResource(R.string.clear_local_projection))
                 }
             } },
             confirmButton = {
@@ -638,10 +681,10 @@ private fun RemoteComputerCard(
                         if (clearLocalCache) onRevokeAssociationAndClear(computer.runtimeId)
                         else onRevokeAssociation(computer.runtimeId)
                     },
-                ) { Text("解除关联") }
+                ) { Text(stringResource(R.string.unlink)) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmRevoke = false }) { Text("取消") }
+                TextButton(onClick = { confirmRevoke = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -653,7 +696,10 @@ private fun RemoteConnectionIndicator(
     presentation: RemoteHostStatusPresentation,
 ) {
     val connecting = state == RemoteConnectionState.CONNECTING
-    val pulseAlpha = if (connecting) {
+    val animationsEnabled = ai.drsai.remote.ui.ReducedMotionPolicy.animationsEnabled(
+        android.animation.ValueAnimator.areAnimatorsEnabled(),
+    )
+    val pulseAlpha = if (connecting && animationsEnabled) {
         rememberInfiniteTransition(label = "remote-connection-pulse").animateFloat(
             initialValue = 0.38f,
             targetValue = 1f,

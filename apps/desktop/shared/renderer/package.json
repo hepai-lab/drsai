@@ -10,7 +10,9 @@
     "react": "19.2.1",
     "react-dom": "19.2.1",
     "react-markdown": "10.1.0",
-    "remark-gfm": "4.0.1"
+    "remark-gfm": "4.0.1",
+    "jszip": "^3.10.1",
+    "docx-preview": "^0.3.5"
   },
   "devDependencies": {
     "@types/qrcode": "^1.5.6",

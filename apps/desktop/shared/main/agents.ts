@@ -17,7 +17,7 @@ import {
   refreshAuthContextAfterUnauthorized,
   requireAuthContext,
 } from "./auth";
-import { getGatewaySnapshot } from "./gateway";
+import { getGatewaySnapshot, getGatewayStatus } from "./gateway";
 import { DRSAI_CONFIG_FILE, DRSAI_HOME } from "./paths";
 import { getActivePlatformConfig } from "./platformConfig";
 import {
@@ -38,6 +38,29 @@ import {
 } from "./agentCatalog";
 import { recordAgentTelemetry } from "./agentTelemetry";
 import { LocalRuntimeClient } from "./runtimeClient";
+import {
+  getExternalAgentRuntimeDescriptor,
+  listExternalAgentRuntimeAgents,
+} from "./externalAgentRuntimes";
+import {
+  getAgentPreferences,
+} from "./agentPreferences";
+import {
+  fetchHostedAgentCatalog,
+  hostedCatalogSubjectSuffix,
+} from "./hostedAgentCatalog";
+import {
+  configureRemoteAgentCredentials,
+  isDeviceRemoteAgentId,
+  removeDeviceRemoteAgent,
+  saveDeviceRemoteAgent,
+  testDeviceRemoteAgent,
+  type RemoteAgentSaveRequest,
+  type RemoteAgentTestRequest,
+} from "./remoteAgents";
+import { readSavedApiKey } from "./settings";
+
+export { configureRemoteAgentCredentials, isDeviceRemoteAgentId };
 
 const ACTIVE_PLATFORM = getActivePlatformConfig();
 const PLATFORM_BASE_URL = ACTIVE_PLATFORM.portalUrl;
@@ -115,6 +138,8 @@ export function getPlatformAgentExecutionDescriptor(
   return descriptor ? { ...descriptor, capabilities: [...descriptor.capabilities] } : null;
 }
 
+export { getExternalAgentRuntimeDescriptor };
+
 export function getPlatformAgentChatUrl(_platformId: string): string {
   // Agents discovered through HepAI's base_url are DDF runtime/model IDs.
   // Execute them through the matching OpenAI-compatible endpoint; the portal
@@ -146,6 +171,37 @@ export async function recordAgentUsage(agentId: string): Promise<DesktopAgentPre
   const descriptor = getPlatformAgentExecutionDescriptor(agentId);
   if (!descriptor) return { agentId, saved: false, message: "Agent not found in the platform catalog." };
   return { agentId, saved: false, message: "Platform usage mutation is not supported; Desktop records privacy-safe execution telemetry locally." };
+}
+
+export async function readAgentPreferences(): Promise<{
+  defaultAgentId: string | null;
+  recentAgentIds: string[];
+}> {
+  const prefs = await getAgentPreferences();
+  return {
+    defaultAgentId: prefs.defaultAgentId,
+    recentAgentIds: prefs.recentAgentIds,
+  };
+}
+
+export async function testRemoteAgentConnection(
+  request: RemoteAgentTestRequest,
+): Promise<{ ok: boolean; message: string; agentInfo?: Record<string, unknown> }> {
+  return testDeviceRemoteAgent(request);
+}
+
+export async function saveRemoteAgentConnection(
+  request: RemoteAgentSaveRequest,
+): Promise<DesktopAgent> {
+  return saveDeviceRemoteAgent(request);
+}
+
+export async function removeRemoteAgentConnection(agentId: string): Promise<{ removed: boolean }> {
+  if (!isDeviceRemoteAgentId(agentId)) {
+    return { removed: false };
+  }
+  const removed = await removeDeviceRemoteAgent(agentId);
+  return { removed };
 }
 
 export async function stopPlatformChat(agentId: string, threadId: string): Promise<boolean> {
@@ -195,7 +251,12 @@ async function listLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
 async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<DesktopAgent[]> {
   // Catalog discovery is read-only. It must never start Python, Gateway, or
   // Codex merely because the user opened the Agent Square.
-  const gateway = getGatewaySnapshot();
+  // The cache-first pass keeps initial paint cheap. Every normal/background
+  // refresh probes the current Runtime so a startup transition cannot leave
+  // the local OpenDrSai entry permanently labelled "stopped".
+  const gateway = options.preferCache === true
+    ? getGatewaySnapshot()
+    : await getGatewayStatus();
   const localSnapshot = readLocalAgentSnapshot();
   const configured = gateway.ready
     ? await listConfiguredAgents().catch(() => localSnapshot)
@@ -211,6 +272,7 @@ async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
     capabilities: ["chat", "workspace", "tools"], catalogGroup: "local", url: gateway.baseUrl,
     error: gateway.externalConflict ? "The local Runtime port is already used by another service." : undefined,
   }));
+  agents.push(...await listExternalAgentRuntimeAgents({ preferCache: options.preferCache }).catch(() => []));
   if (!gateway.ready) return agents;
   try {
     await Promise.all(agents.map(async (agent, index) => {
@@ -223,20 +285,26 @@ async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
   }
   try {
     const client = await LocalRuntimeClient.connect();
+    // Capabilities are authoritative. Do not probe optional Codex routes when
+    // this Runtime does not register the backend; probing creates a noisy 404
+    // on every Agent catalog refresh.
+    const capability = (await client.getCapabilities()).agent_backends?.codex;
+    if (!capability?.available) return agents;
     const [modelCatalog, account] = await Promise.all([
       client.getBackendModels("codex", options.refresh === true),
       client.getBackendAccount("codex", options.refresh === true),
     ]);
-    const capability = (await client.getCapabilities()).agent_backends?.codex;
     const visibleModels = modelCatalog.models?.filter((model) => !model.hidden) ?? [];
     const defaultModel = modelCatalog.default_model
       ?? visibleModels.find((model) => model.default)?.id;
     const executable = capability?.available === true && capability.contract_compatible !== false
       && account.state === "signed_in" && modelCatalog.stale !== true && visibleModels.length > 0;
     agents.push({
-      id: "my-codex", name: "Codex", description: "Codex Agent Runtime running in this Workspace Runtime.",
-      owner: "Local", source: "local", status: executable ? "running" : "stopped", mode: "local",
-      available: executable, capabilities: ["chat", "workspace", "tools"], catalogGroup: "local",
+      id: "my-codex", name: "Codex", description: "A coding agent integrated through the OpenDrSai Codex Adapter.",
+      localizedDescription: { zh: "通过 OpenDrSai Codex Adapter 接入的编程智能体。", en: "A coding agent integrated through the OpenDrSai Codex Adapter." },
+      owner: "OpenAI", source: "local", status: executable ? "running" : "stopped", mode: "local",
+      available: executable, capabilities: ["chat", "streaming", "workspace", "tools"], catalogGroup: "local",
+      catalogVisibility: "when_available",
       model: defaultModel, models: visibleModels.map((model) => model.id),
       error: capability?.available
         ? account.state === "signed_out" ? "Codex needs you to sign in before sending a message."
@@ -314,12 +382,26 @@ async function listPlatformAgents(options: DesktopAgentListOptions): Promise<Des
   if (!subjectKey) {
     activePlatformSubjectKey = null;
     platformExecutionDescriptors.clear();
+    const hosted = await fetchHostedAgentCatalog({
+      refresh: options.refresh === true,
+      catalogBaseUrl: ACTIVE_PLATFORM.baseUrl,
+    });
+    if (hosted.agents.length > 0) {
+      platformStatus = {
+        ...hosted.status,
+        capabilities: [...hosted.status.capabilities],
+      };
+      platformExecutionDescriptors = new Map(
+        hosted.executionDescriptors.map((descriptor) => [descriptor.publicId, descriptor]),
+      );
+      return structuredClone(hosted.agents);
+    }
     platformStatus = {
-      state: "requires_login",
+      state: hosted.status.state === "requires_login" ? "requires_login" : "native_api_unavailable",
       apiVersion: null,
       capabilities: [],
-      message: "Sign in with HepAI to load platform agents.",
-      lastCheckedAt: new Date().toISOString(),
+      message: hosted.status.message || "Sign in with HepAI or save an API key to load platform agents.",
+      lastCheckedAt: hosted.status.lastCheckedAt ?? new Date().toISOString(),
       lastSuccessfulSyncAt: null,
       cacheState: "none",
     };
@@ -369,7 +451,7 @@ async function loadLivePlatformCatalog(subjectKey: string, refresh: boolean): Pr
 }> {
   try {
     const result = await fetchPlatformAgents(platformClientOptions(refresh));
-    if (result.status.state === "ready") {
+    if (result.status.state === "ready" && result.agents.length > 0) {
       const syncedAt = result.status.lastCheckedAt ?? new Date().toISOString();
       const catalog = {
         at: Date.now(),
@@ -385,17 +467,72 @@ async function loadLivePlatformCatalog(subjectKey: string, refresh: boolean): Pr
       writePlatformCache(subjectKey, catalog.agents, syncedAt);
       return catalog;
     }
+
+    // Portal Native empty/unavailable: fall back to WebUI-equivalent DDF list_agents + get_info.
+    const hosted = await fetchHostedAgentCatalog({
+      refresh,
+      catalogBaseUrl: ACTIVE_PLATFORM.baseUrl,
+    });
+    if (hosted.agents.length > 0) {
+      const syncedAt = hosted.status.lastCheckedAt ?? new Date().toISOString();
+      const catalog = {
+        at: Date.now(),
+        agents: hosted.agents.map((agent) => ({ ...agent, catalogState: "live" as const })),
+        executionDescriptors: hosted.executionDescriptors,
+        status: {
+          ...hosted.status,
+          message: result.status.state === "ready" && result.agents.length === 0
+            ? `${hosted.status.message} Native catalog was empty; loaded hosted HepAI workers instead.`
+            : `${hosted.status.message} ${result.status.message}`.trim(),
+          lastSuccessfulSyncAt: syncedAt,
+          cacheState: "fresh" as const,
+        },
+      };
+      platformCatalogMemory.set(subjectKey, catalog);
+      writePlatformCache(subjectKey, catalog.agents, syncedAt);
+      return catalog;
+    }
+
     const cached = readPlatformCache(subjectKey);
     if (cached) {
-      return cachedPlatformCatalog(cached, result.status);
+      return cachedPlatformCatalog(cached, result.status.state === "ready" ? hosted.status : result.status);
     }
     return {
       at: 0,
       agents: [],
       executionDescriptors: [],
-      status: { ...result.status, lastSuccessfulSyncAt: null, cacheState: "none" },
+      status: {
+        ...(result.status.state === "ready" ? hosted.status : result.status),
+        lastSuccessfulSyncAt: null,
+        cacheState: "none",
+      },
     };
   } catch (error) {
+    try {
+      const hosted = await fetchHostedAgentCatalog({
+        refresh,
+        catalogBaseUrl: ACTIVE_PLATFORM.baseUrl,
+      });
+      if (hosted.agents.length > 0) {
+        const syncedAt = hosted.status.lastCheckedAt ?? new Date().toISOString();
+        const catalog = {
+          at: Date.now(),
+          agents: hosted.agents.map((agent) => ({ ...agent, catalogState: "live" as const })),
+          executionDescriptors: hosted.executionDescriptors,
+          status: {
+            ...hosted.status,
+            message: `${hosted.status.message} Native catalog failed; loaded hosted HepAI workers instead.`,
+            lastSuccessfulSyncAt: syncedAt,
+            cacheState: "fresh" as const,
+          },
+        };
+        platformCatalogMemory.set(subjectKey, catalog);
+        writePlatformCache(subjectKey, catalog.agents, syncedAt);
+        return catalog;
+      }
+    } catch {
+      // Fall through to cached catalog handling below.
+    }
     const cached = readPlatformCache(subjectKey);
     const failureStatus: PlatformAgentStatus = {
       state: "error",
@@ -460,8 +597,28 @@ function cachedPlatformCatalog(
 
 async function platformSubjectKey(): Promise<string | null> {
   const session = await getAuthSession();
-  if (!session.authenticated || session.authMode !== "oidc" || !session.user?.id) return null;
-  return createPlatformCatalogSubjectKey(ACTIVE_PLATFORM.name, PLATFORM_CACHE_ID, session.user.id);
+  if (session.authenticated && session.authMode === "oidc" && session.user?.id) {
+    return createPlatformCatalogSubjectKey(ACTIVE_PLATFORM.name, PLATFORM_CACHE_ID, session.user.id);
+  }
+  const apiKey = process.env.HEPAI_API_KEY?.trim()
+    || process.env.OPENAI_API_KEY?.trim()
+    || readSavedApiKey();
+  if (apiKey) {
+    return createPlatformCatalogSubjectKey(
+      ACTIVE_PLATFORM.name,
+      PLATFORM_CACHE_ID,
+      `api-key:${hostedCatalogSubjectSuffix(apiKey)}`,
+    );
+  }
+  return null;
+}
+
+export function resolvePlatformBearerToken(authContext?: { accessToken?: string }): string | null {
+  if (authContext?.accessToken) return authContext.accessToken;
+  return process.env.HEPAI_API_KEY?.trim()
+    || process.env.OPENAI_API_KEY?.trim()
+    || readSavedApiKey()
+    || null;
 }
 
 function platformClientOptions(refresh = false): PlatformAgentClientOptions {
@@ -471,11 +628,15 @@ function platformClientOptions(refresh = false): PlatformAgentClientOptions {
     refresh,
     auth: {
       getAccessToken: async () => {
-        const auth = await requireAuthContext();
-        if (auth.authMode !== "oidc" || !auth.accessToken) {
-          throw new Error("HepAI OIDC sign-in is required.");
+        try {
+          const auth = await requireAuthContext();
+          const bearer = resolvePlatformBearerToken(auth);
+          if (bearer) return bearer;
+        } catch {
+          const bearer = resolvePlatformBearerToken();
+          if (bearer) return bearer;
         }
-        return auth.accessToken;
+        throw new Error("HepAI OIDC sign-in or API key is required.");
       },
       refreshAfterUnauthorized: async () => {
         const auth = await refreshAuthContextAfterUnauthorized();

@@ -29,10 +29,12 @@ class CodexJSONRPCClient:
         *,
         request_timeout: float = 15.0,
         enforce_stable_contract: bool = True,
+        notification_queue_limit: int = 2048,
     ):
         self.supervisor = supervisor
         self.request_timeout = request_timeout
         self.enforce_stable_contract = enforce_stable_contract
+        self.notification_queue_limit = max(1, int(notification_queue_limit))
         self._process: asyncio.subprocess.Process | None = None
         self._generation = 0
         self._next_id = 1
@@ -45,6 +47,9 @@ class CodexJSONRPCClient:
         self._route_handlers: dict[tuple[str | None, str | None], list[MessageHandler]] = defaultdict(list)
         self._server_handlers: dict[str, MessageHandler] = {}
         self._connection_failure_handlers: list[ConnectionFailureHandler] = []
+        self._dispatch_queues: dict[tuple[str | None, str | None], asyncio.Queue] = {}
+        self._dispatch_tasks: dict[tuple[str | None, str | None], asyncio.Task] = {}
+        self._recovery_task: asyncio.Task | None = None
         self.unknown_notifications: list[dict[str, Any]] = []
         self.protocol_violations: list[dict[str, str]] = []
 
@@ -93,6 +98,9 @@ class CodexJSONRPCClient:
                 raise RuntimeExecutionError("codex_experimental_api_rejected", "Production Codex Adapter requires the stable App Server API.")
             await self.notify("initialized", {}, allow_before_ready=True)
             self._state = "ready"
+            marker = getattr(self.supervisor, "mark_initialized", None)
+            if marker is not None:
+                marker(self._generation)
             return result if isinstance(result, Mapping) else {"result": result}
 
     async def request(self, method: str, params: Mapping[str, Any] | None = None, *, timeout: float | None = None) -> Any:
@@ -173,6 +181,11 @@ class CodexJSONRPCClient:
         if self._state == "closed":
             return
         self._state = "closed"
+        await self._stop_dispatchers()
+        if self._recovery_task and self._recovery_task is not asyncio.current_task():
+            self._recovery_task.cancel()
+            await asyncio.gather(self._recovery_task, return_exceptions=True)
+        self._recovery_task = None
         await self._reject_pending("codex_connection_closed", "Codex JSON-RPC client closed.")
         if self._reader_task and self._reader_task is not asyncio.current_task():
             self._reader_task.cancel()
@@ -185,6 +198,7 @@ class CodexJSONRPCClient:
         if self._state == "closed":
             raise RuntimeExecutionError("codex_connection_closed", "Codex JSON-RPC client is closed.")
         await self._reject_pending("codex_reconnecting", "Codex JSON-RPC connection is restarting.")
+        await self._stop_dispatchers()
         if self._reader_task and self._reader_task is not asyncio.current_task():
             self._reader_task.cancel()
             await asyncio.gather(self._reader_task, return_exceptions=True)
@@ -286,8 +300,56 @@ class CodexJSONRPCClient:
         if not handlers:
             self.unknown_notifications.append({"method": method, "params": self._safe_summary(params)})
             self.unknown_notifications[:] = self.unknown_notifications[-100:]
-        for handler in handlers:
-            await self._call(handler, message)
+        if handlers:
+            self._enqueue_notification((thread_id, turn_id), handlers, message, generation)
+
+    def _enqueue_notification(
+        self, key: tuple[str | None, str | None], handlers: list[MessageHandler],
+        message: Mapping[str, Any], generation: int,
+    ) -> None:
+        queue = self._dispatch_queues.get(key)
+        if queue is None:
+            queue = asyncio.Queue(maxsize=self.notification_queue_limit)
+            self._dispatch_queues[key] = queue
+            self._dispatch_tasks[key] = asyncio.create_task(self._dispatch_notifications(key, queue))
+        try:
+            queue.put_nowait((generation, handlers, dict(message)))
+        except asyncio.QueueFull:
+            self._record_protocol_violation("notification_mailbox_full", str(key))
+            asyncio.create_task(self._fail_connection(
+                "codex_notification_backpressure",
+                "Codex notification processing exceeded its bounded queue.",
+            ))
+
+    async def _dispatch_notifications(self, key: tuple[str | None, str | None], queue: asyncio.Queue) -> None:
+        try:
+            while True:
+                generation, handlers, message = await queue.get()
+                try:
+                    if generation != self._generation or self._state == "closed":
+                        continue
+                    for handler in handlers:
+                        try:
+                            await self._call(handler, message)
+                        except Exception as exc:
+                            self._record_protocol_violation("notification_handler_failed", type(exc).__name__)
+                finally:
+                    queue.task_done()
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if self._dispatch_tasks.get(key) is asyncio.current_task():
+                self._dispatch_tasks.pop(key, None)
+                self._dispatch_queues.pop(key, None)
+
+    async def _stop_dispatchers(self) -> None:
+        tasks = list(self._dispatch_tasks.values())
+        self._dispatch_tasks = {}
+        self._dispatch_queues = {}
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _handle_server_request(self, message: Mapping[str, Any], generation: int) -> None:
         method, request_id = str(message["method"]), message["id"]
@@ -326,6 +388,16 @@ class CodexJSONRPCClient:
             except Exception:
                 # One observer must never hide the connection failure from the others.
                 continue
+        if retryable and self._state != "closed" and (not self._recovery_task or self._recovery_task.done()):
+            self._recovery_task = asyncio.create_task(self._auto_recover())
+
+    async def _auto_recover(self) -> None:
+        try:
+            await self.reconnect()
+        except (RuntimeExecutionError, asyncio.CancelledError):
+            # Supervisor health exposes circuit_open/action-required. A later
+            # explicit operation may retry after the bounded failure window.
+            return
 
     async def _reject_pending(self, code: str, message: str) -> None:
         pending, self._pending = self._pending, {}

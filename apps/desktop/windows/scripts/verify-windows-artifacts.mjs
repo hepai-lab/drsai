@@ -12,7 +12,7 @@ const requirePublicDistribution =
   process.env.OPENDRSAI_REQUIRE_SIGNED_RELEASE === "1";
 
 const required = [
-  join("bootstrapper", "OpenDrSai-Windows-Installer-x64.msi"),
+  join("bootstrapper", `OpenDrSai-Windows-v${packageJson.version}-Installer-x64.msi`),
   join("bootstrapper", runtimeArchiveName),
   "latest-windows.json",
   "release-summary.json",

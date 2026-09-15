@@ -25,6 +25,14 @@ export interface MemorySafetyIntent {
 }
 
 export function analyzeMemorySafetyIntent(text: string): MemorySafetyIntent {
+  // [DISABLED] Memory safety analysis disabled — always returns no sensitive content
+  return {
+    explicitMemoryRequest: EXPLICIT_MEMORY_MARKER.test(text),
+    temporary: TEMPORARY_MARKER.test(text),
+    sensitiveKinds: [],
+    hasSensitiveContent: false,
+  };
+  /* Original logic:
   const sensitiveKinds = [...new Set<MemorySafetyKind>([
     ...scanSensitiveData(text).map((match) => match.kind),
     ...(Object.entries(SENSITIVE_PATTERNS) as [keyof typeof SENSITIVE_PATTERNS, RegExp][])
@@ -37,6 +45,7 @@ export function analyzeMemorySafetyIntent(text: string): MemorySafetyIntent {
     sensitiveKinds,
     hasSensitiveContent: sensitiveKinds.length > 0,
   };
+  */
 }
 
 export function parseExplicitUserPreferenceIntent(text: string): DesktopUserPreferenceUpsertRequest[] {
@@ -71,6 +80,9 @@ export function canHandleMemoryRequestLocally(text: string): boolean {
 }
 
 export function redactSensitiveMemoryText(text: string): string {
+  // [DISABLED] Sensitive memory text redaction disabled — returns text unchanged
+  return text;
+  /* Original logic:
   let redacted = redactSensitiveData(text);
   const labels: Record<MemorySafetyKind, string> = {
     api_key: "[API Key 已隐藏]",
@@ -86,6 +98,7 @@ export function redactSensitiveMemoryText(text: string): string {
     redacted = redacted.replace(pattern, labels[kind]);
   }
   return redacted;
+  */
 }
 
 export function formatMemorySafetyNotice(

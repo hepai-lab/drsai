@@ -80,7 +80,7 @@ def compatibility_for_identity(version: str, schema_digest: str | None) -> Codex
     """Classify version and, when supplied, its exact reviewed Schema bytes."""
     compatibility = compatibility_for_version(version)
     if compatibility is CodexCompatibility.BLOCKED or not schema_digest:
-        return compatibility
+        return CodexCompatibility.BLOCKED
     normalized = schema_digest.removeprefix("sha256:").lower()
     return compatibility if REVIEWED_SCHEMA_SHA256.get(version) == normalized else CodexCompatibility.BLOCKED
 

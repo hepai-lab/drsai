@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "feature_id": "M06-F01",
+  "acceptance_run_id": "p10-round-002-product-contracts",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "categories": ["CONFIGURATION", "CREDENTIAL", "QUOTA_OR_RATE_LIMIT", "NETWORK", "MODEL_CAPABILITY", "RUNTIME", "PERMISSION", "TOOL", "APPROVAL", "RECOVERY", "PLATFORM_UNSUPPORTED"],
+  "properties": ["title", "summary", "stable_code", "retryable", "primary_action", "redacted_technical_detail"],
+  "tests": {"UserFacingFailureTest": "4 passed", "credential_redaction_regression": "passed"}
+}

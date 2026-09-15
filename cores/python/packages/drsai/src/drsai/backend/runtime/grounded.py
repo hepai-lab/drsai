@@ -36,6 +36,44 @@ GROUNDED_RETRIEVAL_TOOLS = frozenset({"knowledge_search"})
 # source on the next turn.
 GROUNDED_WITHHELD_DOMAINS = frozenset({"retrieval", "memory"})
 
+# How many envelopes to peel before giving up. Deep enough for the shapes seen
+# in practice, bounded so a self-referential result cannot loop.
+_MAX_RESULT_ENVELOPES = 4
+
+
+def unwrap_tool_result(value: Any) -> Any:
+    """Read the tool result out of whatever the host wrapped it in.
+
+    The same result reaches this code in three shapes: the object itself, a JSON
+    string, and a JSON string holding ``{"content": "<json>"}``. Reading only the
+    outer shape finds no evidence, and the failure is silent in the worst
+    direction — no evidence means no citations are required, so the answers that
+    most need checking are the ones that stop being checked.
+
+    The unwrapping exists in two other places, written out by hand: the kernel's
+    citation evidence and the engine's per-sentence check. Missing this third
+    site is what left a correctly cited answer showing no citations at all.
+    Those two cannot import this module without a cycle (`grounded` imports
+    `agent_kernel`) or without breaking the standalone-source-set rule that
+    `mobile_core` is held to, so folding them in means moving the helper into
+    `agent_kernel` and re-exporting through `mobile_core.context`.
+    """
+
+    for _ in range(_MAX_RESULT_ENVELOPES):
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (TypeError, json.JSONDecodeError):
+                return {}
+        # Only descend when the outer object cannot be the result itself.
+        # An object that already carries evidence is the result, even if it
+        # happens to have a "content" key as well.
+        elif isinstance(value, Mapping) and "evidence" not in value and "content" in value:
+            value = value["content"]
+        else:
+            return value
+    return value
+
 _EXPLICIT_GROUNDED_PATTERNS = (
     # Chinese: "仅根据/只根据/只能根据……回答", "根据提供的……回答"
     r"(?:仅|只|仅仅|只能)(?:根据|依据|基于|使用|用)",
@@ -127,7 +165,40 @@ _CITATION_MARKER = re.compile(r"\[E(\d{1,3})\]")
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？!?])\s*|(?<!\d)\.\s+|\n+")
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 _LATIN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9._-]{2,}")
+_SOURCE_REFERENCE = re.compile(
+    r"^(?:[-*]\s*)?(?:sources?|来源|出处)?\s*[:：]?\s*(?:\[[^\]]*\]\(\s*)?\w+://\S+\)?$",
+    re.IGNORECASE,
+)
+# The engine's own citation repair appends a "Sources:" block, so the heading
+# has to be recognised as apparatus rather than scored as an uncited claim.
+_SOURCE_HEADING = re.compile(
+    r"^(?:证据|参考|引证)?\s*(?:sources?|来源|出处|引用|references?)\s*[:：]?\s*$",
+    re.IGNORECASE,
+)
+# An attribution line names where the evidence came from and repeats the
+# locator we supplied. Scoring it as a claim makes the model's own citation
+# ("第1-13行") look like an invented figure, because those line numbers are
+# not in the passage text.
+_SOURCE_ATTRIBUTION = re.compile(
+    r"^(?:来源|出处|证据来源|证据引用|引用来源|参考|sources?|evidence|reference)\s*[:：]\s*"
+    # It must actually look like an attribution: a file name, path or URL.
+    # A lead-in alone would let any invented sentence skip the check simply
+    # by opening with "来源：".
+    r"[^\n]*?(?:\w+://\S+|[\w./\\-]+\.[A-Za-z0-9]{1,8})",
+    re.IGNORECASE,
+)
 _CJK_TOKEN = re.compile(r"[㐀-鿿]{2,}")
+
+
+_QUOTE_PAIRS = (("“", "”"), ("「", "」"), ("『", "』"))
+
+
+def _quotes_balanced(text: str) -> bool:
+    """Whether every quotation opened in `text` is also closed inside it."""
+    for opener, closer in _QUOTE_PAIRS:
+        if text.count(opener) != text.count(closer):
+            return False
+    return text.count('"') % 2 == 0
 
 
 def build_claim_support(
@@ -148,19 +219,55 @@ def build_claim_support(
         if isinstance(row, Mapping):
             contents[position] = str(row.get("content") or "")
 
+    # Models place the marker on either side of the terminator. Splitting
+    # "... multiple Runs. [E1]" leaves the marker in a segment of its own and
+    # the claim looking uncited, so a correctly cited answer would be sent back
+    # as unsupported. Reattach a marker-only segment to the claim it follows.
+    segments: list[str] = []
+    pending = ""
+    for raw in _SENTENCE_SPLIT.split(final_content):
+        piece = f"{pending} {raw.strip()}".strip() if pending else raw.strip()
+        if not piece:
+            continue
+        # A grounded answer quotes the passage it cites, and the quotation has
+        # its own terminators. Splitting inside it separates the claim from the
+        # marker that follows the closing quote, so a correctly cited answer
+        # gets reported as uncited.
+        if not _quotes_balanced(piece):
+            pending = piece
+            continue
+        pending = ""
+        remainder = _CITATION_MARKER.sub("", piece).strip()
+        if segments and (not remainder or _SOURCE_REFERENCE.match(remainder)):
+            # Carry only the markers back. Folding the source text in too would
+            # make the claim inherit tokens the passage never contains and fail
+            # its own support check.
+            carried = "".join(f"[E{value}]" for value in _CITATION_MARKER.findall(piece))
+            if carried:
+                segments[-1] = f"{segments[-1]} {carried}"
+            continue
+        segments.append(piece)
+    if pending:
+        segments.append(pending)
+
     factual: list[int] = []
     cited: list[int] = []
     unsupported: list[int] = []
     fabricated: set[int] = set()
-    for index, raw in enumerate(_SENTENCE_SPLIT.split(final_content)):
-        sentence = raw.strip()
-        if not sentence:
-            continue
-        markers = [int(value) for value in _CITATION_MARKER.findall(sentence)]
+    carried: list[int] = []
+    for index, sentence in enumerate(segments):
+        own = [int(value) for value in _CITATION_MARKER.findall(sentence)]
         body = _CITATION_MARKER.sub(" ", sentence)
         if not _is_factual(body):
             continue
         factual.append(index)
+        # People cite once and keep writing, so a sentence continuing a cited
+        # one inherits its marker rather than counting as uncited. This does not
+        # weaken the check: the inherited passage still has to support the
+        # sentence, and every figure in it must occur there.
+        markers = own or carried
+        if own:
+            carried = own
         if not markers:
             unsupported.append(index)
             continue
@@ -188,6 +295,14 @@ def _is_factual(sentence: str) -> bool:
     stripped = sentence.strip()
     if len(stripped) < 4:
         return False
+    # A bare source reference is citation apparatus, not a claim. Scoring it as
+    # one makes every properly sourced answer look partly unsupported.
+    if (
+        _SOURCE_REFERENCE.match(stripped)
+        or _SOURCE_HEADING.match(stripped)
+        or _SOURCE_ATTRIBUTION.match(stripped)
+    ):
+        return False
     hedges = (
         "知识库", "文档", "资料", "未包含", "没有找到", "不包含", "无法", "并未",
         "does not", "not found", "no information", "cannot", "could not", "unable to",
@@ -206,12 +321,20 @@ def _passage_supports(sentence: str, passage: str) -> bool:
     numbers = set(_NUMBER.findall(sentence))
     if any(number not in passage for number in numbers):
         return False
+    # Chinese has no word boundaries, so whole runs of characters only match
+    # when the model quotes verbatim; a faithful paraphrase would look invented.
+    # Character bigrams give overlap that survives rewording.
     tokens = {value.casefold() for value in _LATIN_TOKEN.findall(sentence)}
-    tokens.update(_CJK_TOKEN.findall(sentence))
+    for run in _CJK_TOKEN.findall(sentence):
+        tokens.update(run[index:index + 2] for index in range(len(run) - 1))
     if not tokens:
         return bool(numbers)
-    hits = sum(1 for token in tokens if token in folded or token in passage)
-    return hits >= max(1, len(tokens) // 3)
+    # Deliberately weak. This asks "is the sentence talking about the cited
+    # passage at all", and leaves the load-bearing check to the figures above.
+    # Demanding heavy overlap would reject every restatement that is not a
+    # quotation, and training people to ignore the warning is worse than the
+    # narrower guarantee.
+    return any(token in folded or token in passage for token in tokens)
 
 
 def _digest(payload: Mapping[str, Any]) -> str:

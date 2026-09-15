@@ -15,7 +15,10 @@ export function createDesktopPathService(options: CreateDesktopPathServiceOption
   const path = windows ? win32 : posix;
   const { dirname, join } = path;
   const home = environment.DRSAI_HOME?.trim() || join(options.userHome, ".drsai");
-  const packagedInstallRoot = options.resourcesPath ? dirname(dirname(options.resourcesPath)) : "";
+  // Electron resources live directly below the application directory on
+  // Windows (OpenDrSai/resources). The managed Runtime is its sibling at
+  // OpenDrSai/drsai-agent, not a sibling of the application directory.
+  const packagedInstallRoot = options.resourcesPath ? dirname(options.resourcesPath) : "";
   const packagedRepository = packagedInstallRoot ? join(packagedInstallRoot, "drsai-agent") : "";
   const usePackagedRepository = windows && !options.defaultApp && Boolean(packagedRepository);
   const repository = environment.DRSAI_REPO?.trim()
@@ -23,7 +26,7 @@ export function createDesktopPathService(options: CreateDesktopPathServiceOption
   const runtimeRoot = environment.OPENDRSAI_RUNTIME_ROOT?.trim() || repository;
   const virtualEnvironment = join(runtimeRoot, "venv");
   const pythonExecutable = join(virtualEnvironment, windows ? "Scripts/python.exe" : "bin/python");
-  const cliExecutable = windows ? join(virtualEnvironment, "Scripts/drsai.exe") : join(runtimeRoot, "drsai");
+  const cliExecutable = join(virtualEnvironment, windows ? "Scripts/drsai.exe" : "drsai");
   const commandExecutable = windows ? join(virtualEnvironment, "Scripts/drsai.cmd") : cliExecutable;
   const enhancedPathEntries = windows
     ? [join(virtualEnvironment, "Scripts"), join(home, "git", "cmd"), join(home, "node")]

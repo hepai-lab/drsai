@@ -8,6 +8,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import ai.drsai.remote.data.MIGRATION_13_14
 import ai.drsai.remote.data.MIGRATION_14_15
+import ai.drsai.remote.data.MIGRATION_15_16
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -15,6 +16,23 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ModelProviderMigrationTest {
+    @Test fun migration15To16PreservesApprovalAndAddsSafePreview() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "approval-preview-migration-${System.nanoTime()}.db"
+        val initial = open(context, name, 15) { _, _, _ -> }
+        initial.writableDatabase.execSQL("CREATE TABLE workbench_approvals (subject TEXT NOT NULL, organization TEXT NOT NULL, runtimeId TEXT NOT NULL, sessionId TEXT NOT NULL, runId TEXT NOT NULL, approvalId TEXT NOT NULL, toolCallId TEXT NOT NULL, operation TEXT NOT NULL, argumentsDigest TEXT NOT NULL, scope TEXT NOT NULL, status TEXT NOT NULL, expiresAt TEXT NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(subject,organization,runtimeId,approvalId))")
+        initial.writableDatabase.execSQL("INSERT INTO workbench_approvals VALUES ('u','','android-local','s','r','a','c','workspace.write','digest','once','PENDING','9',1)")
+        initial.close()
+        val helper = open(context, name, 16) { db, old, new ->
+            assertEquals(15, old); assertEquals(16, new); MIGRATION_15_16.migrate(db)
+        }
+        helper.writableDatabase.query("SELECT approvalId, previewJson FROM workbench_approvals").use { cursor ->
+            assertTrue(cursor.moveToFirst()); assertEquals("a", cursor.getString(0)); assertEquals("{}", cursor.getString(1))
+        }
+        helper.close()
+        context.deleteDatabase(name)
+    }
+
     @Test fun migration14To15PreservesRowsAndAddsCanonicalSourceJson() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "oaep-source-migration-${System.nanoTime()}.db"

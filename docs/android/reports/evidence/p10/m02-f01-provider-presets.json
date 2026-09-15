@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "feature_id": "M02-F01",
+  "acceptance_run_id": "p10-round-009-provider-presets",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "presets": {
+    "zhizengzeng": {"base_url":"https://api.zhizengzeng.com/v1","wire_api":"openai","models":["deepseek-v4-flash","deepseek-v4-pro"]},
+    "hepai": {"base_url":"BuildConfig.MODEL_BASE_URL","wire_api":"openai","models":["deepseek-ai/deepseek-v4-pro"]},
+    "openai": {"base_url":"https://api.openai.com/v1","wire_api":"openai","models":["gpt-5.1","gpt-5","gpt-5-mini"]}
+  },
+  "contracts": {"preset_endpoint_editable":false,"preset_protocol_editable":false,"recommended_models_prefilled":true},
+  "tests": {"ModelProviderPresetTest":"1 passed","ModelSettingsScreenUiTest_API35":"9 passed as suite"}
+}

@@ -43,7 +43,7 @@ class ContextAssemblerTest {
         assertTrue(prepared.truncated)
         assertTrue(prepared.omittedChars > 40_000)
         assertTrue(prepared.content.length <= 2_000)
-        assertTrue(prepared.content.contains("完整内容请通过原附件或结果 Artifact 查看"))
+        assertTrue(prepared.content.contains("view the original attachment or result Artifact"))
     }
     @Test fun projectInstructionVersionsAreStableAndDetectAddsChangesAndRemovals() {
         val first = listOf(PromptFragment(PromptLayer.PROJECT, "line 1\r\nline 2", "saf:AGENTS.md",

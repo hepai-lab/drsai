@@ -7,6 +7,7 @@ import ai.drsai.remote.data.ConversationEntity
 import ai.drsai.remote.data.MessageAttachment
 import ai.drsai.remote.data.OaepDiagnosticEventUi
 import ai.drsai.remote.remote.generated.OaepMessageContent
+import ai.drsai.remote.remote.generated.OaepLegacyMessagePart
 import ai.drsai.remote.remote.data.OaepJsonCodec
 import ai.drsai.remote.remote.model.RemoteTranscriptMessage
 import ai.drsai.remote.remote.model.projectOaepMessages
@@ -19,6 +20,9 @@ import java.time.Instant
 class LocalOaepLegacyProjection(
     private val database: ChatDatabase,
     private val auditor: LegacyOaepShadowAuditor = LegacyOaepShadowAuditor(database),
+    private val presentationStrings: ai.drsai.remote.remote.model.OaepPresentationStrings =
+        ai.drsai.remote.remote.model.EnglishOaepPresentationStrings,
+    private val runtimeStatusStrings: LegacyRuntimeStatusStrings = EnglishLegacyRuntimeStatusStrings,
 ) {
     data class UiProjection(
         val entries: List<RemoteTranscriptMessage>,
@@ -108,20 +112,20 @@ class LocalOaepLegacyProjection(
             waitingReason !in setOf("approval", "side_effect_reconciliation", "legacy_migration_reconciliation")
         val errorMessage = latestEvents.lastOrNull { it.type == "event.run.failed" }?.data?.error?.message
         val runtimeStatus = when (latest?.status) {
-            "queued" -> "任务已进入队列"
-            "running" -> if (recovering) "正在恢复…" else null
+            "queued" -> runtimeStatusStrings.text(LegacyRuntimeStatusText.QUEUED)
+            "running" -> if (recovering) runtimeStatusStrings.text(LegacyRuntimeStatusText.RECOVERING) else null
             "waiting" -> when (waitingReason) {
-                "approval" -> "等待审批"
-                "side_effect_reconciliation", "legacy_migration_reconciliation" -> "需要确认副作用结果"
-                else -> "任务已暂停，可继续"
+                "approval" -> runtimeStatusStrings.text(LegacyRuntimeStatusText.WAITING_APPROVAL)
+                "side_effect_reconciliation", "legacy_migration_reconciliation" -> runtimeStatusStrings.text(LegacyRuntimeStatusText.RECONCILING)
+                else -> runtimeStatusStrings.text(LegacyRuntimeStatusText.PAUSED)
             }
-            "failed" -> "任务失败"
-            "cancelled" -> "任务已取消"
+            "failed" -> runtimeStatusStrings.text(LegacyRuntimeStatusText.FAILED)
+            "cancelled" -> runtimeStatusStrings.text(LegacyRuntimeStatusText.CANCELLED)
             else -> null
         }
         return UiProjection(
             entries = projectOaepMessages(snapshot),
-            timeline = projectOaepPresentation(snapshot),
+            timeline = projectOaepPresentation(snapshot, presentationStrings),
             runStatus = latest?.status,
             activeRunId = latest?.id,
             snapshotSequence = snapshot.snapshotSequence,
@@ -195,8 +199,8 @@ class LocalOaepLegacyProjection(
                 val content = item.content as OaepMessageContent
                 val messageId = item.source.backendItemId ?: item.id
                 val partsByResource = content.parts.mapNotNull { part ->
-                    val ref = part["resource_ref"] as? Map<*, *> ?: return@mapNotNull null
-                    (ref["resource_id"] as? String)?.let { it to part }
+                    val legacy = part as? OaepLegacyMessagePart ?: return@mapNotNull null
+                    legacy.resourceRef?.resourceId?.let { it to legacy }
                 }.toMap()
                 ChatMessage(
                     id = messageId,
@@ -214,10 +218,10 @@ class LocalOaepLegacyProjection(
                             id = ref.resourceId,
                             messageId = messageId,
                             conversationId = sessionId,
-                            name = (part?.get("name") as? String) ?: ref.label ?: ref.resourceId,
-                            mimeType = (part?.get("mime_type") as? String) ?: "application/octet-stream",
-                            size = (part?.get("size") as? Number)?.toLong() ?: 0,
-                            kind = (part?.get("type") as? String) ?: "file",
+                            name = part?.name ?: ref.label ?: ref.resourceId,
+                            mimeType = part?.mimeType ?: "application/octet-stream",
+                            size = 0,
+                            kind = part?.type ?: "file",
                             sha256 = ref.digest.orEmpty(),
                             status = "sent",
                             createdAt = instantMillis(item.createdAt),

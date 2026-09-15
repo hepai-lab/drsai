@@ -1,0 +1,83 @@
+import { strict as assert } from "node:assert";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+
+const temp = mkdtempSync(join(tmpdir(), "opendrsai-update-plan-"));
+const version = "1.5.2";
+const zip = `OpenDrSai-macOS-v${version}-arm64.zip`;
+mkdirSync(temp, { recursive: true });
+const zipBytes = Buffer.from("zip-fixture", "utf8");
+writeFileSync(join(temp, zip), zipBytes);
+writeFileSync(join(temp, `OpenDrSai-macOS-v${version}-arm64.dmg`), "dmg-fixture", "utf8");
+const sha512 = createHash("sha512").update(zipBytes).digest("base64");
+writeFileSync(join(temp, "latest-mac.yml"), `version: ${version}\nfiles:\n  - url: ${zip}\n    sha512: ${sha512}\n    size: ${zipBytes.length}\npath: ${zip}\nsha512: ${sha512}\nopendrsaiRuntimeVersion: ${version}\nopendrsaiRuntimeSha256: ${"a".repeat(64)}\n`, "utf8");
+const annotation = spawnSync(process.execPath, [new URL("./annotate-update-metadata.mjs", import.meta.url).pathname, "--release-dir", temp], { encoding: "utf8" });
+assert.equal(annotation.status, 0, annotation.stderr);
+const result = spawnSync(process.execPath, [new URL("./publish-update-to-oss.mjs", import.meta.url).pathname, "--release-dir", temp], { encoding: "utf8" });
+assert.equal(result.status, 0, result.stderr);
+const plan = JSON.parse(result.stdout);
+assert.equal(plan.execute, false);
+assert.equal(plan.metadataLast, true);
+assert.equal(plan.commands.length, 5);
+assert.match(plan.commands[0].target, /releases\/v1\.5\.2\/macos\/.*-arm64\.dmg$/);
+assert.match(plan.commands[1].target, /releases\/v1\.5\.2\/macos\/.*-arm64\.zip$/);
+assert.match(plan.commands[2].target, /channels\/stable\/macos\/arm64\/.*\.zip$/);
+assert.match(plan.commands[3].target, /channels\/history\/macos\/arm64\/v1\.5\.2\/latest-mac\.yml$/);
+assert.match(plan.commands[4].target, /channels\/stable\/macos\/arm64\/latest-mac\.yml$/);
+assert.equal(plan.commands[4].forbidOverwrite, false);
+for (const command of plan.commands.slice(0, -1)) assert.equal(command.forbidOverwrite, true);
+assert.match(plan.commands[4].cacheControl, /max-age=30/);
+for (const [phase, expected] of [["--assets-only", 4], ["--promote-metadata", 1]]) {
+  const phased = spawnSync(process.execPath, [new URL("./publish-update-to-oss.mjs", import.meta.url).pathname, "--release-dir", temp, phase], { encoding: "utf8" });
+  assert.equal(phased.status, 0, phased.stderr);
+  assert.equal(JSON.parse(phased.stdout).commands.length, expected);
+}
+for (const phase of ["--snapshot-stable", "--rollback-metadata"]) {
+  const recoveryPlan = spawnSync(process.execPath, [new URL("./publish-update-to-oss.mjs", import.meta.url).pathname, "--release-dir", temp, phase, "--state-file", join(temp, "stable-state.json")], { encoding: "utf8" });
+  assert.equal(recoveryPlan.status, 0, recoveryPlan.stderr);
+  assert.match(JSON.parse(recoveryPlan.stdout).phase, /stable/);
+}
+const betaVersion = "1.5.8-beta.1";
+const betaTemp = mkdtempSync(join(tmpdir(), "opendrsai-beta-update-plan-"));
+const betaZip = `OpenDrSai-macOS-v${betaVersion}-arm64.zip`;
+const betaZipBytes = Buffer.from("beta-zip-fixture", "utf8");
+const betaSha512 = createHash("sha512").update(betaZipBytes).digest("base64");
+writeFileSync(join(betaTemp, betaZip), betaZipBytes);
+writeFileSync(join(betaTemp, `OpenDrSai-macOS-v${betaVersion}-arm64.dmg`), "beta-dmg-fixture", "utf8");
+writeFileSync(join(betaTemp, "latest-mac.yml"), `version: ${betaVersion}\nfiles:\n  - url: ${betaZip}\n    sha512: ${betaSha512}\n    size: ${betaZipBytes.length}\npath: ${betaZip}\nsha512: ${betaSha512}\nopendrsaiRuntimeVersion: ${betaVersion}\nopendrsaiRuntimeSha256: ${"b".repeat(64)}\n`, "utf8");
+const betaResult = spawnSync(process.execPath, [new URL("./publish-update-to-oss.mjs", import.meta.url).pathname, "--release-dir", betaTemp, "--beta"], { encoding: "utf8" });
+assert.equal(betaResult.status, 0, betaResult.stderr);
+const betaPlan = JSON.parse(betaResult.stdout);
+assert.equal(betaPlan.phase, "beta-candidate");
+assert.equal(betaPlan.stableUnchanged, true);
+assert.equal(betaPlan.commands.length, 3);
+assert.deepEqual(betaPlan.commands.map(({ target }) => target), [
+  `oss://hepai-release/releases/v${betaVersion}/macos/OpenDrSai-macOS-v${betaVersion}-arm64.dmg`,
+  `oss://hepai-release/releases/v${betaVersion}/macos/OpenDrSai-macOS-v${betaVersion}-arm64.zip`,
+  `oss://hepai-release/releases/v${betaVersion}/macos/latest-mac.yml`,
+]);
+for (const command of betaPlan.commands) {
+  assert.equal(command.forbidOverwrite, true);
+  assert.match(command.cacheControl, /immutable/);
+  assert.doesNotMatch(command.target, /channels\/stable/);
+}
+const betaMetadataResult = spawnSync(process.execPath, [new URL("./publish-update-to-oss.mjs", import.meta.url).pathname, "--release-dir", betaTemp, "--beta", "--promote-metadata"], { encoding: "utf8" });
+assert.equal(betaMetadataResult.status, 0, betaMetadataResult.stderr);
+const betaMetadataPlan = JSON.parse(betaMetadataResult.stdout);
+assert.equal(betaMetadataPlan.phase, "beta-metadata");
+assert.equal(betaMetadataPlan.stableUnchanged, true);
+assert.equal(betaMetadataPlan.commands.length, 1);
+assert.equal(betaMetadataPlan.commands[0].target, "oss://hepai-release/channels/beta/macos/arm64/latest-mac.yml");
+assert.equal(betaMetadataPlan.commands[0].forbidOverwrite, false);
+assert.match(betaMetadataPlan.commands[0].cacheControl, /max-age=30/);
+assert.doesNotMatch(betaMetadataPlan.commands[0].target, /channels\/stable/);
+const invalidBetaFlags = spawnSync(process.execPath, [new URL("./publish-update-to-oss.mjs", import.meta.url).pathname, "--release-dir", betaTemp, "--beta", "--assets-only"], { encoding: "utf8" });
+assert.notEqual(invalidBetaFlags.status, 0, "beta publication must reject stable publication flags");
+const assetReceipt = join(temp, "asset-receipt.json");
+const assetCheck = spawnSync(process.execPath, [new URL("./verify-update-assets.mjs", import.meta.url).pathname, "--release-dir", temp, "--output", assetReceipt], { encoding: "utf8" });
+assert.equal(assetCheck.status, 0, assetCheck.stderr);
+assert.equal(JSON.parse(await import("node:fs").then(({ readFileSync }) => readFileSync(assetReceipt, "utf8"))).installVerified, false);
+console.log("macOS OSS update publish plan passed; each channel publishes metadata last and only channel metadata is replaceable.");

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "profile_id": "dsh-sdk/0.1.0-rc.5+opendrsai.1",
+  "server_name": "deepseek-harness-sdk-runtime",
+  "supported_versions": [
+    "0.1.0-opendrsai.1"
+  ],
+  "source_commits": [
+    "47f943859bef60e4160492346772ded9b24f765a"
+  ],
+  "native_contract_sha256": "70f0f05b1cca8a37f4dedc92150bd78832bee540c4ad7dbbdb3885d77d2d4909",
+  "required_methods": [
+    "initialize",
+    "runtime/attestation",
+    "session/cancel",
+    "session/history",
+    "session/prompt",
+    "session/resume",
+    "shutdown"
+  ],
+  "required_notifications": [
+    "session.event",
+    "session.status",
+    "subagent.started",
+    "subagent.finished"
+  ],
+  "required_capabilities": [
+    "approval.respond",
+    "run.cancel",
+    "run.terminal",
+    "run.turn-binding",
+    "session.history",
+    "session.resume",
+    "tool.side-effect-ledger",
+    "workspace.containment"
+  ],
+  "mapping_version": "dsh-oaep/1",
+  "event_disposition_sha256": "c6ef209122c0e4a779c5394c5192619b4cc8a7dfbe51d5dc2d4f7847b4511159",
+  "production_ready": true,
+  "blockers": []
+}

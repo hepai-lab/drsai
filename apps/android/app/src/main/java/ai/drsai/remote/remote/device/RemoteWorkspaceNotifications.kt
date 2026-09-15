@@ -92,13 +92,13 @@ class RemoteWorkspaceNotificationReceiver : BroadcastReceiver() {
 internal fun showRemoteWorkspaceNotification(context: Context, payload: RemoteNotificationPayload) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         manager.createNotificationChannel(NotificationChannel(
-            REMOTE_NOTIFICATION_CHANNEL, "远程工作区任务", NotificationManager.IMPORTANCE_DEFAULT,
+            REMOTE_NOTIFICATION_CHANNEL, context.getString(R.string.remote_workspace_tasks_channel), NotificationManager.IMPORTANCE_DEFAULT,
         ))
         val title = when (payload.kind) {
-            "approval_required" -> "任务需要处理"
-            "run_completed" -> "任务已完成"
-            "run_failed" -> "任务需要查看"
-            else -> "任务已停止"
+            "approval_required" -> context.getString(R.string.task_needs_attention)
+            "run_completed" -> context.getString(R.string.task_completed)
+            "run_failed" -> context.getString(R.string.task_needs_review)
+            else -> context.getString(R.string.task_stopped)
         }
         val open = PendingIntent.getActivity(
             context,
@@ -109,7 +109,7 @@ internal fun showRemoteWorkspaceNotification(context: Context, payload: RemoteNo
         val notification = NotificationCompat.Builder(context, REMOTE_NOTIFICATION_CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
-            .setContentText("打开 OpenDrSai 查看详情")
+            .setContentText(context.getString(R.string.open_app_for_details))
             .setAutoCancel(true)
             .setContentIntent(open)
             .build()

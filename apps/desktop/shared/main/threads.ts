@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "fs/promises";
-import { dirname, join } from "path";
+import { dirname, join, normalize } from "path";
 import type {
   CreateThreadRequest,
   DesktopThread,
+  DesktopThreadListRequest,
   DesktopThreadForkMetadata,
   DesktopThreadContentSearchRequest,
   DesktopThreadContentSearchResult,
@@ -14,14 +15,25 @@ import type {
   ChatToolTimelineEvent,
   ChatMessagePart,
   UpdateThreadRequest,
+  ThinkingEffort,
 } from "../api/desktopApi";
 import { LEGACY_MY_DRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
+import {
+  canonicalizeSidebarThreads,
+  catalogTitlesLikelySame,
+  isDesktopThreadId,
+  isRuntimeCatalogSessionId,
+  resolveBoundDesktopThreadId,
+  effectiveRuntimeSessionId,
+  sanitizeDesktopThreadTitle,
+} from "../api/threadSidebarCatalog";
 import { DRSAI_HOME } from "./paths";
 import { sanitizeStructuredTurnState } from "../api/structuredConversation";
 import { replaceFileSafely } from "./atomicFileReplace";
 import { stripAttachmentContextFromUserContent } from "../api/attachmentContextDisplay";
 
 const THREADS_FILE = join(DRSAI_HOME, "desktop", "threads.json");
+const DELETED_THREADS_FILE = join(DRSAI_HOME, "desktop", "deleted-threads.json");
 const THREAD_SNAPSHOTS_FILE = join(DRSAI_HOME, "desktop", "thread-snapshots.json");
 const THREAD_SNAPSHOTS_DIRECTORY = join(DRSAI_HOME, "desktop", "thread-snapshots");
 // The P3 session directory is metadata-only, so retaining 1,000 active entries
@@ -30,6 +42,7 @@ const THREAD_SNAPSHOTS_DIRECTORY = join(DRSAI_HOME, "desktop", "thread-snapshots
 const MAX_THREADS = 1_000;
 const MAX_ARCHIVED_THREADS = 2_000;
 const MAX_THREAD_SNAPSHOTS = 2_000;
+const MAX_DELETED_THREAD_TOMBSTONES = 5_000;
 const MAX_SNAPSHOT_MESSAGES = 500;
 const MAX_MESSAGE_CHARS = 200_000;
 const MAX_STATUS_CHARS = 80_000;
@@ -37,6 +50,8 @@ const MAX_TITLE_CHARS = 120;
 const MAX_WORKSPACE_PATH_CHARS = 2048;
 const MAX_AGENT_ID_CHARS = 160;
 const MAX_AGENT_NAME_CHARS = 160;
+const MAX_MODEL_CHARS = 240;
+const THINKING_EFFORTS = new Set(["none", "low", "medium", "high", "xhigh", "max"]);
 const MAX_FORK_SUMMARY_CHARS = 500;
 const MAX_FORK_LIFECYCLE_MESSAGE_CHARS = 1200;
 const MAX_FORK_QUEUE_MESSAGE_CHARS = 800;
@@ -46,6 +61,13 @@ const atomicJsonWriteQueues = new Map<string, Promise<void>>();
 const jsonMutationQueues = new Map<string, Promise<void>>();
 let staleThreadFilesCleaned = false;
 const threadSnapshotIoMetrics = { shardReads: 0, shardWrites: 0, legacyCatalogReads: 0, shardDirectoryScans: 0 };
+/**
+ * Tombstones for permanently deleted conversations.
+ * Kept in-process for late abort/handoff races, and mirrored to disk so a
+ * restart/login upsert cannot resurrect a conversation the user already deleted.
+ */
+const deletedThreadIds = new Set<string>();
+let deletedTombstonesLoaded = false;
 
 export function getThreadSnapshotIoMetrics(): Readonly<typeof threadSnapshotIoMetrics> {
   return { ...threadSnapshotIoMetrics };
@@ -58,16 +80,96 @@ export function resetThreadSnapshotIoMetrics(): void {
   threadSnapshotIoMetrics.shardDirectoryScans = 0;
 }
 
-export async function listThreads(): Promise<DesktopThread[]> {
+async function ensureDeletedTombstonesLoaded(): Promise<void> {
+  if (deletedTombstonesLoaded) return;
+  deletedTombstonesLoaded = true;
+  try {
+    const parsed = parseStoredJson(await readFile(DELETED_THREADS_FILE, "utf8"));
+    if (!Array.isArray(parsed)) return;
+    for (const value of parsed.slice(-MAX_DELETED_THREAD_TOMBSTONES)) {
+      if (typeof value === "string" && THREAD_ID_PATTERN.test(value) && !/[\r\n]/.test(value)) {
+        deletedThreadIds.add(value);
+      }
+    }
+  } catch {
+    // First run or missing file — no durable tombstones yet.
+  }
+}
+
+async function persistDeletedThreadIds(): Promise<void> {
+  const ids = [...deletedThreadIds].slice(-MAX_DELETED_THREAD_TOMBSTONES);
+  await writeAtomicJson(DELETED_THREADS_FILE, ids);
+}
+
+function rememberDeletedThreadIdentity(id: string | undefined): void {
+  if (id && THREAD_ID_PATTERN.test(id) && !/[\r\n]/.test(id)) deletedThreadIds.add(id);
+}
+
+function isDeletedThreadIdentity(id: string | undefined): boolean {
+  return Boolean(id && deletedThreadIds.has(id));
+}
+
+function isTombstonedThread(thread: Pick<DesktopThread, "id" | "runtimeSessionId">): boolean {
+  return isDeletedThreadIdentity(thread.id) || isDeletedThreadIdentity(thread.runtimeSessionId);
+}
+
+function catalogGhostThread(input: RuntimeThreadCatalogEntry, catalogId: string, runtimeSessionId: string): DesktopThread {
+  const now = new Date().toISOString();
+  return {
+    id: catalogId,
+    kind: "chat",
+    title: String(input.title || "New chat").slice(0, MAX_TITLE_CHARS),
+    workspacePath: String(input.workspacePath || "").slice(0, MAX_WORKSPACE_PATH_CHARS),
+    createdAt: validCatalogTimestamp(input.createdAt, now),
+    updatedAt: validCatalogTimestamp(input.updatedAt, now),
+    runtimeSessionId,
+    status: "idle",
+    archived: input.archived,
+    sourceChannel: input.sourceChannel === "wechat" ? "wechat" : undefined,
+    messageCount: Number.isFinite(input.messageCount) ? Math.max(0, Number(input.messageCount)) : undefined,
+  };
+}
+
+export async function listThreads(request?: DesktopThreadListRequest): Promise<DesktopThread[]> {
   if (!staleThreadFilesCleaned) {
     staleThreadFilesCleaned = true;
     await cleanupStaleThreadTemporaryFiles();
   }
+  await ensureDeletedTombstonesLoaded();
   return serializeJsonMutation(THREADS_FILE, async () => {
     const result = await readThreadsWithMigration();
-    if (result.migrated) await writeThreads(result.threads);
-    return result.threads.sort(compareThreads);
+    const visible = result.threads.filter((thread) => !isTombstonedThread(thread));
+    const removedTombstoned = visible.length !== result.threads.length;
+    if (result.migrated || removedTombstoned) await writeThreads(visible);
+    const sorted = visible.sort(compareThreads);
+    return request ? selectRecentThreads(sorted, request) : sorted;
   });
+}
+
+function selectRecentThreads(threads: DesktopThread[], request: DesktopThreadListRequest): DesktopThread[] {
+  const limit = Math.max(1, Math.min(200, Math.trunc(request.limit ?? 50)));
+  const offset = Math.max(0, Math.trunc(request.offset ?? 0));
+  const wantedWorkspace = request.workspacePath ? comparableWorkspacePath(request.workspacePath) : null;
+  const scoped = wantedWorkspace
+    ? threads.filter((thread) => comparableWorkspacePath(thread.workspacePath) === wantedWorkspace)
+    : threads;
+  const required = new Set((request.requiredThreadIds ?? []).filter((id) => THREAD_ID_PATTERN.test(id)));
+  const allProtectedThreads = scoped.filter((thread) => !thread.archived && (
+    required.has(thread.id) || thread.pinned === true || thread.status === "running"));
+  const protectedThreads = offset === 0 ? allProtectedThreads : [];
+  const protectedIds = new Set(allProtectedThreads.map((thread) => thread.id));
+  const active = scoped.filter((thread) => !thread.archived && !protectedIds.has(thread.id)).slice(offset, offset + limit);
+  const archived = request.includeArchived
+    ? scoped.filter((thread) => thread.archived && !protectedIds.has(thread.id)).slice(offset, offset + limit)
+    : [];
+  return [...new Map([...protectedThreads, ...active, ...archived]
+    .sort(compareThreads)
+    .map((thread) => [thread.id, thread])).values()];
+}
+
+function comparableWorkspacePath(value: string | undefined): string {
+  const normalized = normalize(String(value ?? "").trim()).replace(/[\\/]+$/, "");
+  return process.platform === "win32" ? normalized.toLocaleLowerCase() : normalized;
 }
 
 async function cleanupStaleThreadTemporaryFiles(): Promise<void> {
@@ -95,6 +197,9 @@ export async function createThread(rawRequest: unknown): Promise<DesktopThread> 
       workspacePath: request.workspacePath,
       boundAgentId: request.boundAgentId,
       boundAgentName: request.boundAgentName,
+      model: request.model,
+      reasoningEffort: request.reasoningEffort,
+      planMode: request.planMode,
       fork: request.fork,
       execution: request.execution,
       createdAt: now,
@@ -108,9 +213,27 @@ export async function createThread(rawRequest: unknown): Promise<DesktopThread> 
   });
 }
 
+function throwThreadDeleted(): never {
+  throw Object.assign(new Error("Thread was deleted."), {
+    code: "thread_deleted",
+    retryable: false,
+  });
+}
+
+export function isThreadDeletedError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "thread_deleted");
+}
+
 export async function updateThread(rawRequest: unknown): Promise<DesktopThread> {
   const request = validateUpdateThreadRequest(rawRequest);
+  await ensureDeletedTombstonesLoaded();
+  // Tombstone must be checked inside the store lock. An outer-only check races
+  // deleteThread: update can pass the check, wait for the lock, then recreate
+  // the row after delete has already removed it from threads.json.
   return serializeJsonMutation(THREADS_FILE, async () => {
+    if (isDeletedThreadIdentity(request.id) || isDeletedThreadIdentity(request.runtimeSessionId)) {
+      throwThreadDeleted();
+    }
     const threads = await readThreads();
     const now = new Date().toISOString();
     const existing = threads.find((thread) => thread.id === request.id);
@@ -121,13 +244,20 @@ export async function updateThread(rawRequest: unknown): Promise<DesktopThread> 
       workspacePath: request.workspacePath ?? existing?.workspacePath,
       boundAgentId: request.boundAgentId ?? existing?.boundAgentId,
       boundAgentName: request.boundAgentName ?? existing?.boundAgentName,
+      model: request.model ?? existing?.model,
+      reasoningEffort: request.reasoningEffort ?? existing?.reasoningEffort,
+      planMode: request.planMode ?? existing?.planMode,
       fork: request.fork ?? existing?.fork,
       execution: request.execution ?? existing?.execution,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
       lastRunId: request.lastRunId ?? existing?.lastRunId,
       lastRequestId: request.lastRequestId ?? existing?.lastRequestId,
-      runtimeSessionId: request.runtimeSessionId ?? existing?.runtimeSessionId,
+      runtimeSessionId: normalizeStoredRuntimeSessionId(
+        request.id,
+        request.runtimeSessionId ?? existing?.runtimeSessionId,
+      ),
+      sourceChannel: request.sourceChannel ?? existing?.sourceChannel,
       status: request.status ?? existing?.status ?? "idle",
       messageCount: request.messageCount ?? existing?.messageCount,
       pinned: request.pinned ?? existing?.pinned,
@@ -137,33 +267,61 @@ export async function updateThread(rawRequest: unknown): Promise<DesktopThread> 
       unread: request.unread ?? existing?.unread,
     };
     const withoutCurrent = threads.filter((thread) => thread.id !== request.id);
-    await writeThreads(retainThreads([next, ...withoutCurrent]));
+    await writeThreads(retainThreads(dedupeRuntimeSessionCatalogDuplicates([next, ...withoutCurrent]).threads));
     return next;
   });
 }
 
 export async function deleteThread(rawThreadId: unknown): Promise<boolean> {
   const threadId = sanitizeThreadId(rawThreadId);
+  await ensureDeletedTombstonesLoaded();
+  // Durable tombstone first so restart/login cannot resurrect via upsert even if
+  // the catalog rewrite loses a race or the process exits mid-delete.
+  rememberDeletedThreadIdentity(threadId);
+  try {
+    await persistDeletedThreadIds();
+  } catch {
+    // Catalog removal below is still authoritative for this process; a later
+    // listThreads/delete retry can persist the tombstone file.
+  }
   const deleted = await serializeJsonMutation(THREADS_FILE, async () => {
     const threads = await readThreads();
-    if (!threads.some((thread) => thread.id === threadId)) return false;
-    await writeThreads(threads.filter((thread) => thread.id !== threadId));
+    const existing = threads.find((thread) => thread.id === threadId)
+      ?? threads.find((thread) => thread.runtimeSessionId === threadId);
+    rememberDeletedThreadIdentity(existing?.id);
+    rememberDeletedThreadIdentity(existing?.runtimeSessionId);
+    try {
+      await persistDeletedThreadIds();
+    } catch {
+      // In-process tombstones still block Runtime catalog upsert in this session.
+    }
+    if (!existing) return false;
+    await writeThreads(threads.filter((thread) =>
+      thread.id !== existing.id
+      && thread.id !== existing.runtimeSessionId
+      && thread.runtimeSessionId !== existing.id
+      && !(existing.runtimeSessionId && thread.runtimeSessionId === existing.runtimeSessionId)));
     return true;
   });
-  if (!deleted) return false;
   await rm(threadSnapshotPath(threadId), { force: true }).catch(() => undefined);
-  await serializeJsonMutation(THREAD_SNAPSHOTS_FILE, async () => {
-    const snapshots = await readLegacyThreadSnapshots();
-    if (snapshots[threadId]) {
-      delete snapshots[threadId];
-      await writeThreadSnapshots(snapshots);
-    }
-  });
-  return true;
+  try {
+    await serializeJsonMutation(THREAD_SNAPSHOTS_FILE, async () => {
+      const snapshots = await readLegacyThreadSnapshots();
+      if (snapshots[threadId]) {
+        delete snapshots[threadId];
+        await writeThreadSnapshots(snapshots);
+      }
+    });
+  } catch {
+    // Shard removal above is enough for getThreadSnapshot(); legacy catalog is best-effort.
+  }
+  return deleted;
 }
 
 export async function getThreadSnapshot(rawThreadId: unknown): Promise<DesktopThreadSnapshot | null> {
   const threadId = sanitizeThreadId(rawThreadId);
+  await ensureDeletedTombstonesLoaded();
+  if (isDeletedThreadIdentity(threadId)) return null;
   const sharded = await readThreadSnapshotShard(threadId);
   if (sharded) return sharded;
   // One-time compatibility path for installations created before snapshots
@@ -223,8 +381,11 @@ function createSearchSnippet(content: string, matchIndex: number, matchLength: n
 
 export async function updateThreadSnapshot(rawRequest: unknown): Promise<DesktopThreadSnapshot> {
   const snapshot = validateThreadSnapshot(rawRequest);
+  await ensureDeletedTombstonesLoaded();
+  if (isDeletedThreadIdentity(snapshot.threadId)) throwThreadDeleted();
   const path = threadSnapshotPath(snapshot.threadId);
   return serializeJsonMutation(path, async () => {
+    if (isDeletedThreadIdentity(snapshot.threadId)) throwThreadDeleted();
     await writeThreadSnapshotShard(snapshot);
     return snapshot;
   });
@@ -234,13 +395,14 @@ export async function appendDuplexVoiceHistory(rawRequest: DesktopDuplexVoiceHis
   if (!rawRequest || !THREAD_ID_PATTERN.test(rawRequest.threadId) || !Array.isArray(rawRequest.messages) || rawRequest.messages.length > 100) throw new Error("Duplex voice history request is invalid.");
   const messages = rawRequest.messages.map((message) => {
     if (!message || typeof message.id !== "string" || !message.id.startsWith("duplex:") || message.id.length > 500 || !["user", "assistant"].includes(message.role) || typeof message.content !== "string") throw new Error("Duplex voice history message is invalid.");
-    return { id: message.id, role: message.role, content: message.content.replace(/\0/g, "").slice(0, 20_000), ...(message.statusContent ? { statusContent: message.statusContent.replace(/\0/g, "").slice(0, 20_000) } : {}) } as DesktopThreadMessageSnapshot;
+    if (!Number.isInteger(message.revision) || message.revision < 1 || !Number.isInteger(message.expectedRevision) || message.expectedRevision < 0) throw new Error("Duplex voice history revision is invalid.");
+    return { id: message.id, role: message.role, content: message.content.replace(/\0/g, "").slice(0, 20_000), revision: message.revision, expectedRevision: message.expectedRevision, ...(message.statusContent ? { statusContent: message.statusContent.replace(/\0/g, "").slice(0, 20_000) } : {}), ...(message.voice ? { voice: message.voice } : {}), ...(Array.isArray(message.toolTimeline) ? { toolTimeline: message.toolTimeline.slice(-20).flatMap(sanitizeToolTimelineEvent) } : {}), ...(Array.isArray(message.parts) ? { parts: message.parts.slice(0, 64).flatMap(sanitizeMessagePart) } : {}) };
   });
   const path = threadSnapshotPath(rawRequest.threadId);
   return serializeJsonMutation(path, async () => {
     const current = await readThreadSnapshotShard(rawRequest.threadId) ?? { threadId: rawRequest.threadId, title: rawRequest.threadId, messages: [], updatedAt: Date.now(), messageCount: 0 };
     const merged = new Map(current.messages.map((message) => [message.id, message]));
-    for (const message of messages) merged.set(message.id, { ...merged.get(message.id), ...message });
+    for (const message of messages) { const existing = merged.get(message.id); const currentRevision = existing?.voice?.revision ?? 0; if (message.revision === currentRevision) { if (!existing || existing.content !== message.content || existing.role !== message.role || JSON.stringify(existing.parts ?? []) !== JSON.stringify(message.parts ?? existing.parts ?? [])) throw new Error("Duplex voice history revision conflict."); continue; } if (message.expectedRevision !== currentRevision || message.revision !== currentRevision + 1) throw new Error("Duplex voice history revision conflict."); const { revision: _revision, expectedRevision: _expectedRevision, ...value } = message; merged.set(message.id, { ...existing, ...value, voice: { ...value.voice, revision: message.revision } }); }
     const nextMessages = [...merged.values()].slice(-MAX_SNAPSHOT_MESSAGES);
     const next = validateThreadSnapshot({ ...current, messages: nextMessages, messageCount: nextMessages.length, updatedAt: Date.now() });
     await writeThreadSnapshotShard(next); return next;
@@ -254,13 +416,290 @@ export async function upsertThreadFromRun(input: {
   workspacePath?: string;
   boundAgentId?: string;
   boundAgentName?: string;
+  model?: string;
+  reasoningEffort?: ThinkingEffort;
+  planMode?: boolean;
   lastRunId?: string;
   lastRequestId?: string;
   runtimeSessionId?: string;
+  sourceChannel?: DesktopThread["sourceChannel"];
   status?: DesktopThread["status"];
   messageCount?: number;
 }): Promise<DesktopThread> {
-  return updateThread(input);
+  try {
+    return await updateThread(input);
+  } catch (error) {
+    // Late abort/settle events must not fail the run pipeline after delete.
+    if (isThreadDeletedError(error)) {
+      const now = new Date().toISOString();
+      return {
+        id: input.id,
+        kind: input.kind,
+        title: input.title || defaultTitle(input.kind),
+        workspacePath: input.workspacePath,
+        boundAgentId: input.boundAgentId,
+        boundAgentName: input.boundAgentName,
+        createdAt: now,
+        updatedAt: now,
+        lastRunId: input.lastRunId,
+        lastRequestId: input.lastRequestId,
+        runtimeSessionId: input.runtimeSessionId,
+        status: input.status ?? "idle",
+        messageCount: input.messageCount,
+      };
+    }
+    throw error;
+  }
+}
+
+export interface RuntimeThreadCatalogEntry {
+  id: string;
+  title: string;
+  workspacePath: string;
+  runtimeSessionId: string;
+  createdAt?: string;
+  updatedAt?: string;
+  archived: boolean;
+  sourceChannel?: DesktopThread["sourceChannel"];
+  messageCount?: number;
+}
+
+const PENDING_RUNTIME_SESSION_BIND_TTL_MS = 30_000;
+const RECENT_RUNTIME_SESSION_MS = 60_000;
+const pendingRuntimeSessionBinds: Array<{
+  threadId: string;
+  workspacePath: string;
+  title: string;
+  createdAt: number;
+}> = [];
+const pendingRuntimeSessionOwners = new Map<string, { threadId: string; boundAt: number }>();
+
+/** Register the Desktop thread that is about to create a Runtime Session. */
+export function expectRuntimeSessionBind(input: {
+  threadId: string;
+  workspacePath: string;
+  title: string;
+}): void {
+  const threadId = sanitizeThreadId(input.threadId);
+  const workspacePath = comparableWorkspacePath(input.workspacePath);
+  const title = sanitizeDesktopThreadTitle(input.title) || "New chat";
+  const now = Date.now();
+  expirePendingRuntimeSessionBinds(now);
+  for (let index = pendingRuntimeSessionBinds.length - 1; index >= 0; index -= 1) {
+    if (pendingRuntimeSessionBinds[index]?.threadId === threadId) pendingRuntimeSessionBinds.splice(index, 1);
+  }
+  pendingRuntimeSessionBinds.push({ threadId, workspacePath, title, createdAt: now });
+}
+
+/** Remember the owner after Runtime returns a session_id. */
+export function rememberRuntimeSessionOwner(threadId: string, runtimeSessionId: string): void {
+  pendingRuntimeSessionOwners.set(runtimeSessionId, { threadId: sanitizeThreadId(threadId), boundAt: Date.now() });
+  if (pendingRuntimeSessionOwners.size > 200) {
+    const cutoff = Date.now() - 10 * 60_000;
+    for (const [sessionId, owner] of pendingRuntimeSessionOwners) {
+      if (owner.boundAt < cutoff) pendingRuntimeSessionOwners.delete(sessionId);
+    }
+  }
+}
+
+function expirePendingRuntimeSessionBinds(now = Date.now()): void {
+  for (let index = pendingRuntimeSessionBinds.length - 1; index >= 0; index -= 1) {
+    if (now - (pendingRuntimeSessionBinds[index]?.createdAt ?? 0) > PENDING_RUNTIME_SESSION_BIND_TTL_MS) {
+      pendingRuntimeSessionBinds.splice(index, 1);
+    }
+  }
+}
+
+function isRecentRuntimeCatalogTimestamp(value?: string): boolean {
+  if (!value) return true;
+  const stamp = Date.parse(value);
+  return Number.isFinite(stamp) && Date.now() - stamp < RECENT_RUNTIME_SESSION_MS;
+}
+
+function claimPendingRuntimeSessionBind(input: {
+  workspacePath: string;
+  title: string;
+  createdAt?: string;
+  updatedAt?: string;
+}): string | undefined {
+  if (!isRecentRuntimeCatalogTimestamp(input.updatedAt) && !isRecentRuntimeCatalogTimestamp(input.createdAt)) {
+    return undefined;
+  }
+  const now = Date.now();
+  expirePendingRuntimeSessionBinds(now);
+  const workspacePath = comparableWorkspacePath(input.workspacePath);
+  const title = sanitizeDesktopThreadTitle(input.title) || "New chat";
+  const inWorkspace = pendingRuntimeSessionBinds.filter((pending) => pending.workspacePath === workspacePath);
+  const match = inWorkspace.find((pending) => catalogTitlesLikelySame(pending.title, title))
+    ?? (inWorkspace.length === 1 ? inWorkspace[0] : undefined);
+  if (!match) return undefined;
+  const index = pendingRuntimeSessionBinds.indexOf(match);
+  if (index >= 0) pendingRuntimeSessionBinds.splice(index, 1);
+  return match.threadId;
+}
+
+export function findDesktopOwnerThreadId(
+  threads: DesktopThread[],
+  input: { sessionId: string; workspacePath: string; title: string; createdAt?: string; updatedAt?: string },
+): string | undefined {
+  return resolveBoundDesktopThreadId(threads, input.sessionId)
+    ?? pendingRuntimeSessionOwners.get(input.sessionId)?.threadId
+    ?? claimPendingRuntimeSessionBind({
+      workspacePath: input.workspacePath,
+      title: input.title,
+      createdAt: input.createdAt,
+      updatedAt: input.updatedAt,
+    })
+    ?? findUnboundDesktopOwnerThreadId(threads, input);
+}
+
+function findUnboundDesktopOwnerThreadId(
+  threads: DesktopThread[],
+  input: { workspacePath: string; title: string; createdAt?: string; updatedAt?: string },
+): string | undefined {
+  const workspacePath = comparableWorkspacePath(input.workspacePath);
+  const unbound = threads.filter((thread) =>
+    isDesktopThreadId(thread.id)
+    && !effectiveRuntimeSessionId(thread)
+    && comparableWorkspacePath(thread.workspacePath) === workspacePath);
+  const createdAt = input.createdAt;
+  if (!createdAt) return undefined;
+  const createdAtStamp = Date.parse(createdAt);
+  const byCreatedAt = unbound.filter((thread) => thread.createdAt === createdAt || (
+    Number.isFinite(createdAtStamp)
+    && Number.isFinite(Date.parse(thread.createdAt))
+    && Date.parse(thread.createdAt) === createdAtStamp
+  ));
+  return byCreatedAt.length === 1 ? byCreatedAt[0]?.id : undefined;
+}
+
+function resolveRuntimeCatalogThreadId(
+  threads: DesktopThread[],
+  input: { id: string; runtimeSessionId: string; workspacePath: string; title: string; createdAt?: string; updatedAt?: string },
+): string {
+  return findDesktopOwnerThreadId(threads, {
+    sessionId: input.runtimeSessionId,
+    workspacePath: input.workspacePath,
+    title: input.title,
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt,
+  }) ?? input.id;
+}
+
+/** Persist one authoritative Runtime directory entry without inventing activity. */
+export async function upsertThreadFromRuntimeCatalog(
+  input: RuntimeThreadCatalogEntry,
+): Promise<{ thread: DesktopThread; changed: boolean }> {
+  const [result] = await upsertThreadsFromRuntimeCatalog([input]);
+  if (!result) throw new Error("Runtime catalog entry was not persisted.");
+  return result;
+}
+
+/** Apply a Runtime bootstrap page with one read and at most one atomic write. */
+export async function upsertThreadsFromRuntimeCatalog(
+  inputs: RuntimeThreadCatalogEntry[],
+): Promise<Array<{ thread: DesktopThread; changed: boolean }>> {
+  const entries = inputs.slice(0, 200).map((input) => ({ ...input, id: sanitizeThreadId(input.id) }));
+  await ensureDeletedTombstonesLoaded();
+  return serializeJsonMutation(THREADS_FILE, async () => {
+    let threads = await readThreads();
+    const now = new Date().toISOString();
+    const results: Array<{ thread: DesktopThread; changed: boolean }> = [];
+    let anyChanged = false;
+    for (const input of entries) {
+      const runtimeSessionId = sanitizeThreadId(input.runtimeSessionId);
+      const catalogId = resolveRuntimeCatalogThreadId(threads, {
+        id: input.id,
+        runtimeSessionId,
+        workspacePath: input.workspacePath,
+        title: input.title,
+        createdAt: input.createdAt,
+        updatedAt: input.updatedAt,
+      });
+      if (
+        isDeletedThreadIdentity(catalogId)
+        || isDeletedThreadIdentity(input.id)
+        || isDeletedThreadIdentity(runtimeSessionId)
+      ) {
+        const before = threads.length;
+        threads = threads.filter((item) =>
+          !isTombstonedThread(item)
+          && item.id !== catalogId
+          && item.id !== input.id
+          && item.id !== runtimeSessionId
+          && item.runtimeSessionId !== runtimeSessionId);
+        if (threads.length !== before) anyChanged = true;
+        results.push({ thread: catalogGhostThread(input, catalogId, runtimeSessionId), changed: false });
+        continue;
+      }
+      const existing = threads.find((thread) => thread.id === catalogId) ?? threads.find((thread) => thread.id === input.id);
+      // Keep the Desktop thread's createdAt. Overwriting it with the Runtime
+      // timestamp erased the only stable join key when runtimeSessionId was lost.
+      const createdAt = isDesktopThreadId(catalogId)
+        ? (existing?.createdAt ?? validCatalogTimestamp(input.createdAt, now))
+        : validCatalogTimestamp(input.createdAt, existing?.createdAt ?? now);
+      const updatedAt = validCatalogTimestamp(input.updatedAt, existing?.updatedAt ?? createdAt);
+      const title = sanitizeDesktopThreadTitle(input.title || existing?.title) || "New chat";
+      const workspacePath = String(input.workspacePath || existing?.workspacePath || "").slice(0, MAX_WORKSPACE_PATH_CHARS);
+      const archivedAt = input.archived ? existing?.archivedAt ?? updatedAt : undefined;
+      const archiveSource = input.archived ? existing?.archiveSource ?? "opendrsai" : undefined;
+      const sourceChannel = input.sourceChannel === "wechat" ? "wechat" : existing?.sourceChannel;
+      const incomingCount = Number.isFinite(input.messageCount) ? Math.max(0, Number(input.messageCount)) : undefined;
+      // Runtime catalog rows often omit message_count (treated as 0). Do not
+      // wipe a Desktop count that already reflects a persisted snapshot.
+      const messageCount = incomingCount === undefined
+        ? existing?.messageCount
+        : Math.max(existing?.messageCount ?? 0, incomingCount);
+      const unchanged = Boolean(existing
+        && existing.id === catalogId
+        && existing.title === title
+        && existing.workspacePath === workspacePath
+        && existing.runtimeSessionId === runtimeSessionId
+        && existing.createdAt === createdAt
+        && existing.updatedAt === updatedAt
+        && Boolean(existing.archived) === input.archived
+        && existing.archivedAt === archivedAt
+        && existing.archiveSource === archiveSource
+        && existing.sourceChannel === sourceChannel
+        && existing.messageCount === messageCount);
+      const withoutCatalogOrphans = threads.filter((item) =>
+        item.id === catalogId || (item.id !== input.id && item.id !== runtimeSessionId));
+      if (existing && unchanged && withoutCatalogOrphans.length === threads.length) {
+        results.push({ thread: existing, changed: false });
+        continue;
+      }
+      const thread: DesktopThread = {
+        ...(existing ?? {}),
+        id: catalogId,
+        kind: existing?.kind ?? "chat",
+        title,
+        workspacePath,
+        createdAt,
+        updatedAt,
+        runtimeSessionId,
+        status: existing?.status ?? "idle",
+        messageCount,
+        archived: input.archived,
+        archivedAt,
+        archiveSource,
+        sourceChannel,
+      };
+      threads = [thread, ...withoutCatalogOrphans.filter((item) => item.id !== catalogId)];
+      results.push({ thread, changed: true });
+      anyChanged = true;
+    }
+    const deduped = dedupeRuntimeSessionCatalogDuplicates(threads);
+    if (deduped.migrated) {
+      threads = deduped.threads;
+      anyChanged = true;
+    }
+    if (anyChanged) await writeThreads(retainThreads(threads));
+    return results;
+  });
+}
+
+function validCatalogTimestamp(value: string | undefined, fallback: string): string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : fallback;
 }
 
 async function readThreads(): Promise<DesktopThread[]> {
@@ -273,14 +712,41 @@ async function readThreadsWithMigration(): Promise<{ threads: DesktopThread[]; m
     if (!Array.isArray(parsed)) return { threads: [], migrated: false };
     let migrated = false;
     const threads = retainThreads(parsed.filter(isThread)).map((thread) => {
-      const next = migrateLocalAgentDisplayName(thread);
+      let next = migrateLocalAgentDisplayName(thread);
       if (next !== thread) migrated = true;
+      const cleared = migrateInvalidRuntimeSessionBinding(next);
+      if (cleared !== next) {
+        migrated = true;
+        next = cleared;
+      }
       return next;
     });
-    return { threads, migrated };
+    const deduped = dedupeRuntimeSessionCatalogDuplicates(threads);
+    return { threads: deduped.threads, migrated: migrated || deduped.migrated };
   } catch {
     return { threads: [], migrated: false };
   }
+}
+
+/** Drop orphan catalog rows keyed by Runtime session_id when a Desktop thread-* already owns that Session. */
+export function dedupeRuntimeSessionCatalogDuplicates(threads: DesktopThread[]): {
+  threads: DesktopThread[];
+  migrated: boolean;
+} {
+  const next = canonicalizeSidebarThreads(threads);
+  if (next.length !== threads.length) return { threads: next, migrated: true };
+  const before = new Map(threads.map((thread) => [thread.id, thread.runtimeSessionId ?? ""]));
+  const migrated = next.some((thread) => (before.get(thread.id) ?? "") !== (thread.runtimeSessionId ?? "")
+    || !before.has(thread.id));
+  return { threads: next, migrated };
+}
+
+/** Desktop thread ids must never be stored as Runtime Session ids. */
+export function migrateInvalidRuntimeSessionBinding(thread: DesktopThread): DesktopThread {
+  if (!isDesktopThreadId(thread.id)) return thread;
+  if (!thread.runtimeSessionId || isRuntimeCatalogSessionId(thread.runtimeSessionId)) return thread;
+  const { runtimeSessionId: _invalid, ...rest } = thread;
+  return rest;
 }
 
 export function migrateLocalAgentDisplayName(thread: DesktopThread): DesktopThread {
@@ -294,12 +760,17 @@ async function writeThreads(threads: DesktopThread[]): Promise<void> {
 }
 
 function retainThreads(threads: DesktopThread[]): DesktopThread[] {
-  const active: DesktopThread[] = [];
+  const protectedActive: DesktopThread[] = [];
+  const ordinaryActive: DesktopThread[] = [];
   const archived: DesktopThread[] = [];
   for (const thread of threads) {
-    (thread.archived ? archived : active).push(thread);
+    if (thread.archived) archived.push(thread);
+    else if (thread.pinned || thread.status === "running") protectedActive.push(thread);
+    else ordinaryActive.push(thread);
   }
-  return [...active.slice(0, MAX_THREADS), ...archived.slice(0, MAX_ARCHIVED_THREADS)];
+  const active = [...protectedActive.sort(compareThreads), ...ordinaryActive.sort(compareThreads)]
+    .slice(0, MAX_THREADS);
+  return [...active, ...archived.sort(compareThreads).slice(0, MAX_ARCHIVED_THREADS)];
 }
 
 async function readLegacyThreadSnapshots(): Promise<Record<string, DesktopThreadSnapshot>> {
@@ -416,7 +887,7 @@ function parseStoredJson(serialized: string): unknown {
     // without its closing quote. Repair only that narrow, line-oriented form;
     // all repaired data is rewritten atomically on the next normal update.
     const repaired = serialized.replace(
-      /^(\s*"(?:id|kind|title|workspacePath|boundAgentId|boundAgentName|createdAt|updatedAt|lastRunId|lastRequestId|runtimeSessionId|status|archivedAt|archiveSource)"\s*:\s*".*?)(,\s*)$/gm,
+      /^(\s*"(?:id|kind|title|workspacePath|boundAgentId|boundAgentName|createdAt|updatedAt|lastRunId|lastRequestId|runtimeSessionId|sourceChannel|status|archivedAt|archiveSource)"\s*:\s*".*?)(,\s*)$/gm,
       (line, prefix: string, suffix: string) => prefix.endsWith('"') ? line : `${prefix}"${suffix}`,
     );
     return JSON.parse(repaired);
@@ -437,6 +908,9 @@ function validateCreateThreadRequest(rawRequest: unknown): CreateThreadRequest {
     workspacePath: sanitizeWorkspacePath(request.workspacePath),
     boundAgentId: sanitizeOptionalAgentText(request.boundAgentId, MAX_AGENT_ID_CHARS, "Thread agent id is invalid."),
     boundAgentName: sanitizeOptionalAgentText(request.boundAgentName, MAX_AGENT_NAME_CHARS, "Thread agent name is invalid."),
+    model: sanitizeOptionalAgentText(request.model, MAX_MODEL_CHARS, "Thread model is invalid."),
+    reasoningEffort: normalizeThinkingEffort(request.reasoningEffort),
+    planMode: typeof request.planMode === "boolean" ? request.planMode : undefined,
     fork: sanitizeForkMetadata(request.fork),
     execution: sanitizeExecutionBinding(request.execution),
   };
@@ -466,11 +940,15 @@ function validateUpdateThreadRequest(rawRequest: unknown): UpdateThreadRequest {
     workspacePath: sanitizeWorkspacePath(request.workspacePath),
     boundAgentId: sanitizeOptionalAgentText(request.boundAgentId, MAX_AGENT_ID_CHARS, "Thread agent id is invalid."),
     boundAgentName: sanitizeOptionalAgentText(request.boundAgentName, MAX_AGENT_NAME_CHARS, "Thread agent name is invalid."),
+    model: sanitizeOptionalAgentText(request.model, MAX_MODEL_CHARS, "Thread model is invalid."),
+    reasoningEffort: normalizeThinkingEffort(request.reasoningEffort),
+    planMode: typeof request.planMode === "boolean" ? request.planMode : undefined,
     fork: sanitizeForkMetadata(request.fork),
     execution: sanitizeExecutionBinding(request.execution),
     lastRunId: sanitizeOptionalId(request.lastRunId, "Thread run id is invalid."),
     lastRequestId: sanitizeOptionalId(request.lastRequestId, "Thread request id is invalid."),
     runtimeSessionId: sanitizeOptionalId(request.runtimeSessionId, "Thread Runtime session id is invalid."),
+    sourceChannel: request.sourceChannel === "wechat" ? "wechat" : undefined,
     status: request.status,
     messageCount: Number.isFinite(request.messageCount) ? Math.max(0, Number(request.messageCount)) : undefined,
     pinned: typeof request.pinned === "boolean" ? request.pinned : undefined,
@@ -545,9 +1023,11 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
     content,
     ...(message.streaming ? { streaming: true } : {}),
     ...(message.error ? { error: true } : {}),
+    ...(message.replyFailed ? { replyFailed: true } : {}),
     ...(typeof message.statusContent === "string"
       ? { statusContent: message.statusContent.slice(0, MAX_STATUS_CHARS) }
       : {}),
+    ...(message.voice && typeof message.voice === "object" && Number.isInteger(message.voice.revision) && message.voice.revision >= 1 ? { voice: { revision: message.voice.revision, ...(Number.isFinite(message.voice.generatedAudioMs) ? { generatedAudioMs: Math.max(0, message.voice.generatedAudioMs!) } : {}), ...(Number.isFinite(message.voice.playedAudioMs) ? { playedAudioMs: Math.max(0, message.voice.playedAudioMs!) } : {}), ...(Number.isFinite(message.voice.interruptedAt) ? { interruptedAt: message.voice.interruptedAt } : {}), ...(["none", "word_timing"].includes(message.voice.alignmentConfidence ?? "") ? { alignmentConfidence: message.voice.alignmentConfidence } : {}), ...(typeof message.voice.heardContent === "string" ? { heardContent: message.voice.heardContent.slice(0, MAX_MESSAGE_CHARS) } : {}) } } : {}),
     ...(typeof message.reasoningContent === "string"
       ? { reasoningContent: message.reasoningContent.slice(0, MAX_STATUS_CHARS) }
       : {}),
@@ -569,6 +1049,8 @@ function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThr
   };
 }
 
+const MAX_SNAPSHOT_SCREENSHOT_DATA_URL_CHARS = 2_000_000;
+
 function sanitizeSnapshotAttachments(raw: unknown): ChatAttachment[] | undefined {
   if (!Array.isArray(raw) || !raw.length) return undefined;
   const attachments = raw.slice(0, 40).flatMap((item): ChatAttachment[] => {
@@ -586,6 +1068,10 @@ function sanitizeSnapshotAttachments(raw: unknown): ChatAttachment[] | undefined
     }
     if (typeof attachment.path !== "string" || !attachment.path.trim()) return [];
     if (typeof attachment.name !== "string" || !attachment.name.trim()) return [];
+    const screenshotDataUrl = typeof attachment.screenshotDataUrl === "string"
+      && attachment.screenshotDataUrl.startsWith("data:image/")
+      ? attachment.screenshotDataUrl.slice(0, MAX_SNAPSHOT_SCREENSHOT_DATA_URL_CHARS)
+      : undefined;
     return [{
       kind,
       path: attachment.path.trim().slice(0, 2048),
@@ -593,6 +1079,7 @@ function sanitizeSnapshotAttachments(raw: unknown): ChatAttachment[] | undefined
       ...(typeof attachment.url === "string" ? { url: attachment.url.slice(0, 2048) } : {}),
       ...(typeof attachment.title === "string" ? { title: attachment.title.slice(0, 300) } : {}),
       ...(typeof attachment.note === "string" ? { note: attachment.note.slice(0, 1000) } : {}),
+      ...(screenshotDataUrl ? { screenshotDataUrl } : {}),
     }];
   });
   return attachments.length ? attachments : undefined;
@@ -705,7 +1192,7 @@ function sanitizeTitle(title: unknown): string | undefined {
   if (typeof title !== "string") {
     throw new Error("Thread title is invalid.");
   }
-  return title.replace(/[\r\n\u2028\u2029]+/g, " ").trim().slice(0, MAX_TITLE_CHARS) || undefined;
+  return sanitizeDesktopThreadTitle(title) || undefined;
 }
 
 function sanitizeWorkspacePath(path: unknown): string | undefined {
@@ -714,6 +1201,10 @@ function sanitizeWorkspacePath(path: unknown): string | undefined {
     throw new Error("Thread workspace path is invalid.");
   }
   return path.trim() || undefined;
+}
+
+export function normalizeThinkingEffort(value: unknown): DesktopThread["reasoningEffort"] {
+  return typeof value === "string" && THINKING_EFFORTS.has(value) ? value as DesktopThread["reasoningEffort"] : undefined;
 }
 
 function sanitizeOptionalAgentText(value: unknown, maxChars: number, message: string): string | undefined {
@@ -831,6 +1322,12 @@ function sanitizeIsoLike(value: unknown): string | undefined {
   return trimmed && Number.isFinite(Date.parse(trimmed)) ? trimmed : undefined;
 }
 
+function normalizeStoredRuntimeSessionId(threadId: string, sessionId: string | undefined): string | undefined {
+  if (!sessionId) return undefined;
+  if (threadId.startsWith("thread-") && !isRuntimeCatalogSessionId(sessionId)) return undefined;
+  return sessionId;
+}
+
 function sanitizeOptionalId(value: unknown, message: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string" || !THREAD_ID_PATTERN.test(value) || /[\r\n]/.test(value)) {
@@ -849,6 +1346,7 @@ function isThread(value: unknown): value is DesktopThread {
       typeof thread.title === "string" &&
       typeof thread.createdAt === "string" &&
       typeof thread.updatedAt === "string" &&
+      (thread.sourceChannel === undefined || thread.sourceChannel === "wechat") &&
       (thread.fork === undefined || isForkMetadata(thread.fork)),
   );
 }

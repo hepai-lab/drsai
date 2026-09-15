@@ -1,7 +1,6 @@
 package ai.drsai.remote.remote.ui
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class RemoteConnectionDiagnosticTest {
@@ -36,10 +35,7 @@ class RemoteConnectionDiagnosticTest {
             ),
             fixtures.map(::diagnoseRemoteConnection).map(RemoteConnectionDiagnostic::action),
         )
-        fixtures.map(::diagnoseRemoteConnection).forEach {
-            assertFalse(Regex("runtime|relay|oidc|proof|wss|generation", RegexOption.IGNORE_CASE)
-                .containsMatchIn("${it.title} ${it.reason} ${it.actionLabel}"))
-        }
+        assertEquals(RemoteDiagnosticKind.HEALTHY, diagnoseRemoteConnection(ok).kind)
     }
 
     @Test fun unknownChecksNeverInventAFailure() {
@@ -47,11 +43,10 @@ class RemoteConnectionDiagnosticTest {
         assertEquals(RemoteDiagnosticAction.NONE, diagnoseRemoteConnection(unknown).action)
     }
 
-    @Test fun englishDiagnosticsPreservePriorityAndExposeOneAction() {
+    @Test fun diagnosticsPreservePriorityWithStableSemanticKind() {
         val input = ok.copy(account = RemoteDiagnosticCheck.FAILED, notifications = RemoteDiagnosticCheck.FAILED)
-        val result = diagnoseRemoteConnection(input, RemoteUiLanguage.EN)
+        val result = diagnoseRemoteConnection(input)
         assertEquals(RemoteDiagnosticAction.SIGN_IN, result.action)
-        assertEquals("Sign in", result.actionLabel)
-        assertEquals("Sign-in required", result.title)
+        assertEquals(RemoteDiagnosticKind.SIGN_IN_REQUIRED, result.kind)
     }
 }

@@ -208,8 +208,8 @@ class P6CapacityRecoveryPhysicalTest {
         )),
         items,
         sequence,
-        OaepSnapshotCheckpoint(sequence, "a".repeat(64), sequence),
-        OaepSnapshotWindow(WINDOW_SIZE, hasMore, if (hasMore) "opaque-p6-cursor" else null),
+        checkpoint = OaepSnapshotCheckpoint(sequence, "a".repeat(64), sequence),
+        window = OaepSnapshotWindow(WINDOW_SIZE, hasMore, if (hasMore) "opaque-p6-cursor" else null),
     )
 
     private fun items(range: LongRange) = range.map(::item)

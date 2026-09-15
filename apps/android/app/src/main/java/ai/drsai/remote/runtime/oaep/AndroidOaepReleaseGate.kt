@@ -1,8 +1,9 @@
 package ai.drsai.remote.runtime.oaep
 
-/** Immutable v1.5.6 Debug contract for the fully OAEP Android Agent Runtime. */
+/** Versioned contract for the fully OAEP Android Agent Runtime. */
 object AndroidOaepReleaseGate {
-    const val ANDROID_AGENT_RUNTIME_VERSION = "1.5.6"
+    const val ANDROID_AGENT_RUNTIME_VERSION = "1.5.7"
+    // OAEP peers from v1.5.6 remain protocol compatible during the P10 rollout.
     const val MINIMUM_ANDROID_AGENT_RUNTIME_VERSION = "1.5.6"
     const val OAEP_PROTOCOL_VERSION = "1.0"
     const val OAEP_STREAM_PROFILE = "oaep.session-stream/1"

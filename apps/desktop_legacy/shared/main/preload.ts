@@ -1,0 +1,1504 @@
+import { contextBridge, ipcRenderer, webUtils } from "electron";
+import type { IpcRendererEvent } from "electron";
+
+const desktopPlatform = process.platform === "darwin" ? "macos" : "windows";
+const applyDesktopPlatformMarker = (): void => {
+  document.documentElement.dataset.desktopPlatform = desktopPlatform;
+};
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", applyDesktopPlatformMarker, { once: true });
+} else {
+  applyDesktopPlatformMarker();
+}
+
+import type {
+  DesktopApi,
+  DesktopOpenRequest,
+  DesktopLifecycleEvent,
+  DesktopSystemPermissionKind,
+  DesktopSystemPermissionStatus,
+  MaterialConsistencyAnalysisRequest,
+  MaterialConsistencyAnalysisResult,
+  MaterialQueryRequest,
+  MaterialQueryResult,
+  MaterialRoleAnalysisRequest,
+  MaterialRoleAnalysisResult,
+  DesktopDataCleanupRequest,
+  DesktopDataCleanupScope,
+  DiagnosticEvent,
+  DiagnosticEventInput,
+  DiagnosticQuery,
+  DiagnosticSourceContextRequest,
+  DiagnosticSourceOpenRequest,
+  DiagnosticIssueUpdateRequest,
+  InteractiveDebugBreakpointRequest,
+  InteractiveDebugControlRequest,
+  InteractiveDebugEvaluateRequest,
+  InteractiveDebugSession,
+  InteractiveDebugStartRequest,
+  AgentRunEvent,
+  AgentRunRequest,
+  AuthSession,
+  ChatEvent,
+  ChatRequest,
+  CompletionNotificationClickEvent,
+  CompletionNotificationPreference,
+  BrowserActionRequest,
+  BrowserActionResult,
+  BrowserTaskApprovalRequest,
+  BrowserTaskEvent,
+  BrowserTaskStartRequest,
+  BrowserTaskStopRequest,
+  BrowserUrlCheck,
+  CreateWorkspaceRequest,
+  ConnectRemoteWorkspaceRequest,
+  RemoteGatewayInstallRequest,
+  RemoteGatewayOperationEvent,
+  RemoteWorkspaceStatus,
+  WorkspaceFileChangeEvent,
+  CreateThreadRequest,
+  DesktopBackgroundTask,
+  DesktopBackgroundTaskActionRequest,
+  DesktopBackgroundTaskEnqueueRequest,
+  DesktopBackgroundTaskListRequest,
+  DesktopBackgroundTaskRecoveryResult,
+  DesktopBackgroundTaskUpdateRequest,
+  DesktopAnomalyDecisionApplyRequest,
+  DesktopAnomalyDecisionApplyResult,
+  DesktopReusableTask,
+  DesktopReusableTaskRunPrepareRequest,
+  DesktopReusableTaskRunRecipe,
+  DesktopReusableTaskSaveRequest,
+  DesktopChannelAdapterConfigureRequest,
+  DesktopChannelAdapterConfigureResult,
+  DesktopChannelAdapterAuthStartRequest,
+  DesktopChannelAdapterAuthStartResult,
+  DesktopChannelAdapterAuthPollRequest,
+  DesktopChannelAdapterAuthPollResult,
+  DesktopChannelAdapterAuthRevokeRequest,
+  DesktopChannelAdapterAuthRevokeResult,
+  DesktopChannelProviderTokenConfigureRequest,
+  DesktopChannelProviderTokenConfigureResult,
+  DesktopChannelAdapterListResult,
+  DesktopWeChatChannelStatus,
+  DesktopWeChatLoginStartResult,
+  DesktopWeChatLoginPollRequest,
+  DesktopWeChatLoginPollResult,
+  DesktopWeChatLoginCancelResult,
+  DesktopWeChatSessionSummary,
+  DesktopWeChatReplyCapability,
+  DesktopWeChatReplyCapabilityRequest,
+  DesktopWeChatOutboundRequest,
+  DesktopWeChatOutboundResult,
+  DesktopChannelContextImportRequest,
+  DesktopChannelContextImportResult,
+  DesktopChannelLiveSyncRequest,
+  DesktopChannelInboundEvent,
+  DesktopChannelInboundEventListRequest,
+  DesktopChannelInboundEventRouteRequest,
+  DesktopChannelInboundEventRouteResult,
+  DesktopChannelOutboundDelivery,
+  DesktopChannelOutboundDeliveryListRequest,
+  DesktopChannelOutboundDraftRequest,
+  DesktopChannelOutboundDraftResult,
+  DesktopChannelSnapshotSyncRequest,
+  DesktopChannelSnapshotSyncResult,
+  DesktopExternalConnectionReadinessResult,
+  DesktopApprovalProposalRequest,
+  DesktopApprovalProposalResult,
+  DesktopHealth,
+  DesktopBootstrapResult,
+  DesktopForkWorktreeRequest,
+  DesktopForkWorktreeResult,
+  DesktopWorktreeListRequest,
+  DesktopWorktreeSummary,
+  DesktopWorktreeEventRequest,
+  DesktopWorktreeEventBatch,
+  DesktopWorktreeMigrationDiagnostic,
+  DesktopForkLifecycleApprovalRequest,
+  DesktopForkLifecycleApprovalResult,
+  DesktopForkConflictDraftWriteRequest,
+  DesktopForkConflictDraftWriteResult,
+  DesktopForkQueueDispatchRequest,
+  DesktopForkQueueDispatchResult,
+  DesktopForkQueueStartApprovalRequest,
+  DesktopForkQueueStartApprovalResult,
+  DesktopIdeContextSnapshot,
+  DesktopMcpContextRequest,
+  DesktopMcpContextResult,
+  DesktopMcpActiveSession,
+  DesktopMcpActiveSessionListRequest,
+  DesktopMcpReusableSession,
+  DesktopMcpReusableSessionCloseRequest,
+  DesktopMcpReusableSessionCloseResult,
+  DesktopMcpReusableSessionListRequest,
+  DesktopMcpLiveEnumerationRequest,
+  DesktopMcpLiveEnumerationResult,
+  DesktopMcpSessionCancelRequest,
+  DesktopMcpSessionCancelResult,
+  DesktopMcpSessionAuditEntry,
+  DesktopMcpSessionAuditListRequest,
+  DesktopMcpToolExecutionAuditEntry,
+  DesktopMcpToolExecutionAuditListRequest,
+  DesktopMcpToolExecutionApprovalRequest,
+  DesktopMcpToolExecutionApprovalResult,
+  DesktopApprovalDecisionRequest,
+  DesktopPendingApproval,
+  DesktopProviderErrorAnalyticsRecord,
+  DesktopProviderUsageAnalyticsRecord,
+  DesktopGitCommitApprovalRequest,
+  DesktopShellCommandApprovalRequest,
+  DesktopCustomCommand,
+  DesktopCustomCommandDeleteRequest,
+  DesktopCustomCommandDeleteResult,
+  DesktopCustomCommandListRequest,
+  DesktopCustomCommandUpsertRequest,
+  DesktopThreadSnapshot,
+  DesktopThreadContentSearchRequest,
+  DesktopThreadContentSearchResult,
+  CreateThreadShareRequest,
+  DesktopThreadShareResult,
+  DesktopVoiceTranscriptHandoffRequest,
+  DesktopVoiceTranscriptHandoffResult,
+  DesktopVoiceTranscriptionRequest,
+  DesktopVoiceTranscriptionStartResult,
+  DesktopVoiceRuntimeStatus,
+  DesktopVoiceTranscriptionEvent,
+  DesktopVoiceSynthesisEvent,
+  DesktopVoiceSynthesisRequest,
+  DesktopVoiceSynthesisRuntimeStatus,
+  DesktopVoiceSynthesisStartResult,
+  DesktopScheduledTask,
+  DesktopScheduledTaskCreateRequest,
+  DesktopScheduledTaskDeleteRequest,
+  DesktopScheduledTaskDeleteResult,
+  DesktopScheduledTaskListRequest,
+  DesktopScheduledTaskRunRequest,
+  DesktopScheduledTaskRunResult,
+  DesktopScheduledTaskWorkerStatus,
+  DesktopScheduledTaskUpdateRequest,
+  DesktopShareCreateRequest,
+  DesktopShareInspectionRequest,
+  DesktopShareInspectionResult,
+  DesktopSharePermissionUpdateRequest,
+  DesktopShareRevokeRequest,
+  DesktopShareRevocationResult,
+  DesktopShareVersionInspection,
+  DesktopShareVersionInspectionRequest,
+  DesktopShareVersionPublishRequest,
+  DesktopShareVersionPublishResult,
+  DesktopShareComment,
+  DesktopShareCommentAddRequest,
+  DesktopShareCommentListRequest,
+  DesktopShareCommentTask,
+  DesktopShareCommentTaskCompleteRequest,
+  DesktopShareCommentTaskCreateRequest,
+  DesktopShareCommentTaskListRequest,
+  DesktopShareCommentTaskPreview,
+  DesktopShareCommentTaskPreviewRequest,
+  DesktopShareCommentTaskUpdateRequest,
+  DesktopShareContinuationRequest,
+  DesktopShareContinuationResult,
+  DesktopShareAuditEntry,
+  DesktopShareAuditListRequest,
+  DesktopShareManifest,
+  DesktopSharedObjectOpenRequest,
+  DesktopSharedObjectOpenResult,
+  DesktopSharedArtifactDownloadRequest,
+  DesktopSharedArtifactDownloadResult,
+  DesktopProjectMemoryAddRequest,
+  DesktopProjectMemoryClearRequest,
+  DesktopProjectMemoryClearResult,
+  DesktopProjectMemoryEntry,
+  DesktopProjectMemoryListRequest,
+  DesktopProjectMemoryUpdateRequest,
+  DesktopUserPreference,
+  DesktopUserPreferenceDeleteRequest,
+  DesktopUserPreferenceDeleteResult,
+  DesktopUserPreferenceUpsertRequest,
+  DesktopTeamMemoryAddRequest,
+  DesktopTeamMemoryDeleteRequest,
+  DesktopTeamMemoryDeleteResult,
+  DesktopTeamMemoryEntry,
+  DesktopTeamMemoryListRequest,
+  DesktopProjectSkillDraft,
+  DesktopProjectSkillDraftCreateRequest,
+  DesktopProjectSkillDraftListRequest,
+  DesktopProjectSkillInstallRequest,
+  DesktopProjectSkillInstallResult,
+  DesktopProjectSkillPublishRequest,
+  DesktopProjectSkillPublishResult,
+  DesktopWorkflowMarketplaceListResult,
+  DesktopWorkflowMarketplaceSyncRequest,
+  DesktopWorkflowMarketplaceSyncResult,
+  DesktopWorkflowRun,
+  DesktopWorkflowRunPrepareRequest,
+  DesktopWorkflowRunPrepareResult,
+  DesktopWorkflowRunStepCompleteRequest,
+  DesktopWorkflowRunStepCompleteResult,
+  DesktopWorkflowRunStepDispatchRequest,
+  DesktopWorkflowRunStepDispatchResult,
+  DesktopWorkflowRunStartRequest,
+  DesktopWorkflowRunStartResult,
+  GatewayStatus,
+  InstallStatus,
+  InstallProgress,
+  LoginRequest,
+  LoginResult,
+  LogoutOptions,
+  ManagerPresentationCancelRequest,
+  ManagerPresentationCancelResult,
+  ManagerPresentationPauseRequest,
+  ManagerPresentationPauseResult,
+  ManagerPresentationRecoveryRequest,
+  ManagerPresentationRecoveryResult,
+  ManagerPresentationRecoveryDecisionRequest,
+  ManagerPresentationRecoveryDecisionResult,
+  ManagerPresentationGenerateRequest,
+  ManagerPresentationGenerateResult,
+  ManagerPresentationRequirementUpdateRequest,
+  ManagerPresentationRequirementUpdateResult,
+  ManagerPresentationProgressEvent,
+  PdfPageOpenRequest,
+  PdfPageOpenResult,
+  MyDrSaiConfig,
+  MyDrSaiModelConfigPreview,
+  MyDrSaiModelConnection,
+  MyDrSaiModelDoctorResult,
+  MyDrSaiProviderTestResult,
+  OidcLoginDebugEvent,
+  SaveApiKeyResult,
+  StartInstallOptions,
+  UpdateMyDrSaiConfigRequest,
+  UpdateMyDrSaiModelConnectionRequest,
+  SaveMyDrSaiModelProviderRequest,
+  UpdateThreadRequest,
+  UpdateStatus,
+  UpdateWorkspaceRequest,
+  WorkspaceContextOverview,
+  WorkspaceCheckpoint,
+  WorkspaceCheckpointAcceptRequest,
+  WorkspaceCheckpointCreateRequest,
+  WorkspaceCheckpointPreviewRequest,
+  WorkspaceCheckpointPreviewResult,
+  WorkspaceCheckpointRestoreRequest,
+  WorkspaceCheckpointRestoreResult,
+  WorkspaceFilePreview,
+  WorkspaceFilePreviewRequest,
+  ConversationResourceResolveRequest,
+  ConversationResourceResolveResult,
+  ConversationResourcePreviewRequest,
+  ConversationResourceDownloadRequest,
+  ConversationResourceDownloadResult,
+  WorkspaceFileSaveAsRequest,
+  WorkspaceFileSaveAsResult,
+  WorkspaceFileWriteRequest,
+  WorkspaceFileWriteResult,
+  WorkspaceFileTreeRequest,
+  WorkspaceFileTreeResult,
+  WorkspaceFolderSummaryRequest,
+  WorkspaceFolderSummaryResult,
+  WorkspaceGitFileAtRefRequest,
+  WorkspaceGitFileAtRefResult,
+  WorkspaceGitDiffRequest,
+  WorkspaceGitDiffResult,
+  WorkspaceHunkActionRequest,
+  WorkspaceHunkActionResult,
+  WorkspaceRevertFileRequest,
+  WorkspaceRevertFileResult,
+  WorkspaceStageFileRequest,
+  WorkspaceStageFileResult,
+  GatewaySkill,
+  GatewayAvailableSkill,
+  GatewaySkillInstallRequest,
+  GfsListRequest,
+  GfsListResult,
+  GfsObjectInfo,
+  GfsUploadRequest,
+  GfsDownloadRequest,
+} from "../api/desktopApi";
+
+const duplexVoicePorts = new Map<string, MessagePort>();
+
+const api: DesktopApi = {
+  isAppDialogE2eEnabled: () => process.env.OPENDRSAI_E2E_APP_DIALOG === "1",
+  isOperationalStateE2eEnabled: () => process.env.OPENDRSAI_E2E_OPERATIONAL_STATE === "1",
+  getPlatformDescriptor: () => ipcRenderer.invoke("desktop:platform-descriptor"),
+  onOpenRequest: (callback: (request: DesktopOpenRequest) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, request: DesktopOpenRequest): void => callback(request);
+    ipcRenderer.on("desktop:open-request", listener);
+    return () => ipcRenderer.removeListener("desktop:open-request", listener);
+  },
+  onLifecycleEvent: (callback: (event: DesktopLifecycleEvent) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: DesktopLifecycleEvent): void => callback(event);
+    ipcRenderer.on("desktop:lifecycle-event", listener);
+    return () => ipcRenderer.removeListener("desktop:lifecycle-event", listener);
+  },
+  getSystemPermissions: (): Promise<DesktopSystemPermissionStatus[]> =>
+    ipcRenderer.invoke("desktop:system-permissions-get"),
+  requestSystemPermission: (kind: DesktopSystemPermissionKind): Promise<DesktopSystemPermissionStatus> =>
+    ipcRenderer.invoke("desktop:system-permission-request", kind),
+  openSystemPermissionSettings: (kind: DesktopSystemPermissionKind): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:system-permission-settings", kind),
+  recordDiagnostic: (event: DiagnosticEventInput) =>
+    ipcRenderer.invoke("desktop:diagnostics-record", event),
+  getDiagnosticSnapshot: (query: DiagnosticQuery = {}) =>
+    ipcRenderer.invoke("desktop:diagnostics-snapshot", query),
+  clearDiagnostics: () => ipcRenderer.invoke("desktop:diagnostics-clear"),
+  exportDiagnostics: () => ipcRenderer.invoke("desktop:diagnostics-export"),
+  onDiagnosticEvent: (callback: (event: DiagnosticEvent) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: DiagnosticEvent): void => callback(event);
+    ipcRenderer.on("desktop:diagnostics-event", listener);
+    return () => ipcRenderer.removeListener("desktop:diagnostics-event", listener);
+  },
+  getDiagnosticSourceContext: (request: DiagnosticSourceContextRequest) =>
+    ipcRenderer.invoke("desktop:diagnostics-source-context", request),
+  openDiagnosticSource: (request: DiagnosticSourceOpenRequest) =>
+    ipcRenderer.invoke("desktop:diagnostics-source-open", request),
+  updateDiagnosticIssue: (request: DiagnosticIssueUpdateRequest) =>
+    ipcRenderer.invoke("desktop:diagnostics-issue-update", request),
+  getInteractiveDebugPolicy: () => ipcRenderer.invoke("desktop:interactive-debug-policy"),
+  updateInteractiveDebugPolicy: (request) => ipcRenderer.invoke("desktop:interactive-debug-policy-update", request),
+  listInteractiveDebugTargets: () => ipcRenderer.invoke("desktop:interactive-debug-targets"),
+  listInteractiveDebugSessions: () => ipcRenderer.invoke("desktop:interactive-debug-sessions"),
+  startInteractiveDebugSession: (request: InteractiveDebugStartRequest) => ipcRenderer.invoke("desktop:interactive-debug-start", request),
+  setInteractiveDebugBreakpoint: (request: InteractiveDebugBreakpointRequest) => ipcRenderer.invoke("desktop:interactive-debug-breakpoint", request),
+  controlInteractiveDebugSession: (request: InteractiveDebugControlRequest) => ipcRenderer.invoke("desktop:interactive-debug-control", request),
+  getInteractiveDebugScopes: (sessionId: string, frameId: string) => ipcRenderer.invoke("desktop:interactive-debug-scopes", sessionId, frameId),
+  getInteractiveDebugVariables: (sessionId: string, reference: string) => ipcRenderer.invoke("desktop:interactive-debug-variables", sessionId, reference),
+  evaluateInteractiveDebugExpression: (request: InteractiveDebugEvaluateRequest) => ipcRenderer.invoke("desktop:interactive-debug-evaluate", request),
+  onInteractiveDebugEvent: (callback: (session: InteractiveDebugSession) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, session: InteractiveDebugSession): void => callback(session);
+    ipcRenderer.on("desktop:interactive-debug-event", listener);
+    return () => ipcRenderer.removeListener("desktop:interactive-debug-event", listener);
+  },
+  getProductionDiagnosticStatus: () => ipcRenderer.invoke("desktop:production-diagnostics-status"),
+  updateProductionDiagnosticSettings: (patch) => ipcRenderer.invoke("desktop:production-diagnostics-settings", patch),
+  previewDiagnosticPackage: () => ipcRenderer.invoke("desktop:production-diagnostics-preview"),
+  exportProductionDiagnosticPackage: () => ipcRenderer.invoke("desktop:production-diagnostics-export"),
+  importProductionDiagnosticPackage: () => ipcRenderer.invoke("desktop:production-diagnostics-import"),
+  previewFeedback: (draft) => ipcRenderer.invoke("desktop:feedback-preview", draft),
+  submitFeedback: (draft) => ipcRenderer.invoke("desktop:feedback-submit", draft),
+  listPendingFeedback: () => ipcRenderer.invoke("desktop:feedback-pending-list"),
+  retryPendingFeedback: () => ipcRenderer.invoke("desktop:feedback-pending-retry"),
+  deletePendingFeedback: (clientFeedbackId) => ipcRenderer.invoke("desktop:feedback-pending-delete", clientFeedbackId),
+  getPendingCrashFeedback: () => ipcRenderer.invoke("desktop:feedback-crash-pending"),
+  clearPendingCrashFeedback: (incidentId) => ipcRenderer.invoke("desktop:feedback-crash-clear", incidentId),
+  captureFeedbackScreenshot: () => ipcRenderer.invoke("desktop:feedback-screenshot-capture"),
+  listFeedbackAdmin: (status) => ipcRenderer.invoke("desktop:feedback-admin-list", status),
+  updateFeedbackAdmin: (feedbackId, update) => ipcRenderer.invoke("desktop:feedback-admin-update", feedbackId, update),
+  deleteFeedbackAdmin: (feedbackId) => ipcRenderer.invoke("desktop:feedback-admin-delete", feedbackId),
+  getAuthSession: (): Promise<AuthSession> =>
+    ipcRenderer.invoke("desktop:get-auth-session"),
+  onAuthSessionInvalidated: (callback: () => void): (() => void) => {
+    const listener = (): void => callback();
+    ipcRenderer.on("desktop:auth-session-invalidated", listener);
+    return () => ipcRenderer.removeListener("desktop:auth-session-invalidated", listener);
+  },
+  getA5ServiceGuidanceScenario: () =>
+    ipcRenderer.invoke("desktop:e2e-a5-service-guidance-scenario"),
+  login: (request: LoginRequest): Promise<LoginResult> =>
+    ipcRenderer.invoke("desktop:login", request),
+  startOidcLogin: (request?: { rememberMe?: boolean }): Promise<LoginResult> =>
+    ipcRenderer.invoke("desktop:start-oidc-login", request),
+  cancelOidcLogin: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:cancel-oidc-login"),
+  logout: (
+    options?: LogoutOptions,
+  ): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke("desktop:logout", options),
+  restartApplication: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:restart-application"),
+  previewLocalDataCleanup: (scope: DesktopDataCleanupScope) =>
+    ipcRenderer.invoke("desktop:local-data-cleanup-preview", scope),
+  clearLocalData: (request: DesktopDataCleanupRequest) =>
+    ipcRenderer.invoke("desktop:local-data-cleanup", request),
+  refreshAuthSession: (): Promise<AuthSession> =>
+    ipcRenderer.invoke("desktop:refresh-auth-session"),
+  bootstrapDesktop: (): Promise<DesktopBootstrapResult> =>
+    ipcRenderer.invoke("desktop:bootstrap"),
+  getHealth: (): Promise<DesktopHealth> =>
+    ipcRenderer.invoke("desktop:get-health"),
+  getInstallStatus: (): Promise<InstallStatus> =>
+    ipcRenderer.invoke("desktop:get-install-status"),
+  getGatewayStatus: (): Promise<GatewayStatus> =>
+    ipcRenderer.invoke("desktop:get-gateway-status"),
+  getCodexBackendStatus: (refresh = false) =>
+    ipcRenderer.invoke("desktop:get-codex-backend-status", refresh),
+  restartCodexBackend: () => ipcRenderer.invoke("desktop:restart-codex-backend"),
+  syncCodexWorkspaceSessions: (workspaceId, workspacePath, requestId) =>
+    ipcRenderer.invoke("desktop:sync-codex-workspace-sessions", workspaceId, workspacePath, requestId),
+  cancelCodexWorkspaceSessionSync: (requestId) =>
+    ipcRenderer.invoke("desktop:cancel-codex-workspace-session-sync", requestId),
+  onCodexWorkspaceSessionSyncProgress: (callback) => {
+    const listener = (_event: IpcRendererEvent, progress: Parameters<typeof callback>[0]) => callback(progress);
+    ipcRenderer.on("desktop:codex-workspace-session-sync-progress", listener);
+    return () => ipcRenderer.removeListener("desktop:codex-workspace-session-sync-progress", listener);
+  },
+  startCodexBackendLogin: (type = "chatgpt") =>
+    ipcRenderer.invoke("desktop:start-codex-backend-login", type),
+  cancelCodexBackendLogin: (loginId: string) =>
+    ipcRenderer.invoke("desktop:cancel-codex-backend-login", loginId),
+  logoutCodexBackend: () => ipcRenderer.invoke("desktop:logout-codex-backend"),
+  listProviderUsageAnalytics: (): Promise<DesktopProviderUsageAnalyticsRecord[]> =>
+    ipcRenderer.invoke("desktop:provider-usage-analytics-list"),
+  listProviderErrorAnalytics: (): Promise<DesktopProviderErrorAnalyticsRecord[]> =>
+    ipcRenderer.invoke("desktop:provider-error-analytics-list"),
+  checkForUpdates: (): Promise<UpdateStatus> =>
+    ipcRenderer.invoke("desktop:check-for-updates"),
+  downloadUpdate: (): Promise<UpdateStatus> =>
+    ipcRenderer.invoke("desktop:download-update"),
+  cancelUpdate: (): Promise<UpdateStatus> =>
+    ipcRenderer.invoke("desktop:cancel-update"),
+  installUpdate: (): Promise<UpdateStatus> =>
+    ipcRenderer.invoke("desktop:install-update"),
+  startInstall: (options?: StartInstallOptions): Promise<void> =>
+    ipcRenderer.invoke("desktop:start-install", options),
+  cancelInstall: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:cancel-install"),
+  copyTextToClipboard: (text: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:clipboard-copy-text", text),
+  performEditCommand: (command) =>
+    ipcRenderer.invoke("desktop:edit-command", command),
+  openLogFolder: () =>
+    ipcRenderer.invoke("desktop:open-log-folder"),
+  startGateway: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:start-gateway"),
+  stopGateway: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:stop-gateway"),
+  getMobilePairingReadiness: () =>
+    ipcRenderer.invoke("desktop:mobile-pairing-readiness"),
+  enableMobileRemoteAccess: () =>
+    ipcRenderer.invoke("desktop:mobile-remote-enable"),
+  pauseMobileRemoteAccess: () =>
+    ipcRenderer.invoke("desktop:mobile-remote-pause"),
+  resumeMobileRemoteAccess: () =>
+    ipcRenderer.invoke("desktop:mobile-remote-resume"),
+  renameMobileRuntime: (displayName: string) =>
+    ipcRenderer.invoke("desktop:mobile-runtime-rename", displayName),
+  diagnoseMobileRemoteAccess: () =>
+    ipcRenderer.invoke("desktop:mobile-remote-diagnose"),
+  createMobilePairingGrant: (scope) =>
+    ipcRenderer.invoke("desktop:mobile-pairing-create", scope),
+  getMobilePairingGrant: (grantId: string) =>
+    ipcRenderer.invoke("desktop:mobile-pairing-read", grantId),
+  revokeMobilePairingGrant: (grantId: string) =>
+    ipcRenderer.invoke("desktop:mobile-pairing-revoke", grantId),
+  listMobileAssociations: () =>
+    ipcRenderer.invoke("desktop:mobile-associations-list"),
+  revokeMobileAssociation: (associationId: string) =>
+    ipcRenderer.invoke("desktop:mobile-association-revoke", associationId),
+  shrinkMobileAssociation: (associationId, permissions, scope) =>
+    ipcRenderer.invoke("desktop:mobile-association-shrink", associationId, permissions, scope),
+  revokeMobileRuntimeEnrollment: () =>
+    ipcRenderer.invoke("desktop:mobile-enrollment-revoke"),
+  listSshHosts: () => ipcRenderer.invoke("desktop:ssh-hosts"),
+  saveSshHost: (host) => ipcRenderer.invoke("desktop:ssh-host-save", host),
+  diagnoseSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-diagnose", hostAlias),
+  inspectSshHostKeys: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-keys", hostAlias),
+  testSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-test", hostAlias),
+  approveSshHostKey: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-approve-host-key", hostAlias),
+  connectSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-connect", hostAlias),
+  disconnectSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-disconnect", hostAlias),
+  reconnectSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-reconnect", hostAlias),
+  removeSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-remove", hostAlias),
+  listPortForwards: (filter = {}) => ipcRenderer.invoke("desktop:port-forward-list", filter),
+  createPortForward: (request) => ipcRenderer.invoke("desktop:port-forward-create", request),
+  pausePortForward: (id: string) => ipcRenderer.invoke("desktop:port-forward-pause", id),
+  resumePortForward: (id: string) => ipcRenderer.invoke("desktop:port-forward-resume", id),
+  removePortForward: (id: string) => ipcRenderer.invoke("desktop:port-forward-remove", id),
+  listRemoteDirectories: (hostAlias: string, path?: string) =>
+    ipcRenderer.invoke("desktop:ssh-directories", hostAlias, path),
+  connectRemoteWorkspace: (request: ConnectRemoteWorkspaceRequest) =>
+    ipcRenderer.invoke("desktop:remote-workspace-connect", request),
+  disconnectRemoteWorkspace: (workspaceId: string) =>
+    ipcRenderer.invoke("desktop:remote-workspace-disconnect", workspaceId),
+  getRemoteWorkspaceStatus: (workspaceId: string) =>
+    ipcRenderer.invoke("desktop:remote-workspace-status", workspaceId),
+  listRemoteThreads: (workspaceId: string) =>
+    ipcRenderer.invoke("desktop:remote-workspace-threads", workspaceId),
+  listRemoteHepaiWorkers: (workspaceId: string) =>
+    ipcRenderer.invoke("desktop:remote-hepai-workers", workspaceId),
+  setRemoteHepaiWorkerEnabled: (workspaceId: string, workerId: string, enabled: boolean) =>
+    ipcRenderer.invoke("desktop:remote-hepai-worker-state", workspaceId, workerId, enabled),
+  onRemoteWorkspaceStatus: (callback) => {
+    const listener = (_event: IpcRendererEvent, status: RemoteWorkspaceStatus): void => callback(status);
+    ipcRenderer.on("desktop:remote-workspace-status-event", listener);
+    return () => ipcRenderer.removeListener("desktop:remote-workspace-status-event", listener);
+  },
+  preflightRemoteGateway: (hostAlias: string) =>
+    ipcRenderer.invoke("desktop:remote-gateway-preflight", hostAlias),
+  getRemoteSshDiagnosticReport: () => ipcRenderer.invoke("desktop:remote-ssh-diagnostics"),
+  installRemoteGateway: (request: RemoteGatewayInstallRequest) =>
+    ipcRenderer.invoke("desktop:remote-gateway-install", request),
+  requestRemoteGatewayInstallApproval: (request: RemoteGatewayInstallRequest) =>
+    ipcRenderer.invoke("desktop:remote-gateway-install-approval", request),
+  cancelRemoteGatewayOperation: (hostAlias: string) =>
+    ipcRenderer.invoke("desktop:remote-gateway-cancel", hostAlias),
+  onRemoteGatewayOperation: (callback: (event: RemoteGatewayOperationEvent) => void) => {
+    const listener = (_event: IpcRendererEvent, operation: RemoteGatewayOperationEvent): void => callback(operation);
+    ipcRenderer.on("desktop:remote-gateway-operation-event", listener);
+    return () => ipcRenderer.removeListener("desktop:remote-gateway-operation-event", listener);
+  },
+  onWorkspaceFileChanges: (callback: (event: WorkspaceFileChangeEvent) => void) => {
+    const listener = (_event: IpcRendererEvent, change: WorkspaceFileChangeEvent): void => callback(change);
+    ipcRenderer.on("desktop:workspace-file-change-event", listener);
+    return () => ipcRenderer.removeListener("desktop:workspace-file-change-event", listener);
+  },
+  generateManagerPresentation: (
+    request: ManagerPresentationGenerateRequest,
+  ): Promise<ManagerPresentationGenerateResult> =>
+    ipcRenderer.invoke("desktop:manager-presentation-generate", request),
+  cancelManagerPresentation: (
+    request: ManagerPresentationCancelRequest,
+  ): Promise<ManagerPresentationCancelResult> =>
+    ipcRenderer.invoke("desktop:manager-presentation-cancel", request),
+  pauseManagerPresentation: (
+    request: ManagerPresentationPauseRequest,
+  ): Promise<ManagerPresentationPauseResult> =>
+    ipcRenderer.invoke("desktop:manager-presentation-pause", request),
+  resumeManagerPresentation: (
+    request: ManagerPresentationPauseRequest,
+  ): Promise<ManagerPresentationPauseResult> =>
+    ipcRenderer.invoke("desktop:manager-presentation-resume", request),
+  updateManagerPresentationRequirement: (
+    request: ManagerPresentationRequirementUpdateRequest,
+  ): Promise<ManagerPresentationRequirementUpdateResult> =>
+    ipcRenderer.invoke("desktop:manager-presentation-requirement-update", request),
+  getManagerPresentationRecovery: (
+    request: ManagerPresentationRecoveryRequest,
+  ): Promise<ManagerPresentationRecoveryResult | null> =>
+    ipcRenderer.invoke("desktop:manager-presentation-recovery", request),
+  resolveManagerPresentationRecovery: (
+    request: ManagerPresentationRecoveryDecisionRequest,
+  ): Promise<ManagerPresentationRecoveryDecisionResult> =>
+    ipcRenderer.invoke("desktop:manager-presentation-recovery-resolve", request),
+  onManagerPresentationProgress: (
+    callback: (event: ManagerPresentationProgressEvent) => void,
+  ) => {
+    const listener = (_event: IpcRendererEvent, progress: ManagerPresentationProgressEvent): void => callback(progress);
+    ipcRenderer.on("desktop:manager-presentation-progress", listener);
+    return () => ipcRenderer.removeListener("desktop:manager-presentation-progress", listener);
+  },
+  listWorkspaces: () => ipcRenderer.invoke("desktop:list-workspaces"),
+  createWorkspace: (request: CreateWorkspaceRequest) =>
+    ipcRenderer.invoke("desktop:create-workspace", request),
+  createDefaultWorkspace: () => ipcRenderer.invoke("desktop:create-default-workspace"),
+  updateWorkspace: (request: UpdateWorkspaceRequest) =>
+    ipcRenderer.invoke("desktop:update-workspace", request),
+  deleteWorkspace: (id: string) =>
+    ipcRenderer.invoke("desktop:delete-workspace", id),
+  listThreads: (request) => ipcRenderer.invoke("desktop:list-threads", request),
+  listAgents: (options) => ipcRenderer.invoke("desktop:list-agents", options),
+  getAgentCatalogSnapshot: (options) => ipcRenderer.invoke("desktop:get-agent-catalog-snapshot", options),
+  setDefaultAgent: (agentId) => ipcRenderer.invoke("desktop:set-default-agent", agentId),
+  recordAgentUsage: (agentId) => ipcRenderer.invoke("desktop:record-agent-usage", agentId),
+  getPlatformAgentStatus: () => ipcRenderer.invoke("desktop:get-platform-agent-status"),
+  getMyDrSaiConfig: (workspacePath?: string): Promise<MyDrSaiConfig> =>
+    ipcRenderer.invoke("desktop:get-my-drsai-config", workspacePath),
+  getMyDrSaiRuntimeModelCatalog: () => ipcRenderer.invoke("desktop:get-my-drsai-runtime-model-catalog"),
+  getMyDrSaiAgentModelPolicy: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-model-policy", agentId),
+  getMyDrSaiAgentToolPolicy: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-tool-policy", agentId),
+  updateMyDrSaiAgentToolPolicy: (agentId, policy) => ipcRenderer.invoke("desktop:update-my-drsai-agent-tool-policy", agentId, policy),
+  previewMyDrSaiAgentTools: (agentId) => ipcRenderer.invoke("desktop:preview-my-drsai-agent-tools", agentId),
+  testAgentTool: (toolId) => ipcRenderer.invoke("desktop:test-agent-tool", toolId),
+  getMyDrSaiAgentSkillPolicy: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-skill-policy", agentId),
+  updateMyDrSaiAgentSkillPolicy: (agentId, policy) => ipcRenderer.invoke("desktop:update-my-drsai-agent-skill-policy", agentId, policy),
+  previewMyDrSaiAgentSkills: (agentId) => ipcRenderer.invoke("desktop:preview-my-drsai-agent-skills", agentId),
+  getMyDrSaiAgentKnowledgePolicy: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-knowledge-policy", agentId),
+  updateMyDrSaiAgentKnowledgePolicy: (agentId, policy) => ipcRenderer.invoke("desktop:update-my-drsai-agent-knowledge-policy", agentId, policy),
+  previewMyDrSaiAgentKnowledge: (agentId) => ipcRenderer.invoke("desktop:preview-my-drsai-agent-knowledge", agentId),
+  indexKnowledgeBase: (knowledgeId) => ipcRenderer.invoke("desktop:index-knowledge-base", knowledgeId),
+  testKnowledgeBase: (knowledgeId) => ipcRenderer.invoke("desktop:test-knowledge-base", knowledgeId),
+  searchKnowledgeBase: (knowledgeId, query) => ipcRenderer.invoke("desktop:search-knowledge-base", knowledgeId, query),
+  listKnowledgeBases: () => ipcRenderer.invoke("desktop:list-knowledge-bases"),
+  listPerceptors: () => ipcRenderer.invoke("desktop:list-perceptors"),
+  getWebSearchProviderPolicy: () => ipcRenderer.invoke("desktop:get-web-search-provider-policy"),
+  updateWebSearchProviderPolicy: (mode) => ipcRenderer.invoke("desktop:update-web-search-provider-policy", mode),
+  savePerceptor: (request) => ipcRenderer.invoke("desktop:save-perceptor", request),
+  updatePerceptor: (perceptorId, request) => ipcRenderer.invoke("desktop:update-perceptor", perceptorId, request),
+  testPerceptor: (perceptorId, capability) => ipcRenderer.invoke("desktop:test-perceptor", perceptorId, capability),
+  deletePerceptor: (perceptorId) => ipcRenderer.invoke("desktop:delete-perceptor", perceptorId),
+  createKnowledgeBase: (request) => ipcRenderer.invoke("desktop:create-knowledge-base", request),
+  deleteKnowledgeBase: (knowledgeId) => ipcRenderer.invoke("desktop:delete-knowledge-base", knowledgeId),
+  getMyDrSaiAgentModelCapabilityStatus: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-model-capability-status", agentId),
+  updateMyDrSaiAgentModelPolicy: (agentId, policy) => ipcRenderer.invoke("desktop:update-my-drsai-agent-model-policy", agentId, policy),
+  migrateMyDrSaiAgentModelPolicy: (agentId, legacyModel, expectedRevision) => ipcRenderer.invoke("desktop:migrate-my-drsai-agent-model-policy", agentId, legacyModel, expectedRevision),
+  updateMyDrSaiConfig: (
+    request: UpdateMyDrSaiConfigRequest,
+  ): Promise<MyDrSaiConfig> =>
+    ipcRenderer.invoke("desktop:update-my-drsai-config", request),
+  updateMyDrSaiModelConnection: (
+    request: UpdateMyDrSaiModelConnectionRequest,
+  ): Promise<MyDrSaiModelConnection> =>
+    ipcRenderer.invoke("desktop:update-my-drsai-model-connection", request),
+  previewMyDrSaiModelConnection: (
+    request: UpdateMyDrSaiModelConnectionRequest,
+  ): Promise<MyDrSaiModelConfigPreview> =>
+    ipcRenderer.invoke("desktop:preview-my-drsai-model-connection", request),
+  diagnoseMyDrSaiModelConnection: (online?: boolean): Promise<MyDrSaiModelDoctorResult> =>
+    ipcRenderer.invoke("desktop:diagnose-my-drsai-model-connection", online),
+  restoreMyDrSaiModelConnection: (expectedRevision?: string): Promise<MyDrSaiModelConnection> =>
+    ipcRenderer.invoke("desktop:restore-my-drsai-model-connection", expectedRevision),
+  saveMyDrSaiModelProvider: (
+    provider: string, request: SaveMyDrSaiModelProviderRequest,
+  ): Promise<MyDrSaiModelConnection> =>
+    ipcRenderer.invoke("desktop:save-my-drsai-model-provider", provider, request),
+  testMyDrSaiModelProvider: (
+    provider: string,
+    model?: string,
+  ): Promise<MyDrSaiProviderTestResult> =>
+    ipcRenderer.invoke("desktop:test-my-drsai-model-provider", provider, model),
+  probeMyDrSaiProviderModel: (provider, request) =>
+    ipcRenderer.invoke("desktop:probe-my-drsai-provider-model", provider, request),
+  testMyDrSaiModelDraft: (request, mode) =>
+    ipcRenderer.invoke("desktop:test-my-drsai-model-draft", request, mode),
+  listMyDrSaiModelProviderPresets: () =>
+    ipcRenderer.invoke("desktop:list-my-drsai-model-provider-presets"),
+  discoverMyDrSaiProviderModels: (provider, refresh, draft) =>
+    ipcRenderer.invoke("desktop:discover-my-drsai-provider-models", provider, refresh, draft),
+  preflightMyDrSaiModelProviderDeletion: (provider) =>
+    ipcRenderer.invoke("desktop:preflight-my-drsai-model-provider-deletion", provider),
+  deleteMyDrSaiModelProvider: (
+    provider: string, deleteCredential?: boolean,
+  ): Promise<{ ok: boolean; active?: string }> =>
+    ipcRenderer.invoke("desktop:delete-my-drsai-model-provider", provider, deleteCredential),
+  createThread: (request: CreateThreadRequest) =>
+    ipcRenderer.invoke("desktop:create-thread", request),
+  updateThread: (request: UpdateThreadRequest) =>
+    ipcRenderer.invoke("desktop:update-thread", request),
+  deleteThread: (threadId: string) => ipcRenderer.invoke("desktop:delete-thread", threadId),
+  setThreadArchived: (request) => ipcRenderer.invoke("desktop:set-thread-archived", request),
+  getThreadSnapshot: (threadId: string): Promise<DesktopThreadSnapshot | null> =>
+    ipcRenderer.invoke("desktop:get-thread-snapshot", threadId),
+  getThreadSnapshotEnvelope: (threadId: string, requestId?: string, options?: import("../api/desktopApi").DesktopThreadSnapshotRequest) =>
+    ipcRenderer.invoke("desktop:get-thread-snapshot-envelope", threadId, requestId, options),
+  cancelThreadSnapshotHydration: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:cancel-thread-snapshot-hydration", requestId),
+  subscribeThreadSnapshot: (threadId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:subscribe-thread-snapshot", threadId),
+  unsubscribeThreadSnapshot: (threadId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:unsubscribe-thread-snapshot", threadId),
+  onThreadSnapshot: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: Parameters<typeof callback>[0]): void => {
+      try { callback(event); }
+      catch (error) { console.error("thread_snapshot_subscriber_failed", error); }
+    };
+    ipcRenderer.on("desktop:thread-snapshot", listener);
+    return () => ipcRenderer.removeListener("desktop:thread-snapshot", listener);
+  },
+  onThreadSnapshotPatch: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: Parameters<typeof callback>[0]): void => {
+      try { callback(event); }
+      catch (error) { console.error("thread_snapshot_patch_subscriber_failed", error); }
+    };
+    ipcRenderer.on("desktop:thread-snapshot-patch", listener);
+    return () => ipcRenderer.removeListener("desktop:thread-snapshot-patch", listener);
+  },
+  onRuntimeLogEvent: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, value: Parameters<typeof callback>[0]): void => callback(value);
+    ipcRenderer.on("desktop:runtime-log", listener);
+    return () => ipcRenderer.removeListener("desktop:runtime-log", listener);
+  },
+  onThreadCatalogUpdate: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, value: Parameters<typeof callback>[0]): void => callback(value);
+    ipcRenderer.on("desktop:thread-catalog", listener);
+    return () => ipcRenderer.removeListener("desktop:thread-catalog", listener);
+  },
+  searchThreadMessages: (
+    request: DesktopThreadContentSearchRequest,
+  ): Promise<DesktopThreadContentSearchResult[]> =>
+    ipcRenderer.invoke("desktop:search-thread-messages", request),
+  updateThreadSnapshot: (snapshot: DesktopThreadSnapshot): Promise<DesktopThreadSnapshot> =>
+    ipcRenderer.invoke("desktop:update-thread-snapshot", snapshot),
+  appendDuplexVoiceHistory: (request) => ipcRenderer.invoke("desktop:append-duplex-voice-history", request),
+  createThreadShare: (
+    request: CreateThreadShareRequest,
+  ): Promise<DesktopThreadShareResult> =>
+    ipcRenderer.invoke("desktop:create-thread-share", request),
+  openThreadShare: (filePath: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:open-thread-share", filePath),
+  revealThreadShare: (filePath: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:reveal-thread-share", filePath),
+  listInstalledSkills: (request?: { userId?: string }): Promise<GatewaySkill[]> =>
+    ipcRenderer.invoke("desktop:list-installed-skills", request),
+  listAvailableSkills: (request?: { userId?: string }): Promise<GatewayAvailableSkill[]> =>
+    ipcRenderer.invoke("desktop:list-available-skills", request),
+  getSkillContent: (request: { skillPath: string }): Promise<{ path: string; content: string }> =>
+    ipcRenderer.invoke("desktop:get-skill-content", request),
+  installSkill: (
+    request: GatewaySkillInstallRequest,
+  ): Promise<{ status: string; name: string; path: string }> =>
+    ipcRenderer.invoke("desktop:install-skill", request),
+  updateSkill: (request: {
+    name: string;
+    content: string;
+    userId?: string;
+  }): Promise<{ status: string; name: string; path: string }> =>
+    ipcRenderer.invoke("desktop:update-skill", request),
+  uninstallSkill: (request: {
+    name: string;
+    userId?: string;
+  }): Promise<{ status: string; name: string }> =>
+    ipcRenderer.invoke("desktop:uninstall-skill", request),
+  reloadSkills: (request?: {
+    threadId?: string;
+    userId?: string;
+  }): Promise<{ ok: boolean; reloaded: boolean }> =>
+    ipcRenderer.invoke("desktop:reload-skills", request),
+
+  gfsList: (request: GfsListRequest): Promise<GfsListResult> =>
+    ipcRenderer.invoke("desktop:gfs-list", request),
+  gfsStat: (request: { path: string }): Promise<GfsObjectInfo> =>
+    ipcRenderer.invoke("desktop:gfs-stat", request),
+  gfsRead: (request: { path: string }): Promise<{ path: string; content: string }> =>
+    ipcRenderer.invoke("desktop:gfs-read", request),
+  gfsWrite: (request: {
+    path: string;
+    content: string;
+    contentType?: string;
+  }): Promise<{ path: string; etag: string }> =>
+    ipcRenderer.invoke("desktop:gfs-write", request),
+  gfsUploadFile: (
+    request: GfsUploadRequest,
+  ): Promise<{ path: string; size: number }> =>
+    ipcRenderer.invoke("desktop:gfs-upload-file", request),
+  gfsDownloadFile: (
+    request: GfsDownloadRequest,
+  ): Promise<{ localPath: string; size: number }> =>
+    ipcRenderer.invoke("desktop:gfs-download-file", request),
+  gfsDelete: (request: { path: string }): Promise<{ path: string }> =>
+    ipcRenderer.invoke("desktop:gfs-delete", request),
+  gfsShareUrl: (request: {
+    path: string;
+    ttlMinutes?: number;
+    responseContentType?: string;
+  }): Promise<{ url: string; expiresAt: string }> =>
+    ipcRenderer.invoke("desktop:gfs-share-url", request),
+  gfsHealthcheck: (): Promise<{
+    ok: boolean;
+    bucket?: string;
+    mode?: string;
+    reason?: string;
+  }> => ipcRenderer.invoke("desktop:gfs-healthcheck"),
+  prepareForkWorktree: (
+    request: DesktopForkWorktreeRequest,
+  ): Promise<DesktopForkWorktreeResult> =>
+    ipcRenderer.invoke("desktop:prepare-fork-worktree", request),
+  listWorktrees: (request: DesktopWorktreeListRequest): Promise<DesktopWorktreeSummary[]> =>
+    ipcRenderer.invoke("desktop:list-worktrees", request),
+  listWorktreeEvents: (request: DesktopWorktreeEventRequest): Promise<DesktopWorktreeEventBatch> =>
+    ipcRenderer.invoke("desktop:list-worktree-events", request),
+  getWorktreeMigrationDiagnostics: (request: DesktopWorktreeListRequest): Promise<DesktopWorktreeMigrationDiagnostic[]> =>
+    ipcRenderer.invoke("desktop:worktree-migration-diagnostics", request),
+  startChat: (request: ChatRequest): Promise<string> =>
+    ipcRenderer.invoke("desktop:start-chat", request),
+  recoverChatRun: (request) => ipcRenderer.invoke("desktop:recover-chat-run", request),
+  cancelChatTurn: (request): Promise<import("../api/desktopApi").ChatTurnCancelResult> =>
+    ipcRenderer.invoke("desktop:cancel-chat-turn", request),
+  listSessionRuns: (request) => ipcRenderer.invoke("desktop:run-list", request),
+  getRunInspection: (request) => ipcRenderer.invoke("desktop:run-inspection", request),
+  locateRunItem: (request) => ipcRenderer.invoke("desktop:run-item-locator", request),
+  getRunReproductionManifest: (request) => ipcRenderer.invoke("desktop:run-manifest", request),
+  exportRunReproductionManifest: (request) => ipcRenderer.invoke("desktop:run-manifest-export", request),
+  getExperimentReleaseGate: () => ipcRenderer.invoke("desktop:experiment-release-gate"),
+  createRunExperiment: (request) => ipcRenderer.invoke("desktop:run-experiment-create", request),
+  getRunExperimentCapabilities: (request) => ipcRenderer.invoke("desktop:run-experiment-capabilities", request),
+  finalizeRunExperimentCandidate: (request) => ipcRenderer.invoke("desktop:run-experiment-candidate-snapshot", request),
+  getRunExperiment: (request) => ipcRenderer.invoke("desktop:run-experiment-get", request),
+  updateRunExperiment: (request) => ipcRenderer.invoke("desktop:run-experiment-update", request),
+  deleteRunExperiment: (request) => ipcRenderer.invoke("desktop:run-experiment-delete", request),
+  exportRunExperimentPackage: (request) => ipcRenderer.invoke("desktop:run-experiment-export", request),
+  createReplayPlan: (request) => ipcRenderer.invoke("desktop:replay-plan-create", request),
+  getReplayPlan: (request) => ipcRenderer.invoke("desktop:replay-plan-get", request),
+  getReplayBoundaries: (request) => ipcRenderer.invoke("desktop:replay-boundaries-get", request),
+  getRunRelations: (request) => ipcRenderer.invoke("desktop:run-relations-get", request),
+  executeReplayPlan: (request) => ipcRenderer.invoke("desktop:replay-plan-execute", request),
+  createRunComparison: (request) => ipcRenderer.invoke("desktop:run-comparison-create", request),
+  getRunComparison: (request) => ipcRenderer.invoke("desktop:run-comparison-get", request),
+  listRunComparisonEvaluations: (request) => ipcRenderer.invoke("desktop:run-comparison-evaluations-list", request),
+  createRunComparisonEvaluation: (request) => ipcRenderer.invoke("desktop:run-comparison-evaluation-create", request),
+  getWorktreeAdoptionPreview: (request) => ipcRenderer.invoke("desktop:worktree-adoption-preview", request),
+  applyWorktreeAdoption: (request) => ipcRenderer.invoke("desktop:worktree-adoption-apply", request),
+  getRunAdoptionPreview: (request) => ipcRenderer.invoke("desktop:run-adoption-preview", request),
+  applyRunAdoption: (request) => ipcRenderer.invoke("desktop:run-adoption-apply", request),
+  discardRunAdoption: (request) => ipcRenderer.invoke("desktop:run-adoption-discard", request),
+  decideRuntimeSecurityApproval: (request) => ipcRenderer.invoke("desktop:runtime-security-approval-decision", request),
+  decideRuntimeRunApproval: (request) => ipcRenderer.invoke("desktop:runtime-run-approval-decision", request),
+  respondChatInput: (requestId, response) =>
+    ipcRenderer.invoke("desktop:respond-chat-input", requestId, response),
+  startVoiceTranscription: (
+    request: DesktopVoiceTranscriptionRequest,
+  ): Promise<DesktopVoiceTranscriptionStartResult> =>
+    ipcRenderer.invoke("desktop:voice-transcription-start", request),
+  cancelVoiceTranscription: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:voice-transcription-cancel", requestId),
+  getVoiceRuntimeStatus: (): Promise<DesktopVoiceRuntimeStatus> =>
+    ipcRenderer.invoke("desktop:voice-runtime-status"),
+  getVoicePreferences: () => ipcRenderer.invoke("desktop:voice-preferences-get"),
+  updateVoicePreferences: (request) => ipcRenderer.invoke("desktop:voice-preferences-update", request),
+  onVoicePreferencesChanged: (callback) => {
+    const listener = (_event: IpcRendererEvent, preferences: import("../api/desktopApi").DesktopVoicePreferences): void => callback(preferences);
+    ipcRenderer.on("desktop:voice-preferences-changed", listener);
+    return () => ipcRenderer.removeListener("desktop:voice-preferences-changed", listener);
+  },
+  getDuplexVoiceCapabilities: () => ipcRenderer.invoke("desktop:voice-duplex-capabilities"),
+  getDuplexVoiceReadiness: () => ipcRenderer.invoke("desktop:voice-duplex-readiness"),
+  getDuplexVoiceOccupancy: () => ipcRenderer.invoke("desktop:voice-duplex-occupancy"),
+  startDuplexVoiceSession: async (request) => {
+    const result = await ipcRenderer.invoke("desktop:voice-duplex-start", request);
+    const channel = new MessageChannel();
+    duplexVoicePorts.set(result.sessionId, channel.port2);
+    ipcRenderer.postMessage("desktop:voice-duplex-audio-port", { sessionId: result.sessionId }, [channel.port1]);
+    return result;
+  },
+  takeOverDuplexVoiceSession: async (request) => {
+    const result = await ipcRenderer.invoke("desktop:voice-duplex-takeover", request);
+    const channel = new MessageChannel();
+    duplexVoicePorts.set(result.sessionId, channel.port2);
+    ipcRenderer.postMessage("desktop:voice-duplex-audio-port", { sessionId: result.sessionId }, [channel.port1]);
+    return result;
+  },
+  sendDuplexVoiceAudioChunk: (chunk) => {
+    const port = duplexVoicePorts.get(chunk.sessionId);
+    if (!port) return false;
+    port.postMessage({ ...chunk, audioData: new Uint8Array(chunk.audioData) });
+    return true;
+  },
+  sendDuplexVoicePlaybackAck: (ack) => {
+    const port = duplexVoicePorts.get(ack.sessionId);
+    if (!port) return false;
+    port.postMessage({ ...ack, type: "playback_ack" });
+    return true;
+  },
+  updateDuplexVoiceSession: (request) => ipcRenderer.invoke("desktop:voice-duplex-update", request),
+  interruptDuplexVoiceSession: (request) => ipcRenderer.invoke("desktop:voice-duplex-interrupt", request),
+  submitDuplexVoiceToolResult: (request) => ipcRenderer.invoke("desktop:voice-duplex-tool-result", request),
+  requestDuplexVoiceToolApproval: (request) => ipcRenderer.invoke("desktop:voice-duplex-tool-approval", request),
+  submitDuplexVoiceTextInput: (request) => ipcRenderer.invoke("desktop:voice-duplex-text-input", request),
+  stopDuplexVoiceSession: (sessionId) => ipcRenderer.invoke("desktop:voice-duplex-stop", sessionId),
+  finishDuplexVoiceTurn: (sessionId) => ipcRenderer.invoke("desktop:voice-duplex-finish-turn", sessionId),
+  cancelDuplexVoiceSession: async (sessionId) => {
+    const result = await ipcRenderer.invoke("desktop:voice-duplex-cancel", sessionId);
+    if (result) { duplexVoicePorts.get(sessionId)?.close(); duplexVoicePorts.delete(sessionId); }
+    return result;
+  },
+  disposeDuplexVoiceSession: async (sessionId) => {
+    const result = await ipcRenderer.invoke("desktop:voice-duplex-dispose", sessionId);
+    duplexVoicePorts.get(sessionId)?.close(); duplexVoicePorts.delete(sessionId);
+    return result;
+  },
+  startVoiceSynthesis: (
+    request: DesktopVoiceSynthesisRequest,
+  ): Promise<DesktopVoiceSynthesisStartResult> =>
+    ipcRenderer.invoke("desktop:voice-synthesis-start", request),
+  cancelVoiceSynthesis: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:voice-synthesis-cancel", requestId),
+  getVoiceSynthesisRuntimeStatus: (): Promise<DesktopVoiceSynthesisRuntimeStatus> =>
+    ipcRenderer.invoke("desktop:voice-synthesis-runtime-status"),
+  writeVoiceTranscriptHandoff: (
+    request: DesktopVoiceTranscriptHandoffRequest,
+  ): Promise<DesktopVoiceTranscriptHandoffResult> =>
+    ipcRenderer.invoke("desktop:voice-handoff-write", request),
+  startAgentRun: (
+    request: AgentRunRequest,
+  ): Promise<{ requestId: string; sessionId: string; runId: string }> =>
+    ipcRenderer.invoke("desktop:start-agent-run", request),
+  abortAgentRun: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:abort-agent-run", requestId),
+  recoverAgentRun: (threadId: string): Promise<AgentRunEvent[]> =>
+    ipcRenderer.invoke("desktop:recover-agent-run", threadId),
+  saveApiKey: (apiKey: string): Promise<SaveApiKeyResult> =>
+    ipcRenderer.invoke("desktop:save-api-key", apiKey),
+  pickFiles: () => ipcRenderer.invoke("desktop:pick-files"),
+  pickFolder: () => ipcRenderer.invoke("desktop:pick-folder"),
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+  getWorkspaceContextOverview: (
+    workspacePath: string,
+    workspaceId?: string,
+  ): Promise<WorkspaceContextOverview> =>
+    ipcRenderer.invoke("desktop:workspace-context-overview", workspacePath, workspaceId),
+  listWorkspaceFiles: (
+    request: WorkspaceFileTreeRequest,
+  ): Promise<WorkspaceFileTreeResult> =>
+    ipcRenderer.invoke("desktop:workspace-files", request),
+  summarizeWorkspaceFolder: (
+    request: WorkspaceFolderSummaryRequest,
+  ): Promise<WorkspaceFolderSummaryResult> =>
+    ipcRenderer.invoke("desktop:workspace-folder-summary", request),
+  analyzeMaterialRoles: (
+    request: MaterialRoleAnalysisRequest,
+  ): Promise<MaterialRoleAnalysisResult> =>
+    ipcRenderer.invoke("desktop:material-role-analysis", request),
+  analyzeMaterialConsistency: (
+    request: MaterialConsistencyAnalysisRequest,
+  ): Promise<MaterialConsistencyAnalysisResult> =>
+    ipcRenderer.invoke("desktop:material-consistency-analysis", request),
+  queryMaterials: (request: MaterialQueryRequest): Promise<MaterialQueryResult> =>
+    ipcRenderer.invoke("desktop:material-query", request),
+  previewWorkspaceFile: (
+    request: WorkspaceFilePreviewRequest,
+  ): Promise<WorkspaceFilePreview> =>
+    ipcRenderer.invoke("desktop:workspace-file-preview", request),
+  resolveConversationResource: (
+    request: ConversationResourceResolveRequest,
+  ): Promise<ConversationResourceResolveResult> =>
+    ipcRenderer.invoke("desktop:conversation-resource-resolve", request),
+  previewConversationResource: (
+    request: ConversationResourcePreviewRequest,
+  ): Promise<WorkspaceFilePreview> =>
+    ipcRenderer.invoke("desktop:conversation-resource-preview", request),
+  revealConversationResource: (
+    request: ConversationResourceResolveRequest,
+  ): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:conversation-resource-reveal", request),
+  copyConversationResourceLogicalPath: (
+    request: ConversationResourceResolveRequest,
+  ): Promise<string> =>
+    ipcRenderer.invoke("desktop:conversation-resource-copy-logical-path", request),
+  downloadConversationResource: (
+    request: ConversationResourceDownloadRequest,
+  ): Promise<ConversationResourceDownloadResult> =>
+    ipcRenderer.invoke("desktop:conversation-resource-download", request),
+  cancelConversationResourceDownload: (operationId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:conversation-resource-download-cancel", operationId),
+  onConversationResourceDownloadProgress: (callback) => {
+    const listener = (_event: IpcRendererEvent, progress: import("../api/desktopApi").ConversationResourceDownloadProgressEvent): void => callback(progress);
+    ipcRenderer.on("desktop:conversation-resource-download-progress", listener);
+    return () => ipcRenderer.removeListener("desktop:conversation-resource-download-progress", listener);
+  },
+  startConversationResourceSubscription: (request) =>
+    ipcRenderer.invoke("desktop:conversation-resource-subscription-start", request),
+  stopConversationResourceSubscription: (subscriptionId) =>
+    ipcRenderer.invoke("desktop:conversation-resource-subscription-stop", subscriptionId),
+  onConversationResourceStateEvent: (callback) => {
+    const listener = (_event: IpcRendererEvent, value: import("../api/desktopApi").ConversationResourceStateEvent): void => callback(value);
+    ipcRenderer.on("desktop:conversation-resource-state-event", listener);
+    return () => ipcRenderer.removeListener("desktop:conversation-resource-state-event", listener);
+  },
+  saveWorkspaceFileAs: (
+    request: WorkspaceFileSaveAsRequest,
+  ): Promise<WorkspaceFileSaveAsResult> =>
+    ipcRenderer.invoke("desktop:workspace-file-save-as", request),
+  writeWorkspaceFile: (
+    request: WorkspaceFileWriteRequest,
+  ): Promise<WorkspaceFileWriteResult> =>
+    ipcRenderer.invoke("desktop:workspace-file-write", request),
+  applyAnomalyDecision: (
+    request: DesktopAnomalyDecisionApplyRequest,
+  ): Promise<DesktopAnomalyDecisionApplyResult> =>
+    ipcRenderer.invoke("desktop:apply-anomaly-decision", request),
+  getWorkspaceGitDiff: (
+    request: WorkspaceGitDiffRequest,
+  ): Promise<WorkspaceGitDiffResult> =>
+    ipcRenderer.invoke("desktop:workspace-git-diff", request),
+  getWorkspaceGitFileAtRef: (
+    request: WorkspaceGitFileAtRefRequest,
+  ): Promise<WorkspaceGitFileAtRefResult> =>
+    ipcRenderer.invoke("desktop:workspace-git-file-at-ref", request),
+  revertWorkspaceFile: (
+    request: WorkspaceRevertFileRequest,
+  ): Promise<WorkspaceRevertFileResult> =>
+    ipcRenderer.invoke("desktop:workspace-revert-file", request),
+  stageWorkspaceFile: (
+    request: WorkspaceStageFileRequest,
+  ): Promise<WorkspaceStageFileResult> =>
+    ipcRenderer.invoke("desktop:workspace-stage-file", request),
+  stageWorkspaceHunk: (
+    request: WorkspaceHunkActionRequest,
+  ): Promise<WorkspaceHunkActionResult> =>
+    ipcRenderer.invoke("desktop:workspace-stage-hunk", request),
+  revertWorkspaceHunk: (
+    request: WorkspaceHunkActionRequest,
+  ): Promise<WorkspaceHunkActionResult> =>
+    ipcRenderer.invoke("desktop:workspace-revert-hunk", request),
+  listWorkspaceCheckpoints: (
+    workspacePath: string,
+    workspaceId?: string,
+  ): Promise<WorkspaceCheckpoint[]> =>
+    ipcRenderer.invoke("desktop:workspace-checkpoints-list", workspacePath, workspaceId),
+  createWorkspaceCheckpoint: (
+    request: WorkspaceCheckpointCreateRequest,
+  ): Promise<WorkspaceCheckpoint> =>
+    ipcRenderer.invoke("desktop:workspace-checkpoint-create", request),
+  acceptWorkspaceCheckpoint: (
+    request: WorkspaceCheckpointAcceptRequest,
+  ): Promise<WorkspaceCheckpoint> =>
+    ipcRenderer.invoke("desktop:workspace-checkpoint-accept", request),
+  previewWorkspaceCheckpoint: (
+    request: WorkspaceCheckpointPreviewRequest,
+  ): Promise<WorkspaceCheckpointPreviewResult> =>
+    ipcRenderer.invoke("desktop:workspace-checkpoint-preview", request),
+  restoreWorkspaceCheckpoint: (
+    request: WorkspaceCheckpointRestoreRequest,
+  ): Promise<WorkspaceCheckpointRestoreResult> =>
+    ipcRenderer.invoke("desktop:workspace-checkpoint-restore", request),
+  writeForkConflictDraft: (
+    request: DesktopForkConflictDraftWriteRequest,
+  ): Promise<DesktopForkConflictDraftWriteResult> =>
+    ipcRenderer.invoke("desktop:fork-conflict-draft-write", request),
+  checkBrowserUrl: (url: string): Promise<BrowserUrlCheck> =>
+    ipcRenderer.invoke("desktop:browser-check-url", url),
+  requestBrowserAction: (
+    request: BrowserActionRequest,
+  ): Promise<BrowserActionResult> =>
+    ipcRenderer.invoke("desktop:browser-action-request", request),
+  startBrowserTask: (
+    request: BrowserTaskStartRequest,
+  ): Promise<{ taskId: string }> =>
+    ipcRenderer.invoke("desktop:browser-task-start", request),
+  stopBrowserTask: (request: BrowserTaskStopRequest): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:browser-task-stop", request),
+  proposeApproval: (
+    request: DesktopApprovalProposalRequest,
+  ): Promise<DesktopApprovalProposalResult> =>
+    ipcRenderer.invoke("desktop:propose-approval", request),
+  requestShellCommandApproval: (
+    request: DesktopShellCommandApprovalRequest,
+  ): Promise<DesktopApprovalProposalResult> =>
+    ipcRenderer.invoke("desktop:shell-command-approval", request),
+  requestGitCommitApproval: (
+    request: DesktopGitCommitApprovalRequest,
+  ): Promise<DesktopApprovalProposalResult> =>
+    ipcRenderer.invoke("desktop:git-commit-approval", request),
+  requestForkLifecycleApproval: (
+    request: DesktopForkLifecycleApprovalRequest,
+  ): Promise<DesktopForkLifecycleApprovalResult> =>
+    ipcRenderer.invoke("desktop:fork-lifecycle-approval", request),
+  requestForkQueueStartApproval: (
+    request: DesktopForkQueueStartApprovalRequest,
+  ): Promise<DesktopForkQueueStartApprovalResult> =>
+    ipcRenderer.invoke("desktop:fork-queue-start-approval", request),
+  dispatchForkQueue: (
+    request: DesktopForkQueueDispatchRequest,
+  ): Promise<DesktopForkQueueDispatchResult> =>
+    ipcRenderer.invoke("desktop:fork-queue-dispatch", request),
+  listProjectMemory: (
+    request: DesktopProjectMemoryListRequest,
+  ): Promise<DesktopProjectMemoryEntry[]> =>
+    ipcRenderer.invoke("desktop:project-memory-list", request),
+  addProjectMemory: (
+    request: DesktopProjectMemoryAddRequest,
+  ): Promise<DesktopProjectMemoryEntry> =>
+    ipcRenderer.invoke("desktop:project-memory-add", request),
+  updateProjectMemory: (
+    request: DesktopProjectMemoryUpdateRequest,
+  ): Promise<DesktopProjectMemoryEntry> =>
+    ipcRenderer.invoke("desktop:project-memory-update", request),
+  clearProjectMemory: (
+    request: DesktopProjectMemoryClearRequest,
+  ): Promise<DesktopProjectMemoryClearResult> =>
+    ipcRenderer.invoke("desktop:project-memory-clear", request),
+  listUserPreferences: (): Promise<DesktopUserPreference[]> =>
+    ipcRenderer.invoke("desktop:user-preferences-list"),
+  upsertUserPreference: (
+    request: DesktopUserPreferenceUpsertRequest,
+  ): Promise<DesktopUserPreference> =>
+    ipcRenderer.invoke("desktop:user-preference-upsert", request),
+  deleteUserPreference: (
+    request: DesktopUserPreferenceDeleteRequest,
+  ): Promise<DesktopUserPreferenceDeleteResult> =>
+    ipcRenderer.invoke("desktop:user-preference-delete", request),
+  listTeamMemory: (
+    request: DesktopTeamMemoryListRequest = {},
+  ): Promise<DesktopTeamMemoryEntry[]> =>
+    ipcRenderer.invoke("desktop:team-memory-list", request),
+  addTeamMemory: (
+    request: DesktopTeamMemoryAddRequest,
+  ): Promise<DesktopTeamMemoryEntry> =>
+    ipcRenderer.invoke("desktop:team-memory-add", request),
+  deleteTeamMemory: (
+    request: DesktopTeamMemoryDeleteRequest,
+  ): Promise<DesktopTeamMemoryDeleteResult> =>
+    ipcRenderer.invoke("desktop:team-memory-delete", request),
+  listCustomCommands: (
+    request: DesktopCustomCommandListRequest,
+  ): Promise<DesktopCustomCommand[]> =>
+    ipcRenderer.invoke("desktop:custom-commands-list", request),
+  upsertCustomCommand: (
+    request: DesktopCustomCommandUpsertRequest,
+  ): Promise<DesktopCustomCommand> =>
+    ipcRenderer.invoke("desktop:custom-command-upsert", request),
+  deleteCustomCommand: (
+    request: DesktopCustomCommandDeleteRequest,
+  ): Promise<DesktopCustomCommandDeleteResult> =>
+    ipcRenderer.invoke("desktop:custom-command-delete", request),
+  listProjectSkillDrafts: (
+    request: DesktopProjectSkillDraftListRequest,
+  ): Promise<DesktopProjectSkillDraft[]> =>
+    ipcRenderer.invoke("desktop:project-skill-drafts-list", request),
+  createProjectSkillDraft: (
+    request: DesktopProjectSkillDraftCreateRequest,
+  ): Promise<DesktopProjectSkillDraft> =>
+    ipcRenderer.invoke("desktop:project-skill-draft-create", request),
+  installProjectSkillDraft: (
+    request: DesktopProjectSkillInstallRequest,
+  ): Promise<DesktopProjectSkillInstallResult> =>
+    ipcRenderer.invoke("desktop:project-skill-draft-install", request),
+  publishProjectSkillDraft: (
+    request: DesktopProjectSkillPublishRequest,
+  ): Promise<DesktopProjectSkillPublishResult> =>
+    ipcRenderer.invoke("desktop:project-skill-draft-publish", request),
+  listWorkflowMarketplace: (
+    workspacePath?: string,
+  ): Promise<DesktopWorkflowMarketplaceListResult> =>
+    ipcRenderer.invoke("desktop:workflow-marketplace-list", workspacePath),
+  syncWorkflowMarketplace: (
+    request: DesktopWorkflowMarketplaceSyncRequest,
+  ): Promise<DesktopWorkflowMarketplaceSyncResult> =>
+    ipcRenderer.invoke("desktop:workflow-marketplace-sync", request),
+  prepareWorkflowRun: (
+    request: DesktopWorkflowRunPrepareRequest,
+  ): Promise<DesktopWorkflowRunPrepareResult> =>
+    ipcRenderer.invoke("desktop:workflow-run-prepare", request),
+  startWorkflowRun: (
+    request: DesktopWorkflowRunStartRequest,
+  ): Promise<DesktopWorkflowRunStartResult> =>
+    ipcRenderer.invoke("desktop:workflow-run-start", request),
+  listWorkflowRuns: (workspacePath?: string): Promise<DesktopWorkflowRun[]> =>
+    ipcRenderer.invoke("desktop:workflow-runs-list", workspacePath),
+  dispatchWorkflowRunStep: (
+    request: DesktopWorkflowRunStepDispatchRequest,
+  ): Promise<DesktopWorkflowRunStepDispatchResult> =>
+    ipcRenderer.invoke("desktop:workflow-run-step-dispatch", request),
+  completeWorkflowRunStep: (
+    request: DesktopWorkflowRunStepCompleteRequest,
+  ): Promise<DesktopWorkflowRunStepCompleteResult> =>
+    ipcRenderer.invoke("desktop:workflow-run-step-complete", request),
+  listBackgroundTasks: (
+    request?: DesktopBackgroundTaskListRequest,
+  ): Promise<DesktopBackgroundTask[]> =>
+    ipcRenderer.invoke("desktop:background-tasks-list", request),
+  enqueueBackgroundTask: (
+    request: DesktopBackgroundTaskEnqueueRequest,
+  ): Promise<DesktopBackgroundTask> =>
+    ipcRenderer.invoke("desktop:background-task-enqueue", request),
+  updateBackgroundTask: (
+    request: DesktopBackgroundTaskUpdateRequest,
+  ): Promise<DesktopBackgroundTask> =>
+    ipcRenderer.invoke("desktop:background-task-update", request),
+  cancelBackgroundTask: (request: DesktopBackgroundTaskActionRequest): Promise<DesktopBackgroundTask> =>
+    ipcRenderer.invoke("desktop:background-task-cancel", request),
+  retryBackgroundTask: (request: DesktopBackgroundTaskActionRequest): Promise<DesktopBackgroundTask> =>
+    ipcRenderer.invoke("desktop:background-task-retry", request),
+  recoverBackgroundTasks: (): Promise<DesktopBackgroundTaskRecoveryResult> =>
+    ipcRenderer.invoke("desktop:background-tasks-recover"),
+  listReusableTasks: (): Promise<DesktopReusableTask[]> =>
+    ipcRenderer.invoke("desktop:reusable-tasks-list"),
+  saveReusableTask: (
+    request: DesktopReusableTaskSaveRequest,
+  ): Promise<DesktopReusableTask> =>
+    ipcRenderer.invoke("desktop:reusable-task-save", request),
+  prepareReusableTaskRun: (
+    request: DesktopReusableTaskRunPrepareRequest,
+  ): Promise<DesktopReusableTaskRunRecipe> =>
+    ipcRenderer.invoke("desktop:reusable-task-run-prepare", request),
+  setCompletionNotificationPreference: (
+    preference: CompletionNotificationPreference,
+  ): Promise<CompletionNotificationPreference> =>
+    ipcRenderer.invoke("desktop:completion-notification-preference-set", preference),
+  onCompletionNotificationClick: (
+    callback: (event: CompletionNotificationClickEvent) => void,
+  ): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: CompletionNotificationClickEvent): void => callback(event);
+    ipcRenderer.on("desktop:completion-notification-click", listener);
+    return () => ipcRenderer.removeListener("desktop:completion-notification-click", listener);
+  },
+  listScheduledTasks: (
+    request?: DesktopScheduledTaskListRequest,
+  ): Promise<DesktopScheduledTask[]> =>
+    ipcRenderer.invoke("desktop:scheduled-tasks-list", request),
+  createScheduledTask: (
+    request: DesktopScheduledTaskCreateRequest,
+  ): Promise<DesktopScheduledTask> =>
+    ipcRenderer.invoke("desktop:scheduled-task-create", request),
+  updateScheduledTask: (
+    request: DesktopScheduledTaskUpdateRequest,
+  ): Promise<DesktopScheduledTask> =>
+    ipcRenderer.invoke("desktop:scheduled-task-update", request),
+  deleteScheduledTask: (
+    request: DesktopScheduledTaskDeleteRequest,
+  ): Promise<DesktopScheduledTaskDeleteResult> =>
+    ipcRenderer.invoke("desktop:scheduled-task-delete", request),
+  runDueScheduledTasks: (
+    request?: DesktopScheduledTaskRunRequest,
+  ): Promise<DesktopScheduledTaskRunResult> =>
+    ipcRenderer.invoke("desktop:scheduled-tasks-run-due", request),
+  getScheduledTaskWorkerStatus: (): Promise<DesktopScheduledTaskWorkerStatus> =>
+    ipcRenderer.invoke("desktop:scheduled-task-worker-status"),
+  createShare: (request: DesktopShareCreateRequest): Promise<DesktopShareManifest> =>
+    ipcRenderer.invoke("desktop:share-create", request),
+  inspectShare: (request: DesktopShareInspectionRequest): Promise<DesktopShareInspectionResult> =>
+    ipcRenderer.invoke("desktop:share-inspect", request),
+  updateSharePermission: (request: DesktopSharePermissionUpdateRequest): Promise<DesktopShareManifest> =>
+    ipcRenderer.invoke("desktop:share-permission-update", request),
+  revokeShare: (request: DesktopShareRevokeRequest): Promise<DesktopShareRevocationResult> =>
+    ipcRenderer.invoke("desktop:share-revoke", request),
+  inspectShareVersion: (request: DesktopShareVersionInspectionRequest): Promise<DesktopShareVersionInspection> =>
+    ipcRenderer.invoke("desktop:share-version-inspect", request),
+  publishShareVersion: (request: DesktopShareVersionPublishRequest): Promise<DesktopShareVersionPublishResult> =>
+    ipcRenderer.invoke("desktop:share-version-publish", request),
+  listShareComments: (request: DesktopShareCommentListRequest): Promise<DesktopShareComment[]> =>
+    ipcRenderer.invoke("desktop:share-comments-list", request),
+  addShareComment: (request: DesktopShareCommentAddRequest): Promise<DesktopShareComment> =>
+    ipcRenderer.invoke("desktop:share-comment-add", request),
+  previewShareCommentTask: (request: DesktopShareCommentTaskPreviewRequest): Promise<DesktopShareCommentTaskPreview> =>
+    ipcRenderer.invoke("desktop:share-comment-task-preview", request),
+  createShareCommentTask: (request: DesktopShareCommentTaskCreateRequest): Promise<DesktopShareCommentTask> =>
+    ipcRenderer.invoke("desktop:share-comment-task-create", request),
+  updateShareCommentTask: (request: DesktopShareCommentTaskUpdateRequest): Promise<DesktopShareCommentTask> =>
+    ipcRenderer.invoke("desktop:share-comment-task-update", request),
+  completeShareCommentTask: (request: DesktopShareCommentTaskCompleteRequest): Promise<DesktopShareCommentTask> =>
+    ipcRenderer.invoke("desktop:share-comment-task-complete", request),
+  listShareCommentTasks: (request: DesktopShareCommentTaskListRequest = {}): Promise<DesktopShareCommentTask[]> =>
+    ipcRenderer.invoke("desktop:share-comment-tasks-list", request),
+  continueSharedTask: (request: DesktopShareContinuationRequest): Promise<DesktopShareContinuationResult> =>
+    ipcRenderer.invoke("desktop:share-continue", request),
+  listShareAudit: (request: DesktopShareAuditListRequest): Promise<DesktopShareAuditEntry[]> =>
+    ipcRenderer.invoke("desktop:share-audit-list", request),
+  listIncomingShares: (): Promise<DesktopShareManifest[]> =>
+    ipcRenderer.invoke("desktop:shares-incoming-list"),
+  listOutgoingShares: (): Promise<DesktopShareManifest[]> =>
+    ipcRenderer.invoke("desktop:shares-outgoing-list"),
+  openSharedObject: (request: DesktopSharedObjectOpenRequest): Promise<DesktopSharedObjectOpenResult> =>
+    ipcRenderer.invoke("desktop:shared-object-open", request),
+  downloadSharedArtifact: (request: DesktopSharedArtifactDownloadRequest): Promise<DesktopSharedArtifactDownloadResult> =>
+    ipcRenderer.invoke("desktop:shared-artifact-download", request),
+  listChannelAdapters: (workspacePath?: string): Promise<DesktopChannelAdapterListResult> =>
+    ipcRenderer.invoke("desktop:channel-adapters-list", workspacePath),
+  getWeChatChannelStatus: (): Promise<DesktopWeChatChannelStatus> =>
+    ipcRenderer.invoke("desktop:wechat-channel-status"),
+  startWeChatLogin: (): Promise<DesktopWeChatLoginStartResult> =>
+    ipcRenderer.invoke("desktop:wechat-login-start"),
+  pollWeChatLogin: (request: DesktopWeChatLoginPollRequest): Promise<DesktopWeChatLoginPollResult> =>
+    ipcRenderer.invoke("desktop:wechat-login-poll", request),
+  cancelWeChatLogin: (request: DesktopWeChatLoginPollRequest): Promise<DesktopWeChatLoginCancelResult> =>
+    ipcRenderer.invoke("desktop:wechat-login-cancel", request),
+  startWeChatChannel: (): Promise<DesktopWeChatChannelStatus> =>
+    ipcRenderer.invoke("desktop:wechat-channel-start"),
+  stopWeChatChannel: (): Promise<DesktopWeChatChannelStatus> =>
+    ipcRenderer.invoke("desktop:wechat-channel-stop"),
+  logoutWeChatChannel: (): Promise<DesktopWeChatChannelStatus> =>
+    ipcRenderer.invoke("desktop:wechat-channel-logout"),
+  getWeChatSessionSummary: (): Promise<DesktopWeChatSessionSummary> =>
+    ipcRenderer.invoke("desktop:wechat-sessions-summary"),
+  getWeChatReplyCapability: (request: DesktopWeChatReplyCapabilityRequest): Promise<DesktopWeChatReplyCapability> =>
+    ipcRenderer.invoke("desktop:wechat-reply-capability", request),
+  sendToWeChat: (request: DesktopWeChatOutboundRequest): Promise<DesktopWeChatOutboundResult> =>
+    ipcRenderer.invoke("desktop:wechat-send-outbound", request),
+  configureChannelAdapter: (
+    request: DesktopChannelAdapterConfigureRequest,
+  ): Promise<DesktopChannelAdapterConfigureResult> =>
+    ipcRenderer.invoke("desktop:channel-adapter-configure", request),
+  startChannelAdapterAuth: (
+    request: DesktopChannelAdapterAuthStartRequest,
+  ): Promise<DesktopChannelAdapterAuthStartResult> =>
+    ipcRenderer.invoke("desktop:channel-adapter-auth-start", request),
+  pollChannelAdapterAuth: (request: DesktopChannelAdapterAuthPollRequest): Promise<DesktopChannelAdapterAuthPollResult> =>
+    ipcRenderer.invoke("desktop:channel-adapter-auth-poll", request),
+  revokeChannelAdapterAuth: (request: DesktopChannelAdapterAuthRevokeRequest): Promise<DesktopChannelAdapterAuthRevokeResult> =>
+    ipcRenderer.invoke("desktop:channel-adapter-auth-revoke", request),
+  configureChannelProviderToken: (request: DesktopChannelProviderTokenConfigureRequest): Promise<DesktopChannelProviderTokenConfigureResult> =>
+    ipcRenderer.invoke("desktop:channel-provider-token-configure", request),
+  importChannelContext: (
+    request: DesktopChannelContextImportRequest,
+  ): Promise<DesktopChannelContextImportResult> =>
+    ipcRenderer.invoke("desktop:channel-context-import", request),
+  syncLiveChannelContext: (request: DesktopChannelLiveSyncRequest): Promise<DesktopChannelContextImportResult> =>
+    ipcRenderer.invoke("desktop:channel-live-sync", request),
+  syncChannelSnapshots: (
+    request: DesktopChannelSnapshotSyncRequest,
+  ): Promise<DesktopChannelSnapshotSyncResult> =>
+    ipcRenderer.invoke("desktop:channel-snapshot-sync", request),
+  listChannelInboundEvents: (
+    request?: DesktopChannelInboundEventListRequest,
+  ): Promise<DesktopChannelInboundEvent[]> =>
+    ipcRenderer.invoke("desktop:channel-inbound-events", request),
+  routeChannelInboundEvent: (
+    request: DesktopChannelInboundEventRouteRequest,
+  ): Promise<DesktopChannelInboundEventRouteResult> =>
+    ipcRenderer.invoke("desktop:channel-inbound-route", request),
+  proposeChannelOutboundDraft: (
+    request: DesktopChannelOutboundDraftRequest,
+  ): Promise<DesktopChannelOutboundDraftResult> =>
+    ipcRenderer.invoke("desktop:channel-outbound-draft", request),
+  listChannelOutboundDeliveries: (
+    request?: DesktopChannelOutboundDeliveryListRequest,
+  ): Promise<DesktopChannelOutboundDelivery[]> =>
+    ipcRenderer.invoke("desktop:channel-outbound-deliveries", request),
+  listExternalConnectionReadiness: (
+    workspacePath?: string,
+  ): Promise<DesktopExternalConnectionReadinessResult> =>
+    ipcRenderer.invoke("desktop:external-connection-readiness", workspacePath),
+  importMcpContext: (
+    request: DesktopMcpContextRequest,
+  ): Promise<DesktopMcpContextResult> =>
+    ipcRenderer.invoke("desktop:mcp-context-import", request),
+  requestMcpLiveEnumeration: (
+    request: DesktopMcpLiveEnumerationRequest,
+  ): Promise<DesktopMcpLiveEnumerationResult> =>
+    ipcRenderer.invoke("desktop:mcp-live-enumerate", request),
+  requestMcpToolExecutionApproval: (
+    request: DesktopMcpToolExecutionApprovalRequest,
+  ): Promise<DesktopMcpToolExecutionApprovalResult> =>
+    ipcRenderer.invoke("desktop:mcp-tool-execution-approval", request),
+  listMcpToolExecutionAudits: (
+    request: DesktopMcpToolExecutionAuditListRequest,
+  ): Promise<DesktopMcpToolExecutionAuditEntry[]> =>
+    ipcRenderer.invoke("desktop:mcp-execution-audits", request),
+  listMcpSessionAudits: (
+    request: DesktopMcpSessionAuditListRequest,
+  ): Promise<DesktopMcpSessionAuditEntry[]> =>
+    ipcRenderer.invoke("desktop:mcp-session-audits", request),
+  listMcpActiveSessions: (
+    request: DesktopMcpActiveSessionListRequest,
+  ): Promise<DesktopMcpActiveSession[]> =>
+    ipcRenderer.invoke("desktop:mcp-active-sessions", request),
+  listMcpReusableSessions: (
+    request: DesktopMcpReusableSessionListRequest,
+  ): Promise<DesktopMcpReusableSession[]> =>
+    ipcRenderer.invoke("desktop:mcp-reusable-sessions", request),
+  closeMcpReusableSession: (
+    request: DesktopMcpReusableSessionCloseRequest,
+  ): Promise<DesktopMcpReusableSessionCloseResult> =>
+    ipcRenderer.invoke("desktop:mcp-reusable-session-close", request),
+  cancelMcpActiveSession: (
+    request: DesktopMcpSessionCancelRequest,
+  ): Promise<DesktopMcpSessionCancelResult> =>
+    ipcRenderer.invoke("desktop:mcp-session-cancel", request),
+  listPendingApprovals: (): Promise<DesktopPendingApproval[]> =>
+    ipcRenderer.invoke("desktop:pending-approvals"),
+  decidePendingApproval: (
+    request: DesktopApprovalDecisionRequest,
+  ): Promise<boolean> => ipcRenderer.invoke("desktop:decide-approval", request),
+  decideApproval: (
+    request: DesktopApprovalDecisionRequest,
+  ): Promise<boolean> => ipcRenderer.invoke("desktop:decide-approval", request),
+  listPendingBrowserTaskApprovals: () =>
+    ipcRenderer.invoke("desktop:browser-task-pending-approvals"),
+  approveBrowserTaskAction: (
+    request: BrowserTaskApprovalRequest,
+  ): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:browser-task-approve", request),
+  openExternal: (url: string): Promise<void> =>
+    ipcRenderer.invoke("desktop:open-external", url),
+  openRegressionReference: (uri: string): Promise<string> =>
+    ipcRenderer.invoke("desktop:open-regression-reference", uri),
+  openPath: (path: string): Promise<string> =>
+    ipcRenderer.invoke("desktop:open-path", path),
+  openPdfPage: (request: PdfPageOpenRequest): Promise<PdfPageOpenResult> =>
+    ipcRenderer.invoke("desktop:open-pdf-page", request),
+  getIdeContext: (workspacePath: string): Promise<DesktopIdeContextSnapshot> =>
+    ipcRenderer.invoke("desktop:ide-context", workspacePath),
+  getFileIcon: (path: string) =>
+    ipcRenderer.invoke("desktop:get-file-icon", path),
+  createTerminal: (options) =>
+    ipcRenderer.invoke("desktop:terminal-create", options),
+  listTerminalSessions: (workspaceKey, workspaceId) =>
+    ipcRenderer.invoke("desktop:terminal-list", workspaceKey, workspaceId),
+  getTerminalBuffer: (id) => ipcRenderer.invoke("desktop:terminal-buffer", id),
+  renameTerminal: (id, title) =>
+    ipcRenderer.invoke("desktop:terminal-rename", id, title),
+  writeTerminal: (id, data) =>
+    ipcRenderer.invoke("desktop:terminal-write", id, data),
+  resizeTerminal: (id, cols, rows) =>
+    ipcRenderer.invoke("desktop:terminal-resize", id, cols, rows),
+  killTerminal: (id) => ipcRenderer.invoke("desktop:terminal-kill", id),
+  onInstallProgress: (
+    callback: (progress: InstallProgress) => void,
+  ): (() => void) => {
+    const listener = (_event: IpcRendererEvent, progress: InstallProgress) => {
+      callback(progress);
+    };
+    ipcRenderer.on("desktop:install-progress", listener);
+    return () =>
+      ipcRenderer.removeListener("desktop:install-progress", listener);
+  },
+  onOidcLoginDebug: (
+    callback: (event: OidcLoginDebugEvent) => void,
+  ): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: OidcLoginDebugEvent) => {
+      callback(event);
+    };
+    ipcRenderer.on("desktop:oidc-login-debug", listener);
+    return () =>
+      ipcRenderer.removeListener("desktop:oidc-login-debug", listener);
+  },
+  onChatEvent: (callback: (event: ChatEvent) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: ChatEvent) => {
+      callback(event);
+    };
+    ipcRenderer.on("desktop:chat-event", listener);
+    return () => ipcRenderer.removeListener("desktop:chat-event", listener);
+  },
+  onVoiceTranscriptionEvent: (
+    callback: (event: DesktopVoiceTranscriptionEvent) => void,
+  ): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: DesktopVoiceTranscriptionEvent): void => callback(event);
+    ipcRenderer.on("desktop:voice-transcription-event", listener);
+    return () => ipcRenderer.removeListener("desktop:voice-transcription-event", listener);
+  },
+  onDuplexVoiceEvents: (callback) => {
+    const listener = (_event: IpcRendererEvent, events: import("../api/desktopApi").DesktopDuplexVoiceEvent[]): void => {
+      callback(events);
+      for (const item of events) if (item.type === "completed" || item.type === "cancelled" || item.type === "failed") {
+        duplexVoicePorts.get(item.sessionId)?.close(); duplexVoicePorts.delete(item.sessionId);
+      }
+    };
+    ipcRenderer.on("desktop:voice-duplex-events", listener);
+    return () => ipcRenderer.removeListener("desktop:voice-duplex-events", listener);
+  },
+  onDuplexVoiceToolApprovalDecision: (callback) => {
+    const listener = (_event: IpcRendererEvent, decision: import("../api/desktopApi").DesktopDuplexVoiceToolApprovalDecision): void => callback(decision);
+    ipcRenderer.on("desktop:voice-duplex-tool-approval-decision", listener);
+    return () => ipcRenderer.removeListener("desktop:voice-duplex-tool-approval-decision", listener);
+  },
+  onVoiceSynthesisEvent: (
+    callback: (event: DesktopVoiceSynthesisEvent) => void,
+  ): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: DesktopVoiceSynthesisEvent): void => callback(event);
+    ipcRenderer.on("desktop:voice-synthesis-event", listener);
+    return () => ipcRenderer.removeListener("desktop:voice-synthesis-event", listener);
+  },
+  onAgentRunEvent: (callback: (event: AgentRunEvent) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: AgentRunEvent) => {
+      callback(event);
+    };
+    ipcRenderer.on("desktop:agent-run-event", listener);
+    return () =>
+      ipcRenderer.removeListener("desktop:agent-run-event", listener);
+  },
+  onUpdateStatus: (callback: (status: UpdateStatus) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, status: UpdateStatus) => {
+      callback(status);
+    };
+    ipcRenderer.on("desktop:update-status", listener);
+    return () => ipcRenderer.removeListener("desktop:update-status", listener);
+  },
+  onTerminalData: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event) => {
+      callback(event);
+    };
+    ipcRenderer.on("desktop:terminal-data", listener);
+    return () => ipcRenderer.removeListener("desktop:terminal-data", listener);
+  },
+  onTerminalExit: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event) => {
+      callback(event);
+    };
+    ipcRenderer.on("desktop:terminal-exit", listener);
+    return () => ipcRenderer.removeListener("desktop:terminal-exit", listener);
+  },
+  onBrowserTaskEvent: (
+    callback: (event: BrowserTaskEvent) => void,
+  ): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: BrowserTaskEvent) => {
+      callback(event);
+    };
+    ipcRenderer.on("desktop:browser-task-event", listener);
+    return () =>
+      ipcRenderer.removeListener("desktop:browser-task-event", listener);
+  },
+};
+
+contextBridge.exposeInMainWorld("openDrSai", api);

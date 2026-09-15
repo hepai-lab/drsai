@@ -71,6 +71,38 @@ class HaiModelClientTest {
         assertEquals(0.0, requestBody.getDouble("temperature"), 0.0)
     }
 
+    @Test fun thinkingToolContinuationIsOpaqueAndReplayedWithAssistantToolCall() = runTest {
+        server.enqueue(MockResponse().setBody(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"opaque-thought\",\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"clock\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+        ))
+        val client = HaiModelClient(
+            FakeTokenStore("token", "refresh"), FakeTokenLifecycle(), server.url("/v1").toString(),
+        )
+        val deltas = mutableListOf<ModelDelta>()
+        client.streamCompletionWithTools("model", listOf(RuntimeMessage("user", "time")), schemas("clock")) {
+            deltas += it
+        }
+        assertEquals("opaque-thought", deltas.mapNotNull(ModelDelta::providerReasoningContent).joinToString(""))
+        assertTrue(deltas.all { it.reasoningSummary == null })
+
+        server.enqueue(MockResponse().setBody("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"))
+        client.streamCompletionWithTools(
+            "model",
+            listOf(
+                RuntimeMessage("user", "time"),
+                RuntimeMessage(
+                    "assistant", "", toolCalls = listOf(CompletedToolCall("c1", "clock", "{}")),
+                    providerReasoningContent = "opaque-thought",
+                ),
+                RuntimeMessage("tool", "{\"time\":\"12:00\"}", toolCallId = "c1"),
+            ),
+            schemas("clock"),
+        ) {}
+        server.takeRequest()
+        val replay = JSONObject(server.takeRequest().body.readUtf8()).getJSONArray("messages").getJSONObject(1)
+        assertEquals("opaque-thought", replay.getString("reasoning_content"))
+    }
+
     @Test fun completion_serializes_openai_multimodal_image_content() = runTest {
         server.enqueue(MockResponse().setBody("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"))
         val client = HaiModelClient(FakeTokenStore("token", "refresh"), FakeTokenLifecycle(), server.url("/v1").toString())
@@ -123,7 +155,7 @@ class HaiModelClientTest {
         }.exceptionOrNull() as ApiException
 
         assertEquals(400, error.status)
-        assertEquals("当前 HAI 模型不支持图片输入，请切换到视觉模型", error.message)
+        assertEquals("The HAI model does not support image input; switch to a vision model", error.message)
         assertFalse(error.retryable)
     }
 
@@ -258,7 +290,7 @@ class HaiModelClientTest {
         assertEquals(400, error.status)
         assertEquals("model_tool_schema_rejected", error.code)
         assertFalse(error.retryable)
-        assertTrue(error.message.contains("工具 Schema"))
+        assertTrue(error.message.contains("tool schema"))
     }
 
     @Test fun pinnedRunKeepsOriginalUpstreamModelAfterConfiguredDefaultChanges() = runTest {
@@ -311,7 +343,7 @@ class HaiModelClientTest {
         assertTrue(error is ApiException)
         assertEquals("model_stream_interrupted", (error as ApiException).code)
         assertTrue(error.retryable)
-        assertEquals("模型流在完成前中断", error.message)
+        assertEquals("The model stream ended before completion", error.message)
     }
 
     @Test fun completedProviderStreamWithoutContentToolOrSummaryFailsExplicitly() = runTest {

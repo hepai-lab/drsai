@@ -9,6 +9,9 @@ import ai.drsai.remote.data.Conversation
 import ai.drsai.remote.data.ConversationEntity
 import ai.drsai.remote.data.MessageAttachment
 import ai.drsai.remote.remote.generated.OaepMessageContent
+import ai.drsai.remote.remote.generated.OaepLegacyMessagePart
+import ai.drsai.remote.remote.generated.OaepResourceMessagePart
+import ai.drsai.remote.remote.generated.OaepTextMessagePart
 import ai.drsai.remote.remote.generated.OaepCommandExecutionContent
 import ai.drsai.remote.remote.generated.OaepFileChangeContent
 import ai.drsai.remote.remote.generated.OaepPlanContent
@@ -179,9 +182,15 @@ class AndroidOaepStoreTest {
         assertEquals("world", (messages.getValue("assistant").content as OaepMessageContent).text)
         assertEquals("commentary", (messages.getValue("assistant").content as OaepMessageContent).phase)
         val user = messages.getValue("user").content as OaepMessageContent
-        assertEquals(listOf("text", "image", "audio", "file"), user.parts.map { it["type"] })
+        assertEquals(listOf("text", "image", "audio", "file"), user.parts.map {
+            when (it) {
+                is OaepTextMessagePart -> "text"
+                is OaepResourceMessagePart -> "resource"
+                is OaepLegacyMessagePart -> it.type
+            }
+        })
         assertEquals(setOf("a-image", "a-audio", "a-file"), user.resourceRefs.map { it.resourceId }.toSet())
-        assertEquals("a-image", ((user.parts[1]["resource_ref"] as Map<*, *>)["resource_id"]))
+        assertEquals("a-image", (user.parts[1] as OaepLegacyMessagePart).resourceRef?.resourceId)
     }
 
     @Test

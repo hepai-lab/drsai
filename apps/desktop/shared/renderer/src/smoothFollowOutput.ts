@@ -69,7 +69,8 @@ export function createSmoothFollowOutputController({
   };
 
   const handleHeightChange = (height: number): void => {
-    const grew = lastHeight !== undefined && height > lastHeight + HEIGHT_CHANGE_TOLERANCE;
+    const isFirst = lastHeight === undefined;
+    const grew = isFirst || height > lastHeight! + HEIGHT_CHANGE_TOLERANCE;
     lastHeight = height;
     if (!grew || !following || pendingFrame !== undefined) return;
     pendingFrame = requestFrame(() => {

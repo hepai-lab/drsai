@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendrsai.dev/protocol/runtime-control/v1/schema.json",
+  "title": "OpenDrSai Runtime Control v1",
+  "type": "object",
+  "required": ["method", "params"],
+  "additionalProperties": false,
+  "properties": {
+    "method": {"type": "string", "enum": ["initialize", "runtime.health", "session.create", "session.resume", "session.archive", "run.start", "run.cancel", "approval.respond", "session.snapshot", "session.events", "runtime.shutdown"]},
+    "params": {"type": "object"}
+  },
+  "x-control-methods": {
+    "initialize": {"type": "InitializeParams", "required": [], "fields": {"protocols": "object?"}},
+    "runtime.health": {"type": "EmptyParams", "required": [], "fields": {}},
+    "session.create": {"type": "SessionCreateParams", "required": ["idempotency_key"], "fields": {"idempotency_key": "str", "workspace_id": "str?", "workspace_fingerprint": "str?", "native_profile": "str?", "mapping_version": "str?", "owner_profile": "str?"}},
+    "session.resume": {"type": "SessionResumeParams", "required": ["session_id"], "fields": {"session_id": "str"}},
+    "session.archive": {"type": "SessionArchiveParams", "required": ["session_id", "idempotency_key"], "fields": {"session_id": "str", "idempotency_key": "str"}},
+    "run.start": {"type": "RunStartParams", "required": ["session_id", "idempotency_key", "content_blocks"], "fields": {"session_id": "str", "idempotency_key": "str", "content_blocks": "list[dict[str, object]]"}},
+    "run.cancel": {"type": "RunCancelParams", "required": ["run_id"], "fields": {"run_id": "str"}},
+    "approval.respond": {"type": "ApprovalRespondParams", "required": ["run_id", "approval_id", "outcome"], "fields": {"run_id": "str", "approval_id": "str", "outcome": "str"}},
+    "session.snapshot": {"type": "SessionSnapshotParams", "required": ["session_id"], "fields": {"session_id": "str"}},
+    "session.events": {"type": "SessionEventsParams", "required": ["session_id"], "fields": {"session_id": "str", "after_sequence": "int?", "limit": "int?"}},
+    "runtime.shutdown": {"type": "EmptyParams", "required": [], "fields": {}}
+  }
+}

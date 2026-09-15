@@ -5,7 +5,9 @@ import ai.drsai.remote.remote.generated.OwopSchemaGenerated
 
 val OWOP_PROTOCOL_VERSION: String = OwopSchemaGenerated.VERSION
 
-enum class ReadOnlyWorkspaceOperation(val wireName: String) {
+sealed interface WorkspaceOperation { val wireName: String }
+
+enum class ReadOnlyWorkspaceOperation(override val wireName: String) : WorkspaceOperation {
     WORKSPACE_DESCRIBE("workspace.describe"),
     FILES_LIST("files.list"),
     FILES_STAT("files.stat"),
@@ -23,11 +25,22 @@ enum class ReadOnlyWorkspaceOperation(val wireName: String) {
     }
 }
 
+enum class ResourceWorkspaceOperation(override val wireName: String) : WorkspaceOperation {
+    RESOLVE_BATCH("resources.resolve_batch"),
+    PREVIEW("resources.preview"),
+    DOWNLOAD_PREPARE("resources.download.prepare"),
+    DOWNLOAD_CHUNK("resources.download.chunk"),
+    DOWNLOAD_CANCEL("resources.download.cancel"),
+    ;
+
+    init { require(wireName in OwopSchemaGenerated.OPERATIONS) { "owop_resource_operation_missing_from_schema" } }
+}
+
 data class OwopRequest(
     val version: String = OWOP_PROTOCOL_VERSION,
     val requestId: String,
     val workspaceId: WorkspaceId,
-    val operation: ReadOnlyWorkspaceOperation,
+    val operation: WorkspaceOperation,
     val params: Map<String, Any?>,
     val correlationId: String,
     val binding: String = "relay",
@@ -124,7 +137,7 @@ class RelayWorkspaceOperationsClient(private val transport: OwopRelayTransport) 
 
     private suspend fun execute(
         workspaceId: WorkspaceId,
-        operation: ReadOnlyWorkspaceOperation,
+        operation: WorkspaceOperation,
         arguments: Map<String, Any?>,
         requestId: String,
         correlationId: String,
@@ -140,5 +153,36 @@ class RelayWorkspaceOperationsClient(private val transport: OwopRelayTransport) 
                 correlationId = correlationId,
             )
         )
+    }
+}
+
+class RelayResourceOperationsClient(private val transport: OwopRelayTransport) {
+    suspend fun resolveBatch(workspaceId: WorkspaceId, observations: List<Map<String, Any?>>, requestId: String, correlationId: String): OwopResult {
+        require(observations.isNotEmpty() && observations.size <= 100) { "resource_observation_bounds_invalid" }
+        return execute(workspaceId, ResourceWorkspaceOperation.RESOLVE_BATCH, mapOf("observations" to observations), requestId, correlationId)
+    }
+
+    suspend fun preview(workspaceId: WorkspaceId, resource: Map<String, Any?>, versionId: String, maxBytes: Long, requestId: String, correlationId: String): OwopResult {
+        require(versionId.isNotBlank() && maxBytes in 1..1_048_576) { "resource_preview_bounds_invalid" }
+        return execute(workspaceId, ResourceWorkspaceOperation.PREVIEW, mapOf(
+            "resource" to resource, "version_id" to versionId,
+            "accept_kinds" to listOf("text", "markdown", "json", "image", "pdf", "office"), "max_bytes" to maxBytes,
+        ), requestId, correlationId)
+    }
+
+    suspend fun prepareDownload(workspaceId: WorkspaceId, resource: Map<String, Any?>, versionId: String, suggestedName: String, requestId: String, correlationId: String): OwopResult =
+        execute(workspaceId, ResourceWorkspaceOperation.DOWNLOAD_PREPARE, mapOf("resource" to resource, "version_id" to versionId, "suggested_name" to suggestedName), requestId, correlationId)
+
+    suspend fun downloadChunk(workspaceId: WorkspaceId, downloadId: String, offset: Long, length: Long, requestId: String, correlationId: String): OwopResult {
+        require(downloadId.isNotBlank() && offset >= 0 && length in 65_536..8_388_608) { "resource_download_chunk_bounds_invalid" }
+        return execute(workspaceId, ResourceWorkspaceOperation.DOWNLOAD_CHUNK, mapOf("download_id" to downloadId, "offset" to offset, "length" to length), requestId, correlationId)
+    }
+
+    suspend fun cancelDownload(workspaceId: WorkspaceId, downloadId: String, requestId: String, correlationId: String): OwopResult =
+        execute(workspaceId, ResourceWorkspaceOperation.DOWNLOAD_CANCEL, mapOf("download_id" to downloadId), requestId, correlationId)
+
+    private suspend fun execute(workspaceId: WorkspaceId, operation: WorkspaceOperation, params: Map<String, Any?>, requestId: String, correlationId: String): OwopResult {
+        require(requestId.isNotBlank() && correlationId.isNotBlank()) { "owop_request_identity_required" }
+        return transport.execute(OwopRequest(requestId = requestId, workspaceId = workspaceId, operation = operation, params = params, correlationId = correlationId))
     }
 }

@@ -1,0 +1,253 @@
+{
+  "schema_version": 1,
+  "feature_id": "M10-F02",
+  "generated_at": "2026-08-14T08:41:03.835516+00:00",
+  "passed": true,
+  "candidate_apk_sha256": "d727a165778eb53298c3558f685d11055a0668f5b92a03fc74e37e36fa810289",
+  "gates": {
+    "api_26_30_35_36_present": true,
+    "all_five_journeys_green": true,
+    "screenshot_video_and_instrumentation_per_journey": true,
+    "junit_per_api": true,
+    "oaep_handoff_per_api": true,
+    "single_candidate_apk": true
+  },
+  "matrix": {
+    "26": {
+      "serial": "emulator-5556",
+      "api": 26,
+      "journeys": {
+        "fresh_install_first_success": {
+          "passed": true,
+          "test": "ai.drsai.remote.FirstTaskJourneyInstrumentedTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/fresh_install_first_success/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/fresh_install_first_success/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/fresh_install_first_success/instrumentation.txt",
+          "screenshot_sha256": "9472197875bdf68076fc48a94176170721d867278a21a51264a6a89f93bbc751",
+          "video_sha256": "66cf4f7c1895532eb76ea0d9877bb3cfb88c3b3d38a1ec1bd72f0d148d34de14"
+        },
+        "returning_task": {
+          "passed": true,
+          "test": "ai.drsai.remote.PythonRuntimeCriticalJourneyTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/returning_task/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/returning_task/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/returning_task/instrumentation.txt",
+          "screenshot_sha256": "3aa06dabfdb28223fcd4508cbd3b9dbb40bc9f12c17a70209c2bb0a1a3b7032d",
+          "video_sha256": "e86e5f23293435808846262b0d225d49786d9aeb8357acb856bd1fca503621d6"
+        },
+        "permission_repair": {
+          "passed": true,
+          "test": "ai.drsai.remote.PythonRuntimeCriticalJourneyTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/permission_repair/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/permission_repair/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/permission_repair/instrumentation.txt",
+          "screenshot_sha256": "3aa06dabfdb28223fcd4508cbd3b9dbb40bc9f12c17a70209c2bb0a1a3b7032d",
+          "video_sha256": "f66542a9fb103b24979360410d14ece7e7cf2062486ca3559eb9da92cb6b4439"
+        },
+        "error_recovery": {
+          "passed": true,
+          "test": "ai.drsai.remote.AndroidOaepStage8StressTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/error_recovery/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/error_recovery/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/error_recovery/instrumentation.txt",
+          "screenshot_sha256": "3aa06dabfdb28223fcd4508cbd3b9dbb40bc9f12c17a70209c2bb0a1a3b7032d",
+          "video_sha256": "34f45d2f6cb408736572618bc0bb7817eef5b141485b5b11cbf23998c736b846"
+        },
+        "desktop_handoff": {
+          "passed": true,
+          "test": "ai.drsai.remote.ui.MainInterfaceTest#handoffPickerExplainsTransferAndRequiresUserTargetChoice",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/desktop_handoff/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/desktop_handoff/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/desktop_handoff/instrumentation.txt",
+          "screenshot_sha256": "f10da23a74f24c73e8bccbad0abe67008670ba31ade3ac690f619a8acff9e637",
+          "video_sha256": "5e70e9ddd78b80884bf8e4a1c269bdd7237571463cc6b61a43c82d23aefba6cc"
+        }
+      },
+      "junit": "docs/android/reports/evidence/p10/pending/m10-f02-media/api26/junit.xml",
+      "handoff": {
+        "passed": true,
+        "android_to_desktop_events": 9,
+        "desktop_to_android_events": 9,
+        "side_effect_execution_count": 1,
+        "source": "docs/android/reports/evidence/p10/pending/m10-f02-handoff-api26.json"
+      }
+    },
+    "30": {
+      "serial": "emulator-5558",
+      "api": 30,
+      "journeys": {
+        "fresh_install_first_success": {
+          "passed": true,
+          "test": "ai.drsai.remote.FirstTaskJourneyInstrumentedTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/fresh_install_first_success/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/fresh_install_first_success/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/fresh_install_first_success/instrumentation.txt",
+          "screenshot_sha256": "7fdaf4f3a5d76a04e5f7d92712d1ade897c8efb171fd4362fa1e3705e2e1084f",
+          "video_sha256": "22c0d7649d28f4b10f13236a1a6718844be4752f221328fa1bf1254378695da6"
+        },
+        "returning_task": {
+          "passed": true,
+          "test": "ai.drsai.remote.PythonRuntimeCriticalJourneyTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/returning_task/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/returning_task/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/returning_task/instrumentation.txt",
+          "screenshot_sha256": "7fdaf4f3a5d76a04e5f7d92712d1ade897c8efb171fd4362fa1e3705e2e1084f",
+          "video_sha256": "8249c3e32c676221fb5fdc18054b240c0ea150a5d6e37328ba541d7a5428c2aa"
+        },
+        "permission_repair": {
+          "passed": true,
+          "test": "ai.drsai.remote.PythonRuntimeCriticalJourneyTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/permission_repair/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/permission_repair/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/permission_repair/instrumentation.txt",
+          "screenshot_sha256": "7fdaf4f3a5d76a04e5f7d92712d1ade897c8efb171fd4362fa1e3705e2e1084f",
+          "video_sha256": "9c86c05787c639d86d5903dfffc85f4db9057ec851d9dc4436081700f258dbdc"
+        },
+        "error_recovery": {
+          "passed": true,
+          "test": "ai.drsai.remote.AndroidOaepStage8StressTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/error_recovery/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/error_recovery/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/error_recovery/instrumentation.txt",
+          "screenshot_sha256": "7fdaf4f3a5d76a04e5f7d92712d1ade897c8efb171fd4362fa1e3705e2e1084f",
+          "video_sha256": "3d3bec21e40bf7dc4662bf056eb507e2dface98504462f62b98effc2e764c67d"
+        },
+        "desktop_handoff": {
+          "passed": true,
+          "test": "ai.drsai.remote.ui.MainInterfaceTest#handoffPickerExplainsTransferAndRequiresUserTargetChoice",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/desktop_handoff/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/desktop_handoff/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/desktop_handoff/instrumentation.txt",
+          "screenshot_sha256": "9228e538f4415b38c6f33980cf4920c7aa71e4b3801056fe17f925137bdf8be7",
+          "video_sha256": "fa43ce3336ac4d4ebaa93464289432b3e594167d97961e611d92d164fcbd4ffc"
+        }
+      },
+      "junit": "docs/android/reports/evidence/p10/pending/m10-f02-media/api30/junit.xml",
+      "handoff": {
+        "passed": true,
+        "android_to_desktop_events": 9,
+        "desktop_to_android_events": 9,
+        "side_effect_execution_count": 1,
+        "source": "docs/android/reports/evidence/p10/pending/m10-f02-handoff-api30.json"
+      }
+    },
+    "35": {
+      "serial": "emulator-5554",
+      "api": 35,
+      "journeys": {
+        "fresh_install_first_success": {
+          "passed": true,
+          "test": "ai.drsai.remote.FirstTaskJourneyInstrumentedTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/fresh_install_first_success/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/fresh_install_first_success/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/fresh_install_first_success/instrumentation.txt",
+          "screenshot_sha256": "5563aa69657a26646e907bab15040556050f03e48f41d51be52d2bf9a36169ae",
+          "video_sha256": "f39d66778620f974b82b76e7fcdcc69248630ce0e5d7b293a856afed8e18c3c8"
+        },
+        "returning_task": {
+          "passed": true,
+          "test": "ai.drsai.remote.PythonRuntimeCriticalJourneyTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/returning_task/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/returning_task/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/returning_task/instrumentation.txt",
+          "screenshot_sha256": "fa91ecd1854fd8d7f19d3a07049d54c305a42de4148d78cf1d7b9d93057b7f65",
+          "video_sha256": "21bc0e4c1a07a63bcc715ab7f6d3573bc5b6a0b49006a63983f215b2bd051b23"
+        },
+        "permission_repair": {
+          "passed": true,
+          "test": "ai.drsai.remote.PythonRuntimeCriticalJourneyTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/permission_repair/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/permission_repair/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/permission_repair/instrumentation.txt",
+          "screenshot_sha256": "fa91ecd1854fd8d7f19d3a07049d54c305a42de4148d78cf1d7b9d93057b7f65",
+          "video_sha256": "763cd0b431e4b30b4e457241677bdb4b6093d7f71e415461093f831568160cac"
+        },
+        "error_recovery": {
+          "passed": true,
+          "test": "ai.drsai.remote.AndroidOaepStage8StressTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/error_recovery/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/error_recovery/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/error_recovery/instrumentation.txt",
+          "screenshot_sha256": "fa91ecd1854fd8d7f19d3a07049d54c305a42de4148d78cf1d7b9d93057b7f65",
+          "video_sha256": "8e4337333e6f8ff075f7cfb567fda74361eb925de31f2b0ac0d6ea137ca30d96"
+        },
+        "desktop_handoff": {
+          "passed": true,
+          "test": "ai.drsai.remote.ui.MainInterfaceTest#handoffPickerExplainsTransferAndRequiresUserTargetChoice",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/desktop_handoff/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/desktop_handoff/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/desktop_handoff/instrumentation.txt",
+          "screenshot_sha256": "0655d4eaf9ca028652bfbb94fa28ede872d5125d2614fa616078bc092c1500b5",
+          "video_sha256": "a2a3a9c4c3292f64737b3ef20557119a21ce2bfc3518c890b2cfd0fad20f89ec"
+        }
+      },
+      "junit": "docs/android/reports/evidence/p10/pending/m10-f02-media/api35/junit.xml",
+      "handoff": {
+        "passed": true,
+        "android_to_desktop_events": 9,
+        "desktop_to_android_events": 9,
+        "side_effect_execution_count": 1,
+        "source": "docs/android/reports/evidence/p10/pending/m10-f02-handoff-api35.json"
+      }
+    },
+    "36": {
+      "serial": "emulator-5560",
+      "api": 36,
+      "journeys": {
+        "fresh_install_first_success": {
+          "passed": true,
+          "test": "ai.drsai.remote.FirstTaskJourneyInstrumentedTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/fresh_install_first_success/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/fresh_install_first_success/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/fresh_install_first_success/instrumentation.txt",
+          "screenshot_sha256": "fadb4c44326850f66670602e6395eac81fa4c537c6b1aebbbc7fadf9e85f926f",
+          "video_sha256": "9e2e5862601e529077278afdca2f0f564871ae3ef8d1c73055666dc1b73a8f91"
+        },
+        "returning_task": {
+          "passed": true,
+          "test": "ai.drsai.remote.PythonRuntimeCriticalJourneyTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/returning_task/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/returning_task/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/returning_task/instrumentation.txt",
+          "screenshot_sha256": "5f9132ac2daf98fab94087312149f62c46ca6daa9eb122fb7fd3d2f2d9395ed7",
+          "video_sha256": "1679fa025a3fe13e61df0a4f5628a00da2a5738e6bf9607d350ac999e1b7c149"
+        },
+        "permission_repair": {
+          "passed": true,
+          "test": "ai.drsai.remote.PythonRuntimeCriticalJourneyTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/permission_repair/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/permission_repair/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/permission_repair/instrumentation.txt",
+          "screenshot_sha256": "5f9132ac2daf98fab94087312149f62c46ca6daa9eb122fb7fd3d2f2d9395ed7",
+          "video_sha256": "271f6b998c2c0e664364ec3b5f47c0a883fd28d9e2ddac7e90c8a072ad20d9ce"
+        },
+        "error_recovery": {
+          "passed": true,
+          "test": "ai.drsai.remote.AndroidOaepStage8StressTest",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/error_recovery/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/error_recovery/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/error_recovery/instrumentation.txt",
+          "screenshot_sha256": "80b0c4833922b7a3d6de7a6e124039b6240f5897edcba23fa061d3fb559786b5",
+          "video_sha256": "242f26dd9780251fa4848b3ad423a77cef115fa17debf4e1a8efa435d718fcc7"
+        },
+        "desktop_handoff": {
+          "passed": true,
+          "test": "ai.drsai.remote.ui.MainInterfaceTest#handoffPickerExplainsTransferAndRequiresUserTargetChoice",
+          "screenshot": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/desktop_handoff/final.png",
+          "video": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/desktop_handoff/journey.mp4",
+          "instrumentation": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/desktop_handoff/instrumentation.txt",
+          "screenshot_sha256": "05fc1c4093c1fa6926c13bc06673beca8fb3f36d083980022ee62aa6ea16bc07",
+          "video_sha256": "209ee08f46345025065d795fe4b10581e2d7bb6afa56106ecb30eb71a1ccdee1"
+        }
+      },
+      "junit": "docs/android/reports/evidence/p10/pending/m10-f02-media/api36/junit.xml",
+      "handoff": {
+        "passed": true,
+        "android_to_desktop_events": 9,
+        "desktop_to_android_events": 9,
+        "side_effect_execution_count": 1,
+        "source": "docs/android/reports/evidence/p10/pending/m10-f02-handoff-api36.json"
+      }
+    }
+  }
+}

@@ -22,26 +22,25 @@ function defaultConfig(): string {
   return `active_platform = "${defaultActivePlatform()}"
 
 [platforms.production]
-portal_url = "https://ai-dev.ihep.ac.cn"
-base_url = "https://ai-dev.ihep.ac.cn/apiv2/v1"
+portal_url = "https://ai.ihep.ac.cn"
+base_url = "https://aiapi.ihep.ac.cn/apiv2"
 
 [platforms.development]
 portal_url = "https://ai-dev.ihep.ac.cn"
-base_url = "https://ai-dev.ihep.ac.cn/apiv2/v1"
+base_url = "https://ai-dev.ihep.ac.cn/apiv2"
 `;
 }
 
 const BUILT_INS: Record<string, { portalUrl: string; baseUrl: string }> = {
   production: {
-    // HAI production is temporarily unavailable. Keep the packaged product
-    // slot on ai-dev as well so clean installs and upgrades share one issuer
-    // and model service until the platform is explicitly switched back.
-    portalUrl: "https://ai-dev.ihep.ac.cn",
-    baseUrl: "https://ai-dev.ihep.ac.cn/apiv2/v1",
+    // Match WebUI `platform_config.DEFAULT_PLATFORMS["production"]`.
+    portalUrl: "https://ai.ihep.ac.cn",
+    baseUrl: "https://aiapi.ihep.ac.cn/apiv2",
   },
   development: {
+    // Match WebUI `platform_config.DEFAULT_PLATFORMS["development"]`.
     portalUrl: "https://ai-dev.ihep.ac.cn",
-    baseUrl: "https://ai-dev.ihep.ac.cn/apiv2/v1",
+    baseUrl: "https://ai-dev.ihep.ac.cn/apiv2",
   },
 };
 

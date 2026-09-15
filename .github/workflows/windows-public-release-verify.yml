@@ -17,6 +17,14 @@ on:
         required: false
         type: boolean
         default: true
+      channel:
+        description: "OSS channel pointer to verify"
+        required: false
+        type: choice
+        options:
+          - stable
+          - beta
+        default: stable
 
 jobs:
   verify-public-windows-release:
@@ -45,18 +53,21 @@ jobs:
           if ("${{ github.event_name }}" -eq "release") {
             $tag = "${{ github.event.release.tag_name }}"
             $fullDownload = "1"
+            $channel = if ("${{ github.event.release.prerelease }}" -eq "true") { "beta" } else { "stable" }
           } else {
             $tag = "${{ inputs.release_tag }}"
             $fullDownload = if ("${{ inputs.full_download }}" -eq "true") { "1" } else { "0" }
+            $channel = "${{ inputs.channel }}"
           }
 
           "OPENDRSAI_RELEASE_BASE_URL=https://download-opendrsai.ihep.ac.cn/releases/$tag/windows" >> $env:GITHUB_ENV
-          "OPENDRSAI_RELEASE_METADATA_BASE_URL=https://github.com/$env:OPENDRSAI_RELEASE_REPOSITORY/releases/download/$tag" >> $env:GITHUB_ENV
-          "OPENDRSAI_UPDATE_MANIFEST_URL=https://download-opendrsai.ihep.ac.cn/channels/beta/latest-windows.json" >> $env:GITHUB_ENV
+          "OPENDRSAI_RELEASE_METADATA_BASE_URL=https://download-opendrsai.ihep.ac.cn/releases/$tag/windows" >> $env:GITHUB_ENV
+          "OPENDRSAI_RELEASE_SUMMARY_URL=https://download-opendrsai.ihep.ac.cn/releases/$tag/windows/release-summary-$channel.json" >> $env:GITHUB_ENV
+          "OPENDRSAI_UPDATE_MANIFEST_URL=https://download-opendrsai.ihep.ac.cn/channels/$channel/latest-windows.json" >> $env:GITHUB_ENV
           "VERIFY_PUBLIC_RELEASE_DOWNLOAD=$fullDownload" >> $env:GITHUB_ENV
 
       - name: Verify public Windows release
         env:
           EXPECTED_WINDOWS_SIGNER_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
           EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_CERTIFICATE_SUBJECT }}
-        run: npm run verify:public-release
+        run: node --use-system-ca scripts/verify-public-runtime-release.mjs

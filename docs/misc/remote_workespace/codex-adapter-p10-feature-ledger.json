@@ -1,5 +1,7 @@
 {
   "schema": "opendrsai.codex-adapter-p10.ledger.v1",
+  "status": "historical_superseded",
+  "supersededBy": "docs/remote_workespace/codex-adapter-p10r-feature-ledger.json",
   "total": 60,
   "generatedAt": "2026-08-12T13:53:40.535Z",
   "totals": {

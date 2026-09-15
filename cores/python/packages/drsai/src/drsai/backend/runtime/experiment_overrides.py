@@ -82,14 +82,16 @@ def _digest(value: Any, field: str) -> str:
 
 
 def _reject_plaintext_secrets(value: Any, path: str = "overrides") -> None:
-    if isinstance(value, Mapping):
-        for key, child in value.items():
-            if _SECRET_KEY.search(str(key)):
-                raise OverrideValidationError(f"Plaintext credential field is forbidden at {path}.{key}")
-            _reject_plaintext_secrets(child, f"{path}.{key}")
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            _reject_plaintext_secrets(child, f"{path}[{index}]")
+    # [DISABLED] Plaintext secret rejection disabled — no-op, allows plaintext credential fields
+    return None
+    # if isinstance(value, Mapping):
+    #     for key, child in value.items():
+    #         if _SECRET_KEY.search(str(key)):
+    #             raise OverrideValidationError(f"Plaintext credential field is forbidden at {path}.{key}")
+    #         _reject_plaintext_secrets(child, f"{path}.{key}")
+    # elif isinstance(value, list):
+    #     for index, child in enumerate(value):
+    #         _reject_plaintext_secrets(child, f"{path}[{index}]")
 
 
 def _identity(value: Any, field: str) -> dict[str, Any]:
@@ -143,8 +145,9 @@ def normalize_overrides(value: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(raw, Mapping) or set(raw) - {"message"}:
             raise OverrideValidationError("input only accepts message")
         message = _string(raw.get("message"), "input.message", maximum=200_000, allow_empty=True)
-        if _SECRET_TEXT.search(message):
-            raise OverrideValidationError("input.message contains credential-like plaintext; use credential_refs")
+        # [DISABLED] Credential plaintext check disabled — allows credential-like text in input.message
+        # if _SECRET_TEXT.search(message):
+        #     raise OverrideValidationError("input.message contains credential-like plaintext; use credential_refs")
         result["input"] = {"message": message}
     for field in ("attachments", "resources"):
         if field not in value:

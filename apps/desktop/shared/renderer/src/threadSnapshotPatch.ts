@@ -40,8 +40,8 @@ export function decodeThreadSnapshotPatchEvent(value: unknown): DesktopThreadSna
     // All non-text fields were bounded above. Avoid serializing a large delta
     // a second time on the hot path; four UTF-8 bytes per UTF-16 code unit is
     // a safe upper bound.
-    if ((patch.delta as { text: string }).text.length * 4 > 16 * 1024 * 1024) throw incompatible();
-  } else if (encodedSize(value) > 16 * 1024 * 1024) throw incompatible();
+    if ((patch.delta as { text: string }).text.length * 4 > 4 * 1024 * 1024) throw incompatible();
+  } else if (encodedSize(value) > 4 * 1024 * 1024) throw incompatible();
   return value as DesktopThreadSnapshotPatchEvent;
 }
 
@@ -56,7 +56,7 @@ function isMessageSnapshot(value: unknown, depth: number): boolean {
   return typeof message.id === "string" && Boolean(message.id)
     && (message.role === "user" || message.role === "assistant" || message.role === "system")
     && typeof message.content === "string"
-    && message.content.length <= 8 * 1024 * 1024
+    && message.content.length <= 2 * 1024 * 1024
     && boundedTree(message, depth + 1);
 }
 
@@ -172,6 +172,19 @@ function applyItemDelta(
     }
     if (kind.startsWith("subtask.") && part.kind === "subtask") {
       matched = true;
+      if (kind === "subtask.reasoning.append") {
+        const segmentId = patch.delta.segmentId || `${patch.itemId}:reasoning`;
+        const segments = part.reasoningSegments ?? [];
+        const segmentIndex = segments.findIndex((segment) => segment.id === segmentId);
+        const updatedSegments = segmentIndex >= 0
+          ? segments.map((segment, candidate) => candidate === segmentIndex
+            ? { ...segment, text: `${segment.text}${patch.delta.text}` } : segment)
+          : [...segments, { id: segmentId, text: patch.delta.text, status: "running" as const }];
+        return { ...part, reasoningSegments: updatedSegments };
+      }
+      if (kind === "subtask.markdown.append") {
+        return { ...part, markdownSummary: `${part.markdownSummary ?? ""}${patch.delta.text}` };
+      }
       return { ...part, summary: `${part.summary || ""}${patch.delta.text}` };
     }
     return part;

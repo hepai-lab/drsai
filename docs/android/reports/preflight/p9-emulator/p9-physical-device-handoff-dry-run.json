@@ -1,12 +1,12 @@
 {
   "artifacts": {
     "app_apk": {
-      "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\debug\\OpenDrSai-Android-v1.5.6.apk",
-      "sha256": "2b22e11b5c6e4c790b5cd3cb00d4822afb3f418f76c1b9ae5708072c22bf0c24"
+      "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\debug\\OpenDrSai-Android-v1.5.7.apk",
+      "sha256": "9ec66dc4d64b9de90350a76799d895c6144c1fbb902151b72058aef6f8daaaa8"
     },
     "test_apk": {
       "path": "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\androidTest\\debug\\app-debug-androidTest.apk",
-      "sha256": "1b17ead9b8f0354f5da6635eb2d8188bdff327cc9601cb6d00d96cb9a2a448e5"
+      "sha256": "7210e730d0c3da21b11be167c376359bcf4aa220a15ffa9d5a2666bae46f848b"
     }
   },
   "device_requirements": {
@@ -29,7 +29,7 @@
     "--adb",
     "C:\\Users\\win11\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
     "--app-apk",
-    "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\debug\\OpenDrSai-Android-v1.5.6.apk",
+    "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\debug\\OpenDrSai-Android-v1.5.7.apk",
     "--test-apk",
     "C:\\Users\\win11\\VSProjects\\drsai\\apps\\android\\app\\build\\outputs\\apk\\androidTest\\debug\\app-debug-androidTest.apk",
     "--output",

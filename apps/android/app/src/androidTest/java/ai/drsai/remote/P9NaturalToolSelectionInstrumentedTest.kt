@@ -17,8 +17,10 @@ import ai.drsai.remote.data.MIGRATION_11_12
 import ai.drsai.remote.data.MIGRATION_12_13
 import ai.drsai.remote.data.MIGRATION_13_14
 import ai.drsai.remote.data.MIGRATION_14_15
+import ai.drsai.remote.data.MIGRATION_15_16
 import ai.drsai.remote.data.ModelProviderRepository
 import ai.drsai.remote.data.ModelProviderStore
+import ai.drsai.remote.data.ModelInfo
 import ai.drsai.remote.data.OidcClient
 import ai.drsai.remote.data.SecureTokenStore
 import ai.drsai.remote.runtime.device.SafeDeviceInfoProvider
@@ -101,23 +103,41 @@ class P9NaturalToolSelectionInstrumentedTest {
         val attemptsPerCase = arguments.getString(ARG_ATTEMPTS)?.toIntOrNull()
             ?: suite.getInt("minimum_attempts_per_case")
         val toolLimit = arguments.getString(ARG_TOOL_LIMIT)?.toIntOrNull()
-        assertTrue(attemptsPerCase >= if (caseFilter == null && toolLimit == null) 3 else 1)
+        val p10Profile = arguments.getString(ARG_PROFILE) == PROFILE_P10
+        assertTrue(attemptsPerCase >= if (caseFilter == null && toolLimit == null && !p10Profile) 3 else 1)
 
         val database = Room.databaseBuilder(context, ChatDatabase::class.java, "opendrsai.db")
             .addMigrations(
                 MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                 MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
                 MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
-                MIGRATION_13_14, MIGRATION_14_15,
+                MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
             )
             .build()
         val runtime = PythonRuntimeClient(context, idleTimeoutMs = -1)
+        var injectedCredential: Triple<ModelProviderStore, String, String?>? = null
         try {
             val credentials = ModelProviderStore(context)
             val repository = ModelProviderRepository(
                 database.modelProviderDao(), credentials, credentials::providers,
             )
             repository.ensureBuiltIns(BuildConfig.MODEL_BASE_URL)
+            val injectedApiKey = arguments.getString(ARG_API_KEY)?.takeIf(String::isNotBlank)
+            if (p10Profile && injectedApiKey != null) {
+                val previous = credentials.apiKey("zhizengzeng")
+                repository.save(
+                    providerId = "zhizengzeng",
+                    presetId = "zhizengzeng",
+                    displayName = "智增增",
+                    baseUrl = "https://api.zhizengzeng.com/v1",
+                    wireApi = "openai",
+                    apiKey = injectedApiKey,
+                    models = listOf("deepseek-v4-flash", "deepseek-v4-pro").map { upstream ->
+                        ModelInfo("", upstream, tools = true, providerId = "zhizengzeng", upstreamId = upstream)
+                    },
+                )
+                injectedCredential = Triple(credentials, "zhizengzeng", previous)
+            }
             val (providers, models) = repository.snapshot()
             val requestedModel = InstrumentationRegistry.getArguments().getString(ARG_MODEL)
                 ?.takeIf(String::isNotBlank) ?: DEFAULT_MODEL
@@ -277,6 +297,9 @@ class P9NaturalToolSelectionInstrumentedTest {
             assertEquals(selectedCases.size * attemptsPerCase, observations.length())
             assertTrue(output.isFile && output.length() > 0)
         } finally {
+            injectedCredential?.let { (store, providerId, previous) ->
+                if (previous.isNullOrBlank()) store.deleteApiKey(providerId) else store.saveApiKey(providerId, previous)
+            }
             runtime.close()
             database.close()
         }
@@ -410,6 +433,9 @@ class P9NaturalToolSelectionInstrumentedTest {
         private const val ARG_CASE = "p9Case"
         private const val ARG_ATTEMPTS = "p9Attempts"
         private const val ARG_TOOL_LIMIT = "p9ToolLimit"
+        private const val ARG_PROFILE = "acceptanceProfile"
+        private const val ARG_API_KEY = "acceptanceApiKey"
+        private const val PROFILE_P10 = "p10"
         private const val DEFAULT_MODEL = "deepseek-v4-flash"
         private const val TEMPERATURE = 0.0
         private const val FIXTURE = "p9-natural-tool-selection-v1.json"

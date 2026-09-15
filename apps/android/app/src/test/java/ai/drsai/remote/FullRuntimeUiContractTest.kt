@@ -11,21 +11,24 @@ class FullRuntimeUiContractTest {
     @Test fun localAgentAndUiNeverAdvertiseLiteOrUnverifiedDesktopParity() {
         assertFalse(BuildConfig.DESKTOP_AGENT_PARITY_COMPLETE)
         assertTrue(DEFAULT_AGENT.description.contains("Android Agent Runtime Preview"))
-        assertTrue(DEFAULT_AGENT.description.contains("Desktop 能力对等尚未完成"))
+        assertTrue(DEFAULT_AGENT.description.contains("Desktop capability parity is not complete"))
         assertFalse(DEFAULT_AGENT.description.contains("Android Full Agent Runtime"))
-        assertFalse(DEFAULT_AGENT.description.contains("轻量智能 Agent"))
+        assertFalse(DEFAULT_AGENT.description.contains("Lite Agent"))
 
         val models = source("src/main/java/ai/drsai/remote/data/Models.kt")
         val ui = source("src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt")
+        val strings = source("src/main/res/values/strings.xml")
         val build = source("build.gradle.kts")
         assertTrue(build.contains("buildConfigField(\"boolean\", \"DESKTOP_AGENT_PARITY_COMPLETE\", desktopAgentParityComplete.toString())"))
         assertFalse(build.contains("buildConfigField(\"boolean\", \"DESKTOP_AGENT_PARITY_COMPLETE\", \"true\")"))
         assertTrue(build.contains("p9AcceptanceItems.all"))
         assertFalse(models.contains("运行在 Android 本机的轻量智能 Agent"))
-        assertTrue(ui.contains("执行路由"))
+        assertTrue(ui.contains("R.string.diagnostic_route"))
         assertTrue(ui.contains("Android Agent Runtime Preview · Desktop parity incomplete"))
-        assertTrue(ui.contains("Full Runtime 脱敏诊断已复制"))
-        assertTrue(ui.contains("重试绑定"))
+        assertTrue(ui.contains("R.string.feedback_bundle_copied"))
+        assertTrue(ui.contains("R.string.retry_binding"))
+        assertTrue(strings.contains("脱敏反馈包已复制"))
+        assertTrue(strings.contains("重试绑定"))
     }
 
     @Test fun exportedDiagnosticProvesFullRuntimeAndNoKotlinFallback() {
@@ -51,6 +54,8 @@ class FullRuntimeUiContractTest {
             capabilityManifestSha256 = "c".repeat(64),
             hostPortProtocolVersion = "p9-host-port-v1",
             modelToolSnapshotVersion = "p9-model-tools-v1",
+            activeRunId = "run-123",
+            errorId = "request-456",
         ).exportText()
 
         assertTrue(text.contains("build_enabled=true"))
@@ -69,6 +74,21 @@ class FullRuntimeUiContractTest {
         assertTrue(text.contains("capability_manifest_version=p9-capabilities-v1"))
         assertTrue(text.contains("host_port_protocol_version=p9-host-port-v1"))
         assertTrue(text.contains("model_tool_snapshot_version=p9-model-tools-v1"))
+        assertTrue(text.contains("run_id=run-123"))
+        assertTrue(text.contains("error_id=request-456"))
+    }
+
+    @Test fun exportedDiagnosticRedactsSecretsBeforeCopyOrShare() {
+        val secret = "sk-p10-diagnostic-secret-canary"
+        val text = FullRuntimeDiagnosticUi(
+            bindReason = "Authorization: Bearer $secret api_key=$secret",
+            activeRunId = "run-safe",
+            errorId = "err-safe",
+        ).exportText()
+        assertFalse(text.contains(secret))
+        assertFalse(text.contains("Bearer "))
+        assertTrue(text.contains("run_id=run-safe"))
+        assertTrue(text.contains("error_id=err-safe"))
     }
 
     private fun source(relative: String): String {

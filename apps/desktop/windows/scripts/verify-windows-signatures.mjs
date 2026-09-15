@@ -17,7 +17,7 @@ const temporaryRoot = mkdtempSync(join(tmpdir(), "opendrsai-signatures-"));
 const runtimeExecutable = join(temporaryRoot, "OpenDrSai.exe");
 let temporaryRootRemoved = false;
 process.once("exit", cleanupTemporaryRoot);
-const artifacts = [join(releaseDir, "bootstrapper", "OpenDrSai-Windows-Installer-x64.msi")];
+const artifacts = [join(releaseDir, "bootstrapper", `OpenDrSai-Windows-v${packageJson.version}-Installer-x64.msi`)];
 const failures = [];
 if (existsSync(runtimePath)) {
   extractRuntimeExecutable(runtimePath, runtimeExecutable);

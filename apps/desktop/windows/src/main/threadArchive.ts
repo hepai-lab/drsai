@@ -1,3 +1,5 @@
+import { RemoteProtocolError } from "../../../shared/api/remoteSshProtocol";
+import { runtimeSessionIdForLookup } from "../../../shared/api/threadSidebarCatalog";
 import { connectRuntimeClientForWorkspace } from "./runtimeClient";
 import { listThreads, updateThread } from "./threads";
 import type { DesktopThread, UpdateThreadRequest } from "../shared/desktopApi";
@@ -10,17 +12,50 @@ export interface ThreadArchivePort {
   reportRuntimeSyncFailure(threadId: string, error: unknown): void;
 }
 
+/**
+ * Missing run/session bindings are expected for legacy, platform, or restarted
+ * local history. Archive must treat them as "nothing to sync", not as failures.
+ */
+export function isMissingRuntimeBindingError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  if (
+    message.includes("run not found")
+    || message.includes("session not found")
+    || message.includes("run was not found")
+    || message.includes("session was not found")
+  ) {
+    return true;
+  }
+  if (error instanceof RemoteProtocolError) {
+    if (error.status === 404) return true;
+    const code = error.code.toLowerCase();
+    return code === "run_not_found"
+      || code === "session_not_found"
+      || code === "http_404"
+      || code.endsWith("_not_found");
+  }
+  return false;
+}
+
 const defaultThreadArchivePort: ThreadArchivePort = {
   listThreads,
   updateThread,
   async resolveRuntimeSessionId(thread) {
-    if (thread.runtimeSessionId) return thread.runtimeSessionId;
+    const boundSessionId = runtimeSessionIdForLookup(thread);
+    if (boundSessionId) return boundSessionId;
     if (!thread.lastRunId || !thread.workspacePath) return undefined;
     const runtime = await connectRuntimeClientForWorkspace(
       thread.workspacePath,
       thread.execution?.workspaceId,
     );
-    return (await runtime.client.getAgentRun(thread.lastRunId)).session_id;
+    try {
+      return (await runtime.client.getAgentRun(thread.lastRunId)).session_id;
+    } catch (error) {
+      // Same recovery pattern as chat.ts: stale lastRunId must not block archive.
+      if (isMissingRuntimeBindingError(error)) return undefined;
+      throw error;
+    }
   },
   async updateRuntimeSession(thread, sessionId, archived) {
     if (!thread.workspacePath) return;
@@ -28,7 +63,12 @@ const defaultThreadArchivePort: ThreadArchivePort = {
       thread.workspacePath,
       thread.execution?.workspaceId,
     );
-    await runtime.client.updateSession(sessionId, { archived });
+    try {
+      await runtime.client.updateSession(sessionId, { archived });
+    } catch (error) {
+      if (isMissingRuntimeBindingError(error)) return;
+      throw error;
+    }
   },
   reportRuntimeSyncFailure(threadId, error) {
     console.warn(`[thread-archive] Runtime sync failed for ${threadId}; desktop state was preserved.`, error);
@@ -63,6 +103,8 @@ export async function setThreadArchivedWithPort(
     }
     await port.updateRuntimeSession(updated, runtimeSessionId, archived);
   } catch (error) {
+    // Missing run/session bindings are expected for legacy/platform history.
+    if (isMissingRuntimeBindingError(error)) return updated;
     port.reportRuntimeSyncFailure(thread.id, error);
     if (thread.boundAgentId === "my-codex" || thread.archiveSource === "codex") {
       await port.updateThread({

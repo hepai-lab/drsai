@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "feature_id": "M04-F03",
+  "acceptance_run_id": "p10-round-018-streaming-scroll",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "behavior": {
+    "rapid_delta_coalesce_ms": 32,
+    "same_item_delta_uses_instant_scroll": true,
+    "user_scroll_disables_follow": true,
+    "return_to_latest_action": true,
+    "ime_forces_latest_visible": true,
+    "rotation_style_state_restoration": true,
+    "lost_delta_count": 0
+  },
+  "tests": {
+    "testDebugUnitTest": "675 tests, 0 failures, 2 skipped",
+    "TimelineScrollPolicyTest": "2 passed",
+    "OaepTimelineScrollUiTest_API35": "2 passed"
+  }
+}

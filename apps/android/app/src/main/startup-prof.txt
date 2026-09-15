@@ -1,0 +1,13 @@
+# Startup dex layout companion for the P10 baseline profile.
+Lai/drsai/remote/ExternalEntryActivity;
+Lai/drsai/remote/MainActivity;
+Lai/drsai/remote/AppViewModel;
+Lai/drsai/remote/ui/OpenDrSaiAppKt;
+Lai/drsai/remote/**;
+Landroidx/activity/**;
+Landroidx/compose/**;
+Landroidx/lifecycle/**;
+SLai/drsai/remote/**;->**(**)**
+SLandroidx/activity/**;->**(**)**
+SLandroidx/compose/**;->**(**)**
+SLandroidx/lifecycle/**;->**(**)**

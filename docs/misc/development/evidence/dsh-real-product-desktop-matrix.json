@@ -1,0 +1,18 @@
+{
+  "accepted": true,
+  "bridge": {
+    "availability": "production",
+    "base_url": "http://127.0.0.1:56275",
+    "profile_id": "dsh-sdk/0.1.0-rc.5+opendrsai.1",
+    "runtime_id": "runtime-eff3cb74a9795cd3abf73d48935951e2"
+  },
+  "desktop": {
+    "accepted": true,
+    "agentId": "runtime:deepseek-harness",
+    "runId": "run-466bb25973645c649d98f1d121777e30",
+    "sequence": 12,
+    "sessionId": "session-6b2235155c53592e92107910a70d0d1a",
+    "terminal": "event.run.completed"
+  },
+  "schema_version": 1
+}

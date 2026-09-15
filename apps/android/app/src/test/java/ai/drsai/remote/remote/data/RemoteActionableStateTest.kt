@@ -19,8 +19,7 @@ class RemoteActionableStateTest {
         expected.forEach { (lifecycle, action) ->
             val state = requireNotNull(remoteActionableState(lifecycle))
             assertEquals(action, state.action)
-            assertFalse(state.actionLabel.isNullOrBlank())
-            assertFalse(state.reason.contains("http", ignoreCase = true))
+            assertFalse(state.kind == RemoteActionableKind.CUSTOM)
         }
         assertNull(remoteActionableState(RemoteLifecycleState.ONLINE))
         assertEquals(RemoteRecoveryAction.RESUME_ON_COMPUTER,
@@ -28,10 +27,8 @@ class RemoteActionableStateTest {
     }
 
     @Test fun rawExceptionDetailsNeverReachUserMessage() {
-        val message = safeRemoteFailureMessage(IOException("https://internal/token?secret=value"))
-        assertEquals("网络连接失败", message)
-        assertFalse(message.contains("http"))
-        assertFalse(message.contains("secret"))
+        val kind = safeRemoteFailureKind(IOException("https://internal/token?secret=value"))
+        assertEquals(RemoteFailureMessageKind.NETWORK_FAILED, kind)
     }
 
     @Test fun everyGeneratedRelayErrorHasExactlyOneSafeUserAction() {
@@ -44,10 +41,7 @@ class RemoteActionableStateTest {
         )
         val mapped = RelayContractGenerated.ERROR_ACTIONS.map { (code, _) ->
             val state = remoteActionableFailure(RelayHttpException(400, "corr", code))
-            assertFalse(state.title.contains("http", ignoreCase = true))
-            assertFalse(state.reason.contains("token", ignoreCase = true))
-            assertFalse(state.reason.contains("/"))
-            assertFalse(state.actionLabel.isNullOrBlank())
+            assertFalse(state.kind == RemoteActionableKind.CUSTOM)
             state.action
         }.toSet()
         assertEquals(expectedActions, mapped)

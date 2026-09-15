@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "feature_id": "M01-F02",
+  "acceptance_run_id": "p10-round-001-s0",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "p9_accepted": 69,
+  "p9_expected": 72,
+  "p10_accepted_after_this_round": 2,
+  "p10_expected": 60,
+  "desktop_agent_parity_complete": false,
+  "p10_productization_complete": false,
+  "p10_release_candidate_ready": false,
+  "gate_expression": "desktopAgentParityComplete && p10ProductizationComplete",
+  "tests": {
+    "android_p9_p10_ledger_pytest": "4 passed",
+    "P10BuildIdentityContractTest": "passed",
+    "FullRuntimeUiContractTest": "passed"
+  }
+}

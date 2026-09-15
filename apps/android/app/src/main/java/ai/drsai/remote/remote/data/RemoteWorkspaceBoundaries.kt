@@ -45,8 +45,10 @@ data class RemoteApprovalBoundary(
 
 class RemoteFileBoundary(
     private val clientFactory: (RuntimeId) -> RelayWorkspaceOperationsClient,
+    private val resourceClientFactory: (RuntimeId) -> ConversationResourceClient,
 ) {
     fun client(runtimeId: RuntimeId): RelayWorkspaceOperationsClient = clientFactory(runtimeId)
+    fun resources(runtimeId: RuntimeId): ConversationResourceClient = resourceClientFactory(runtimeId)
 }
 
 data class RemotePushBoundary(

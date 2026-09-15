@@ -47,7 +47,11 @@ class AndroidUpdateManager private constructor(private val context: Context) {
     init {
         if (android.os.Build.VERSION.SDK_INT >= 26) {
             context.getSystemService(NotificationManager::class.java)
-                ?.createNotificationChannel(NotificationChannel("updates", "应用更新", NotificationManager.IMPORTANCE_LOW))
+                ?.createNotificationChannel(NotificationChannel(
+                    "updates",
+                    context.getString(ai.drsai.remote.R.string.app_updates_channel),
+                    NotificationManager.IMPORTANCE_LOW,
+                ))
         }
         restorePrepared()
     }
@@ -150,8 +154,8 @@ class AndroidUpdateManager private constructor(private val context: Context) {
     private fun notifyProgress(update: AndroidApkUpdate, progress: Int) {
         val notification = NotificationCompat.Builder(context, "updates")
             .setSmallIcon(ai.drsai.remote.R.drawable.ic_launcher_foreground)
-            .setContentTitle("OpenDrSai 更新")
-            .setContentText("正在下载 ${update.version}")
+            .setContentTitle(context.getString(ai.drsai.remote.R.string.update_notification_title))
+            .setContentText(context.getString(ai.drsai.remote.R.string.downloading_version, update.version))
             .setProgress(100, progress, false).setOngoing(true).build()
         runCatching { androidx.core.app.NotificationManagerCompat.from(context).notify(UPDATE_NOTIFICATION_ID, notification) }
     }
@@ -160,8 +164,8 @@ class AndroidUpdateManager private constructor(private val context: Context) {
     private fun notifyAvailable(update: AndroidApkUpdate) {
         val notification = NotificationCompat.Builder(context, "updates")
             .setSmallIcon(ai.drsai.remote.R.drawable.ic_launcher_foreground)
-            .setContentTitle("OpenDrSai ${update.version} 可更新")
-            .setContentText("点击打开应用检查并安装")
+            .setContentTitle(context.getString(ai.drsai.remote.R.string.update_available_title, update.version))
+            .setContentText(context.getString(ai.drsai.remote.R.string.open_to_install_update))
             .setContentIntent(openAppPendingIntent())
             .setAutoCancel(true)
             .build()
@@ -175,8 +179,8 @@ class AndroidUpdateManager private constructor(private val context: Context) {
     private fun notifyReady(update: AndroidApkUpdate) {
         val notification = NotificationCompat.Builder(context, "updates")
             .setSmallIcon(ai.drsai.remote.R.drawable.ic_launcher_foreground)
-            .setContentTitle("OpenDrSai 更新已准备好")
-            .setContentText("${update.version} 已下载，打开应用完成安装")
+            .setContentTitle(context.getString(ai.drsai.remote.R.string.update_ready_title))
+            .setContentText(context.getString(ai.drsai.remote.R.string.version_downloaded, update.version))
             .setContentIntent(openAppPendingIntent())
             .setAutoCancel(true).build()
         runCatching { androidx.core.app.NotificationManagerCompat.from(context).notify(UPDATE_NOTIFICATION_ID, notification) }

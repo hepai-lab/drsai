@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "feature_id": "M05-F03",
+  "acceptance_run_id": "p10-round-024-authorization-scope",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "allow_once_is_default_and_non_persistent": true,
+    "session_grant_scoped_by_account_organization_runtime_session_tool": true,
+    "decline_and_expiry_are_terminal": true,
+    "grants_are_visible_after_room_reconstruction": true,
+    "grants_are_user_revocable": true,
+    "revoked_grant_cannot_authorize_next_call": true
+  },
+  "tests": {
+    "testDebugUnitTest": "682 tests, 0 failures, 2 skipped",
+    "LocalStoreTest_and_MainInterfaceTest_API35": "57 passed",
+    "process_style_database_reconstruction_API35": "1 passed",
+    "migration_11_to_15_recovery_fixture": "passed"
+  }
+}

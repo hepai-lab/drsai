@@ -10,7 +10,7 @@ const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
 const buildLabel = String(process.env.OPENDRSAI_BUILD_LABEL || "").trim();
 const runtimeArchiveName = `OpenDrSai-Windows-v${packageJson.version}-x64.zip`;
 const artifacts = [
-  join("bootstrapper", "OpenDrSai-Windows-Installer-x64.msi"),
+  join("bootstrapper", `OpenDrSai-Windows-v${packageJson.version}-Installer-x64.msi`),
   join("bootstrapper", runtimeArchiveName),
   "latest-windows.json",
 ];
