@@ -1080,6 +1080,9 @@ For more info: https://note.ihep.ac.cn/s/Sc5E2Bw1b
               await switchSession(sid)
             }
 
+            // Close SSH panel so chat input reappears
+            setRemotePanelOpen(false)
+
             showSlashOutput(
               `✅ Connected to ${result.remote_hostname} via SSH tunnel` +
               (result.remote_cwd ? `\n   Remote workdir: ${result.remote_cwd}` : ''),
@@ -1120,6 +1123,9 @@ For more info: https://note.ihep.ac.cn/s/Sc5E2Bw1b
             if (sid) {
               await switchSession(sid)
             }
+
+            // Close SSH panel so chat input reappears
+            setRemotePanelOpen(false)
 
             showSlashOutput('✅ Switched back to local gateway', 3000)
           } catch (err) {
