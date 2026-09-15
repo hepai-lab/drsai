@@ -79,6 +79,7 @@ import { supportsFullAgentPrimaryRuntime, supportsImageGenerationModel } from ".
 import { getAgentModelOptions, getImageGenerationModelOptions } from "./agentModelOptions";
 import { formatUpdateStatus } from "./statusFormatting";
 import { normalizeWorkspaceSortMode, sortWorkspacesForSidebar, type WorkspaceSortMode } from "./workspaceOrdering";
+import { describeMissingWorkspacePreview, isMissingWorkspacePreview, loadWorkspacePreview } from "./workspacePreview";
 import { LoginScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
 import { deriveOperationalState, shouldShowOperationalStateBar, type OperationalStateFacts } from "@shared/operationalState";
@@ -2372,9 +2373,21 @@ function AuthenticatedApp({
     }
     setSelectedChatModel(model);
     if (selectedChatAgentId) {
+      // A remote worker owns its model namespace: its options carry a synthetic
+      // ``remote:<agentId>`` provider. Persist that ref so the composer can
+      // resolve the selection back to the remote option after a re-render or a
+      // thread restore. Local agents keep the legacy alias-only behaviour:
+      // their authoritative provider comes from the Agent model policy.
+      const isRemoteSelection = selectedChatAgent?.source === "remote";
       setAgentConfigurations((current) => ({
         ...current,
-        [selectedChatAgentId]: { ...current[selectedChatAgentId], model },
+        [selectedChatAgentId]: {
+          ...current[selectedChatAgentId],
+          model,
+          ...(isRemoteSelection && providerId
+            ? { modelRef: { provider_id: providerId, model_id: model } }
+            : {}),
+        },
       }));
     }
   }
@@ -3166,10 +3179,16 @@ function AuthenticatedApp({
           defaultPlanMode={defaultPlanMode}
           selectedAgentId={selectedChatAgentId ?? undefined}
           selectedAgentName={selectedChatAgentName}
+          selectedAgentSource={selectedChatAgent?.source}
           selectedModelName={selectedChatModel ?? undefined}
           selectedModelProviderId={selectedChatAgentId === myDrSaiAgentModelPolicy?.agent_id
             ? myDrSaiAgentModelPolicy?.effective_ref?.provider_id
-            : selectedChatAgentId ? agentConfigurations[selectedChatAgentId]?.modelRef?.provider_id : undefined}
+            : selectedChatAgent?.source === "remote"
+              // Remote worker options declare a synthetic ``remote:<agentId>``
+              // provider. Without it the composer cannot disambiguate a remote
+              // alias that collides with a local catalog entry.
+              ? `remote:${selectedChatAgent.id}`
+              : selectedChatAgentId ? agentConfigurations[selectedChatAgentId]?.modelRef?.provider_id : undefined}
           selectedImageGenerationModelName={selectedImageGenerationModelRef?.model_id}
           selectedImageGenerationProviderId={selectedImageGenerationModelRef?.provider_id}
           agentOptions={availableChatAgents}
@@ -3653,8 +3672,11 @@ function AuthenticatedApp({
     );
 
   const getPreviewContent = useCallback((preview: WorkspaceFilePreview): string => {
+    // A deleted/moved file resolves to a placeholder preview; say that instead of
+    // rendering an empty pane that reads like a 0-byte file.
+    if (isMissingWorkspacePreview(preview)) return describeMissingWorkspacePreview(language);
     return preview.content ?? preview.message ?? `${preview.kind} preview is metadata-only.`;
-  }, []);
+  }, [language]);
 
   const loadForkConflictContent = useCallback(
     async (
@@ -3670,16 +3692,14 @@ function AuthenticatedApp({
           path: file.path,
           maxBytes: 80_000,
         }),
-        desktopApi.previewWorkspaceFile({
-          workspacePath: fork.sourceWorkspacePath,
-          path: file.path,
-          maxBytes: 80_000,
-        }),
-        desktopApi.previewWorkspaceFile({
-          workspacePath: fork.worktreePath,
-          path: file.path,
-          maxBytes: 80_000,
-        }),
+        loadWorkspacePreview(
+          { workspacePath: fork.sourceWorkspacePath, path: file.path, maxBytes: 80_000 },
+          { cacheMissing: false },
+        ),
+        loadWorkspacePreview(
+          { workspacePath: fork.worktreePath, path: file.path, maxBytes: 80_000 },
+          { cacheMissing: false },
+        ),
         desktopApi.getWorkspaceGitDiff({
           workspacePath: fork.sourceWorkspacePath,
           path: file.path,
@@ -5607,11 +5627,16 @@ function ResultsCenterView({
     setLocalEditScope(null);
     setPreviewState({ artifact, state: "loading", message: zh ? "正在准备预览…" : "Preparing preview…" });
     try {
-      const preview = await desktopApi.previewWorkspaceFile({
-        workspacePath: artifact.sourceWorkspacePath,
-        path: artifact.path,
-        maxBytes: 500_000,
-      });
+      const preview = await loadWorkspacePreview(
+        { workspacePath: artifact.sourceWorkspacePath, path: artifact.path, maxBytes: 500_000 },
+        { cacheMissing: false },
+      );
+      // The artifact was deleted/moved after it was recorded: report it as a failed
+      // preview so the localized-edit and chart actions stay hidden.
+      if (isMissingWorkspacePreview(preview)) {
+        setPreviewState({ artifact, state: "failed", message: describeMissingWorkspacePreview(zh ? "zh" : "en") });
+        return;
+      }
       if (preview.kind === "table" && preview.columns && preview.columns.length >= 2) {
         const anomalyColumn = preview.columns.find((column) => /anomaly|异常/i.test(column)) || "";
         const yColumn = preview.columns.find((column, index) => index > 0 && column !== anomalyColumn) || preview.columns[1];
@@ -5679,9 +5704,25 @@ function ResultsCenterView({
     setCompareState({ artifact, state: "loading", message: zh ? "正在读取原版和修改版…" : "Loading original and edited versions…" });
     try {
       const [source, edited] = await Promise.all([
-        desktopApi.previewWorkspaceFile({ workspacePath: artifact.sourceWorkspacePath, path: artifact.editLineage.sourcePath, maxBytes: 500_000 }),
-        desktopApi.previewWorkspaceFile({ workspacePath: artifact.sourceWorkspacePath, path: artifact.path, maxBytes: 500_000 }),
+        loadWorkspacePreview(
+          { workspacePath: artifact.sourceWorkspacePath, path: artifact.editLineage.sourcePath, maxBytes: 500_000 },
+          { cacheMissing: false },
+        ),
+        loadWorkspacePreview(
+          { workspacePath: artifact.sourceWorkspacePath, path: artifact.path, maxBytes: 500_000 },
+          { cacheMissing: false },
+        ),
       ]);
+      if (isMissingWorkspacePreview(source) || isMissingWorkspacePreview(edited)) {
+        setCompareState({
+          artifact,
+          state: "failed",
+          message: zh
+            ? "原始文件或修改版已被删除、移动或重命名，无法比较。"
+            : "The original or the edited file was deleted, moved or renamed, so they cannot be compared.",
+        });
+        return;
+      }
       setCompareState({ artifact, state: "ready", source, edited, message: zh ? "新旧版本已就绪" : "Comparison ready" });
     } catch (caught) {
       setCompareState({ artifact, state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
@@ -5737,7 +5778,13 @@ function ResultsCenterView({
     const sourceTask = tasks.find((task) => task.id === artifact.sourceTaskId);
     if (!sourceTask?.deliverySummary) return;
     const sourcePath = artifact.chartQuality.sourcePath;
-    const sourcePreview = await desktopApi.previewWorkspaceFile({ workspacePath: artifact.sourceWorkspacePath, path: sourcePath, maxBytes: 250_000 }).catch(() => null);
+    // A deleted source file now resolves to a `missing` placeholder instead of
+    // rejecting with ENOENT. `content` is empty either way, so the insights are
+    // built from an empty string exactly as they were before.
+    const sourcePreview = await loadWorkspacePreview(
+      { workspacePath: artifact.sourceWorkspacePath, path: sourcePath, maxBytes: 250_000 },
+      { cacheMissing: false },
+    ).catch(() => null);
     const insights = buildAnalysisRouteInsights(sourcePreview?.content || "", artifact.chartQuality, zh);
     const routeGroupId = artifact.analysisRoute?.routeGroupId || `analysis-${reviewFingerprint(sourcePath)}`;
     const inputFingerprint = reviewFingerprint([

@@ -8906,6 +8906,21 @@ button.structured-activity-detail:hover {
   padding: 2px 0 0;
 }
 
+/*
+ * A resource that is known to be gone (deleted/moved): the markup already drops
+ * the click handler for it, so the card only has to stop looking openable.
+ */
+.structured-artifact-card[data-resource-state="deleted"] .structured-artifact strong,
+.structured-artifact-card[data-resource-state="deleted"] .structured-artifact em,
+.structured-citation[data-resource-state="deleted"] .structured-citation-open strong {
+  color: var(--app-text-secondary);
+}
+
+.structured-artifact-card[data-resource-state="deleted"] .structured-artifact,
+.structured-citation[data-resource-state="deleted"] .structured-citation-open {
+  cursor: default;
+}
+
 .structured-artifact-image {
   display: block;
   margin: 0;
@@ -15099,7 +15114,8 @@ button.structured-activity-detail:hover {
 }
 
 .files-preview-empty,
-.files-preview-metadata {
+.files-preview-metadata,
+.files-preview-missing {
   display: flex;
   min-height: 100%;
   align-items: center;
@@ -15112,18 +15128,41 @@ button.structured-activity-detail:hover {
 }
 
 .files-preview-empty h3,
-.files-preview-metadata h3 {
+.files-preview-metadata h3,
+.files-preview-missing h3 {
   margin: 0;
   color: var(--app-text-primary);
   font-size: 15px;
 }
 
 .files-preview-empty p,
-.files-preview-metadata p {
+.files-preview-metadata p,
+.files-preview-missing p {
   margin: 0;
   max-width: 280px;
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* The path is the only piece of metadata left worth showing for a file that is
+   gone, so it gets its own block instead of the usual metadata grid. */
+.files-preview-missing dl {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  max-width: 320px;
+  font-size: 11px;
+}
+
+.files-preview-missing dt {
+  color: var(--app-text-secondary);
+}
+
+.files-preview-missing dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  color: var(--app-text-primary);
 }
 
 .files-preview-markdown pre,

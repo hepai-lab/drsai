@@ -228,7 +228,10 @@ class DesktopAgentBackend:
     @staticmethod
     def _input_task(context: RuntimeRunContext, prompt: str) -> Any:
         """Encode prompt plus any attached resources the way the Agent expects."""
-        from drsai.backend.runtime.input_resources import autogen_input_task
+        from drsai.backend.runtime.input_resources import (
+            autogen_input_task,
+            input_resource_error_message,
+        )
 
         try:
             return autogen_input_task(
@@ -240,7 +243,7 @@ class DesktopAgentBackend:
         except (OSError, ValueError) as exc:
             raise RuntimeExecutionError(
                 "input_resources_invalid",
-                "An input resource is unavailable, changed, or cannot be decoded.",
+                input_resource_error_message(exc),
             ) from exc
 
     def _stream(

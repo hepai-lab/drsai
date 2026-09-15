@@ -247,6 +247,66 @@ def test_catalog_reads_agent_config_model_aliases(monkeypatch):
     assert worker["defult_config_name"] == "hepai/deepseek-v4-flash"
 
 
+def test_catalog_reads_agent_config_per_model_config_objects(monkeypatch):
+    """The real DDF contract: ``agent_config`` values are per-model config dicts.
+
+    Regression for the Desktop model menu showing only the default alias: the
+    parser used to require a plain ``str`` value and silently skipped every
+    alias when the worker sent the full config object.
+    """
+    payload = _build_catalog(
+        monkeypatch,
+        rows=[{"name": "DrSai iPanda"}],
+        infos={"DrSai iPanda": {
+            "name": "DrSai iPanda",
+            "description": "Assistant",
+            "defult_config_name": "hepai/deepseek-v4-flash",
+            "agent_config": {
+                "hepai/deepseek-v4-pro": {
+                    "model": "deepseek-ai/deepseek-v4-pro",
+                    "token_limit": 1048576,
+                    "max_tokens": 64000,
+                    "client_type": "openai",
+                    "vision": False,
+                },
+                "hepai/deepseek-v4-flash": {
+                    "model": "deepseek-ai/deepseek-v4-flash",
+                    "token_limit": 10000000,
+                    "max_tokens": 64000,
+                    "client_type": "openai",
+                    "vision": False,
+                },
+            },
+        }},
+    )
+    worker = payload["workers"][0]
+    configs = worker["model_configs"]
+    assert [item["name"] for item in configs] == ["hepai/deepseek-v4-pro", "hepai/deepseek-v4-flash"]
+    assert configs[0]["model"] == "deepseek-ai/deepseek-v4-pro"
+    assert configs[1]["model"] == "deepseek-ai/deepseek-v4-flash"
+
+
+def test_catalog_ignores_connection_settings_agent_config(monkeypatch):
+    """A connection-settings ``agent_config`` must not become model options."""
+    payload = _build_catalog(
+        monkeypatch,
+        rows=[{"name": "conn-worker"}],
+        infos={"conn-worker": {
+            "name": "conn-worker",
+            "defult_config_name": "hepai/solo",
+            "agent_config": {
+                "api_key": "sk-should-not-leak",
+                "url": "https://ddf.example/apiv2",
+                "name": "conn-worker",
+                "defult_config_name": "hepai/solo",
+            },
+        }},
+    )
+    worker = payload["workers"][0]
+    # Only the declared default survives; no api_key/url pseudo-models.
+    assert [item["name"] for item in worker["model_configs"]] == ["hepai/solo"]
+
+
 def test_catalog_falls_back_to_default_model_only(monkeypatch):
     """A worker that only declares a default still shows it as a model option."""
     payload = _build_catalog(

@@ -23,6 +23,7 @@ import type {
   WorkspaceFilePreview,
 } from "@shared/desktopApi";
 import { FilePreviewer } from "./files/file_previewer/FilePreviewer";
+import { loadWorkspacePreview } from "../workspacePreview";
 
 interface KnowledgeBasePanelProps {
   agentId: string;
@@ -544,11 +545,16 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
     setFilePreviewLoading(true);
     setFilePreviewError(null);
     try {
-      const preview = await desktopApi.previewWorkspaceFile({
-        workspacePath: rootPath,
-        path: relativePath,
-        maxBytes: 220_000,
-      });
+      const preview = await loadWorkspacePreview(
+        {
+          workspacePath: rootPath,
+          path: relativePath,
+          maxBytes: 220_000,
+        },
+        // This is an explicit click on a listed file, so skip the `missing`
+        // cache: the file may have been restored since it was last probed.
+        { cacheMissing: false },
+      );
       setFilePreview(preview);
     } catch (cause) {
       setFilePreview(null);

@@ -75,8 +75,19 @@ def _remote_payloads(metadata: Mapping[str, Any]) -> tuple[tuple[Mapping[str, An
                 size = len(base64.b64decode(encoded, validate=True))
             except Exception as exc:
                 raise RuntimeExecutionError("remote_files_invalid", f"{name or 'Remote file'} has invalid Base64 data.") from exc
+            # Report the cause that actually failed: a missing name, one
+            # oversized file and an oversized total are three different
+            # problems, and collapsing them into one message is what makes a
+            # rejected attachment look unexplained.
+            if not name:
+                raise RuntimeExecutionError("remote_files_invalid", "Each remote file requires a name.")
+            if size > _REMOTE_FILE_MAX_BYTES:
+                raise RuntimeExecutionError(
+                    "remote_file_too_large",
+                    f"{name} exceeds the {_REMOTE_FILE_MAX_BYTES // (1024 * 1024)} MB remote attachment limit.",
+                )
             total += size
-            if not name or size > _REMOTE_FILE_MAX_BYTES or total > _REMOTE_FILE_MAX_BYTES:
+            if total > _REMOTE_FILE_MAX_BYTES:
                 raise RuntimeExecutionError("remote_file_too_large", "Remote attachments must not exceed 10 MB in total.")
             files.append({"name": name, "base64": data, "size": size})
     skills: list[Mapping[str, Any]] = []

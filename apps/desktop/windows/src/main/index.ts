@@ -464,6 +464,8 @@ import {
   listWorkspaceFilesViaGateway,
   analyzeMaterialConsistency,
   analyzeMaterialRoles,
+  buildMissingWorkspacePreview,
+  isWorkspaceFileMissingError,
   queryMaterials,
   previewWorkspaceFile,
   previewWorkspaceFileViaGateway,
@@ -628,6 +630,7 @@ import type {
   WorkspaceCheckpointCreateRequest,
   WorkspaceCheckpointAcceptRequest,
   WorkspaceCheckpointPreviewRequest,
+  WorkspaceFilePreview,
   WorkspaceFilePreviewRequest,
   WorkspaceFileSaveAsRequest,
   WorkspaceFileSaveAsResult,
@@ -4155,6 +4158,51 @@ function isTransientWorkspacePreviewError(error: unknown): boolean {
   );
 }
 
+/**
+ * Turns "the artifact is gone" preview failures into a placeholder preview.
+ *
+ * Electron logs every rejected `ipcMain.handle` as `Error occurred in handler for
+ * ...`, and the renderer's `.catch()` cannot suppress it. So a chat bubble that
+ * still points at a deleted file (or at a file inside a deleted folder) used to
+ * flood the console with ENOENT noise for something that is a normal, expected
+ * state. We resolve those into an explicit `{ missing: true }` preview that the
+ * renderer renders as "file was deleted or moved", and keep an info-level
+ * diagnostic so the event is still visible in an exported diagnostics bundle.
+ *
+ * Returns `null` for every other error, which the caller rethrows so the handler
+ * still rejects as before.
+ */
+function resolveWorkspacePreviewFailure(
+  error: unknown,
+  request: WorkspaceFilePreviewRequest,
+): WorkspaceFilePreview | null {
+  if (!isWorkspaceFileMissingError(error) && !isRemoteFileNotFoundError(error)) return null;
+  const missing = buildMissingWorkspacePreview(request);
+  if (!missing) return null;
+  void desktopDiagnostics.record({
+    module: "workspace",
+    component: "workspace-preview",
+    operation: "workspace.preview.missing",
+    kind: "operation",
+    level: "info",
+    status: "completed",
+    message: "Workspace preview target is missing; returned a placeholder preview.",
+    attributes: { path: missing.relativePath, kind: missing.kind },
+  });
+  return missing;
+}
+
+/**
+ * A remote gateway answered 404 for `GET /v1/workspaces/{id}/file`: the file (or
+ * the workspace) is not there any more, which is the remote equivalent of a
+ * local ENOENT and just as unactionable from the renderer's point of view.
+ */
+function isRemoteFileNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  if (!(error instanceof Error) || error.name !== "RemoteProtocolError") return false;
+  return (error as { status?: unknown }).status === 404;
+}
+
 /** Copy mangled names like `Deck.pptx（介绍）` to a temp `Deck.pptx` so the OS can associate. */
 async function resolveOpenPathForShell(rawPath: string): Promise<string> {
   const canonical = resolveCanonicalExtension(rawPath);
@@ -5298,30 +5346,39 @@ function registerIpc(): void {
     return remoteRoot ? summarizeRemoteWorkspaceFolder(request as WorkspaceFolderSummaryRequest, remoteRoot) : summarizeWorkspaceFolder(request);
   });
   secureHandle("desktop:workspace-file-preview", async (_event, request: WorkspaceFilePreviewRequest) => {
-    // Office/PDF previews need local extractors (and sibling slide PNGs). Avoid
-    // gateway /file entirely so a slow Runtime cannot AbortError the IPC call.
-    if (
-      prefersLocalRichPreview(request?.path)
-      && (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) === "local_or_unknown"
-    ) {
-      return previewWorkspaceFile(request);
-    }
-    // V2: route through gateway when workspaceId is available
-    if (request?.workspaceId) {
-      try {
-        return await withRuntimeClientForWorkspace(
-          request.workspacePath,
-          request.workspaceId,
-          async ({ client }) => previewWorkspaceFileViaGateway(client, request),
-        );
-      } catch (error) {
-        if (!isLocalRuntimeUnavailableError(error) && !isTransientWorkspacePreviewError(error)) throw error;
-        // gateway unavailable / timed out — fall through to local fs
+    try {
+      // Office/PDF previews need local extractors (and sibling slide PNGs). Avoid
+      // gateway /file entirely so a slow Runtime cannot AbortError the IPC call.
+      if (
+        prefersLocalRichPreview(request?.path)
+        && (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) === "local_or_unknown"
+      ) {
+        return await previewWorkspaceFile(request);
       }
+      // V2: route through gateway when workspaceId is available
+      if (request?.workspaceId) {
+        try {
+          return await withRuntimeClientForWorkspace(
+            request.workspacePath,
+            request.workspaceId,
+            async ({ client }) => previewWorkspaceFileViaGateway(client, request),
+          );
+        } catch (error) {
+          if (!isLocalRuntimeUnavailableError(error) && !isTransientWorkspacePreviewError(error)) throw error;
+          // gateway unavailable / timed out — fall through to local fs
+        }
+      }
+      return (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown"
+        ? await previewRemoteWorkspaceFile(request)
+        : await previewWorkspaceFile(request);
+    } catch (error) {
+      // A deleted/moved target resolves into an explicit `{ missing: true }`
+      // preview: Electron logs every rejected handler call and the renderer
+      // cannot suppress that log. Anything else still rejects.
+      const missing = resolveWorkspacePreviewFailure(error, request);
+      if (missing) return missing;
+      throw error;
     }
-    return (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown"
-      ? previewRemoteWorkspaceFile(request)
-      : previewWorkspaceFile(request);
   });
   registerConversationResourceReadIpc(secureHandle as never, (path) => {
     if (process.env.OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN !== "1") shell.showItemInFolder(path);

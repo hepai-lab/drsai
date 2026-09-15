@@ -49,6 +49,7 @@ import type { OaepResourceRef } from "@shared/oaep.generated";
 import { selectInlineArtifactLinks, type InlineArtifactLink, type SelectedInlineArtifactLink } from "../artifactLinkPlugin";
 import { ChatMessageContent } from "./ChatMessageContent";
 import { desktopApi } from "../desktopApi";
+import { loadWorkspacePreview } from "../workspacePreview";
 
 export interface InteractionResponse extends Record<string, unknown> {
   approved?: boolean;
@@ -1210,6 +1211,11 @@ function ArtifactItem({
   const [previewSrc, setPreviewSrc] = useState<string | undefined>(
     part.url?.startsWith("data:image/") ? part.url : undefined,
   );
+  // The bubble keeps pointing at the artifact path after the agent wrote it. If
+  // that file is later deleted (or its folder is), the image probe answers with
+  // `missing: true` and the card switches to the "deleted" state below instead of
+  // silently staying an empty image slot.
+  const [previewMissing, setPreviewMissing] = useState(false);
 
   useEffect(() => {
     if (part.url?.startsWith("data:image/")) {
@@ -1218,12 +1224,18 @@ function ArtifactItem({
     }
     if (!showImage || previewSrc || !workspacePath?.trim() || !part.path?.trim()) return;
     let cancelled = false;
-    void desktopApi.previewWorkspaceFile({
+    void loadWorkspacePreview({
       workspacePath,
       path: part.path,
       maxBytes: 8_000_000,
     }).then((preview) => {
-      if (!cancelled && preview.kind === "image" && preview.dataUrl?.startsWith("data:image/")) {
+      if (cancelled) return;
+      if (preview.missing) {
+        setPreviewMissing(true);
+        return;
+      }
+      setPreviewMissing(false);
+      if (preview.kind === "image" && preview.dataUrl?.startsWith("data:image/")) {
         setPreviewSrc(preview.dataUrl);
       }
     }).catch(() => undefined);
@@ -1232,13 +1244,20 @@ function ArtifactItem({
     };
   }, [part.path, part.url, previewSrc, showImage, workspacePath]);
 
+  // A direct "the file is gone" probe beats a possibly stale resource state, but
+  // it must not override "offline" (the workspace itself is unreachable, which
+  // says nothing about whether the file exists).
+  const effectiveResourceState = previewMissing && resourceState !== "offline"
+    ? "deleted" as const
+    : resourceState;
+
   return (
     <div
       className={`structured-artifact-card ${showImage && previewSrc ? "has-preview" : ""} ${focused ? "relation-focus" : ""}`}
       data-structured-part-id={part.id}
       data-artifact-id={part.artifactId}
       data-status={part.status}
-      data-resource-state={resourceState}
+      data-resource-state={effectiveResourceState}
       onContextMenu={onOpenMenu ? (event) => {
         event.preventDefault();
         event.currentTarget.querySelector<HTMLButtonElement>("button")?.focus();
@@ -1260,8 +1279,8 @@ function ArtifactItem({
       <button
         type="button"
         className="structured-artifact"
-        onClick={resourceState === "deleted" ? undefined : onOpen}
-        aria-disabled={resourceState === "deleted" ? true : undefined}
+        onClick={effectiveResourceState === "deleted" ? undefined : onOpen}
+        aria-disabled={effectiveResourceState === "deleted" ? true : undefined}
         onKeyDown={onOpenMenu ? (event) => {
           if (event.key === "F10" && event.shiftKey) {
             event.preventDefault();
@@ -1270,7 +1289,7 @@ function ArtifactItem({
           }
         } : undefined}
         title={part.path || part.url || part.name}
-        aria-label={`${language === "zh" ? "打开资源" : "Open resource"}: ${part.name}${resourceState ? ` · ${formatResourceState(resourceState, language)}` : ""}`}
+        aria-label={`${language === "zh" ? "打开资源" : "Open resource"}: ${part.name}${effectiveResourceState ? ` · ${formatResourceState(effectiveResourceState, language)}` : ""}`}
       >
         <Icon size={16} aria-hidden="true" />
         <span>
@@ -1278,7 +1297,7 @@ function ArtifactItem({
           {part.summary ? <small>{part.summary}</small> : null}
           <small>{[formatArtifactSize(part.size), language === "zh" ? "在文件中显示" : "Show in Files"].filter(Boolean).join(" · ")}</small>
         </span>
-        <em>{formatResourceState(resourceState, language) || formatPartStatus(part.status, language)}</em>
+        <em>{formatResourceState(effectiveResourceState, language) || formatPartStatus(part.status, language)}</em>
         <ArrowUpRight size={14} aria-hidden="true" />
       </button>
     </div>

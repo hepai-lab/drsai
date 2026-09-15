@@ -333,6 +333,18 @@ async function listPlatformAgents(options: DesktopAgentListOptions): Promise<Des
     return gatewayCatalog.agents;
   }
 
+  // Keep the last good remote-worker descriptors: dropping them turns every
+  // remote Agent card (and its get_info model configs) into a "not found"
+  // entry until the platform recovers.
+  if (platformExecutionDescriptors.size > 0 && platformStatus.state === "ready") {
+    platformStatus = {
+      ...platformStatus,
+      message: platformStatus.message || "The local Runtime remote-worker catalog is unavailable. Showing the last loaded agents.",
+      lastCheckedAt: new Date().toISOString(),
+    };
+    return [];
+  }
+
   platformExecutionDescriptors.clear();
   platformStatus = {
     state: "native_api_unavailable",

@@ -16,6 +16,7 @@ import type {
   WorkspaceFilePreview,
 } from "@shared/desktopApi";
 import type { AppLanguage } from "../../navigation";
+import { loadWorkspacePreview } from "../../workspacePreview";
 import { desktopApi } from "../../desktopApi";
 import { findWorkspaceNodeByArtifactPath, normalizeWorkspaceArtifactPath } from "./artifactWorkspaceLink";
 import { DirectoryContextPreview } from "./DirectoryContextPreview";
@@ -599,14 +600,20 @@ export function FilesContextPanel({
     setPreview(null);
     setPreviewState("loading");
     try {
-      const nextPreview = await desktopApi.previewWorkspaceFile({
-        workspacePath,
-        workspaceId,
-        path: node.path,
-        // Images need the full file; gateway/text defaults (~220KB) truncate
-        // JPEG/PNG payloads and only the top of the picture decodes.
-        maxBytes: node.previewKind === "image" ? 8_000_000 : 220_000,
-      });
+      const nextPreview = await loadWorkspacePreview(
+        {
+          workspacePath,
+          workspaceId,
+          path: node.path,
+          // Images need the full file; gateway/text defaults (~220KB) truncate
+          // JPEG/PNG payloads and only the top of the picture decodes.
+          maxBytes: node.previewKind === "image" ? 8_000_000 : 220_000,
+        },
+        // The user picked this file on purpose, and the tree is refreshed by a
+        // watcher: never answer from the `missing` cache, a restored file would
+        // keep reading as deleted. A `missing` preview still renders as such.
+        { cacheMissing: false },
+      );
       if (previewRequestPathRef.current !== node.path) return;
       setPreview(nextPreview);
       setPreviewState("idle");
@@ -664,13 +671,16 @@ export function FilesContextPanel({
     setPreview(null);
     setPreviewState("loading");
     try {
-      const nextPreview = await desktopApi.previewWorkspaceFile({
-        workspacePath,
-        workspaceId,
-        path: selectedNode.path,
-        maxBytes: selectedNode.previewKind === "image" ? 8_000_000 : 220_000,
-        mode,
-      });
+      const nextPreview = await loadWorkspacePreview(
+        {
+          workspacePath,
+          workspaceId,
+          path: selectedNode.path,
+          maxBytes: selectedNode.previewKind === "image" ? 8_000_000 : 220_000,
+          mode,
+        },
+        { cacheMissing: false },
+      );
       if (previewRequestPathRef.current !== selectedNode.path) return;
       setPreview(nextPreview);
       setPreviewState("idle");

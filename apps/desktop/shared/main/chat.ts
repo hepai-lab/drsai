@@ -1414,14 +1414,14 @@ export async function stageAttachments(
           });
           staged.push({ ...attachment, kind: "file", path: stagedImage.destPath, name: stagedImage.destName });
           refs.push(stagedImage.destRel);
-          // Include base64 data as content so the Runtime can create
-          // multimodal messages (matching ui-tui's design).
-          const clipboardImageContent = `data:${mime};base64,${bytes.toString("base64")}`;
+          // The Runtime builds multimodal content from `reference` inside the
+          // Workspace (Image.from_file); it never reads `content` for file
+          // resources. Inlining the Base64 data URL here duplicated the bytes
+          // and tripped the Runtime's per-resource content cap (HTTP 422).
           resources.push({
             protocol: "oaep.input/1", resource_id: resourceId, kind: "file",
             name: stagedImage.destName, permission: "read", status: "encoded",
             reference: stagedImage.destRel, size_bytes: bytes.length, sha256: stagedImage.sha256, mime,
-            content: clipboardImageContent,
           });
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
@@ -1489,18 +1489,15 @@ export async function stageAttachments(
         refs.push(reference);
         const size = sourceInfo.size;
         const sha256 = await sha256File(sourceAbs, signal);
-        // For image files, include base64 data as content so the Runtime can
-        // create multimodal messages (matching ui-tui's design).
-        let imageContent: string | undefined;
-        if (imageMime) {
-          const imageBuffer = await readFile(sourceAbs);
-          imageContent = `data:${imageMime};base64,${imageBuffer.toString("base64")}`;
-        }
+        // The Runtime builds multimodal content from `reference` inside the
+        // Workspace (Image.from_file) and never reads `content` for file
+        // resources. Inlining the Base64 data URL here duplicated the bytes
+        // and tripped the Runtime's per-resource content cap (HTTP 422) for
+        // every image larger than ~75 KB.
         resources.push({
           protocol: "oaep.input/1", resource_id: resourceId, kind: "file",
           name: attachment.name, permission: "read", status: "encoded", reference, size_bytes: size, sha256,
           ...(imageMime ? { mime: imageMime } : {}),
-          ...(imageContent ? { content: imageContent } : {}),
         });
         continue;
       }
@@ -1529,13 +1526,11 @@ export async function stageAttachments(
       const destRel = relative(root, destPath).replace(/\\/g, "/");
       const size = (await stat(destPath).catch(() => null))?.size;
       const sha256 = await sha256File(destPath, signal);
-      // For image files, include base64 data as content so the Runtime can
-      // create multimodal messages (matching ui-tui's design).
-      let imageContent: string | undefined;
-      if (imageMime) {
-        const imageBuffer = await readFile(destPath);
-        imageContent = `data:${imageMime};base64,${imageBuffer.toString("base64")}`;
-      }
+      // The Runtime builds multimodal content from `reference` inside the
+      // Workspace (Image.from_file) and never reads `content` for file
+      // resources. Inlining the Base64 data URL here duplicated the bytes and
+      // tripped the Runtime's per-resource content cap (HTTP 422) for every
+      // image larger than ~75 KB.
       staged.push({ ...attachment, path: destPath, name: destName });
       refs.push(destRel);
       resources.push({
@@ -1544,7 +1539,6 @@ export async function stageAttachments(
         ...(typeof size === "number" ? { size_bytes: size } : {}),
         ...(imageMime ? { mime: imageMime } : {}),
         sha256,
-        ...(imageContent ? { content: imageContent } : {}),
       });
     } catch (error) {
       if (signal?.aborted) throw signal.reason ?? error;

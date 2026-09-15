@@ -2768,7 +2768,10 @@ class GatewayOpenDrSaiAgentBackend:
         undelivered_baseline = _workspace_undelivered_snapshot(context.workspace_path)
         try:
             run_stream = self._runner or manager.run_stream
-            from drsai.backend.runtime.input_resources import autogen_input_task
+            from drsai.backend.runtime.input_resources import (
+                autogen_input_task,
+                input_resource_error_message,
+            )
             try:
                 input_task = autogen_input_task(
                     prompt, context.input_resources, workspace_path=context.workspace_path,
@@ -2779,7 +2782,7 @@ class GatewayOpenDrSaiAgentBackend:
             except (OSError, ValueError) as exc:
                 raise RuntimeExecutionError(
                     "input_resources_invalid",
-                    "An input resource is unavailable, changed, or cannot be decoded.",
+                    input_resource_error_message(exc),
                 ) from exc
             run_kwargs = dict(
                 task=input_task,

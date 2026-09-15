@@ -92,6 +92,7 @@ import type { AppLanguage } from "../navigation";
 import { supportsFullAgentPrimaryRuntime } from "../modelCatalogRecovery";
 import { getAgentEmptyChatPrompts, parseCatalogAgentExamples } from "../agentExamplePrompts";
 import { desktopApi, hasDesktopApi } from "../desktopApi";
+import { loadWorkspacePreview } from "../workspacePreview";
 import { appendRendererStage } from "../debugLogStore";
 import { decideWeChatComposerSubmit } from "../wechatComposerPolicy";
 import { copyTextSafely } from "../clipboard";
@@ -349,6 +350,12 @@ interface ChatWorkspaceProps {
   structuredTurnFocus?: { turnId: string; nonce: number } | null;
   selectedAgentId?: string;
   selectedAgentName?: string;
+  /**
+   * Authoritative source of the selected Agent, supplied by App.
+   * ``agentOptions`` may not yet contain a remote worker when a thread is
+   * restored, so remote detection must not depend on catalog membership.
+   */
+  selectedAgentSource?: DesktopAgent["source"];
   selectedModelName?: string;
   selectedModelProviderId?: string;
   selectedImageGenerationModelName?: string;
@@ -426,6 +433,7 @@ function ChatWorkspaceImpl({
   structuredTurnFocus = null,
   selectedAgentId,
   selectedAgentName,
+  selectedAgentSource,
   selectedModelName,
   selectedModelProviderId,
   selectedImageGenerationModelName,
@@ -648,9 +656,13 @@ function ChatWorkspaceImpl({
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
   const composerAttachmentsByThreadRef = useRef<Map<string, ComposerAttachment[]>>(new Map());
   const composerConversationIdRef = useRef(conversationId);
-  const isRemoteAgent = useMemo(() => agentOptions.some(
-    (agent) => agent.id === selectedAgentId && agent.source === "remote",
-  ), [agentOptions, selectedAgentId]);
+  const isRemoteAgent = useMemo(() => {
+    if (selectedAgentSource) return selectedAgentSource === "remote";
+    // Fallback for callers that do not pass the authoritative source.
+    return agentOptions.some(
+      (agent) => agent.id === selectedAgentId && agent.source === "remote",
+    );
+  }, [agentOptions, selectedAgentId, selectedAgentSource]);
   attachmentsRef.current = attachments;
   const [interactionDraft, setInteractionDraft] = useState("");
   const [materialRoleAnalysis, setMaterialRoleAnalysis] = useState<MaterialRoleAnalysisResult | null>(null);
@@ -3707,14 +3719,19 @@ function ChatWorkspaceImpl({
     const partExt = (part.path ?? "").match(/(\.[^.]+)$/)?.[1]?.toLowerCase() ?? "";
     if (RICH_LOCAL_EXTS.has(partExt) && part.path && workspacePath) {
       try {
-        const localPreview = await desktopApi.previewWorkspaceFile({
+        const localPreview = await loadWorkspacePreview({
           workspacePath,
           path: part.path,
           maxBytes: 220_000,
         });
-        onOpenConversationResourcePreview?.(localPreview, part.path);
-        setToolsOpen(false);
-        return;
+        // A placeholder means the bytes are gone locally; fall through so the
+        // P2/locator paths below can report it with their richer wording (or
+        // serve the file from the runtime).
+        if (!localPreview.missing) {
+          onOpenConversationResourcePreview?.(localPreview, part.path);
+          setToolsOpen(false);
+          return;
+        }
       } catch {
         // Local preview failed — fall through to P2.
       }
@@ -3729,14 +3746,16 @@ function ChatWorkspaceImpl({
       // tree, which may not have indexed the file yet.
       if (part.path && workspacePath) {
         try {
-          const localPreview = await desktopApi.previewWorkspaceFile({
+          const localPreview = await loadWorkspacePreview({
             workspacePath,
             path: part.path,
             maxBytes: 220_000,
           });
-          onOpenConversationResourcePreview?.(localPreview, part.path);
-          setToolsOpen(false);
-          return;
+          if (!localPreview.missing) {
+            onOpenConversationResourcePreview?.(localPreview, part.path);
+            setToolsOpen(false);
+            return;
+          }
         } catch {
           // Local preview also failed — let the file tree try.
         }
@@ -3757,14 +3776,16 @@ function ChatWorkspaceImpl({
       const fallbackPath = resolved.logicalPath ?? resolved.path ?? part.path;
       if (fallbackPath && workspacePath) {
         try {
-          const localPreview = await desktopApi.previewWorkspaceFile({
+          const localPreview = await loadWorkspacePreview({
             workspacePath,
             path: fallbackPath,
             maxBytes: 220_000,
           });
-          onOpenConversationResourcePreview?.(localPreview, fallbackPath);
-          setToolsOpen(false);
-          return;
+          if (!localPreview.missing) {
+            onOpenConversationResourcePreview?.(localPreview, fallbackPath);
+            setToolsOpen(false);
+            return;
+          }
         } catch {
           // Local preview also failed — fall back to file tree.
         }
@@ -3784,11 +3805,13 @@ function ChatWorkspaceImpl({
     }
     // No P2 association — try a direct local preview.
     if (part.path && workspacePath) {
-      void desktopApi.previewWorkspaceFile({
-        workspacePath,
-        path: part.path,
-        maxBytes: 220_000,
-      }).then((preview) => {
+      void loadWorkspacePreview(
+        { workspacePath, path: part.path, maxBytes: 220_000 },
+        // Clicked on purpose: don't reuse a cached `missing` answer.
+        { cacheMissing: false },
+      ).then((preview) => {
+        // Includes the `missing` placeholder: the pane then explains that the
+        // file was deleted or moved instead of opening an empty document.
         onOpenConversationResourcePreview?.(preview, part.path);
         setToolsOpen(false);
       }).catch(() => {
@@ -3833,11 +3856,12 @@ function ChatWorkspaceImpl({
     }
     // No P2 association — try a direct local preview.
     if (part.path && workspacePath) {
-      void desktopApi.previewWorkspaceFile({
-        workspacePath,
-        path: part.path,
-        maxBytes: 220_000,
-      }).then((preview) => {
+      void loadWorkspacePreview(
+        { workspacePath, path: part.path, maxBytes: 220_000 },
+        // Clicked on purpose: don't reuse a cached `missing` answer.
+        { cacheMissing: false },
+      ).then((preview) => {
+        // Includes the `missing` placeholder, see openStructuredArtifact.
         onOpenConversationResourcePreview?.(preview, part.path);
         setToolsOpen(false);
       }).catch(() => {
@@ -5222,7 +5246,14 @@ function ChatWorkspaceImpl({
                         {configurationSection === "model" ? (hasModelOptions ? modelOptions.map((model) => {
                           const selected = (model.alias || model.model) === selectedModelName
                             && (!selectedModelProviderId || model.provider_id === selectedModelProviderId);
-                          const primaryReady = supportsFullAgentPrimaryRuntime(model);
+                          const primaryReady = supportsFullAgentPrimaryRuntime(model)
+                            // Remote worker options are always primary-capable:
+                            // the worker owns its own model namespace and the
+                            // Desktop has no local capability metadata for it.
+                            // The marker is only produced by the remote branch
+                            // of getAgentModelOptions, so the local gate above
+                            // is untouched.
+                            || (isRemoteAgent && model.capability_source === "provider");
                           const isRemoteDefault = isRemoteAgent
                             && Boolean(activeAgent?.remoteDefaultModel)
                             && (model.alias || model.model) === activeAgent?.remoteDefaultModel;
@@ -6418,7 +6449,7 @@ function useAttachmentImageSrc(
     if (!showImage || previewSrc || !workspacePath?.trim() || !attachment.path.trim()) return;
     if (attachment.path.startsWith("clipboard:")) return;
     let cancelled = false;
-    void desktopApi.previewWorkspaceFile({
+    void loadWorkspacePreview({
       workspacePath,
       path: attachment.path,
       maxBytes: 8_000_000,
@@ -6537,11 +6568,12 @@ function ComposerFilePreviewLightbox({
     setPreview(null);
     void (async () => {
       try {
-        const result = await desktopApi.previewWorkspaceFile({
-          workspacePath: parts.workspacePath,
-          path: parts.relativePath,
-          maxBytes: 220_000,
-        });
+        const result = await loadWorkspacePreview(
+          { workspacePath: parts.workspacePath, path: parts.relativePath, maxBytes: 220_000 },
+          // Opened from a click: don't reuse a cached `missing` answer. A missing
+          // result is still passed through, FilePreviewer renders the reason.
+          { cacheMissing: false },
+        );
         if (cancelled) return;
         setPreview(result);
       } catch (cause) {

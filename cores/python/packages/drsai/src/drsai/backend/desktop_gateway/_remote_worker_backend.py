@@ -186,7 +186,10 @@ class RemoteWorkerBackend:
                 metadata["skills"] = json.dumps(list(context.remote_skills), ensure_ascii=False)
             return TextMessage(content=prompt, source="user", metadata=metadata)
 
-        from drsai.backend.runtime.input_resources import autogen_input_task
+        from drsai.backend.runtime.input_resources import (
+            autogen_input_task,
+            input_resource_error_message,
+        )
         try:
             return autogen_input_task(
                 prompt,
@@ -197,7 +200,7 @@ class RemoteWorkerBackend:
         except (OSError, ValueError) as exc:
             raise RuntimeExecutionError(
                 "input_resources_invalid",
-                "An input resource is unavailable, changed, or cannot be decoded.",
+                input_resource_error_message(exc),
             ) from exc
 
     def _stream(

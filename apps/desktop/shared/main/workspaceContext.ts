@@ -1210,6 +1210,86 @@ export async function previewWorkspaceFile(
   };
 }
 
+/** errno codes meaning "this path is gone", not "the preview failed". */
+const MISSING_PATH_ERROR_CODES = new Set(["ENOENT", "ENOTDIR"]);
+
+/**
+ * True when a preview failure is really "the path is not there anymore"
+ * (file deleted, folder deleted, or a parent component replaced by a file).
+ * The IPC layer turns these into a resolved `{ missing: true }` payload instead
+ * of a rejected handler, so Electron does not log a spurious handler error.
+ */
+export function isWorkspaceFileMissingError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && MISSING_PATH_ERROR_CODES.has(code);
+}
+
+/**
+ * Placeholder preview for a path that vanished between the agent writing the
+ * message and the user clicking the artifact. Deliberately kept out of
+ * `previewWorkspaceFile` itself: that primitive is also used by the write paths
+ * (`saveWorkspaceFileAs` / `writeWorkspaceFile`) and must keep failing loudly
+ * when its target disappears.
+ *
+ * Purely string based — it never touches the filesystem, so it also works for a
+ * remote workspace (where the local path does not exist) and for a workspace
+ * root that has itself been removed. It only echoes back metadata derived from
+ * the caller's own request, so there is nothing to leak.
+ *
+ * Returns null when the request cannot be trusted, so callers rethrow.
+ */
+export function buildMissingWorkspacePreview(rawRequest: unknown): WorkspaceFilePreview | null {
+  let request: WorkspaceFilePreviewRequest;
+  try {
+    request = validatePreviewRequest(rawRequest);
+  } catch {
+    return null;
+  }
+  const rawPath = request.path;
+  if (!rawPath || /[\r\n]/.test(rawPath)) return null;
+  const workspacePath = typeof request.workspacePath === "string" ? request.workspacePath.trim() : "";
+  if (/[\r\n]/.test(workspacePath)) return null;
+  const target = isAbsolute(rawPath) || !workspacePath
+    ? rawPath
+    : isPosixRoot(workspacePath)
+      ? posixJoin(workspacePath, rawPath)
+      : join(workspacePath, rawPath);
+  const extension = extname(target).toLowerCase();
+  const kind = classifyPreviewKind(target, 0);
+  return {
+    workspacePath,
+    path: target,
+    relativePath: missingRelativePath(workspacePath, target),
+    name: basename(target) || target,
+    kind,
+    mime: getMime(extension, kind),
+    size: 0,
+    modifiedAt: "",
+    truncated: false,
+    missing: true,
+    message: "This file no longer exists in the workspace; it may have been deleted, moved or renamed.",
+  };
+}
+
+/** A remote (or otherwise posix) workspace root, e.g. `/home/me/project`. */
+function isPosixRoot(workspacePath: string): boolean {
+  return workspacePath.startsWith("/") && !/^[a-zA-Z]:/.test(workspacePath);
+}
+
+function posixJoin(root: string, child: string): string {
+  return `${root.replace(/\/+$/, "")}/${child.replace(/^\/+/, "")}`;
+}
+
+/** Best-effort workspace-relative path for a target that is already gone. */
+function missingRelativePath(workspacePath: string, target: string): string {
+  const toSlashes = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "");
+  const root = toSlashes(workspacePath);
+  const full = toSlashes(target);
+  if (root && full.startsWith(`${root}/`)) return normalizeRel(full.slice(root.length + 1));
+  return normalizeRel(basename(target) || target);
+}
+
 async function hasValidImportSignature(filePath: string, extension: string): Promise<boolean> {
   const expected = extension === ".pdf"
     ? "%PDF-"

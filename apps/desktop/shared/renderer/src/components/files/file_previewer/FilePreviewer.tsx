@@ -6,6 +6,7 @@ import { ImagePreviewer } from "./ImagePreviewer";
 import { MarkdownPreviewer } from "./MarkdownPreviewer";
 import { MediaPreviewer } from "./MediaPreviewer";
 import { MetadataPreviewer } from "./MetadataPreviewer";
+import { MissingPreviewer } from "./MissingPreviewer";
 import { NotebookPreviewer } from "./NotebookPreviewer";
 import { OfficePreviewer } from "./OfficePreviewer";
 import { OutlinePreviewer } from "./OutlinePreviewer";
@@ -33,6 +34,9 @@ export function FilePreviewer({
   highlight?: LineHighlight;
 }): React.JSX.Element {
   if (!preview) return <EmptyPreviewer language={language} />;
+  // The file is gone (deleted/moved/renamed): say so instead of rendering an
+  // empty metadata pane that reads like a 0-byte file.
+  if (preview.missing) return <MissingPreviewer language={language} preview={preview} />;
   if (preview.kind === "notebook") return <NotebookPreviewer language={language} preview={preview} />;
   // Outline mode is explicit; never hide source text behind a symbol list.
   if (preview.mode === "outline" && preview.outline?.length && !highlight) {

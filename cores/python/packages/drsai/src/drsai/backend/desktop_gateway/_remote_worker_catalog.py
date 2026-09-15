@@ -148,6 +148,42 @@ def normalize_worker_name(row: Any) -> str:
     return ""
 
 
+# ``agent_config`` keys that describe the worker connection or bookkeeping
+# rather than a switchable model alias. Some DrSai workers send the connection
+# settings dict under this name; surfacing those would add fake model options
+# ("api_key", "url", ...) to the Desktop model menu.
+_AGENT_CONFIG_BOOKKEEPING_KEYS = frozenset({
+    "api_key", "apikey", "authorization", "base_url", "url", "token",
+    "defult_config_name", "default_config_name", "model_client", "config",
+    "provider", "settings_config", "agent_mode_config",
+    # Connection-identity keys: a worker whose ``agent_config`` is really its
+    # connection settings dict uses these as plain fields, not model aliases.
+    "name", "worker", "worker_name", "version", "description", "author",
+    "owner", "logo", "skills", "examples", "capabilities",
+})
+
+# Keys inside a per-model config object that carry the underlying model id,
+# most specific first.
+_AGENT_CONFIG_MODEL_KEYS = ("model", "model_id", "model_name", "upstream_id", "id", "name")
+
+
+def _agent_config_model_name(underlying: Any) -> str:
+    """Extract the underlying model name from an ``agent_config`` value.
+
+    Real DDF workers send the full per-model config dict; fixtures and older
+    workers send a plain string. Return "" when neither shape carries a usable
+    model name, so the caller can skip the alias.
+    """
+    if isinstance(underlying, str):
+        return underlying.strip()
+    if isinstance(underlying, dict):
+        for key in _AGENT_CONFIG_MODEL_KEYS:
+            value = underlying.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
 async def _list_agent_rows(root: str, api_key: str) -> list[dict[str, Any]]:
     """Return the full DDF list_agents rows (rich agent metadata)."""
     import httpx
@@ -451,6 +487,12 @@ async def _fetch_remote_worker_catalog(
         # "deepseek-ai/deepseek-v4-pro"). get_info returns it alongside the
         # misspelled ``defult_config_name`` default. Without this branch the
         # Desktop model menu only ever shows the default alias.
+        #
+        # The value shape is NOT fixed across deployments. Real DDF workers
+        # return the full per-model config object (a dict with ``model``,
+        # ``token_limit``, ``client_type``, ...), while some fixtures/older
+        # workers return a plain model-name string. Accept both: only the alias
+        # (the key) and the underlying model name matter here.
         raw_agent_config = merged.get("agent_config")
         if isinstance(raw_agent_config, dict) and raw_agent_config:
             existing_names = {
@@ -465,13 +507,15 @@ async def _fetch_remote_worker_catalog(
                 alias_text = str(alias or "").strip()
                 if not alias_text or alias_text in existing_names:
                     continue
-                # Skip non-model bookkeeping keys some workers keep in the dict
-                # (e.g. ``defult_config_name`` accidentally nested inside it).
-                if alias_text in ("defult_config_name", "default_config_name"):
+                # Some worker ``agent_config`` dicts are really connection
+                # settings rather than an alias -> model map. Never surface
+                # those keys as selectable models.
+                if alias_text.lower() in _AGENT_CONFIG_BOOKKEEPING_KEYS:
                     continue
-                if not (isinstance(underlying, str) and underlying.strip()):
+                underlying_model = _agent_config_model_name(underlying)
+                if not underlying_model:
                     continue
-                agent_config_models.append({"name": alias_text, "model": underlying.strip()})
+                agent_config_models.append({"name": alias_text, "model": underlying_model})
             if agent_config_models:
                 descriptor["model_configs"] = agent_config_models
 

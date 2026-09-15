@@ -4697,6 +4697,13 @@ export interface WorkspaceFilePreview {
   modifiedAt: string;
   truncated: boolean;
   stale?: boolean;
+  /**
+   * The requested path no longer exists inside the workspace (deleted, moved or
+   * renamed). The preview is a placeholder: `size` is 0 and there is no content,
+   * but `path` / `relativePath` / `name` / `kind` are still filled in so callers
+   * can render a "resource is gone" state instead of an empty pane.
+   */
+  missing?: boolean;
   fileHash?: string;
   content?: string;
   dataUrl?: string;

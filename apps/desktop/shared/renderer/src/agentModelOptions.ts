@@ -66,6 +66,10 @@ export function getAgentModelOptions(
       operations: ["chat", "tool_calling"],
       input_modalities: ["text", "image", "audio"],
       output_modalities: ["text"],
+      // Explicit, remote-only marker consumed by the composer's primary-ready
+      // gate. Local catalog entries never carry it, so the local capability
+      // gate (chat + tool_calling) is unaffected.
+      capability_source: "provider",
     }));
   }
 
