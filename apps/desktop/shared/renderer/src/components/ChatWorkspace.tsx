@@ -351,8 +351,11 @@ interface ChatWorkspaceProps {
   selectedAgentName?: string;
   selectedModelName?: string;
   selectedModelProviderId?: string;
+  selectedImageGenerationModelName?: string;
+  selectedImageGenerationProviderId?: string;
   agentOptions?: DesktopAgent[];
   modelOptions?: MyDrSaiModelConfig[];
+  imageGenerationModelOptions?: MyDrSaiModelConfig[];
   samplePrompts?: DesktopAgent["examples"];
   externalAttachments?: ChatAttachment[];
   ideContext?: DesktopIdeContextSnapshot | null;
@@ -369,6 +372,7 @@ interface ChatWorkspaceProps {
   onSelectAgent?: (agentId: string) => void;
   onSelectWorkspace?: (workspaceId: string) => void;
   onSelectModel?: (model: string, providerId?: string) => void;
+  onSelectImageGenerationModel?: (model: string, providerId?: string) => void;
   onOpenExternal: (url: string) => void;
   onOpenAgentSettings?: () => void;
   onOpenPreviewBrowser?: (url?: string) => void;
@@ -424,8 +428,11 @@ function ChatWorkspaceImpl({
   selectedAgentName,
   selectedModelName,
   selectedModelProviderId,
+  selectedImageGenerationModelName,
+  selectedImageGenerationProviderId,
   agentOptions = [],
   modelOptions = [],
+  imageGenerationModelOptions = [],
   samplePrompts,
   externalAttachments = [],
   ideContext,
@@ -442,6 +449,7 @@ function ChatWorkspaceImpl({
   onSelectAgent,
   onSelectWorkspace,
   onSelectModel,
+  onSelectImageGenerationModel,
   onOpenExternal,
   onOpenAgentSettings,
   onOpenPreviewBrowser,
@@ -658,7 +666,7 @@ function ChatWorkspaceImpl({
   const [privateMode, setPrivateMode] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [metaMenuOpen, setMetaMenuOpen] = useState<"configuration" | "skill" | null>(null);
-  const [configurationSection, setConfigurationSection] = useState<"model" | "thinking" | "task" | "agent" | "private" | null>(null);
+  const [configurationSection, setConfigurationSection] = useState<"model" | "imageGeneration" | "thinking" | "task" | "agent" | "private" | null>(null);
   const [configurationSubmenuPosition, setConfigurationSubmenuPosition] = useState({ top: 0, left: 0, maxHeight: 220 });
   const [installedSkills, setInstalledSkills] = useState<GatewaySkill[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
@@ -1336,6 +1344,10 @@ function ChatWorkspaceImpl({
     : "";
   const activeModelName =
     getModelLabel(modelOptions, selectedModelName, selectedModelProviderId) || selectedModelName?.trim() || (zh ? "默认" : "Default");
+  const activeImageGenerationModelName =
+    getModelLabel(imageGenerationModelOptions, selectedImageGenerationModelName, selectedImageGenerationProviderId)
+    || selectedImageGenerationModelName?.trim()
+    || (zh ? "默认" : "Default");
   const compactModelName = getCompactComposerModelLabel(activeModelName);
   const activeModelConfig = useMemo(
     () => findSelectedModelConfig(modelOptions, selectedModelName, selectedModelProviderId),
@@ -1382,6 +1394,7 @@ function ChatWorkspaceImpl({
   ].join(" · ");
   const hasAgentOptions = agentOptions.length > 0;
   const hasModelOptions = modelOptions.length > 0;
+  const hasImageGenerationModelOptions = imageGenerationModelOptions.length > 0;
   const parsedSamplePrompts = useMemo(
     () => parseCatalogAgentExamples(samplePrompts, language),
     [samplePrompts, language],
@@ -3055,7 +3068,7 @@ function ChatWorkspaceImpl({
   }
 
   function revealConfigurationSection(
-    section: "agent" | "model" | "thinking" | "task" | "private",
+    section: "agent" | "model" | "imageGeneration" | "thinking" | "task" | "private",
     anchor: HTMLButtonElement,
   ): void {
     const menu = anchor.closest<HTMLElement>(".composer-configuration-menu");
@@ -3359,6 +3372,12 @@ function ChatWorkspaceImpl({
   function selectModel(model: string, providerId?: string): void {
     onSelectModel?.(model, providerId);
     setMetaMenuOpen(null);
+    textareaRef.current?.focus();
+  }
+
+  function selectImageGenerationModel(model: string, providerId?: string): void {
+    onSelectImageGenerationModel?.(model, providerId);
+    setConfigurationSection(null);
     textareaRef.current?.focus();
   }
 
@@ -5192,12 +5211,13 @@ function ChatWorkspaceImpl({
                     }}
                   >
                     <div className="composer-configuration-rows">
-                      <button type="button" aria-expanded={configurationSection === "model"} onMouseEnter={(event) => revealConfigurationSection("model", event.currentTarget)} onFocus={(event) => revealConfigurationSection("model", event.currentTarget)} onClick={(event) => revealConfigurationSection("model", event.currentTarget)}><span><strong>{zh ? "模型" : "Model"}</strong><small>{activeModelName}</small></span><ChevronRight size={14} /></button>
-                      <button type="button" disabled={!showThinkingEffort} aria-expanded={configurationSection === "thinking"} onMouseEnter={(event) => revealConfigurationSection("thinking", event.currentTarget)} onFocus={(event) => revealConfigurationSection("thinking", event.currentTarget)} onClick={(event) => revealConfigurationSection("thinking", event.currentTarget)}><span><strong>{zh ? "推理强度" : "Reasoning effort"}</strong><small>{thinkingEffortMenuLabel}</small></span><ChevronRight size={14} /></button>
-                      <button type="button" data-testid="composer-plan-mode" disabled={!isLocalOpenDrSaiAgent || showStop} aria-expanded={configurationSection === "task"} onMouseEnter={(event) => revealConfigurationSection("task", event.currentTarget)} onFocus={(event) => revealConfigurationSection("task", event.currentTarget)} onClick={(event) => revealConfigurationSection("task", event.currentTarget)}><span><strong>{zh ? "计划模式" : "Plan mode"}</strong><small>{taskInteractionModeLabel}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" data-testid="composer-primary-model" aria-expanded={configurationSection === "model"} onMouseEnter={(event) => revealConfigurationSection("model", event.currentTarget)} onFocus={(event) => revealConfigurationSection("model", event.currentTarget)} onClick={(event) => revealConfigurationSection("model", event.currentTarget)}><span><strong>{zh ? "主模型" : "Primary model"}</strong><small title={activeModelName}>{activeModelName}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" data-testid="composer-image-generation-model" disabled={!isLocalOpenDrSaiAgent || showStop} aria-expanded={configurationSection === "imageGeneration"} onMouseEnter={(event) => revealConfigurationSection("imageGeneration", event.currentTarget)} onFocus={(event) => revealConfigurationSection("imageGeneration", event.currentTarget)} onClick={(event) => revealConfigurationSection("imageGeneration", event.currentTarget)}><span><strong>{zh ? "图像生成" : "Image generation"}</strong><small title={isLocalOpenDrSaiAgent ? activeImageGenerationModelName : (zh ? "仅本地 Agent" : "Local Agent only")}>{isLocalOpenDrSaiAgent ? activeImageGenerationModelName : (zh ? "仅本地 Agent" : "Local Agent only")}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" disabled={!showThinkingEffort} aria-expanded={configurationSection === "thinking"} onMouseEnter={(event) => revealConfigurationSection("thinking", event.currentTarget)} onFocus={(event) => revealConfigurationSection("thinking", event.currentTarget)} onClick={(event) => revealConfigurationSection("thinking", event.currentTarget)}><span><strong>{zh ? "推理强度" : "Reasoning effort"}</strong><small title={thinkingEffortMenuLabel}>{thinkingEffortMenuLabel}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" data-testid="composer-plan-mode" disabled={!isLocalOpenDrSaiAgent || showStop} aria-expanded={configurationSection === "task"} onMouseEnter={(event) => revealConfigurationSection("task", event.currentTarget)} onFocus={(event) => revealConfigurationSection("task", event.currentTarget)} onClick={(event) => revealConfigurationSection("task", event.currentTarget)}><span><strong>{zh ? "计划模式" : "Plan mode"}</strong><small title={taskInteractionModeLabel}>{taskInteractionModeLabel}</small></span><ChevronRight size={14} /></button>
                       <button type="button" data-testid="composer-private-mode-row" disabled={!isLocalOpenDrSaiAgent || showStop} aria-expanded={configurationSection === "private"} onMouseEnter={(event) => revealConfigurationSection("private", event.currentTarget)} onFocus={(event) => revealConfigurationSection("private", event.currentTarget)} onClick={(event) => revealConfigurationSection("private", event.currentTarget)}><span><strong>{zh ? "私密模式" : "Private mode"}</strong><small>{privateMode ? (zh ? "已开启" : "On") : (zh ? "已关闭" : "Off")}</small></span><ChevronRight size={14} /></button>
                     </div>
-                    {configurationSection ? <div className="composer-configuration-submenu" style={configurationSubmenuPosition} role="menu" aria-label={configurationSection === "model" ? (zh ? "选择模型" : "Choose model") : configurationSection === "thinking" ? (zh ? "选择推理强度" : "Choose reasoning effort") : configurationSection === "private" ? (zh ? "选择私密模式" : "Choose private mode") : (zh ? "选择计划模式" : "Choose plan mode")}>
+                    {configurationSection ? <div className="composer-configuration-submenu" style={configurationSubmenuPosition} role="menu" aria-label={configurationSection === "model" ? (zh ? "选择主模型" : "Choose primary model") : configurationSection === "imageGeneration" ? (zh ? "选择图像生成模型" : "Choose image-generation model") : configurationSection === "thinking" ? (zh ? "选择推理强度" : "Choose reasoning effort") : configurationSection === "private" ? (zh ? "选择私密模式" : "Choose private mode") : (zh ? "选择计划模式" : "Choose plan mode")}>
                       <div className="composer-configuration-options">
                         {configurationSection === "model" ? (hasModelOptions ? modelOptions.map((model) => {
                           const selected = (model.alias || model.model) === selectedModelName
@@ -5211,7 +5231,7 @@ function ChatWorkspaceImpl({
                             if (!primaryReady) return;
                             selectModel(model.alias || model.model || "", model.provider_id);
                           }}>
-                            <span><strong>{getModelOptionLabel(model)}{isRemoteDefault ? (zh ? "（默认）" : " (Default)") : ""}</strong><small>{isRemoteAgent
+                            <span><strong title={getModelOptionLabel(model)}>{getModelOptionLabel(model)}{isRemoteDefault ? (zh ? "（默认）" : " (Default)") : ""}</strong><small>{isRemoteAgent
                               ? (zh ? "远程模型配置" : "Remote agent model")
                               : primaryReady ? getModelProviderLabel(model, zh) : (zh ? "不可用作主模型 · 请在图像理解中配置" : "Not a primary model · use Image understanding")}</small></span>
                             {selected ? <Check size={14} aria-hidden /> : null}
@@ -5219,7 +5239,28 @@ function ChatWorkspaceImpl({
                           );
                         }) : <p className="composer-meta-menu-empty">{isRemoteAgent
                           ? (zh ? "远程智能体未返回模型配置，请刷新智能体列表后重试。" : "The remote agent returned no model configs. Refresh the agent list and retry.")
-                          : (zh ? "暂无可用模型" : "No models available")}</p>) : configurationSection === "thinking" ? supportedThinkingEfforts.map((effort) => (
+                          : (zh ? "暂无可用模型" : "No models available")}</p>) : configurationSection === "imageGeneration" ? (hasImageGenerationModelOptions ? imageGenerationModelOptions.map((model) => {
+                          const selected = (model.alias || model.model) === selectedImageGenerationModelName
+                            && (!selectedImageGenerationProviderId || model.provider_id === selectedImageGenerationProviderId);
+                          const usable = model.availability === undefined
+                            || model.availability === "available"
+                            || model.availability === "configured_unverified"
+                            || selected;
+                          const status = !usable
+                            ? (model.availability === "unauthorized"
+                              ? (zh ? "需重新登录" : "Sign in again")
+                              : (zh ? "维护中/不可用" : "Unavailable"))
+                            : getModelProviderLabel(model, zh);
+                          return (
+                          <button key={`image-gen:${model.provider_id || "backend"}:${model.alias || model.model}`} type="button" role="menuitemradio" aria-checked={selected} aria-disabled={!usable} disabled={!usable} className={selected ? "active" : ""} data-testid={`composer-image-generation-option-${model.alias || model.model}`} onClick={() => {
+                            if (!usable) return;
+                            selectImageGenerationModel(model.alias || model.model || "", model.provider_id);
+                          }}>
+                            <span><strong title={getModelOptionLabel(model)}>{getModelOptionLabel(model)}</strong><small>{status}</small></span>
+                            {selected ? <Check size={14} aria-hidden /> : null}
+                          </button>
+                          );
+                        }) : <p className="composer-meta-menu-empty">{zh ? "暂无图像生成模型，请刷新目录或检查 Provider" : "No image-generation models. Refresh the catalog or check the Provider."}</p>) : configurationSection === "thinking" ? supportedThinkingEfforts.map((effort) => (
                           <button key={effort} type="button" role="menuitemradio" aria-checked={effort === thinkingEffort} className={effort === thinkingEffort ? "active" : ""} onClick={() => selectThinkingEffort(effort)}>
                             <span><strong>{getThinkingEffortLabel(effort, zh)}</strong></span>
                             {effort === thinkingEffort ? <Check size={14} aria-hidden /> : null}
@@ -6380,7 +6421,7 @@ function useAttachmentImageSrc(
     void desktopApi.previewWorkspaceFile({
       workspacePath,
       path: attachment.path,
-      maxBytes: 1_500_000,
+      maxBytes: 8_000_000,
     }).then((preview) => {
       if (!cancelled && preview.kind === "image" && preview.dataUrl?.startsWith("data:image/")) {
         setPreviewSrc(preview.dataUrl);

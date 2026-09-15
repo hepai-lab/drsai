@@ -1221,7 +1221,7 @@ function ArtifactItem({
     void desktopApi.previewWorkspaceFile({
       workspacePath,
       path: part.path,
-      maxBytes: 1_500_000,
+      maxBytes: 8_000_000,
     }).then((preview) => {
       if (!cancelled && preview.kind === "image" && preview.dataUrl?.startsWith("data:image/")) {
         setPreviewSrc(preview.dataUrl);

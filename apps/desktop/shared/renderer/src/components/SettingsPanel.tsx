@@ -39,6 +39,7 @@ import {
   isSelectableModelAvailability,
   modelCatalogRecoveryCopy,
   supportsFullAgentPrimaryRuntime,
+  supportsImageGenerationModel,
 } from "../modelCatalogRecovery";
 import { knownVoiceModelCapabilities, mergeKnownVoiceModalities } from "../modelVoiceCapabilities";
 import { getAgentModelOptions } from "../agentModelOptions";
@@ -767,7 +768,7 @@ export function SettingsPanel({
     selection: AgentModelSelection | null | undefined;
   }> = [
     { role: "image_understanding_model", testId: "agent-image-understanding-model-setting", label: zh ? "图像理解" : "Image understanding", description: zh ? "接收图片并输出文字理解结果。" : "Accepts images and returns a text understanding.", models: selectableCapabilityModels("image", "text"), selection: agentModelPolicyDraft?.image_understanding_model },
-    { role: "image_generation_model", testId: "agent-image-generation-model-setting", label: zh ? "图像生成" : "Image generation", description: zh ? "根据文字或图片生成图像。" : "Generates images from text or image input.", models: models.filter((model) => model.provider_id && ["available", "configured_unverified"].includes(model.availability ?? "") && model.output_modalities?.includes("image")), selection: agentModelPolicyDraft?.image_generation_model },
+    { role: "image_generation_model", testId: "agent-image-generation-model-setting", label: zh ? "图像生成" : "Image generation", description: zh ? "选定主模型后，可再选择图像生成模型；系统有默认值，也可手动切换。根据文字或图片生成图像。" : "After the primary model, pick an image-generation model (system default available; you can switch). Generates images from text or image input.", models: models.filter((model) => Boolean(model.provider_id) && supportsImageGenerationModel(model)), selection: agentModelPolicyDraft?.image_generation_model },
     { role: "text_to_speech_model", testId: "agent-text-to-speech-model-setting", label: zh ? "文字转语音" : "Text to speech", description: zh ? "将文字合成为语音。" : "Synthesizes speech from text.", models: selectableCapabilityModels("text", "audio"), selection: agentModelPolicyDraft?.text_to_speech_model },
     { role: "realtime_voice_model", testId: "agent-realtime-voice-model-setting", label: zh ? "实时" : "Realtime", description: zh ? "用于全双工实时语音输入与输出。" : "Handles full-duplex realtime voice input and output.", models: selectableRealtimeVoiceModels, selection: agentModelPolicyDraft?.realtime_voice_model },
     { role: "speech_to_text_model", testId: "agent-speech-to-text-model-setting", label: zh ? "语音转文字" : "Speech to text", description: zh ? "将语音识别为文字。" : "Transcribes speech into text.", models: selectableCapabilityModels("audio", "text"), selection: agentModelPolicyDraft?.speech_to_text_model },
@@ -2511,9 +2512,30 @@ export function SettingsPanel({
                       setAgentModelPolicyDirty(true);
                       setAgentModelPolicyMessage(null);
                     }} disabled={setting.models.length === 0}>
-                      <option value="">{setting.models.length === 0 ? (zh ? "暂无匹配模型" : "No matching model") : (zh ? "未指定" : "Not assigned")}</option>
+                      <option value="">{setting.models.length === 0
+                        ? (zh ? "暂无匹配模型" : "No matching model")
+                        : setting.role === "image_generation_model"
+                          ? (zh ? "默认" : "Default")
+                          : (zh ? "未指定" : "Not assigned")}</option>
                       {Object.entries(groups).map(([provider, providerModels]) => <optgroup key={provider} label={provider}>
-                        {providerModels.map((model) => <option key={`${model.provider_id}:${model.alias}`} value={`${encodeURIComponent(model.provider_id || "")}::${encodeURIComponent(model.alias)}`}>{model.display_name || model.alias}</option>)}
+                        {providerModels.map((model) => {
+                          const selected = setting.selection?.mode === "explicit"
+                            && setting.selection.ref?.provider_id === model.provider_id
+                            && setting.selection.ref?.model_id === model.alias;
+                          const usable = ["available", "configured_unverified"].includes(model.availability ?? "");
+                          const status = !usable
+                            ? (model.availability === "unauthorized"
+                              ? (zh ? "（需重新登录）" : " (sign in again)")
+                              : model.availability === "unavailable" || model.availability === "offline"
+                                ? (zh ? "（维护中/不可用）" : " (unavailable)")
+                                : (zh ? "（不可选）" : " (not selectable)"))
+                            : "";
+                          return <option
+                            key={`${model.provider_id}:${model.alias}`}
+                            disabled={!usable && !selected}
+                            value={`${encodeURIComponent(model.provider_id || "")}::${encodeURIComponent(model.alias)}`}
+                          >{`${model.display_name || model.alias}${status}`}</option>;
+                        })}
                       </optgroup>)}
                     </select>
                     {selectedProvider && <small className="settings-model-provider" data-testid={`agent-${setting.role.replaceAll("_", "-")}-provider`}>{zh ? `提供方：${selectedProvider}` : `Provider: ${selectedProvider}`}</small>}

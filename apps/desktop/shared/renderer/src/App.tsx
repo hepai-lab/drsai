@@ -75,8 +75,8 @@ import { copyTextSafely } from "./clipboard";
 import { describeUserFacingError, type UserFacingRecoveryAction } from "./userFacingErrors";
 import { appendRendererStage } from "./debugLogStore";
 import { userFacingBusinessText, userFacingFailureMessage } from "./userFacingLanguage";
-import { supportsFullAgentPrimaryRuntime } from "./modelCatalogRecovery";
-import { getAgentModelOptions } from "./agentModelOptions";
+import { supportsFullAgentPrimaryRuntime, supportsImageGenerationModel } from "./modelCatalogRecovery";
+import { getAgentModelOptions, getImageGenerationModelOptions } from "./agentModelOptions";
 import { formatUpdateStatus } from "./statusFormatting";
 import { normalizeWorkspaceSortMode, sortWorkspacesForSidebar, type WorkspaceSortMode } from "./workspaceOrdering";
 import { LoginScreen } from "./auth/LoginScreen";
@@ -488,6 +488,18 @@ function AuthenticatedApp({
       selectedChatModelRef,
     ),
     [availableChatModels, selectedChatAgent, selectedChatModel, selectedChatModelRef],
+  );
+  const selectedImageGenerationModelRef = selectedChatAgentId === myDrSaiAgentModelPolicy?.agent_id
+    ? (myDrSaiAgentModelPolicy.image_generation_model?.mode === "explicit"
+      ? myDrSaiAgentModelPolicy.image_generation_model.ref
+      : myDrSaiAgentModelPolicy.effective_image_generation_ref)
+      ?? undefined
+    : undefined;
+  const imageGenerationModelOptions = useMemo(
+    () => (selectedChatAgent?.source === "local" && selectedChatAgent.id !== "my-codex"
+      ? getImageGenerationModelOptions(availableChatModels, selectedImageGenerationModelRef)
+      : []),
+    [availableChatModels, selectedChatAgent, selectedImageGenerationModelRef],
   );
   const [pendingChatInput, setPendingChatInput] = useState<string | null>(null);
   const resultsContainer = useResultsContainerController();
@@ -2367,6 +2379,57 @@ function AuthenticatedApp({
     }
   }
 
+  function handleChatImageGenerationModelSelect(model: string, providerId?: string): void {
+    if (!selectedChatAgentId || selectedChatAgentId !== myDrSaiAgentModelPolicy?.agent_id) return;
+    void configureAgentImageGenerationModel(selectedChatAgentId, model, providerId).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      void showAppNotice({
+        id: "chat-image-generation-model-switch-failed",
+        title: language === "zh" ? "切换图像生成模型失败" : "Image-generation model switch failed",
+        description: message,
+      });
+    });
+  }
+
+  async function configureAgentImageGenerationModel(agentId: string, model: string, providerId?: string): Promise<void> {
+    const activeProvider = myDrSaiConfig?.modelConnection?.model_provider;
+    const candidates = availableChatModels.filter((item) => {
+      if (!item.provider_id || !supportsImageGenerationModel(item)) return false;
+      const normalized = model.trim().toLowerCase();
+      return [item.alias, item.model, item.display_name]
+        .filter((value): value is string => Boolean(value))
+        .some((value) => value.trim().toLowerCase() === normalized);
+    });
+    const selected = candidates.find((item) => item.provider_id === providerId)
+      ?? candidates.find((item) => item.provider_id === activeProvider)
+      ?? candidates[0];
+    if (!selected?.provider_id) {
+      throw new Error(language === "zh"
+        ? "所选图像生成模型不在 Provider 目录中。"
+        : "The selected image-generation model is not in the Provider catalog.");
+    }
+    const latestPolicy = await desktopApi.getMyDrSaiAgentModelPolicy(agentId);
+    setMyDrSaiAgentModelPolicy(latestPolicy);
+    const modelId = selected.alias || selected.model;
+    if (!modelId) {
+      throw new Error(language === "zh"
+        ? "所选图像生成模型缺少模型标识。"
+        : "The selected image-generation model has no model identifier.");
+    }
+    const updated = await desktopApi.updateMyDrSaiAgentModelPolicy(agentId, {
+      agent_id: agentId,
+      primary_model: latestPolicy.primary_model,
+      image_understanding_model: latestPolicy.image_understanding_model ?? null,
+      image_generation_model: { mode: "explicit", ref: { provider_id: selected.provider_id, model_id: modelId } },
+      text_to_speech_model: latestPolicy.text_to_speech_model ?? null,
+      realtime_voice_model: latestPolicy.realtime_voice_model ?? null,
+      speech_to_text_model: latestPolicy.speech_to_text_model ?? null,
+      reasoning_effort: latestPolicy.reasoning_effort ?? null,
+      expected_revision: latestPolicy.revision,
+    });
+    setMyDrSaiAgentModelPolicy(updated);
+  }
+
   async function configureAgentModel(agentId: string, model: string, providerId?: string): Promise<void> {
     if (agentId === myDrSaiAgentModelPolicy?.agent_id) {
       const activeProvider = myDrSaiConfig?.modelConnection?.model_provider;
@@ -3107,8 +3170,11 @@ function AuthenticatedApp({
           selectedModelProviderId={selectedChatAgentId === myDrSaiAgentModelPolicy?.agent_id
             ? myDrSaiAgentModelPolicy?.effective_ref?.provider_id
             : selectedChatAgentId ? agentConfigurations[selectedChatAgentId]?.modelRef?.provider_id : undefined}
+          selectedImageGenerationModelName={selectedImageGenerationModelRef?.model_id}
+          selectedImageGenerationProviderId={selectedImageGenerationModelRef?.provider_id}
           agentOptions={availableChatAgents}
           modelOptions={chatModelOptions}
+          imageGenerationModelOptions={imageGenerationModelOptions}
           samplePrompts={selectedChatAgent?.examples ?? selectedChatExamples}
           messageFocus={messageFocus}
           structuredTurnFocus={structuredTurnFocus}
@@ -3132,6 +3198,7 @@ function AuthenticatedApp({
           onSelectAgent={handleChatAgentSelect}
           onSelectWorkspace={(workspaceId) => void handleEmptyChatWorkspaceSelect(workspaceId)}
           onSelectModel={handleChatModelSelect}
+          onSelectImageGenerationModel={handleChatImageGenerationModelSelect}
           onOpenExternal={(url) => desktopApi.openExternal(url)}
           onOpenAgentSettings={() => {
             setRequestedSettingsPane("agent-defaults");

@@ -33,7 +33,8 @@ const requireArchive = process.argv.includes("--require-archive");
 // `drsai` source tree: <repo>/cores/python/packages/drsai/src/drsai
 const pythonPackageRoot = resolve(root, "..", "..", "..", "cores", "python", "packages", "drsai", "src", "drsai");
 
-const EXPECTED_SPECIALIZED_MODELS = ["gpt-5.6-luna", "gemini-3.1-flash-lite-image", "tts-1", "whisper-1"];
+const EXPECTED_SPECIALIZED_MODELS = ["gpt-5.6-luna", "gpt-image-2.5-sunburst", "tts-1", "whisper-1"];
+const RETIRED_IMAGE_MODELS = ["gemini-3.1-flash-lite-image", "qwen-image-2.0"];
 
 assert(existsSync(configPath), "version-controlled Runtime defaults are missing config.toml");
 assert(existsSync(defaultsRoot), "version-controlled Runtime defaults directory is missing");
@@ -147,15 +148,32 @@ function verifyRuntimeOwnership(configToml) {
     /^def ensure_desktop_runtime_config\(/m.test(bootstrap),
     "drsai.config.ensure_desktop_runtime_config is gone; the Runtime no longer owns first-launch config generation",
   );
+  // The non-chat product models live in model_defaults.DEFAULT_SPECIALIZED_PRODUCT_MODELS
+  // and desktop_bootstrap merges them into the product catalog, so assert both halves.
   assert(
-    /_SPECIALIZED_PRODUCT_MODELS/.test(bootstrap),
+    bootstrap.includes("update(DEFAULT_SPECIALIZED_PRODUCT_MODELS)"),
     "Runtime product model catalog is gone; the desktop model picker would lose its non-chat models",
   );
   for (const model of EXPECTED_SPECIALIZED_MODELS) {
-    assert(bootstrap.includes(`"${model}": {`), `Runtime product model catalog is missing ${model}`);
+    assert(
+      modelDefaultsPy.includes(`"${model}": {`),
+      `Runtime product model catalog is missing ${model}`,
+    );
+  }
+  for (const alias of pythonTuple(modelDefaultsPy, "IMAGE_GENERATION_MODEL_ALIASES")) {
+    assert(
+      modelDefaultsPy.includes(`"${alias}": {`),
+      `Runtime product model catalog is missing image-generation alias ${alias}`,
+    );
+  }
+  for (const retired of RETIRED_IMAGE_MODELS) {
+    assert(
+      !modelDefaultsPy.includes(`"${retired}": {`),
+      `Runtime product model catalog reintroduced the retired image model ${retired}`,
+    );
   }
   assert(
-    !bootstrap.includes("gemini-3.6-flash"),
+    !bootstrap.includes("gemini-3.6-flash") && !modelDefaultsPy.includes("gemini-3.6-flash"),
     "Runtime product model catalog contains the excluded unstable model gemini-3.6-flash",
   );
 
@@ -235,6 +253,16 @@ function pythonConstant(source, name) {
   const match = new RegExp(`^${name}\\s*=\\s*(.+?)\\s*$`, "m").exec(source);
   assert(match, `drsai Python defaults no longer declare ${name}`);
   return match[1].replace(/^"|"$/g, "");
+}
+
+function pythonTuple(source, name) {
+  const match = new RegExp(`^${name}\\s*:\\s*tuple\\[str, \\.\\.\\.\\]\\s*=\\s*\\(([^)]*)\\)`, "m").exec(source);
+  assert(match, `drsai Python defaults no longer declare ${name}`);
+  return match[1]
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => value.replace(/^"|"$/g, ""));
 }
 
 function inspectArchive(path) {

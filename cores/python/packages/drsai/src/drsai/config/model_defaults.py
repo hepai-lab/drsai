@@ -353,6 +353,109 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
 DEFAULT_CONFIG_NAME = "hepai/deepseek-v4-flash"
 PRIVATE_MODEL_NAME = "hepai/deepseek-flash"
 
+# Optional product default for Agent ``image_generation_model``.
+# ``None`` = do not auto-bind; user must pick from IMAGE_GENERATION_MODEL_ALIASES.
+DEFAULT_IMAGE_GENERATION_MODEL: str | None = "gpt-image-2.5-sunburst"
+
+# Catalog aliases the Desktop image-generation picker and Agent policy may bind.
+# Keep in sync with DEFAULT_SPECIALIZED_PRODUCT_MODELS entries that declare
+# ``image_generation`` capability. First entry is the product primary/default.
+IMAGE_GENERATION_MODEL_ALIASES: tuple[str, ...] = (
+    "gpt-image-2.5-sunburst",
+    "gpt-image-2",
+    "gpt-image-2.5-flare",
+    "gemini-3.1-flash-image-preview",
+    "gemini-3-pro-image-preview",
+)
+
+
+# ── Specialised product models (non-chat / role-bound) ───────────────────────
+# Single source of truth for Desktop Provider catalog extras that are not
+# ordinary chat entries in DEFAULT_LLM_MODE_CONFIG (or that override a chat
+# entry with role-specific modalities/capabilities).
+#
+# Shape matches desktop_bootstrap / Provider ``models`` entries:
+# alias?, input_modalities, output_modalities, api_protocol, enabled,
+# capabilities, upstream_id?
+DEFAULT_SPECIALIZED_PRODUCT_MODELS: dict[str, dict[str, object]] = {
+    # Image understanding override for the chat alias already in DEFAULT_LLM_MODE_CONFIG.
+    "gpt-5.6-luna": {
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["chat", "tool_calling"],
+        "upstream_id": "openai/gpt-5.6-luna",
+    },
+    # ── Image generation candidates (AIAPI / HepAI model square) ──
+    # Access notes (RuntimeImageOperationAdapter):
+    # - Product HepAI Provider keeps api_protocol=openai → POST /v1/images/*
+    #   with ``upstream_id`` as the square model id. Request body/size rules
+    #   still differ by family (gpt-image-* vs gemini-*).
+    # - Native Gemini Providers (wire_api=gemini) use generateContent instead.
+    # - Product default / primary: gpt-image-2.5-sunburst.
+    "gpt-image-2.5-sunburst": {
+        "alias": "GPT Image 2.5 Sunburst",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text", "image"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["image_generation", "image_edit"],
+        "upstream_id": "openai/gpt-image-2.5-sunburst",
+    },
+    "gpt-image-2": {
+        "alias": "GPT Image 2",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text", "image"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["image_generation", "image_edit"],
+        "upstream_id": "openai/gpt-image-2",
+    },
+    "gpt-image-2.5-flare": {
+        "alias": "GPT Image 2.5 Flare",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text", "image"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["image_generation", "image_edit"],
+        "upstream_id": "openai/gpt-image-2.5-flare",
+    },
+    "gemini-3.1-flash-image-preview": {
+        "alias": "Gemini 3.1 Flash Image Preview",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text", "image"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["image_generation", "image_edit"],
+        "upstream_id": "google/gemini-3.1-flash-image-preview",
+    },
+    "gemini-3-pro-image-preview": {
+        "alias": "Gemini 3 Pro Image Preview",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text", "image"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["image_generation", "image_edit"],
+        "upstream_id": "google/gemini-3-pro-image-preview",
+    },
+    # ── Audio ──
+    "tts-1": {
+        "input_modalities": ["text"],
+        "output_modalities": ["audio"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["text_to_speech"],
+    },
+    "whisper-1": {
+        "input_modalities": ["audio"],
+        "output_modalities": ["text"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["speech_to_text"],
+    },
+}
+
 
 DISPLAY_NAME_OVERRIDES: dict[str, str] = {
     "hepai/deepseek-v4-pro": "HEPAI DeepSeek V4 PRO",
@@ -369,6 +472,11 @@ DISPLAY_NAME_OVERRIDES: dict[str, str] = {
     "claude-opus-4-7": "Claude Opus 4.7",
     "claude-opus-4-8": "Claude Opus 4.8",
     "claude-haiku-4-5": "Claude Haiku 4.5",
+    "gpt-image-2": "GPT Image 2",
+    "gpt-image-2.5-flare": "GPT Image 2.5 Flare",
+    "gpt-image-2.5-sunburst": "GPT Image 2.5 Sunburst",
+    "gemini-3.1-flash-image-preview": "Gemini 3.1 Flash Image Preview",
+    "gemini-3-pro-image-preview": "Gemini 3 Pro Image Preview",
 }
 
 

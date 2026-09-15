@@ -105,12 +105,16 @@ def tool_dispatcher() -> RuntimeToolDispatcher:
     global _tool_dispatcher
     if _tool_dispatcher is None:
         from ._artifacts import deliver_runtime_artifact, publish_runtime_artifact
+        from ._image_tools import image_adapter
 
+        adapter = image_adapter()
         _tool_dispatcher = RuntimeToolDispatcher(
             runtime_engine(),
             tools={
                 "artifact.publish": publish_runtime_artifact,
                 "artifact.deliver": deliver_runtime_artifact,
+                "image_generation": adapter.generate,
+                "image_edit": adapter.edit,
             },
         )
     return _tool_dispatcher
@@ -288,3 +292,6 @@ def reset_state() -> None:
     _agent_service = None
     _agent_manager = None
     _workspace_roots.clear()
+    from ._image_tools import reset_image_adapter
+
+    reset_image_adapter()

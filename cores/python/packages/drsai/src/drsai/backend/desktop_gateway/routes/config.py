@@ -166,11 +166,12 @@ def _normalize_agent_reasoning_effort(effort: str, supported: tuple[str, ...]) -
 def _descriptor_supports_agent_role(descriptor: Mapping[str, object], role: str) -> bool:
     inputs = set(descriptor.get("input_modalities") or [])
     outputs = set(descriptor.get("output_modalities") or [])
+    operations = set(descriptor.get("operations") or [])
     model_ref = descriptor.get("ref")
     model_id = str(model_ref.get("model_id") or "").lower() if isinstance(model_ref, Mapping) else ""
     return {
         "image_understanding_model": "image" in inputs and "text" in outputs,
-        "image_generation_model": "image" in outputs,
+        "image_generation_model": "image" in outputs and "image_generation" in operations,
         "text_to_speech_model": "text" in inputs and "audio" in outputs,
         "realtime_voice_model": ("audio" in inputs and "audio" in outputs) or model_id.startswith("gpt-realtime"),
         "speech_to_text_model": "audio" in inputs and "text" in outputs,

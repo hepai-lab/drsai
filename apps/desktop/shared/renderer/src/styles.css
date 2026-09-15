@@ -1855,6 +1855,60 @@ button {
   white-space: nowrap;
 }
 
+.thread-item-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.thread-item .thread-item-title-viewport {
+  display: block;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.thread-item .thread-item-title-track {
+  display: inline-flex;
+  width: max-content;
+  max-width: none;
+  overflow: visible;
+  text-overflow: unset;
+  will-change: transform;
+}
+
+.thread-item .thread-item-title-chunk {
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: nowrap;
+}
+
+.thread-item .thread-item-title-viewport.is-overflowing .thread-item-title-chunk {
+  padding-right: 2em;
+}
+
+.workspace-thread-row:hover .thread-item-title-viewport.is-overflowing .thread-item-title-track,
+.workspace-thread-row:focus-within .thread-item-title-viewport.is-overflowing .thread-item-title-track {
+  animation: thread-title-marquee var(--thread-title-duration, 6s) linear infinite;
+}
+
+@keyframes thread-title-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-thread-row:hover .thread-item-title-viewport.is-overflowing .thread-item-title-track,
+  .workspace-thread-row:focus-within .thread-item-title-viewport.is-overflowing .thread-item-title-track {
+    animation: none;
+  }
+}
+
 .thread-item time {
   color: var(--app-sidebar-muted);
   font-size: 11.5px;
@@ -7370,7 +7424,8 @@ body.is-panel-resizing object {
     22px
     max(18px, calc((100% - var(--chat-content-max-width)) / 2 + 18px))
     calc(var(--chat-composer-height, 112px) + 14px)
-    max(18px, calc((100% - var(--chat-content-max-width)) / 2 + 18px));
+    /* Keep a left gutter for the per-question turn rail at all sidebar widths. */
+    max(28px, calc((100% - var(--chat-content-max-width)) / 2 + 18px));
 }
 
 .conversation-turn-rail {
@@ -7379,7 +7434,7 @@ body.is-panel-resizing object {
   bottom: calc(var(--chat-composer-height, 112px) + 14px);
   left: 6px;
   z-index: 3;
-  display: none;
+  display: grid;
   width: 22px;
   pointer-events: none;
 }
@@ -7446,9 +7501,35 @@ body.is-panel-resizing object {
   background: var(--app-text-primary);
 }
 
-@container chat-pane (min-width: 1080px) {
+/* Very narrow chat panes: keep ticks short so they stay in the left gutter. */
+@container chat-pane (max-width: 640px) {
   .conversation-turn-rail {
-    display: grid;
+    left: 2px;
+    width: 14px;
+  }
+
+  .conversation-turn-rail button {
+    width: 14px;
+  }
+
+  .conversation-turn-rail button::after {
+    width: 6px;
+  }
+
+  .conversation-turn-rail button:hover::after,
+  .conversation-turn-rail button:focus-visible::after,
+  .conversation-turn-rail:has(button:hover) button.active:hover::after {
+    width: 12px;
+  }
+
+  .conversation-turn-rail button:has(+ button:hover)::after,
+  .conversation-turn-rail button:hover + button::after {
+    width: 9px;
+  }
+
+  .conversation-turn-rail button:has(+ button + button:hover)::after,
+  .conversation-turn-rail button:hover + button + button::after {
+    width: 8px;
   }
 }
 
@@ -10736,8 +10817,9 @@ button.structured-activity-detail:hover {
   bottom: calc(100% + 5px);
   left: 0;
   z-index: 36;
-  width: min(240px, 72vw);
-  overflow: visible;
+  box-sizing: border-box;
+  width: min(300px, 78vw);
+  overflow: hidden;
   padding: 5px;
   border: 1px solid var(--app-panel-border);
   border-radius: 12px;
@@ -10754,7 +10836,9 @@ button.structured-activity-detail:hover {
 .composer-configuration-rows > button,
 .composer-configuration-options > button {
   display: flex;
+  box-sizing: border-box;
   width: 100%;
+  min-width: 0;
   min-height: 36px;
   align-items: center;
   justify-content: space-between;
@@ -10778,6 +10862,7 @@ button.structured-activity-detail:hover {
 .composer-configuration-rows > button > span,
 .composer-configuration-options > button > span {
   display: grid;
+  flex: 1 1 auto;
   min-width: 0;
   gap: 2px;
 }
@@ -10793,23 +10878,33 @@ button.structured-activity-detail:hover {
 
 .composer-configuration-rows > button > span {
   display: flex;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
-  width: 100%;
   gap: 10px;
+  overflow: hidden;
 }
 
 .composer-configuration-rows > button > span > strong {
-  flex: 0 0 auto;
+  display: block;
+  flex: 0 1 auto;
+  max-width: 42%;
 }
 
 .composer-configuration-rows > button > span > small {
+  display: block;
+  flex: 1 1 0;
   min-width: 0;
+  overflow: hidden;
   text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer-configuration-rows strong,
 .composer-configuration-options strong {
+  display: block;
+  min-width: 0;
   overflow: hidden;
   font-size: 12px;
   text-overflow: ellipsis;
@@ -10818,6 +10913,8 @@ button.structured-activity-detail:hover {
 
 .composer-configuration-rows small,
 .composer-configuration-options small {
+  display: block;
+  min-width: 0;
   overflow: hidden;
   color: var(--app-text-muted);
   font-size: 11px;
@@ -24902,12 +24999,15 @@ button.structured-activity-compact:hover > span {
   height: 29px;
   flex: 0 0 auto;
   padding: 0 28px 0 9px;
+  overflow: hidden;
   border: 1px solid var(--app-border-soft);
   border-radius: 6px;
   background: var(--app-card-bg);
   color: var(--app-text-primary);
   font: inherit;
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-row select:focus-visible {

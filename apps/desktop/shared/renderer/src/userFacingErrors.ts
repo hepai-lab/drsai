@@ -80,12 +80,12 @@ export function describeUserFacingError(error: unknown, language: "zh" | "en"): 
       }),
     };
   }
-  if (envelope.code === "image_generation_model_unavailable") {
+  if (envelope.code === "image_generation_model_unavailable" || envelope.code === "image_model_unconfigured") {
     return {
       title: language === "zh" ? "未配置图像生成模型" : "Image-generation model is not configured",
       action: language === "zh"
-        ? "输入内容已保留。请在 Agent 模型设置中绑定图像生成模型后再发送。"
-        : "Your input was preserved. Bind an image-generation model in Agent model settings, then send again.",
+        ? "输入内容已保留。请在 Agent 模型设置中绑定图像生成模型（默认 GPT Image 2.5 Sunburst，也可切换 GPT Image / Gemini 图像预览）后再发送。"
+        : "Your input was preserved. Bind an image-generation model in Agent settings (default GPT Image 2.5 Sunburst; GPT Image / Gemini image preview also available), then send again.",
       retryable: false,
       diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
         ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
@@ -93,6 +93,54 @@ export function describeUserFacingError(error: unknown, language: "zh" | "en"): 
         const id = ACTION_IDS[action];
         return { id, label: LABELS[id][language] };
       }),
+    };
+  }
+  if (
+    envelope.code === "image_model_unavailable"
+    || envelope.code === "image_operation_unsupported"
+    || envelope.code === "image_operation_protocol_unsupported"
+    || envelope.code === "image_provider_rejected"
+    || envelope.code === "image_provider_invalid_response"
+    || envelope.code === "image_provider_timeout"
+  ) {
+    return {
+      title: language === "zh" ? "图像生成失败" : "Image generation failed",
+      action: language === "zh"
+        ? "请在 Agent 模型设置中改选其他图像生成模型，确认已登录且模型未在维护，然后重试。不要连续盲目重试以免重复计费。"
+        : "Switch to another image-generation model in Agent settings, confirm you are signed in and the model is not under maintenance, then retry. Avoid blind retries that may bill again.",
+      retryable: envelope.retryable,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.length
+        ? envelope.recovery_actions.map((action) => {
+          const id = ACTION_IDS[action];
+          return { id, label: LABELS[id][language] };
+        })
+        : [{ id: "select_model", label: LABELS.select_model[language] }],
+    };
+  }
+  if (envelope.code === "image_prompt_invalid" || envelope.code === "image_size_unsupported") {
+    return {
+      title: language === "zh" ? "图像生成参数无效" : "Image generation parameters are invalid",
+      action: language === "zh"
+        ? "请调整提示词或尺寸后重试（尺寸需为支持的规格，如 1024x1024）。"
+        : "Adjust the prompt or size and retry (use a supported size such as 1024x1024).",
+      retryable: true,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: [{ id: "retry", label: LABELS.retry[language] }],
+    };
+  }
+  if (envelope.code === "side_effect_outcome_unknown") {
+    return {
+      title: language === "zh" ? "图像请求结果未知" : "Image request outcome is unknown",
+      action: language === "zh"
+        ? "请求可能已到达图像服务。请勿立即重复发送；先检查工作区 artifacts 是否已有结果，或稍后重试。"
+        : "The request may have reached the image provider. Do not resend immediately; check workspace artifacts first, or retry later.",
+      retryable: false,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: [{ id: "diagnostics", label: LABELS.diagnostics[language] }],
     };
   }
   if (envelope.code === "thread_skill_unavailable" || envelope.code === "thread_skill_invalid") {
@@ -126,11 +174,20 @@ export function describeUserFacingError(error: unknown, language: "zh" | "en"): 
     };
   }
   if (envelope.code === "model_unauthorized") {
+    const imageGen = /image.?generat|image_model|生图|图像生成/i.test(
+      `${envelope.message || ""} ${envelope.diagnostic_reference || ""} ${envelope.code}`,
+    );
     return {
-      title: language === "zh" ? "图像理解模型鉴权失败" : "Image-understanding model authorization failed",
+      title: language === "zh"
+        ? (imageGen ? "图像生成鉴权失败" : "图像理解模型鉴权失败")
+        : (imageGen ? "Image-generation authorization failed" : "Image-understanding model authorization failed"),
       action: language === "zh"
-        ? "图片附件已保留。请重新登录 AI 平台账号，确认已开通该识图模型，然后重试。"
-        : "Your image attachment was preserved. Sign in to the AI platform again, confirm the vision model is enabled, then retry.",
+        ? (imageGen
+          ? "请重新登录 AI 平台账号，确认已开通当前图像生成模型，然后重试。不要连续盲目重试。"
+          : "图片附件已保留。请重新登录 AI 平台账号，确认已开通该识图模型，然后重试。")
+        : (imageGen
+          ? "Sign in to the AI platform again, confirm the image-generation model is enabled, then retry. Avoid blind retries."
+          : "Your image attachment was preserved. Sign in to the AI platform again, confirm the vision model is enabled, then retry."),
       retryable: envelope.retryable,
       diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
         ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
@@ -209,6 +266,25 @@ export function describeUserFacingError(error: unknown, language: "zh" | "en"): 
       retryable: true,
       diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
         ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: ["retry", "new_task", "diagnostics"].map((action) => {
+        const id = ACTION_IDS[action as RuntimeRecoveryAction];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (
+    envelope.code === "session_outbox_busy"
+    || (typeof envelope.message === "string" && envelope.message.includes("awaiting Runtime acknowledgement"))
+  ) {
+    return {
+      title: language === "zh" ? "上一轮任务仍在收尾" : "Previous turn is still finishing",
+      action: language === "zh"
+        ? "刚停止的任务还在后台结束中。请稍等片刻再发送，或新建任务。"
+        : "The stopped turn is still finishing in the background. Wait a moment and send again, or start a new task.",
+      retryable: true,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? (envelope.code === "unexpected_error" ? "session_outbox_busy" : envelope.code)
+        : `${envelope.code === "unexpected_error" ? "session_outbox_busy" : envelope.code} · ${envelope.diagnostic_reference}`,
       actions: ["retry", "new_task", "diagnostics"].map((action) => {
         const id = ACTION_IDS[action as RuntimeRecoveryAction];
         return { id, label: LABELS[id][language] };

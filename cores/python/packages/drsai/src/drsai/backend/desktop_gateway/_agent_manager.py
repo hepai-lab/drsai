@@ -52,6 +52,7 @@ from drsai.utils.utils import compress_state, decompress_state
 
 from ._artifacts import deliver_artifact
 from ._auth import effective_user_id
+from ._image_tools import IMAGE_GENERATION_HOST_POLICY, image_edit, image_generation
 
 _db_manager: DatabaseManager | None = None
 
@@ -409,9 +410,10 @@ class DesktopAgentManager:
             model_provider=model_provider,
             model_id=model_id,
             work_dir=work_dir or os.getcwd(),
-            # Artifact delivery is a host capability, not a user-toggled
-            # tool: every Agent must be able to publish a file it created.
-            extra_tools=[deliver_artifact],
+            # Host capabilities: artifact delivery + image generation/edit.
+            # Image tools resolve the Agent's image_generation_model policy
+            # and never take credentials as arguments.
+            extra_tools=[deliver_artifact, image_generation, image_edit],
             # ARCHIVED(2026-09-02): Desktop reuses the TUI legacy path.
             # run_drsai_agent_factory sets _shared_agent_kernel=None for
             # kernel_surface=="tui", so DrSaiAssistant.run_stream() falls
@@ -537,10 +539,13 @@ class DesktopAgentManager:
             # Apply plan mode + composer skill selection every turn so a prior
             # turn cannot leak into a normal turn (the Agent is cached per key).
             skill_suffix = apply_selected_skill_to_agent(agent, selected_skill_id)
+            # Host image policy last in suffix so it outranks skill copy that
+            # still tells the model to run image scripts.
+            suffix_parts = [part for part in (skill_suffix, IMAGE_GENERATION_HOST_POLICY) if part]
             if hasattr(agent, "inject_system_prompt"):
                 agent.inject_system_prompt(
                     prefix=PLAN_MODE_SYSTEM_PROMPT if plan_mode else "",
-                    suffix=skill_suffix,
+                    suffix="\n\n".join(suffix_parts),
                 )
             # Reasoning is applied per turn because the Agent is cached per
             # session.  Never let a previous turn's effort leak into a later

@@ -1,5 +1,5 @@
 import type { DesktopAgent, MyDrSaiModelConfig } from "@shared/desktopApi";
-import { supportsFullAgentPrimaryRuntime } from "./modelCatalogRecovery";
+import { supportsFullAgentPrimaryRuntime, supportsImageGenerationModel } from "./modelCatalogRecovery";
 
 export function getAgentModelOptions(
   catalog: MyDrSaiModelConfig[],
@@ -95,4 +95,32 @@ export function getAgentModelOptions(
     result.push(model);
   }
   return result;
+}
+
+/** Image-generation options for Composer / Settings — from backend catalog only. */
+export function getImageGenerationModelOptions(
+  catalog: MyDrSaiModelConfig[],
+  selectedRef?: { provider_id: string; model_id: string } | null,
+): MyDrSaiModelConfig[] {
+  const byKey = new Map<string, MyDrSaiModelConfig>();
+  for (const model of catalog) {
+    if (!model.provider_id || !model.alias || !supportsImageGenerationModel(model)) continue;
+    byKey.set(`${model.provider_id}\0${model.alias}`, model);
+  }
+  if (selectedRef?.provider_id && selectedRef.model_id) {
+    const key = `${selectedRef.provider_id}\0${selectedRef.model_id}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        alias: selectedRef.model_id,
+        display_name: selectedRef.model_id,
+        model: selectedRef.model_id,
+        provider_id: selectedRef.provider_id,
+        output_modalities: ["image"],
+        operations: ["image_generation"],
+        availability: "unavailable",
+        capability_source: "unknown",
+      });
+    }
+  }
+  return [...byKey.values()];
 }

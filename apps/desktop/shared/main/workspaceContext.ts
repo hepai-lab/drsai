@@ -60,7 +60,8 @@ const DEFAULT_FOLDER_SUMMARY_FILES = 16;
 const DEFAULT_FOLDER_SUMMARY_CHARS = 12_000;
 const MAX_FOLDER_SUMMARY_FILE_BYTES = 24_000;
 const MAX_INSTRUCTION_CHARS = 12_000;
-const MAX_IMAGE_DATA_URL_BYTES = 1_500_000;
+// AI-generated 1024² PNGs commonly land around 1–3 MB; keep headroom for 1536².
+const MAX_IMAGE_DATA_URL_BYTES = 8_000_000;
 const NOISY_DIRS = new Set([
   ".git",
   ".hg",
@@ -2471,7 +2472,7 @@ export async function previewWorkspaceFileViaGateway(
   // Match local previewWorkspaceFile: images need the full file, not a
   // text-oriented max_bytes sample that corrupts the bitmap.
   const maxBytes = imagePreview
-    ? Math.min(1_048_576, MAX_IMAGE_DATA_URL_BYTES)
+    ? MAX_IMAGE_DATA_URL_BYTES
     : clampInt(request.maxBytes, 8_000, 500_000, DEFAULT_PREVIEW_BYTES);
 
   // Gateway expects a workspace-relative path; tree selection often passes absolute.
