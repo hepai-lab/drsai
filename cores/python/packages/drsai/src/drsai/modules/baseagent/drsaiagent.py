@@ -91,6 +91,26 @@ from drsai.utils.utils import download_file_from_url_or_base64
 from drsai.configs.constant import FILE_DIR, DEFAULT_USERNAME
 from pathlib import Path
 
+
+class ModelEmptyStreamError(RuntimeError):
+    """Raised when a model client produces zero usable output events.
+
+    Covers two failure shapes that previously terminated the agent loop
+    without retry:
+      1. Streaming mode: ``create_stream()`` completes without ever yielding
+         a final ``CreateResult`` (e.g. upstream gateway silently closes the
+         SSE connection, or the stream ends mid-way after yielding only
+         text chunks).
+      2. Non-streaming mode: ``create()`` returns ``None`` instead of a
+         ``CreateResult``.
+
+    This is almost always transient (gateway hiccup, network blip, upstream
+    5xx masquerading as an empty 200), so ``is_retryable_llm_error`` treats
+    it as retriable and the agent-level retry loop applies exponential
+    backoff instead of crashing the whole ``on_messages_stream``.
+    """
+
+
 class DrSaiAgentConfig(BaseModel):
     """The declarative configuration for the assistant agent."""
 
@@ -1771,14 +1791,21 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             if effort in {"off", "none"}:
                 # Normalize the TUI's user-facing off/none values across
                 # provider-specific request protocols.
-                if _is_anthropic and param_type in {"deepseek_reasoning_effort", "adaptive"}:
+                if param_type == "deepseek_reasoning_effort":
+                    # DeepSeek supports reasoning_effort via OpenAI-compatible
+                    # API; passing "thinking" (Anthropic-only) would cause
+                    # ValueError in the client.  Omit entirely to use model
+                    # default (no explicit reasoning).
+                    pass
+                elif param_type == "adaptive":
                     extra_create_args["thinking"] = {"type": "disabled"}
                 else:
                     # OpenAI clients (and Anthropic clients with other
                     # param_types) use reasoning_effort="none".
                     extra_create_args["reasoning_effort"] = "none"
-            elif _is_anthropic and param_type == "deepseek_reasoning_effort":
-                extra_create_args["thinking"] = {"type": "enabled"}
+            elif param_type == "deepseek_reasoning_effort":
+                # DeepSeek uses reasoning_effort only, NOT Anthropic's
+                # "thinking" field.  Setting both would fail client validation.
                 extra_create_args["reasoning_effort"] = effort
             elif _is_anthropic and param_type == "adaptive":
                 extra_create_args["thinking"] = {"type": "adaptive"}
@@ -1807,7 +1834,15 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 else:
                     raise RuntimeError(f"Invalid chunk type: {type(chunk)}")
             if model_result is None:
-                raise RuntimeError("No final model result in streaming mode.")
+                # Stream completed without a final CreateResult — the gateway
+                # silently dropped the connection or yielded zero events.
+                # Raise the dedicated retriable error so the agent-level
+                # retry loop handles it with exponential backoff instead of
+                # crashing on_messages_stream with an opaque RuntimeError.
+                raise ModelEmptyStreamError(
+                    "Model client stream completed without a final CreateResult "
+                    "(zero usable events yielded by create_stream)."
+                )
             yield model_result
         else:
             model_result = await model_client.create(
@@ -1816,4 +1851,10 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 cancellation_token=cancellation_token,
                 extra_create_args={key: value for key, value in extra_create_args.items() if key != "stream_options"},
             )
+            if model_result is None:
+                # Non-streaming client returned None — treat identically to
+                # an empty stream (transient, retriable).
+                raise ModelEmptyStreamError(
+                    "Model client create() returned None instead of a CreateResult."
+                )
             yield model_result

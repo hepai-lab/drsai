@@ -32,7 +32,8 @@ from drsai.modules.baseagent import (
     AssistantMessage,
     UserMessage,
     SystemMessage,
-    LLMMessage
+    LLMMessage,
+    ModelEmptyStreamError,
     )
 from drsai.modules.baseagent.drsaiagent import DrSaiAgentConfig
 from drsai.modules.baseagent import CodeExecutorAgent, CodeExecutor
@@ -203,6 +204,16 @@ def _desktop_tool_error_code(value: Any) -> str:
 
 def is_retryable_llm_error(error: BaseException) -> bool:
     """Return whether retrying can plausibly succeed without user action."""
+    # ModelEmptyStreamError: stream yielded zero usable events or create()
+    # returned None — almost always a transient gateway/network failure.
+    # Check the exception chain as well since it may be wrapped.
+    current_check: BaseException | None = error
+    _seen: set[int] = set()
+    while current_check is not None and id(current_check) not in _seen:
+        _seen.add(id(current_check))
+        if isinstance(current_check, ModelEmptyStreamError):
+            return True
+        current_check = current_check.__cause__ or current_check.__context__
     current: BaseException | None = error
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
@@ -2021,32 +2032,57 @@ class DrSaiAssistant(DrSaiAgent):
                                 yield inference_output
                                 _chunks_yielded = True
 
-                        assert model_result is not None, "No model result was produced."
-
-                        # ── Check for empty text output ─────────────────────
-                        if isinstance(model_result.content, str) and not model_result.content.strip():
-                            # Empty output — treat as a retriable failure
+                        # ── Check for no result OR empty text output ─────────
+                        # Case A: stream yielded zero usable events (client
+                        #         layer normally raises ModelEmptyStreamError
+                        #         which is handled by the except branch below,
+                        #         but defensive: _call_llm may return without
+                        #         a CreateResult in custom reply_function
+                        #         paths).
+                        # Case B: result has empty string content.
+                        _empty_or_missing = (
+                            model_result is None
+                            or (
+                                isinstance(model_result.content, str)
+                                and not model_result.content.strip()
+                            )
+                        )
+                        if _empty_or_missing:
                             if llm_retry_count < self._llm_max_retries:
                                 llm_retry_count += 1
                                 delay = min(self._llm_retry_base_delay * (2 ** (llm_retry_count - 1)), 60)
+                                _reason = "无输出 (no result)" if model_result is None else "空输出 (empty output)"
                                 logger.warning(
-                                    f"[LLM Retry] Empty output (attempt {llm_retry_count}/{self._llm_max_retries}), "
+                                    f"[LLM Retry] {_reason} (attempt {llm_retry_count}/{self._llm_max_retries}), "
                                     f"retrying in {delay:.1f}s…"
                                 )
+                                _retry_notice = (
+                                    f"⚠️ 模型{_reason}，正在重试 "
+                                    f"({llm_retry_count}/{self._llm_max_retries})，等待 {delay:.1f}s…"
+                                )
+                                if _chunks_yielded:
+                                    # Partial text was already streamed —
+                                    # warn the user it may be incomplete
+                                    _retry_notice = (
+                                        f"⚠️ 以上输出因模型流中断可能不完整。"
+                                        f"正在重试 ({llm_retry_count}/{self._llm_max_retries})，"
+                                        f"等待 {delay:.1f}s…\n"
+                                        f"────────────────────────────────"
+                                    )
                                 yield AgentLogEvent(
                                     source="system",
                                     title="LLM Retry",
-                                    content=f"⚠️ 模型输出为空，正在重试 ({llm_retry_count}/{self._llm_max_retries})，等待 {delay:.1f}s…",
+                                    content=_retry_notice,
                                     send_level=Send_level.WARNING,
                                 )
                                 await asyncio.sleep(delay)
-                                # Do NOT add empty output to context — just retry
+                                # Do NOT add empty/missing output to context — just retry
                                 model_result = None
                                 continue
                             else:
-                                # Exhausted retries for empty output
+                                # Exhausted retries for empty/missing output
                                 logger.error(
-                                    f"[LLM Retry] Empty output after {self._llm_max_retries} retries"
+                                    f"[LLM Retry] Empty/missing output after {self._llm_max_retries} retries"
                                 )
                                 # Set model_result to None so the post-loop guard
                                 # (if model_result is None) yields the error Response
