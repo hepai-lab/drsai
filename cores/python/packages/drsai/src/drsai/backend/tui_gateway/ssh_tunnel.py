@@ -53,6 +53,15 @@ def _remote_pid_file(port: int) -> str:
     return f"{REMOTE_TMP_DIR}/gateway_{port}.pid"
 
 
+# ── 本地安装脚本路径 ───────────────────────────────────────────────
+# 从本文件位置向上 8 级到仓库根目录, 再进 scripts/
+_INSTALL_SCRIPT_PATH = os.path.abspath(os.path.join(
+    os.path.dirname(__file__),
+    "..", "..", "..", "..", "..", "..", "..", "..",
+    "scripts", "install_drsai_tui.sh",
+))
+
+
 # ── 数据结构 ─────────────────────────────────────────────────────────
 
 
@@ -187,14 +196,15 @@ class SSHTunnelManager:
                 raise RuntimeError(f"远程命令执行失败 (hostname/pwd): {e}") from e
 
             # 定位远程 opendrsai 可执行文件 (PATH → 默认安装目录)
-            self._opendrsai = self._resolve_opendrsai()
+            self._opendrsai = self._ensure_opendrsai()
             logger.info("远程 opendrsai: %s", self._opendrsai)
 
             try:
                 py_ver_out, _, _ = self._exec_remote(f"{self._opendrsai} --version 2>&1 || true", timeout=30)
+                self.status.remote_python_version = py_ver_out.strip().splitlines()[0] if py_ver_out.strip() else ""
             except Exception as e:
-                raise RuntimeError(f"远程 opendrsai --version 执行超时或失败: {e}") from e
-            self.status.remote_python_version = py_ver_out.strip().splitlines()[0] if py_ver_out.strip() else ""
+                logger.warning("远程 opendrsai --version 执行失败 (不影响连接): %s", e)
+                self.status.remote_python_version = "(unknown)"
 
             # 选择远程 gateway 端口
             remote_port = cfg.remote_gateway_port or self._find_free_remote_port(cfg)
@@ -224,36 +234,131 @@ class SSHTunnelManager:
 
     # ── 远程操作 ────────────────────────────────────────────────────
 
-    def _resolve_opendrsai(self) -> str:
-        """定位远程 `opendrsai` 可执行文件。
+    def _resolve_opendrsai(self, quick_verify: bool = True) -> str | None:
+        """定位远程 `opendrsai` 可执行文件，找不到时返回 None。
 
-        解析顺序:
-          1. `command -v opendrsai` — 远程 PATH 中查找 (install_drsai.sh
-             会把安装目录的 bin/ 写入 ~/.bashrc 等, ssh 非交互式 shell
-             在多数发行版上也会 source ~/.bashrc, 因此通常能命中)
-          2. 兜底: 默认安装目录 `~/.drsai/bin/opendrsai` — 检查文件存在
-
-        Returns:
-            可直接在远程 shell 中执行的命令字符串
-            (PATH 命中时为 'opendrsai', 否则为完整路径)
-
-        Raises:
-            RuntimeError: 两种方式都找不到 opendrsai
+        Args:
+            quick_verify: True 时对找到的 launcher 做一次快速 --version
+                          验证，确保它背后真的是一个可用的安装（而非坏链）。
         """
+        candidates = []
+
+        # 1. PATH 查找
         out, _, _ = self._exec_remote("command -v opendrsai 2>/dev/null || true")
         launcher = out.strip().splitlines()[0].strip() if out.strip() else ""
         if launcher:
-            return launcher
+            candidates.append(launcher)
 
-        fallback = "~/.drsai/bin/opendrsai"
-        out, _, _ = self._exec_remote(f"test -x {fallback} && echo FOUND || true")
+        # 2. 兜底: 默认安装目录
+        out, _, _ = self._exec_remote("test -x ~/.drsai/bin/opendrsai && echo FOUND || true")
         if "FOUND" in out:
-            return fallback
+            candidates.append("~/.drsai/bin/opendrsai")
 
-        raise RuntimeError(
-            "远程服务器上找不到 opendrsai 可执行文件 (PATH 和 ~/.drsai/bin/ 均未命中)。\n"
-            "请先在远程服务器上运行 scripts/install_drsai.sh 完成安装。"
+        # 3. 对每个候选做快速验证
+        for launcher in candidates:
+            if not quick_verify:
+                return launcher
+            try:
+                # 用短超时跑 --version，快速确认安装有效。
+                # 注意: 这里刻意不加 `|| true` —— 坏安装（例如 symlink
+                # 指向缺失的 venv）会向 stderr 打印错误并以非 0 退出，
+                # 若用 `|| true` 吞掉退出码就会把坏安装误判为可用。
+                ver_out, ver_err, code = self._exec_remote(
+                    f"{launcher} --version 2>&1", timeout=30
+                )
+                if code == 0 and ver_out.strip():
+                    return launcher
+                logger.info(
+                    "候选 launcher '%s' 验证失败 (code=%d): %s",
+                    launcher, code, (ver_out or ver_err).strip()[:200],
+                )
+            except Exception as e:
+                logger.info("候选 launcher '%s' 验证超时或失败: %s", launcher, e)
+
+        return None
+
+    def _ensure_opendrsai(self) -> str:
+        """确保远程有 opendrsai，找不到时自动上传安装脚本并远程安装。
+
+        流程:
+          1. 调用 _resolve_opendrsai() 查找
+          2. 找到 → 直接返回
+          3. 找不到 → 通过 SSH 传输 install_drsai_tui.sh 到远程并执行
+          4. 再次 _resolve_opendrsai() 验证
+          5. 仍然找不到 → 报错
+        """
+        existing = self._resolve_opendrsai()
+        if existing is not None:
+            return existing
+
+        logger.info("远程未发现 opendrsai，开始自动安装...")
+
+        # 检测远程 curl 是否可用
+        curl_out, _, _ = self._exec_remote("command -v curl 2>/dev/null && echo FOUND || echo MISSING")
+        if "MISSING" in curl_out:
+            raise RuntimeError(
+                "远程服务器上缺少 curl，无法下载安装依赖。\n"
+                "请先在远程服务器上安装 curl，或手动运行 scripts/install_drsai_tui.sh。"
+            )
+
+        # 检查本地安装脚本是否存在
+        if not os.path.isfile(_INSTALL_SCRIPT_PATH):
+            raise RuntimeError(
+                f"本地安装脚本不存在: {_INSTALL_SCRIPT_PATH}\n"
+                "请确认仓库完整，或手动在远程运行 scripts/install_drsai_tui.sh。"
+            )
+
+        # 读取本地安装脚本内容。
+        # 必须显式把换行统一成 LF: Windows checkout（core.autocrlf）下这个
+        # 文件可能是 CRLF，直接原样传到 Linux 执行会得到
+        # `$'\r': command not found` 之类的错误。
+        with open(_INSTALL_SCRIPT_PATH, encoding="utf-8", newline="") as f:
+            script_content = f.read().replace("\r\n", "\n").replace("\r", "\n")
+
+        # 通过 base64 编码传输脚本内容，避免 shell 转义问题
+        import base64 as _b64
+        encoded = _b64.b64encode(script_content.encode()).decode()
+        logger.info("通过 SSH 传输安装脚本到远程...")
+
+        # 在远程解码并写入临时文件，然后执行
+        install_cmd = (
+            f"mkdir -p {REMOTE_TMP_DIR} && "
+            f"python3 -c \"import base64; "
+            f"open('{REMOTE_TMP_DIR}/install_drsai_tui.sh','w').write(base64.b64decode('{encoded}').decode())\" && "
+            f"chmod +x {REMOTE_TMP_DIR}/install_drsai_tui.sh && "
+            f"bash {REMOTE_TMP_DIR}/install_drsai_tui.sh "
+            f"--force --non-interactive --install-dir \"$HOME/.drsai\" 2>&1 && "
+            f"rm -f {REMOTE_TMP_DIR}/install_drsai_tui.sh"
         )
+        # 超时给足: 安装脚本要静默下载 ~1-2GB（便携 Python/Node + 源码），
+        # 慢链路上单个下载步骤就可能超过 5 分钟没有任何输出。
+        logger.info("远程安装 opendrsai 中（需下载约 1-2GB，可能需要几分钟）...")
+        out, err, code = self._exec_remote(install_cmd, timeout=1800)
+        if code != 0:
+            raise RuntimeError(
+                f"远程安装 opendrsai 失败 (code={code}):\n{err or out[:2000]}"
+            )
+
+        logger.info("远程安装完成，重新查找 opendrsai...")
+        result = self._resolve_opendrsai()
+        if result is None:
+            # 安装脚本已成功，但 --version 可能因首次冷启动 import 太慢而
+            # 验证失败（共享/集群文件系统上很常见）。此时只要 launcher
+            # 确实存在就继续，让后续步骤给出真实错误。
+            check, _, _ = self._exec_remote(
+                "test -x ~/.drsai/bin/opendrsai && echo FOUND || true"
+            )
+            if "FOUND" in check:
+                logger.warning(
+                    "opendrsai --version 验证未通过，但 launcher 已存在；继续使用 ~/.drsai/bin/opendrsai"
+                )
+                return "~/.drsai/bin/opendrsai"
+            raise RuntimeError(
+                "远程安装脚本执行完毕，但 opendrsai 仍不可用。\n"
+                "请手动 SSH 到远程服务器检查 ~/.drsai/bin/ 目录和安装日志。"
+            )
+
+        return result
 
     def _exec_remote(self, cmd: str, timeout: float = 15) -> tuple[str, str, int]:
         """执行远程命令，返回 (stdout, stderr, returncode)。
@@ -372,25 +477,27 @@ class SSHTunnelManager:
             log = self._read_remote_log(remote_port)
             raise RuntimeError(f"无法获取远程 PID (got '{pid_str}')。日志:\n{log}")
 
-        # 等待端口就绪 — 直接通过 SSH transport 尝试建立 direct-tcpip
-        # channel 来探测远程端口, 不依赖 ss/netstat 命令 (跨平台、
-        # 无需额外远程命令执行, 避免 channel 拥塞导致的超时)。
+        # 等待端口就绪 — 通过 SSH transport 建立 direct-tcpip channel 探测
+        # 远程端口，不依赖 ss/netstat（跨平台，无需额外远程命令执行）。
         #
-        # 修复: 仅 open_channel + close 可能产生假阳性 — SSH channel
-        # 创建成功不代表远程 TCP 端口有进程监听。  改为发送一个 HTTP
-        # upgrade 请求并读取响应, 确认远端确实有 WebSocket 服务器在监听。
+        # 超时给足：/aifs 这类集群/共享文件系统上，首次 import 整条 agent 依赖
+        # 栈（autogen / fastapi / openai ...）可能远超 10s，而端口绑定发生在
+        # import 之后 —— 固定 9s 在慢盘上必然失败。
         ready = False
-        for i in range(30):  # 30 × 0.3s = 9s
-            time.sleep(0.3)
+        wait_seconds = float(os.environ.get("DRSAI_SSH_READY_TIMEOUT", "150"))
+        deadline = time.time() + wait_seconds
+        attempt = 0
+        while time.time() < deadline:
+            attempt += 1
+            time.sleep(0.5)
             try:
                 chan = self._transport.open_channel(
                     "direct-tcpip",
                     ("127.0.0.1", remote_port),
                     ("127.0.0.1", 22),
                 )
-                # 发送 HTTP 升级请求, 验证远端确实有 WS 服务器在监听。
-                # 如果端口无人监听, SSH 服务端会返回 channel EOF 或
-                # 连接拒绝异常, recv() 会抛错或返回空。
+                # 发送 HTTP 升级请求，验证远端确实有 WebSocket 服务器在监听。
+                # 如果端口无人监听，SSH 服务端会返回 channel EOF 或连接拒绝。
                 chan.send(
                     b"GET /attach HTTP/1.1\r\n"
                     b"Host: 127.0.0.1\r\n"
@@ -398,36 +505,33 @@ class SSHTunnelManager:
                     b"Connection: Upgrade\r\n"
                     b"\r\n"
                 )
-                # 等待响应 (最多 1s)
                 chan.settimeout(1.0)
                 data = chan.recv(1024)
-                chan.close()
+                try:
+                    chan.close()
+                except Exception:
+                    pass
                 if data:
-                    # 收到任何响应都说明端口有进程在监听
                     ready = True
                     break
-                else:
-                    # 空响应 = 端口已关闭
-                    chan.close()
             except Exception:
-                pass  # 端口未就绪或连接被拒, 继续等待
+                pass  # 端口未就绪或连接被拒，继续等待
 
-            # 检查进程是否还活着 (第 5 次和第 15 次各检查一次)
-            if i == 5 or i == 15:
+            # 每 ~2s 检查一次进程是否存活。必须每轮都查：只查固定次数时，
+            # 进程若在两次检查之间退出，会被误报成"端口未就绪"而掩盖真因。
+            if attempt % 4 == 0:
                 alive_out, _, _ = self._exec_remote(
                     f"kill -0 {self.status.remote_pid} 2>&1 && echo ALIVE || echo DEAD"
                 )
                 if "DEAD" in alive_out:
-                    log = self._read_remote_log(remote_port)
-                    raise RuntimeError(
-                        f"远程 tui_gateway 进程已退出 (PID={self.status.remote_pid})。日志:\n{log}"
-                    )
+                    raise RuntimeError(self._remote_startup_failure(
+                        remote_port, "进程已退出"
+                    ))
 
         if not ready:
-            log = self._read_remote_log(remote_port)
-            raise RuntimeError(
-                f"远程 tui_gateway 端口 {remote_port} 未就绪 (等待 9s)。日志:\n{log}"
-            )
+            raise RuntimeError(self._remote_startup_failure(
+                remote_port, f"端口未就绪 (等待 {wait_seconds:.0f}s)"
+            ))
 
         # 端口探测通过后, 再等待 1s 并检查进程是否仍然存活。
         # 这可以捕获 "进程绑定端口后立即崩溃" 的情况 (例如依赖缺失、
@@ -441,6 +545,53 @@ class SSHTunnelManager:
             raise RuntimeError(
                 f"远程 tui_gateway 进程在启动后立即退出 (PID={self.status.remote_pid})。日志:\n{log}"
             )
+
+    def _remote_startup_failure(self, remote_port: int, reason: str) -> str:
+        """收集远程 gateway 启动失败的诊断信息。
+
+        空日志 + 进程存活往往只是"还在慢慢 import"，而"坏安装"会在这里
+        以 launcher / venv 检查的形式直接暴露出来。
+        """
+        lines = [
+            f"远程 tui_gateway 启动失败: {reason} "
+            f"(port={remote_port}, pid={self.status.remote_pid})",
+        ]
+
+        # gateway 自身的 stdout/stderr
+        try:
+            log = self._read_remote_log(remote_port)
+        except Exception:
+            log = ""
+        lines.append("--- gateway 日志 ---")
+        lines.append(log.strip() or "(空)")
+
+        # gateway 主动记录的退出原因
+        try:
+            crash, _, _ = self._exec_remote(
+                "tail -n 40 ~/.drsai/logs/tui_gateway_crash.log 2>/dev/null || true"
+            )
+            if crash.strip():
+                lines.append("--- crash log (~/.drsai/logs/tui_gateway_crash.log) ---")
+                lines.append(crash.strip())
+        except Exception:
+            pass
+
+        # launcher / venv 状态 — 坏安装最容易在这里暴露
+        try:
+            diag, _, _ = self._exec_remote(
+                "ls -la ~/.drsai/bin/opendrsai 2>&1; "
+                "if [ -x ~/.drsai/packages/venv/bin/drsai ]; then "
+                "echo 'venv drsai: OK'; else echo 'venv drsai: MISSING'; fi; "
+                f"{self._opendrsai} --version 2>&1 | head -n 5",
+                timeout=30,
+            )
+            if diag.strip():
+                lines.append("--- launcher 诊断 ---")
+                lines.append(diag.strip())
+        except Exception:
+            pass
+
+        return "\n".join(lines)
 
     def _read_remote_log(self, port: int = 0) -> str:
         """读取远程 gateway 日志。"""
@@ -762,12 +913,35 @@ class SSHTunnelManager:
                     "请先在远程服务器上运行 scripts/install_drsai.sh 完成安装。"
                 )
 
-            version = _exec(f"{opendrsai} --version 2>&1 || true").splitlines()
+            # 验证 launcher 背后真的是可用安装（防范坏链 / 缺 venv）
+            try:
+                version = _exec(f"{opendrsai} --version 2>&1 || true").splitlines()
+            except Exception as e:
+                client.close()
+                return False, (
+                    f"SSH 连接成功 (host: {hostname})，但 opendrsai 无法执行。\n"
+                    f"launcher: {opendrsai}\n"
+                    f"错误: {e}\n\n"
+                    "安装可能已损坏（例如 packages/venv 缺失）。\n"
+                    "在 TUI 中直接按 Enter 连接会自动重新安装；\n"
+                    "或手动运行 scripts/install_drsai_tui.sh --force。"
+                )
+
+            if not version or not version[0].strip():
+                client.close()
+                return False, (
+                    f"SSH 连接成功 (host: {hostname})，但 opendrsai 无输出。\n"
+                    f"launcher: {opendrsai}\n\n"
+                    "安装可能已损坏（例如 packages/venv 缺失）。\n"
+                    "在 TUI 中直接按 Enter 连接会自动重新安装；\n"
+                    "或手动运行 scripts/install_drsai_tui.sh --force。"
+                )
+
             client.close()
             return True, (
                 f"{hostname}\n"
                 f"opendrsai: {opendrsai}\n"
-                + (version[0] if version else "")
+                + version[0]
             )
         except Exception as e:
             return False, str(e)
