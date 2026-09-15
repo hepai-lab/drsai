@@ -1180,7 +1180,7 @@ export function useDesktopChatAdapter({
         const assistantId = streamingAssistantByRequest.current[event.requestId];
         const alreadyCompleted = completedStructuredRequests.current.has(event.requestId);
         setMessages((current) => publishAndReturn(
-          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+          updateAssistantByIdExact(current, assistantId, (message) => ({
             ...message,
             streaming: false,
             inputRequest: undefined,
@@ -1204,7 +1204,7 @@ export function useDesktopChatAdapter({
       const assistantId = streamingAssistantByRequest.current[event.requestId];
       setMessages((current) =>
         publishAndReturn(
-          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+          updateAssistantByIdExact(current, assistantId, (message) => ({
             ...message,
             streaming: false,
             inputRequest: undefined,
@@ -1241,6 +1241,7 @@ export function useDesktopChatAdapter({
             assistantId,
             runtimeVisibleError,
             friendlyError.actions,
+            { exactAssistantId: true },
           )),
         );
         structuredRequests.current.delete(event.requestId);
@@ -1263,6 +1264,7 @@ export function useDesktopChatAdapter({
           assistantId,
           runtimeVisibleError,
           friendlyError.actions,
+          { exactAssistantId: true },
         )),
       );
       delete streamingAssistantByRequest.current[event.requestId];
@@ -3255,14 +3257,31 @@ function updateAssistantByIdOrLatestStreaming(
   return next;
 }
 
+/** Terminal events must never fall back to the latest streaming bubble. */
+function updateAssistantByIdExact(
+  messages: UiMessage[],
+  assistantId: string | undefined,
+  update: (message: UiMessage) => UiMessage,
+): UiMessage[] {
+  if (!assistantId) return messages;
+  const next = [...messages];
+  const index = next.findIndex((message) => message.id === assistantId);
+  if (index === -1) return next;
+  next[index] = update(next[index]);
+  return next;
+}
+
 function settleAssistantAfterHiddenError(
   messages: UiMessage[],
   assistantId: string | undefined,
   visibleError?: string,
   recoveryActions?: UserFacingRecoveryAction[],
+  options?: { exactAssistantId?: boolean },
 ): UiMessage[] {
   const next = [...messages];
-  const index = findAssistantIndex(next, assistantId);
+  const index = options?.exactAssistantId
+    ? (assistantId ? next.findIndex((message) => message.id === assistantId) : -1)
+    : findAssistantIndex(next, assistantId);
   if (index === -1) return next;
   const message = next[index];
   if (!message.content.trim()) {

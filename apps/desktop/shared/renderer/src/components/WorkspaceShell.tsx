@@ -1302,7 +1302,7 @@ export function WorkspaceShell({
           className={`thread-item workspace-thread-item ${showSourceIcon ? "has-source-icon " : ""}${thread.active ? "active" : ""}${thread.activity.kind === "error" ? " failed" : ""}`}
           onClick={() => onThreadSelect(thread.id)}
         >
-          <span>
+          <span className="thread-item-label">
             {thread.unread && <b className="thread-unread-dot" aria-hidden />}
             {thread.pinned && <b className="thread-pinned-mark" aria-hidden>{"\u2022"}</b>}
             {thread.fork && (
@@ -1316,7 +1316,7 @@ export function WorkspaceShell({
                 {thread.fork.queueStatus === "waiting_approval" ? "Wait" : thread.fork.queueStatus === "ready" ? "Ready" : "Fork"}
               </b>
             )}
-            {thread.title}
+            <ThreadTitleScroll title={thread.title} />
           </span>
           <span className="thread-item-status">
             {thread.activity.kind === "idle" ? (
@@ -3646,6 +3646,47 @@ export function WorkspaceShell({
         </div>
       )}
     </div>
+  );
+}
+
+function ThreadTitleScroll({ title }: { title: string }): React.JSX.Element {
+  const viewportRef = useRef<HTMLSpanElement>(null);
+  const chunkRef = useRef<HTMLSpanElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const chunk = chunkRef.current;
+    if (!viewport || !chunk) return;
+    setOverflowing(chunk.scrollWidth > viewport.clientWidth + 1);
+  }, [title]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const chunk = chunkRef.current;
+      if (!chunk) return;
+      setOverflowing(chunk.scrollWidth > viewport.clientWidth + 1);
+    });
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [title]);
+
+  const durationSec = Math.min(18, Math.max(4, title.length * 0.14));
+
+  return (
+    <span
+      ref={viewportRef}
+      className={`thread-item-title-viewport${overflowing ? " is-overflowing" : ""}`}
+      style={{ "--thread-title-duration": `${durationSec}s` } as React.CSSProperties}
+      title={title}
+    >
+      <span className="thread-item-title-track">
+        <span className="thread-item-title-chunk" ref={chunkRef}>{title}</span>
+        {overflowing ? <span className="thread-item-title-chunk" aria-hidden="true">{title}</span> : null}
+      </span>
+    </span>
   );
 }
 
