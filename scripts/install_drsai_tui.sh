@@ -51,14 +51,16 @@ REQUIRED_SPACE_GB=2
 REQUIRED_SPACE_BYTES=$((REQUIRED_SPACE_GB * 1024 * 1024 * 1024))
 FORCE=0
 INSTALL_DIR=""
+NONINTERACTIVE=0
 
 # -- Parse args ---------------------------------------------------------------
 while [ $# -gt 0 ]; do
     case "$1" in
-        --install-dir) INSTALL_DIR="${2:?}"; shift 2 ;;
-        --force)       FORCE=1; shift ;;
-        -h|--help)     sed -n '2,18p' "$0" 2>/dev/null; exit 0 ;;
-        *)             echo "Unknown option: $1" >&2; exit 1 ;;
+        --install-dir)    INSTALL_DIR="${2:?}"; shift 2 ;;
+        --force)          FORCE=1; shift ;;
+        --non-interactive) NONINTERACTIVE=1; shift ;;
+        -h|--help)        sed -n '2,18p' "$0" 2>/dev/null; exit 0 ;;
+        *)                echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
 
@@ -80,9 +82,22 @@ die()     { err "$*"; exit 1; }
 section() { printf "\n${C_C}--- %s ---${C_RST}\n" "$*"; }
 
 # -- Terminal input (works even when piped: curl | bash) ------------------------
+# A controlling terminal is NOT the same as /dev/tty existing: over a
+# non-PTY SSH `exec_command` (e.g. the TUI remote-connect flow) the device
+# node is present but cannot be opened, so `read < /dev/tty` fails with
+# "No such device or address".  Probe by actually opening it.
+_has_tty() {
+    { : < /dev/tty; } 2>/dev/null
+}
+
 tty_read() {
     local _var="$1"
-    if [ -e /dev/tty ]; then
+    if [ "$NONINTERACTIVE" -eq 1 ]; then
+        # No prompts available — fall through to the caller's default.
+        eval "$_var="
+        return 0
+    fi
+    if _has_tty; then
         read -r "$_var" < /dev/tty
     else
         read -r "$_var"
@@ -90,8 +105,14 @@ tty_read() {
 }
 
 prompt_yes_no() {
+    if [ "$NONINTERACTIVE" -eq 1 ]; then
+        # Safe default when nobody can answer: do NOT destroy anything.
+        REPLY="n"
+        printf "%s [y/N]: n (non-interactive)\n" "$1" >&2
+        return 0
+    fi
     printf "%s [y/N]: " "$1" >&2
-    if [ -e /dev/tty ]; then
+    if _has_tty; then
         read -r REPLY < /dev/tty
     else
         read -r REPLY
@@ -101,6 +122,14 @@ prompt_yes_no() {
         *)     REPLY="n" ;;
     esac
 }
+
+# -- Non-interactive mode resolution -------------------------------------------
+# Explicit --non-interactive wins; otherwise fall back to non-interactive when
+# no usable controlling terminal exists (non-PTY SSH, CI, `exec_command`).
+if [ "$NONINTERACTIVE" -ne 1 ] && ! _has_tty; then
+    NONINTERACTIVE=1
+    info "No TTY detected — running in non-interactive mode"
+fi
 
 trap 'err "Install failed at line $LINENO (exit code: $?)"' ERR
 
@@ -250,6 +279,10 @@ select_install_dir() {
         if [ -n "$INSTALL_DIR" ]; then
             # --install-dir was provided via command line, use it directly
             info "Install dir (from --install-dir): $INSTALL_DIR"
+        elif [ "$NONINTERACTIVE" -eq 1 ]; then
+            # Nobody can answer the prompt — take the default silently.
+            INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+            info "Install dir (default, non-interactive): $INSTALL_DIR"
         else
             echo
             printf "  ${C_B}Choose install directory:${C_RST}\n"
@@ -281,6 +314,9 @@ select_install_dir() {
 
         # Step 3: Create directory if it doesn't exist
         if ! mkdir -p "$INSTALL_DIR" 2>/dev/null; then
+            if [ "$NONINTERACTIVE" -eq 1 ]; then
+                die "Failed to create directory: $INSTALL_DIR"
+            fi
             warn "Failed to create directory: $INSTALL_DIR"
             INSTALL_DIR=""
             continue
@@ -290,6 +326,9 @@ select_install_dir() {
         check_disk_space "$INSTALL_DIR"
 
         if [ "${avail_bytes:-0}" -lt "$REQUIRED_SPACE_BYTES" ] 2>/dev/null; then
+            if [ "$NONINTERACTIVE" -eq 1 ]; then
+                die "Insufficient disk space at $INSTALL_DIR: ${avail_gb}GB < ${REQUIRED_SPACE_GB}GB required"
+            fi
             warn "Insufficient disk space: ${avail_gb}GB < ${REQUIRED_SPACE_GB}GB"
             INSTALL_DIR=""
             continue
@@ -331,7 +370,13 @@ check_running() {
         echo "$running_pids" | while read -r pid; do
             [ -n "$pid" ] && warn "  PID $pid: $(ps -p "$pid" -o command= 2>/dev/null | head -1 || echo 'unknown')"
         done
-        die "Please close all running DrSai terminals/processes, then re-run this installer."
+        if [ "$FORCE" -eq 1 ]; then
+            # Repair flow (e.g. remote auto-install over SSH): stale processes
+            # are expected, and bin/ + venv/ are recreated from scratch below.
+            warn "--force given: continuing despite running processes"
+        else
+            die "Please close all running DrSai terminals/processes, then re-run this installer."
+        fi
     else
         ok "No running DrSai processes found"
     fi
