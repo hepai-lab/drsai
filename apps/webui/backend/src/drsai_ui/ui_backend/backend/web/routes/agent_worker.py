@@ -25,7 +25,7 @@ from .....agent_factory.agent_mode_cofigs import (
     get_user_agents,
     get_user_remote_agents,
     list_user_remote_agents,
-    upsert_user_remote_agent,
+    patch_user_agent,
 )
 from ..auth_source import get_user_source
 
@@ -344,35 +344,22 @@ async def update_user_agent(
     request: SaveRemoteAgentRequest,
     db=Depends(get_db)) -> Dict:
     '''
-    保存用户的远程智能体配置（与 POST /remote_agent/save 相同，写 UserRemoteAgent 行）
+    部分更新已有智能体。前端切模型时只传 id + defult_config_name，
+    不要求 mode，也不会把目录智能体误存成用户 remote。
     '''
     try:
         saved_agent_config = request.agent_config
-        agent_id: str|None = saved_agent_config.get("id")
-        if agent_id is None:
-            raise HTTPException(status_code=500, detail="Please to provide agent id")
+        agent_id: str|None = saved_agent_config.get("id") if isinstance(saved_agent_config, dict) else None
+        if not agent_id:
+            raise HTTPException(status_code=400, detail="请提供智能体 id。")
 
-        mode_lc = _validate_saved_agent_config(saved_agent_config)
-        proposed = _agent_entry_display_name(saved_agent_config)
-        taken = _existing_saved_agent_display_name_keys(db, request.user_id, str(agent_id))
-        if proposed and proposed.casefold() in taken:
-            raise HTTPException(
-                status_code=409,
-                detail="该名称与已有智能体重名，请更换名称后再保存。",
-            )
-        if proposed:
-            saved_agent_config["name"] = proposed
-            cfg = saved_agent_config.get("config")
-            if not isinstance(cfg, dict):
-                cfg = {}
-                saved_agent_config["config"] = cfg
-            cfg["name"] = proposed
-            if mode_lc == "remote":
-                remote_url = _remote_agent_url(saved_agent_config)
-                if remote_url:
-                    cfg["url"] = remote_url
-
-        upsert_user_remote_agent(db, request.user_id, saved_agent_config)
+        user_source = get_user_source(db, request.user_id)
+        patch_user_agent(
+            db,
+            request.user_id,
+            saved_agent_config,
+            user_source=user_source,
+        )
         return {"status": True, "message": "智能体配置保存/更新成功"}
 
     except HTTPException:

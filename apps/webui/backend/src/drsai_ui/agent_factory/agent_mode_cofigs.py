@@ -110,6 +110,19 @@ def list_user_remote_agents(db: DatabaseManager, user_id: str) -> List[Dict[str,
     return [_agent_dict_from_remote_row(r) for r in rows]
 
 
+def get_user_remote_agent_row(
+    db: DatabaseManager, user_id: str, agent_id: str
+) -> UserRemoteAgent | None:
+    """Return the UserRemoteAgent row for (user_id, agent_id), if any."""
+    target = str(agent_id or "").strip()
+    if not target:
+        return None
+    for row in list_user_remote_agent_rows(db, user_id):
+        if str(getattr(row, "agent_id", "") or "").strip() == target:
+            return row
+    return None
+
+
 def upsert_user_remote_agent(
     db: DatabaseManager, user_id: str, agent: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -126,14 +139,7 @@ def upsert_user_remote_agent(
     if name:
         payload["name"] = name
 
-    existing = None
-    with DBSession(db.engine) as session:
-        existing = session.exec(
-            select(UserRemoteAgent).where(
-                UserRemoteAgent.user_id == user_id,
-                UserRemoteAgent.agent_id == agent_id,
-            )
-        ).first()
+    existing = get_user_remote_agent_row(db, user_id, agent_id)
 
     if existing:
         existing.mode = mode
@@ -267,6 +273,7 @@ def assemble_catalog_agents(
             agent["id"] = str(uuid.uuid4())
         agents_list.append(agent)
 
+    _overlay_saved_default_config_names(db, user_id, agents_list)
     _mark_featured_and_default_agents(agents_list)
 
     if (user_source or "").strip() == "user_agent":
@@ -296,6 +303,179 @@ def find_catalog_agent(
         if str(agent.get("id") or "").strip() == target:
             return agent
     return None
+
+
+def _resolved_default_config_name(agent: Dict[str, Any] | None) -> str:
+    if not isinstance(agent, dict):
+        return ""
+    value = agent.get("defult_config_name") or agent.get("default_config_name")
+    return str(value).strip() if value is not None else ""
+
+
+def _is_agent_pref_stub(agent: Dict[str, Any]) -> bool:
+    """True when agents_mode entry only stores a model preference, not a full agent."""
+    return not (
+        agent.get("name")
+        or agent.get("config")
+        or agent.get("mode")
+        or agent.get("url")
+    )
+
+
+def _overlay_saved_default_config_names(
+    db: DatabaseManager, user_id: str, agents: List[Dict[str, Any]]
+) -> None:
+    """Apply per-agent defult_config_name saved via PUT /user_agent/save."""
+    response = db.get(AgentModeSettings, filters={"user_id": user_id})
+    if not (response.status and response.data):
+        return
+    prefs: Dict[str, str] = {}
+    for entry in getattr(response.data[0], "agents_mode", None) or []:
+        if not isinstance(entry, dict):
+            continue
+        aid = str(entry.get("id") or "").strip()
+        name = _resolved_default_config_name(entry)
+        if aid and name:
+            prefs[aid] = name
+    if not prefs:
+        return
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        aid = str(agent.get("id") or "").strip()
+        if aid in prefs:
+            agent["defult_config_name"] = prefs[aid]
+
+
+def _upsert_agent_default_config_pref(
+    db: DatabaseManager, user_id: str, agent_id: str, defult_config_name: str
+) -> None:
+    """Persist a user's default model choice for one catalog agent."""
+    agent_id = str(agent_id or "").strip()
+    name = str(defult_config_name or "").strip()
+    if not agent_id or not name:
+        return
+
+    response = db.get(AgentModeSettings, filters={"user_id": user_id})
+    if response.status and response.data:
+        settings = response.data[0]
+        agents = [
+            dict(a) for a in (getattr(settings, "agents_mode", None) or [])
+            if isinstance(a, dict)
+        ]
+        found = False
+        for agent in agents:
+            if str(agent.get("id") or "").strip() == agent_id:
+                agent["defult_config_name"] = name
+                found = True
+                break
+        if not found:
+            agents.append({"id": agent_id, "defult_config_name": name})
+        settings.agents_mode = agents
+        result = db.upsert(settings)
+        if not result.status:
+            raise HTTPException(
+                status_code=500,
+                detail=getattr(result, "message", None) or "Failed to save model preference",
+            )
+        return
+
+    settings = AgentModeSettings(
+        user_id=user_id,
+        agents_mode=[{"id": agent_id, "defult_config_name": name}],
+    )
+    result = db.upsert(settings)
+    if not result.status:
+        raise HTTPException(
+            status_code=500,
+            detail=getattr(result, "message", None) or "Failed to save model preference",
+        )
+
+
+def _apply_stored_agents_mode(
+    defaults: List[Dict[str, Any]], stored: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Merge stored agents_mode onto defaults without promoting model-pref stubs."""
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for agent in defaults:
+        if isinstance(agent, dict) and agent.get("id"):
+            by_id[str(agent["id"])] = dict(agent)
+    for agent in stored:
+        if not isinstance(agent, dict) or not agent.get("id"):
+            continue
+        aid = str(agent["id"])
+        name = _resolved_default_config_name(agent)
+        if aid in by_id:
+            if name:
+                by_id[aid]["defult_config_name"] = name
+            if not _is_agent_pref_stub(agent):
+                merged = dict(by_id[aid])
+                merged.update(agent)
+                by_id[aid] = merged
+        elif not _is_agent_pref_stub(agent):
+            by_id[aid] = dict(agent)
+    return list(by_id.values())
+
+
+def patch_user_agent(
+    db: DatabaseManager,
+    user_id: str,
+    patch: Dict[str, Any],
+    *,
+    user_source: str | None = None,
+) -> Dict[str, Any]:
+    """Merge a partial catalog update (typically id + defult_config_name).
+
+    PUT /user_agent/save is used by the LLM selector before a session exists.
+    It must not require mode, and must not insert a stub UserRemoteAgent row
+    for DDF / platform catalog agents.
+    """
+    if not isinstance(patch, dict):
+        raise HTTPException(status_code=400, detail="agent_config 须为对象。")
+    agent_id = str(patch.get("id") or "").strip()
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="请提供智能体 id。")
+
+    existing = find_catalog_agent(
+        user_id, agent_id, db, user_source=user_source
+    )
+    if not existing:
+        raise HTTPException(
+            status_code=404,
+            detail="该智能体已经下线或更新，请刷新后重试。",
+        )
+
+    merged = dict(existing)
+    for key, value in patch.items():
+        if key == "id" or value is None:
+            continue
+        merged[key] = value
+    merged["id"] = agent_id
+
+    default_name = _resolved_default_config_name(patch)
+    if default_name:
+        _upsert_agent_default_config_pref(db, user_id, agent_id, default_name)
+        merged["defult_config_name"] = default_name
+
+    owned = get_user_remote_agent_row(db, user_id, agent_id)
+    if owned is not None:
+        payload = dict(owned.payload or {})
+        for key, value in patch.items():
+            if key == "id" or value is None:
+                continue
+            payload[key] = value
+        payload["id"] = agent_id
+        payload["mode"] = owned.mode or payload.get("mode") or "remote"
+        if owned.name and not str(payload.get("name") or "").strip():
+            payload["name"] = owned.name
+        if default_name:
+            payload["defult_config_name"] = default_name
+        upsert_user_remote_agent(db, user_id, payload)
+        return _agent_dict_from_remote_row(
+            get_user_remote_agent_row(db, user_id, agent_id) or owned
+        )
+
+    return merged
 
 
 def _truthy_env(value: str | None) -> bool:
@@ -586,16 +766,10 @@ async def get_agents_mode(
         settings = response.data[0]
 
     stored = [dict(a) for a in (settings.agents_mode or []) if isinstance(a, dict)]
-    by_id: Dict[str, Dict[str, Any]] = {}
-    for agent in get_default_agent_mode_config(
-        user_id=user_id, user_source=user_source
-    ):
-        if isinstance(agent, dict) and agent.get("id"):
-            by_id[str(agent["id"])] = dict(agent)
-    for agent in stored:
-        if isinstance(agent, dict) and agent.get("id"):
-            by_id[str(agent["id"])] = dict(agent)
-    merged = list(by_id.values())
+    merged = _apply_stored_agents_mode(
+        get_default_agent_mode_config(user_id=user_id, user_source=user_source),
+        stored,
+    )
     _mark_featured_and_default_agents(merged)
     payload = settings.model_dump(mode="json")
     payload["agents_mode"] = merged
@@ -699,7 +873,13 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
                     }
                 )
                 if agent_info.get("name") in agents_name_old:
-                    agent_info.update({"id": agents_name_old[agent_info.get("name")]["id"]})
+                    old = agents_name_old[agent_info.get("name")]
+                    agent_info.update({"id": old["id"]})
+                    old_default = old.get("defult_config_name") or old.get(
+                        "default_config_name"
+                    )
+                    if old_default and not agent_info.get("defult_config_name"):
+                        agent_info["defult_config_name"] = old_default
                 else:
                     agent_info.update({"id": str(uuid.uuid4())})
                 return agent_info
