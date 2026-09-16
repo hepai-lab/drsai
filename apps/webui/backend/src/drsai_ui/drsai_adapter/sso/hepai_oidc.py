@@ -21,9 +21,13 @@ logger = logger.bind(name="HepAI-OIDC")
 DEFAULT_ISSUER = "https://ai-dev.ihep.ac.cn/api"
 DEFAULT_SCOPE = "openid email profile hai_api offline_access"
 DEFAULT_CLIENT_ID = "opendrsai-webui"
-CALLBACK_PATH = "/auth/oidc/callback"
+# Prefer /api/... so Caddy (which already proxies /api) reaches FastAPI.
+# Legacy /auth/... URIs remain allowlisted while IdP keeps them registered.
+CALLBACK_PATH = "/api/auth/oidc/callback"
 DEFAULT_IDP_LOGOUT_URL = "https://newlogin.ihep.ac.cn/logout/"
 DEFAULT_ALLOWED_REDIRECT_URIS = (
+    "https://opendrsai.ihep.ac.cn/api/auth/oidc/callback",
+    "https://drsaiv2.ihep.ac.cn/api/auth/oidc/callback",
     "https://opendrsai.ihep.ac.cn/auth/oidc/callback",
     "https://drsaiv2.ihep.ac.cn/auth/oidc/callback",
 )

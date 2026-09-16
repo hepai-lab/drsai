@@ -537,7 +537,9 @@ if SERVICE_MODE == "PROD" or _oidc_enabled:
 
 if _oidc_enabled:
     from ....drsai_adapter.sso.hepai_oidc_router import router as hepai_oidc_router
+    # Mount on app (direct) and api (Caddy already proxies /api → backend).
     app.include_router(hepai_oidc_router, tags=["oidc"])
+    api.include_router(hepai_oidc_router, tags=["oidc"])
 
 if SERVICE_MODE == "PROD":
     from ....drsai_adapter.sso.ihep_sso_router import router as ihep_sso_router

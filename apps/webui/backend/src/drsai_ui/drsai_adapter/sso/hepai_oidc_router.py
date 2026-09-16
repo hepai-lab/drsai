@@ -1,8 +1,7 @@
-"""HepAI OIDC routes: login start + GET /auth/oidc/callback.
+"""HepAI OIDC routes: login start + OIDC callback.
 
-Login entry is also served at /umt/oidc-login so reverse proxies that already
-forward /umt (and /api) reach FastAPI without extra Caddy rules. The HAI
-redirect_uri stays /auth/oidc/callback.
+Mounted on both the root app and the /api app. Prefer redirect_uri
+/api/auth/oidc/callback (Caddy already proxies /api). Login alias: /umt/oidc-login.
 """
 
 from __future__ import annotations
@@ -94,7 +93,9 @@ async def oidc_logout(request: Request) -> HTMLResponse:
 
 
 @router.get("/auth/oidc/callback", name="oidc_callback")
+@router.get("/auth/oidc/callback/")
 @router.get("/umt/oidc-callback")
+@router.get("/umt/oidc-callback/")
 async def oidc_callback(request: Request, db=Depends(get_db)) -> RedirectResponse:
     if not oidc_configured():
         raise HTTPException(
