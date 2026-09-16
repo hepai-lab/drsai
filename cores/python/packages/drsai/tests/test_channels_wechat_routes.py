@@ -13,8 +13,9 @@ couplings.  These tests pin the properties the move depends on:
   anything else;
 * platform identity reaches the long-lived polling task through the
   process-memory broker rather than a process-global capture;
-* a channel Session is owned by a user Workspace, never by the hidden
-  remote-agents compatibility Workspace.
+* a channel Session is owned by the Workspace the Desktop presents as its
+  managed default, never by the hidden remote-agents compatibility Workspace
+  and never by whichever user Workspace happened to be opened last.
 
 Everything here runs against a temporary ``DRSAI_HOME`` and never talks to a
 model provider, WeChat, or the network.
@@ -100,6 +101,13 @@ def _bare_client() -> TestClient:
     app = FastAPI()
     app.include_router(channels_wechat.router())
     return TestClient(app)
+
+
+def _desktop_store(state_root: Path, entries: list[dict[str, Any]]) -> None:
+    """Write the Electron-owned Workspace store, as the Desktop would."""
+    path = state_root / "desktop" / "workspaces.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(entries, ensure_ascii=False), encoding="utf-8")
 
 
 def _outbound_call(session_id: str = "session-1", *, confirm: bool, key: str = "k" * 16):
@@ -558,6 +566,83 @@ def test_channel_workspace_never_uses_the_hidden_remote_agents_workspace(
     record = channels_wechat._workspace_record()
     assert record.workspace_id == user_record.workspace_id
     assert Path(record.path).resolve() != hidden.resolve()
+
+
+def test_channel_workspace_is_the_desktop_managed_default(state_root, monkeypatch, tmp_path) -> None:
+    """The channel answers from the Desktop's default space, not the newest one."""
+    default = tmp_path / "OpenDrSai Workspace"
+    default.mkdir()
+    project = tmp_path / "project"
+    project.mkdir()
+    registry = _state.runtime_registry()
+    default_record = registry.open_workspace(str(default), display_name="默认")
+    # The user opened another Workspace afterwards; the Desktop still calls the
+    # managed default the default, and so must the channel.
+    registry.open_workspace(str(project), display_name="My Project")
+    _desktop_store(state_root, [
+        {
+            "id": default_record.workspace_id,
+            "name": "默认",
+            "path": str(default),
+            "metadata": {"managedDefault": True, "defaultWorkspaceVersion": 2},
+        },
+        {"id": "workspace-project", "name": "My Project", "path": str(project)},
+    ])
+
+    record = channels_wechat._workspace_record()
+
+    assert record.workspace_id == default_record.workspace_id
+    assert Path(record.path) == default.resolve()
+    assert record.display_name == "默认"
+    assert channels_wechat._workspace_path() == default.resolve()
+    # The root is remembered, so a Run can resolve the Workspace without disk IO.
+    assert _state.workspace_root(default_record.workspace_id) == default.resolve()
+
+
+def test_channel_workspace_ignores_a_managed_default_that_is_gone(
+    state_root, monkeypatch, tmp_path,
+) -> None:
+    """A store naming a directory the user deleted must not break the channel."""
+    user = tmp_path / "workspace"
+    user.mkdir()
+    monkeypatch.setattr(channels_wechat, "WORKSPACE_DIR", str(user))
+    user_record = _state.runtime_registry().open_workspace(str(user), display_name="My Project")
+    _desktop_store(state_root, [{
+        "id": "workspace-gone",
+        "name": "默认",
+        "path": str(tmp_path / "moved-away"),
+        "metadata": {"managedDefault": True},
+    }])
+
+    record = channels_wechat._workspace_record()
+
+    assert record.workspace_id == user_record.workspace_id
+
+
+def test_channel_workspace_never_takes_the_hidden_workspace_as_the_default(
+    state_root, monkeypatch, tmp_path,
+) -> None:
+    registry = _state.runtime_registry()
+    hidden = tmp_path / "runtime" / "remote-agents-workspace"
+    hidden.mkdir(parents=True)
+    registry.open_workspace(str(hidden), display_name="Remote Agents")
+
+    user = tmp_path / "workspace"
+    user.mkdir()
+    monkeypatch.setattr(channels_wechat, "WORKSPACE_DIR", str(user))
+    user_record = registry.open_workspace(str(user), display_name="My Project")
+    # Even a store that (wrongly) marks the hidden Workspace as the default must
+    # not hand a channel Session to it.
+    _desktop_store(state_root, [{
+        "id": "workspace-hidden",
+        "name": "Remote Agents",
+        "path": str(hidden),
+        "metadata": {"managedDefault": True},
+    }])
+
+    record = channels_wechat._workspace_record()
+
+    assert record.workspace_id == user_record.workspace_id
 
 
 def test_channel_identity_secret_is_created_once_per_state_root(state_root) -> None:

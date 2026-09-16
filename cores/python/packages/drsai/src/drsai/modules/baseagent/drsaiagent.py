@@ -87,28 +87,20 @@ from drsai.modules.managers.messages.agent_messages import(
     ToolLongTaskEvent,
 )
 from drsai.modules.components.task_manager.base_task_system import TaskStatus
+from drsai.modules.model_errors import (
+    ModelEmptyStreamError,
+    ModelMalformedToolCallError,
+    assert_well_formed_model_result,
+)
 from drsai.utils.utils import download_file_from_url_or_base64
 from drsai.configs.constant import FILE_DIR, DEFAULT_USERNAME
 from pathlib import Path
 
 
-class ModelEmptyStreamError(RuntimeError):
-    """Raised when a model client produces zero usable output events.
-
-    Covers two failure shapes that previously terminated the agent loop
-    without retry:
-      1. Streaming mode: ``create_stream()`` completes without ever yielding
-         a final ``CreateResult`` (e.g. upstream gateway silently closes the
-         SSE connection, or the stream ends mid-way after yielding only
-         text chunks).
-      2. Non-streaming mode: ``create()`` returns ``None`` instead of a
-         ``CreateResult``.
-
-    This is almost always transient (gateway hiccup, network blip, upstream
-    5xx masquerading as an empty 200), so ``is_retryable_llm_error`` treats
-    it as retriable and the agent-level retry loop applies exponential
-    backoff instead of crashing the whole ``on_messages_stream``.
-    """
+# NOTE: ``ModelEmptyStreamError`` / ``ModelMalformedToolCallError`` are imported
+# above from ``drsai.modules.model_errors`` and re-exported from this module, so
+# ``drsai.modules.baseagent.drsaiagent.ModelEmptyStreamError`` (and the
+# ``drsai.modules.baseagent`` package re-export) keep working unchanged.
 
 
 class DrSaiAgentConfig(BaseModel):
@@ -1850,6 +1842,12 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                     "Model client stream completed without a final CreateResult "
                     "(zero usable events yielded by create_stream)."
                 )
+            # A tool call missing its name/id cannot be resolved to any Tool at
+            # all. Treat it as a retriable malformed response so the retry loop
+            # re-samples the turn, instead of letting
+            # agent_kernel.verify_model_tool_calls fail the turn closed with the
+            # unactionable `model_tool_not_in_snapshot:unknown`.
+            assert_well_formed_model_result(model_result)
             yield model_result
         else:
             model_result = await model_client.create(

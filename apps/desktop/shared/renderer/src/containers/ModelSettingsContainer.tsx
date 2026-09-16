@@ -110,7 +110,13 @@ export function ModelSettingsContainer({ children, initialProvider, requestedPan
   const [providerModelConfigsDraft, setProviderModelConfigsDraft] = useState<Record<string, MyDrSaiProviderModelConfig>>({});
   const [newProviderModelDraft, setNewProviderModelDraft] = useState<string | null>(null);
 
-  useEffect(() => { if (requestedPane) setActivePane(requestedPane === "executors" ? "perceptors" : requestedPane); }, [requestedPane]);
+  useEffect(() => {
+    if (!requestedPane) return;
+    // "executors" used to be folded into "perceptors"; both panes are currently
+    // unavailable, so pass the request through and let SettingsPanel land on a
+    // usable pane instead of chaining into another disabled one.
+    setActivePane(requestedPane);
+  }, [requestedPane]);
 
   return <>{children({
     activePane, setActivePane,

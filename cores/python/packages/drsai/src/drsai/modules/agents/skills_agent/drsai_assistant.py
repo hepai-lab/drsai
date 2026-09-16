@@ -705,15 +705,17 @@ class DrSaiAssistant(DrSaiAgent):
         # === todo manager ===
         self._todo_manager = TodoManager()
         self._todo_tools = [get_todo_manager_tool()]
-        self._regression_tools = get_regression_read_tools()
-        from .managers.regression_manager import RegressionManager
-        self._regression_manager = RegressionManager(
-            self._work_dir,
-            workspace_resolver=lambda: (
-                getattr(self, "_runtime_workspace_path", None) or work_dir
-            ),
-            workspace_id_resolver=lambda: getattr(self, "_runtime_workspace_id", None),
-        )
+        # NOTE: regression_* tools disabled on request. Re-enable by restoring
+        # the three blocks tagged "regression tools disabled".
+        # self._regression_tools = get_regression_read_tools()
+        # from .managers.regression_manager import RegressionManager
+        # self._regression_manager = RegressionManager(
+        #     self._work_dir,
+        #     workspace_resolver=lambda: (
+        #         getattr(self, "_runtime_workspace_path", None) or work_dir
+        #     ),
+        #     workspace_id_resolver=lambda: getattr(self, "_runtime_workspace_id", None),
+        # )
 
         # === scheduled task manager ===
         # 注意: task_manager 实例会在 run.py 中创建并注入到 app._task_manager
@@ -1953,7 +1955,8 @@ class DrSaiAssistant(DrSaiAgent):
             skills_loader = self._cached_skills_loader
 
             # manager ToolSchema
-            manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools+self._scheduled_task_tools+self._regression_tools
+            # regression tools disabled: self._regression_tools removed
+            manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools+self._scheduled_task_tools
 
             # count the number of tools (only for DrSaiChatCompletionContext which has _tool_schema)
             if hasattr(self._model_context, '_tool_schema'):
@@ -3035,29 +3038,30 @@ class DrSaiAssistant(DrSaiAgent):
                         is_error=True,
                     ))
 
-            elif tool_name in _REGRESSION_READ_TOOL_NAMES | _REGRESSION_EXECUTION_TOOL_NAMES:
-                try:
-                    result_content = self._regression_manager.execute(tool_name, arguments)
-                    exec_results.append(FunctionExecutionResult(
-                        content=result_content,
-                        name=tool_name,
-                        call_id=call_id,
-                        is_error=False,
-                    ))
-                    yield AgentLogEvent(
-                        title=f"Reading regression data: {tool_name}",
-                        source=agent_name,
-                        content=json.dumps(arguments, ensure_ascii=False),
-                        content_type="tools",
-                    )
-                except Exception as e:
-                    logger.exception(f"Error executing {tool_name}: {e}")
-                    exec_results.append(FunctionExecutionResult(
-                        content=json.dumps({"error": {"code": "regression_tool_failed", "message": str(e)}}, ensure_ascii=False),
-                        name=tool_name,
-                        call_id=call_id,
-                        is_error=True,
-                    ))
+            # regression tools disabled: execution branch removed
+            # elif tool_name in _REGRESSION_READ_TOOL_NAMES | _REGRESSION_EXECUTION_TOOL_NAMES:
+            #     try:
+            #         result_content = self._regression_manager.execute(tool_name, arguments)
+            #         exec_results.append(FunctionExecutionResult(
+            #             content=result_content,
+            #             name=tool_name,
+            #             call_id=call_id,
+            #             is_error=False,
+            #         ))
+            #         yield AgentLogEvent(
+            #             title=f"Reading regression data: {tool_name}",
+            #             source=agent_name,
+            #             content=json.dumps(arguments, ensure_ascii=False),
+            #             content_type="tools",
+            #         )
+            #     except Exception as e:
+            #         logger.exception(f"Error executing {tool_name}: {e}")
+            #         exec_results.append(FunctionExecutionResult(
+            #             content=json.dumps({"error": {"code": "regression_tool_failed", "message": str(e)}}, ensure_ascii=False),
+            #             name=tool_name,
+            #             call_id=call_id,
+            #             is_error=True,
+            #         ))
 
             elif tool_name == "TodoWrite":
                 # TodoWrite tool handling

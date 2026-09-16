@@ -26,9 +26,11 @@ import {
   createStructuredTurnState,
   migrateLegacyMessageToStructuredTurn,
   settleInterruptedStructuredTurn,
+  type ReasoningSegment,
   type StructuredAssistantPart,
   type StructuredActivityEvent,
   type StructuredConversationEvent,
+  type StructuredPartStatus,
   type StructuredTurnState,
 } from "@shared/structuredConversation";
 import { stripAttachmentContextFromUserContent } from "@shared/attachmentContextDisplay";
@@ -52,7 +54,7 @@ import {
   formatRecentTerminalTestResult,
   readRecentTerminalTestResult,
 } from "../terminalTestResults";
-import { acceptChatEventSequence, getVisibleChatText } from "../chatOutputModel";
+import { acceptChatEventSequence, getVisibleChatText, mergeReasoningText } from "../chatOutputModel";
 import { sanitizeSensitiveValue } from "../../../api/sensitiveData";
 import {
   appendDebugLog,
@@ -2851,26 +2853,31 @@ function mergeHydratedAssistantMessages(primary: UiMessage, secondary: UiMessage
   const primaryTurn = primary.structuredTurn;
   const secondaryTurn = secondary.structuredTurn;
   if (!primaryTurn || !secondaryTurn) return primary;
-  const partIds = new Set(primaryTurn.parts.map((part) => part.id));
-  const activityIds = new Set(primaryTurn.activities.map((activity) => activity.id));
-  const parts = [
-    ...primaryTurn.parts,
-    ...secondaryTurn.parts.filter((part) => !partIds.has(part.id)),
-  ];
-  const activities = [
-    ...primaryTurn.activities,
-    ...secondaryTurn.activities
-      .filter((activity) => !activityIds.has(activity.id))
-      .map((activity) => ({ ...activity, turnId: primaryTurn.turnId })),
-  ];
+  const primaryPartIndex = new Map(primaryTurn.parts.map((part, index) => [part.id, index]));
+  const parts = [...primaryTurn.parts];
+  for (const part of secondaryTurn.parts) {
+    const index = primaryPartIndex.get(part.id);
+    if (index === undefined) {
+      primaryPartIndex.set(part.id, parts.length);
+      parts.push(part);
+      continue;
+    }
+    // The same part hydrated twice: keep whichever snapshot is further along
+    // instead of dropping the secondary one wholesale (a truncated primary
+    // snapshot would otherwise lose the tail of the reasoning stream).
+    parts[index] = mergeStructuredPart(parts[index], part);
+  }
+  const activities = dedupeById(
+    primaryTurn.activities,
+    secondaryTurn.activities.map((activity) => ({ ...activity, turnId: primaryTurn.turnId })),
+  );
   const structuredTurn: StructuredTurnState = {
     ...primaryTurn,
     parts,
     activities,
-    processTimeline: [
-      ...(primaryTurn.processTimeline ?? []),
-      ...(secondaryTurn.processTimeline ?? []),
-    ].slice(-500),
+    // Both messages describe the same run, so their timelines overlap. Plain
+    // concatenation would make every reasoning boundary render twice.
+    processTimeline: dedupeById(primaryTurn.processTimeline ?? [], secondaryTurn.processTimeline ?? []).slice(-500),
     lastSequence: Math.max(primaryTurn.lastSequence, secondaryTurn.lastSequence),
     seenDedupeKeys: [...new Set([...primaryTurn.seenDedupeKeys, ...secondaryTurn.seenDedupeKeys])],
     protocolIssues: [...primaryTurn.protocolIssues, ...secondaryTurn.protocolIssues],
@@ -2881,10 +2888,98 @@ function mergeHydratedAssistantMessages(primary: UiMessage, secondary: UiMessage
     content: secondaryContent && !primary.content.includes(secondaryContent)
       ? [primary.content, secondary.content].filter(Boolean).join("\n\n")
       : primary.content,
-    reasoningContent: [primary.reasoningContent, secondary.reasoningContent].filter(Boolean).join(""),
+    // Two snapshots of the same run usually overlap: a plain concatenation
+    // would show the same thinking text twice.
+    reasoningContent: mergeReasoningText(primary.reasoningContent, secondary.reasoningContent) || undefined,
     structuredTurn,
     lastEventAt: Math.max(primary.lastEventAt ?? 0, secondary.lastEventAt ?? 0) || undefined,
   });
+}
+
+function dedupeById<T extends { id: string }>(primary: readonly T[], secondary: readonly T[]): T[] {
+  // Primary first: it carries the earlier snapshot, so its entries keep their
+  // original order and identity.
+  const seen = new Set(primary.map((item) => item.id));
+  return [...primary, ...secondary.filter((item) => !seen.has(item.id))];
+}
+
+function preferredPartStatus(primary: StructuredPartStatus, secondary: StructuredPartStatus): StructuredPartStatus {
+  const isTerminal = (status: StructuredPartStatus): boolean =>
+    status === "completed" || status === "error" || status === "cancelled";
+  if (isTerminal(primary) !== isTerminal(secondary)) return isTerminal(primary) ? primary : secondary;
+  return primary;
+}
+
+function mergeReasoningSegments(
+  primary: readonly ReasoningSegment[],
+  secondary: readonly ReasoningSegment[],
+): ReasoningSegment[] {
+  const merged = [...primary];
+  const indexById = new Map(merged.map((segment, index) => [segment.id, index]));
+  for (const segment of secondary) {
+    const index = indexById.get(segment.id);
+    if (index === undefined) {
+      indexById.set(segment.id, merged.length);
+      merged.push(segment);
+      continue;
+    }
+    // Hydration can deliver the same segment twice, the later copy holding the
+    // longer tail. Never replace a longer snapshot with a shorter one.
+    if (segment.text.length > merged[index].text.length) merged[index] = segment;
+  }
+  return merged;
+}
+
+function mergeStructuredPart(
+  primary: StructuredAssistantPart,
+  secondary: StructuredAssistantPart,
+): StructuredAssistantPart {
+  if (primary.kind !== secondary.kind) return primary;
+  const status = preferredPartStatus(primary.status, secondary.status);
+  if (primary.kind === "reasoning" && secondary.kind === "reasoning") {
+    return {
+      ...primary,
+      status,
+      segments: mergeReasoningSegments(primary.segments, secondary.segments),
+      summary: primary.summary ?? secondary.summary,
+    };
+  }
+  if (primary.kind === "markdown" && secondary.kind === "markdown") {
+    const citationIds = [...new Set([...(primary.citationIds ?? []), ...(secondary.citationIds ?? [])])];
+    return {
+      ...primary,
+      status,
+      markdown: secondary.markdown.length > primary.markdown.length ? secondary.markdown : primary.markdown,
+      channel: primary.channel ?? secondary.channel,
+      final: primary.final === true || secondary.final === true,
+      ...(citationIds.length ? { citationIds } : {}),
+    };
+  }
+  if (primary.kind === "progress" && secondary.kind === "progress") {
+    return {
+      ...primary,
+      status,
+      summary: secondary.summary.length > primary.summary.length ? secondary.summary : primary.summary,
+      phase: primary.phase ?? secondary.phase,
+      completed: secondary.completed ?? primary.completed,
+      total: secondary.total ?? primary.total,
+    };
+  }
+  if (primary.kind === "subtask" && secondary.kind === "subtask") {
+    const markdownSummary = secondary.markdownSummary ?? "";
+    return {
+      ...primary,
+      status,
+      summary: primary.summary ?? secondary.summary,
+      markdownSummary: markdownSummary.length > (primary.markdownSummary?.length ?? 0)
+        ? markdownSummary
+        : primary.markdownSummary,
+      reasoningSegments: mergeReasoningSegments(primary.reasoningSegments ?? [], secondary.reasoningSegments ?? []),
+      activities: dedupeById(primary.activities ?? [], secondary.activities ?? []),
+      timeline: dedupeById(primary.timeline ?? [], secondary.timeline ?? []),
+    };
+  }
+  return { ...primary, status } as StructuredAssistantPart;
 }
 
 function coalesceUiAssistantMessages(messages: UiMessage[]): UiMessage[] {
@@ -2908,10 +3003,7 @@ function coalesceUiAssistantMessages(messages: UiMessage[]): UiMessage[] {
         ...previous,
         id: preferCurrent ? message.id : previous.id,
         content: previous.content.trim() || message.content,
-        reasoningContent: [previous.reasoningContent, message.reasoningContent]
-          .map((value) => value?.trim() ?? "")
-          .filter(Boolean)
-          .join("\n\n") || undefined,
+        reasoningContent: mergeReasoningText(previous.reasoningContent, message.reasoningContent) || undefined,
         statusContent: [previous.statusContent, message.statusContent]
           .map((value) => value?.trim() ?? "")
           .filter(Boolean)

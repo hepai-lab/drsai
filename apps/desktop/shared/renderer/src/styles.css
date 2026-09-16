@@ -8238,6 +8238,16 @@ body.is-panel-resizing object {
   white-space: pre-wrap;
   font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
 }
+/* `.message-body code` paints the inline-code chip (a light `--app-code-bg` slab)
+   behind every code element. Inside this dark terminal card that chip sits on top
+   of the card's own surface and washes out the white command text, so the card's
+   colours have to win here. Specificity (0,2,1) beats `.message-body code` (0,1,1). */
+.message-body .structured-shell-card code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border-radius: 0;
+}
 .structured-todo-progress {
   display: flex;
   align-items: center;
@@ -23624,6 +23634,26 @@ button.structured-activity-compact:hover > span {
 
 .settings-navigation button.active svg {
   color: var(--app-accent-strong);
+}
+
+.settings-navigation button:disabled,
+.settings-navigation button:disabled:hover,
+.settings-navigation button:disabled:focus-visible {
+  background: transparent;
+  color: var(--app-text-muted);
+  opacity: 0.55;
+  cursor: not-allowed;
+  outline: none;
+}
+
+.settings-navigation button.settings-pane-unavailable .settings-pane-unavailable-tag {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .openai-brand-icon {

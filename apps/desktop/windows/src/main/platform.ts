@@ -24,6 +24,19 @@ export const WINDOWS_PLATFORM_DESCRIPTOR: DesktopPlatformDescriptor = {
       // agent_backend_not_found).
       codexBackend: false,
       duplexVoice: isDuplexVoiceEnabled(),
+      // V2 desktop_gateway routes/audio.py registers transcription only
+      // (POST /v1/audio/transcriptions); there is no POST /v1/audio/speech, so
+      // provider-backed speech synthesis fails with 404.  Keep the capability
+      // false and let the renderer disable the online reading paths instead of
+      // failing at request time.  Windows system speech stays available.
+      remoteSpeechSynthesis: false,
+      // Android remote access is served by the Runtime's /v1/mobile-pairing
+      // management routes (status, enrollment, associations, diagnostics).
+      // The V2 desktop_gateway registers none of them, so every device-list
+      // refresh and the enable/pause switch would fail with 404.  Keep the
+      // capability false and let the renderer mark the Android card as
+      // unavailable instead of failing at request time.
+      mobilePairing: false,
     },
   },
 };

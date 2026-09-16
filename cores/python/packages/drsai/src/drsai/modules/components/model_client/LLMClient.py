@@ -27,6 +27,7 @@ from drsai.platform_auth import (
     try_refresh_platform_auth,
 )
 from drsai.platform_upstream import resolve_hepai_model_base_url
+from drsai.modules.model_errors import assert_well_formed_model_result
 
 from openai.types.chat import ChatCompletionChunk
 from tiktoken.model import MODEL_TO_ENCODING
@@ -583,15 +584,17 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
                     is_reasoning = False
                     yield reasoning_content
 
-                # First try get content
+                # Content and tool_calls are NOT mutually exclusive. Several
+                # OpenAI-compatible gateways (and OpenAI's own reasoning models)
+                # emit both in a single delta. The old `continue` here skipped
+                # the entire tool_calls branch for such a chunk, so the header
+                # carrying id/name was dropped while later arguments-only
+                # chunks still created a placeholder FunctionCall -> a nameless
+                # call reached agent_kernel.verify_model_tool_calls and killed
+                # the turn closed with `model_tool_not_in_snapshot:unknown`.
                 if choice.delta.content:
                     content_deltas.append(choice.delta.content)
-                    if len(choice.delta.content) > 0:
-                        yield choice.delta.content
-                    # NOTE: for OpenAI, tool_calls and content are mutually exclusive it seems, so we can skip the rest of the loop.
-                    # However, this may not be the case for other APIs -- we should expect this may need to be updated.
-                    continue
-                # Otherwise, get tool calls
+                    yield choice.delta.content
                 if choice.delta.tool_calls is not None:
                     for tool_call_chunk in choice.delta.tool_calls:
                         idx = tool_call_chunk.index
@@ -599,12 +602,23 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
                             # We ignore the type hint here because we want to fill in type when the delta provides it
                             full_tool_calls[idx] = FunctionCall(id="", arguments="", name="")
 
-                        if tool_call_chunk.id is not None:
-                            full_tool_calls[idx].id += tool_call_chunk.id
+                        # The id is a header value: providers send it once, but
+                        # some compatibility gateways repeat it on every chunk.
+                        # Assign once instead of accumulating so a repeated id
+                        # cannot turn into "call_abccall_abc".
+                        if tool_call_chunk.id is not None and not full_tool_calls[idx].id:
+                            full_tool_calls[idx].id = tool_call_chunk.id
 
                         if tool_call_chunk.function is not None:
-                            if tool_call_chunk.function.name is not None:
-                                full_tool_calls[idx].name += tool_call_chunk.function.name
+                            if tool_call_chunk.function.name:
+                                # Names arrive in one piece for most providers
+                                # but may be split across chunks; the endswith
+                                # guard tolerates gateways that repeat the same
+                                # fragment on every chunk instead of doubling
+                                # the name into "readreadread".
+                                fragment = tool_call_chunk.function.name
+                                if not full_tool_calls[idx].name.endswith(fragment):
+                                    full_tool_calls[idx].name += fragment
                             if tool_call_chunk.function.arguments is not None:
                                 full_tool_calls[idx].arguments += tool_call_chunk.function.arguments
                 if choice.logprobs and choice.logprobs.content:
@@ -699,6 +713,14 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
         self._total_usage = _add_usage(self._total_usage, usage)
         self._actual_usage = _add_usage(self._actual_usage, usage)
 
+        # A tool call without a name/id is a transport-level defect, not a
+        # model contract violation: raise a retriable error *before* the
+        # CreateResult is handed to the agent so the agent-level retry loop
+        # re-samples the turn instead of letting
+        # agent_kernel.verify_model_tool_calls fail it closed with
+        # `model_tool_not_in_snapshot:unknown`.
+        assert_well_formed_model_result(result)
+
         # Yield the CreateResult.
         yield result
 
@@ -771,7 +793,20 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
                         )
                         function_order.append(key)
                     else:
-                        function_calls[key].arguments = getattr(item, "arguments", "") or function_calls[key].arguments
+                        call = function_calls[key]
+                        # `output_item.added` normally carries the header, but
+                        # some deployments only populate name/id on the final
+                        # item; backfill them alongside arguments so a nameless
+                        # call cannot survive to the end of the stream.
+                        if not call.name:
+                            call.name = getattr(item, "name", "") or ""
+                        if not call.id:
+                            call.id = (
+                                getattr(item, "call_id", None)
+                                or getattr(item, "id", "")
+                                or ""
+                            )
+                        call.arguments = getattr(item, "arguments", "") or call.arguments
                 response_usage = getattr(response, "usage", None)
                 if response_usage is not None:
                     usage = RequestUsage(
@@ -803,6 +838,11 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
         ))
         self._total_usage = _add_usage(self._total_usage, usage)
         self._actual_usage = _add_usage(self._actual_usage, usage)
+        # Same guard as the Chat Completions path: the Responses API only
+        # reports the tool-call header on `output_item.added`/final items, so a
+        # missing name must become a retriable error rather than a nameless
+        # call that the kernel rejects fail-closed.
+        assert_well_formed_model_result(result)
         yield result
 
     @staticmethod

@@ -159,15 +159,7 @@ class WeChatRuntimeSessionBridge:
         normalized_message_id = str(message_id).strip()
         if not normalized_message_id:
             raise ValueError("WeChat message_id is required for durable idempotency")
-        provider_user_key = self.identity.provider_user_key(provider_user_id)
-        session, created_session = self.engine.resolve_or_create_channel_session(
-            self.workspace_id(),
-            provider="wechat",
-            account_fingerprint=self.account_fingerprint,
-            provider_user_key=provider_user_key,
-            title_prefix="微信会话",
-        )
-        self._session_routes[str(session["session_id"])] = provider_user_id
+        session, created_session = self._resolve(provider_user_id)
         idempotency_digest = hashlib.sha256(
             f"wechat\0{self.account_fingerprint}\0{normalized_message_id}".encode("utf-8")
         ).hexdigest()
@@ -220,7 +212,10 @@ class WeChatRuntimeSessionBridge:
             str(origin.get("binding_id") or ""), title_prefix="微信会话"
         )
         self._session_routes[str(rotated["session_id"])] = provider_user_id
-        return rotated
+        # A new Session copies the Workspace of the one it replaces, so this
+        # normally changes nothing -- it keeps every Session the bridge hands to
+        # the channel in the channel's Workspace regardless.
+        return self._pin_workspace(rotated)
 
     def list_sessions(self, provider_user_id: str) -> tuple[list[dict[str, Any]], str]:
         current, _ = self._resolve(provider_user_id)
@@ -237,7 +232,22 @@ class WeChatRuntimeSessionBridge:
             str(origin.get("binding_id") or ""), session_id
         )
         self._session_routes[str(selected["session_id"])] = provider_user_id
-        return selected
+        # Switching back to a Session created before the channel moved must not
+        # send its next Run to the directory it used to live in.
+        return self._pin_workspace(selected)
+
+    def retire_stale_account_sessions(self) -> int:
+        """Archive the channel Sessions of a WeChat account this link replaced.
+
+        The QR login that produced the credentials being served is the only
+        account this installation can receive from, so the Sessions of any
+        earlier account leave the Desktop list instead of standing beside the
+        live one as a second "微信会话 N".  Their bindings stay, which is what
+        lets that account resume its own conversation if it is linked again.
+        """
+        return self.engine.archive_stale_channel_sessions(
+            provider="wechat", account_fingerprint=self.account_fingerprint
+        )
 
     def _resolve(self, provider_user_id: str) -> tuple[dict[str, Any], bool]:
         result = self.engine.resolve_or_create_channel_session(
@@ -247,8 +257,26 @@ class WeChatRuntimeSessionBridge:
             provider_user_key=self.identity.provider_user_key(provider_user_id),
             title_prefix="微信会话",
         )
-        self._session_routes[str(result[0]["session_id"])] = provider_user_id
-        return result
+        session = self._pin_workspace(result[0])
+        self._session_routes[str(session["session_id"])] = provider_user_id
+        return session, result[1]
+
+    def _pin_workspace(self, session: dict[str, Any]) -> dict[str, Any]:
+        """Keep a channel Session in the Workspace the channel resolves to.
+
+        A binding is keyed by provider identity alone, so its Session survives a
+        change of Workspace: one created while the channel pointed elsewhere --
+        or before the Desktop had a default Workspace at all -- would otherwise
+        keep running in the old directory, with that directory's project
+        instructions and environment section.  Relocating the Session re-points
+        every Run that follows; the Runs already recorded stay where they ran.
+        """
+        workspace_id = self.workspace_id()
+        if not workspace_id or str(session.get("workspace_id") or "") == workspace_id:
+            return session
+        return self.engine.relocate_channel_session(
+            str(session["session_id"]), workspace_id=workspace_id
+        )
 
     def provider_user_for_session(self, session_id: str) -> str | None:
         return self._session_routes.get(session_id)

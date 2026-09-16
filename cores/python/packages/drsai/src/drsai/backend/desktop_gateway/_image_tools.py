@@ -16,25 +16,16 @@ from typing import Any
 from autogen_core import CancellationToken
 
 from drsai.backend.runtime.image_operations import RuntimeImageOperationAdapter
+from drsai.backend.prompt_registry import IMAGE_GENERATION_HOST_POLICY
 
 from . import _artifacts, _state
 
-# Injected every Desktop turn so end users can say natural language like
-# 「画一只猫」without needing to name tools or forbid scripts themselves.
-IMAGE_GENERATION_HOST_POLICY = """## Host image generation (required)
-
-When the user asks to draw, generate, create, or edit an image:
-
-1. Call the Host tool `image_generation` (or `image_edit` for edits) immediately.
-2. Do **not** load Skill `image-process` (or similar) for generation.
-3. Do **not** write/run Python, shell, curl, or HTTP scripts to call image APIs.
-4. Do **not** invent ASCII/Markdown fake images as a substitute.
-5. The Host picks the image model from Agent settings and handles credentials.
-
-If `image_generation` fails, report the tool error and suggest switching the
-Agent image-generation model in settings. Do **not** offer a script/HTTP
-fallback, even as an optional backup.
-"""
+# Image-generation prompt policy lives in drsai.backend.prompt_registry (single
+# source of truth for prompt fragments) and is re-exported here so existing
+# importers of `drsai.backend.desktop_gateway._image_tools.IMAGE_GENERATION_HOST_POLICY`
+# keep working:
+#   Injected every Desktop turn so end users can say natural language like
+#   「画一只猫」without needing to name tools or forbid scripts themselves.
 
 _image_adapter: RuntimeImageOperationAdapter | None = None
 

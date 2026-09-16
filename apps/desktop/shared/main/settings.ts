@@ -52,8 +52,17 @@ export async function syncSavedApiKeyToGateway(): Promise<boolean> {
     || process.env.OPENAI_API_KEY?.trim()
     || readSavedApiKey();
   if (!apiKey) return false;
-  await putGatewayConfig(`/v1/config/env/${encodeURIComponent(API_KEY_NAME)}`, { value: apiKey });
-  return true;
+  try {
+    // The V2 desktop_gateway serves no PUT /v1/config/env/{key}: the runtime
+    // receives its provider credentials from the launcher environment and the
+    // HepAI OIDC session, not from a remote config write.  Keep the local file
+    // as the source of truth and treat an unsupported runtime as "not synced"
+    // instead of failing the caller (voice readiness, developer API-key login).
+    await putGatewayConfig(`/v1/config/env/${encodeURIComponent(API_KEY_NAME)}`, { value: apiKey });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function upsertEnvValue(content: string, key: string, value: string): string {

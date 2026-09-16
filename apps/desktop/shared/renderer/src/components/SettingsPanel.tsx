@@ -88,6 +88,67 @@ const AWAY_STARTED_AT_STORAGE_KEY = "opendrsai.awayStartedAt";
 
 export type SettingsPane = "general" | "voice" | "agent-defaults" | "model-providers" | "perceptors" | "executors" | "memories" | "agent-task" | "approvals" | "analytics" | "integrations" | "codex" | "remote-workspace" | "channels" | "archived-sessions" | "other";
 
+/** Settings panes that are still rendered in the navigation but have no working
+ * implementation behind them. They stay visible so the surface stays honest
+ * about what exists, but they are disabled instead of opening a pane that fails
+ * at mount (Perceptors 404s against the Desktop Runtime; Executors and Memories
+ * are placeholders for the next stage). Remove an entry here once its backend
+ * and pane content actually ship. */
+export const UNAVAILABLE_SETTINGS_PANES: Partial<Record<SettingsPane, { zh: string; en: string }>> = {
+  perceptors: {
+    zh: "桌面运行时尚未提供感知器接口（GET /v1/config/perceptors 返回 404）。",
+    en: "The desktop runtime does not expose the Perceptor API yet (GET /v1/config/perceptors returns 404).",
+  },
+  executors: {
+    zh: "执行器注册表将在下一阶段开放。",
+    en: "Executor registry is coming next.",
+  },
+  memories: {
+    zh: "记忆器注册表将在下一阶段开放。",
+    en: "Memory registry is coming next.",
+  },
+};
+
+/** Whether the Desktop Runtime serves the Perceptor registry. Probing a route
+ * the runtime does not serve costs a rejected ipcMain handler, and Electron logs
+ * every rejected handler even when the renderer catches the rejection — so no
+ * call site may probe while the registry is absent. Derived from the registry
+ * above so re-enabling the pane also re-enables the probes. */
+export const PERCEPTOR_REGISTRY_AVAILABLE = !UNAVAILABLE_SETTINGS_PANES.perceptors;
+
+/** Localized explanation for a disabled pane, or null when the pane is usable. */
+export function settingsPaneUnavailableReason(pane: SettingsPane, zh: boolean): string | null {
+  const entry = UNAVAILABLE_SETTINGS_PANES[pane];
+  if (!entry) return null;
+  return zh ? entry.zh : entry.en;
+}
+
+/** Panes that this desktop build cannot serve even though the pane itself is
+ * implemented. They are derived from the platform feature capabilities so a
+ * platform (or a future runtime) that really serves the capability keeps the
+ * pane enabled. */
+export function capabilityDisabledPaneReason(
+  pane: SettingsPane,
+  features: DesktopPlatformDescriptor["capabilities"]["features"] | undefined,
+  zh: boolean,
+): string | null {
+  if (pane === "codex" && features?.codexBackend === false) {
+    return zh
+      ? "当前桌面运行时只注册了 opendrsai 后端，未注册 Codex 后端，因此 Codex 集成在此构建中不可用。"
+      : "This desktop runtime registers only the opendrsai backend, not the Codex backend, so Codex integration is unavailable in this build.";
+  }
+  return null;
+}
+
+/** Single entry point for "this navigation item is rendered but disabled". */
+function disabledPaneReason(
+  pane: SettingsPane,
+  features: DesktopPlatformDescriptor["capabilities"]["features"] | undefined,
+  zh: boolean,
+): string | null {
+  return settingsPaneUnavailableReason(pane, zh) ?? capabilityDisabledPaneReason(pane, features, zh);
+}
+
 function modelProviderRuntimeSummary(connection: MyDrSaiModelConnection, zh: boolean): string | undefined {
   switch (connection.runtime?.runtime_status) {
     case "applied": return connection.runtime.active_runtime_count > 0 ? (zh ? "运行中" : "Active") : undefined;
@@ -377,8 +438,14 @@ function AgentResourcesSettings({ agentId, zh, onManagePerceptors }: { agentId: 
   const refresh = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [perceptorRows, tools, toolsPreview, skills, skillsPreview, knowledge, knowledgePreviewResult] = await Promise.all([
-        desktopApi.listPerceptors(),
+      // The Perceptor API is not served by the Desktop Runtime yet, so do not
+      // probe it at all: the .catch() below would still leave a rejected
+      // ipcMain handler behind, which Electron logs as "Error occurred in
+      // handler for 'desktop:list-perceptors'". The catch stays as a guard for
+      // the day the route ships and misbehaves — it must never take the
+      // tool/skill/knowledge panels down with it.
+      const perceptorRows = PERCEPTOR_REGISTRY_AVAILABLE ? await desktopApi.listPerceptors().catch(() => []) : [];
+      const [tools, toolsPreview, skills, skillsPreview, knowledge, knowledgePreviewResult] = await Promise.all([
         desktopApi.getMyDrSaiAgentToolPolicy(agentId),
         desktopApi.previewMyDrSaiAgentTools(agentId),
         desktopApi.getMyDrSaiAgentSkillPolicy(agentId),
@@ -440,7 +507,7 @@ function AgentResourcesSettings({ agentId, zh, onManagePerceptors }: { agentId: 
     {tab === "perception" && <div role="tabpanel" data-testid="agent-perception-settings">
       <div className="settings-row">
         <span><strong>{zh ? "可用感知器资源" : "Available perceptor resources"}</strong><small>{zh ? "连接地址和凭据由全局感知器配置管理；这里仅展示当前智能体可引用的资源和运行时能力。" : "Global Perceptor configuration owns endpoints and credentials; this view only shows resources and runtime capabilities available for Agent binding."}</small></span>
-        <button type="button" onClick={onManagePerceptors}>{zh ? "管理感知器资源" : "Manage perceptors"}</button>
+        <button type="button" onClick={onManagePerceptors} disabled title={settingsPaneUnavailableReason("perceptors", zh) ?? undefined}>{zh ? "管理感知器资源" : "Manage perceptors"}</button>
       </div>
       {perceptors.map((perceptor) => <div className="settings-row" key={perceptor.perceptor_id} data-testid={`perceptor-${perceptor.perceptor_id}`}>
         <span><strong>{perceptor.name || perceptor.perceptor_id}</strong><small>{perceptor.adapter} · {perceptor.capabilities.join(", ")}</small><span className="perceptor-runtime-status">
@@ -449,7 +516,7 @@ function AgentResourcesSettings({ agentId, zh, onManagePerceptors }: { agentId: 
           <em className={(toolPreview?.tools ?? []).some((tool) => tool.tool_id === "builtin.web-search" && tool.selected) ? "ok" : "warning"}>{(toolPreview?.tools ?? []).some((tool) => tool.tool_id === "builtin.web-search" && tool.selected) ? (zh ? "当前智能体已加载" : "Loaded by this Agent") : (zh ? "当前智能体未加载" : "Not loaded by this Agent")}</em>
         </span></span>
       </div>)}
-      {!busy && perceptors.length === 0 && <p>{zh ? "尚未配置感知器，请前往全局感知器配置创建资源。" : "No perceptor is configured. Create one in global Perceptor configuration."}</p>}
+      {!busy && perceptors.length === 0 && <p>{zh ? "当前运行时未提供感知器接口，感知器资源暂不可用；工具、技能与知识库不受影响。" : "This runtime does not expose the Perceptor API yet, so perceptor resources are unavailable. Tools, skills, and knowledge keep working."}</p>}
     </div>}
     {tab === "tools" && <div role="tabpanel">
       {(toolPreview?.tools ?? []).map((tool) => <div className="settings-toggle" key={tool.tool_id} data-testid={`agent-tool-${tool.tool_id}`}>
@@ -1687,7 +1754,7 @@ export function SettingsPanel({
       ).then((hosts) => {
         if (cancelled) return;
         setRemoteHostCount(hosts.length);
-        if (featureCapabilities?.remoteWorkspace === true) void refreshAndroidDevices();
+        if (featureCapabilities?.remoteWorkspace === true && featureCapabilities?.mobilePairing !== false) void refreshAndroidDevices();
       });
     };
     refresh();
@@ -1724,6 +1791,24 @@ export function SettingsPanel({
     window.speechSynthesis.addEventListener("voiceschanged", refreshVoices);
     return () => window.speechSynthesis.removeEventListener("voiceschanged", refreshVoices);
   }, [activePane]);
+
+  // The V2 Desktop Runtime does not serve POST /v1/audio/speech, so provider
+  // (online) reading cannot run here; see
+  // WINDOWS_PLATFORM_DESCRIPTOR.features.remoteSpeechSynthesis.  Windows system
+  // speech stays available, so only the online paths are disabled.
+  const remoteSynthesisAvailable = featureCapabilities?.remoteSpeechSynthesis !== false;
+  const onlineSynthesisUnavailableReason = zh
+    ? "此桌面运行时未提供在线朗读接口（POST /v1/audio/speech 返回 404），当前只能使用 Windows 本地朗读。"
+    : "This desktop runtime does not expose online speech synthesis (POST /v1/audio/speech returns 404); only Windows system speech is available.";
+  useEffect(() => {
+    if (remoteSynthesisAvailable) return;
+    if (voicePreferences.synthesisMode !== "provider") return;
+    updateVoicePreferences({ synthesisMode: "system" });
+  }, [remoteSynthesisAvailable, voicePreferences.synthesisMode, updateVoicePreferences]);
+
+  // Capability-gated Codex entry point in the Integrations pane: it must not
+  // navigate into a pane that this build disables.
+  const codexIntegrationUnavailableReason = capabilityDisabledPaneReason("codex", featureCapabilities, zh);
 
   const refreshDuplexVoiceReadiness = useCallback(async () => {
     setDuplexVoiceReadinessBusy(true);
@@ -1840,9 +1925,9 @@ export function SettingsPanel({
   })).filter((group) => group.items.length > 0);
   const visiblePaneIds = visibleGroups.flatMap((group) => group.items.map((item) => item.id));
   useEffect(() => {
-    if (visiblePaneIds.includes(activePane)) return;
+    if (visiblePaneIds.includes(activePane) && !disabledPaneReason(activePane, featureCapabilities, zh)) return;
     setActivePane("general");
-  }, [activePane, visiblePaneIds.join("|")]);
+  }, [activePane, visiblePaneIds.join("|"), featureCapabilities]);
   const presetModelProviderTabs = effectiveModelProviderPresets
     .filter((preset) => !preset.id.startsWith("custom-"))
     .sort((left, right) => {
@@ -1916,6 +2001,16 @@ export function SettingsPanel({
   ).size;
   const androidRemoteEnabled = mobilePairingReadiness?.state === "ready"
     || (mobilePairingReadiness?.state === "offline" && Boolean(mobilePairingReadiness.runtime_id));
+  // Android device management is served by the Runtime's /v1/mobile-pairing
+  // routes (status / enrollment / associations / diagnostics); see
+  // WINDOWS_PLATFORM_DESCRIPTOR.features.mobilePairing.  When the runtime does
+  // not expose them the card is informational only instead of failing at
+  // request time.
+  const mobilePairingUnavailableReason = featureCapabilities?.mobilePairing === false
+    ? (zh
+      ? "此桌面运行时未提供 Android 远程设备管理接口（/v1/mobile-pairing 返回 404），无法启用或管理设备。"
+      : "This desktop runtime does not expose the Android remote device management API (/v1/mobile-pairing returns 404), so Android access cannot be enabled or managed.")
+    : null;
   const androidDeviceStateText: Record<DesktopMobileAssociation["access_state"], string> = zh ? {
     accessing: "正在访问",
     online: "在线",
@@ -1971,17 +2066,22 @@ export function SettingsPanel({
             <h2>{group.label}</h2>
             {group.items.map((item) => {
               const Icon = item.icon;
+              const unavailableReason = disabledPaneReason(item.id, featureCapabilities, zh);
               return (
                 <button
                   key={item.id}
                   type="button"
                   data-testid={`settings-pane-${item.id}`}
                   autoFocus={item.id === "general"}
-                  className={activePane === item.id ? "active" : ""}
-                  onClick={() => setActivePane(item.id)}
+                  className={[activePane === item.id ? "active" : "", unavailableReason ? "settings-pane-unavailable" : ""].filter(Boolean).join(" ")}
+                  disabled={Boolean(unavailableReason)}
+                  aria-disabled={Boolean(unavailableReason)}
+                  title={unavailableReason ?? undefined}
+                  onClick={() => { if (unavailableReason) return; setActivePane(item.id); }}
                 >
                   <Icon size={15} />
                   <span>{item.label}</span>
+                  {unavailableReason ? <em className="settings-pane-unavailable-tag">{zh ? "不可用" : "Unavailable"}</em> : null}
                 </button>
               );
             })}
@@ -2330,11 +2430,12 @@ export function SettingsPanel({
                   onChange={(event) => updateVoicePreferences({ autoReadResponses: event.target.checked })}
                 />
               </label>
-              <label className="settings-toggle">
-                <span><strong>{zh ? "允许在线朗读" : "Allow online speech synthesis"}</strong><small>{zh ? "允许将回复文本发送给当前配置的语音服务；关闭后仅使用 Windows 本地朗读。" : "Allow response text to be sent to the configured speech provider; when off, only Windows system speech is used."}</small></span>
+              <label className="settings-toggle" title={remoteSynthesisAvailable ? undefined : onlineSynthesisUnavailableReason}>
+                <span><strong>{zh ? "允许在线朗读" : "Allow online speech synthesis"}</strong><small>{remoteSynthesisAvailable ? (zh ? "允许将回复文本发送给当前配置的语音服务；关闭后仅使用 Windows 本地朗读。" : "Allow response text to be sent to the configured speech provider; when off, only Windows system speech is used.") : onlineSynthesisUnavailableReason}</small></span>
                 <input
                   type="checkbox"
                   data-testid="voice-remote-tts-consent"
+                  disabled={!remoteSynthesisAvailable}
                   checked={voicePreferences.remoteTtsConsent}
                   onChange={(event) => updateVoicePreferences({
                     remoteTtsConsent: event.target.checked,
@@ -2343,16 +2444,18 @@ export function SettingsPanel({
                 />
               </label>
               <div className="settings-row">
-                <span><strong>{zh ? "朗读引擎" : "Reading engine"}</strong><small>{zh ? "Provider 不可用时会显示错误；切换到 Windows 系统声音需由你确认。" : "Provider failures are shown explicitly; switching to Windows system speech requires your choice."}</small></span>
+                <span><strong>{zh ? "朗读引擎" : "Reading engine"}</strong><small>{remoteSynthesisAvailable ? (zh ? "Provider 不可用时会显示错误；切换到 Windows 系统声音需由你确认。" : "Provider failures are shown explicitly; switching to Windows system speech requires your choice.") : onlineSynthesisUnavailableReason}</small></span>
                 <select
                   data-testid="voice-synthesis-mode"
                   value={voicePreferences.synthesisMode}
                   onChange={(event) => updateVoicePreferences({ synthesisMode: event.target.value as "system" | "provider" })}
+                  aria-describedby={remoteSynthesisAvailable ? undefined : "voice-online-synthesis-unavailable"}
                 >
                   <option value="system">{zh ? "Windows 系统声音" : "Windows system speech"}</option>
-                  <option value="provider" disabled={!voicePreferences.remoteTtsConsent}>{zh ? "语音服务 Provider" : "Speech provider"}</option>
+                  <option value="provider" disabled={!voicePreferences.remoteTtsConsent || !remoteSynthesisAvailable}>{zh ? "语音服务 Provider" : "Speech provider"}</option>
                 </select>
               </div>
+              {!remoteSynthesisAvailable ? <p id="voice-online-synthesis-unavailable" className="settings-privacy-note" role="note" data-testid="voice-online-synthesis-unavailable">{onlineSynthesisUnavailableReason}</p> : null}
               <div className="settings-row">
                 <span><strong>{zh ? "语速" : "Reading speed"}</strong><small>{voicePreferences.playbackRate.toFixed(1)}x</small></span>
                 <input
@@ -2591,7 +2694,7 @@ export function SettingsPanel({
           </>
         )}
 
-        {activePane === "perceptors" && <><PerceptorSettingsPanel language={language} />{dataPerceptorsPanel ? <div className="settings-embedded-view settings-data-perceptors">{dataPerceptorsPanel}</div> : null}</>}
+        {activePane === "perceptors" && <PerceptorSettingsPanel language={language} />}
 
         {activePane === "executors" && (
           <>
@@ -2626,7 +2729,10 @@ export function SettingsPanel({
 
         {activePane === "approvals" && <div className="settings-embedded-view">{approvalCenterPanel}</div>}
         {activePane === "analytics" && <div className="settings-embedded-view">{usageAnalyticsPanel}</div>}
-        {activePane === "channels" && <div className="settings-embedded-view">{channelsPanel}</div>}
+        {activePane === "channels" && <>
+          <div className="settings-embedded-view">{channelsPanel}</div>
+          {dataPerceptorsPanel ? <div className="settings-embedded-view settings-data-perceptors">{dataPerceptorsPanel}</div> : null}
+        </>}
 
         {activePane === "codex" && <CodexIntegrationSettings
           busy={updateBusy}
@@ -2655,13 +2761,13 @@ export function SettingsPanel({
                   <button type="button" className="settings-connection-card-summary" aria-expanded={expandedIntegrationCard === "codex"} onClick={() => setExpandedIntegrationCard((current) => current === "codex" ? null : "codex")}>
                     <span className="settings-connection-card-logo"><OpenAiBrandIcon size={25} /></span>
                     <span><strong>Codex</strong><small>{zh ? "OpenAI 官方编程智能体，通过 OpenDrSai Codex Adapter 接入。" : "OpenAI's official coding Agent, connected through the OpenDrSai Codex Adapter."}</small></span>
-                    <em className={codexConfigurationAgent ? "is-ready" : ""}>{codexConfigurationAgent ? (zh ? "已启用" : "Enabled") : (zh ? "未启用" : "Disabled")}</em>
+                    <em className={codexIntegrationUnavailableReason ? "" : codexConfigurationAgent ? "is-ready" : ""}>{codexIntegrationUnavailableReason ? (zh ? "不可用" : "Unavailable") : codexConfigurationAgent ? (zh ? "已启用" : "Enabled") : (zh ? "未启用" : "Disabled")}</em>
                     {expandedIntegrationCard === "codex" ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </button>
                 </div>
                 {expandedIntegrationCard === "codex" && <div className="settings-connection-card-body">
-                  <p>{zh ? "任务过程遵循 OpenDrSai 智能体执行协议，可保留运行记录，并将工作区数据和技能资产沉淀下来。" : "Runs follow the OpenDrSai Agent execution protocol so records remain reproducible and workspace data and skills can be retained."}</p>
-                  <div className="settings-integration-actions"><button type="button" onClick={() => setActivePane("codex")}>{zh ? "管理 Codex" : "Manage Codex"}</button></div>
+                  <p>{codexIntegrationUnavailableReason ?? (zh ? "任务过程遵循 OpenDrSai 智能体执行协议，可保留运行记录，并将工作区数据和技能资产沉淀下来。" : "Runs follow the OpenDrSai Agent execution protocol so records remain reproducible and workspace data and skills can be retained.")}</p>
+                  <div className="settings-integration-actions"><button type="button" disabled={Boolean(codexIntegrationUnavailableReason)} title={codexIntegrationUnavailableReason ?? undefined} onClick={() => { if (codexIntegrationUnavailableReason) return; setActivePane("codex"); }}>{zh ? "管理 Codex" : "Manage Codex"}</button></div>
                 </div>}
               </article>
               <article className={`settings-connection-card ${expandedIntegrationCard === "deepseek-harness" ? "is-expanded" : ""}`}>
@@ -2708,14 +2814,17 @@ export function SettingsPanel({
                       <strong>Android</strong>
                       <small>{zh ? "OpenDrSai Android 远程连接与设备管理。" : "OpenDrSai Android remote connection and device management."}</small>
                     </span>
-                    <em className={androidRemoteEnabled ? "is-ready" : ""}>{androidRemoteEnabled ? (zh ? "可用" : "Available") : (zh ? "未启用" : "Disabled")}</em>
+                    <em className={mobilePairingUnavailableReason ? "" : androidRemoteEnabled ? "is-ready" : ""}>{mobilePairingUnavailableReason ? (zh ? "不可用" : "Unavailable") : androidRemoteEnabled ? (zh ? "可用" : "Available") : (zh ? "未启用" : "Disabled")}</em>
                     {androidPanelExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </button>
                   <div className="settings-integration-actions">
-                    <button type="button" role="switch" aria-checked={androidRemoteEnabled} aria-label={androidRemoteEnabled ? (zh ? "暂停 Android 远程访问" : "Pause Android remote access") : (zh ? "恢复 Android 远程访问" : "Resume Android remote access")} className={`settings-connection-switch ${androidRemoteEnabled ? "is-enabled" : ""}`} data-testid="android-remote-toggle" disabled={mobileEnrollmentBusy || mobileAssociationsState === "loading"} onClick={() => { if (androidRemoteEnabled) void pauseMobileRemoteAccess(); else void enableMobileRemoteAccess(); }}><span aria-hidden="true" /></button>
+                    <button type="button" role="switch" aria-checked={androidRemoteEnabled} aria-label={androidRemoteEnabled ? (zh ? "暂停 Android 远程访问" : "Pause Android remote access") : (zh ? "恢复 Android 远程访问" : "Resume Android remote access")} className={`settings-connection-switch ${androidRemoteEnabled ? "is-enabled" : ""}`} data-testid="android-remote-toggle" title={mobilePairingUnavailableReason ?? undefined} disabled={Boolean(mobilePairingUnavailableReason) || mobileEnrollmentBusy || mobileAssociationsState === "loading"} onClick={() => { if (mobilePairingUnavailableReason) return; if (androidRemoteEnabled) void pauseMobileRemoteAccess(); else void enableMobileRemoteAccess(); }}><span aria-hidden="true" /></button>
                   </div>
                 </div>
                 {androidPanelExpanded && <div className="settings-connection-card-body android-remote-body">
+                {mobilePairingUnavailableReason ? (
+                  <p className="android-remote-message" data-state="unavailable" data-testid="android-device-state">{mobilePairingUnavailableReason}</p>
+                ) : (<>
                 <div className="android-remote-counts" data-testid="android-device-counts">
                   <span>{zh ? `已授权设备 ${activeAndroidAssociations.length}` : `Authorized devices ${activeAndroidAssociations.length}`}</span>
                   <span>{zh ? `当前在线 ${androidOnlineDeviceCount}` : `Online now ${androidOnlineDeviceCount}`}</span>
@@ -2800,6 +2909,7 @@ export function SettingsPanel({
                   <button type="button" className="danger" disabled={mobileEnrollmentBusy || activeAndroidAssociations.length === 0} onClick={() => void revokeAllAndroidDevices()} data-testid="android-revoke-all">{zh ? "撤销全部设备" : "Revoke all devices"}</button>
                   <button type="button" className="danger" disabled={mobileEnrollmentBusy || mobilePairingReadiness?.state === "not_registered"} onClick={() => void revokeMobileEnrollment()} data-testid="android-revoke-enrollment">{zh ? "注销此电脑" : "Unregister this computer"}</button>
                 </div>
+                </>)}
                 </div>}
               </div>
             </div>

@@ -53,7 +53,7 @@ from drsai.backend.wechat.wechat_bot import WeChatBot
 from drsai.configs.constant import WECHAT_DIR, WORKSPACE_DIR
 from drsai.platform_auth import PlatformAuthContext
 
-from .. import _channel_auth, _state
+from .. import _channel_auth, _desktop_workspaces, _state
 from .._vision import understand_runtime_images
 
 _auth = WeChatAuthService(Path(WECHAT_DIR) / "credentials.json")
@@ -80,14 +80,26 @@ def capture_platform_auth(context: PlatformAuthContext) -> None:
 def _workspace_record():
     """Return the Workspace a WeChat Session belongs to.
 
-    Channel Sessions are ordinary Runtime Sessions, so they must live in a
-    Workspace the Desktop already lists.  The most recently opened user
-    Workspace wins; the hidden remote-agents compatibility Workspace is skipped
-    even when it is the newest one, which it becomes as soon as any remote
-    worker is dispatched.
+    A channel Session is an ordinary Runtime Session, and it must live in the
+    same space the Desktop user considers *the* space: the managed default
+    Workspace the Desktop creates on first launch.  The Run's working
+    directory, the ENVIRONMENT section of the system prompt and the project
+    instructions are all derived from that Workspace, so picking anything else
+    -- for instance the Workspace the user happened to open most recently --
+    would make the same agent answer differently over WeChat than over the
+    Desktop.
+
+    The Desktop's own store is authoritative for which Workspace that is.  When
+    it cannot be read, the most recently opened user Workspace is used, and the
+    hidden remote-agents compatibility Workspace is never eligible.
     """
     registry = _state.runtime_registry()
     hidden = (_state.state_root() / _HIDDEN_WORKSPACE_LEAF).resolve()
+
+    record = _open_desktop_default_workspace(registry, hidden)
+    if record is not None:
+        return record
+
     for record in registry.list_workspaces():
         if Path(record.path).resolve() == hidden:
             continue
@@ -99,12 +111,36 @@ def _workspace_record():
     return record
 
 
+def _open_desktop_default_workspace(registry: Any, hidden: Path):
+    """Open the Workspace the Desktop marks as its managed default, if any.
+
+    ``open_workspace`` is idempotent, so this returns the same Runtime
+    Workspace the Desktop already registered: a channel Run then starts in
+    exactly the directory -- and therefore exactly the instructions -- a
+    Desktop Run uses.  A store that has gone stale (a directory the user moved
+    or deleted, a Workspace list from another machine) degrades to ``None``
+    instead of breaking the channel.
+    """
+    default = _desktop_workspaces.managed_default_workspace(_state.state_root())
+    if default is None or Path(default.path).resolve() == hidden:
+        return None
+    try:
+        record = registry.open_workspace(default.path, display_name=default.display_name)
+    except (OSError, ValueError):
+        return None
+    _state.remember_workspace_root(record.workspace_id, Path(record.path))
+    return record
+
+
 def _workspace_id() -> str:
     return str(_workspace_record().workspace_id)
 
 
 def _workspace_path() -> Path:
-    return Path(str(_workspace_record().path))
+    # Resolved, like the Runtime resolves a Workspace before a Run: the staged
+    # channel attachments and the Run's working directory must be the same
+    # directory even when the store holds a non-canonical path.
+    return Path(str(_workspace_record().path)).resolve()
 
 
 # ── Channel Run model policy ──────────────────────────────────────────────────
@@ -200,6 +236,16 @@ async def _run_bot(credentials: dict[str, Any]) -> None:
     api_key = str(credentials.get("hepai_api_key") or "")
     runtime_bridge = _runtime_bridge(credentials)
     _audit_legacy_mapping(runtime_bridge.engine)
+    try:
+        # A channel holds one WeChat account at a time, so the Sessions left by
+        # whatever account this one replaced stop standing beside the live one in
+        # the Desktop list.  Housekeeping must never keep the polling task from
+        # starting: the next message resolves through the binding either way
+        # (``resolve_or_create_channel_session`` rebuilds a Session its binding
+        # can no longer use).
+        runtime_bridge.retire_stale_account_sessions()
+    except Exception:
+        pass
     bot = WeChatBot(
         model=None,
         creds=credentials,

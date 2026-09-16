@@ -664,6 +664,10 @@ export function applyStructuredConversationEvent(
         ...next,
         status: "completed",
         sealed: true,
+        // A finished turn must not leave parts "running". The reasoning
+        // disclosure derives its open/close transition from the part status, so
+        // an unterminated part would stay expanded forever after the turn ends.
+        parts: sealOpenParts(next.parts),
         // Final-answer authority belongs to part.completed / the backend. A
         // terminal turn event must never promote unclassified process text.
         meta: { ...next.meta, ...event.meta },
@@ -739,8 +743,35 @@ export function isStructuredAssistantPart(part: unknown): part is StructuredAssi
   }
 }
 
+function sealOpenParts(parts: StructuredAssistantPart[]): StructuredAssistantPart[] {
+  return parts.map((part) => {
+    // Interaction and notice parts carry their own lifecycle (an unanswered
+    // approval must stay actionable) and never drive the process disclosure.
+    if (part.kind === "interaction" || part.kind === "notice") return part;
+    if (part.status !== "running" && part.status !== "pending") return part;
+    // Mirror the local completion path: a markdown part that is still open when
+    // the turn ends is the final answer, otherwise the result pane (which only
+    // renders `final` answer markdown) would show nothing at all.
+    return {
+      ...part,
+      status: "completed",
+      ...(part.kind === "markdown" ? { final: true } : {}),
+    } as StructuredAssistantPart;
+  });
+}
+
+function isTerminalPartStatus(status: StructuredPartStatus): boolean {
+  return status === "completed" || status === "error" || status === "cancelled";
+}
+
 function startPart(state: StructuredTurnState, part: StructuredAssistantPart, sequence: number): StructuredTurnState {
   const existing = state.parts.find((item) => item.id === part.id);
+  // Terminal states are monotonic. A late duplicate `part.started` (or a stale
+  // "running" replay from a snapshot) must not reopen a part that already
+  // finished, otherwise a collapsed reasoning disclosure pops back open.
+  if (existing && isTerminalPartStatus(existing.status) && (part.status === "running" || part.status === "pending")) {
+    return state;
+  }
   return { ...state, parts: upsertById(state.parts, { ...existing, ...part, sequence: existing?.sequence ?? part.sequence ?? sequence } as StructuredAssistantPart) };
 }
 

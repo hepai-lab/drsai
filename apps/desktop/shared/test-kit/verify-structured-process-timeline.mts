@@ -4,10 +4,18 @@ import {
   createStructuredTurnState,
   sanitizeStructuredTurnState,
   STRUCTURED_CONVERSATION_VERSION,
+  type ReasoningSegment,
   type StructuredActivityEvent,
   type StructuredAssistantPart,
   type StructuredConversationEvent,
+  type StructuredProcessTimelineEntry,
 } from "../api/structuredConversation";
+import {
+  buildProcessTimeline,
+  visibleReasoningText,
+  type ProcessTimelineEntry,
+  type StructuredReasoningPart,
+} from "../renderer/src/processTimelineModel";
 import type { DesktopThread } from "../api/desktopApi";
 import type { OaepItem, OaepRun } from "../api/oaep.generated";
 import { projectOaepAssistantItem, projectOaepThreadSnapshot } from "../main/threadRuntimeProjection";
@@ -66,6 +74,178 @@ function verifyOaepProjectionTimeline(): void {
   assert.deepEqual(turn?.processTimeline?.map((entry) => [entry.kind, entry.sequence]), [["reasoning", 3], ["activity", 4], ["markdown", 5]]);
 }
 
+function verifyReasoningRangeRendering(): void {
+  const entry = (
+    id: string,
+    sequence: number,
+    partId: string,
+    segmentId: string,
+    text: string,
+  ): StructuredProcessTimelineEntry => ({ id, kind: "reasoning", sequence, partId, segmentId, text, status: "running" });
+  const reasoningPart = (
+    id: string,
+    segments: Array<{ id: string; text: string }>,
+    summary?: string,
+  ): StructuredReasoningPart => ({
+    id,
+    kind: "reasoning",
+    status: "running",
+    segments: segments.map((segment): ReasoningSegment => ({ ...segment, status: "running" })),
+    ...(summary ? { summary } : {}),
+  });
+  const toolActivity: StructuredActivityEvent = {
+    id: "a1",
+    turnId: "verify-ranges",
+    timestamp: new Date(0).toISOString(),
+    source: "verify",
+    status: "running",
+    title: "Tool",
+    kind: "tool",
+    toolName: "read",
+    callId: "a1",
+  };
+  const rendered = (entries: ProcessTimelineEntry[]): string[] => entries
+    .filter((candidate): candidate is Extract<ProcessTimelineEntry, { type: "reasoning" }> => candidate.type === "reasoning")
+    .map((candidate) => visibleReasoningText(candidate.part));
+
+  // Interleaved reasoning: the timeline records one entry per delta boundary and
+  // the part holds the accumulated text. Rendering the accumulation once per
+  // entry is the duplication bug; each entry must render only its own range.
+  const interleaved = buildProcessTimeline(
+    [
+      entry("t:r1", 1, "p:reason", "s1", "Alpha "),
+      { id: "t:a1", kind: "activity", sequence: 2, activityId: "a1" },
+      entry("t:r3", 3, "p:reason", "s1", "Beta"),
+    ],
+    [reasoningPart("p:reason", [{ id: "s1", text: "Alpha Beta" }], "Plan")],
+    [],
+    [],
+    [toolActivity],
+    [],
+    true,
+  );
+  assert.deepEqual(interleaved.map((candidate) => candidate.type), ["reasoning", "activity", "reasoning"]);
+  assert.deepEqual(rendered(interleaved), ["Alpha ", "Beta"]);
+  assert.equal(rendered(interleaved).join(""), "Alpha Beta");
+  // The part summary is part-level metadata; repeating it per range would be the
+  // same duplication in another form.
+  assert.deepEqual(
+    interleaved.filter((candidate) => candidate.type === "reasoning").map((candidate) => candidate.part.summary),
+    ["Plan", undefined],
+  );
+
+  // Patch after snapshot: the timeline entry only covers a prefix of the part.
+  const patched = buildProcessTimeline(
+    [entry("t:p1", 1, "p:patch", "s1", "H")],
+    [reasoningPart("p:patch", [{ id: "s1", text: "HT" }])],
+    [],
+    [],
+    [],
+    [],
+    true,
+  );
+  assert.deepEqual(rendered(patched), ["HT"]);
+
+  // The same, with the missing tail belonging to the last of several entries.
+  const patchedTail = buildProcessTimeline(
+    [entry("t:m1", 1, "p:multi", "s1", "H"), entry("t:m2", 2, "p:multi", "s1", "i")],
+    [reasoningPart("p:multi", [{ id: "s1", text: "Hi!" }])],
+    [],
+    [],
+    [],
+    [],
+    true,
+  );
+  assert.deepEqual(rendered(patchedTail), ["H", "i!"]);
+  assert.equal(rendered(patchedTail).join(""), "Hi!");
+
+  // Divergence between timeline and aggregate degrades to rendering the
+  // aggregate exactly once, never to rendering something twice.
+  const divergent = buildProcessTimeline(
+    [entry("t:d1", 1, "p:drift", "s1", "One"), entry("t:d2", 2, "p:drift", "s1", "Two")],
+    [reasoningPart("p:drift", [{ id: "s1", text: "Completely different" }])],
+    [],
+    [],
+    [],
+    [],
+    true,
+  );
+  assert.deepEqual(rendered(divergent), ["Completely different"]);
+
+  // A part whose timeline entries were dropped (bounded timeline) still renders.
+  const orphaned = buildProcessTimeline(
+    [{ id: "t:a9", kind: "activity", sequence: 1, activityId: "a1" }],
+    [reasoningPart("p:lost", [{ id: "s1", text: "Still shown" }])],
+    [],
+    [],
+    [toolActivity],
+    [],
+    true,
+  );
+  assert.deepEqual(rendered(orphaned), ["Still shown"]);
+
+  // Legacy snapshots without a timeline keep rendering the aggregate once.
+  const legacy = buildProcessTimeline(
+    undefined,
+    [reasoningPart("p:legacy", [{ id: "s1", text: "Old" }])],
+    [],
+    [],
+    [],
+    [],
+    false,
+  );
+  assert.deepEqual(rendered(legacy), ["Old"]);
+}
+
+function verifyTerminalPartMonotonicity(): void {
+  let sequence = 0;
+  const makeEvent = (turnId: string) => (
+    type: StructuredConversationEvent["type"],
+    data: Partial<StructuredConversationEvent> = {},
+  ): StructuredConversationEvent => {
+    const next = data.sequence ?? ++sequence;
+    return { version: STRUCTURED_CONVERSATION_VERSION, turnId, sequence: next, dedupeKey: `${type}:${next}`, timestamp: new Date(next).toISOString(), source: "verify", type, ...data } as StructuredConversationEvent;
+  };
+  const reasoningStarted: StructuredAssistantPart = { id: "p:reason", kind: "reasoning", status: "running", segments: [] };
+  const reasoningDone: StructuredAssistantPart = {
+    id: "p:reason",
+    kind: "reasoning",
+    status: "completed",
+    segments: [{ id: "s1", text: "Think", status: "completed" }],
+  };
+
+  // A late duplicate start (snapshot replay) must not reopen a finished part,
+  // otherwise a collapsed reasoning block pops back open.
+  const monotonic = makeEvent("verify-monotonic");
+  let state = createStructuredTurnState("verify-monotonic");
+  state = applyStructuredConversationEvent(state, monotonic("turn.started"));
+  state = applyStructuredConversationEvent(state, monotonic("part.started", { part: reasoningStarted } as Partial<StructuredConversationEvent>));
+  state = applyStructuredConversationEvent(state, monotonic("part.completed", { part: reasoningDone } as Partial<StructuredConversationEvent>));
+  state = applyStructuredConversationEvent(state, monotonic("part.started", { part: reasoningStarted } as Partial<StructuredConversationEvent>));
+  assert.equal(state.parts.find((part) => part.id === "p:reason")?.status, "completed");
+
+  // A turn that ends without an explicit part.completed must still seal its open
+  // parts: the reasoning disclosure stays expanded forever otherwise, and the
+  // result pane renders nothing while the answer markdown is not final.
+  const sealing = makeEvent("verify-seal");
+  let openTurn = createStructuredTurnState("verify-seal");
+  openTurn = applyStructuredConversationEvent(openTurn, sealing("turn.started"));
+  openTurn = applyStructuredConversationEvent(openTurn, sealing("part.started", {
+    part: { id: "p:open-reason", kind: "reasoning", status: "running", segments: [{ id: "s1", text: "Thinking", status: "running" }] } as StructuredAssistantPart,
+  } as Partial<StructuredConversationEvent>));
+  openTurn = applyStructuredConversationEvent(openTurn, sealing("part.started", {
+    part: { id: "p:answer", kind: "markdown", status: "running", channel: "answer", markdown: "Done" } as StructuredAssistantPart,
+  } as Partial<StructuredConversationEvent>));
+  openTurn = applyStructuredConversationEvent(openTurn, sealing("turn.completed"));
+  const sealedReasoning = openTurn.parts.find((part) => part.id === "p:open-reason");
+  const sealedMarkdown = openTurn.parts.find((part) => part.id === "p:answer");
+  assert.equal(sealedReasoning?.status, "completed");
+  assert.equal(sealedMarkdown?.status, "completed");
+  assert.equal(sealedMarkdown?.kind === "markdown" ? sealedMarkdown.final : undefined, true);
+}
+
 verifyReducerTimeline();
 verifyOaepProjectionTimeline();
+verifyReasoningRangeRendering();
+verifyTerminalPartMonotonicity();
 console.log("Structured process timeline verification passed.");

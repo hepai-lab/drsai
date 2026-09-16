@@ -43,7 +43,15 @@ from loguru import logger
 # desktop_kernel_events.py, desktop_manager_ports.py) is archived: Desktop no
 # longer executes it. Delegate/subagents are handled directly by
 # DrSaiAssistant._process_model_result / _execute_subagent, same as the TUI.
+from drsai.backend.cli.config import load_config
 from drsai.backend.run_drsai_agent_factory import DEFAULT_CONFIG_NAME, PLAN_MODE_SYSTEM_PROMPT, create_agent
+from drsai.backend.prompt_registry import (
+    SURFACE_DESKTOP,
+    build_selected_skill_suffix,
+    build_selected_skill_task_prefix,
+    build_turn_prefix,
+    build_turn_suffix,
+)
 from drsai.backend.runtime.agent import RuntimeExecutionError
 from drsai.modules.managers.database import DatabaseManager
 from drsai.modules.managers.datamodel.db import RunStatus, Thread
@@ -123,25 +131,12 @@ def resolve_loaded_skill_name(skills: Mapping[str, Any], requested: str) -> str 
     return None
 
 
-def build_selected_skill_suffix(skill_name: str, skill_content: str) -> str:
-    """Turn-scoped system suffix that forces the Agent to follow a selected skill."""
-    return (
-        f"CRITICAL — Composer skill selection for this turn.\n"
-        f"The user explicitly selected skill `{skill_name}`. "
-        "You MUST follow this skill's workflow and constraints to complete the request. "
-        "Do not answer from general knowledge when the skill defines scripts, steps, or formats. "
-        "If the skill lists scripts or resources, use those paths.\n\n"
-        f"<skill-loaded name=\"{skill_name}\">\n{skill_content}\n</skill-loaded>"
-    )
-
-
-def build_selected_skill_task_prefix(skill_name: str) -> str:
-    """User-message prefix so the selected skill stays salient in the turn context."""
-    return (
-        f"[Selected skill: {skill_name}] "
-        f"Follow the <skill-loaded name=\"{skill_name}\"> instructions in your system prompt "
-        "for this turn. Do not skip that skill's required steps.\n\n"
-    )
+# Selected-skill prompt builders now live in drsai.backend.prompt_registry
+# (single source of truth) and are re-imported above so existing callers keep
+# working:
+#   build_selected_skill_suffix      — turn-scoped system suffix
+#   build_selected_skill_task_prefix — user-message prefix
+#   build_turn_suffix / build_turn_prefix — the assembled turn injection
 
 
 def annotate_task_with_selected_skill(task: Any, skill_name: str) -> Any:
@@ -410,6 +405,11 @@ class DesktopAgentManager:
             model_provider=model_provider,
             model_id=model_id,
             work_dir=work_dir or os.getcwd(),
+            # Pass the live CLI config the same way the TUI does. Without it
+            # the factory falls back to load_config() at import-adjacent time,
+            # which can disagree with the config the user is actually editing
+            # (and with the TUI on the same machine) for keys like plan_mode.
+            cli_cfg=load_config(),
             # Host capabilities: artifact delivery + image generation/edit.
             # Image tools resolve the Agent's image_generation_model policy
             # and never take credentials as arguments.
@@ -429,6 +429,11 @@ class DesktopAgentManager:
             agent = await asyncio.to_thread(create_agent, **kwargs)
         if hasattr(agent, "lazy_init"):
             await agent.lazy_init()
+        # Project instructions (DRSAI.md / CLAUDE.md, discovered from cwd
+        # upwards) reach the prompt the same way they do in the TUI. Desktop
+        # previously skipped this layer entirely, so a repository's own
+        # instructions never applied to Desktop sessions.
+        await self._apply_project_instructions(agent, work_dir)
         try:
             workbench = getattr(agent, "_workbench", None)
             listed = list(getattr(workbench, "_tools", None) or getattr(agent, "_tools", []) or [])
@@ -453,6 +458,36 @@ class DesktopAgentManager:
             await agent.load_state(state)
         await self._ensure_thread(session_id, uid, work_dir)
         return agent
+
+    @staticmethod
+    async def _apply_project_instructions(agent: Any, work_dir: str | None) -> None:
+        """Inject DRSAI.md / CLAUDE.md for the session's cwd, as the TUI does.
+
+        ``/memory reload`` in the TUI re-runs this on demand; Desktop has no
+        such command, so it is applied once at Agent build time from the
+        session's own working directory.
+
+        Failures are logged and swallowed: a malformed project file must not
+        stop a session from starting, and the loader already degrades to an
+        empty string when nothing is found.
+        """
+        if not hasattr(agent, "inject_system_prompt"):
+            return
+        try:
+            from drsai.backend.cli.drsaimd_loader import load_project_instructions
+
+            content, loaded_paths, warnings = await asyncio.to_thread(
+                load_project_instructions, str(work_dir or os.getcwd()),
+            )
+            if warnings:
+                for warning in warnings:
+                    logger.warning("Project instructions: {}", warning)
+            if not content:
+                return
+            agent.inject_system_prompt(project_instructions=content)
+            logger.info("Injected project instructions from {}", loaded_paths)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("Failed to load project instructions: {}", exc)
 
     def _supersede(self, key: str, agent: Any) -> None:
         """Stop a replaced Agent's in-flight turn and close it off the hot path.
@@ -539,13 +574,16 @@ class DesktopAgentManager:
             # Apply plan mode + composer skill selection every turn so a prior
             # turn cannot leak into a normal turn (the Agent is cached per key).
             skill_suffix = apply_selected_skill_to_agent(agent, selected_skill_id)
-            # Host image policy last in suffix so it outranks skill copy that
-            # still tells the model to run image scripts.
-            suffix_parts = [part for part in (skill_suffix, IMAGE_GENERATION_HOST_POLICY) if part]
+            # build_turn_suffix keeps the host image policy last so it outranks
+            # skill copy that still tells the model to run image scripts.
+            suffix = build_turn_suffix(
+                surface=SURFACE_DESKTOP,
+                selected_skill_suffix=skill_suffix,
+            )
             if hasattr(agent, "inject_system_prompt"):
                 agent.inject_system_prompt(
-                    prefix=PLAN_MODE_SYSTEM_PROMPT if plan_mode else "",
-                    suffix="\n\n".join(suffix_parts),
+                    prefix=build_turn_prefix(plan_mode=plan_mode),
+                    suffix=suffix,
                 )
             # Reasoning is applied per turn because the Agent is cached per
             # session.  Never let a previous turn's effort leak into a later

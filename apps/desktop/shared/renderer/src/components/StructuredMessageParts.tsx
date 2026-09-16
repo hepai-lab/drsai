@@ -32,6 +32,11 @@ import {
   type ProcessActivityGroup,
   type ProcessProgressGroup,
 } from "../structuredProcessPresentation";
+import {
+  buildProcessTimeline,
+  visibleReasoningText,
+  type ProcessTimelineEntry,
+} from "../processTimelineModel";
 import type {
   ArtifactPart,
   CitationPart,
@@ -756,7 +761,7 @@ function StructuredProcessTimeline({
   return <div className="structured-process-timeline" aria-label={language === "zh" ? "执行时间线" : "Execution timeline"}>
     <div className="structured-timeline-window" data-timeline-window-start={window.start} data-timeline-window-end={window.end}>
       {entries.slice(window.start, window.end).map((entry) => {
-        if (entry.type === "reasoning") return <div key={entry.id} className="structured-timeline-item reasoning"><span className="structured-timeline-marker">💭</span>{renderPart(entry.part)}</div>;
+        if (entry.type === "reasoning") return <div key={entry.id} className="structured-timeline-item reasoning" data-reasoning-range-id={entry.id}><span className="structured-timeline-marker">💭</span><StructuredReasoning part={entry.part} language={language} onOpenLink={onOpenLink} /></div>;
         if (entry.type === "markdown") return <div key={entry.id} className="structured-timeline-item streaming-markdown"><span className="structured-timeline-marker">✎</span><ChatMessageContent content={entry.text} streaming={running} language={language} onOpenLink={onOpenLink} citations={inlineCitations} onOpenCitation={(citationId) => { const citation = citationParts.find((candidate) => candidate.citationId === citationId); if (citation) onOpenCitation(citation); }} artifactLinks={inlineArtifactsByMarkdown.get(entry.partId)} onOpenArtifactLink={(artifactPartId) => { const artifact = artifactParts.find((candidate) => candidate.id === artifactPartId); if (artifact) onOpenArtifact(artifact); }} onOpenArtifactLinkMenu={onOpenArtifactMenu ? (artifactPartId, anchor) => { const artifact = artifactParts.find((candidate) => candidate.id === artifactPartId); if (artifact) onOpenArtifactMenu(artifact, anchor); } : undefined} /></div>;
         if (entry.type === "progress") return <div key={entry.id} className={`structured-timeline-item progress ${entry.part.status}`}><span className="structured-timeline-marker"><ActivityStatusIcon status={entry.part.status} /></span>{renderPart(entry.part)}</div>;
         if (entry.type === "subtask") return <div key={entry.id} className={`structured-timeline-item subtask ${entry.part.status}`}><span className="structured-timeline-marker"><ActivityStatusIcon status={entry.part.status} /></span><SubtaskContainer part={entry.part} language={language} onOpenLink={onOpenLink} /></div>;
@@ -765,91 +770,6 @@ function StructuredProcessTimeline({
       <ProcessWindowNavigation window={window} total={entries.length} language={language} onPage={setPage} />
     </div>
   </div>;
-}
-
-type ProcessTimelineEntry =
-  | { type: "reasoning"; id: string; sequence: number; part: Extract<StructuredAssistantPart, { kind: "reasoning" }> }
-  | { type: "markdown"; id: string; partId: string; sequence: number; text: string; transient: boolean }
-  | { type: "progress"; id: string; sequence: number; part: Extract<StructuredAssistantPart, { kind: "progress" }> }
-  | { type: "activity"; id: string; sequence: number; activity: StructuredActivityEvent }
-  | { type: "subtask"; id: string; sequence: number; part: SubtaskPart };
-
-function buildProcessTimeline(
-  timeline: StructuredProcessTimelineEntry[] | undefined,
-  reasoningParts: Array<Extract<StructuredAssistantPart, { kind: "reasoning" }>>,
-  progressParts: Array<Extract<StructuredAssistantPart, { kind: "progress" }>>,
-  markdownParts: Array<Extract<StructuredAssistantPart, { kind: "markdown" }>>,
-  activities: StructuredActivityEvent[],
-  subtaskParts: SubtaskPart[],
-  running: boolean,
-): ProcessTimelineEntry[] {
-  // Prefer the authoritative append-ordered timeline when available.
-  if (timeline && timeline.length) {
-    const activityById = new Map(activities.map((activity) => [activity.id, activity]));
-    const reasoningByPartId = new Map(reasoningParts.map((part) => [part.id, part]));
-    const progressByPartId = new Map(progressParts.map((part) => [part.id, part]));
-    const markdownByPartId = new Map(markdownParts.map((part) => [part.id, part]));
-    const subtaskByPartId = new Map(subtaskParts.map((part) => [part.id, part]));
-    const result: ProcessTimelineEntry[] = [];
-    for (const entry of timeline) {
-      if (entry.kind === "reasoning") {
-        const part = reasoningByPartId.get(entry.partId);
-        if (part) {
-          // For timeline display, we show only the segment text from this
-          // delta boundary, not the full accumulated reasoning. We create a
-          // lightweight wrapper part so renderPart can display it.
-          const segmentPart = { ...part, segments: part.segments.filter((seg) => seg.id === entry.segmentId || seg.text.includes(entry.text.slice(0, 50))) };
-          if (segmentPart.segments.length === 0) segmentPart.segments = [{ id: entry.segmentId, text: entry.text, status: entry.status }];
-          result.push({ type: "reasoning", id: entry.id, sequence: entry.sequence, part: segmentPart });
-        }
-      } else if (entry.kind === "markdown") {
-        // The aggregate markdown part is the source of truth at render time.
-        // A hydrated/legacy timeline may have lost its transient flag, so do
-        // not let a finalized answer reappear in Process after completion.
-        const markdownPart = markdownByPartId.get(entry.partId);
-        const visibleInResult = !running && markdownPart?.channel === "answer" && markdownPart.final === true;
-        // Keep the process copy until Result owns the final answer. This avoids
-        // a blank frame when part.completed arrives before turn.completed.
-        if (visibleInResult) continue;
-        if (entry.transient && !running) continue;
-        result.push({ type: "markdown", id: entry.id, partId: entry.partId, sequence: entry.sequence, text: entry.text, transient: entry.transient });
-      } else if (entry.kind === "progress") {
-        const part = progressByPartId.get(entry.partId);
-        if (part) result.push({ type: "progress", id: entry.id, sequence: entry.sequence, part });
-      } else if (entry.kind === "activity") {
-        const activity = activityById.get(entry.activityId);
-        if (activity) result.push({ type: "activity", id: entry.id, sequence: entry.sequence, activity });
-      } else if (entry.kind === "subtask") {
-        const part = subtaskByPartId.get(entry.partId);
-        if (part) result.push({ type: "subtask", id: entry.id, sequence: entry.sequence, part });
-      }
-    }
-    return result;
-  }
-
-  // Legacy fallback: reconstruct from aggregate parts when no authoritative
-  // timeline exists (e.g. old snapshots). Uses part.sequence for ordering.
-  const entries: ProcessTimelineEntry[] = [];
-  reasoningParts.forEach((part, index) => {
-    const sequence = part.sequence ?? Number.MAX_SAFE_INTEGER - 100000 + index;
-    entries.push({ type: "reasoning", id: `reasoning:${part.id}`, sequence, part });
-  });
-  progressParts.forEach((part, index) => {
-    const sequence = part.sequence ?? Number.MAX_SAFE_INTEGER - 50000 + index;
-    entries.push({ type: "progress", id: `progress:${part.id}`, sequence, part });
-  });
-  // Show process-channel markdown in the timeline during fallback.
-  markdownParts.filter((part) =>
-    part.channel === "process" || (part.channel === undefined && !part.final),
-  ).forEach((part, index) => {
-    const sequence = part.sequence ?? Number.MAX_SAFE_INTEGER - 80000 + index;
-    entries.push({ type: "markdown", id: `markdown:${part.id}`, partId: part.id, sequence, text: part.markdown, transient: false });
-  });
-  activities.forEach((activity, index) => {
-    const sequence = activity.sequence ?? Number.MAX_SAFE_INTEGER - 10000 + index;
-    entries.push({ type: "activity", id: `activity:${activity.id}`, sequence, activity });
-  });
-  return entries.sort((a, b) => a.sequence - b.sequence);
 }
 
 const TOOL_OUTPUT_PREVIEW_LIMIT = 600;
@@ -1076,7 +996,7 @@ function StructuredReasoning({
   onOpenLink: (href: string | undefined) => void;
 }): React.JSX.Element | null {
   const visibleSegments = part.segments.filter((segment) => !segment.visibility || segment.visibility === "user");
-  const content = visibleSegments.map((segment) => segment.text).filter(Boolean).join("\n\n");
+  const content = visibleReasoningText(part);
   if (!content && !part.summary) return null;
   const running = part.status === "running" || part.status === "pending";
   // Auto-expand while running, auto-collapse when done. User can still toggle.
@@ -1093,7 +1013,9 @@ function StructuredReasoning({
       <summary>
         <span className="structured-reasoning-label">
           {language === "zh" ? "思考" : "Reasoning"}
-          {part.summary ? <small>{part.summary}</small> : null}
+          {/* Peek while collapsed only: the expanded body below renders the same
+              summary, and rendering both at once is the duplication users see. */}
+          {!open && part.summary ? <small>{part.summary}</small> : null}
         </span>
         <ChevronDown size={12} aria-hidden="true" />
       </summary>

@@ -19,6 +19,11 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 from drsai.backend.cli.config import load_config, save_config
+from drsai.backend.prompt_registry import (
+    PLAN_MODE_SYSTEM_PROMPT,
+    SURFACE_CLI,
+    build_base_system_message,
+)
 from drsai.backend.runtime.agent_kernel import (
     AgentRunConfig,
     DEFAULT_MAX_MESSAGES,
@@ -61,11 +66,9 @@ logger = logging.getLogger(__name__)
 
 
 # ── Plan Mode Prompt ─────────────────────────────────────────────────────────
-PLAN_MODE_SYSTEM_PROMPT = """Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
-
-Ask the questions one at a time.
-
-If a question can be answered by exploring the codebase, explore the codebase instead."""
+# Moved to drsai.backend.prompt_registry (single source of truth for prompt
+# fragments) and re-imported above so existing callers keep working:
+#     from drsai.backend.run_drsai_agent_factory import PLAN_MODE_SYSTEM_PROMPT
 
 OPENDRSAI_ASSISTANT_NAME = "OpenDrSai"
 OPENDRSAI_IDENTITY_SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
@@ -335,58 +338,18 @@ def _overlay_live_gfs_config(cli_cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_cwd_prompt(cli_cfg: dict[str, Any], work_dir: str = "") -> str:
-    """Compose a small system-prompt prefix that tells the agent the user's
-    current working directory.
+    """Compose the developer message handed to ``DrSaiAssistant``.
 
-    The CLI injects this each time a session starts so the agent can
-    resolve relative paths and skill searches against the user's project.
-    An explicit ``cli_cfg['system_message']`` or env ``DRSAI_SYSTEM_MESSAGE``
-    is appended on top for user-supplied context.
-
-    If ``cli_cfg['plan_mode']`` is True, the plan mode prompt is prepended
-    to guide the agent to interview the user about their plan.
+    Thin wrapper over :func:`drsai.backend.prompt_registry.build_base_system_message`
+    kept for the historical private name.  The wording, the layer order and the
+    injected system prompt all come from the registry now -- this function owns
+    no prompt text of its own.
     """
-    if work_dir:
-        cwd = work_dir
-    else:
-        try:
-            cwd = os.getcwd()
-        except Exception:
-            cwd = ""
-    # This is the same versioned authoritative base prompt used by Android.
-    # Surface-specific environment/project content is appended afterwards.
-    lines: list[str] = [AgentRunConfig().authoritative_prompt()]
-
-    # Plan mode: prepend the plan mode prompt
-    if cli_cfg.get("plan_mode"):
-        lines.append(PLAN_MODE_SYSTEM_PROMPT)
-        lines.append("")  # Empty line separator
-
-    if cwd:
-        lines.append(
-            "## Environment\n"
-            f"The user launched drsai-cli from this working directory:\n"
-            f"  {cwd}\n"
-            "Resolve relative file paths against this directory unless the "
-            "user specifies otherwise. Treat it as the project root when "
-            "searching for code or config.\n"
-            "Files requested as user deliverables must be written beneath "
-            "the `artifacts/` directory in this Workspace. Use private "
-            "temporary storage only for scripts, caches, and intermediate "
-            "files, and never report an internal storage path as a delivered "
-            "result.\n"
-            "Do not create companion preview/thumbnail images for documents "
-            "(for example `*-预览.png` / `*-preview.png` next to a PDF or "
-            "Office file) unless the user explicitly asked for an image. "
-            "Desktop previews PDF and Office natively. Presentation skills "
-            "that require per-slide review images are an exception when that "
-            "skill is active."
-        )
-    extra = os.environ.get("DRSAI_SYSTEM_MESSAGE") or cli_cfg.get("system_message") or ""
-    extra = str(extra).strip()
-    if extra:
-        lines.append(extra)
-    return "\n\n".join(lines) if lines else ""
+    return build_base_system_message(
+        surface=SURFACE_CLI,
+        cli_cfg=cli_cfg,
+        work_dir=work_dir,
+    )
 
 
 def _build_gfs_tools(

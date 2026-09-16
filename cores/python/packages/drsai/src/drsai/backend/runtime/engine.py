@@ -938,36 +938,47 @@ class RuntimeEngine:
                 row = db.execute(
                     "SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)
                 ).fetchone()
-                if row is None:
-                    db.rollback()
-                    raise RuntimeError("Channel binding references a missing Session")
-                if str(row["lifecycle"]) == "removed":
-                    db.rollback()
-                    raise RuntimeError("Channel binding references a removed Session")
-                if str(row["lifecycle"]) == "archived":
-                    revision = int(row["revision"]) + 1
-                    db.execute(
-                        "UPDATE runtime_sessions SET archived=0,lifecycle='active',revision=?,updated_at=? "
-                        "WHERE session_id=?",
-                        (revision, now, session_id),
-                    )
-                    self.conversation_journal.append_event_in_transaction(
+                if row is None or str(row["lifecycle"]) == "removed":
+                    # A binding outlives the Session it names: the Desktop can
+                    # remove a channel Session, and a Session can go missing with
+                    # the Workspace that held it.  Rebuilding the Session keeps the
+                    # conversation reachable; refusing here would fail every later
+                    # turn of a channel this installation still has linked,
+                    # because nothing else ever re-points the binding.
+                    session_id = self._replace_binding_session_in_transaction(
                         db,
-                        session_id,
-                        "session.updated",
-                        {
-                            "title": str(row["title"]),
-                            "lifecycle": "active",
-                            "revision": revision,
-                            "origin": {"kind": "channel", "provider": provider},
-                        },
-                        dedupe_key=f"session-revision:{session_id}:{revision}",
-                        created_at=now,
+                        binding,
+                        title_prefix=title_prefix,
+                        now=now,
+                        workspace_id=workspace_id,
+                        worktree_id=worktree_id,
                     )
-                db.execute(
-                    "UPDATE runtime_channel_bindings SET updated_at=? WHERE binding_id=?",
-                    (now, str(binding["binding_id"])),
-                )
+                    created = True
+                else:
+                    if str(row["lifecycle"]) == "archived":
+                        revision = int(row["revision"]) + 1
+                        db.execute(
+                            "UPDATE runtime_sessions SET archived=0,lifecycle='active',revision=?,updated_at=? "
+                            "WHERE session_id=?",
+                            (revision, now, session_id),
+                        )
+                        self.conversation_journal.append_event_in_transaction(
+                            db,
+                            session_id,
+                            "session.updated",
+                            {
+                                "title": str(row["title"]),
+                                "lifecycle": "active",
+                                "revision": revision,
+                                "origin": {"kind": "channel", "provider": provider},
+                            },
+                            dedupe_key=f"session-revision:{session_id}:{revision}",
+                            created_at=now,
+                        )
+                    db.execute(
+                        "UPDATE runtime_channel_bindings SET updated_at=? WHERE binding_id=?",
+                        (now, str(binding["binding_id"])),
+                    )
                 db.commit()
             else:
                 display_index = int(db.execute(
@@ -1009,6 +1020,67 @@ class RuntimeEngine:
         self.conversation_journal.notify_committed()
         return self.get_session(session_id), created
 
+    def relocate_channel_session(self, session_id: str, *, workspace_id: str) -> dict[str, Any]:
+        """Move one channel Session to another Workspace, atomically.
+
+        A channel binding is keyed by ``(provider, account, user)`` alone, so its
+        Session outlives the Workspace the channel resolves to.  A Run copies
+        the Session's Workspace when it is created, which is how a channel
+        inherits the working directory, environment section and project
+        instructions of the Workspace it belongs to -- so moving the Session is
+        what re-points the channel at its user-visible space.  Runs that already
+        happened keep the Workspace they actually ran in.
+        """
+        if not session_id or not workspace_id or not self.workspace_exists(workspace_id):
+            raise KeyError("Unknown or closed Workspace")
+        worktree_id = self.worktree_for_workspace(workspace_id)
+        now = _now()
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)
+            ).fetchone()
+            if row is None:
+                db.rollback()
+                raise KeyError("Session not found")
+            if str(row["origin_kind"]) != "channel" or row["origin_binding_id"] is None:
+                db.rollback()
+                raise ValueError("Only a channel Session can be relocated")
+            if str(row["lifecycle"]) == "removed":
+                db.rollback()
+                raise ValueError("A removed Session cannot be relocated")
+            if str(row["workspace_id"]) == workspace_id:
+                db.commit()
+                return self._session(row)
+            revision = int(row["revision"]) + 1
+            payload = {
+                "title": str(row["title"]),
+                "lifecycle": str(row["lifecycle"]),
+                "revision": revision,
+                "origin": {"kind": "channel", "provider": str(row["origin_provider"] or "")},
+            }
+            # ``append_event_in_transaction`` stamps the Session's Workspace onto
+            # the event, so the Workspace being left is notified while the
+            # Session still points at it and the new one after the move.  Both
+            # catalogs would otherwise keep serving a list that is no longer
+            # true.
+            self.conversation_journal.append_event_in_transaction(
+                db, session_id, "session.updated", payload,
+                dedupe_key=f"session-workspace-out:{session_id}:{revision}", created_at=now,
+            )
+            db.execute(
+                "UPDATE runtime_sessions SET workspace_id=?,worktree_id=?,revision=?,updated_at=? "
+                "WHERE session_id=?",
+                (workspace_id, worktree_id, revision, now, session_id),
+            )
+            self.conversation_journal.append_event_in_transaction(
+                db, session_id, "session.updated", payload,
+                dedupe_key=f"session-workspace-in:{session_id}:{revision}", created_at=now,
+            )
+            db.commit()
+        self.conversation_journal.notify_committed()
+        return self.get_session(session_id)
+
     def rotate_channel_session(self, binding_id: str, *, title_prefix: str) -> dict[str, Any]:
         """Create a fresh Session and atomically make it active for a binding."""
         if not binding_id or not title_prefix:
@@ -1022,38 +1094,19 @@ class RuntimeEngine:
             if binding is None:
                 db.rollback()
                 raise KeyError("Channel binding not found")
-            previous = db.execute(
-                "SELECT * FROM runtime_sessions WHERE session_id=?",
-                (str(binding["active_session_id"]),),
-            ).fetchone()
-            if previous is None:
-                db.rollback()
-                raise RuntimeError("Channel binding references a missing Session")
             display_index = int(db.execute(
                 "SELECT COALESCE(MAX(display_index),0)+1 FROM runtime_channel_bindings "
                 "WHERE provider=? AND account_fingerprint=?",
                 (str(binding["provider"]), str(binding["account_fingerprint"])),
             ).fetchone()[0])
-            session_id = f"session-{uuid.uuid4()}"
-            title = f"{title_prefix} {display_index}"[:240]
-            db.execute(
-                "INSERT INTO runtime_sessions(session_id,workspace_id,worktree_id,title,archived,lifecycle,"
-                "revision,agent_definition,backend_id,removed_at,origin_kind,origin_provider,origin_binding_id,"
-                "created_at,updated_at) VALUES(?,?,?,?,0,'active',1,?,?,NULL,'channel',?,?,?,?)",
-                (session_id, str(previous["workspace_id"]), previous["worktree_id"], title,
-                 previous["agent_definition"], previous["backend_id"], str(binding["provider"]),
-                 binding_id, now, now),
-            )
-            db.execute(
-                "UPDATE runtime_channel_bindings SET active_session_id=?,display_index=?,updated_at=? "
-                "WHERE binding_id=?",
-                (session_id, display_index, now, binding_id),
-            )
-            self.conversation_journal.append_event_in_transaction(
-                db, session_id, "session.updated",
-                {"title": title, "lifecycle": "active", "revision": 1,
-                 "origin": {"kind": "channel", "provider": str(binding["provider"])}},
-                dedupe_key=f"session-created:{session_id}", created_at=now,
+            # An explicit rotation asks for a new conversation, so it takes the
+            # next display number rather than the slot it replaces.
+            session_id = self._replace_binding_session_in_transaction(
+                db,
+                binding,
+                title_prefix=title_prefix,
+                now=now,
+                display_index=display_index,
             )
             db.commit()
         self.conversation_journal.notify_committed()
@@ -1082,6 +1135,130 @@ class RuntimeEngine:
                 "SELECT COUNT(*) FROM runtime_sessions WHERE origin_kind='channel' "
                 "AND origin_provider=? AND lifecycle<>'removed'", (provider,),
             ).fetchone()[0])
+
+    def _replace_binding_session_in_transaction(
+        self,
+        db: sqlite3.Connection,
+        binding: sqlite3.Row,
+        *,
+        now: str,
+        title_prefix: str | None = None,
+        display_index: int | None = None,
+        workspace_id: str | None = None,
+        worktree_id: str | None = None,
+    ) -> str:
+        """Give a binding a fresh Session inside the caller's transaction.
+
+        The caller already holds ``BEGIN IMMEDIATE`` on ``db``, so this cannot go
+        through :meth:`rotate_channel_session`: a second connection would block
+        on the caller's own write transaction.
+
+        The replacement inherits the Workspace, worktree, Agent Definition and
+        Agent Backend of the Session it stands in for, and keeps that Session's
+        display slot unless the caller asks for another number.  ``title_prefix``
+        is omitted by callers that only preserve an existing name (a removed
+        Session is replaced under the title the Desktop already shows).
+        """
+        previous = db.execute(
+            "SELECT * FROM runtime_sessions WHERE session_id=?",
+            (str(binding["active_session_id"]),),
+        ).fetchone()
+        target_workspace = (
+            str(previous["workspace_id"]) if previous is not None else workspace_id
+        )
+        if not target_workspace:
+            # Nothing describes where the replacement belongs: a binding has no
+            # Workspace column of its own.
+            raise RuntimeError("Channel binding references a missing Session")
+        slot = int(binding["display_index"]) if display_index is None else int(display_index)
+        if title_prefix is None:
+            if previous is None:
+                raise RuntimeError("Channel Session replacement requires a title")
+            title = str(previous["title"])[:240]
+        else:
+            title = f"{title_prefix} {slot}"[:240]
+        provider = str(binding["provider"])
+        session_id = f"session-{uuid.uuid4()}"
+        db.execute(
+            "INSERT INTO runtime_sessions(session_id,workspace_id,worktree_id,title,archived,lifecycle,"
+            "revision,agent_definition,backend_id,removed_at,origin_kind,origin_provider,origin_binding_id,"
+            "created_at,updated_at) VALUES(?,?,?,?,0,'active',1,?,?,NULL,'channel',?,?,?,?)",
+            (
+                session_id,
+                target_workspace,
+                previous["worktree_id"] if previous is not None else worktree_id,
+                title,
+                previous["agent_definition"] if previous is not None else None,
+                previous["backend_id"] if previous is not None else None,
+                provider,
+                str(binding["binding_id"]),
+                now,
+                now,
+            ),
+        )
+        db.execute(
+            "UPDATE runtime_channel_bindings SET active_session_id=?,display_index=?,updated_at=? "
+            "WHERE binding_id=?",
+            (session_id, slot, now, str(binding["binding_id"])),
+        )
+        self.conversation_journal.append_event_in_transaction(
+            db, session_id, "session.updated",
+            {"title": title, "lifecycle": "active", "revision": 1,
+             "origin": {"kind": "channel", "provider": provider}},
+            dedupe_key=f"session-created:{session_id}", created_at=now,
+        )
+        return session_id
+
+    def archive_stale_channel_sessions(
+        self, *, provider: str, account_fingerprint: str
+    ) -> int:
+        """Retire the channel Sessions of an Account this link no longer holds.
+
+        A channel keeps one Account at a time, so after a re-login every binding
+        written for the previous Account describes a conversation the provider can
+        still deliver if that Account is linked again -- but not while another one
+        is.  Its Session is archived rather than deleted or re-pointed: the
+        Desktop stops showing a second "Provider Session N" beside the live one,
+        the transcript survives, and logging that Account back in revives the very
+        Session through the existing archived-Session path.
+
+        Returns how many Sessions were archived.
+        """
+        if not provider or not account_fingerprint:
+            raise ValueError("Channel Account identity is required")
+        now = _now()
+        archived = 0
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            bindings = db.execute(
+                "SELECT * FROM runtime_channel_bindings WHERE provider=? AND account_fingerprint<>?",
+                (provider, account_fingerprint),
+            ).fetchall()
+            for binding in bindings:
+                session = db.execute(
+                    "SELECT * FROM runtime_sessions WHERE session_id=?",
+                    (str(binding["active_session_id"]),),
+                ).fetchone()
+                if session is None or str(session["lifecycle"]) != "active":
+                    continue
+                session_id = str(session["session_id"])
+                revision = int(session["revision"]) + 1
+                db.execute(
+                    "UPDATE runtime_sessions SET archived=1,lifecycle='archived',revision=?,updated_at=? "
+                    "WHERE session_id=?",
+                    (revision, now, session_id),
+                )
+                self.conversation_journal.append_event_in_transaction(
+                    db, session_id, "session.archived",
+                    {"title": str(session["title"]), "lifecycle": "archived", "revision": revision,
+                     "origin": {"kind": "channel", "provider": provider}},
+                    dedupe_key=f"session-revision:{session_id}:{revision}", created_at=now,
+                )
+                archived += 1
+            db.commit()
+        if archived:
+            self.conversation_journal.notify_committed()
+        return archived
 
     def record_channel_migration(
         self, *, provider: str, source_version: str, source_digest: str,
@@ -1560,6 +1737,20 @@ class RuntimeEngine:
                 dedupe_key=f"session-revision:{session_id}:{revision}",
                 created_at=updated_at,
             )
+            if wanted == "removed":
+                # Removing a channel Session must not leave its binding pointing at
+                # a Session that can never be used again.  The polling task resolves
+                # through the binding, so the next WeChat turn would fail, and the
+                # binding would stay broken until that Account logs in again.  The
+                # replacement keeps the name and the Workspace, so the channel --
+                # and the Desktop list -- reads the same as before the deletion.
+                for binding in db.execute(
+                    "SELECT * FROM runtime_channel_bindings WHERE active_session_id=?",
+                    (session_id,),
+                ).fetchall():
+                    self._replace_binding_session_in_transaction(
+                        db, binding, now=updated_at
+                    )
             db.commit()
         self.conversation_journal.notify_committed()
         return self.get_session(session_id)
