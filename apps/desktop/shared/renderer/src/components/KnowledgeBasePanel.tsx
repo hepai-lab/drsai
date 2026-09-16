@@ -398,6 +398,7 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
       const message = cause instanceof Error ? cause.message : String(cause);
       setError(message);
       showActionToast("error", isZh ? `删除失败：${message}` : `Delete failed: ${message}`);
+    } finally {
       setBusy(false);
     }
   };
@@ -887,6 +888,14 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
                 </small>
               </label>
             ))}
+            <input
+              className="kb-panel-input"
+              type="password"
+              autoComplete="off"
+              placeholder={isZh ? "如需凭证，输入 API Key（已存在的知识库无需重复输入）" : "Enter API Key if credential is needed"}
+              value={ragflowApiKey}
+              onChange={(event) => setRagflowApiKey(event.target.value)}
+            />
             <div className="kb-panel-inline-actions">
               <button
                 type="button"
@@ -1051,11 +1060,9 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
                     <button
                       type="button"
                       className="skills-btn ghost danger"
-                      disabled={busy || selectedIds.has(activeKb.knowledge_id)}
+                      disabled={busy}
                       onClick={() => void handleDelete(activeKb.knowledge_id)}
-                      title={selectedIds.has(activeKb.knowledge_id)
-                        ? (isZh ? "请先取消启用再删除" : "Disable before deleting")
-                        : (isZh ? "删除" : "Delete")}
+                      title={isZh ? "删除知识库" : "Delete knowledge base"}
                     >
                       <Trash2 size={13} />
                       {isZh ? "删除" : "Delete"}

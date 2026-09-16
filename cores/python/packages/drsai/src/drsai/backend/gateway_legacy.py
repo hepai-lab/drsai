@@ -10553,10 +10553,7 @@ def _knowledge_agent_references(knowledge_id: str) -> list[dict[str, str]]:
     references: list[dict[str, str]] = []
     for agent_name in list_agent_names():
         policy = load_agent_runtime_policy(agent_name)
-        if knowledge_id in policy.knowledge.sources or (
-            policy.knowledge.mode in {"inherit", "all_enabled"}
-            and policy.knowledge.retrieval_policy != "never"
-        ):
+        if knowledge_id in policy.knowledge.sources:
             references.append({"kind": "agent_knowledge_reference", "agent_name": agent_name, "knowledge_id": knowledge_id})
     return references
 
@@ -10648,8 +10645,8 @@ async def update_knowledge_base(knowledge_id: str, req: KnowledgeResourceRequest
 async def delete_knowledge_base(knowledge_id: str, user_id: str | None = Query(default=None)):
     resolved = canonical_knowledge_id(knowledge_id)
     references = _knowledge_agent_references(resolved)
-    if references:
-        raise HTTPException(status_code=409, detail={"code": "knowledge_base_in_use", "message": "Knowledge Base is referenced by one or more Agents", "references": references})
+    for ref in references:
+        _remove_knowledge_from_agent(ref["agent_name"], resolved)
     try:
         resource = delete_knowledge_resource(_get_config_dir(user_id), resolved)
     except ModelProviderConfigError as exc:

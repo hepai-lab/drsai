@@ -119,14 +119,11 @@ def _resolve_ragflow_token(config_dir: Path, resource: KnowledgeResource) -> str
     return None
 
 def _knowledge_agent_references(knowledge_id: str) -> list[dict[str, str]]:
-    """List agents whose runtime policy references *knowledge_id*."""
+    """List agents whose runtime policy explicitly references *knowledge_id*."""
     references: list[dict[str, str]] = []
     for agent_name in list_agent_names():
         policy = load_agent_runtime_policy(agent_name)
-        if knowledge_id in policy.knowledge.sources or (
-            policy.knowledge.mode in {"inherit", "all_enabled"}
-            and policy.knowledge.retrieval_policy != "never"
-        ):
+        if knowledge_id in policy.knowledge.sources:
             references.append({"kind": "agent_knowledge_reference", "agent_name": agent_name, "knowledge_id": knowledge_id})
     return references
 
@@ -242,8 +239,8 @@ async def delete_knowledge_base(knowledge_id: str, user_id: str | None = Query(d
     """Remove a Knowledge Base entry and clean up its stored credential."""
     resolved = canonical_knowledge_id(knowledge_id)
     references = _knowledge_agent_references(resolved)
-    if references:
-        raise HTTPException(status_code=409, detail={"code": "knowledge_base_in_use", "message": "Knowledge Base is referenced by one or more Agents", "references": references})
+    for ref in references:
+        _remove_knowledge_from_agent(ref["agent_name"], resolved)
     try:
         resource = await asyncio.to_thread(delete_knowledge_resource, _get_config_dir(user_id), resolved)
     except ModelProviderConfigError as exc:
@@ -265,7 +262,7 @@ async def get_knowledge_base_status(knowledge_id: str, user_id: str | None = Que
     status = knowledge_status(_get_config_dir(user_id), resource)
     if resource.type == "ragflow" and status["status"] == "configured":
         reference = str((resource.config or {}).get("credential_ref") or "")
-        status["status"] = "configured" if resolve_credential(reference) else "credential_required"
+        status["status"] = "configured" if reference and resolve_credential(reference) else "credential_required"
     return status
 
 
@@ -282,11 +279,14 @@ async def test_knowledge_base(knowledge_id: str, user_id: str | None = Query(def
                 raise ModelProviderConfigError("Local Knowledge Base root directory is unavailable")
             return {"ok": True, "knowledge_id": knowledge_id, "type": resource.type, "status": status["status"]}
         config = dict(resource.config or {})
-        token = resolve_credential(str(config.get("credential_ref") or ""))
-        if not token:
+        credential_ref = str(config.get("credential_ref") or "")
+        if not credential_ref:
+            raise ModelProviderConfigError("RAGFlow Knowledge Base credential is unavailable")
+        credential = resolve_credential(credential_ref)
+        if not credential:
             raise ModelProviderConfigError("RAGFlow Knowledge Base credential is unavailable")
         from drsai.modules.components.memory.ragflow_memory import RAGFlowMemoryManager
-        datasets = await RAGFlowMemoryManager(str(config["base_url"]), token).list_datasets()
+        datasets = await RAGFlowMemoryManager(str(config["base_url"]), credential).list_datasets()
         available = {str(row.get("id") or "") for row in datasets if isinstance(row, Mapping)}
         configured = set(config.get("dataset_ids") or [])
         missing = sorted(configured - available)
@@ -323,11 +323,14 @@ async def search_knowledge_base(knowledge_id: str, req: KnowledgeSearchRequest, 
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"knowledge_id": resource.knowledge_id, "query": req.query, "evidence": [_knowledge_evidence_payload(item) for item in evidence]}
     config = dict(resource.config or {})
-    token = resolve_credential(str(config.get("credential_ref") or ""))
-    if not token:
+    credential_ref = str(config.get("credential_ref") or "")
+    if not credential_ref:
+        raise HTTPException(status_code=400, detail="RAGFlow Knowledge Base credential is unavailable")
+    credential = resolve_credential(credential_ref)
+    if not credential:
         raise HTTPException(status_code=400, detail="RAGFlow Knowledge Base credential is unavailable")
     from drsai.modules.components.memory.ragflow_memory import RAGFlowMemoryManager
-    manager_instance = RAGFlowMemoryManager(str(config["base_url"]), token)
+    manager_instance = RAGFlowMemoryManager(str(config["base_url"]), credential)
     raw = await manager_instance.retrieve_chunks_by_content(
         question=req.query, dataset_ids=list(config.get("dataset_ids") or []),
         page_size=req.top_k, top_k=req.top_k, similarity_threshold=req.score_threshold,
