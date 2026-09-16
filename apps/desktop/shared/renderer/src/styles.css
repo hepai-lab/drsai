@@ -29454,6 +29454,23 @@ button.structured-activity-compact:hover > span {
 .app-decision-dialog footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 .app-decision-dialog.danger header { color: var(--app-danger); }
 .app-decision-dialog button.danger { background: var(--app-danger); color: #fff; }
+.app-decision-input { width: 100%; margin-top: 12px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--app-border, rgb(148 163 184 / 30%)); background: var(--app-input-bg, transparent); color: var(--app-text-primary); font-size: 14px; outline: none; box-sizing: border-box; }
+.app-decision-input:focus { border-color: var(--app-accent, #6366f1); box-shadow: 0 0 0 2px rgb(99 102 241 / 20%); }
+
+/* GFS 新建文件夹弹窗 */
+.gfs-mkdir-overlay { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.28); backdrop-filter: blur(2px); }
+.gfs-mkdir-dialog { width: 320px; padding: 20px; border-radius: 12px; background: var(--app-card-bg, #fff); border: 1px solid var(--app-panel-border, #ddd3ef); box-shadow: 0 8px 32px rgba(0,0,0,.18); display: flex; flex-direction: column; gap: 0; }
+.gfs-mkdir-title { margin: 0 0 14px; display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; color: var(--app-sidebar-strong, #233047); }
+.gfs-mkdir-input { width: 100%; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--app-panel-border, #ddd3ef); border-radius: 7px; background: var(--app-input-bg, #f7f8fb); color: var(--app-text, #2f2a3a); font-size: 13px; outline: none; transition: border-color .15s; }
+.gfs-mkdir-input:focus { border-color: var(--app-accent, #8b5cf6); box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-accent, #8b5cf6) 18%, transparent); }
+.gfs-mkdir-input.has-error { border-color: var(--app-danger, #e44c4c); }
+.gfs-mkdir-error { margin: 5px 0 0; font-size: 11.5px; color: var(--app-danger, #e44c4c); }
+.gfs-mkdir-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.gfs-mkdir-btn { display: inline-flex; align-items: center; padding: 5px 14px; border-radius: 7px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: opacity .15s; }
+.gfs-mkdir-btn.cancel { background: var(--app-card-bg, #fff); border-color: var(--app-panel-border, #ddd3ef); color: var(--app-text-secondary, #5f5870); }
+.gfs-mkdir-btn.cancel:hover { background: #f3f5f8; }
+.gfs-mkdir-btn.confirm { background: var(--app-accent, #8b5cf6); color: #fff; }
+.gfs-mkdir-btn.confirm:hover { opacity: .88; }
 
 .operational-state-control { position: relative; }
 .operational-state-control > summary { display: inline-flex; min-width: 28px; height: 28px; align-items: center; gap: 6px; padding: 0 8px; border-radius: 7px; background: transparent; color: var(--app-text-secondary); cursor: pointer; font-size: 11px; list-style: none; white-space: nowrap; }

@@ -25,6 +25,7 @@ import {
   Upload,
 } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { GfsObjectInfo } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
@@ -436,6 +437,75 @@ function isSameOrDescendantPath(parent: string, child: string): boolean {
 
 const GFS_DND_MIME = "application/x-opendrsai-gfs-node";
 
+const MkdirDialog: React.FC<{
+  isZh: boolean;
+  existingNames: Set<string>;
+  onConfirm: (name: string) => void;
+  onCancel: () => void;
+}> = ({ isZh, existingNames, onConfirm, onCancel }) => {
+  const [value, setValue] = useState(isZh ? "新建文件夹" : "New folder");
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.select();
+  }, []);
+
+  const validate = (v: string): string | null => {
+    const t = v.trim();
+    if (!t) return isZh ? "文件夹名称不能为空" : "Folder name is required";
+    if (t.includes("/") || t === "." || t === "..") return isZh ? "名称不能包含路径分隔符" : "Name cannot contain path separators";
+    if (existingNames.has(t)) return isZh ? `"${t}" 已存在` : `"${t}" already exists`;
+    return null;
+  };
+
+  const handleConfirm = () => {
+    const err = validate(value);
+    if (err) { setError(err); return; }
+    onConfirm(value.trim());
+  };
+
+  return createPortal(
+    <div
+      className="gfs-mkdir-overlay"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+    >
+      <div
+        className="gfs-mkdir-dialog"
+        role="dialog"
+        aria-modal="true"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+        }}
+      >
+        <h3 className="gfs-mkdir-title">
+          <FolderPlus className="w-4 h-4" />
+          {isZh ? "新建文件夹" : "New Folder"}
+        </h3>
+        <input
+          ref={inputRef}
+          className={`gfs-mkdir-input${error ? " has-error" : ""}`}
+          value={value}
+          onChange={(e) => { setValue(e.target.value); if (error) setError(validate(e.target.value)); }}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleConfirm(); } }}
+          placeholder={isZh ? "文件夹名称" : "Folder name"}
+          autoFocus
+        />
+        {error && <p className="gfs-mkdir-error">{error}</p>}
+        <div className="gfs-mkdir-footer">
+          <button type="button" className="gfs-mkdir-btn cancel" onClick={onCancel}>
+            {isZh ? "取消" : "Cancel"}
+          </button>
+          <button type="button" className="gfs-mkdir-btn confirm" onClick={handleConfirm}>
+            {isZh ? "创建" : "Create"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+};
+
 const TreeNode: React.FC<{
   node: TreeFile;
   depth: number;
@@ -814,6 +884,7 @@ export function GfsView({
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [draggingPath, setDraggingPath] = useState<string | null>(null);
   const [mkdirBusy, setMkdirBusy] = useState(false);
+  const [mkdirOpen, setMkdirOpen] = useState(false);
 
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1186,15 +1257,8 @@ export function GfsView({
     }
   }, [previewFile, triggerRefresh, showActionToast, isZh]);
 
-  const handleCreateFolder = useCallback(async () => {
-    if (mkdirBusy || connStatus !== "connected") return;
-    const suggested = isZh ? "新建文件夹" : "New folder";
-    const name = window.prompt(isZh ? "文件夹名称" : "Folder name", suggested)?.trim();
-    if (!name) return;
-    if (name.includes("/") || name === "." || name === "..") {
-      showActionToast("error", isZh ? "名称不能包含路径分隔符" : "Name cannot contain path separators");
-      return;
-    }
+  const handleCreateFolder = useCallback(async (name: string) => {
+    setMkdirOpen(false);
     setMkdirBusy(true);
     try {
       await desktopApi.gfsMkdir({
@@ -1208,7 +1272,7 @@ export function GfsView({
     } finally {
       setMkdirBusy(false);
     }
-  }, [mkdirBusy, connStatus, currentPath, triggerRefresh, showActionToast, isZh]);
+  }, [currentPath, triggerRefresh, showActionToast, isZh]);
 
   const handleDownload = useCallback(async (path: string) => {
     if (downloadingPath) return;
@@ -1353,6 +1417,7 @@ export function GfsView({
       : "Configure credentials to browse cloud storage for agents.");
 
   return (
+    <>
     <div className="gfs-page skills-manager skills-manager-page" data-testid="gfs-panel">
       {actionToast ? (
         <div
@@ -1857,11 +1922,11 @@ export function GfsView({
                         type="button"
                         className="gfs-breadcrumb-action"
                         disabled={mkdirBusy || connStatus !== "connected"}
-                        onClick={() => void handleCreateFolder()}
+                        onClick={() => setMkdirOpen(true)}
                         title={isZh ? "在当前目录新建文件夹" : "Create folder here"}
                       >
                         <FolderPlus className="w-3.5 h-3.5" />
-                        <span>{isZh ? "新建文件夹" : "New folder"}</span>
+                        <span>{mkdirBusy ? (isZh ? "创建中…" : "Creating…") : (isZh ? "新建文件夹" : "New folder")}</span>
                       </button>
                     </div>
                   </div>
@@ -1959,5 +2024,18 @@ export function GfsView({
         )}
       </div>
     </div>
+    {mkdirOpen && (
+      <MkdirDialog
+        isZh={isZh}
+        existingNames={new Set(
+          treeData
+            .filter((n) => n.isDir && n.path.startsWith(currentPath) && !n.path.slice(currentPath.length).includes("/"))
+            .map((n) => n.name),
+        )}
+        onConfirm={(name) => void handleCreateFolder(name)}
+        onCancel={() => setMkdirOpen(false)}
+      />
+    )}
+    </>
   );
 }

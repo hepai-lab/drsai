@@ -11,11 +11,13 @@ export interface AppDecisionRequest {
   confirmLabel?: string;
   cancelLabel?: string;
   tone?: "normal" | "danger";
-  kind?: "confirmation" | "notice";
+  kind?: "confirmation" | "notice" | "input";
+  inputDefaultValue?: string;
+  inputPlaceholder?: string;
 }
 
 interface PendingDecision extends AppDecisionRequest {
-  resolve: (approved: boolean) => void;
+  resolve: (result: boolean | string | null) => void;
   trigger: HTMLElement | null;
 }
 
@@ -26,7 +28,22 @@ export function requestAppDecision(request: AppDecisionRequest): Promise<boolean
   return new Promise((resolve) => {
     const pending = {
       ...request,
-      resolve,
+      resolve: (r: boolean | string | null) => resolve(Boolean(r)),
+      trigger: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+    };
+    if (activeHost) activeHost(pending);
+    else waiting.push(pending);
+  });
+}
+
+export function requestAppInput(request: Omit<AppDecisionRequest, "kind"> & { defaultValue?: string; placeholder?: string }): Promise<string | null> {
+  return new Promise((resolve) => {
+    const pending: PendingDecision = {
+      ...request,
+      kind: "input",
+      inputDefaultValue: request.defaultValue,
+      inputPlaceholder: request.placeholder,
+      resolve: (r: boolean | string | null) => resolve(typeof r === "string" ? r : null),
       trigger: document.activeElement instanceof HTMLElement ? document.activeElement : null,
     };
     if (activeHost) activeHost(pending);
@@ -41,6 +58,7 @@ export async function showAppNotice(request: Omit<AppDecisionRequest, "kind">): 
 export function AppDecisionDialogHost({ language }: { language: AppLanguage }): React.JSX.Element | null {
   const zh = language === "zh";
   const [current, setCurrent] = useState<PendingDecision | null>(null);
+  const [inputValue, setInputValue] = useState("");
   const currentRef = useRef<PendingDecision | null>(null);
   const dialogRef = useRef<HTMLElement | null>(null);
   const safeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -53,6 +71,7 @@ export function AppDecisionDialogHost({ language }: { language: AppLanguage }): 
       if (!next) return;
       currentRef.current = next;
       setCurrent(next);
+      setInputValue(next.inputDefaultValue ?? "");
     };
     const accept = (request: PendingDecision): void => {
       waiting.push(request);
@@ -75,12 +94,16 @@ export function AppDecisionDialogHost({ language }: { language: AppLanguage }): 
     }
   }, [current]);
 
-  function finish(approved: boolean, reason: "confirm" | "cancel" | "escape" | "backdrop"): void {
+  function finish(approved: boolean, reason: "confirm" | "cancel" | "escape" | "backdrop", value?: string): void {
     const request = currentRef.current;
     if (!request) return;
     currentRef.current = null;
     setCurrent(null);
-    request.resolve(approved);
+    if (request.kind === "input") {
+      request.resolve(approved ? (value ?? "") : null);
+    } else {
+      request.resolve(approved);
+    }
     window.dispatchEvent(new CustomEvent("drsai:app-dialog-decision", {
       detail: { id: request.id, approved, reason },
     }));
@@ -123,6 +146,7 @@ export function AppDecisionDialogHost({ language }: { language: AppLanguage }): 
   }
 
   if (!current) return null;
+  const isInput = current.kind === "input";
   const notice = current.kind === "notice";
   const titleId = `app-decision-title-${current.id.replace(/[^a-z0-9_-]/gi, "-")}`;
   const descriptionId = `${titleId}-description`;
@@ -138,7 +162,7 @@ export function AppDecisionDialogHost({ language }: { language: AppLanguage }): 
     <section
       ref={dialogRef}
       className={`app-decision-dialog ${current.tone ?? "normal"}`}
-      role={notice ? "dialog" : "alertdialog"}
+      role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={descriptionId}
@@ -147,13 +171,26 @@ export function AppDecisionDialogHost({ language }: { language: AppLanguage }): 
       <header><Icon size={22} aria-hidden="true" /><h2 id={titleId}>{current.title}</h2></header>
       <p id={descriptionId}>{current.description}</p>
       {current.impact ? <p className="app-decision-impact"><strong>{zh ? "影响：" : "Impact: "}</strong>{current.impact}</p> : null}
+      {isInput && (
+        <input
+          autoFocus
+          className="app-decision-input"
+          value={inputValue}
+          placeholder={current.inputPlaceholder}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { e.preventDefault(); finish(true, "confirm", inputValue); }
+            else if (e.key === "Escape") { e.preventDefault(); finish(false, "escape"); }
+          }}
+        />
+      )}
       <footer>
-        {!notice ? <button ref={safeButtonRef} type="button" onClick={() => finish(false, "cancel")}>{current.cancelLabel ?? (zh ? "取消" : "Cancel")}</button> : null}
+        {!notice ? <button type="button" onClick={() => finish(false, "cancel")}>{current.cancelLabel ?? (zh ? "取消" : "Cancel")}</button> : null}
         <button
-          ref={notice ? safeButtonRef : undefined}
+          ref={isInput ? undefined : safeButtonRef}
           type="button"
           className={current.tone === "danger" ? "danger" : "primary"}
-          onClick={() => finish(true, "confirm")}
+          onClick={() => finish(true, "confirm", inputValue)}
         >{current.confirmLabel ?? (notice ? (zh ? "知道了" : "OK") : (zh ? "确认" : "Confirm"))}</button>
       </footer>
     </section>

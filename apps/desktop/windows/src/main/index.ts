@@ -272,6 +272,9 @@ import {
   gfsDownloadFile,
   gfsDownloadToDisk,
   gfsDelete,
+  gfsMkdir,
+  gfsRename,
+  gfsMove,
   gfsShareUrl,
   gfsHealthcheck,
   gfsGetConfig,
@@ -6168,6 +6171,15 @@ function registerIpc(): void {
   );
   secureHandle("desktop:gfs-delete", (_event, request) =>
     gfsDelete((request as { path: string }).path),
+  );
+  secureHandle("desktop:gfs-mkdir", (_event, request) =>
+    gfsMkdir(request as Parameters<typeof gfsMkdir>[0]),
+  );
+  secureHandle("desktop:gfs-rename", (_event, request) =>
+    gfsRename(request as Parameters<typeof gfsRename>[0]),
+  );
+  secureHandle("desktop:gfs-move", (_event, request) =>
+    gfsMove(request as Parameters<typeof gfsMove>[0]),
   );
   secureHandle("desktop:gfs-share-url", (_event, request) => {
     const r = request as {
