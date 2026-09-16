@@ -18,6 +18,7 @@ v2 把这些投影成 **一条稳定的逻辑消息**，拥有:
 - 独立的 `reasoning` 和 `content` 通道（前端不再自己剥 `<think>` 标签）
 - 单调递增的 `seq` 序号（支持断线重连 + 历史回放）
 - 稳定的 `message_id`（一个气泡一个 ID，全生命周期不变）
+- 每帧 `event_id`（与 `seq` 组合实现「恰好一次」语义）
 
 ---
 
@@ -65,9 +66,11 @@ v2 把这些投影成 **一条稳定的逻辑消息**，拥有:
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `type` | `"stream.v2"` | 固定值，前端据此进入 v2 reducer |
-| `event_id` | `string(uuid)` | 每帧唯一，前端用它去重 |
-| `message_id` | `string(uuid)` | **气泡身份证** — 同一个 message_id 的所有帧归到同一个聊天气泡 |
-| `seq` | `int` | 单调递增，从 1 开始；前端检测乱序和断线重连 |
+| `event_id` | `string(uuid4)` | **帧指纹** — 后端每发一帧 `uuid4()` 生成；写入 journal 后重放**不换 ID**；前端 `seenEventIds` 去重 |
+| `run_id` | `string` | 本次 run 归属 |
+| `stream_id` | `string(uuid4)` | **流级 ID** — 与 hop 一起在 `_ensure()` 生成；见 §3.1（现与 `message_id` 1:1） |
+| `message_id` | `string(uuid4)` | **气泡身份证** — 同一个 message_id 的所有帧归到同一个聊天气泡（reducer 主键） |
+| `seq` | `int` | **位置游标** — 单调递增，从 1 开始；检测乱序、断线重连 offset |
 | `source` | `string` | `Assistant`, `user_proxy`, `user`, `system` 等 |
 | `channel` | `"reasoning" \| "content"` | 仅 `message.delta`：增量属于哪个通道 |
 | `delta` | `string` | 仅 `message.delta`：增量文本 |
@@ -76,6 +79,27 @@ v2 把这些投影成 **一条稳定的逻辑消息**，拥有:
 | `interaction` | `object` | `turn.ready` / `interaction.required`：`{kind, interaction_type, prompt, request_id?}` |
 | `working` | `object` | `agent.working`：`{phase, detail}` |
 | `final_message_id` | `string` | 仅 `turn.ready`：本回合终稿气泡的 message_id |
+
+### 3.1 身份字段怎么排（讲清「谁干什么」）
+
+| 字段 | 粒度 | 一句话 |
+|---|---|---|
+| `run_id` | 整次 run | 哪一次对话 |
+| `stream_id` | 「一段流」 | 设计上是流级 ID；**实现上每次开 hop 都与 `message_id` 成对新建，生命周期 1:1** |
+| `message_id` | 一个气泡 | 真正的归并主键（`byId[message_id]`） |
+| `seq` | 位置 | 「我该从哪一格继续？」— 乱序 / 补缺 / `resume_after_seq` |
+| `event_id` | 一帧 | 「这一格我吃过没有？」— 至多一次去重 |
+
+**`seq` + `event_id` 合起来才是「恰好一次」：**
+
+- `seq` + journal 回放 → **至少一次**（帧丢了能补回来）
+- `event_id` 去重 → **至多一次**（同一帧不会生效两次）
+
+日常路径里 `lastSeq` 与 `seenEventIds` 锁步前进，所以多数重复会被 `seq <= lastSeq` 先拦住；`event_id` 是游标与「真实已见」脱钩时的保险（见 §13.4）。
+
+**关于 `stream_id`：** 前端主路径不靠它做归并/去重；物化时写入 `metadata.stream_id`，持久化 `_persist_v2_hop` 也会带上。唯一逻辑消费在 `chatMessagePipeline.ts`：折叠「流式草稿 vs 终稿」时，若 `message_id` 缺失，用 `stream_id` 相等当兜底认「同一逻辑消息」。
+
+**关于碰撞：** `event_id` / `message_id` / `stream_id` 都是随机 UUID，碰撞概率可忽略。要防的不是「两帧碰巧同 ID」，而是「同一帧被重发两次」（断线重放）——那本来就该撞上 `seenEventIds`。
 
 ---
 
@@ -278,6 +302,28 @@ reduceStreamEvent(state, event):
   5. 按序消费 pending 中连续的事件
 ```
 
+调用链：`useChatWebSocket` 收到 WS 帧 →（可选 `LegacyStreamAdapter`）→ `reduceStreamEvent` → 写回 `streamStateRef`。新 run 时 `createChatStreamState` 清空 `seenEventIds` / `lastSeq`。
+
+### 「见过」是什么意思（`seenEventIds`）
+
+**不是「WS 收到就算见过」，而是「已经成功 `applyOrderedEvent` 过」才算见过。**
+
+| 时机 | 代码行为 |
+|---|---|
+| **判定丢弃** | `reduceStreamEvent` 入口：`state.seenEventIds.has(event.event_id)` 或 `event.seq <= state.lastSeq` → `return state` |
+| **写入** | 仅在 `applyOrderedEvent` 开头：`seenEventIds.add(event.event_id)`，并推进 `lastSeq` |
+| **乱序缓冲** | `seq > lastSeq + 1` 时只进 `pending`，**不**写入 `seenEventIds`；缺口补齐后再 apply 才记 |
+
+```
+WS onmessage → reduceStreamEvent
+  ├─ seenEventIds.has(event_id)? ──是──→ 丢（至多一次）
+  ├─ seq <= lastSeq?              ──是──→ 丢
+  ├─ seq > lastSeq+1?             ──是──→ pending（还不算见过）
+  └─ applyOrderedEvent → add(event_id) + lastSeq = seq
+```
+
+典型第二次撞上 `has(event_id)`：断线后 `stream.resume` 把 journal 原件（同一 `event_id`）再推一遍，而该帧此前已 apply。
+
 ### materializeStreamMessages
 
 把 entity 转成 `Message[]` 供渲染。`plane === "final"` 时 content 为纯正文; `plane !== "final"` 且有 reasoning 时 content 包成 ` ImmutableList... ImmutableList`。
@@ -290,11 +336,13 @@ DB 持久化消息与 live 状态合并。用持久化顺序做骨架，避免 D
 
 ## 10. 断线重连
 
-1. 前端 WebSocket 重连后发 `stream.resume`，带 `resume_after_seq = lastSeq`
+1. 前端 WebSocket 重连后发 `stream.resume`，带 `resume_after_seq = lastSeq`（`useChatWebSocket` 的 `onopen` / `needsResume`）
 2. 后端 `replay_after(last_seq)`:
-   - journal 中有 seq > last_seq 的事件 → 按序回放
-   - journal 不够（太老）→ 回退到当前 snapshots 的 `message.snapshot`
-3. 前端收到回放事件后，通过 `event_id` 去重，只处理未见过的
+   - journal 中有 seq > last_seq 的事件 → **按序回放原件**（同一 `event_id`、同一 `seq`，不重新生成）
+   - journal 不够（太老，超出 `journal_size=512`）→ 回退到当前 snapshots 的 `message.snapshot`
+3. 前端收到回放后：`seq <= lastSeq` 与 `seenEventIds` 双闸去重，只 apply 未见过的
+
+**为何需要 `event_id` 而不只靠 `seq`：** 若客户端报的 `resume_after_seq` 偏旧（例如 ref 竞态），后端会重放已消费过的帧；`seq <= lastSeq` 通常已能拦，但游标与真实已见脱钩、或将来重发路径重编 seq 时，只有稳定的 `event_id` 仍能认出「这帧吃过」。
 
 ---
 
@@ -407,10 +455,19 @@ Agent 的 `TextMessage` 完成后，流式 chunk 可能还有迟到的 token（�
 
 网络可能导致 WS 帧乱序。reducer 用 `pending` 缓冲 + `stream.resume` 补帧。`message.snapshot` 可以打破乱序（直接覆盖），用于断线重连后快速同步状态。
 
-### 13.4 去重
+### 13.4 去重与「恰好一次」
 
-- 前端: `event_id` + `seenEventIds` 防止重连后重复处理
-- 后端: `complete()` 的内容比对防止重复发 `message.completed`
+- **前端双闸**（`reduceStreamEvent`）: `seenEventIds.has(event_id)` **或** `seq <= lastSeq`，任一命中就丢
+- **后端**: `complete()` 的内容比对防止重复发 `message.completed`
+- **诚实说明**: 正常单连接路径下 `lastSeq` 与 `seenEventIds` 同步推进，多数重复被 `seq` 闸拦住；`event_id` 是幂等保险，不是日常主路径。它单独发力的情形包括：
+  1. 重连 `resume_after_seq` 偏旧，journal 重放已消费帧
+  2. `message.snapshot` 大跳游标后，回放链路上身份与位置脱钩
+  3. `LegacyStreamAdapter` 重建后私有 `seq` 可能撞号，只剩 UUID 可靠
+  4. 将来发送层「至少一次」重试且重编了 `seq`
+
+### 13.5 stream_id 与 message_id
+
+设计上「流」可比「气泡」更粗（例如多个 interrupted hop 共享一个 stream）。当前实现每次 `_ensure()` 都新开一对 UUID，因此 **一个 hop = 一个 `message_id` = 一个 `stream_id`**。讲协议时勿把 `stream_id` 说成与 `seq`/`event_id` 同级的运行时机制。
 
 ---
 
@@ -418,23 +475,24 @@ Agent 的 `TextMessage` 完成后，流式 chunk 可能还有迟到的 token（�
 
 ```typescript
 interface StreamV2Event {
-  type: "stream.started" | "message.started" | "message.delta" |
-        "message.snapshot" | "message.completed" | "message.interrupted" |
-        "turn.ready" | "interaction.required" | "agent.working" |
-        "run.state" | "stream.resumed" | "stream.ended" | "error";
-  seq: number;              // 单调递增
-  event_id: string;         // UUID, 去重用
+  type: "stream.v2";
+  protocol_version: 2;
+  event_id: string;         // uuid4, 帧指纹；重放不换
   run_id: string;
-  message_id?: string;      // message.* 事件
-  source?: string;          // "assistant" | "user" | "user_proxy"
+  stream_id: string;        // uuid4, 现与 message_id 1:1
+  message_id: string;       // uuid4, 气泡归并主键
+  seq: number;              // 单调递增位置游标
+  event: "message.started" | "message.delta" | "message.snapshot" |
+         "message.completed" | "turn.ready" | "interaction.required" |
+         "agent.working";
+  source: string;
   channel?: "reasoning" | "content";
-  delta?: string;           // message.delta
-  snapshot?: string;        // message.snapshot
-  content?: string;         // message.completed
-  status?: "active" | "interrupted" | "completed";
-  phase?: string;           // agent.working
-  reason?: string;          // interaction.required / error
-  resume_after_seq?: number; // stream.resume
+  delta?: string;
+  snapshot?: { reasoning: string; content: string; status: string };
+  status?: string;
+  interaction?: object;
+  working?: { phase: string; detail?: string };
+  final_message_id?: string;
 }
 ```
 

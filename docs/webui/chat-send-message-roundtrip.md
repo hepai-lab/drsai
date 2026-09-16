@@ -2,7 +2,7 @@
 
 本文按时间顺序写清：**用户点发送**之后，消息怎么进 WebUI 后端、怎么转发给智能体、智能体怎么解析并跑一轮、事件怎么流回后端、后端再怎么投影给前端画气泡。
 
-描述的是 **当前 WebUI 实现**（协议 v2）。更细的状态机、`interrupt()`、处理过程框见 [chat-user-message-ws-agent-flow.md](./chat-user-message-ws-agent-flow.md)。
+描述的是 **当前 WebUI 实现**（协议 v2）。更细的状态机、`interrupt()`、处理过程框见 [chat-user-message-ws-agent-flow.md](./chat-user-message-ws-agent-flow.md)。聊天框附件（选文件立刻上传、发送时只带元数据、智能体落到 `downloads/`）见 [chat-file-upload-to-agent.md](./chat-file-upload-to-agent.md)。
 
 ---
 
@@ -165,7 +165,7 @@ Session / Run 是之前 REST 建好的（`POST /sessions/` 会顺带插一条 `R
    - 用户 query（仍是 JSON 字符串）→ `source="user"` 的 `TextMessage`。
    - 非图片附件读成文本，拼进 `internal=yes` 的消息。
    - 图片走 `MultiModalMessage`。
-   - `attached_files` 写进 metadata。
+   - `attached_files` 写进 metadata。细节见 [chat-file-upload-to-agent.md](./chat-file-upload-to-agent.md)。
 4. `asyncio.create_task(WebSocketManager.start_stream(...))`。
 
 `start_stream`（`managers/connection.py`）再做：
