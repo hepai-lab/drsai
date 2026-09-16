@@ -16,6 +16,9 @@ import {
 import { IPlan } from "../../components/types/plan";
 import { sessionAPI } from "../../components/views/api";
 import { getAgentConfig } from "./config/agentConfigs";
+import {
+  resolvePresentationAgentName,
+} from "./config/agentPresentationProfile";
 import { useChatWebSocket } from "./hooks/useChatWebSocket";
 import { usePlanManagement } from "./hooks/usePlanManagement";
 import { useProgressTracking } from "./hooks/useProgressTracking";
@@ -31,6 +34,7 @@ import {
   normalizeRunInteractionStatus,
   reconcilePersistedMessages,
 } from "./chatStreamReducer";
+import { useModeConfigStore } from "../../store/modeConfig";
 
 // Extend RunStatus for sidebar status reporting
 type SidebarRunStatus = BaseRunStatus | "final_answer_awaiting_input";
@@ -120,6 +124,19 @@ export default function ChatView({
   }, [visible, session]);
 
   const agentConfig = React.useMemo(() => getAgentConfig(agentType), [agentType]);
+
+  const selectedAgentName = useModeConfigStore((s) => s.selectedAgent?.name);
+  const agentInfoName = useModeConfigStore((s) => s.agentInfo?.name);
+  const presentationAgentName = React.useMemo(() => {
+    const cfg = session?.agent_mode_config as
+      | { name?: string; config?: { name?: string } }
+      | undefined;
+    return resolvePresentationAgentName({
+      sessionAgentName: cfg?.name || cfg?.config?.name || null,
+      agentInfoName,
+      selectedAgentName,
+    });
+  }, [session?.agent_mode_config, agentInfoName, selectedAgentName]);
 
   const [isPanelMinimized, setIsPanelMinimized] = React.useState(
     agentConfig.panel.defaultMinimized
@@ -735,6 +752,7 @@ export default function ChatView({
                     showPanel={showPanel}
                     setShowPanel={setShowPanel}
                     agentConfig={agentConfig}
+                    agentName={presentationAgentName}
                     onApprove={handleApprove}
                     onDeny={handleDeny}
                     onAcceptPlan={handleAcceptPlan}

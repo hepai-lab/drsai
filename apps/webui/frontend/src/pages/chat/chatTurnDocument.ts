@@ -6,8 +6,8 @@
  *   user / plan / step
  *   process[]   — ReAct: thinking, narration, tools, logs
  *   final       — turn.ready (or live candidate), reply text only
- *   files[]     — last FilesEvent of the turn only (intermediate drafts stay off-thread)
-
+ *   files[]     — one FilesEvent as the turn deliverable (office docs first;
+ *                 layout/package json stay off-thread)
  *
  * Slot assignment prefers ``turn_plane`` stamped by the stream protocol.
  * Array order inside a turn is ignored for slot placement.
@@ -51,6 +51,71 @@ function isPlanOrStep(msg: Message): boolean {
 
 function isFilesMsg(msg: Message): boolean {
   return cfgOf(msg).type === "FilesEvent" || metaOf(msg).type === "FilesEvent";
+}
+
+/** Primary chat-thread deliverables. Prefer these over later workspace writes. */
+const OFFICE_DELIVERABLE_EXTS = new Set(["pptx", "ppt", "docx", "doc"]);
+
+/** Intermediate / tooling files that must not replace a deck or document card. */
+const INTERMEDIATE_FILE_EXTS = new Set([
+  "json",
+  "yaml",
+  "yml",
+  "js",
+  "mjs",
+  "cjs",
+  "ts",
+  "tsx",
+  "md",
+  "log",
+  "map",
+  "lock",
+]);
+
+function extOfFileName(name: string): string {
+  const base = name.split(/[\\/]/).pop() || name;
+  const dot = base.lastIndexOf(".");
+  return dot >= 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+
+function filesEventNames(msg: Message): string[] {
+  const content = cfgOf(msg).content;
+  const parsed =
+    typeof content === "string"
+      ? (() => {
+          try {
+            return JSON.parse(content);
+          } catch {
+            return null;
+          }
+        })()
+      : content;
+  const files = parsed?.files ?? cfgOf(msg).files ?? [];
+  if (!Array.isArray(files)) return [];
+  return files
+    .map((file: { name?: string }) => String(file?.name || "").trim())
+    .filter(Boolean);
+}
+
+function namesHaveExt(names: string[], exts: Set<string>): boolean {
+  return names.some((name) => exts.has(extOfFileName(name)));
+}
+
+/** Last pptx/docx in the turn; otherwise last non-json artifact. Json-only turns stay off-thread. */
+function pickTurnDeliverable(files: Indexed[]): Indexed | null {
+  if (files.length === 0) return null;
+  for (let i = files.length - 1; i >= 0; i--) {
+    if (namesHaveExt(filesEventNames(files[i].msg), OFFICE_DELIVERABLE_EXTS)) {
+      return files[i];
+    }
+  }
+  for (let i = files.length - 1; i >= 0; i--) {
+    const names = filesEventNames(files[i].msg);
+    if (names.some((name) => !INTERMEDIATE_FILE_EXTS.has(extOfFileName(name)))) {
+      return files[i];
+    }
+  }
+  return null;
 }
 
 function isTurnLead(msg: Message): boolean {
@@ -177,10 +242,10 @@ function assembleTurnBody(body: Indexed[]): MessageSegment[] {
   finals.forEach((item) => {
     segments.push({ kind: "single", idx: item.idx, msg: item.msg });
   });
-  // Intermediate workspace writes (test_*.pptx etc.) are still in run.file_events.
-  // The thread only shows the last file of the turn as the deliverable.
-  if (files.length > 0) {
-    const deliverable = files[files.length - 1];
+  // Intermediate writes stay in run.file_events (right panel). The thread
+  // prefers the last pptx/docx so layout.json cannot hide the deck.
+  const deliverable = pickTurnDeliverable(files);
+  if (deliverable) {
     segments.push({
       kind: "single",
       idx: deliverable.idx,

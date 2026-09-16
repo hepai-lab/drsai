@@ -36,6 +36,11 @@ import {
   buildTurnSegments,
   type MessageSegment,
 } from "./chatTurnDocument";
+import {
+  resolveAgentPresentationProfile,
+  resolvePresentationAgentName,
+} from "./config/agentPresentationProfile";
+import { useModeConfigStore } from "../../store/modeConfig";
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
 const CHAT_INPUT_BASE_HEIGHT_PX = 78;
 
@@ -222,6 +227,8 @@ interface RunViewProps {
   serverFilesPrefill?: ServerUploadedFileInfo[] | null;
   /** Read-only viewer (e.g. shared session link); hides input and actions */
   viewOnly?: boolean;
+  /** Agent display name for per-agent process presentation profiles. */
+  agentName?: string | null;
 }
 
 const RunView: React.FC<RunViewProps> = ({
@@ -235,6 +242,7 @@ const RunView: React.FC<RunViewProps> = ({
   showPanel,
   setShowPanel,
   agentConfig, // 从 parent 接收
+  agentName: agentNameProp = null,
   onApprove,
   onDeny,
   onAcceptPlan,
@@ -250,6 +258,19 @@ const RunView: React.FC<RunViewProps> = ({
   viewOnly = false,
 }) => {
   const { t } = useLang();
+  const storeAgentInfoName = useModeConfigStore((s) => s.agentInfo?.name);
+  const storeSelectedAgentName = useModeConfigStore((s) => s.selectedAgent?.name);
+  const presentationProfile = useMemo(
+    () =>
+      resolveAgentPresentationProfile(
+        resolvePresentationAgentName({
+          sessionAgentName: agentNameProp,
+          agentInfoName: storeAgentInfoName,
+          selectedAgentName: storeSelectedAgentName,
+        })
+      ),
+    [agentNameProp, storeAgentInfoName, storeSelectedAgentName]
+  );
   const resolvedSessionId =
     sessionIdProp && sessionIdProp > 0
       ? sessionIdProp
@@ -1701,6 +1722,8 @@ const RunView: React.FC<RunViewProps> = ({
                     items={segment.items}
                     runStatus={laterFinal ? "ready" : processGroupStatus}
                     onLogMessageClick={handleSwitchToLogExecution}
+                    layout={presentationProfile.processLayout}
+                    processBox={presentationProfile.processBox}
                   />
                 );
               }
