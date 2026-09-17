@@ -416,7 +416,7 @@ class Userinfo(SQLModel, table=True):
         default_factory=datetime.now,
         sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
     )  # pylint: disable=not-callable
-    user_id: Optional[str] = None
+    user_id: Optional[str] = Field(default=None, index=True)
     version: Optional[str] = "0.0.1"
     password: Optional[str] = None
     meta: Optional[dict[str, Any]] = Field(

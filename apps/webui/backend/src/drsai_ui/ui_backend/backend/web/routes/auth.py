@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from typing import Dict
 
@@ -21,7 +22,7 @@ from .....drsai_adapter.sso.hepai_oidc import (
     revoke_server_tokens,
 )
 from ..auth_cookies import REFRESH_COOKIE_NAME, clear_refresh_cookie, set_refresh_cookie
-from ..auth_source import get_cooper_info, get_display_name
+from ..auth_source import get_profile_fields
 from ..deps import get_db
 
 router = APIRouter()
@@ -36,13 +37,15 @@ async def auth_me(
     """Return the OIDC session user, or the JWT-authenticated WebUI user."""
     session_user = get_session_user(request)
     if session_user:
+        # Identity is already in the signed session cookie. Do not touch the
+        # 1.8GB NFS SQLite here — that lookup blocked first paint / RouteGuard.
         user_id = session_user.get("email") or session_user.get("sub")
         return {
             **session_user,
             "status": True,
             "data": {
                 "user_id": user_id,
-                "cooper_info": get_cooper_info(db, str(user_id or "")),
+                "cooper_info": "",
                 "display_name": session_user.get("name") or "",
             },
         }
@@ -53,8 +56,7 @@ async def auth_me(
     user_id = token_data.user_id
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    cooper_info = get_cooper_info(db, user_id)
-    display_name = get_display_name(db, user_id)
+    cooper_info, display_name = await asyncio.to_thread(get_profile_fields, db, user_id)
     return {
         "status": True,
         "data": {

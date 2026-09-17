@@ -67,6 +67,7 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS ix_message_session_id ON message (session_id)",
             "CREATE INDEX IF NOT EXISTS ix_session_user_id ON session (user_id)",
             "CREATE INDEX IF NOT EXISTS ix_run_session_id ON run (session_id)",
+            "CREATE INDEX IF NOT EXISTS ix_userinfo_user_id ON userinfo (user_id)",
         )
         try:
             with self.engine.begin() as conn:
