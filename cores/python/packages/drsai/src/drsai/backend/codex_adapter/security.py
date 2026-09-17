@@ -7,6 +7,7 @@ import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from drsai.backend.runtime.agent_bindings import AgentBackendBindingStore
@@ -29,23 +30,44 @@ _REQUIRED_PERMISSIONS = {
 
 
 class CodexAccountManager:
-    def __init__(self, rpc: CodexJSONRPCClient):
+    def __init__(self, rpc: CodexJSONRPCClient, *, ttl_seconds: float = 30.0):
         self.rpc = rpc
+        self.ttl_seconds = max(0.1, ttl_seconds)
+        self._last_status: dict[str, Any] | None = None
+        self._generation: int | None = None
+        self._last_successful_at: str | None = None
+        self._refreshed_monotonic = 0.0
+        self._refresh_lock = asyncio.Lock()
 
     async def status(self, *, refresh: bool = False) -> dict[str, Any]:
+        async with self._refresh_lock:
+            if (
+                not refresh and self._last_status is not None
+                and not self._last_status.get("reason")
+                and self._generation == self.rpc.generation
+                and time.monotonic() - self._refreshed_monotonic < self.ttl_seconds
+            ):
+                return dict(self._last_status)
+            return await self._refresh_status(refresh=refresh)
+
+    async def _refresh_status(self, *, refresh: bool) -> dict[str, Any]:
         try:
             result = await self.rpc.request("account/read", {"refreshToken": bool(refresh)})
         except RuntimeExecutionError as exc:
             category = error_category(exc.code)
             state = "unavailable" if category in {"transport", "runtime", "backend"} else "unknown"
-            return {
+            status = {
                 "state": state, "logged_in": False, "auth_mode": None, "email": None, "plan_type": None,
                 "credential_source": None, "requires_openai_auth": True,
                 "reason": exc.code, "retryable": exc.retryable,
             }
+            self._last_status = status
+            self._generation = self.rpc.generation
+            self._refreshed_monotonic = time.monotonic()
+            return status
         account = result.get("account") if isinstance(result, Mapping) and isinstance(result.get("account"), Mapping) else None
         auth_type = str(account.get("type")) if account and account.get("type") else None
-        return {
+        status = {
             "state": "signed_in" if account is not None else "signed_out",
             "logged_in": account is not None,
             "auth_mode": auth_type,
@@ -55,11 +77,30 @@ class CodexAccountManager:
             "requires_openai_auth": bool(result.get("requiresOpenaiAuth")) if isinstance(result, Mapping) else True,
             "reason": None,
         }
+        self._last_status = status
+        self._generation = self.rpc.generation
+        self._refreshed_monotonic = time.monotonic()
+        self._last_successful_at = datetime.now(timezone.utc).isoformat()
+        return status
+
+    def capability(self, *, current_generation: int) -> dict[str, Any]:
+        current = self._generation == current_generation
+        status = self._last_status if current else None
+        return {
+            "state": str(status.get("state")) if status else "unknown",
+            "reason": status.get("reason") if status else "not_probed",
+            "observed_at": self._last_successful_at if status and not status.get("reason") else None,
+            "last_success_at": self._last_successful_at,
+            "retryable": bool(status.get("retryable")) if status else True,
+            "actions": ["login"] if status and status.get("state") == "signed_out" else ["refresh"],
+            "stale": self._last_status is not None and not current,
+        }
 
     async def login_start(self, login_type: str = "chatgpt") -> dict[str, Any]:
         if login_type not in {"chatgpt", "chatgptDeviceCode"}:
             raise RuntimeExecutionError("codex_login_type_invalid", "Only managed ChatGPT login flows are exposed.")
         result = await self.rpc.request("account/login/start", {"type": login_type})
+        self._refreshed_monotonic = 0.0
         if not isinstance(result, Mapping):
             raise RuntimeExecutionError("codex_login_response_invalid", "Codex login response is invalid.")
         allowed = {"type", "loginId", "authUrl", "verificationUrl", "userCode"}
@@ -70,6 +111,14 @@ class CodexAccountManager:
 
     async def logout(self) -> None:
         await self.rpc.request("account/logout", {})
+        self._last_status = {
+            "state": "signed_out", "logged_in": False, "auth_mode": None, "email": None,
+            "plan_type": None, "credential_source": None, "requires_openai_auth": True,
+            "reason": None, "retryable": False,
+        }
+        self._generation = self.rpc.generation
+        self._refreshed_monotonic = time.monotonic()
+        self._last_successful_at = datetime.now(timezone.utc).isoformat()
 
 
 @dataclass

@@ -482,19 +482,22 @@ class RelayHttpException(
 ) :
     IllegalStateException("relay_http_$status${correlationId?.let { " ($it)" }.orEmpty()}")
 
-fun associationErrorMessage(failure: Throwable): String = when {
+fun associationErrorMessage(
+    failure: Throwable,
+    strings: AssociationStrings = EnglishAssociationStrings,
+): String = when {
     failure is IllegalArgumentException && failure.message == "access_grant_environment_mismatch" ->
-        "二维码环境与当前应用不一致"
-    failure is IllegalArgumentException -> "二维码格式无效，请在电脑端刷新后重试"
+        strings.text(AssociationText.ENVIRONMENT_MISMATCH)
+    failure is IllegalArgumentException -> strings.text(AssociationText.INVALID_CODE)
     failure is RelayHttpException && failure.errorCode == "access_grant_expired" ->
-        "二维码已过期，请在电脑端刷新后重试"
+        strings.text(AssociationText.EXPIRED_CODE)
     failure is RelayHttpException && failure.errorCode == "access_grant_consumed" ->
-        "二维码已使用，请在电脑端刷新后重试"
+        strings.text(AssociationText.CONSUMED_CODE)
     failure is RelayHttpException && failure.errorCode == "access_grant_revoked" ->
-        "二维码已撤销，请在电脑端刷新后重试"
+        strings.text(AssociationText.REVOKED_CODE)
     failure is RelayHttpException && (failure.status == 401 || failure.errorCode == "oidc_auth_invalid") ->
-        "HepAI 登录已过期，请重新登录"
-    failure is RelayHttpException && failure.status == 429 -> "操作过于频繁，请稍后重试"
-    failure is java.io.IOException -> "网络连接失败，请检查网络后重试"
-    else -> "关联失败，请重试"
+        strings.text(AssociationText.LOGIN_EXPIRED)
+    failure is RelayHttpException && failure.status == 429 -> strings.text(AssociationText.RATE_LIMITED)
+    failure is java.io.IOException -> strings.text(AssociationText.NETWORK_FAILED)
+    else -> strings.text(AssociationText.FAILED)
 }

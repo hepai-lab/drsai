@@ -8,6 +8,13 @@
 ########################
 # 项目特定文件
 ########################
+/.release-worktrees/
+/.sessions/
+/.test-runtime/
+/.tooling/
+/.tools/
+/.worktrees/
+/.tmp_abort_audit.txt
 release
 .tmp-runtime-inspect
 .pnpm-store
@@ -276,6 +283,10 @@ data
 !apps/android/app/src/main/java/ai/drsai/remote/data/**
 !apps/android/app/src/main/java/ai/drsai/remote/remote/data/
 !apps/android/app/src/main/java/ai/drsai/remote/remote/data/**
+# Android instrumentation tests mirror the production package hierarchy.
+# This is test source code, not local runtime data.
+!apps/android/app/src/androidTest/java/ai/drsai/remote/remote/data/
+!apps/android/app/src/androidTest/java/ai/drsai/remote/remote/data/**
 runs
 node_modules
 # Legacy/local Gatsby frontend workspace generated at the repository root.
@@ -340,20 +351,38 @@ device.png
 .artifacts/
 approval-proof.txt
 
+# One-off diagnostics of a developer's local Codex runtime and sandbox ACLs.
+# Reusable troubleshooting guidance belongs in a sanitized project document.
+docs/voice/computer-use-node-kernel-assets-diagnostic.md
+
 # Raw device/UI captures are local validation output. Keep the curated JSON
 # acceptance ledgers and release manifests in docs, but do not accumulate
 # screenshots, accessibility dumps, or unfinished probe output in Git.
 docs/android/reports/evidence/**/*.png
 docs/android/reports/evidence/**/*.xml
 docs/android/reports/evidence/p9/pending/
+# P10 pending runs contain raw device media and instrumentation logs. Keep only
+# completed, curated evidence records under version control.
+docs/android/reports/evidence/p10/pending/
 docs/android/reports/evidence/round*.*
 docs/android/reports/evidence/samsung-model-provider-*/
+# Android P9 emulator preflight keeps curated checkpoint/manifest JSON in Git.
+# Raw instrumentation logs, JUnit output, screenshots, and retry rounds are
+# machine-specific and reproducible, so keep them outside repository history.
+docs/android/reports/preflight/p9-emulator/**/instrumentation-*.txt
+docs/android/reports/preflight/p9-emulator/lifecycle-*.txt
+docs/android/reports/preflight/p9-emulator/**/*.xml
+docs/android/reports/preflight/p9-emulator/*.png
+docs/android/reports/preflight/p9-emulator/round*/
 docs/desktop/evidence/**/*.png
 docs/desktop/evidence/**/accessibility-tree.json
 docs/desktop/evidence/round*/
 
 # Desktop renderer bundles are reproducible build output.
 apps/desktop/shared/renderer/out/
+
+# Empty temporary files occasionally left by Windows package tooling.
+apps/desktop/windows/_tmp_*
 
 ########################
 # Reasonix（个人配置，不提交）

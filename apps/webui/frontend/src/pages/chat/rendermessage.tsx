@@ -39,7 +39,6 @@ import MarkdownRenderer from "../../components/common/markdownrender";
 import PlanView from "./plan";
 import { IPlanStep, convertToIPlanSteps } from "../../components/types/plan";
 import RenderFile from "../../components/common/filerenderer";
-import LearnPlanButton from "../../components/features/Plans/LearnPlanButton";
 import { appContext } from "../../hooks/provider";
 
 // Types
@@ -413,7 +412,7 @@ const RenderToolResult: React.FC<{ content: FunctionExecutionResult[] }> = memo(
   }
 );
 
-const extractToolLabel = (title: string | undefined): string => {
+export const extractToolLabel = (title: string | undefined): string => {
   if (!title) return "工具调用";
   const toolsMatch = title.match(/I am using tools?:\s*(.+)/i);
   if (toolsMatch) {
@@ -425,7 +424,12 @@ const extractToolLabel = (title: string | undefined): string => {
   return `${clean.slice(0, 45)}…`;
 };
 
-const RenderToolCallSummaryCard: React.FC<{
+/** Dispatcher tools that should not occupy a row in the process box. */
+export function isHiddenProcessToolName(name: string | undefined): boolean {
+  return (name || "").trim().toLowerCase() === "skill";
+}
+
+export const RenderToolCallSummaryCard: React.FC<{
   content: string;
   label?: string;
   defaultCollapsed?: boolean;
@@ -433,40 +437,44 @@ const RenderToolCallSummaryCard: React.FC<{
 }> = memo(({ content, label, defaultCollapsed = true, compact = false }) => {
   const [expanded, setExpanded] = useState(!defaultCollapsed);
   const trimmed = (content || "").trim();
-  const displayLabel = label ? extractToolLabel(label) : "Tool result";
+  const displayLabel = label ? extractToolLabel(label) : "工具结果";
   const hasResult = trimmed.length > 0;
 
   if (compact) {
-    return (
-      <div className="rounded-md border border-secondary/15 bg-secondary/[0.04] overflow-hidden">
-        <button
-          type="button"
-          className="group w-full flex items-center gap-2 px-2.5 py-1.5 text-left min-w-0 transition-colors hover:bg-secondary/10"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (hasResult) setExpanded((v) => !v);
-          }}
-          aria-expanded={expanded}
-          disabled={!hasResult}
-        >
-          <Terminal
-            size={12}
-            className="shrink-0 text-secondary/55 group-hover:text-secondary/75 transition-colors"
-            aria-hidden
-          />
-          <span className="text-xs font-medium text-secondary/80 truncate flex-1 min-w-0">
+    if (isHiddenProcessToolName(displayLabel)) return null;
+
+    if (!hasResult) {
+      return (
+        <div className="flex items-center gap-1.5 px-1 py-0.5 min-w-0">
+          <span className="text-[11px] font-medium text-secondary/55 truncate">
             {displayLabel}
           </span>
-          {hasResult && (
-            <ChevronRight
-              size={12}
-              className={`shrink-0 text-secondary/40 transition-transform ${expanded ? "rotate-90" : ""}`}
-              aria-hidden
-            />
+        </div>
+      );
+    }
+
+    return (
+      <div className="w-full">
+        <button
+          type="button"
+          className="group w-full flex items-center gap-1.5 px-1 py-0.5 text-left min-w-0 rounded-md cursor-pointer transition-colors hover:bg-secondary/10"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+          aria-expanded={expanded}
+        >
+          {expanded ? (
+            <ChevronDown size={12} className="shrink-0 text-secondary/40" aria-hidden />
+          ) : (
+            <ChevronRight size={12} className="shrink-0 text-secondary/40" aria-hidden />
           )}
+          <span className="text-[11px] font-medium text-secondary/55 truncate flex-1 min-w-0">
+            {displayLabel}
+          </span>
         </button>
-        {expanded && hasResult && (
-          <div className="px-2.5 pb-2 border-t border-secondary/10">
+        {expanded && (
+          <div className="mt-0.5 ml-2.5 pl-2 border-l border-secondary/15">
             <MarkdownRenderer
               content={trimmed}
               indented={true}
@@ -653,22 +661,14 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
 
 interface RenderFinalAnswerProps {
   content: string;
-  sessionId: number;
-  messageIdx: number;
 }
 
 const RenderFinalAnswer: React.FC<RenderFinalAnswerProps> = memo(
-  ({ content, sessionId, messageIdx }) => {
+  ({ content }) => {
     return (
       <div className="border-2 border-secondary rounded-lg p-4">
         <div className="flex justify-between items-center">
           <div className="font-semibold text-primary">Final Answer</div>
-          <LearnPlanButton
-            sessionId={sessionId}
-            messageId={messageIdx}
-            onSuccess={(planId: string) => {
-            }}
-          />
         </div>
         <div className="">
           <MarkdownRenderer content={content} />
@@ -1361,8 +1361,9 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       ? stripThinkBlocksForCopyHeuristic(rawAssistantMarkdownSource).trim()
       : rawAssistantMarkdownSource.trim();
     const showAssistantMessageCopyButton =
-      !hasAssistantThinkTags ||
-      assistantBodyOutsideThink.replace(/\s+/g, "").length >= 12;
+      !isCompact &&
+      (!hasAssistantThinkTags ||
+        assistantBodyOutsideThink.replace(/\s+/g, "").length >= 12);
     // Use new plan message check
     const isPlanMsg = messageUtils.isPlanMessage(normalizedMessage.metadata);
     const orchestratorContent =
@@ -1427,10 +1428,25 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       normalizedMessage.metadata?.is_save === "yes" ||
       normalizedMessage.metadata?.internal === "yes";
 
-    // 对于 TextMessage 类型的历史消息，直接显示 source badge；对于流式消息，需要 start_flag 判断
-    const shouldShowSourceBadge = !isUser && !isUserProxy && (
-      (isTextMessage && isHistoricalMessage) || isStartFlagActive
-    );
+    const isTurnFinal =
+      String(normalizedMessage.metadata?.is_turn_final || "").toLowerCase() ===
+      "yes";
+    const isV2Stream = String(normalizedMessage.metadata?.stream_protocol || "") === "2";
+    const persistedFinal =
+      isV2Stream &&
+      (normalizedMessage.metadata?.is_save === "yes" ||
+        normalizedMessage.metadata?.internal === "yes") &&
+      normalizedMessage.metadata?.turn_plane === "final";
+
+    // V2 live hops are candidate finals until turn.ready. Don't flash
+    // Robot/Assistant on an unsealed hop that may still be demoted.
+    const shouldShowSourceBadge =
+      !isUser &&
+      !isUserProxy &&
+      (isTurnFinal ||
+        persistedFinal ||
+        (!isV2Stream &&
+          ((isTextMessage && isHistoricalMessage) || isStartFlagActive)));
 
     // Hide regeneration request messages
     if (
@@ -1612,11 +1628,17 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                 ) : orchestratorContent?.type === "final-answer" ? (
                   <RenderFinalAnswer
                     content={orchestratorContent.content}
-                    sessionId={sessionId}
-                    messageIdx={messageIdx}
                   />
                 ) : messageUtils.isToolCallContent(parsedContent.text) ? (
-                  <RenderToolCall content={parsedContent.text} />
+                  (() => {
+                    const calls = isCompact
+                      ? parsedContent.text.filter(
+                          (call) => !isHiddenProcessToolName(call.name)
+                        )
+                      : parsedContent.text;
+                    if (calls.length === 0) return null;
+                    return <RenderToolCall content={calls} />;
+                  })()
                 ) : messageUtils.isMultiModalContent(parsedContent.text) ? (
                   normalizedMessage.metadata?.type === "browser_screenshot" ? (
                     <RenderMultiModalBrowserStep

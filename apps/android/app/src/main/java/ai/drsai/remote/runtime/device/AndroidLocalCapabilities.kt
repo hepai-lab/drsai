@@ -60,7 +60,9 @@ class SafWorkspaceStore(private val context: Context) {
             uri,
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
         )
-        preferences.edit().putString(key(subject), uri.toString()).apply()
+        val label = DocumentFile.fromTreeUri(context, uri)?.name
+            ?.let(WorkspaceBoundaryPolicy::safeWorkspaceLabel) ?: "Authorized directory"
+        preferences.edit().putString(key(subject), uri.toString()).putString(nameKey(subject), label).apply()
     }
 
     fun uri(subject: String): Uri? = preferences.getString(key(subject), null)?.let(Uri::parse)
@@ -71,6 +73,8 @@ class SafWorkspaceStore(private val context: Context) {
         }
     } == true
 
+    fun displayName(subject: String): String? = preferences.getString(nameKey(subject), null)
+
     fun clear(subject: String) {
         uri(subject)?.let { granted ->
             runCatching {
@@ -80,11 +84,32 @@ class SafWorkspaceStore(private val context: Context) {
                 )
             }
         }
-        preferences.edit().remove(key(subject)).apply()
+        preferences.edit().remove(key(subject)).remove(nameKey(subject)).apply()
     }
 
     private fun key(subject: String): String = MessageDigest.getInstance("SHA-256")
         .digest(subject.toByteArray()).joinToString("") { "%02x".format(it) }
+
+    private fun nameKey(subject: String) = "${key(subject)}:name"
+}
+
+object WorkspaceBoundaryPolicy {
+    fun safeWorkspaceLabel(value: String): String = value.replace(Regex("[\\r\\n\\u0000]"), " ")
+        .replace(Regex("(?:[A-Za-z]:\\\\|/)(?:[^\\s]+[/\\\\])+"), "")
+        .trim().take(80).ifBlank { "Authorized directory" }
+
+    fun requireRelativePath(value: String) {
+        val normalized = value.trim()
+        require(!normalized.startsWith('/') && !normalized.startsWith('\\')) { "saf_absolute_path_forbidden" }
+        require(!Regex("^[A-Za-z]:[/\\\\]").containsMatchIn(normalized)) { "saf_absolute_path_forbidden" }
+        require(!normalized.startsWith("content:", true) && !normalized.startsWith("file:", true)) { "saf_uri_path_forbidden" }
+    }
+
+    fun uniqueChildIndex(names: List<String>, requested: String): Int {
+        val matches = names.mapIndexedNotNull { index, name -> index.takeIf { name == requested } }
+        require(matches.size <= 1) { "saf_path_ambiguous" }
+        return matches.singleOrNull() ?: -1
+    }
 }
 
 object SafProjectInstructionPayload {
@@ -224,7 +249,9 @@ class SafWorkspaceGateway(private val context: Context, private val store: SafWo
 
     private fun resolve(subject: String, relativePath: String, requireDirectory: Boolean): DocumentFile {
         val result = safeParts(relativePath).fold(root(subject)) { current, part ->
-            current.findFile(part) ?: error("saf_path_not_found")
+            val children = current.listFiles()
+            val index = WorkspaceBoundaryPolicy.uniqueChildIndex(children.map { it.name.orEmpty() }, part)
+            children.getOrNull(index) ?: error("saf_path_not_found")
         }
         if (requireDirectory) require(result.isDirectory) { "saf_directory_required" }
         return result
@@ -265,7 +292,15 @@ class SafWorkspaceGateway(private val context: Context, private val store: SafWo
             if (plan.after == null) delete(subject, plan.path)
             else write(subject, plan.path, plan.after.encodeToByteArray(), approved = true)
         }
-        return receipt(committed.plan, committed.replayed)
+        val output = receipt(committed.plan, committed.replayed)
+        val toolId = if (committed.plan.operation == "undo") "workspace.undo" else if (committed.plan.operation == "edit") "workspace.edit" else "workspace.write"
+        val approvedPreview = ai.drsai.remote.runtime.security.ApprovalChangePreviewPolicy.sanitize(
+            toolId, committed.plan.previewJson(),
+        )
+        check(ai.drsai.remote.runtime.security.ApprovalChangePreviewPolicy.receiptMatches(approvedPreview, output.toString())) {
+            "workspace_receipt_outside_approved_scope"
+        }
+        return output
     }
 
     private fun readOptional(subject: String, path: String): String? = try {
@@ -324,6 +359,7 @@ class SafWorkspaceGateway(private val context: Context, private val store: SafWo
         }
 
         fun safeParts(relativePath: String): List<String> {
+            WorkspaceBoundaryPolicy.requireRelativePath(relativePath)
             val normalized = relativePath.replace('\\', '/').trim('/')
             if (normalized.isEmpty()) return emptyList()
             val parts = normalized.split('/')

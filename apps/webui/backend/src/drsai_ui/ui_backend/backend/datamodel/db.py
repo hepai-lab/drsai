@@ -361,6 +361,10 @@ class UserAgents(SQLModel, table=True):
     )
 
 class UserRemoteAgents(SQLModel, table=True):
+    """Legacy blob store (one JSON list per user). Prefer UserRemoteAgent rows.
+
+    Kept for one-time migration into UserRemoteAgent; new writes go to the row table.
+    """
     __table_args__ = {"sqlite_autoincrement": True}
     id: Optional[int] = Field(default=None, primary_key=True)
     uuid: str = Field(
@@ -380,7 +384,35 @@ class UserRemoteAgents(SQLModel, table=True):
         default_factory=list, sa_column=Column(JSON)
     )
 
+
+class UserRemoteAgent(SQLModel, table=True):
+    """One saved remote/custom agent per row (source of truth for user-owned agents)."""
+    __table_args__ = (
+        UniqueConstraint("user_id", "agent_id", name="uq_userremoteagent_user_agent"),
+        {"sqlite_autoincrement": True},
+    )
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False),
+    )
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )  # pylint: disable=not-callable
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )  # pylint: disable=not-callable
+    user_id: str = Field(index=True)
+    agent_id: str = Field(index=True)
+    mode: str = Field(default="remote")
+    name: str = Field(default="")
+    version: Optional[str] = "0.0.1"
+    payload: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+
+
 class UserDDFAgents(SQLModel, table=True):
+    """DDF platform catalog cache (one snapshot per user + platform_url)."""
     __table_args__ = {"sqlite_autoincrement": True}
     id: Optional[int] = Field(default=None, primary_key=True)
     uuid: str = Field(
@@ -395,6 +427,7 @@ class UserDDFAgents(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
     )  # pylint: disable=not-callable
     user_id: Optional[str] = None
+    platform_url: Optional[str] = Field(default=None, index=True)
     version: Optional[str] = "0.0.1"
     agents: Optional[list[dict[str, Any]]] = Field(
         default_factory=list, sa_column=Column(JSON)
@@ -794,6 +827,7 @@ DatabaseModel = (
     | AgentModeConfig 
     | UserAgents 
     | UserRemoteAgents
+    | UserRemoteAgent
     | UserDDFAgents
     | Userinfo
     | UserRole

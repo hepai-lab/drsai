@@ -11,15 +11,15 @@ OpenDrSai 服务启动后，需要确认：
 
 ## 前端如何找到后端（DEV 自动推导）
 
-DEV 模式下前端(4290)与后端(4291)分离。前端 `getServerUrl()`（`frontend/src/components/utils.ts`）
+DEV 模式下前端(8001)与后端(8086)分离。前端 `getServerUrl()`（`frontend/src/components/utils.ts`）
 **不写死后端地址**，而是按优先级推导：
 
 1. 若设了 `GATSBY_API_URL` → 用它（一般不需要，除非后端在另一台主机）
-2. DEV 模式 → `http://${window.location.hostname}:${GATSBY_DEV_API_PORT||4291}/api`
+2. DEV 模式 → `http://${window.location.hostname}:${GATSBY_DEV_API_PORT||8086}/api`
    —— 即跟随**浏览器访问前端所用的 host** 自动指向同主机的后端
 3. PROD → 相对路径 `/api`（后端同源托管）
 
-含义：从哪个 IP/域名访问前端，API 就自动走哪个 IP 的 4291。**所以请用对外可达的独立 IP
+含义：从哪个 IP/域名访问前端，API 就自动走哪个 IP 的 8086。**所以请用对外可达的独立 IP
 （下文的 net1）访问前端**，不要用容器内网 eth0 的地址，也不要在 `.env.development` 硬编码
 `GATSBY_API_URL`（会覆盖自动推导）。
 
@@ -48,7 +48,7 @@ ip route show
 > 本项目运行在 **K8s Pod** 中（`eth0@if97` + `/.dockerenv`），容器内无防火墙。
 > 端口能否被外部访问，取决于：
 > - `net1` 网卡 (10.5.8.104) 是否通过 Multus CNI 直接暴露给外部网络
-> - 宿主节点是否有 NodePort / Ingress 将 4290/4291 映射出去
+> - 宿主节点是否有 NodePort / Ingress 将 8001/8086 映射出去
 
 ## 完整验证脚本
 
@@ -56,8 +56,8 @@ ip route show
 
 ```bash
 #!/bin/bash
-BACKEND_PORT=4291
-FRONTEND_PORT=4290
+BACKEND_PORT=8086
+FRONTEND_PORT=8001
 
 echo "========================================"
 echo "  OpenDrSai 网络访问验证"
@@ -215,27 +215,27 @@ ip addr show | grep "inet " | grep -v "127.0.0.1"
 
 ### 检查端口监听
 ```bash
-ss -tlnp | grep -E "4290|4291"
+ss -tlnp | grep -E "8001|8086"
 ```
 
 ### 测试特定 IP:端口 可达性
 ```bash
-curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 http://10.42.1.113:4291/
+curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 http://10.42.1.113:8086/
 ```
 
 ### 防火墙放行端口（如需要）
 
 ```bash
 # firewalld
-sudo firewall-cmd --add-port=4291/tcp --permanent
-sudo firewall-cmd --add-port=4290/tcp --permanent
+sudo firewall-cmd --add-port=8086/tcp --permanent
+sudo firewall-cmd --add-port=8001/tcp --permanent
 sudo firewall-cmd --reload
 
 # ufw
-sudo ufw allow 4291/tcp
-sudo ufw allow 4290/tcp
+sudo ufw allow 8086/tcp
+sudo ufw allow 8001/tcp
 
 # iptables
-sudo iptables -A INPUT -p tcp --dport 4291 -j ACCEPT
-sudo iptables -A INPUT -p tcp --dport 4290 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 8086 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 8001 -j ACCEPT
 ```

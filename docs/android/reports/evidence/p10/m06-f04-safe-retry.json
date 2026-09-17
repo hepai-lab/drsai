@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "feature_id": "M06-F04",
+  "acceptance_run_id": "p10-round-030-safe-retry",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "model_and_read_only_retry_same_run": true,
+    "write_and_sensitive_tools_not_blind_replayed": true,
+    "unknown_side_effect_requires_reconciliation": true,
+    "durable_receipt_replayed_without_mutation": true,
+    "new_run_requires_explicit_user_action": true,
+    "run_mode_visible_to_user": true
+  },
+  "tests": {
+    "testDebugUnitTest": "697 tests, 0 failures, 2 skipped",
+    "MainInterfaceTest_API35": "31 passed"
+  }
+}

@@ -92,6 +92,7 @@ class StructuredConversationProjector:
     completed: bool = False
     reasoning_counter: int = 0
     activity_counter: int = 0
+    reasoning_part_index: int = 0
     normalizer: _ThinkStreamNormalizer = field(default_factory=_ThinkStreamNormalizer)
 
     @property
@@ -100,7 +101,7 @@ class StructuredConversationProjector:
 
     @property
     def reasoning_part_id(self) -> str:
-        return f"{self.turn_id}:reasoning"
+        return f"{self.turn_id}:reasoning:{self.reasoning_part_index}"
 
     def start(self) -> list[dict[str, Any]]:
         if self.started:
@@ -125,7 +126,7 @@ class StructuredConversationProjector:
                 self.reasoning_counter += 1
                 events.extend(self._append_reasoning(reasoning, source, f"native-{self.reasoning_counter}"))
         elif event_type in {"tool.start", "tool.progress", "tool.complete"}:
-            events.append(self._tool_activity(event_type, payload, source))
+            events.extend(self._tool_activity(event_type, payload, source))
         elif event_type == "status.update":
             self.activity_counter += 1
             activity_id = str(payload.get("id") or f"{self.turn_id}:log:{self.activity_counter}")
@@ -142,7 +143,7 @@ class StructuredConversationProjector:
             }
             self.activities[activity_id] = activity
             events.append(self._event("activity.updated", source, activity=activity))
-        elif event_type in {"subagent.thinking", "subagent.complete"}:
+        elif event_type in {"subagent.thinking", "subagent.markdown", "subagent.complete", "subagent.completed"}:
             events.extend(self._subtask(event_type, payload, source))
         elif event_type == "progress.update":
             events.extend(self._progress(payload, source))
@@ -254,8 +255,29 @@ class StructuredConversationProjector:
         ))
         return events
 
-    def _tool_activity(self, event_type: str, payload: dict[str, Any], source: str) -> dict[str, Any]:
+    def _tool_activity(self, event_type: str, payload: dict[str, Any], source: str) -> list[dict[str, Any]]:
         self.activity_counter += 1
+        pre_events: list[dict[str, Any]] = []
+        # When a new tool starts, close the current reasoning part (if any)
+        # and advance to a new reasoning part index.  This ensures that
+        # thinking segments before and after a tool call are stored in
+        # separate reasoning parts, preserving the interleaved order
+        # (think → tool → think → tool) in the process timeline.
+        if event_type == "tool.start":
+            current_reasoning = self.parts.get(self.reasoning_part_id)
+            if current_reasoning and current_reasoning.get("status") in {"pending", "running"}:
+                current_reasoning["status"] = "completed"
+                for segment in current_reasoning.get("segments", []):
+                    if segment.get("status") in {"pending", "running"}:
+                        segment["status"] = "completed"
+                self.parts[self.reasoning_part_id] = current_reasoning
+                pre_events.append(self._event(
+                    "part.completed", source, part=dict(current_reasoning),
+                ))
+                # Advance to a new reasoning part index so subsequent
+                # thinking creates a fresh part, preserving the
+                # think → tool → think interleaving in the timeline.
+                self.reasoning_part_index += 1
         call_id = str(payload.get("tool_id") or payload.get("call_id") or f"tool-{self.activity_counter}")
         status = "completed" if event_type == "tool.complete" else "running"
         activity = {
@@ -275,11 +297,18 @@ class StructuredConversationProjector:
             activity["output"] = payload["result"]
         if payload.get("duration_ms") is not None:
             activity["durationMs"] = payload["duration_ms"]
+        child_id = payload.get("subagent_id")
+        if child_id:
+            activity["subtaskId"] = str(child_id)
         self.activities[activity["id"]] = activity
-        return self._event("activity.updated", source, activity=activity)
+        return [*pre_events, self._event("activity.updated", source, activity=activity)]
 
     def _subtask(self, event_type: str, payload: dict[str, Any], source: str) -> list[dict[str, Any]]:
-        source_id = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", source).strip("-") or "subtask"
+        # Prefer an explicit child identity when supplied. Source is a
+        # display/transport label and is not unique for parallel invocations
+        # of the same skills_agent.
+        raw_task_id = str(payload.get("subagent_id") or payload.get("task_id") or source)
+        source_id = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", raw_task_id).strip("-") or "subtask"
         part_id = f"{self.turn_id}:subtask:{source_id}"
         part = self.parts.get(part_id)
         events: list[dict[str, Any]] = []
@@ -295,9 +324,42 @@ class StructuredConversationProjector:
             self.parts[part_id] = part
             events.append(self._event("part.started", source, part=dict(part)))
         summary = str(payload.get("text") or payload.get("summary") or "")
-        if event_type == "subagent.complete":
+        if event_type == "subagent.markdown":
+            events.append(self._event(
+                "part.delta", source, partId=part_id,
+                delta={"kind": "subtask.markdown.append", "text": summary},
+            ))
+            return events
+        if event_type == "subagent.thinking":
+            segment_id = str(payload.get("segment_id") or f"{part_id}:reasoning")
+            events.append(self._event(
+                "part.delta", source, partId=part_id,
+                delta={
+                    "kind": "subtask.reasoning.append",
+                    "segmentId": segment_id,
+                    "text": summary,
+                    "source": source,
+                },
+            ))
+            return events
+        # Normalize "subagent.completed" → "subagent.complete" for the
+        # comparison below.  The kernel emits "subagent.completed" (with the
+        # -ed suffix) but the projector's contract uses "subagent.complete".
+        is_complete = event_type in {"subagent.complete", "subagent.completed"}
+        status_override = str(payload.get("status") or "").lower()
+        if is_complete:
+            # The streamed child answer is already stored in markdownSummary.
+            # Use terminal text only as a fallback, avoiding duplicate full
+            # child output when the final message repeats streamed chunks.
+            if summary and not part.get("markdownSummary"):
+                part["markdownSummary"] = summary
             part["summary"] = summary
-            part["status"] = "completed"
+            if status_override in {"error", "failed"}:
+                part["status"] = "error"
+            elif status_override in {"cancelled", "canceled", "aborted"}:
+                part["status"] = "cancelled"
+            else:
+                part["status"] = "completed"
             events.append(self._event("part.completed", source, part=dict(part)))
         else:
             events.append(self._event(
@@ -352,7 +414,7 @@ class StructuredConversationProjector:
             "artifactType": artifact_type,
             "name": str(payload.get("name") or payload.get("title") or "Artifact"),
         }
-        for source_key, target_key in (("summary", "summary"), ("path", "path"), ("url", "url"), ("mime", "mime"), ("sha256", "sha256"), ("source_call_id", "sourceCallId")):
+        for source_key, target_key in (("summary", "summary"), ("path", "path"), ("url", "url"), ("mime", "mime"), ("mime_type", "mime"), ("sha256", "sha256"), ("source_call_id", "sourceCallId")):
             if payload.get(source_key):
                 part[target_key] = str(payload[source_key])
         if isinstance(payload.get("size"), int) and not isinstance(payload.get("size"), bool):

@@ -1,0 +1,1217 @@
+{
+  "schemaVersion": 1,
+  "generatedFrom": {
+    "plan": "docs/voice/duplex-voice-p2-development-plan.md",
+    "progress": "docs/voice/duplex-voice-p2-progress.md"
+  },
+  "policy": {
+    "automationDoesNotEqualStrictAcceptance": true,
+    "pendingOrUnsignedReportsDoNotCount": true,
+    "fixturesDoNotCountAsExternalEvidence": true
+  },
+  "counts": {
+    "total": 52,
+    "implemented": 52,
+    "strictAccepted": 0
+  },
+  "evidenceSources": {
+    "packaged_named_review": "apps/desktop/windows/release/duplex-voice/packaged-report.json",
+    "live_named_listening": "apps/desktop/windows/release/duplex-voice/live-report.json",
+    "hardware_physical": "apps/desktop/windows/release/duplex-voice/hardware-report.json",
+    "hardware_workbook": "apps/desktop/windows/release/duplex-voice/hardware-review-workbook.json",
+    "stable_release_cycle": null
+  },
+  "features": [
+    {
+      "id": "M1-F1",
+      "feature": "两种用户模式",
+      "solution": "设置和 Composer 仅显示“实时对话”“单次语音输入”；内部仍映射 duplex/serial",
+      "testPlan": "偏好迁移、未知值、回滚快照",
+      "acceptanceCriteria": "新用户无需解释即可选对；旧用户偏好不丢失",
+      "implementation": "implemented",
+      "implementationEvidence": "Composer 与设置页均仅显示“单次语音输入/实时对话”；内部映射 serial/duplex",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-contracts",
+          "verify:voice:duplex-ui"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "新用户无需解释即可选对；旧用户偏好不丢失"
+    },
+    {
+      "id": "M1-F2",
+      "feature": "Streaming 下线迁移",
+      "solution": "从主 UI 移除 streaming；旧值迁到 serial，并记录一次迁移诊断；代码标 legacy",
+      "testPlan": "配置迁移、无新引用架构扫描、Serial 零回归",
+      "acceptanceCriteria": "升级后不出现失效模式，旧会话仍可读",
+      "implementation": "implemented",
+      "implementationEvidence": "偏好 schema 已演进至 v7，继续将旧 streaming 值迁移为 serial 并写入一次迁移标记；两处主 UI 已移除 Streaming，v6 及更早版本可升级",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-contracts",
+          "verify:voice:duplex-ui"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "升级后不出现失效模式，旧会话仍可读"
+    },
+    {
+      "id": "M1-F3",
+      "feature": "Readiness 契约",
+      "solution": "新增 rollout/Gateway/credential/model/provider/device 分项状态和 reason code",
+      "testPlan": "每种组合、超时、缓存失效、fail-closed",
+      "acceptanceCriteria": "未就绪时开始按钮禁用且原因准确",
+      "implementation": "implemented",
+      "implementationEvidence": "新增 rollout/Gateway/credential/model/provider/capability Readiness 契约；开始前强制刷新并 fail-closed",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-contracts",
+          "verify:voice:duplex-ui"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "未就绪时开始按钮禁用且原因准确"
+    },
+    {
+      "id": "M1-F4",
+      "feature": "动态能力交集",
+      "solution": "最终能力 = Adapter 静态上限 ∩ 模型配置 ∩ live probe",
+      "testPlan": "能力缺失、矛盾、旧 probe、模型切换",
+      "acceptanceCriteria": "UI 仅承诺实测支持的转录/VAD/cancel/tool",
+      "implementation": "implemented",
+      "implementationEvidence": "Gateway 对 Agent 精确绑定模型执行有界 Realtime WebSocket 探针；能力按 Adapter 上限、有效模型绑定和新鲜真实证据取交集；启动再次校验绑定与能力",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-contracts",
+          "verify:voice:duplex-ui"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "UI 仅承诺实测支持的转录/VAD/cancel/tool"
+    },
+    {
+      "id": "M1-F5",
+      "feature": "一键修复动作",
+      "solution": "reason code 映射到“打开智能体设置/重试 Gateway/切换单次输入”",
+      "testPlan": "路由和动作映射测试",
+      "acceptanceCriteria": "每个常见失败都有一个主操作和备用操作",
+      "implementation": "implemented",
+      "implementationEvidence": "Readiness reason code 已映射“打开智能体配置/重新检查/切换单次输入”，设置页和 Composer 均展示可操作恢复路径",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-contracts",
+          "verify:voice:duplex-ui"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "每个常见失败都有一个主操作和备用操作"
+    },
+    {
+      "id": "M1-F6",
+      "feature": "会话占用体验",
+      "solution": "多窗口冲突显示占用窗口、开始时间和安全接管选项",
+      "testPlan": "registry 接管竞态、拒绝、原窗口销毁",
+      "acceptanceCriteria": "第二窗口不会只看到技术错误",
+      "implementation": "implemented",
+      "implementationEvidence": "全局单会话占用快照包含窗口、开始时间与所有权；UI 提供明确拒绝、单次输入回退和带 expectedSessionId 竞态保护的安全接管；窗口销毁释放资源",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-contracts",
+          "verify:voice:duplex-ui"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "第二窗口不会只看到技术错误"
+    },
+    {
+      "id": "M2-F1",
+      "feature": "v2 上行 credit",
+      "solution": "Main 发布 frame/byte/ms credit；Renderer 只在额度内 postMessage",
+      "testPlan": "虚拟时钟、乱序 ack、额度耗尽/恢复、属性测试",
+      "acceptanceCriteria": "弱网 10 分钟无正常拥塞导致的会话取消",
+      "implementation": "implemented",
+      "implementationEvidence": "Duplex 协议升级 v2；Main 发布绝对 frame/byte/ms credit 和 ack cursor；Renderer 在额度内发送；乱序/重复 ack 不增加额度；15,000 帧/10 分钟虚拟 soak 无拒绝",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-capture",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "弱网 10 分钟无正常拥塞导致的会话取消"
+    },
+    {
+      "id": "M2-F2",
+      "feature": "采集暂停策略",
+      "solution": "credit=0 时保留 VAD 观测但暂停上传；只可丢弃未承诺静音帧",
+      "testPlan": "语音/静音边界、暂停恢复、序号连续性",
+      "acceptanceCriteria": "恢复后不重复、不把半句话拼错",
+      "implementation": "implemented",
+      "implementationEvidence": "credit=0 时继续本地 VAD，静音不进入 IPC，语音有界保留；采集序号与 wire 序号分离，恢复按实时帧速排空且 wire 序号连续",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-capture",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "恢复后不重复、不把半句话拼错"
+    },
+    {
+      "id": "M2-F3",
+      "feature": "流式高质量重采样",
+      "solution": "以带抗混叠低通的流式 resampler 替换线性实现",
+      "testPlan": "44.1/48/96→24 kHz 频响、相位连续、长时漂移",
+      "acceptanceCriteria": "真机无明显高频混叠或语速漂移",
+      "implementation": "implemented",
+      "implementationEvidence": "线性插值已替换为有状态窗化 sinc 低通；44.1/48/96→24 kHz 保持跨块相位与有界固定延迟；10 秒分块测试无累计漂移，18 kHz 输入在降采样前被抑制",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-capture",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "真机无明显高频混叠或语速漂移"
+    },
+    {
+      "id": "M2-F4",
+      "feature": "采集质量监测",
+      "solution": "clipping、静音、DC offset、实际采样率和约束降级事件",
+      "testPlan": "合成波形与阈值测试",
+      "acceptanceCriteria": "HUD 能提示“麦克风太小/削波/AEC 未生效”",
+      "implementation": "implemented",
+      "implementationEvidence": "独立监测 RMS/peak、静音时长、削波比、DC offset、实际采样率及约束降级；HUD 提供中英文可操作提示",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-capture",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "HUD 能提示“麦克风太小/削波/AEC 未生效”"
+    },
+    {
+      "id": "M2-F5",
+      "feature": "启动顺序事务",
+      "solution": "先完成预检和用户授权，再开 Provider；失败反向释放所有资源",
+      "testPlan": "每一步故障注入与资源泄漏测试",
+      "acceptanceCriteria": "拒绝麦克风不会创建计费 Session",
+      "implementation": "implemented",
+      "implementationEvidence": "启动拆为 readiness/授权与本地 prepare/Provider start/本地 activate；逐阶段故障按 Provider→采集反向回滚，授权拒绝路径不调用 Provider",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-capture",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "拒绝麦克风不会创建计费 Session"
+    },
+    {
+      "id": "M2-F6",
+      "feature": "输入设备热切换",
+      "solution": "会话中切换麦克风，使用 generation barrier，不混入旧设备帧",
+      "testPlan": "devicechange、track ended、快速连切",
+      "acceptanceCriteria": "内置/USB/蓝牙互切不需要结束整场会话",
+      "implementation": "implemented",
+      "implementationEvidence": "会话内可选择系统默认或枚举麦克风；新流准备完成后原子换 source，generation barrier 释放过期快速连切；失败保留旧设备，活动设备丢失尝试默认设备",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-capture",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "内置/USB/蓝牙互切不需要结束整场会话"
+    },
+    {
+      "id": "M3-F1",
+      "feature": "下行消费确认",
+      "solution": "Renderer 按已接收/已排程/已播放回报 credit，Main 限制发送水位",
+      "testPlan": "慢 Renderer、突发音频、确认丢失",
+      "acceptanceCriteria": "长回复不造成 IPC 堆积或直接丢帧",
+      "implementation": "implemented",
+      "implementationEvidence": "v2 MessagePort 回报 received/scheduled/played 序号与累计毫秒；Main 以已播放/明确释放游标补充端到端额度，40 ms 投递粒度、有界 30 秒待发队列，完成事件不越过待发音频；确认可幂等重发",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-playback",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "长回复不造成 IPC 堆积或直接丢帧"
+    },
+    {
+      "id": "M3-F2",
+      "feature": "缺口恢复",
+      "solution": "有界重排序窗口和 gap timeout；跳序必须产生日志与 UI 降级",
+      "testPlan": "乱序、重复、永久缺帧、跨 response",
+      "acceptanceCriteria": "缺一帧不会让整段后续音频永久静音",
+      "implementation": "implemented",
+      "implementationEvidence": "response 携带首/末音频序号；Renderer 有界重排、120 ms gap timeout、重复隔离、永久尾缺口和跨 response timer 隔离；跳序写诊断并在 HUD 显示自动继续",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-playback",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "缺一帧不会让整段后续音频永久静音"
+    },
+    {
+      "id": "M3-F3",
+      "feature": "真实播放时间线",
+      "solution": "记录每个 source 的 scheduled/start/end/cancel，计入 base/output latency",
+      "testPlan": "gap、suspend、clock drift、cancel 测试",
+      "acceptanceCriteria": "played cursor 与录音回放误差满足阈值",
+      "implementation": "implemented",
+      "implementationEvidence": "Browser sink 回报每个 source 的 scheduled/start/end/cancel；Controller 保留有界逐 source timeline，heard cursor 扣除 AudioContext base/output latency 且时钟回退不倒退；interrupt 使用校准游标",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-playback",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "played cursor 与录音回放误差满足阈值"
+    },
+    {
+      "id": "M3-F4",
+      "feature": "自适应 jitter buffer",
+      "solution": "根据网络抖动在低延迟和连续性之间调整 60–400 ms 水位",
+      "testPlan": "抖动模型、突发、稳定收敛",
+      "acceptanceCriteria": "Wi-Fi 弱网无频繁爆音，稳定网不显著增延迟",
+      "implementation": "implemented",
+      "implementationEvidence": "使用 Main 记录的 Provider 原始到达时间计算 RFC 风格 EWMA jitter；动态启动水位限制 60–400 ms，抖动/underrun 快速升高、稳定期缓慢回落；HUD 显示网络等级与当前水位",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-playback",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "Wi-Fi 弱网无频繁爆音，稳定网不显著增延迟"
+    },
+    {
+      "id": "M3-F5",
+      "feature": "输出设备与恢复",
+      "solution": "支持可用平台的 sink 选择；suspend/设备丢失显示恢复动作",
+      "testPlan": "sink change、AudioContext suspend、占用错误",
+      "acceptanceCriteria": "扬声器/USB/蓝牙切换行为可预测",
+      "implementation": "implemented",
+      "implementationEvidence": "Browser AudioContext `setSinkId` 能力探测与会话内输出枚举/热切换；失败保留旧 sink，设备丢失回退系统默认并同步偏好；suspend/占用失败进入可重试恢复提示",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-playback",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "扬声器/USB/蓝牙切换行为可预测"
+    },
+    {
+      "id": "M3-F6",
+      "feature": "音量与 duck",
+      "solution": "独立语音音量；候选插话先 80–120 ms duck，可撤销恢复",
+      "testPlan": "gain envelope、重复 duck、cancel",
+      "acceptanceCriteria": "附和时 AI 短暂变轻但不被截断，抢话时迅速停声",
+      "implementation": "implemented",
+      "implementationEvidence": "偏好 schema v7 持久化独立 Realtime 音量；所有 source 经共享 GainNode；本地候选语音以 100 ms 包络 duck 至 25%，重复幂等，附和/VAD 撤销以 100 ms 恢复，cancel 立即复位",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-playback",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "附和时 AI 短暂变轻但不被截断，抢话时迅速停声"
+    },
+    {
+      "id": "M4-F1",
+      "feature": "多信号候选器",
+      "solution": "融合本地 VAD、Provider VAD、ASR prefix、播放参考与持续时长",
+      "testPlan": "回声/键盘/咳嗽/说话 fixture",
+      "acceptanceCriteria": "扬声器外放下误触率达标",
+      "implementation": "implemented",
+      "implementationEvidence": "多信号候选器融合本地 VAD、Provider VAD、ASR 前缀、播放状态与输出参考电平；具备回声风险抑制、短噪声过滤、候选 duck 和整段证据保留。剩余真实扬声器外放误触发率、真人抢话召回率与打包环境验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-turns",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "扬声器外放下误触率达标"
+    },
+    {
+      "id": "M4-F2",
+      "feature": "意图决策器",
+      "solution": "区分附和、停止、纠正、补充、新问题；规则仅做快速停止词",
+      "testPlan": "中英文语料、混合语、口头禅、否定句",
+      "acceptanceCriteria": "盲测集按意图分别达到门槛",
+      "implementation": "implemented",
+      "implementationEvidence": "中英文意图分类区分 acknowledgement、stop、correction、addendum、new_question；32 条语料门禁及分意图最低准确率已通过。剩余独立盲测语料、口音/ASR 错字集和真人场景验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-turns",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "盲测集按意图分别达到门槛"
+    },
+    {
+      "id": "M4-F3",
+      "feature": "Interrupt transaction",
+      "solution": "`interruptId` 串联 duck、local stop、cancel、truncate、ack、outcome",
+      "testPlan": "各步骤延迟/失败/重复/乱序",
+      "acceptanceCriteria": "每次插话在诊断中只有一个明确结果",
+      "implementation": "implemented",
+      "implementationEvidence": "`interruptId` 已贯穿 candidate duck、本地 stop、清空队列、Provider cancel/truncate 请求和 Main `interrupted` 回执；事务具有 candidate、committed、reverted、rejected、timeout、superseded 唯一结果并写入结构化诊断。剩余真实 Provider ACK 延迟/丢失、打包诊断唯一性验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-turns",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "每次插话在诊断中只有一个明确结果"
+    },
+    {
+      "id": "M4-F4",
+      "feature": "可撤销附和",
+      "solution": "acknowledgement 不 cancel，恢复音量并保留附和转录策略",
+      "testPlan": "“嗯/对/继续”与长句歧义测试",
+      "acceptanceCriteria": "自然附和不中断 AI 主句",
+      "implementation": "implemented",
+      "implementationEvidence": "acknowledgement 撤销候选 duck、恢复独立 Realtime 音量，不发送 Provider cancel，输入转录仍走正常投影与历史策略；重复撤销幂等。剩余真人长短附和歧义与自然度验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-turns",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "自然附和不中断 AI 主句"
+    },
+    {
+      "id": "M4-F5",
+      "feature": "停止词极速路径",
+      "solution": "明确停止词可在 transcript final 前 commit，但需声纹时长/回声保护",
+      "testPlan": "stop prefix、回声复读、短噪声",
+      "acceptanceCriteria": "“停/别说了”P95 停声延迟达标",
+      "implementation": "implemented",
+      "implementationEvidence": "停止词可在 final 前、120 ms 本地语音证据后提交；播放参考占优且缺少 Provider VAD 时禁止快速停止，避免 AI 外放复读“停止”误杀；记录 `decisionLatencyMs`、echoRisk 和本地语音时长，且同一候选只提交一次。剩余真实设备 P95 停声延迟、回声复读和口音验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-turns",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "“停/别说了”P95 停声延迟达标"
+    },
+    {
+      "id": "M4-F6",
+      "feature": "手动优先级",
+      "solution": "点击停止/键盘快捷键覆盖自动事务，幂等结束本地与 Provider 输出",
+      "testPlan": "自动与手动竞态 10,000 次",
+      "acceptanceCriteria": "连点不会恢复旧音频或产生双终态",
+      "implementation": "implemented",
+      "implementationEvidence": "Renderer 同 response 并发提交共享一个 Promise；手动操作使自动事务 superseded；Main Runtime 按 response 建立最终幂等屏障，不因不同 interruptId 重复发送 cancel/truncate 或双回执。10,000 次自动/手动竞态门禁和 100 路并发提交门禁通过。剩余真实点击/快捷键连击和打包 Provider 验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-turns",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "连点不会恢复旧音频或产生双终态"
+    },
+    {
+      "id": "M5-F1",
+      "feature": "生命周期策略表",
+      "solution": "hidden、pagehide、offline、suspend、lock、window close 分别处理",
+      "testPlan": "浏览器/Windows 生命周期状态表",
+      "acceptanceCriteria": "切应用不掉线，关窗必释放麦克风",
+      "implementation": "implemented",
+      "implementationEvidence": "建立 hidden/visible/pagehide/offline/online/suspend/resume/lock/unlock/window-close 策略表；hidden 保持会话，pagehide/窗口销毁释放 Session，offline 停止上行，suspend/lock 释放麦克风与 AudioContext，resume/unlock 创建全新采集图并保留 Provider 会话。剩余 Windows 打包环境切应用、睡眠、锁屏和关窗资源验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-recovery",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "切应用不掉线，关窗必释放麦克风"
+    },
+    {
+      "id": "M5-F2",
+      "feature": "有界重连",
+      "solution": "断线期停止上传旧音频，保留有限新语音提示；新 Provider session 显式分段",
+      "testPlan": "多断点、重连耗尽、无旧帧重放",
+      "acceptanceCriteria": "Wi-Fi 闪断后用户知道丢失范围并可继续",
+      "implementation": "implemented",
+      "implementationEvidence": "重连状态发布零上行 credit 并拒绝新音频，清除所有未确认帧且不向新连接重放；重连成功递增 segmentId，携带可能丢失的 audio-ms，HUD 明确要求用户重复断线期间内容；指数退避和次数耗尽保持有界。剩余真实 Wi-Fi 多断点、Provider 新 Session 边界和用户可理解性验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-recovery",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "Wi-Fi 闪断后用户知道丢失范围并可继续"
+    },
+    {
+      "id": "M5-F3",
+      "feature": "三种结束动作",
+      "solution": "finish turn、end session、cancel session 契约分离",
+      "testPlan": "drain deadline、final transcript、cancel race",
+      "acceptanceCriteria": "“结束”不会吞掉最后一句，“取消”立即停止",
+      "implementation": "implemented",
+      "implementationEvidence": "新增 finish-turn IPC，仅提交输入缓冲且保持 Session；end-session 停止采集但保留播放、转录和工具桥，等待 Provider final transcript 后完成，缺失 final 时使用 2 秒 drain deadline；cancel-session 立即停止本地资源并发送 Provider cancel。剩余真实 Provider final/drain、长回答听感和 cancel 竞态验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-recovery",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "“结束”不会吞掉最后一句，“取消”立即停止"
+    },
+    {
+      "id": "M5-F4",
+      "feature": "暂停/继续",
+      "solution": "用户可暂停麦克风而保留会话；暂停时有强视觉提示",
+      "testPlan": "pause/resume、工具在途、超时",
+      "acceptanceCriteria": "临时静音不必重新连接 Provider",
+      "implementation": "implemented",
+      "implementationEvidence": "会话内麦克风可暂停/继续，暂停会释放 MediaStream 和 AudioContext、保持 Provider Session/播放/工具，继续时建立全新采集图；UI 使用 aria-pressed 和强状态文案，暂停时禁止 finish-turn。剩余 Windows 权限、蓝牙设备、工具在途和读屏验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-recovery",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "临时静音不必重新连接 Provider"
+    },
+    {
+      "id": "M5-F5",
+      "feature": "资源与电源预算",
+      "solution": "前后台、长会话、重连周期的 CPU/内存/句柄上限",
+      "testPlan": "1,000 session、60 分钟 soak、heap/handle",
+      "acceptanceCriteria": "笔记本运行 30 分钟无持续增长和异常耗电",
+      "implementation": "implemented",
+      "implementationEvidence": "Runtime snapshot 暴露 timer、uplink/downlink frame 与 downlink audio-ms 资源计数；上行 100 帧、下行 30 秒、活动 timer 数均有硬上限；1,000 Session churn、10,000 terminal race、10 分钟虚拟上行和 60 分钟转录上下文测试无遗留 registry/队列；转录去重窗口限制 4,096、孤儿草稿限制 64。剩余真实 30 分钟 CPU/heap/handle/电池验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-recovery",
+          "test:voice:duplex-runtime"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "笔记本运行 30 分钟无持续增长和异常耗电"
+    },
+    {
+      "id": "M6-F1",
+      "feature": "按 item 的 draft store",
+      "solution": "输入/输出按 item/response/content 管理，不跨轮拼接",
+      "testPlan": "并行 response、乱序 delta、重复 final",
+      "acceptanceCriteria": "HUD 始终只显示当前轮且无串词",
+      "implementation": "implemented",
+      "implementationEvidence": "输入草稿按 itemId+contentIndex、输出草稿按 responseId+itemId+contentIndex 隔离；完成一个 item 只清除自己的草稿，并行 response 和乱序 delta 不再拼接；每草稿限制 20,000 字符。剩余真实 Provider 并行 item、HUD 视觉和长会话验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-transcript",
+          "test:voice:duplex-history"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "HUD 始终只显示当前轮且无串词"
+    },
+    {
+      "id": "M6-F2",
+      "feature": "稳定事件 journal",
+      "solution": "只追加本次 revision，序列化写入 Thread，支持失败重试",
+      "testPlan": "CAS 冲突、崩溃恢复、重复写、I/O 失败",
+      "acceptanceCriteria": "重启后稳定历史完整且无重复",
+      "implementation": "implemented",
+      "implementationEvidence": "稳定输入/输出/中断更新按单 item revision 写入，不再重复提交整个投影；Thread 消息持久化 voice revision，写入执行 expectedRevision CAS；相同 revision+相同载荷幂等，载荷不同或跳号拒绝；Renderer 串行写入并在失败后保留 dirty revision，下一稳定事件重试。CAS、重复写、乱序、重启读取和原子 shard 写测试通过。剩余强制 I/O 失败/进程崩溃注入与打包验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-transcript",
+          "test:voice:duplex-history"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "重启后稳定历史完整且无重复"
+    },
+    {
+      "id": "M6-F3",
+      "feature": "heard alignment",
+      "solution": "使用 Provider 时间戳或词级对齐；无证据时不生成精确 heard text",
+      "testPlan": "中英语速、停顿、gap、cancel",
+      "acceptanceCriteria": "Thread 展示与用户实际听感一致",
+      "implementation": "implemented",
+      "implementationEvidence": "移除按字符比例伪造 heard text；中断消息保存 generatedAudioMs、playedAudioMs 和 alignmentConfidence=none；只有显式词级 endMs 证据才输出 confidence=word_timing 的精确 heardContent。中英文字符、停顿边界和无证据测试通过。剩余真实 Provider 词级时间戳接入、gap/蓝牙延迟对齐和录音回放验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-transcript",
+          "test:voice:duplex-history"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "Thread 展示与用户实际听感一致"
+    },
+    {
+      "id": "M6-F4",
+      "feature": "中断消息模型",
+      "solution": "保存 generated、heard、interruptedAt、alignmentConfidence",
+      "testPlan": "schema 迁移和旧消息兼容",
+      "acceptanceCriteria": "UI 能解释“生成了但未听完”，模型上下文只取 heard",
+      "implementation": "implemented",
+      "implementationEvidence": "Thread voice metadata 保存 revision、generatedAudioMs、playedAudioMs、interruptedAt、alignmentConfidence、可选 heardContent；完整 generated 内容保留用于解释历史，UI 独立说明实际播放位置及精确 heard 是否可用；投影给模型的 context 对 interrupted 消息只取可信 heard，confidence=none 时完全排除生成正文；旧消息无 voice 字段仍兼容。剩余旧数据迁移样本、真实 UI/读屏和模型续接验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-transcript",
+          "test:voice:duplex-history"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "UI 能解释“生成了但未听完”，模型上下文只取 heard"
+    },
+    {
+      "id": "M6-F5",
+      "feature": "会话上下文接续",
+      "solution": "新 Realtime session 只注入受限的稳定 Thread 摘要/近期消息",
+      "testPlan": "token/字符预算、敏感字段、长 Thread",
+      "acceptanceCriteria": "结束重开后能自然续聊且不泄漏隐藏内容",
+      "implementation": "implemented",
+      "implementationEvidence": "新 Realtime Session 启动前读取 Thread snapshot，只选择 user/assistant 稳定消息；最多最近 12 条、8,000 context 字符，加基础 instructions 后总长不超过 30,000；过滤 token/API key、忽略系统/隐藏字段，并排除未听到的 assistant 内容；读取失败安全降级为空上下文。剩余真实长 Thread、跨 Session 连贯性与 Provider token 计量验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-transcript",
+          "test:voice:duplex-history"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "结束重开后能自然续聊且不泄漏隐藏内容"
+    },
+    {
+      "id": "M6-F6",
+      "feature": "删除与隐私一致性",
+      "solution": "删除 Thread/消息时同步移除语音投影；不留旁路 journal",
+      "testPlan": "删除、撤销、崩溃中断测试",
+      "acceptanceCriteria": "用户删除后本地搜索与诊断均不可恢复正文",
+      "implementation": "implemented",
+      "implementationEvidence": "语音稳定历史只写入 Thread snapshot shard，不创建独立正文 journal；删除 Thread 同时移除 shard 和 legacy snapshot；删除测试在整个 DRSAI_HOME 文件树扫描 canary，确认正文与 voice metadata 均不可恢复。剩余活动 Session 同步删除、桌面搜索索引和打包崩溃中断验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-transcript",
+          "test:voice:duplex-history"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "用户删除后本地搜索与诊断均不可恢复正文"
+    },
+    {
+      "id": "M7-F1",
+      "feature": "移除假文字队列",
+      "solution": "删除 `queueManualText/drainManualText` 及未消费状态",
+      "testPlan": "无死引用、构建和旧测试迁移",
+      "acceptanceCriteria": "UI 不再宣称未实现的排队行为",
+      "implementation": "implemented",
+      "implementationEvidence": "删除 `queueManualText`、`drainManualText`、`queuedManualText` 及假排队 UI；连接/恢复/结束期间明确保留草稿并要求重试，不宣称已排队。静态防回退、类型检查和旧测试迁移通过。剩余产品走查。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-provider",
+          "test:voice:duplex-tools"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "UI 不再宣称未实现的排队行为"
+    },
+    {
+      "id": "M7-F2",
+      "feature": "真实文字 item",
+      "solution": "活动会话中文字通过 Provider conversation item 发送",
+      "testPlan": "顺序、重复、离线、大小限制",
+      "acceptanceCriteria": "文字可触发实时语音回答并进入同一 Thread",
+      "implementation": "implemented",
+      "implementationEvidence": "活动 Session 文字输入经 Renderer→IPC→Main→Provider 发送 `conversation.item.create` + `response.create`；Provider `conversation.item.created` 回执转换为稳定用户 item 并写入同一 Thread；20,000 字符上限，离线拒绝，itemId 同载荷幂等、异载荷拒绝，附件明确不支持且不丢草稿。剩余真实 Provider 文字触发语音回答、混合顺序和打包验收。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-provider",
+          "test:voice:duplex-tools"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "文字可触发实时语音回答并进入同一 Thread"
+    },
+    {
+      "id": "M7-F3",
+      "feature": "文字发送策略",
+      "solution": "提供“立即打断并发送/当前回答后发送”，默认后者",
+      "testPlan": "自动/手动插话竞态、队列取消",
+      "acceptanceCriteria": "草稿不丢，用户能预期何时生效",
+      "implementation": "implemented",
+      "implementationEvidence": "新增显式单槽文字调度器，默认“当前回答后发送”，可选“立即打断并发送”。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-provider",
+          "test:voice:duplex-tools"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "草稿不丢，用户能预期何时生效"
+    },
+    {
+      "id": "M7-F4",
+      "feature": "正式工具审批",
+      "solution": "复用 Desktop approval UI，显示工具、参数摘要、风险和作用域",
+      "testPlan": "allow/reject/timeout/cancel、重放幂等",
+      "acceptanceCriteria": "写工具未经点击绝不执行，审批不靠语音绕过",
+      "implementation": "implemented",
+      "implementationEvidence": "Realtime 写类工具复用 Desktop 正式审批中心。Windows 接入现有 pending approval/decision 管线；macOS 接入 `PersistentApprovalStore` executor/observer。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-provider",
+          "test:voice:duplex-tools"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "写工具未经点击绝不执行，审批不靠语音绕过"
+    },
+    {
+      "id": "M7-F5",
+      "feature": "工具 timeline",
+      "solution": "waiting/running/result/side effect/late result 进入 Thread parts",
+      "testPlan": "session detach、晚到结果、敏感结果脱敏",
+      "acceptanceCriteria": "用户能追溯工具做了什么及是否已产生副作用",
+      "implementation": "implemented",
+      "implementationEvidence": "工具 waiting/running/completed/rejected/cancelled/failed/detached 状态写入 Thread 原生 `tool` part，并同步 legacy `toolTimeline` 兼容字段。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-provider",
+          "test:voice:duplex-tools"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "用户能追溯工具做了什么及是否已产生副作用"
+    },
+    {
+      "id": "M8-F1",
+      "feature": "启动预检面板",
+      "solution": "独立于 error banner，显示 Provider/model/发送/保存/工具权限",
+      "testPlan": "disclosure 版本、记忆、配置变化",
+      "acceptanceCriteria": "首次使用清楚，重复使用不反复打扰",
+      "implementation": "implemented",
+      "implementationEvidence": "新增独立启动预检面板，明确 Provider/model、音频发送、转录保存和工具审批策略；确认按 disclosure version + Provider + model 持久化，配置变化才重新提示。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "verify:voice:duplex-ui",
+          "test:voice:duplex-turns"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "首次使用清楚，重复使用不反复打扰"
+    },
+    {
+      "id": "M8-F2",
+      "feature": "状态 HUD",
+      "solution": "本地化显示正在连接/听/说/回答/插话/恢复/暂停",
+      "testPlan": "reducer→文案快照、ARIA live 节流",
+      "acceptanceCriteria": "用户无需看日志即可判断当前状态",
+      "implementation": "implemented",
+      "implementationEvidence": "新增纯函数 HUD 状态模型，本地化显示连接、听、说、回答、插话、恢复、暂停、结束和错误；ARIA live 仅包裹低频状态文字，高频输入电平不会反复播报。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "verify:voice:duplex-ui",
+          "test:voice:duplex-turns"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "用户无需看日志即可判断当前状态"
+    },
+    {
+      "id": "M8-F3",
+      "feature": "音量与连接反馈",
+      "solution": "展示输入级别、输出状态、网络质量和重连倒计时",
+      "testPlan": "指标映射、无障碍 reduced motion",
+      "acceptanceCriteria": "弱网和静音问题可自行判断",
+      "implementation": "implemented",
+      "implementationEvidence": "HUD 展示实时输入电平、AudioContext 输出状态、网络质量及精确到秒的重连倒计时；`prefers-reduced-motion` 下关闭 HUD 动效。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "verify:voice:duplex-ui",
+          "test:voice:duplex-turns"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "弱网和静音问题可自行判断"
+    },
+    {
+      "id": "M8-F4",
+      "feature": "错误恢复卡",
+      "solution": "reason code 对应主操作、备用操作和 trace ID",
+      "testPlan": "所有错误码覆盖、i18n 完整性",
+      "acceptanceCriteria": "auth/model/device/network/rate limit 均可自助恢复",
+      "implementation": "implemented",
+      "implementationEvidence": "保留 Provider 结构化错误对象；auth/model/protocol/network/device/audio/rate_limit/policy/cancelled/internal 全部映射主操作和备用操作，错误卡展示 reason code 与可用 trace/request ID。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "verify:voice:duplex-ui",
+          "test:voice:duplex-turns"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "auth/model/device/network/rate limit 均可自助恢复"
+    },
+    {
+      "id": "M8-F5",
+      "feature": "键盘与读屏",
+      "solution": "开始、暂停、停止、立即打断均有快捷键和可访问名称",
+      "testPlan": "axe、键盘序列、焦点恢复",
+      "acceptanceCriteria": "仅键盘和 Narrator 可完成完整会话",
+      "implementation": "implemented",
+      "implementationEvidence": "新增 Alt+Shift+V（开始/结束）、Alt+Shift+P（暂停/继续）、Alt+Shift+S（停止）、Alt+Shift+I（立即打断）；控件声明 `aria-keyshortcuts`，会话结束后焦点回到语音启动按钮。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "verify:voice:duplex-ui",
+          "test:voice:duplex-turns"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "仅键盘和 Narrator 可完成完整会话"
+    },
+    {
+      "id": "M9-F1",
+      "feature": "Realtime 设置页",
+      "solution": "独立模型、voice、语言、设备、自动恢复、转录保存策略",
+      "testPlan": "设置往返、并发写、非法值、迁移",
+      "acceptanceCriteria": "设置含义与实际 session payload 一致",
+      "implementation": "implemented",
+      "implementationEvidence": "语音偏好 schema 升级至 v9；Realtime 独立保存 Provider voice、语言、输入/输出设备、自动恢复和转录保存策略。设置值直接映射到 Session 请求；关闭转录保存时仅显示临时字幕，不写入任务历史。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "verify:voice:duplex-privacy",
+          "test:voice:duplex-contracts"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "设置含义与实际 session payload 一致"
+    },
+    {
+      "id": "M9-F2",
+      "feature": "热更新矩阵",
+      "solution": "明确可热更新和需重启字段，更新有 ack/rollback",
+      "testPlan": "update 超时、部分拒绝、模型切换",
+      "acceptanceCriteria": "会话中改 voice/instruction 结果可解释",
+      "implementation": "implemented",
+      "implementationEvidence": "建立显式更新矩阵。音量和设备由本地热切换；instructions 使用带 `updateId` 的 Provider ACK 事务；并发更新拒绝、Provider 拒绝回滚、2 秒 ACK 超时回滚；模型、voice、语言、恢复和保存策略明确要求新 Session。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "verify:voice:duplex-privacy",
+          "test:voice:duplex-contracts"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "会话中改 voice/instruction 结果可解释"
+    },
+    {
+      "id": "M9-F3",
+      "feature": "隐私安全诊断",
+      "solution": "默认仅数字指标和 reason code；显式短期诊断有到期清理",
+      "testPlan": "canary、密钥/正文扫描、TTL",
+      "acceptanceCriteria": "导出诊断不含密钥、原始音频和完整转录",
+      "implementation": "implemented",
+      "implementationEvidence": "默认遥测只保留数值、布尔值、null 和安全 reason code。临时诊断必须由用户显式开启，默认 10 分钟、最长 15 分钟、内存上限 500 条；到期、关闭和组件卸载均立即擦除，字符串转录与 secret/canary 不进入导出。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "verify:voice:duplex-privacy",
+          "test:voice:duplex-contracts"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "导出诊断不含密钥、原始音频和完整转录"
+    },
+    {
+      "id": "M9-F4",
+      "feature": "SLO 与成本",
+      "solution": "TTFA、stop latency、interrupt accuracy、underrun、reconnect、audio seconds",
+      "testPlan": "分位数、缺失值、Provider cost=null",
+      "acceptanceCriteria": "HUD/诊断数值与真实测量抽样一致",
+      "implementation": "implemented",
+      "implementationEvidence": "HUD 接入 TTFA、停止延迟、打断准确率、underrun、重连次数、输入/输出音频秒数和 Provider 估算成本；缺失成本与无样本比例使用 null-safe 展示，不伪造数值。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "verify:voice:duplex-privacy",
+          "test:voice:duplex-contracts"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "HUD/诊断数值与真实测量抽样一致"
+    },
+    {
+      "id": "M10-F1",
+      "feature": "故障注入总套件",
+      "solution": "网络、Provider、IPC、设备、AudioContext、I/O、审批全矩阵",
+      "testPlan": "固定种子 + 属性测试 + 10,000 race",
+      "acceptanceCriteria": "CI 可重复，失败能定位到 reason code",
+      "implementation": "implemented",
+      "implementationEvidence": "新增统一故障矩阵运行器，覆盖 network、Provider、IPC、输入设备、AudioContext、I/O、正式审批和终态 race；失败信息固定输出 `domain:reason_code`。新增固定种子 `0x5eedc0de` 的 10,000 组属性测试，并复用 Runtime 10,000 终态竞态测试。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-fault-matrix",
+          "test:voice:duplex-evidence-gates",
+          "test:voice:duplex-legacy-gate"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "CI 可重复，失败能定位到 reason code"
+    },
+    {
+      "id": "M10-F2",
+      "feature": "真实发布矩阵",
+      "solution": "Serial 零回归、Duplex packaged/live/hardware、无 fixture 冒充",
+      "testPlan": "报告 schema、哈希、附件和防回退",
+      "acceptanceCriteria": "Win10/11、内置/USB/蓝牙、弱网和睡眠签核",
+      "implementation": "implemented",
+      "implementationEvidence": "收紧 packaged/live/hardware 证据 schema。Packaged 必须绑定精确 Serial 零回归套件及报告 SHA-256；所有附件必须有 URI 和 SHA-256；继续要求实名签核、全报告摘要哈希、真实模型观察值和禁止 Serial/fixture 回退。生成的三份模板默认 `ok=false`，未执行真实验收时必定失败。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-fault-matrix",
+          "test:voice:duplex-evidence-gates",
+          "test:voice:duplex-legacy-gate"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "live_named_listening",
+        "hardware_physical"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "Win10/11、内置/USB/蓝牙、弱网和睡眠签核"
+    },
+    {
+      "id": "M10-F3",
+      "feature": "Legacy 删除门禁",
+      "solution": "Streaming 无 UI/新配置引用；遥测和迁移窗口满足后才删代码",
+      "testPlan": "架构扫描、旧偏好 fixture、回滚构建",
+      "acceptanceCriteria": "一个稳定发布周期后删除不影响历史与 Serial",
+      "implementation": "implemented",
+      "implementationEvidence": "新增 fail-closed Legacy 删除资格清单。新 UI/配置不得选择 Streaming；旧偏好继续归一为 Serial。至少一个稳定发布周期、足量迁移遥测和低于阈值的 legacy selection rate 全部满足前，Streaming rollback 代码和测试必须保留，提前请求删除会被拒绝。",
+      "automation": {
+        "status": "passed",
+        "suites": [
+          "test:voice:duplex-fault-matrix",
+          "test:voice:duplex-evidence-gates",
+          "test:voice:duplex-legacy-gate"
+        ]
+      },
+      "requiredEvidence": [
+        "automation",
+        "packaged_named_review",
+        "stable_release_cycle"
+      ],
+      "strictAcceptance": "pending",
+      "pendingEvidence": "一个稳定发布周期后删除不影响历史与 Serial"
+    }
+  ]
+}

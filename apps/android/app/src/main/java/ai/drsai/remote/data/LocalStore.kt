@@ -264,7 +264,7 @@ interface ChatDao {
         WorkbenchAuditEntity::class, AndroidOaepSessionEntity::class, AndroidOaepRunEntity::class,
         AndroidOaepItemEntity::class, AndroidOaepEventEntity::class, AndroidOaepMigrationEntity::class,
         ModelProviderEntity::class, ProviderModelEntity::class],
-    version = 15,
+    version = 16,
     exportSchema = false,
 )
 abstract class ChatDatabase : RoomDatabase() {
@@ -277,7 +277,29 @@ abstract class ChatDatabase : RoomDatabase() {
 
 val MIGRATION_14_15 = object : Migration(14, 15) {
     override fun migrate(db: SupportSQLiteDatabase) {
-        db.execSQL("ALTER TABLE remote_oaep_items ADD COLUMN sourceJson TEXT NOT NULL DEFAULT '{}'")
+        val alreadyPresent = db.query("PRAGMA table_info(remote_oaep_items)").use { cursor ->
+            val nameIndex = cursor.getColumnIndex("name")
+            var found = false
+            while (cursor.moveToNext() && !found) found = cursor.getString(nameIndex) == "sourceJson"
+            found
+        }
+        if (!alreadyPresent) {
+            db.execSQL("ALTER TABLE remote_oaep_items ADD COLUMN sourceJson TEXT NOT NULL DEFAULT '{}'")
+        }
+    }
+}
+
+val MIGRATION_15_16 = object : Migration(15, 16) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        val alreadyPresent = db.query("PRAGMA table_info(workbench_approvals)").use { cursor ->
+            val nameIndex = cursor.getColumnIndex("name")
+            var found = false
+            while (cursor.moveToNext() && !found) found = cursor.getString(nameIndex) == "previewJson"
+            found
+        }
+        if (!alreadyPresent) {
+            db.execSQL("ALTER TABLE workbench_approvals ADD COLUMN previewJson TEXT NOT NULL DEFAULT '{}'")
+        }
     }
 }
 
@@ -394,7 +416,7 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
         db.execSQL("CREATE INDEX IF NOT EXISTS index_workbench_audit_subject_organization_runtimeId_runId ON workbench_audit(subject, organization, runtimeId, runId)")
 
         // Preserve current local conversations as Sessions in a stable virtual Workspace.
-        db.execSQL("INSERT OR IGNORE INTO workbench_workspaces SELECT userId, '', 'android-local', 'local', 'OpenDrSai 本地', 'LOCAL', 'LOCAL_DEVICE', MAX(updatedAt) FROM conversations GROUP BY userId")
+                db.execSQL("INSERT OR IGNORE INTO workbench_workspaces SELECT userId, '', 'android-local', 'local', 'OpenDrSai Local', 'LOCAL', 'LOCAL_DEVICE', MAX(updatedAt) FROM conversations GROUP BY userId")
         db.execSQL("INSERT OR IGNORE INTO workbench_sessions SELECT userId, '', 'android-local', 'local', id, title, 'opendrsai', 'LOCAL_DEVICE', id, 0, 0, 0, updatedAt FROM conversations")
 
         // Preserve remote projections. These remain non-authoritative caches even

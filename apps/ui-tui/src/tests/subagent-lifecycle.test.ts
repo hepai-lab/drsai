@@ -46,7 +46,7 @@ function partsSummary(parts: ContentPart[]): string[] {
       const preview = text.replace(/\n/g, '\\n').slice(0, 50)
       return `text:"${preview}${text.length > 50 ? '...' : ''}"`
     }
-    return `tool:${p.toolId}`
+    return p.kind === 'tool' ? `tool:${p.toolId}` : `artifact:${p.artifactId}`
   })
 }
 

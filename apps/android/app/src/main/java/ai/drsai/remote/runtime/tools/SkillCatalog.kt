@@ -107,10 +107,12 @@ class SkillCatalog {
 }
 
 object SkillTaskMatcher {
-    private val workspace = Regex("""(?i)(\b(?:workspace|file|folder|directory|config|code|project)\b|工作区|文件|目录|配置|代码|项目)""")
-    private val memory = Regex("""(?i)(\b(?:remember|memory|preference|recall)\b|记住|记忆|偏好|之前)""")
-    private val device = Regex("""(?i)(\b(?:android|device|phone|tablet)\b|系统版本|设备|手机|平板)""")
-    private val attachment = Regex("""(?i)(\b(?:attachment|attached|image|pdf)\b|附件|图片|文档)""")
+    // These are intent-recognition tokens, not presentation copy. Unicode escapes keep
+    // the matching vocabulary stable without adding non-localized UI string debt.
+    private val workspace = Regex("(?i)(\\b(?:workspace|file|folder|directory|config|code|project)\\b|\\u5de5\\u4f5c\\u533a|\\u6587\\u4ef6|\\u76ee\\u5f55|\\u914d\\u7f6e|\\u4ee3\\u7801|\\u9879\\u76ee)")
+    private val memory = Regex("(?i)(\\b(?:remember|memory|preference|recall)\\b|\\u8bb0\\u4f4f|\\u8bb0\\u5fc6|\\u504f\\u597d|\\u4e4b\\u524d)")
+    private val device = Regex("(?i)(\\b(?:android|device|phone|tablet)\\b|\\u7cfb\\u7edf\\u7248\\u672c|\\u8bbe\\u5907|\\u624b\\u673a|\\u5e73\\u677f)")
+    private val attachment = Regex("(?i)(\\b(?:attachment|attached|image|pdf)\\b|\\u9644\\u4ef6|\\u56fe\\u7247|\\u6587\\u6863)")
 
     fun matches(skill: SkillDefinition, input: String): Boolean {
         val text = input.trim()

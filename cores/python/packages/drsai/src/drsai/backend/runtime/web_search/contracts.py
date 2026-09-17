@@ -126,12 +126,18 @@ class ProviderReceipt:
     request_id: str = ""
     latency_ms: int | None = None
     usage_units: float | None = None
+    trace_id: str = ""
+    model: str = ""
+    function: str = ""
 
     def public_dict(self) -> dict[str, Any]:
         return {
             **({"request_id": self.request_id} if self.request_id else {}),
             **({"latency_ms": self.latency_ms} if self.latency_ms is not None else {}),
             **({"usage_units": self.usage_units} if self.usage_units is not None else {}),
+            **({"trace_id": self.trace_id} if self.trace_id else {}),
+            **({"model": self.model} if self.model else {}),
+            **({"function": self.function} if self.function else {}),
         }
 
 

@@ -1,36 +1,49 @@
 package ai.drsai.remote.remote.ui
 
+import ai.drsai.remote.R
+import ai.drsai.remote.remote.data.RemoteActionableKind
 import ai.drsai.remote.remote.data.RemoteActionableState
 import ai.drsai.remote.remote.data.RemoteRecoveryAction
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 
-fun localizedRemoteActionableState(
-    state: RemoteActionableState,
-    language: RemoteUiLanguage,
-): RemoteActionableState {
-    if (language == RemoteUiLanguage.ZH) return state
-    return when (state.action) {
-        RemoteRecoveryAction.RETRY -> RemoteActionableState(
-            "Temporarily unavailable", "Check your network and retry. Synced content remains available.", state.action, "Retry",
-        )
-        RemoteRecoveryAction.SIGN_IN -> RemoteActionableState(
-            "Sign-in expired", "Sign in again to keep using the existing device authorization.", state.action, "Sign in",
-        )
-        RemoteRecoveryAction.REASSOCIATE -> RemoteActionableState(
-            "Reconnect this computer", "Generate a new QR code on the computer.", state.action, "Scan again",
-        )
-        RemoteRecoveryAction.UPDATE_APP -> RemoteActionableState(
-            "Version incompatible", "Update OpenDrSai before reconnecting.", state.action, "Check for updates",
-        )
-        RemoteRecoveryAction.CONTACT_ADMIN -> RemoteActionableState(
-            "Could not complete the action", "If retrying fails, contact your administrator with the association reference.",
-            state.action, "Contact administrator",
-        )
-        RemoteRecoveryAction.RESUME_ON_COMPUTER -> RemoteActionableState(
-            "Computer paused", "Mobile access is paused on the computer. Existing authorization is preserved.",
-            state.action, "Retry after resuming",
-        )
-        RemoteRecoveryAction.NONE -> RemoteActionableState(
-            "Connecting", "Loading the remote workspace.", state.action, null,
-        )
+@Composable
+fun localizedRemoteActionableState(state: RemoteActionableState): RemoteActionableState {
+    if (state.kind == RemoteActionableKind.CUSTOM) return state
+    val title = stringResource(when (state.kind) {
+        RemoteActionableKind.PAUSED -> R.string.actionable_paused_title
+        RemoteActionableKind.LOADING -> R.string.remote_status_connecting
+        RemoteActionableKind.STALE -> R.string.actionable_stale_title
+        RemoteActionableKind.OFFLINE -> R.string.actionable_offline_title
+        RemoteActionableKind.AUTH_REQUIRED, RemoteActionableKind.SIGN_IN_FAILURE -> R.string.actionable_auth_title
+        RemoteActionableKind.REVOKED -> R.string.actionable_revoked_title
+        RemoteActionableKind.INCOMPATIBLE, RemoteActionableKind.UPDATE_FAILURE -> R.string.actionable_incompatible_title
+        RemoteActionableKind.RETRY_FAILURE -> R.string.actionable_retry_title
+        RemoteActionableKind.REASSOCIATE_FAILURE -> R.string.actionable_reassociate_title
+        RemoteActionableKind.CONTACT_ADMIN_FAILURE -> R.string.actionable_contact_admin_title
+        RemoteActionableKind.CUSTOM -> error("custom handled above")
+    })
+    val reason = stringResource(when (state.kind) {
+        RemoteActionableKind.PAUSED -> R.string.actionable_paused_reason
+        RemoteActionableKind.LOADING -> R.string.actionable_loading_reason
+        RemoteActionableKind.STALE -> R.string.actionable_stale_reason
+        RemoteActionableKind.OFFLINE -> R.string.actionable_offline_reason
+        RemoteActionableKind.AUTH_REQUIRED, RemoteActionableKind.SIGN_IN_FAILURE -> R.string.actionable_auth_reason
+        RemoteActionableKind.REVOKED, RemoteActionableKind.REASSOCIATE_FAILURE -> R.string.actionable_reassociate_reason
+        RemoteActionableKind.INCOMPATIBLE -> R.string.actionable_incompatible_reason
+        RemoteActionableKind.RETRY_FAILURE -> R.string.actionable_retry_reason
+        RemoteActionableKind.UPDATE_FAILURE -> R.string.actionable_update_reason
+        RemoteActionableKind.CONTACT_ADMIN_FAILURE -> R.string.actionable_contact_admin_reason
+        RemoteActionableKind.CUSTOM -> error("custom handled above")
+    })
+    val actionLabel = when (state.action) {
+        RemoteRecoveryAction.NONE -> null
+        RemoteRecoveryAction.RETRY -> stringResource(R.string.retry)
+        RemoteRecoveryAction.SIGN_IN -> stringResource(R.string.sign_in_again)
+        RemoteRecoveryAction.UPDATE_APP -> stringResource(R.string.check_for_updates)
+        RemoteRecoveryAction.REASSOCIATE -> stringResource(R.string.diagnostic_scan_again)
+        RemoteRecoveryAction.CONTACT_ADMIN -> stringResource(R.string.contact_administrator)
+        RemoteRecoveryAction.RESUME_ON_COMPUTER -> stringResource(R.string.retry_after_resuming)
     }
+    return state.copy(title = title, reason = reason, actionLabel = actionLabel)
 }

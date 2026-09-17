@@ -10,7 +10,6 @@ param(
     [switch]$SkipNpmInstall,
     [switch]$NoDevServer,
     [switch]$NoGateway,
-    [switch]$HotLoad,
     [switch]$EnableRegressionControl,
     [string]$PipIndexUrl = "https://pypi.tuna.tsinghua.edu.cn/simple",
     [switch]$ShowLibPngWarnings
@@ -19,8 +18,10 @@ param(
 $ErrorActionPreference = "Stop"
 $IsProductionLaunch = $LaunchMode -eq "Production"
 $LaunchModeName = $LaunchMode.ToLowerInvariant()
+# Default desktop entry is workbench → desktop_gateway on 28643.
+# V2 surface: Electron owns desktop_gateway directly, no legacy gateway on 28642.
 if ($GatewayPort -eq 0) {
-    $GatewayPort = if ($IsProductionLaunch) { 18642 } else { 28642 }
+    $GatewayPort = 28643
 }
 $StartupStopwatch = [Diagnostics.Stopwatch]::StartNew()
 $env:OPENDRSAI_DEV_START_EPOCH_MS = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString()
@@ -148,47 +149,6 @@ function Assert-DesktopNodeVersion {
     }
 
     throw "Node.js $version is too old for the Windows desktop dev server. This project requires Node.js >= 20.19.0 (Node 22 LTS recommended). Upgrade Node, then remove apps\desktop\node_modules and run npm run dev:bootstrap again."
-}
-
-function Get-TailwindOxideVersion {
-    $oxidePackageJson = "node_modules\@tailwindcss\oxide\package.json"
-    if (Test-Path $oxidePackageJson) {
-        try {
-            $pkg = Get-Content -LiteralPath $oxidePackageJson -Raw | ConvertFrom-Json
-            if ($pkg.version) {
-                return [string]$pkg.version
-            }
-        } catch {
-        }
-    }
-    return "4.2.2"
-}
-
-function Repair-TailwindNativeBinding {
-    param([string]$NpmCommand)
-
-    if (-not (Test-Path "node_modules\@tailwindcss\oxide")) {
-        return
-    }
-
-    $isWindowsX64 = $env:OS -eq "Windows_NT" -and $env:PROCESSOR_ARCHITECTURE -match "^(AMD64|x64)$"
-    if (-not $isWindowsX64) {
-        return
-    }
-
-    $binding = "node_modules\@tailwindcss\oxide-win32-x64-msvc\tailwindcss-oxide.win32-x64-msvc.node"
-    if (Test-Path $binding) {
-        return
-    }
-
-    Write-Host "    Repairing missing Tailwind native binding..." -ForegroundColor Yellow
-    $oxideVersion = Get-TailwindOxideVersion
-    Invoke-StepProcess `
-        -FilePath $NpmCommand `
-        -ArgumentList @("install", "--no-save", "@tailwindcss/oxide-win32-x64-msvc@$oxideVersion") `
-        -Prefix "Installing Tailwind native binding" `
-        -LogName "npm-tailwind-oxide-install" `
-        -LogDir $DevLogDir
 }
 
 function Repair-ElectronBinary {
@@ -463,10 +423,18 @@ function Invoke-StepProcess {
 
     [Console]::Write("`r$((' ' * 120))`r")
     $exitCode = $proc.ExitCode
-    if ($null -eq $exitCode) {
+    if ($null -eq $exitCode -or "" -eq "$exitCode") {
         $successText = $false
         if (Test-Path $stdout) {
-            $successText = Select-String -LiteralPath $stdout -Pattern "installation complete|Developer install complete|Successfully installed|added \d+ packages|up to date, audited \d+ packages" -Quiet
+            $successText = Select-String -LiteralPath $stdout -Pattern "installation complete|Developer install complete|Successfully installed|added \d+ packages|up to date, audited \d+ packages|rebuilt dependencies successfully" -Quiet
+        }
+        if (-not $successText) {
+            $hasStderr = $false
+            if (Test-Path $stderr) {
+                $errContent = (Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue)
+                if ($errContent -and $errContent.Trim() -ne "") { $hasStderr = $true }
+            }
+            if (-not $hasStderr) { $successText = $true }
         }
         if ($successText) {
             $exitCode = 0
@@ -704,11 +672,31 @@ $env:VITE_OPENDRSAI_LAUNCH_MODE = $LaunchModeName
 $env:OPENDRSAI_DESKTOP_DEV = if ($IsProductionLaunch) { "0" } else { "1" }
 $env:OPENDRSAI_ACTIVE_PLATFORM = if ($IsProductionLaunch) { "production" } else { "development" }
 $env:OPENDRSAI_OIDC_ONLY = "1"
+$env:VITE_OPENDRSAI_OIDC_ONLY = "1"
 $PlatformPortalUrl = if ($IsProductionLaunch) { "https://ai.ihep.ac.cn" } else { "https://ai-dev.ihep.ac.cn" }
-$PlatformModelBaseUrl = if ($IsProductionLaunch) { "https://ai.ihep.ac.cn/apiv2/v1" } else { "https://ai-dev.ihep.ac.cn/apiv2/v1" }
+# WebUI test (drsaiv2) and production both use HepAI production base_url for
+# get_ddf_agents (aiapi). Desktop mirrors that for Agent Square in both launch
+# modes. Portal/OIDC stay on the launch-mode portal (ai-dev for Development).
+$PlatformApiBaseUrl = "https://aiapi.ihep.ac.cn/apiv2"
 $env:OPENDRSAI_PLATFORM_BASE_URL = $PlatformPortalUrl
-$env:OPENDRSAI_PLATFORM_API_BASE_URL = $PlatformModelBaseUrl
-$env:OPENDRSAI_MODEL_BASE_URL = $PlatformModelBaseUrl
+$env:OPENDRSAI_PLATFORM_API_BASE_URL = $PlatformApiBaseUrl
+# Skills Square APIs are on WebUI hosts (not HepAI portal used for OIDC):
+# test → drsaiv2 ; production → opendrsai.
+$env:OPENDRSAI_SKILLS_API_BASE_URL = if ($env:OPENDRSAI_SKILLS_API_BASE_URL) {
+    $env:OPENDRSAI_SKILLS_API_BASE_URL
+} elseif ($IsProductionLaunch) {
+    "https://opendrsai.ihep.ac.cn"
+} else {
+    "https://drsaiv2.ihep.ac.cn"
+}
+# OPENDRSAI_MODEL_BASE_URL must NOT override to the production aiapi server.
+# The OIDC token is issued by $PlatformPortalUrl/api (e.g. ai-dev.ihep.ac.cn).
+# Sending a dev OIDC token to the production aiapi.ihep.ac.cn server causes
+# 401 "OIDC signing keys are unavailable" because the production server
+# cannot fetch JWKS from the dev OIDC issuer. Instead, let
+# resolve_hepai_model_base_url() in platform_upstream.py resolve the correct
+# model base URL based on the OIDC issuer (DEVELOPMENT_OIDC_ISSUER → ai-dev).
+$env:OPENDRSAI_DDF_API_BASE_URL = $PlatformApiBaseUrl
 $env:OPENDRSAI_OIDC_ISSUER = "$PlatformPortalUrl/api"
 $BuiltInSkillsDir = Join-Path $RepoRoot "skills\skills"
 if (-not (Test-Path -LiteralPath $BuiltInSkillsDir -PathType Container)) {
@@ -716,6 +704,22 @@ if (-not (Test-Path -LiteralPath $BuiltInSkillsDir -PathType Container)) {
 }
 $env:SYSTEM_SKILLS_DIR = $BuiltInSkillsDir
 Remove-Item Env:HEPAI_API_KEY, Env:OPENAI_API_KEY, Env:OPENAI_ADMIN_KEY -ErrorAction SilentlyContinue
+
+# Propagate GFS cloud settings from the repository .env into the desktop process.
+# desktop_gateway /v1/gfs/* reads DRSAI_GFS_* / GFS_* from process.env (inherited by
+# the spawned gateway). Without this, the restored GFS UI cannot connect.
+$RepoEnvFile = Join-Path $RepoRoot ".env"
+if (Test-Path -LiteralPath $RepoEnvFile) {
+    Get-Content -LiteralPath $RepoEnvFile | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line -or $line.StartsWith("#")) { return }
+        if ($line -match '^(DRSAI_GFS_ENABLED|DRSAI_GFS_MODE|GFS_[A-Z0-9_]+)\s*=\s*(.*)$') {
+            $name = $Matches[1]
+            $value = $Matches[2].Trim().Trim('"').Trim("'")
+            Set-Item -Path "Env:$name" -Value $value
+        }
+    }
+}
 
 # A fresh, isolated developer profile must not stall on an unreachable public
 # PyPI mirror.  The caller can override this with -PipIndexUrl (or the
@@ -776,7 +780,9 @@ Write-Host "  Repository:  $RepoRoot" -ForegroundColor Green
 Write-Host "  DrSai home:  $DrsaiHome" -ForegroundColor Green
 Write-Host "  User data:   $ElectronUserData" -ForegroundColor Green
 Write-Host "  Gateway:     http://127.0.0.1:$GatewayPort" -ForegroundColor Green
-Write-Host "  Platform:    $(if ($IsProductionLaunch) { 'HAI production (OIDC + models)' } else { 'HAI development (OIDC + models)' })" -ForegroundColor Green
+Write-Host "  DRSAI_HOME:  $DrsaiHome" -ForegroundColor Green
+Write-Host "  Platform:    $(if ($IsProductionLaunch) { 'WebUI prod portal + HepAI aiapi (DDF)' } else { 'WebUI test: ai-dev OIDC + HepAI aiapi (DDF)' })" -ForegroundColor Green
+Write-Host "  Skills API:  $($env:OPENDRSAI_SKILLS_API_BASE_URL)" -ForegroundColor Green
 Write-Host "  Skills:      $BuiltInSkillsDir" -ForegroundColor Green
 Write-Host "  Pip index:   $($env:PIP_INDEX_URL)" -ForegroundColor Green
 Write-Host "  Desktop app: $DesktopDir" -ForegroundColor Green
@@ -837,20 +843,11 @@ if ($InstallOnly) {
 
 $GatewayProcess = $null
 $GatewayEnabled = -not $NoGateway -and -not $NoDevServer
-$GatewayHotReload = $GatewayEnabled -and $HotLoad
 Write-Host "[2/3] Gateway" -ForegroundColor Yellow
 if (-not $GatewayEnabled) {
     Write-Host "    SKIP Gateway startup." -ForegroundColor Yellow
-} elseif ($GatewayHotReload) {
-    $GatewayPython = Join-Path $InstallDir "venv\Scripts\python.exe"
-    $GatewayProcess = Start-HotReloadGateway `
-        -PythonPath $GatewayPython `
-        -RepoRoot $RepoRoot `
-        -DrsaiHome $DrsaiHome `
-        -LogDir $DevLogDir `
-        -Port $GatewayPort
 } else {
-    Write-Host "    READY Electron will start Gateway without Python hot reload." -ForegroundColor Green
+    Write-Host "    READY Electron will start desktop_gateway on port $GatewayPort." -ForegroundColor Green
 }
 
 Push-Location $DesktopWorkspaceDir
@@ -885,12 +882,10 @@ try {
         )
         $frontendCacheReady = (Test-Path $FrontendValidationStamp) -and
             ((Get-Content -LiteralPath $FrontendValidationStamp -Raw -ErrorAction SilentlyContinue) -eq $frontendFingerprint) -and
-            (Test-Path "node_modules\electron\dist\electron.exe") -and
-            (Test-Path "node_modules\@tailwindcss\oxide-win32-x64-msvc\tailwindcss-oxide.win32-x64-msvc.node")
+            (Test-Path "node_modules\electron\dist\electron.exe")
         if ($frontendCacheReady) {
             Write-Host "    OK frontend dependency validation cached." -ForegroundColor Green
         } else {
-            Repair-TailwindNativeBinding -NpmCommand $npm
             Repair-ElectronBinary -NpmCommand $npm
             New-Item -ItemType Directory -Force -Path $DevCacheDir | Out-Null
             Set-Content -LiteralPath $FrontendValidationStamp -Value $frontendFingerprint -NoNewline
@@ -918,20 +913,23 @@ try {
     $env:OPENDRSAI_RUNTIME_ROOT = $InstallDir
     $env:OPENDRSAI_ELECTRON_USER_DATA = $ElectronUserData
     $env:OPENDRSAI_GATEWAY_STARTUP = if ($GatewayEnabled) { "eager" } else { "on-demand" }
-    # Source Runtime ownership is session-scoped: normal mode is owned by
-    # Electron, while hot-load mode is owned by the outer watcher below.
+    # Source Runtime ownership is session-scoped: workbench Electron owns
+    # desktop_gateway on 28643. Legacy hot-load is refused above.
     $env:OPENDRSAI_RUNTIME_PERSIST = "0"
+    $env:DRSAI_DESKTOP_GATEWAY_PORT = [string]$GatewayPort
     $env:OPENDRSAI_LAUNCH_GATEWAY_PORT = [string]$GatewayPort
     $env:OPENDRSAI_DEV_GATEWAY_PORT = [string]$GatewayPort
     $env:OPENDRSAI_VOICE_TTS_RUNTIME = "gateway-provider"
-    if ($GatewayHotReload) {
-        $env:DRSAI_GATEWAY_DEV_MANAGED = "1"
-        $env:DRSAI_GATEWAY_HOT_RELOAD = "1"
-        $env:OPENDRSAI_GATEWAY_PORT = [string]$GatewayPort
-    } else {
-        Remove-Item Env:DRSAI_GATEWAY_DEV_MANAGED -ErrorAction SilentlyContinue
-        Remove-Item Env:DRSAI_GATEWAY_HOT_RELOAD -ErrorAction SilentlyContinue
+    # Full-duplex Realtime voice is a development feature under active P2
+    # integration. Production keeps its rollout independently controlled.
+    if (-not $IsProductionLaunch) {
+        $env:OPENDRSAI_ENABLE_DUPLEX_VOICE = "1"
     }
+    # Never leave legacy "already managed" flags set: workbench would otherwise
+    # stand down for a 28642 process that does not speak desktop-v2.
+    Remove-Item Env:DRSAI_GATEWAY_DEV_MANAGED -ErrorAction SilentlyContinue
+    Remove-Item Env:DRSAI_GATEWAY_HOT_RELOAD -ErrorAction SilentlyContinue
+    Remove-Item Env:OPENDRSAI_WORKBENCH_EXTERNAL_RUNTIME -ErrorAction SilentlyContinue
     if (-not $npm) {
         $npm = Resolve-NpmCommand
     }

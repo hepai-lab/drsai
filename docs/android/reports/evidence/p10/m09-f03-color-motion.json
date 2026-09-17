@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "feature_id": "M09-F03",
+  "acceptance_run_id": "p10-round-047-color-motion",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "light_and_dark_body_pairs_wcag_aa": true,
+    "container_text_pairs_wcag_aa": true,
+    "state_always_has_text_and_accessibility_description": true,
+    "system_animation_disabled_stops_connection_pulse": true,
+    "user_reduced_motion_policy_effective": true
+  },
+  "tests": {
+    "OpenDrSaiThemeTest": "expanded contrast matrix passed",
+    "ReducedMotionPolicyTest": "1 test, 0 failures",
+    "RemoteHostStatusPresentationTest": "state text/accessibility suite passed",
+    "testDebugUnitTest": "724 tests, 0 failures, 2 skipped"
+  }
+}

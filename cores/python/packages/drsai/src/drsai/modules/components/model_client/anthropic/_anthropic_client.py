@@ -72,6 +72,9 @@ from drsai.platform_auth import (
     OidcModelCredentialProvider,
     get_model_credential_provider,
     static_model_credentials_allowed,
+    is_token_expired,
+    is_token_expiring_soon,
+    try_refresh_platform_auth,
 )
 
 class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
@@ -101,7 +104,7 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
             self._uses_platform_auth = True
         super().__init__(**kwargs)
 
-    def _bind_platform_auth(self) -> None:
+    async def _bind_platform_auth(self) -> None:
         if not getattr(self, "_uses_platform_auth", True) and not getattr(self, "_oidc_credential_pending", False):
             return
         credential = get_model_credential_provider()
@@ -109,6 +112,13 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
             if getattr(self, "_oidc_credential_pending", False):
                 raise RuntimeError("OIDC credential context is unavailable for this model request.")
             return
+        if isinstance(credential, OidcModelCredentialProvider):
+            if is_token_expiring_soon(credential.access_token):
+                refreshed = await try_refresh_platform_auth()
+                if refreshed is not None:
+                    credential = OidcModelCredentialProvider(refreshed)
+                elif is_token_expired(credential.access_token):
+                    raise ValueError("token_expired: access token has expired and refresh is unavailable.")
         self._client.api_key = credential.access_token
         self._client.base_url = credential.anthropic_base_url
         if credential.delegation_headers:
@@ -116,7 +126,7 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         self._oidc_credential_pending = False
 
     async def create(self, *args: Any, **kwargs: Any):
-        self._bind_platform_auth()
+        await self._bind_platform_auth()
         return await super().create(*args, **kwargs)
 
     def _sanitize_anthropic_message(self, message: MessageParam) -> MessageParam:
@@ -170,7 +180,7 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         cancellation_token: Optional[CancellationToken] = None,
         max_consecutive_empty_chunk_tolerance: int = 0,
     ) -> AsyncGenerator[Union[str, CreateResult], None]:
-        self._bind_platform_auth()
+        await self._bind_platform_auth()
         async for chunk in self.create_stream_tmp(
             messages,
             tools=tools,

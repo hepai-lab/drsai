@@ -178,6 +178,25 @@ export class AgentWorkerAPI {
             }
         );
         const data = await response.json();
+        if (!response.ok) {
+            const d = data?.detail;
+            let msg: string;
+            if (typeof d === "string") {
+                msg = d;
+            } else if (Array.isArray(d)) {
+                msg = d
+                    .map((x: unknown) => {
+                        if (x && typeof x === "object" && "msg" in x) {
+                            return String((x as { msg: unknown }).msg);
+                        }
+                        return typeof x === "string" ? x : JSON.stringify(x);
+                    })
+                    .join(", ");
+            } else {
+                msg = data?.message || `Request failed (${response.status})`;
+            }
+            throw new Error(msg);
+        }
         if (!data.status)
             throw new Error(data.message || "Failed to update user agent");
         return data;
@@ -220,7 +239,6 @@ export class AgentWorkerAPI {
 
     async getUserDefaultAgent(userId: string): Promise<{
         default_agent_id: string | null;
-        stored_default_agent_id: string | null;
         auto_load_default_agent?: boolean;
         default_agent_name?: string | null;
         science_default_agent_name?: string | null;
@@ -234,21 +252,6 @@ export class AgentWorkerAPI {
             throw new Error(data.message || "Failed to fetch user default agent");
         }
         return data.data;
-    }
-
-    async setUserDefaultAgent(userId: string, agentId: string): Promise<void> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/agentworker/user_default_agent`,
-            {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ user_id: userId, agent_id: agentId }),
-            },
-        );
-        const data = await response.json();
-        if (!data.status) {
-            throw new Error(data.message || "Failed to set default agent");
-        }
     }
 }
 

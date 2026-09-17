@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "feature_id": "M03-F06",
+  "acceptance_run_id": "p10-round-015-binding-self-healing",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "binding": {
+    "cold_start_timeout_ms": 45000,
+    "max_attempts": 2,
+    "binder_death_rebind": true,
+    "process_reclaim_rebind": true,
+    "continuous_failure_state": "UNAVAILABLE"
+  },
+  "run_recovery": {
+    "no_side_effect": "run.waiting then checkpoint resume",
+    "side_effect_observed": "side_effect.reconciliation_required",
+    "ordinary_provider_failure": "fail without runtime recovery disguise",
+    "kotlin_lite_fallback": false
+  },
+  "tests": {
+    "testDebugUnitTest": "672 tests, 0 failures, 2 skipped",
+    "FullRuntimeBindingCoordinatorTest": "7 passed",
+    "FullRuntimeRecoveryPolicyTest": "3 passed",
+    "FullRuntimePhysicalAcceptanceTest_API35": "6 passed, 0 skipped"
+  }
+}

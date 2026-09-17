@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import { createReadStream, existsSync } from "fs";
 import { open, readdir, readFile, realpath, stat } from "fs/promises";
 import { createHash } from "crypto";
-import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "path";
 import { inflateRawSync } from "zlib";
 import type {
   MaterialConsistencyAnalysisRequest,
@@ -69,12 +69,7 @@ const NOISY_DIRS = new Set([
   ".turbo",
   ".venv",
   "__pycache__",
-  "build",
-  "coverage",
-  "dist",
   "node_modules",
-  "out",
-  "target",
   "venv",
 ]);
 
@@ -158,6 +153,13 @@ const MEDIA_MIME: Record<string, string> = {
 
 const OFFICE_EXTENSIONS = new Set([".docx", ".pptx", ".xlsx", ".doc", ".ppt", ".xls"]);
 
+/** Whether a file should use the local rich extractor instead of gateway bytes. */
+export function prefersLocalRichPreview(filePath: string | undefined): boolean {
+  if (!filePath) return false;
+  const extension = extname(filePath).toLowerCase();
+  return OFFICE_EXTENSIONS.has(extension) || extension === ".pdf";
+}
+
 export async function getWorkspaceContextOverview(
   rawWorkspacePath: unknown,
   trusted = true,
@@ -189,16 +191,25 @@ export async function listWorkspaceFiles(
   const request = validateTreeRequest(rawRequest);
   const workspacePath = await resolveWorkspaceRoot(request.workspacePath);
   const query = request.query?.trim().toLowerCase() || "";
+  const requestedDirectory = request.directoryPath
+    ? resolve(workspacePath, request.directoryPath)
+    : workspacePath;
+  if (!requestedDirectory.startsWith(`${workspacePath}${sep}`) && requestedDirectory !== workspacePath) {
+    throw new Error("Workspace directory is outside the workspace root.");
+  }
+  const listingRoot = request.directoryPath ? await resolveWorkspaceRoot(requestedDirectory) : workspacePath;
   const maxDepth = clampInt(request.maxDepth, 1, 8, DEFAULT_MAX_DEPTH);
   const maxEntries = clampInt(request.maxEntries, 50, 2_000, DEFAULT_MAX_ENTRIES);
+  const offset = clampInt(request.offset, 0, 1_000_000, 0);
   const gitStatuses = new Map(
     (await getGitChangedFiles(workspacePath)).map((item) => [normalizeRel(item.path), item.status]),
   );
   let totalEntries = 0;
+  let scannedEntries = 0;
   let truncated = false;
 
   async function walk(dirPath: string, depth: number): Promise<WorkspaceFileNode[]> {
-    if (totalEntries >= maxEntries) {
+    if (scannedEntries >= maxEntries + offset) {
       truncated = true;
       return [];
     }
@@ -215,23 +226,31 @@ export async function listWorkspaceFiles(
 
     const nodes: WorkspaceFileNode[] = [];
     for (const entry of entries) {
-      if (totalEntries >= maxEntries) {
+      if (scannedEntries >= maxEntries + offset) {
         truncated = true;
         break;
       }
-      if (entry.name.startsWith(".") && entry.name !== ".claude" && entry.name !== ".env.example") {
-        if (entry.name !== ".env" && entry.name !== ".github") continue;
-      }
+      // Show dot-files by default (align with VSCode).  Only hide the noisy
+      // directories in NOISY_DIRS and version-control dirs.
       if (entry.isDirectory() && NOISY_DIRS.has(entry.name)) continue;
 
       const absolutePath = join(dirPath, entry.name);
       const relativePath = normalizeRel(relative(workspacePath, absolutePath));
       const matchesQuery = !query || relativePath.toLowerCase().includes(query);
       let children: WorkspaceFileNode[] | undefined;
-      if (entry.isDirectory() && depth < maxDepth) {
-        children = await walk(absolutePath, depth + 1);
+      let hasChildren: boolean | undefined;
+      if (entry.isDirectory()) {
+        if (depth < maxDepth) {
+          children = await walk(absolutePath, depth + 1);
+          hasChildren = children.length > 0;
+        } else {
+          hasChildren = true; // conservative: might have children
+        }
       }
       if (!matchesQuery && (!children || children.length === 0)) continue;
+
+      scannedEntries += 1;
+      if (scannedEntries <= offset) continue; // skip entries before offset
 
       const fileStat = await safeStat(absolutePath);
       const fileSize = toSafeNumber(fileStat?.size);
@@ -247,17 +266,29 @@ export async function listWorkspaceFiles(
         gitStatus: gitStatuses.get(relativePath) ?? "clean",
         previewKind: entry.isFile() ? classifyPreviewKind(entry.name, fileSize ?? 0) : undefined,
         children,
+        hasChildren,
         truncated: entry.isDirectory() && depth >= maxDepth,
       });
     }
     return nodes;
   }
 
+  const allNodes = await walk(listingRoot, 0);
+  // When searching, rebuild tree from flat results so the renderer always
+  // gets a proper hierarchy (same as the gateway path).
+  const resultNodes = query
+    ? rebuildLocalTreeFromFlat(allNodes)
+    : allNodes;
+
   return {
     workspacePath,
-    nodes: await walk(workspacePath, 0),
+    nodes: resultNodes,
     totalEntries,
     truncated,
+    nextOffset: truncated && offset + totalEntries < scannedEntries
+      ? offset + totalEntries
+      : undefined,
+    flat: query ? true : undefined,
   };
 }
 
@@ -1036,9 +1067,22 @@ export async function previewWorkspaceFile(
     kind === "office"
   ) {
     const officeText = await extractOfficeText(target, extension, Math.min(fileStat.size, maxBytes));
+    // Include raw bytes for in-browser rich rendering (docx-preview / JSZip).
+    // Cap at 10 MB to avoid IPC serialization issues.
+    const MAX_OFFICE_RAW_BYTES = 10_000_000;
+    let dataUrl: string | undefined;
+    if (fileStat.size <= MAX_OFFICE_RAW_BYTES) {
+      try {
+        const rawBuffer = await readFile(target);
+        dataUrl = `data:${base.mime};base64,${rawBuffer.toString("base64")}`;
+      } catch {
+        // If raw read fails, continue with text-only preview.
+      }
+    }
     return {
       ...base,
       content: officeText || undefined,
+      dataUrl,
       message: officeText
         ? "Extracted a basic text preview from the Office document."
         : getMetadataOnlyMessage(kind),
@@ -1404,9 +1448,14 @@ function validateTreeRequest(rawRequest: unknown): WorkspaceFileTreeRequest {
   const request = rawRequest as Partial<WorkspaceFileTreeRequest>;
   return {
     workspacePath: String(request.workspacePath ?? ""),
+    directoryPath:
+      typeof request.directoryPath === "string" && request.directoryPath.trim()
+        ? request.directoryPath.trim().slice(0, 4096)
+        : undefined,
     query: typeof request.query === "string" ? request.query.slice(0, 200) : undefined,
     maxDepth: typeof request.maxDepth === "number" ? request.maxDepth : undefined,
     maxEntries: typeof request.maxEntries === "number" ? request.maxEntries : undefined,
+    offset: typeof request.offset === "number" ? request.offset : undefined,
   };
 }
 
@@ -1603,8 +1652,8 @@ function classifyPreviewKind(filePath: string, size: number): WorkspacePreviewKi
   if (extension in IMAGE_MIME) return "image";
   if (extension in MEDIA_MIME) return "media";
   if (extension === ".pdf") return "pdf";
-  if (size > 2_000_000) return "large";
   if (OFFICE_EXTENSIONS.has(extension)) return "office";
+  if (size > 2_000_000) return "large";
   if (extension === ".ipynb") return "notebook";
   if (extension === ".md" || extension === ".mdx") return "markdown";
   if (extension === ".html" || extension === ".htm") return "html";
@@ -1996,6 +2045,12 @@ function normalizeRel(value: string): string {
   return value.replace(/\\/g, "/").replace(/^\.?\//, "");
 }
 
+/** Convert an absolute directory path to a workspace-relative POSIX-style path. */
+function relativeWorkspacePath(workspacePath: string, directoryPath: string): string {
+  const rel = relative(workspacePath, directoryPath);
+  return rel.replace(/\\/g, "/");
+}
+
 function clampInt(value: number | undefined, min: number, max: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
   return Math.max(min, Math.min(max, Math.floor(value as number)));
@@ -2037,4 +2092,314 @@ function runGitWithInput(
     });
     child.stdin?.end(input);
   });
+}
+
+/* ---------------------------------------------------------------------------
+ * V2 gateway adapters — convert desktop_gateway response shapes to the
+ * existing WorkspaceFileTreeResult / WorkspaceFilePreview types so the
+ * renderer never needs to change.
+ *
+ * Gateway routes (port 28643):
+ *   GET /v1/workspaces/{id}/files  → listWorkspaceFiles (#15)
+ *   GET /v1/workspaces/{id}/file   → readWorkspaceFile  (#16)
+ * ------------------------------------------------------------------------- */
+
+/** Gateway response entry for GET /v1/workspaces/{id}/files (tree shape). */
+interface GatewayFileTreeEntry {
+  name: string;
+  path: string;               // relative to workspace root
+  directory: boolean;
+  size?: number;
+  modified_at?: string;
+  git_status?: string;
+  children?: GatewayFileTreeEntry[];
+  /**
+   * Present on directory rows: false = verified empty, true = has (or may
+   * have) children.  Absent on rows from older gateways — fall back to
+   * `Boolean(children?.length)`.
+   */
+  has_children?: boolean;
+}
+
+/** Gateway response for GET /v1/workspaces/{id}/files. */
+interface GatewayFileListResponse {
+  workspace_id: string;
+  shape: "flat" | "tree";
+  data: GatewayFileTreeEntry[];
+  total: number;
+  offset: number;
+  next_offset?: number | null;
+  truncated: boolean;
+  scan_limit: number;
+}
+
+/** Gateway response for GET /v1/workspaces/{id}/file. */
+interface GatewayFileReadResponse {
+  path: string;               // relative to workspace root
+  mime: string;
+  truncated: boolean;
+  size: number;
+  modified_at: string;
+  sha256: string;
+  content?: string;            // present when binary === false
+  data_url?: string;           // present when binary === true
+  binary: boolean;
+  encoding?: string | null;
+}
+
+/** Minimal runtime-client surface needed by the adapters. */
+export interface GatewayFileClient {
+  requestFiles<T>(workspaceId: string, endpoint: string, init?: RequestInit): Promise<T>;
+}
+
+function convertGatewayFileNode(
+  entry: GatewayFileTreeEntry,
+  workspacePath: string,
+): WorkspaceFileNode {
+  const absolutePath = join(workspacePath, entry.path);
+  const isDir = entry.directory;
+  return {
+    name: entry.name,
+    path: absolutePath,
+    relativePath: entry.path,
+    type: isDir ? "directory" : "file",
+    extension: !isDir ? extname(entry.name).toLowerCase() : undefined,
+    size: entry.size,
+    modifiedAt: entry.modified_at,
+    gitStatus: (entry.git_status as WorkspaceFileGitStatus | undefined) ?? undefined,
+    previewKind: !isDir ? classifyPreviewKind(entry.name, entry.size ?? 0) : undefined,
+    children: entry.children?.map((child) => convertGatewayFileNode(child, workspacePath)),
+    hasChildren: isDir
+      ? entry.has_children ?? Boolean(entry.children?.length)
+      : undefined,
+  };
+}
+
+/**
+ * Rebuild a nested tree from a flat listing.  Entries carry full relative
+ * paths ("src/components/FilesTree.tsx"); intermediate directories that are
+ * missing from the listing are synthesized as placeholder nodes so the
+ * renderer always receives a proper hierarchy.  Parent directories sort
+ * before their contents, directories before files at the same level.
+ */
+function rebuildTreeFromFlatEntries(
+  entries: GatewayFileTreeEntry[],
+): GatewayFileTreeEntry[] {
+  const nodeByPath = new Map<string, GatewayFileTreeEntry & { children: GatewayFileTreeEntry[] }>();
+  const roots: GatewayFileTreeEntry[] = [];
+
+  const ensureDirectory = (path: string): GatewayFileTreeEntry & { children: GatewayFileTreeEntry[] } => {
+    const existing = nodeByPath.get(path);
+    if (existing) return existing;
+    const name = path.split("/").pop() ?? path;
+    const created: GatewayFileTreeEntry & { children: GatewayFileTreeEntry[] } = {
+      name,
+      path,
+      directory: true,
+      children: [],
+      has_children: true,
+    };
+    nodeByPath.set(path, created);
+    const parentPath = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+    if (parentPath) {
+      ensureDirectory(parentPath).children.push(created);
+    } else {
+      roots.push(created);
+    }
+    return created;
+  };
+
+  for (const entry of entries) {
+    if (entry.directory) {
+      const dir = ensureDirectory(entry.path);
+      // Overlay real metadata (git_status, size, ...) onto the placeholder.
+      Object.assign(dir, { ...entry, children: dir.children, has_children: true });
+      continue;
+    }
+    const node: GatewayFileTreeEntry & { children: GatewayFileTreeEntry[] } = { ...entry, children: [] };
+    nodeByPath.set(entry.path, node);
+    const parentPath = entry.path.includes("/") ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "";
+    if (parentPath) {
+      ensureDirectory(parentPath).children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  const sortLevel = (items: GatewayFileTreeEntry[]) => {
+    items.sort((a, b) =>
+      (a.directory === b.directory ? 0 : a.directory ? -1 : 1)
+      || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    for (const item of items) if (item.children?.length) sortLevel(item.children);
+  };
+  sortLevel(roots);
+  return roots;
+}
+
+/**
+ * Rebuild a nested tree from a flat list of WorkspaceFileNode entries
+ * (local path).  Uses `relativePath` to infer parent-child relationships.
+ * Synthesizes missing intermediate directory nodes so the renderer always
+ * receives a proper hierarchy.
+ */
+function rebuildLocalTreeFromFlat(flatNodes: WorkspaceFileNode[]): WorkspaceFileNode[] {
+  const nodeByPath = new Map<string, WorkspaceFileNode & { children: WorkspaceFileNode[] }>();
+  const roots: WorkspaceFileNode[] = [];
+
+  const ensureDirectory = (relativePath: string, workspacePath: string): WorkspaceFileNode & { children: WorkspaceFileNode[] } => {
+    const existing = nodeByPath.get(relativePath);
+    if (existing) return existing;
+    const name = relativePath.split("/").pop() ?? relativePath;
+    const absolutePath = join(workspacePath, relativePath);
+    const created: WorkspaceFileNode & { children: WorkspaceFileNode[] } = {
+      name,
+      path: absolutePath,
+      relativePath,
+      type: "directory",
+      children: [],
+      hasChildren: true,
+    };
+    nodeByPath.set(relativePath, created);
+    const parentRel = relativePath.includes("/")
+      ? relativePath.slice(0, relativePath.lastIndexOf("/"))
+      : "";
+    if (parentRel) {
+      ensureDirectory(parentRel, workspacePath).children.push(created);
+    } else {
+      roots.push(created);
+    }
+    return created;
+  };
+
+  for (const node of flatNodes) {
+    if (node.type === "directory") {
+      const dir = ensureDirectory(node.relativePath, node.path.slice(0, node.path.length - node.relativePath.length));
+      // Overlay real metadata onto the placeholder.
+      Object.assign(dir, {
+        ...node,
+        children: dir.children,
+        hasChildren: true,
+      });
+      continue;
+    }
+    const enriched: WorkspaceFileNode & { children: WorkspaceFileNode[] } = { ...node, children: [] };
+    nodeByPath.set(node.relativePath, enriched);
+    const parentRel = node.relativePath.includes("/")
+      ? node.relativePath.slice(0, node.relativePath.lastIndexOf("/"))
+      : "";
+    if (parentRel) {
+      const workspaceBase = node.path.slice(0, node.path.length - node.relativePath.length);
+      ensureDirectory(parentRel, workspaceBase).children.push(enriched);
+    } else {
+      roots.push(enriched);
+    }
+  }
+
+  const sortLevel = (items: WorkspaceFileNode[]) => {
+    items.sort((a, b) =>
+      (a.type === "directory" && b.type !== "directory" ? -1
+        : a.type !== "directory" && b.type === "directory" ? 1 : 0)
+      || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    for (const item of items) if (item.children?.length) sortLevel(item.children);
+  };
+  sortLevel(roots);
+  return roots;
+}
+export function convertGatewayFileList(
+  response: GatewayFileListResponse,
+  workspacePath: string,
+): WorkspaceFileTreeResult {
+  const isFlat = response.shape === "flat";
+  const treeData = isFlat
+    ? rebuildTreeFromFlatEntries(response.data)
+    : response.data;
+  return {
+    workspacePath,
+    nodes: treeData.map((entry) => convertGatewayFileNode(entry, workspacePath)),
+    totalEntries: response.total,
+    truncated: response.truncated,
+    nextOffset: response.next_offset ?? undefined,
+    flat: isFlat || undefined,
+    scanLimit: response.scan_limit,
+  };
+}
+
+/** Convert a gateway read-file response to WorkspaceFilePreview. */
+export function convertGatewayFilePreview(
+  response: GatewayFileReadResponse,
+  workspacePath: string,
+): WorkspaceFilePreview {
+  const absolutePath = join(workspacePath, response.path);
+  const name = basename(response.path);
+  const kind = classifyPreviewKind(response.path, response.size);
+  return {
+    workspacePath,
+    path: absolutePath,
+    relativePath: response.path,
+    name,
+    kind,
+    mime: response.mime,
+    size: response.size,
+    modifiedAt: response.modified_at,
+    truncated: response.truncated,
+    fileHash: response.sha256,
+    content: response.content,
+    dataUrl: response.data_url,
+  };
+}
+
+/**
+ * V2 gateway-backed listWorkspaceFiles.  Calls GET /v1/workspaces/{id}/files
+ * (route #15) via the runtime client, then converts the response to the
+ * legacy WorkspaceFileTreeResult shape.
+ */
+export async function listWorkspaceFilesViaGateway(
+  client: GatewayFileClient,
+  request: WorkspaceFileTreeRequest,
+): Promise<WorkspaceFileTreeResult> {
+  const workspaceId = request.workspaceId;
+  if (!workspaceId) throw new Error("workspaceId is required for gateway file listing");
+
+  const params = new URLSearchParams();
+  // When directoryPath is provided, list that directory's direct children.
+  // Convert absolute → relative for the gateway API (which expects relative).
+  if (request.directoryPath?.trim()) {
+    const rel = relativeWorkspacePath(request.workspacePath, request.directoryPath);
+    params.set("path", rel || ".");
+  } else {
+    params.set("path", ".");
+  }
+  params.set("depth", String(clampInt(request.maxDepth, 1, 8, DEFAULT_MAX_DEPTH)));
+  if (request.query?.trim()) params.set("query", request.query.trim());
+  params.set("offset", String(clampInt(request.offset, 0, 1_000_000, 0)));
+  params.set("max_entries", String(clampInt(request.maxEntries, 50, 2_000, DEFAULT_MAX_ENTRIES)));
+
+  const response = await client.requestFiles<GatewayFileListResponse>(
+    workspaceId,
+    `/files?${params.toString()}`,
+  );
+  return convertGatewayFileList(response, request.workspacePath);
+}
+
+/**
+ * V2 gateway-backed previewWorkspaceFile.  Calls GET /v1/workspaces/{id}/file
+ * (route #16) via the runtime client, then converts the response to the
+ * legacy WorkspaceFilePreview shape.
+ */
+export async function previewWorkspaceFileViaGateway(
+  client: GatewayFileClient,
+  request: WorkspaceFilePreviewRequest,
+): Promise<WorkspaceFilePreview> {
+  const workspaceId = request.workspaceId;
+  if (!workspaceId) throw new Error("workspaceId is required for gateway file preview");
+
+  const params = new URLSearchParams();
+  params.set("path", request.path);
+  params.set("max_bytes", String(clampInt(request.maxBytes, 8_000, 500_000, DEFAULT_PREVIEW_BYTES)));
+
+  const response = await client.requestFiles<GatewayFileReadResponse>(
+    workspaceId,
+    `/file?${params.toString()}`,
+  );
+  return convertGatewayFilePreview(response, request.workspacePath);
 }

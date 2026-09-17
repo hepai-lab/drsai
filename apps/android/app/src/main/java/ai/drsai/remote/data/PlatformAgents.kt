@@ -36,12 +36,13 @@ data class PlatformCatalogResult(
 class AccessTokenCoordinator(
     private val tokens: AuthTokenStore,
     private val oidc: TokenLifecycleClient,
+    private val strings: PlatformAgentStrings = EnglishPlatformAgentStrings,
 ) {
     private val mutex = Mutex()
 
     fun current(): String = tokens.accessToken
         ?.takeIf(String::isNotBlank)
-        ?: throw ApiException(401, "请先登录", retryable = false)
+        ?: throw ApiException(401, strings.text(PlatformAgentText.SIGN_IN_FIRST), retryable = false)
 
     suspend fun refreshAfter(failedToken: String): String? = mutex.withLock {
         if (tokens.accessToken != failedToken) return@withLock tokens.accessToken
@@ -56,6 +57,7 @@ class PlatformAgentClient(
     private val auth: AccessTokenCoordinator,
     private val baseUrl: String = BuildConfig.HAI_BASE_URL,
     private val http: OkHttpClient = platformHttpClient(readTimeoutSeconds = 20),
+    private val strings: PlatformAgentStrings = EnglishPlatformAgentStrings,
 ) {
     suspend fun listAgents(refresh: Boolean): PlatformCatalogResult = withContext(Dispatchers.IO) {
         val url = "${baseUrl.trimEnd('/')}$PLATFORM_AGENTS_PATH?refresh=$refresh"
@@ -69,9 +71,9 @@ class PlatformAgentClient(
         }
         response.use {
             val raw = it.body?.string().orEmpty()
-            if (!it.isSuccessful) throw nativeApiError(it.code, raw)
+            if (!it.isSuccessful) throw nativeApiError(it.code, raw, strings)
             val root = runCatching { JSONObject(raw) }
-                .getOrElse { throw ApiException(0, "平台智能体目录返回了无效数据") }
+                .getOrElse { throw ApiException(0, strings.text(PlatformAgentText.INVALID_CATALOG)) }
             val data = root.optJSONObject("data")
             val capabilitiesObject = root.optJSONObject("capabilities")
                 ?: data?.optJSONObject("capabilities")
@@ -92,7 +94,7 @@ class PlatformAgentClient(
                 agents = agents,
                 status = AgentCatalogStatus(
                     state = "ready",
-                    message = "已连接 HAI 平台智能体",
+                    message = strings.text(PlatformAgentText.CATALOG_CONNECTED),
                     apiVersion = apiVersion,
                     capabilities = features,
                 ),
@@ -107,9 +109,9 @@ class PlatformAgentClient(
             val raw = response.body?.string().orEmpty()
             val code = nativeErrorCode(raw)
             response.close()
-            if (code != "token_expired") throw nativeApiError(401, raw)
+            if (code != "token_expired") throw nativeApiError(401, raw, strings)
             val refreshed = auth.refreshAfter(initial)
-                ?: throw ApiException(401, "HAI 登录已过期，请重新登录", retryable = false)
+                ?: throw ApiException(401, strings.text(PlatformAgentText.LOGIN_EXPIRED), retryable = false)
             response = execute(factory(refreshed))
         }
         return response
@@ -118,13 +120,14 @@ class PlatformAgentClient(
     private fun execute(request: Request): Response = try {
         http.newCall(request).execute()
     } catch (error: IOException) {
-        throw ApiException(0, error.message ?: "无法连接 HAI 平台")
+        throw ApiException(0, error.message ?: strings.text(PlatformAgentText.CANNOT_CONNECT))
     }
 }
 
 class AgentRepository(
     private val client: PlatformAgentClient,
     private val dao: ChatDao,
+    private val strings: PlatformAgentStrings = EnglishPlatformAgentStrings,
 ) {
     suspend fun load(userId: String, refresh: Boolean = false): PlatformCatalogResult {
         return try {
@@ -140,7 +143,7 @@ class AgentRepository(
                     cached,
                     AgentCatalogStatus(
                         state = "cached",
-                        message = "平台暂时不可用，正在显示上次同步的智能体",
+                        message = strings.text(PlatformAgentText.CATALOG_CACHED),
                         cached = true,
                     ),
                 )
@@ -149,7 +152,7 @@ class AgentRepository(
                     emptyList(),
                     AgentCatalogStatus(
                         state = if ((error as? ApiException)?.status == 403) "forbidden" else "error",
-                        message = error.message ?: "无法加载平台智能体",
+                        message = error.message ?: strings.text(PlatformAgentText.CATALOG_LOAD_FAILED),
                     ),
                 )
             }
@@ -162,6 +165,7 @@ class PlatformAgentRuntime(
     private val dao: ChatDao,
     private val baseUrl: String = BuildConfig.HAI_BASE_URL,
     private val http: OkHttpClient = platformHttpClient(readTimeoutSeconds = 300),
+    private val strings: PlatformAgentStrings = EnglishPlatformAgentStrings,
 ) {
     private val activeCall = AtomicReference<okhttp3.Call?>()
     private val pausedRuns = ConcurrentHashMap.newKeySet<String>()
@@ -222,11 +226,11 @@ class PlatformAgentRuntime(
                         .build()
                 }
                 response.use {
-                    if (!it.isSuccessful) throw nativeApiError(it.code, it.body?.string().orEmpty())
+                    if (!it.isSuccessful) throw nativeApiError(it.code, it.body?.string().orEmpty(), strings)
                     if (!it.header("Content-Type").orEmpty().startsWith("text/event-stream")) {
-                        throw ApiException(502, "平台智能体返回了无效的流式响应")
+                        throw ApiException(502, strings.text(PlatformAgentText.INVALID_STREAM_RESPONSE))
                     }
-                    val reader = it.body?.charStream() ?: throw ApiException(502, "平台智能体响应为空")
+                    val reader = it.body?.charStream() ?: throw ApiException(502, strings.text(PlatformAgentText.EMPTY_RESPONSE))
                     val parser = SseParser()
                     val chars = CharArray(2048)
                     var sawDone = false
@@ -252,7 +256,7 @@ class PlatformAgentRuntime(
                                     artifacts += artifact
                                     send(RuntimeEvent.Artifact(artifact))
                                 }
-                                val delta = nativeTextDelta(event)
+                                val delta = nativeTextDelta(event, strings)
                                 if (delta.isNotEmpty()) {
                                     text.append(delta)
                                     dao.saveMessage(
@@ -269,9 +273,9 @@ class PlatformAgentRuntime(
                             }
                         }
                     }
-                    if (!sawDone) throw ApiException(0, "平台智能体流在完成前中断")
+                    if (!sawDone) throw ApiException(0, strings.text(PlatformAgentText.STREAM_INTERRUPTED))
                 }
-                if (text.isBlank() && artifacts.isEmpty()) throw ApiException(0, "平台智能体没有返回可显示内容")
+                if (text.isBlank() && artifacts.isEmpty()) throw ApiException(0, strings.text(PlatformAgentText.NO_DISPLAY_CONTENT))
                 dao.saveMessage(
                     MessageEntity(
                         id = assistantId,
@@ -294,7 +298,7 @@ class PlatformAgentRuntime(
                     send(if (paused) RuntimeEvent.Paused else RuntimeEvent.Cancelled)
                 } else {
                     markAssistant(assistantId, conversation.id, text.toString(), "failed")
-                    send(RuntimeEvent.Failed(error.message ?: "平台智能体运行失败", (error as? ApiException)?.retryable ?: true))
+                    send(RuntimeEvent.Failed(error.message ?: strings.text(PlatformAgentText.RUN_FAILED), (error as? ApiException)?.retryable ?: true))
                 }
             } finally {
                 activeCall.set(null)
@@ -316,9 +320,9 @@ class PlatformAgentRuntime(
             val raw = response.body?.string().orEmpty()
             val code = nativeErrorCode(raw)
             response.close()
-            if (code != "token_expired") throw nativeApiError(401, raw)
+            if (code != "token_expired") throw nativeApiError(401, raw, strings)
             val refreshed = auth.refreshAfter(initial)
-                ?: throw ApiException(401, "HAI 登录已过期，请重新登录", retryable = false)
+                ?: throw ApiException(401, strings.text(PlatformAgentText.LOGIN_EXPIRED), retryable = false)
             response = execute(factory(refreshed))
         }
         return response
@@ -330,7 +334,7 @@ class PlatformAgentRuntime(
         return try {
             call.execute()
         } catch (error: IOException) {
-            throw ApiException(0, error.message ?: "平台智能体连接中断")
+            throw ApiException(0, error.message ?: strings.text(PlatformAgentText.CONNECTION_INTERRUPTED))
         }
     }
 
@@ -439,11 +443,11 @@ private fun remoteContext(items: List<MessageEntity>): List<JSONObject> {
     }
 }
 
-internal fun nativeTextDelta(raw: String): String {
+internal fun nativeTextDelta(raw: String, strings: PlatformAgentStrings = EnglishPlatformAgentStrings): String {
     val root = runCatching { JSONObject(raw) }
-        .getOrElse { throw ApiException(502, "平台智能体返回了无效流数据") }
+        .getOrElse { throw ApiException(502, strings.text(PlatformAgentText.INVALID_STREAM_DATA)) }
     root.optJSONObject("error")?.let { error ->
-        throw ApiException(502, error.optString("message", "平台智能体流返回错误"))
+        throw ApiException(502, error.optString("message", strings.text(PlatformAgentText.STREAM_ERROR)))
     }
     return root.optJSONArray("choices")
         ?.optJSONObject(0)
@@ -470,25 +474,29 @@ internal fun nativeArtifacts(raw: String): List<RemoteAttachment> {
     }
 }
 
-internal fun nativeApiError(status: Int, raw: String): ApiException {
+internal fun nativeApiError(
+    status: Int,
+    raw: String,
+    strings: PlatformAgentStrings = EnglishPlatformAgentStrings,
+): ApiException {
     val code = nativeErrorCode(raw)
     val message = when (code) {
-        "token_expired", "invalid_token" -> "HAI 登录已过期，请重新登录"
-        "native_access_forbidden", "agent_forbidden" -> "当前账号没有使用该智能体的权限"
-        "agent_not_found" -> "选择的智能体已不可用，请刷新列表"
-        "agent_chat_unsupported" -> "该智能体暂不支持 Android 对话"
-        "agent_credentials_unavailable" -> "平台尚未准备好该智能体的运行凭据"
-        "agent_credentials_invalid" -> "平台智能体运行凭据无效，请联系管理员"
-        "quota_exceeded" -> "智能体额度已用尽，请稍后重试"
-        "catalog_unavailable" -> "HAI 智能体目录暂时不可用"
+        "token_expired", "invalid_token" -> strings.text(PlatformAgentText.LOGIN_EXPIRED)
+        "native_access_forbidden", "agent_forbidden" -> strings.text(PlatformAgentText.ACCESS_FORBIDDEN)
+        "agent_not_found" -> strings.text(PlatformAgentText.AGENT_NOT_FOUND)
+        "agent_chat_unsupported" -> strings.text(PlatformAgentText.CHAT_UNSUPPORTED)
+        "agent_credentials_unavailable" -> strings.text(PlatformAgentText.CREDENTIALS_UNAVAILABLE)
+        "agent_credentials_invalid" -> strings.text(PlatformAgentText.CREDENTIALS_INVALID)
+        "quota_exceeded" -> strings.text(PlatformAgentText.QUOTA_EXCEEDED)
+        "catalog_unavailable" -> strings.text(PlatformAgentText.CATALOG_UNAVAILABLE)
         else -> when (status) {
-            401 -> "HAI 登录已过期，请重新登录"
-            403 -> "当前账号没有使用平台智能体的权限"
-            404 -> "平台智能体接口不可用"
-            409 -> "该智能体暂不支持对话"
-            429 -> "请求过于频繁或额度不足"
-            in 500..599 -> "HAI 平台智能体服务暂时不可用"
-            else -> "平台智能体请求失败（HTTP $status）"
+            401 -> strings.text(PlatformAgentText.LOGIN_EXPIRED)
+            403 -> strings.text(PlatformAgentText.PLATFORM_ACCESS_FORBIDDEN)
+            404 -> strings.text(PlatformAgentText.API_UNAVAILABLE)
+            409 -> strings.text(PlatformAgentText.CHAT_UNSUPPORTED)
+            429 -> strings.text(PlatformAgentText.REQUEST_LIMITED)
+            in 500..599 -> strings.text(PlatformAgentText.SERVICE_UNAVAILABLE)
+            else -> strings.text(PlatformAgentText.HTTP_REQUEST_FAILED, status)
         }
     }
     return ApiException(status, message, status == 0 || status == 408 || status == 429 || status >= 500)

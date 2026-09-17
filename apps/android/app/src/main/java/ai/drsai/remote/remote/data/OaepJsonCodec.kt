@@ -6,6 +6,8 @@ import org.json.JSONObject
 
 /** Strict OAEP envelope decoder. Legacy Session Event shapes fail closed. */
 object OaepJsonCodec {
+    fun messagePart(value: Map<String, Any?>): OaepMessagePart = messagePart(JSONObject(value))
+
     fun sessionJson(value: OaepSession): JSONObject = JSONObject()
         .put("id", value.id).put("workspace_id", value.workspaceId)
         .putOpt("title", value.title).put("status", value.status)
@@ -17,6 +19,7 @@ object OaepJsonCodec {
         .put("session", sessionJson(value.session))
         .put("runs", JSONArray(value.runs.map(::runJson)))
         .put("items", JSONArray(value.items.map(::itemJson)))
+        .putOpt("mapping_version", value.mappingVersion)
         .put("snapshot_sequence", value.snapshotSequence)
 
     fun eventPageJson(value: OaepEventPage): JSONObject = JSONObject()
@@ -38,6 +41,7 @@ object OaepJsonCodec {
         .put("type", value.type).put("status", value.status).put("sequence", value.sequence)
         .put("created_at", value.createdAt).put("updated_at", value.updatedAt)
         .put("source", sourceJson(value.source)).put("content", contentJsonObject(value.content))
+        .apply { if (value.associations.isNotEmpty()) put("associations", JSONArray(value.associations.map(::associationJson))) }
 
     fun eventJson(value: OaepEvent): JSONObject = JSONObject()
         .put("version", value.version).put("event_id", value.eventId)
@@ -75,6 +79,7 @@ object OaepJsonCodec {
             snapshotSequence = root.getLong("snapshot_sequence").also {
                 require(it >= 0) { "oaep_snapshot_sequence_invalid" }
             },
+            mappingVersion = root.stringOrNull("mapping_version"),
             checkpoint = root.optJSONObject("checkpoint")?.let { checkpoint ->
                 OaepSnapshotCheckpoint(
                     checkpoint.getLong("sequence"), checkpoint.required("snapshot_hash"),
@@ -181,6 +186,7 @@ object OaepJsonCodec {
                 message = "This client cannot render a newer OAEP Item type.",
                 details = mapOf("wire_type" to wireType),
             ),
+            associations = root.objectsOrEmpty("associations").map(::association),
         )
     }
 
@@ -270,7 +276,7 @@ object OaepJsonCodec {
                 text = root.getString("text"),
                 phase = root.stringOrNull("phase"),
                 citations = root.objectsOrEmpty("citations").map { it.toMap() },
-                parts = root.objectsOrEmpty("parts").map { it.toMap() },
+                parts = root.objectsOrEmpty("parts").map(::messagePart),
                 operationRef = operation,
                 resourceRefs = resources,
             )
@@ -339,6 +345,53 @@ object OaepJsonCodec {
         label = root.stringOrNull("label"), digest = root.stringOrNull("digest"),
     )
 
+    private fun messagePart(root: JSONObject): OaepMessagePart {
+        val type = root.required("type")
+        val partId = root.stringOrNull("part_id")
+        return when {
+            type == "text" && partId != null && root.has("text") ->
+                OaepTextMessagePart(partId, root.getString("text"))
+            type == "resource" && partId != null && root.has("association_id") ->
+                OaepResourceMessagePart(partId, root.required("association_id"))
+            type in setOf("text", "image", "audio", "file", "resource_ref") ->
+                OaepLegacyMessagePart(
+                    type = type,
+                    text = root.stringOrNull("text"),
+                    url = root.stringOrNull("url"),
+                    name = root.stringOrNull("name"),
+                    mimeType = root.stringOrNull("mime_type"),
+                    resourceRef = root.objectOrNull("resource_ref")?.let(::resourceRef),
+                )
+            else -> OaepLegacyMessagePart(type = "unsupported")
+        }
+    }
+
+    private fun resourceKey(root: JSONObject) = OaepResourceKey(
+        protocol = root.required("protocol").also { require(it == "owop/1") },
+        authorityId = root.required("authority_id"),
+        workspaceId = root.required("workspace_id"),
+        resourceType = root.required("resource_type"),
+        resourceId = root.required("resource_id"),
+        generation = root.getLong("generation").also { require(it > 0) },
+    )
+
+    private fun association(root: JSONObject) = OaepResourceAssociation(
+        associationId = root.required("association_id"),
+        resource = resourceKey(root.getJSONObject("resource")),
+        relation = root.required("relation"),
+        labelSnapshot = root.required("label_snapshot"),
+        versionSnapshot = root.objectOrNull("version_snapshot")?.let {
+            OaepResourceVersionSnapshot(
+                versionId = it.required("version_id"), digest = it.stringOrNull("digest"),
+                size = it.longOrNull("size"), mimeType = it.stringOrNull("mime_type"),
+                capturedAt = it.stringOrNull("captured_at"),
+            )
+        },
+        locator = root.objectOrNull("locator")?.toMap(),
+        presentation = root.required("presentation"),
+        operationId = root.stringOrNull("operation_id"),
+    )
+
     fun sourceJson(value: OaepSource) = JSONObject()
         .put("backend", value.backend).putOpt("backend_item_id", value.backendItemId)
         .putOpt("backend_event_id", value.backendEventId).putOpt("client", value.client)
@@ -363,11 +416,38 @@ object OaepJsonCodec {
             .putOpt("operation_id", it.operationId).putOpt("label", it.label).putOpt("digest", it.digest)
     })
 
+    private fun messagePartJson(value: OaepMessagePart): JSONObject = when (value) {
+        is OaepTextMessagePart -> JSONObject().put("part_id", value.partId).put("type", "text").put("text", value.text)
+        is OaepResourceMessagePart -> JSONObject().put("part_id", value.partId).put("type", "resource").put("association_id", value.associationId)
+        is OaepLegacyMessagePart -> JSONObject().put("type", value.type)
+            .putOpt("text", value.text).putOpt("url", value.url).putOpt("name", value.name)
+            .putOpt("mime_type", value.mimeType).putOpt("resource_ref", value.resourceRef?.let(::resourceRefJson))
+    }
+
+    private fun resourceRefJson(value: OaepResourceRef) = JSONObject()
+        .put("protocol", value.protocol).put("workspace_id", value.workspaceId)
+        .put("resource_type", value.resourceType).put("resource_id", value.resourceId)
+        .putOpt("operation_id", value.operationId).putOpt("label", value.label).putOpt("digest", value.digest)
+
+    private fun associationJson(value: OaepResourceAssociation) = JSONObject()
+        .put("association_id", value.associationId)
+        .put("resource", JSONObject().put("protocol", value.resource.protocol)
+            .put("authority_id", value.resource.authorityId).put("workspace_id", value.resource.workspaceId)
+            .put("resource_type", value.resource.resourceType).put("resource_id", value.resource.resourceId)
+            .put("generation", value.resource.generation))
+        .put("relation", value.relation).put("label_snapshot", value.labelSnapshot)
+        .put("presentation", value.presentation).putOpt("operation_id", value.operationId)
+        .putOpt("locator", value.locator?.let(::JSONObject))
+        .putOpt("version_snapshot", value.versionSnapshot?.let {
+            JSONObject().put("version_id", it.versionId).putOpt("digest", it.digest)
+                .putOpt("size", it.size).putOpt("mime_type", it.mimeType).putOpt("captured_at", it.capturedAt)
+        })
+
     private fun contentJsonObject(value: OaepItemContent): JSONObject {
         val root = when (value) {
             is OaepMessageContent -> JSONObject().put("role", value.role).put("text", value.text)
                 .putOpt("phase", value.phase).put("citations", JSONArray(value.citations))
-                .put("parts", JSONArray(value.parts))
+                .put("parts", JSONArray(value.parts.map(::messagePartJson)))
             is OaepReasoningContent -> JSONObject().put("segments", JSONArray(value.segments))
             is OaepPlanContent -> JSONObject().put("text", value.text).put("steps", JSONArray(value.steps))
                 .putOpt("explanation", value.explanation)

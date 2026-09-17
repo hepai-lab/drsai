@@ -5,8 +5,11 @@ export const MENU_IDS = {
   savedPlan: "saved_plan",
   results: "results",
   skillsSquare: "skills_square",
+  skillsLocal: "skills_local",
+  skillsOnline: "skills_online",
   plugins: "plugins",
   library: "library",
+  knowledgeBase: "knowledge_base",
   approvalCenter: "approval_center",
   profile: "profile",
   usageAnalytics: "usage_analytics",
@@ -18,13 +21,7 @@ export const MENU_IDS = {
 
 export type NavId = (typeof MENU_IDS)[keyof typeof MENU_IDS];
 
-export type RightTab =
-  | "run"
-  | "files"
-  | "templates"
-  | "browser"
-  | "terminal"
-  | "debug";
+export type RightTab = "files";
 export type AppLanguage = "en" | "zh";
 
 export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
@@ -35,9 +32,12 @@ export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
     [MENU_IDS.myAgents]: "我的智能体",
     [MENU_IDS.agentSquare]: "智能体",
     [MENU_IDS.savedPlan]: "已保存计划",
-    [MENU_IDS.skillsSquare]: "Skills",
+    [MENU_IDS.skillsSquare]: "技能",
+    [MENU_IDS.skillsLocal]: "本地技能",
+    [MENU_IDS.skillsOnline]: "在线技能",
     [MENU_IDS.plugins]: "插件",
     [MENU_IDS.library]: "GFS 云盘",
+    [MENU_IDS.knowledgeBase]: "知识库",
     [MENU_IDS.profile]: "设置",
     [MENU_IDS.usageAnalytics]: "使用分析",
     [MENU_IDS.channels]: "频道",
@@ -52,8 +52,11 @@ export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
     [MENU_IDS.agentSquare]: "Agents",
     [MENU_IDS.savedPlan]: "Saved Plans",
     [MENU_IDS.skillsSquare]: "Skills",
+    [MENU_IDS.skillsLocal]: "Local skills",
+    [MENU_IDS.skillsOnline]: "Online skills",
     [MENU_IDS.plugins]: "Plugins",
     [MENU_IDS.library]: "GFS Storage",
+    [MENU_IDS.knowledgeBase]: "Knowledge",
     [MENU_IDS.approvalCenter]: "Approval Center",
     [MENU_IDS.profile]: "Settings",
     [MENU_IDS.usageAnalytics]: "Usage Analytics",
@@ -101,6 +104,8 @@ const navDefinitions: Array<{
     id: "chat",
     items: [
       { id: MENU_IDS.currentSession, enabled: true },
+      { id: MENU_IDS.library, enabled: true },
+      { id: MENU_IDS.knowledgeBase, enabled: true },
       { id: MENU_IDS.results, enabled: true },
     ],
   },
@@ -108,7 +113,8 @@ const navDefinitions: Array<{
     id: "agents",
     items: [
       { id: MENU_IDS.agentSquare, enabled: true },
-      { id: MENU_IDS.skillsSquare, enabled: true },
+      { id: MENU_IDS.skillsLocal, enabled: true },
+      { id: MENU_IDS.skillsOnline, enabled: true },
     ],
   },
   {
@@ -146,32 +152,17 @@ export function getNavItems(language: AppLanguage): NavItem[] {
 
 const rightTabLabels: Record<AppLanguage, Record<RightTab, string>> = {
   zh: {
-    run: "运行",
-    debug: "调试",
     files: "文件",
-    templates: "模板",
-    browser: "浏览器",
-    terminal: "终端",
   },
   en: {
-    run: "Run",
     files: "Files",
-    templates: "Templates",
-    browser: "Browser",
-    terminal: "Terminal",
-    debug: "Debug",
   },
 };
 
 export function getRightTabs(
-  language: AppLanguage,
+  _language: AppLanguage,
 ): Array<{ id: RightTab; label: string }> {
-  return (
-    ["run", "files", "browser", "terminal", "debug"] as RightTab[]
-  ).map((id) => ({
-    id,
-    label: rightTabLabels[language][id],
-  }));
+  return [{ id: "files", label: rightTabLabels[_language ?? "en"].files }];
 }
 
 export const navSections: NavSection[] = getNavSections("zh");

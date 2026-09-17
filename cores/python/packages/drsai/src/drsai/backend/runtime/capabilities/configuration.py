@@ -57,6 +57,12 @@ _CURRENT_INFO = re.compile(
     r"latest|recent|current|today|schedule|conference|event|news|price|version)",
     re.IGNORECASE,
 )
+_RETRYABLE_MANAGED_STATUS = frozenset({
+    "worker_unavailable", "provider_unavailable", "timeout", "provider_timeout", "rate_limited",
+})
+_CREDENTIAL_MANAGED_STATUS = frozenset({
+    "permission_denied", "login_required", "authentication_failed",
+})
 
 
 def prompt_requires_current_web(prompt: str, *, current_year: int | None = None) -> bool:
@@ -75,6 +81,23 @@ def prompt_requires_current_web(prompt: str, *, current_year: int | None = None)
     year = current_year or datetime.now(UTC).year
     mentioned = [int(value) for value in re.findall(r"(?<!\d)(20\d{2})(?!\d)", normalized)]
     return any(value >= year for value in mentioned)
+
+
+def classify_managed_web_search_status(status: str) -> CapabilityConfigurationRequest | None:
+    """Map a non-available HAI-managed search status to a recoverable pause.
+
+    Transient transport failures stay with the caller so they can raise a
+    retryable RuntimeExecutionError. Account/policy denials must not fail the
+    whole Run; Desktop already knows how to offer answer-without-network.
+    """
+
+    code = str(status or "worker_unavailable").strip() or "worker_unavailable"
+    if code == "available" or code in _RETRYABLE_MANAGED_STATUS:
+        return None
+    reason: CapabilityReason = (
+        "credential_unavailable" if code in _CREDENTIAL_MANAGED_STATUS else "policy_denied"
+    )
+    return CapabilityConfigurationRequest("web.search", "public_web", "tavily", reason)
 
 
 def classify_web_search_configuration(

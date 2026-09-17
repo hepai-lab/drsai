@@ -43,9 +43,9 @@ data class OidcConfiguration(
     val usesNativeRedirect: Boolean get() = nativeRedirectUri.isNotBlank()
 
     init {
-        require(clientId.isNotBlank()) { "OIDC client_id 不能为空" }
+        require(clientId.isNotBlank()) { "OIDC client_id must not be blank" }
         require(!usesNativeRedirect || nativeRedirectUri == OIDC_NATIVE_REDIRECT_URI) {
-            "Android 原生回调必须为 $OIDC_NATIVE_REDIRECT_URI"
+            "Android native redirect must be $OIDC_NATIVE_REDIRECT_URI"
         }
     }
 
@@ -78,15 +78,16 @@ internal fun validateAuthorizationCallback(
     callback: Uri,
     transaction: OidcLoginTransaction,
     now: Long = System.currentTimeMillis(),
+    strings: OidcStrings = EnglishOidcStrings,
 ): String {
     if (transaction.createdAt > now + 60_000 || now - transaction.createdAt > OIDC_AUTH_TIMEOUT_MS) {
-        throw ApiException(401, "登录请求已过期，请重新登录", retryable = false)
+        throw ApiException(401, strings.text(OidcText.REQUEST_EXPIRED), retryable = false)
     }
     val expected = Uri.parse(transaction.redirectUri)
     val sameDestination = callback.scheme.equals(expected.scheme, ignoreCase = true) &&
         callback.authority.equals(expected.authority, ignoreCase = true) &&
         callback.path == expected.path
-    if (!sameDestination) throw ApiException(401, "登录回调地址不匹配", retryable = false)
+    if (!sameDestination) throw ApiException(401, strings.text(OidcText.CALLBACK_MISMATCH), retryable = false)
     val error = callback.getQueryParameter("error")
     if (!error.isNullOrBlank()) {
         throw ApiException(
@@ -96,11 +97,11 @@ internal fun validateAuthorizationCallback(
         )
     }
     if (callback.getQueryParameter("state") != transaction.state) {
-        throw ApiException(401, "登录状态校验失败", retryable = false)
+        throw ApiException(401, strings.text(OidcText.STATE_INVALID), retryable = false)
     }
     return callback.getQueryParameter("code")
         ?.takeIf(String::isNotBlank)
-        ?: throw ApiException(401, "登录回调缺少授权码", retryable = false)
+        ?: throw ApiException(401, strings.text(OidcText.CODE_MISSING), retryable = false)
 }
 
 class OidcClient(
@@ -110,6 +111,7 @@ class OidcClient(
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build(),
+    private val strings: OidcStrings = EnglishOidcStrings,
 ) : TokenLifecycleClient {
     @Volatile private var metadataCache: JSONObject? = null
     @Volatile private var jwksCache: JSONObject? = null
@@ -153,7 +155,7 @@ class OidcClient(
     suspend fun finishLogin(session: OidcLoginSession, redirect: Uri? = null): AuthTokens = withContext(Dispatchers.IO) {
         try {
             val callback = redirect ?: withTimeout(OIDC_AUTH_TIMEOUT_MS) { waitForCallback(session) }
-            val code = validateAuthorizationCallback(callback, session.transaction)
+            val code = validateAuthorizationCallback(callback, session.transaction, strings = strings)
             val token = tokenRequest(
                 FormBody.Builder()
                     .add("grant_type", "authorization_code")
@@ -209,7 +211,7 @@ class OidcClient(
     }
 
     private suspend fun waitForCallback(session: OidcLoginSession): Uri {
-        val server = session.server ?: throw ApiException(401, "原生登录回调尚未返回")
+        val server = session.server ?: throw ApiException(401, strings.text(OidcText.CALLBACK_PENDING))
         while (currentCoroutineContext().isActive) {
             try {
                 server.accept().use { socket ->
@@ -229,7 +231,7 @@ class OidcClient(
                 // Wake periodically so coroutine cancellation is observed.
             }
         }
-        throw ApiException(401, "登录已取消")
+        throw ApiException(401, strings.text(OidcText.LOGIN_CANCELLED))
     }
 
     private fun writeAppReturnResponse(socket: java.net.Socket) {
@@ -288,10 +290,10 @@ class OidcClient(
         response.close()
         val json = runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
         if (status !in 200..299 || !json.optString("token_type").equals("bearer", ignoreCase = true)) {
-            throw ApiException(status, json.optString("error_description", json.optString("error", "OIDC Token 请求失败")))
+            throw ApiException(status, json.optString("error_description", json.optString("error", strings.text(OidcText.TOKEN_REQUEST_FAILED))))
         }
         if (!json.has("access_token") || !json.has("id_token")) {
-            throw ApiException(status, "OIDC Token 响应不完整")
+        throw ApiException(status, strings.text(OidcText.TOKEN_INCOMPLETE))
         }
         return json
     }
@@ -308,12 +310,12 @@ class OidcClient(
         validateClaims(idClaims, clientId)
         validateClaims(accessClaims, "hai-api")
         if (expectedNonce != null && idClaims.optString("nonce") != expectedNonce) {
-            throw ApiException(401, "OIDC nonce 校验失败")
+            throw ApiException(401, strings.text(OidcText.NONCE_INVALID))
         }
         val subject = idClaims.optString("sub", accessClaims.optString("sub"))
-        if (subject.isBlank()) throw ApiException(401, "OIDC Token 缺少用户标识")
+        if (subject.isBlank()) throw ApiException(401, strings.text(OidcText.SUBJECT_MISSING))
         val refreshToken = token.optString("refresh_token", previousRefreshToken.orEmpty())
-        if (refreshToken.isBlank()) throw ApiException(401, "OIDC 未返回 Refresh Token")
+        if (refreshToken.isBlank()) throw ApiException(401, strings.text(OidcText.REFRESH_MISSING))
         return AuthTokens(
             accessToken = accessToken,
             refreshToken = refreshToken,
@@ -322,9 +324,9 @@ class OidcClient(
     }
 
     private fun validateClaims(claims: JSONObject, audience: String) {
-        if (claims.optString("iss") != OIDC_ISSUER) throw ApiException(401, "OIDC issuer 校验失败")
-        if (!audienceIncludes(claims.opt("aud"), audience)) throw ApiException(401, "OIDC audience 校验失败")
-        if (claims.optLong("exp") <= System.currentTimeMillis() / 1000) throw ApiException(401, "OIDC Token 已过期")
+        if (claims.optString("iss") != OIDC_ISSUER) throw ApiException(401, strings.text(OidcText.ISSUER_INVALID))
+        if (!audienceIncludes(claims.opt("aud"), audience)) throw ApiException(401, strings.text(OidcText.AUDIENCE_INVALID))
+        if (claims.optLong("exp") <= System.currentTimeMillis() / 1000) throw ApiException(401, strings.text(OidcText.TOKEN_EXPIRED))
     }
 
     private fun audienceIncludes(raw: Any?, expected: String): Boolean = when (raw) {
@@ -335,14 +337,14 @@ class OidcClient(
 
     private fun verifyJwt(token: String): JSONObject {
         val parts = token.split('.')
-        if (parts.size != 3) throw ApiException(401, "OIDC 返回了无效 JWT")
+        if (parts.size != 3) throw ApiException(401, strings.text(OidcText.JWT_INVALID))
         val header = JSONObject(String(base64UrlDecode(parts[0]), StandardCharsets.UTF_8))
-        if (header.optString("alg") != "RS256") throw ApiException(401, "OIDC Token 必须使用 RS256")
+        if (header.optString("alg") != "RS256") throw ApiException(401, strings.text(OidcText.RS256_REQUIRED))
         val keys = jwksBlocking().getJSONArray("keys")
         val kid = header.optString("kid")
         val key = (0 until keys.length()).map { keys.getJSONObject(it) }
             .firstOrNull { it.optString("kty") == "RSA" && (kid.isBlank() || it.optString("kid") == kid) }
-            ?: throw ApiException(401, "找不到 OIDC 签名密钥")
+            ?: throw ApiException(401, strings.text(OidcText.SIGNING_KEY_MISSING))
         val publicKey = KeyFactory.getInstance("RSA").generatePublic(
             RSAPublicKeySpec(
                 BigInteger(1, base64UrlDecode(key.getString("n"))),
@@ -354,7 +356,7 @@ class OidcClient(
             update("${parts[0]}.${parts[1]}".toByteArray(StandardCharsets.US_ASCII))
             verify(base64UrlDecode(parts[2]))
         }
-        if (!valid) throw ApiException(401, "OIDC Token 签名校验失败")
+        if (!valid) throw ApiException(401, strings.text(OidcText.SIGNATURE_INVALID))
         return JSONObject(String(base64UrlDecode(parts[1]), StandardCharsets.UTF_8))
     }
 
@@ -368,7 +370,7 @@ class OidcClient(
         response.close()
         val json = runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
         if (status !in 200..299 || json.optString("issuer") != OIDC_ISSUER) {
-            throw ApiException(status, "无法加载 HAI OIDC 配置")
+            throw ApiException(status, strings.text(OidcText.CONFIG_LOAD_FAILED))
         }
         metadataCache = json
         return json
@@ -385,7 +387,7 @@ class OidcClient(
         val json = runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
         val keys = json.optJSONArray("keys")
         if (status !in 200..299 || keys == null || keys.length() == 0) {
-            throw ApiException(status, "无法加载 HAI OIDC 签名密钥")
+            throw ApiException(status, strings.text(OidcText.JWKS_LOAD_FAILED))
         }
         jwksCache = json
         return json

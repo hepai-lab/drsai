@@ -19,6 +19,7 @@ import {
 import { DRSAI_HOME } from "./paths";
 import { backupLegacyWorkspaceDataOnce, migrateLegacyWorkspaceRecords, migrateWorkspaceToAuthoritativeId, recordWorkspaceIdMigration } from "./workspaceMigrations";
 import { LocalRuntimeClient } from "./runtimeClient";
+import { RemoteProtocolError } from "../api/remoteSshProtocol";
 import { isRemoteAcceptanceWorkspace } from "./remoteWorkspaceRestorePolicy";
 import { replaceFileSafely } from "./atomicFileReplace";
 import { ensureDefaultWorkspaceDirectory, migrateLegacyDefaultWorkspaceDirectory } from "./defaultWorkspace";
@@ -281,7 +282,14 @@ export async function deleteWorkspace(rawId: unknown): Promise<boolean> {
   const workspaces = await readWorkspaces();
   const existing = workspaces.find((workspace) => workspace.id === rawId);
   if (existing?.location !== "remote") {
-    await (await LocalRuntimeClient.connect()).closeWorkspace(rawId);
+    try {
+      await (await LocalRuntimeClient.connect()).closeWorkspace(rawId);
+    } catch (error) {
+      // 404 means the workspace is not registered on the gateway side (e.g.
+      // it was created locally but never opened, or the gateway was reset).
+      // This is not an error — proceed to remove the local record.
+      if (!(error instanceof RemoteProtocolError && error.status === 404)) throw error;
+    }
   }
   const next = workspaces.filter((workspace) => workspace.id !== rawId);
   await writeWorkspaces(next);

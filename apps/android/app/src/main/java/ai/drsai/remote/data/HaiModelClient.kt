@@ -105,6 +105,7 @@ class HaiModelClient(
         .build(),
     private val providerStore: ModelConfigurationResolver? = null,
     private val requestTemperature: Double? = null,
+    private val strings: ModelGatewayStrings = EnglishModelGatewayStrings,
 ) : ModelGateway, ToolChoiceAwareModelGateway, PinnedModelRouteGateway {
     init {
         require(requestTemperature == null || requestTemperature in 0.0..2.0) {
@@ -149,7 +150,7 @@ class HaiModelClient(
         }
     }
 
-    override fun selectModel(models: List<ModelInfo>): ModelInfo = selectPreferredModel(models)
+    override fun selectModel(models: List<ModelInfo>): ModelInfo = selectPreferredModel(models, strings)
 
     override suspend fun streamCompletion(
         model: String,
@@ -271,7 +272,7 @@ class HaiModelClient(
                 it.code, it.body?.string().orEmpty(), customProvider, upstreamModel,
                 toolSchemaRequest = wireTools != null && wireTools.length() > 0,
             )
-            val reader = it.body?.charStream() ?: throw ApiException(0, "模型响应为空")
+            val reader = it.body?.charStream() ?: throw ApiException(0, strings.text(ModelGatewayText.EMPTY_RESPONSE))
             val parser = SseParser()
             val chars = CharArray(2048)
             var sawDone = false
@@ -298,10 +299,10 @@ class HaiModelClient(
                 }
             }
             if (!sawDone) throw ApiException(
-                0, "模型流在完成前中断", retryable = true, code = "model_stream_interrupted",
+                0, strings.text(ModelGatewayText.STREAM_INTERRUPTED), retryable = true, code = "model_stream_interrupted",
             )
             if (!sawOutput) throw ApiException(
-                0, "模型返回了空响应，请重试", retryable = true, code = "model_empty_response",
+                0, strings.text(ModelGatewayText.RETRY_EMPTY_RESPONSE), retryable = true, code = "model_empty_response",
             )
         }
     }
@@ -311,7 +312,7 @@ class HaiModelClient(
     }
 
     private suspend fun authenticatedResponse(factory: (String) -> Request): Response {
-        val initial = tokens.accessToken ?: throw ApiException(401, "请先登录", retryable = false)
+        val initial = tokens.accessToken ?: throw ApiException(401, strings.text(ModelGatewayText.SIGN_IN_FIRST), retryable = false)
         var response = execute(factory(initial))
         if (response.code == 401 && refresh(initial)) {
             response.close()
@@ -326,7 +327,7 @@ class HaiModelClient(
         try {
             call.execute().also { activeResponse.set(it) }
         } catch (error: IOException) {
-            throw ApiException(0, error.message ?: "网络连接失败")
+            throw ApiException(0, error.message ?: strings.text(ModelGatewayText.NETWORK_FAILED))
         } finally {
             activeCall.compareAndSet(call, null)
         }
@@ -400,15 +401,15 @@ class HaiModelClient(
             "schema", "input_schema", "tools", "tool_choice", "function",
         ).any { raw.contains(it, ignoreCase = true) }
         val message = when {
-            imageUnsupported -> "当前 $providerName 模型不支持图片输入，请切换到视觉模型"
-            schemaRejected -> "$providerName 不接受当前工具 Schema$routeSuffix"
-            status == 401 && provider == null -> "HAI 登录已过期，请重新登录"
-            status == 401 -> "$providerName API Key 无效或已过期"
-            status == 403 -> "$providerName 拒绝访问当前模型"
-            status == 404 -> "$providerName 未提供请求的模型$routeSuffix"
-            status == 429 -> "模型请求过于频繁或额度不足，请稍后重试"
-            status in 500..599 -> "$providerName 模型服务暂时不可用（HTTP $status）$routeSuffix"
-            else -> safeDetail.takeIf(String::isNotBlank) ?: "模型请求失败（HTTP $status）"
+            imageUnsupported -> strings.text(ModelGatewayText.IMAGE_UNSUPPORTED, providerName)
+            schemaRejected -> strings.text(ModelGatewayText.SCHEMA_REJECTED, providerName, routeSuffix)
+            status == 401 && provider == null -> strings.text(ModelGatewayText.LOGIN_EXPIRED)
+            status == 401 -> strings.text(ModelGatewayText.API_KEY_INVALID, providerName)
+            status == 403 -> strings.text(ModelGatewayText.MODEL_FORBIDDEN, providerName)
+            status == 404 -> strings.text(ModelGatewayText.MODEL_NOT_FOUND, providerName, routeSuffix)
+            status == 429 -> strings.text(ModelGatewayText.RATE_LIMITED)
+            status in 500..599 -> strings.text(ModelGatewayText.SERVICE_UNAVAILABLE, providerName, status, routeSuffix)
+            else -> safeDetail.takeIf(String::isNotBlank) ?: strings.text(ModelGatewayText.REQUEST_FAILED, status)
         }
         return ApiException(
             status,
@@ -419,9 +420,9 @@ class HaiModelClient(
     }
 
     private fun parseDelta(raw: String): ModelDelta {
-        val root = runCatching { JSONObject(raw) }.getOrElse { throw ApiException(0, "模型返回了无效流数据") }
+        val root = runCatching { JSONObject(raw) }.getOrElse { throw ApiException(0, strings.text(ModelGatewayText.INVALID_STREAM)) }
         root.optJSONObject("error")?.let {
-            throw ApiException(0, SensitiveDataRedactor.redact(it.optString("message", "模型流返回错误")))
+            throw ApiException(0, SensitiveDataRedactor.redact(it.optString("message", strings.text(ModelGatewayText.STREAM_ERROR))))
         }
         val choice = root.optJSONArray("choices")?.optJSONObject(0)
             ?: return ModelDelta(null, emptyList(), null)
@@ -442,6 +443,9 @@ class HaiModelClient(
             finishReason = choice.stringOrNull("finish_reason")?.takeIf(String::isNotBlank),
             // Only the provider's explicit public summary channel is accepted. Never expose reasoning_content/CoT.
             reasoningSummary = delta.stringOrNull("reasoning_summary")?.takeIf(String::isNotBlank),
+            // Opaque provider continuation. It is never projected to UI/OAEP and is only replayed
+            // with the immediately following assistant tool-call message.
+            providerReasoningContent = delta.stringOrNull("reasoning_content")?.takeIf(String::isNotEmpty),
         )
     }
 
@@ -470,6 +474,9 @@ class HaiModelClient(
                     .put("type", "function")
                     .put("function", JSONObject().put("name", toHaiToolName(call.name)).put("arguments", call.arguments))
             }))
+        }
+        if (message.role == "assistant" && message.toolCalls.isNotEmpty()) {
+            message.providerReasoningContent?.takeIf(String::isNotEmpty)?.let { json.put("reasoning_content", it) }
         }
         return json
     }
@@ -525,7 +532,7 @@ private fun JSONObject.stringOrNull(name: String): String? {
                 it.code, it.body?.string().orEmpty(), provider, model,
                 toolSchemaRequest = wireTools != null && wireTools.length() > 0,
             )
-            val reader = it.body?.charStream() ?: throw ApiException(0, "模型响应为空")
+            val reader = it.body?.charStream() ?: throw ApiException(0, strings.text(ModelGatewayText.EMPTY_RESPONSE))
             val parser = SseParser()
             val chars = CharArray(2048)
             var completed = false
@@ -549,10 +556,10 @@ private fun JSONObject.stringOrNull(name: String): String? {
                 }
             }
             if (!completed) throw ApiException(
-                0, "模型流在完成前中断", retryable = true, code = "model_stream_interrupted",
+                0, strings.text(ModelGatewayText.STREAM_INTERRUPTED), retryable = true, code = "model_stream_interrupted",
             )
             if (!sawOutput) throw ApiException(
-                0, "模型返回了空响应，请重试", retryable = true, code = "model_empty_response",
+                0, strings.text(ModelGatewayText.RETRY_EMPTY_RESPONSE), retryable = true, code = "model_empty_response",
             )
         }
     }
@@ -579,8 +586,8 @@ private fun JSONObject.stringOrNull(name: String): String? {
     }
 
     private fun parseAnthropicDelta(raw: String): ModelDelta {
-        val root = runCatching { JSONObject(raw) }.getOrElse { throw ApiException(0, "模型返回了无效流数据") }
-        root.optJSONObject("error")?.let { throw ApiException(0, it.optString("message", "模型流返回错误")) }
+        val root = runCatching { JSONObject(raw) }.getOrElse { throw ApiException(0, strings.text(ModelGatewayText.INVALID_STREAM)) }
+        root.optJSONObject("error")?.let { throw ApiException(0, it.optString("message", strings.text(ModelGatewayText.STREAM_ERROR))) }
         return when (root.optString("type")) {
             "content_block_start" -> {
                 val block = root.optJSONObject("content_block") ?: JSONObject()
@@ -609,8 +616,8 @@ internal fun fromHaiToolName(wire: String): String = wire.replace("__dot__", "."
 private fun ModelDelta.isMeaningful(): Boolean =
     !content.isNullOrEmpty() || toolCalls.isNotEmpty() || !reasoningSummary.isNullOrEmpty()
 
-internal fun selectPreferredModel(models: List<ModelInfo>): ModelInfo {
-    if (models.isEmpty()) throw ApiException(404, "当前 HAI 账号没有可用模型", retryable = false)
+internal fun selectPreferredModel(models: List<ModelInfo>, strings: ModelGatewayStrings = EnglishModelGatewayStrings): ModelInfo {
+    if (models.isEmpty()) throw ApiException(404, strings.text(ModelGatewayText.NO_AVAILABLE_MODEL), retryable = false)
     return models.firstOrNull(ModelInfo::tools)
         ?: models.firstOrNull { it.id == "deepseek-ai/deepseek-v4-pro" }
         ?: models.firstOrNull { it.id.contains("deepseek-v4-pro", ignoreCase = true) }

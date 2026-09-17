@@ -37,6 +37,30 @@ val desktopAgentParityComplete = p9AcceptanceItems.all {
         (it["tests"] as? List<*>)?.isNotEmpty() == true &&
         (it["evidence"] as? List<*>)?.isNotEmpty() == true
 }
+val p10AcceptanceLedgerFile = rootProject.file(
+    "../../docs/android/reports/progress/ANDROID_P10_ACCEPTANCE_LEDGER.json"
+)
+val p10AcceptanceLedger = JsonSlurper().parse(p10AcceptanceLedgerFile) as Map<*, *>
+val p10AcceptanceItems = (p10AcceptanceLedger["items"] as? List<*>)
+    ?.map { it as? Map<*, *> ?: error("Invalid P10 acceptance item") }
+    ?: error("P10 acceptance ledger items are missing")
+val expectedP10Ids = (1..10).flatMap { module ->
+    (1..6).map { feature -> "M%02d-F%02d".format(module, feature) }
+}
+val actualP10Ids = p10AcceptanceItems.map { it["id"]?.toString().orEmpty() }
+require(p10AcceptanceLedger["schema_version"] == 1) { "Unsupported P10 acceptance ledger schema" }
+require(p10AcceptanceLedger["expected_total"] == 60) { "P10 acceptance total must be 60" }
+require(actualP10Ids == expectedP10Ids) { "P10 acceptance IDs are missing, duplicated, or out of order" }
+p10AcceptanceItems.filter { it["status"] == "accepted" }.forEach { item ->
+    require((item["tests"] as? List<*>)?.isNotEmpty() == true) { "Accepted P10 item ${item["id"]} has no tests" }
+    require((item["evidence"] as? List<*>)?.isNotEmpty() == true) { "Accepted P10 item ${item["id"]} has no evidence" }
+}
+val p10ProductizationComplete = p10AcceptanceItems.all {
+    it["status"] == "accepted" &&
+        (it["tests"] as? List<*>)?.isNotEmpty() == true &&
+        (it["evidence"] as? List<*>)?.isNotEmpty() == true
+}
+val p10ReleaseCandidateReady = desktopAgentParityComplete && p10ProductizationComplete
 val androidBuildPythonOverride = providers.gradleProperty("opendrsai.android.buildPython")
     .orElse(providers.environmentVariable("OPENDRSAI_ANDROID_BUILD_PYTHON"))
     .orNull
@@ -67,7 +91,7 @@ val acceptanceVersion = providers.gradleProperty("opendrsai.android.acceptanceVe
     require(Regex("\\d+\\.\\d+\\.\\d+").matches(it)) { "Invalid acceptance version: $it" }
 }
 val developmentVersion = providers.gradleProperty("opendrsai.android.developmentVersion")
-    .getOrElse("1.5.6")
+    .getOrElse(systemVersion)
     .also {
         require(Regex("\\d+\\.\\d+\\.\\d+").matches(it)) { "Invalid development version: $it" }
     }
@@ -208,6 +232,9 @@ android {
         buildConfigField("boolean", "FULL_AGENT_RUNTIME_ENABLED", "false")
         // Derived from the machine-readable 72-item ledger; never hand-set this claim.
         buildConfigField("boolean", "DESKTOP_AGENT_PARITY_COMPLETE", desktopAgentParityComplete.toString())
+        // Product and release claims are derived from the two authoritative ledgers.
+        buildConfigField("boolean", "P10_PRODUCTIZATION_COMPLETE", p10ProductizationComplete.toString())
+        buildConfigField("boolean", "P10_RELEASE_CANDIDATE_READY", p10ReleaseCandidateReady.toString())
         buildConfigField("boolean", "KOTLIN_LITE_RUNTIME_ENABLED", "true")
         buildConfigField("String", "RUNTIME_POLICY_URL", "$haiBaseUrl/api/runtime-policy/android".asBuildConfigString())
         buildConfigField("String", "RUNTIME_POLICY_PUBLIC_KEY", runtimePolicyPublicKey.asBuildConfigString())
@@ -320,6 +347,16 @@ android {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
             matchingFallbacks += listOf("release")
         }
+        create("benchmark") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".benchmark"
+            isMinifyEnabled = false
+            isShrinkResources = false
+            isDebuggable = false
+            signingConfig = signingConfigs.getByName("debug")
+            manifestPlaceholders["usesCleartextTraffic"] = "false"
+            matchingFallbacks += listOf("release")
+        }
     }
 
     buildFeatures { compose = true; buildConfig = true }
@@ -375,21 +412,32 @@ fun renderAndroidOwopBindings(): String {
     val version = schema["version"] as String
     val operations = (schema["x-owop-operations"] as Map<*, *>).keys.map(Any?::toString).sorted()
     val bindings = (schema["x-owop-bindings"] as List<*>).map(Any?::toString).sorted()
+    val capabilities = (schema["x-owop-capabilities"] as List<*>).map(Any?::toString).sorted()
+    val digest = MessageDigest.getInstance("SHA-256").digest(owopSchemaFile.readBytes())
+        .joinToString("") { "%02x".format(it) }
     fun quoted(values: List<String>) = values.joinToString(",\n") { "        \"$it\"" }
-    return """
-        // Generated from cores/protocol/owop/owop.schema.json. Do not edit.
-        package ai.drsai.remote.remote.generated
+    return """// Generated from cores/protocol/owop/owop.schema.json. Do not edit.
+package ai.drsai.remote.remote.generated
 
-        object OwopSchemaGenerated {
-            const val VERSION: String = "$version"
-            val OPERATIONS: Set<String> = setOf(
-        ${quoted(operations)}
-            )
-            val BINDINGS: Set<String> = setOf(
-        ${quoted(bindings)}
-            )
-        }
-    """.trimIndent() + "\n"
+object OwopSchemaGenerated {
+    const val VERSION: String = "$version"
+    const val SCHEMA_SHA256: String = "$digest"
+    val OPERATIONS: Set<String> = setOf(
+${quoted(operations)}
+    )
+    val BINDINGS: Set<String> = setOf(
+${quoted(bindings)}
+    )
+    val CAPABILITIES: Set<String> = setOf(
+${quoted(capabilities)}
+    )
+}
+
+data class OwopResourceKey(val protocol: String = "owop/1", val authorityId: String, val workspaceId: String, val resourceType: String, val resourceId: String, val generation: Long)
+data class OwopResourceVersion(val versionId: String, val digest: String, val size: Long, val mimeType: String?, val modifiedAt: String)
+data class OwopResourceCapabilities(val readCurrent: Boolean, val readSnapshot: Boolean, val preview: Boolean, val download: Boolean, val reveal: Boolean, val openExternal: Boolean, val copyLogicalPath: Boolean)
+data class OwopResourceDescriptor(val resource: OwopResourceKey, val resolutionId: String, val state: String, val displayName: String, val logicalPath: String?, val kind: String, val currentVersion: OwopResourceVersion, val observedVersion: OwopResourceVersion?, val capabilities: OwopResourceCapabilities)
+"""
 }
 
 tasks.register("generateAndroidOwopBindings") {

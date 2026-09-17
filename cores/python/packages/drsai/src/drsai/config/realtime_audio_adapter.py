@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import aiohttp
 
@@ -43,7 +43,7 @@ class OpenAIRealtimeAudioAdapter:
         self._session = self._external_session or aiohttp.ClientSession()
         try:
             self._socket = await self._session.ws_connect(
-                realtime_audio_url(base_url), headers=headers,
+                realtime_audio_url(base_url, resolved.model), headers=headers,
                 timeout=aiohttp.ClientWSTimeout(ws_receive=None, ws_close=5.0),
                 autoclose=True, autoping=True, heartbeat=20.0,
                 max_msg_size=MAX_REALTIME_EVENT_BYTES,
@@ -86,7 +86,7 @@ class OpenAIRealtimeAudioAdapter:
         self._session = None
 
 
-def realtime_audio_url(base_url: str) -> str:
+def realtime_audio_url(base_url: str, model: str | None = None) -> str:
     parsed = urlsplit(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ModelProtocolError("configuration_invalid", "Provider base URL cannot be used for Realtime audio")
@@ -95,4 +95,5 @@ def realtime_audio_url(base_url: str) -> str:
         raise ModelProtocolError("configuration_invalid", "Realtime audio Provider must use TLS")
     path = parsed.path.rstrip("/")
     path = path if path.endswith("/realtime") else f"{path}/realtime" if path.endswith("/v1") else f"{path}/v1/realtime"
-    return urlunsplit(("wss" if parsed.scheme == "https" else "ws", parsed.netloc, path, "", ""))
+    query = f"model={quote(model, safe='-._~')}" if model else ""
+    return urlunsplit(("wss" if parsed.scheme == "https" else "ws", parsed.netloc, path, query, ""))

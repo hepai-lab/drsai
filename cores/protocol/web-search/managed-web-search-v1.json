@@ -1,0 +1,31 @@
+{
+  "schema": "opendrsai.web-search/1",
+  "model": "hepai/tavily-web-search-v1",
+  "functions": ["search", "extract"],
+  "provider_modes": ["auto", "managed", "byok", "none"],
+  "capability_statuses": [
+    "login_required",
+    "checking",
+    "available",
+    "permission_denied",
+    "quota_exhausted",
+    "worker_unavailable",
+    "provider_unavailable",
+    "offline"
+  ],
+  "errors": [
+    { "code": "login_required", "retryable": false, "action": "login" },
+    { "code": "permission_denied", "retryable": false, "action": "account_or_byok" },
+    { "code": "rate_limited", "retryable": true, "action": "retry" },
+    { "code": "quota_exhausted", "retryable": false, "action": "account_or_byok" },
+    { "code": "worker_unavailable", "retryable": true, "action": "retry_or_byok" },
+    { "code": "provider_authentication_failed", "retryable": false, "action": "contact_admin" },
+    { "code": "provider_rate_limited", "retryable": true, "action": "retry" },
+    { "code": "provider_quota_exhausted", "retryable": false, "action": "contact_admin" },
+    { "code": "provider_timeout", "retryable": true, "action": "retry" },
+    { "code": "provider_unavailable", "retryable": true, "action": "retry" },
+    { "code": "provider_invalid_response", "retryable": true, "action": "retry" },
+    { "code": "unsafe_web_url", "retryable": false, "action": "change_url" },
+    { "code": "invalid_request", "retryable": false, "action": "edit_request" }
+  ]
+}

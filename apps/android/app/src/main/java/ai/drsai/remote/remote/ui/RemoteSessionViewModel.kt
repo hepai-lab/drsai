@@ -10,10 +10,13 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import ai.drsai.remote.remote.data.*
 import android.content.Intent
+import android.net.Uri
 import android.util.Base64
 import java.io.File
 import ai.drsai.remote.remote.model.*
 import ai.drsai.remote.remote.generated.*
+import ai.drsai.remote.R
+import ai.drsai.remote.ui.LocalizedText
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
@@ -36,6 +39,7 @@ class RemoteSessionViewModel(
     private val runtimeName: String,
     private val workspaceName: String,
 ) : AndroidViewModel(app) {
+    private val conversationStrings = ai.drsai.remote.remote.model.AndroidRemoteConversationStrings(app)
     private val container = RemoteWorkspaceContainer.get(app)
     private val time = container.time
     private val tokens = container.boundaries.auth.tokens
@@ -47,6 +51,7 @@ class RemoteSessionViewModel(
     private val oaep = container.boundaries.session.oaep
     private val legacy = container.boundaries.session.legacy
     private val workspace = container.boundaries.file.client(runtimeId)
+    private val conversationResources = container.boundaries.file.resources(runtimeId)
     private val cache = container.cache
     private val drafts = container.drafts
     private val activity = container.activity
@@ -201,7 +206,7 @@ class RemoteSessionViewModel(
             }
         }.onFailure { failure ->
             mutableState.update {
-                it.copy(loadingHistory = false, historyError = safeRemoteFailureMessage(failure))
+                it.copy(loadingHistory = false, historyError = safeRemoteFailureMessage(getApplication(), failure))
             }
         }
     }
@@ -311,7 +316,7 @@ class RemoteSessionViewModel(
                         )
                         runCatching { cache.maintainAccountIfDue(subject, organization) }
                         val conversation = snapshot.toLegacyItems()
-                        val messages = projectConversationMessages(conversation).map { it.toUi() }
+                        val messages = projectConversationMessages(conversation, conversationStrings).map { it.toUi() }
                         val artifacts = conversation.asSequence()
                             .filter { it.kind == "artifact.created" }
                             .mapNotNull(::conversationArtifact)
@@ -409,7 +414,7 @@ class RemoteSessionViewModel(
                     it.copy(
                         authority = authoritativeSnapshot(RemoteConnectionState.OFFLINE, null),
                         messages = it.messages + RemoteMessageUi(
-                            "error", "assistant", safeRemoteFailureMessage(failure),
+                            "error", "assistant", safeRemoteFailureMessage(getApplication(), failure),
                         ),
                     )
                 }
@@ -470,7 +475,7 @@ class RemoteSessionViewModel(
                         renderCachedOaepItems()
                     }
                     mutableState.update { it.copy(messages = it.messages +
-                        RemoteMessageUi("send-error-${UUID.randomUUID()}", "assistant", safeRemoteFailureMessage(failure))) }
+                        RemoteMessageUi("send-error-${UUID.randomUUID()}", "assistant", safeRemoteFailureMessage(getApplication(), failure))) }
                 }
             }
     }
@@ -485,7 +490,8 @@ class RemoteSessionViewModel(
         val acquired = runCatching { runControls.begin(pending) }.getOrElse {
             mutableState.update { state -> state.copy(
                 runControlState = RemoteRunControlState.IDLE,
-                runControlOutcome = "已有控制操作正在确认，请等待权威状态同步。",
+                runControlOutcome = null,
+                runControlOutcomeText = LocalizedText(R.string.remote_control_already_confirming),
             ) }
             return@launch
         }
@@ -522,7 +528,8 @@ class RemoteSessionViewModel(
         }.getOrElse {
             mutableState.update { state -> state.copy(
                 runControlState = RemoteRunControlState.IDLE,
-                runControlOutcome = "已有控制操作正在确认，请等待权威状态同步。",
+                runControlOutcome = null,
+                runControlOutcomeText = LocalizedText(R.string.remote_control_already_confirming),
             ) }
             return@launch
         }
@@ -553,12 +560,13 @@ class RemoteSessionViewModel(
                 runControlStateMachine.settled()
                 mutableState.update { it.copy(
                     runControlState = RemoteRunControlState.IDLE,
-                    runControlOutcome = if (uncertain) {
-                        "重试结果尚未确认；系统会查询原幂等操作，可安全再次检查。"
+                    runControlOutcome = null,
+                    runControlOutcomeText = if (uncertain) {
+                        LocalizedText(R.string.remote_retry_result_uncertain)
                     } else null,
                     messages = it.messages + RemoteMessageUi(
                         "retry-error-${UUID.randomUUID()}", "assistant",
-                        safeRemoteFailureMessage(failure),
+                        safeRemoteFailureMessage(getApplication(), failure),
                     ),
                 ) }
             }
@@ -575,7 +583,8 @@ class RemoteSessionViewModel(
             runControlStateMachine.settled()
             mutableState.update { it.copy(
                 runControlState = RemoteRunControlState.IDLE,
-                runControlOutcome = "停止结果已与权威运行状态同步。",
+                runControlOutcome = null,
+                runControlOutcomeText = LocalizedText(R.string.remote_stop_result_synced),
             ) }
             refresh()
             return
@@ -583,9 +592,10 @@ class RemoteSessionViewModel(
         runControlStateMachine.settled()
         mutableState.update { it.copy(
             runControlState = RemoteRunControlState.IDLE,
-            runControlOutcome = "停止结果尚未确认；可安全再次停止，系统不会创建新的运行。",
+            runControlOutcome = null,
+            runControlOutcomeText = LocalizedText(R.string.remote_stop_result_uncertain),
             messages = it.messages + RemoteMessageUi(
-                "cancel-error-${UUID.randomUUID()}", "assistant", safeRemoteFailureMessage(failure),
+                "cancel-error-${UUID.randomUUID()}", "assistant", safeRemoteFailureMessage(getApplication(), failure),
             ),
         ) }
     }
@@ -598,7 +608,8 @@ class RemoteSessionViewModel(
             runControls.clear(pending)
             mutableState.update { it.copy(
                 runControlState = RemoteRunControlState.IDLE,
-                runControlOutcome = "上次控制操作已过期，请根据当前运行状态重新操作。",
+                runControlOutcome = null,
+                runControlOutcomeText = LocalizedText(R.string.remote_control_expired),
             ) }
             return
         }
@@ -612,12 +623,14 @@ class RemoteSessionViewModel(
                     runControls.clear(pending)
                     mutableState.update { it.copy(
                         runControlState = RemoteRunControlState.IDLE,
-                        runControlOutcome = "停止结果已与权威运行状态同步。",
+                        runControlOutcome = null,
+                        runControlOutcomeText = LocalizedText(R.string.remote_stop_result_synced),
                     ) }
                 } else {
                     mutableState.update { it.copy(
                         runControlState = RemoteRunControlState.IDLE,
-                        runControlOutcome = "上次停止结果尚未确认；可安全再次停止。",
+                        runControlOutcome = null,
+                        runControlOutcomeText = LocalizedText(R.string.remote_previous_stop_uncertain),
                     ) }
                 }
             }
@@ -634,12 +647,14 @@ class RemoteSessionViewModel(
                         authority = authoritativeRun(RemoteRunStatus.RUNNING),
                         activeRunId = recovered.runId,
                         runControlState = RemoteRunControlState.IDLE,
-                        runControlOutcome = "已恢复上次重试的权威运行。",
+                        runControlOutcome = null,
+                        runControlOutcomeText = LocalizedText(R.string.remote_retry_run_recovered),
                     ) }
                 } else {
                     mutableState.update { it.copy(
                         runControlState = RemoteRunControlState.IDLE,
-                        runControlOutcome = "上次重试结果尚未确认；再次重试会复用同一幂等操作。",
+                        runControlOutcome = null,
+                        runControlOutcomeText = LocalizedText(R.string.remote_previous_retry_uncertain),
                     ) }
                 }
             }
@@ -659,7 +674,8 @@ class RemoteSessionViewModel(
         val acquired = runCatching { approvalDecisions.begin(pending) }.getOrElse {
             mutableState.update { state -> state.copy(
                 approvalDecisionState = RemoteApprovalDecisionState.PENDING,
-                approvalOutcome = "已有审批决定正在确认，请等待权威状态同步。",
+                approvalOutcome = null,
+                approvalOutcomeText = LocalizedText(R.string.remote_approval_already_confirming),
             ) }
             return@launch
         }
@@ -668,8 +684,11 @@ class RemoteSessionViewModel(
             .onSuccess { status ->
                 approvalDecisions.clear(acquired)
                 val final = approvalStateMachine.settle(status)
-                mutableState.update { it.copy(approvalDecisionState = final,
-                    approvalOutcome = final.userLabel()) }
+                mutableState.update { it.copy(
+                    approvalDecisionState = final,
+                    approvalOutcome = null,
+                    approvalOutcomeText = approvalDecisionText(final),
+                ) }
                 refresh()
             }
             .onFailure { failure -> reconcileApprovalDecision(acquired, failure) }
@@ -684,9 +703,42 @@ class RemoteSessionViewModel(
             }
             RemoteDownloadDecision.REJECT_TOO_LARGE -> mutableState.update { state -> state.copy(
                 artifacts = state.artifacts.map {
-                    if (it.artifactId == artifactId) it.copy(error = "文件过大，无法在移动端下载") else it
+                    if (it.artifactId == artifactId) it.copy(
+                        error = null,
+                        errorText = LocalizedText(R.string.remote_artifact_too_large),
+                    ) else it
                 },
             ) }
+        }
+    }
+
+    suspend fun resolveConversationResource(resource: RemoteTranscriptResource): AndroidResourceDescriptor =
+        conversationResources.resolve(resource)
+
+    suspend fun previewConversationResource(resource: RemoteTranscriptResource, descriptor: AndroidResourceDescriptor, observed: Boolean): AndroidResourceDescriptor =
+        conversationResources.preview(resource, descriptor, observed)
+
+    suspend fun downloadConversationResource(
+        resource: RemoteTranscriptResource,
+        descriptor: AndroidResourceDescriptor,
+        destination: Uri,
+        onProgress: (Long, Long) -> Unit,
+    ) = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        val resolver = getApplication<Application>().contentResolver
+        val safeOperation = descriptor.associationId.replace(Regex("[^A-Za-z0-9_-]"), "_").take(24).ifBlank { "unknown" }
+        val temporary = File.createTempFile("resource-$safeOperation-", ".partial", getApplication<Application>().cacheDir)
+        var destinationStarted = false
+        try {
+            temporary.outputStream().use { output -> conversationResources.download(resource, descriptor, output, onProgress) }
+            resolver.openOutputStream(destination, "w")?.use { output ->
+                destinationStarted = true
+                temporary.inputStream().use { input -> input.copyTo(output) }
+            } ?: error("resource_destination_unavailable")
+        } catch (failure: Throwable) {
+            if (destinationStarted) runCatching { resolver.delete(destination, null, null) }
+            throw failure
+        } finally {
+            temporary.delete()
         }
     }
 
@@ -728,7 +780,7 @@ class RemoteSessionViewModel(
                 if (it.artifactId == artifactId) it.copy(downloading = false, error = null) else it
             }) }
         }.onFailure { failure -> mutableState.update { state -> state.copy(artifacts = state.artifacts.map {
-            if (it.artifactId == artifactId) it.copy(downloading = false, error = safeRemoteFailureMessage(failure)) else it
+            if (it.artifactId == artifactId) it.copy(downloading = false, error = safeRemoteFailureMessage(getApplication(), failure)) else it
         }) } }
     }
 
@@ -788,7 +840,7 @@ class RemoteSessionViewModel(
         val items = cache.sessionItems(
             subject, organization, runtimeId.value, sessionId.value,
         ).mapIndexed { index, item -> item.toLegacyItem(index + 1L) }
-        val messages = projectConversationMessages(items).map { it.toUi() }
+        val messages = projectConversationMessages(items, conversationStrings).map { it.toUi() }
         val artifacts = items.asSequence()
             .filter { it.kind == "artifact.created" }
             .mapNotNull(::conversationArtifact)
@@ -1288,7 +1340,7 @@ class RemoteSessionViewModel(
         val status = runs.getRun(runtimeId, identity.runId).second
         val pending = approvals.approvals(runtimeId, workspaceId)
             .firstOrNull { it.sessionId == sessionId && it.runId == identity.runId }
-        val messages = projectConversationMessages(conversation).map { it.toUi() }
+        val messages = projectConversationMessages(conversation, conversationStrings).map { it.toUi() }
         val artifacts = conversation.asSequence()
             .filter { it.kind == "artifact.created" }
             .mapNotNull(::conversationArtifact)
@@ -1341,7 +1393,8 @@ class RemoteSessionViewModel(
                     mutableState.update { it.copy(
                         approval = null,
                         approvalDecisionState = final,
-                        approvalOutcome = "该请求${final.userLabel()}（可能由另一台已授权设备处理）",
+                        approvalOutcome = null,
+                        approvalOutcomeText = approvalHandledElsewhereText(final),
                     ) }
                 }
             }
@@ -1398,7 +1451,8 @@ class RemoteSessionViewModel(
             mutableState.update { it.copy(
                 approval = null,
                 approvalDecisionState = final,
-                approvalOutcome = "该请求${final.userLabel()}（可能由另一台已授权设备处理）",
+                approvalOutcome = null,
+                approvalOutcomeText = approvalHandledElsewhereText(final),
             ) }
             refresh()
             return
@@ -1409,9 +1463,10 @@ class RemoteSessionViewModel(
         approvalStateMachine.restore(RemoteApprovalDecisionState.PENDING)
         mutableState.update { it.copy(
             approvalDecisionState = RemoteApprovalDecisionState.PENDING,
-            approvalOutcome = if (uncertain) {
-                "审批结果尚未确认；再次提交相同决定会复用原幂等操作。"
-            } else safeRemoteFailureMessage(failure),
+            approvalOutcome = if (uncertain) null else safeRemoteFailureMessage(getApplication(), failure),
+            approvalOutcomeText = if (uncertain) {
+                LocalizedText(R.string.remote_approval_result_uncertain)
+            } else null,
         ) }
     }
 
@@ -1424,7 +1479,8 @@ class RemoteSessionViewModel(
             approvalStateMachine.restore(RemoteApprovalDecisionState.PENDING)
             mutableState.update { it.copy(
                 approvalDecisionState = RemoteApprovalDecisionState.PENDING,
-                approvalOutcome = "上次审批操作已过期，请根据当前权威状态重新决定。",
+                approvalOutcome = null,
+                approvalOutcomeText = LocalizedText(R.string.remote_approval_expired),
             ) }
             return
         }
@@ -1451,13 +1507,15 @@ class RemoteSessionViewModel(
             mutableState.update { it.copy(
                 approval = null,
                 approvalDecisionState = final,
-                approvalOutcome = "已恢复上次审批的权威结果：${final.userLabel()}。",
+                approvalOutcome = null,
+                approvalOutcomeText = approvalRecoveredText(final),
             ) }
         } else {
             approvalStateMachine.restore(RemoteApprovalDecisionState.PENDING)
             mutableState.update { it.copy(
                 approvalDecisionState = RemoteApprovalDecisionState.PENDING,
-                approvalOutcome = "上次审批结果尚未确认；只能安全重试相同决定。",
+                approvalOutcome = null,
+                approvalOutcomeText = LocalizedText(R.string.remote_previous_approval_uncertain),
             ) }
         }
     }
@@ -1588,7 +1646,8 @@ class RemoteSessionViewModel(
                     RemoteMessageUi(
                         "access-revoked",
                         "assistant",
-                        "当前设备的远程访问授权已撤销",
+                        "",
+                        localizedText = LocalizedText(R.string.remote_error_device_access_revoked),
                     )
                 ),
                 artifacts = emptyList(),
@@ -1672,3 +1731,28 @@ class RemoteSessionViewModel(
 
 internal fun isTerminalRemoteRunStatus(status: String): Boolean =
     status.uppercase() in setOf("COMPLETED", "FAILED", "CANCELLED")
+
+private fun approvalDecisionText(state: RemoteApprovalDecisionState): LocalizedText = LocalizedText(when (state) {
+    RemoteApprovalDecisionState.PENDING -> R.string.remote_approval_pending
+    RemoteApprovalDecisionState.DECIDING -> R.string.remote_approval_deciding
+    RemoteApprovalDecisionState.APPROVED -> R.string.remote_approval_approved
+    RemoteApprovalDecisionState.DENIED -> R.string.remote_approval_denied
+    RemoteApprovalDecisionState.CANCELLED -> R.string.remote_approval_cancelled
+    RemoteApprovalDecisionState.EXPIRED -> R.string.remote_approval_expired_label
+})
+
+private fun approvalHandledElsewhereText(state: RemoteApprovalDecisionState): LocalizedText = LocalizedText(when (state) {
+    RemoteApprovalDecisionState.APPROVED -> R.string.remote_approval_approved_elsewhere
+    RemoteApprovalDecisionState.DENIED -> R.string.remote_approval_denied_elsewhere
+    RemoteApprovalDecisionState.CANCELLED -> R.string.remote_approval_cancelled_elsewhere
+    RemoteApprovalDecisionState.EXPIRED -> R.string.remote_approval_expired_elsewhere
+    else -> R.string.remote_approval_handled_elsewhere
+})
+
+private fun approvalRecoveredText(state: RemoteApprovalDecisionState): LocalizedText = LocalizedText(when (state) {
+    RemoteApprovalDecisionState.APPROVED -> R.string.remote_approval_recovered_approved
+    RemoteApprovalDecisionState.DENIED -> R.string.remote_approval_recovered_denied
+    RemoteApprovalDecisionState.CANCELLED -> R.string.remote_approval_recovered_cancelled
+    RemoteApprovalDecisionState.EXPIRED -> R.string.remote_approval_recovered_expired
+    else -> R.string.remote_approval_recovered
+})

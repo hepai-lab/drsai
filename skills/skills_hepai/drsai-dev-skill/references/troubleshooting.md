@@ -8,17 +8,17 @@
 
 **现象**：本地登录后页面报 `Unexpected end of JSON input`，进不去。
 
-**根因**：前端把 API 请求打到了**错误的地址**（通常是相对路径 `/api`，落到前端自己 4290 端口），
+**根因**：前端把 API 请求打到了**错误的地址**（通常是相对路径 `/api`，落到前端自己 8001 端口），
 后端返回 404 HTML 页面，前端对它调 `response.json()` 解析失败。
 
 **排查**：
 ```bash
-# 1) 确认后端在 4291 且本地登录可用
-curl -s -X POST "http://localhost:4291/api/umtlocal/login?user_id=admin&password=admin123456"
+# 1) 确认后端在 8086 且本地登录可用
+curl -s -X POST "http://localhost:8086/api/umtlocal/login?user_id=admin&password=admin123456"
 # 期望: {"status":true,...,"access_token":"..."}
 
 # 2) 看前端是否把 /api 错误指向自身（返回 HTML 即为问题）
-curl -s -i "http://localhost:4290/api/auth/me" | head -5
+curl -s -i "http://localhost:8001/api/auth/me" | head -5
 # 若 Content-Type: text/html → 前端 API 地址配错
 ```
 
@@ -30,14 +30,14 @@ curl -s -i "http://localhost:4290/api/auth/me" | head -5
    grep -n GATSBY_API_URL frontend/.env.development   # 应无未注释的该项
    ./drsai-dev.sh restart frontend
    ```
-2. 确认后端监听 `0.0.0.0:4291`（而非 `127.0.0.1:8081`）：`./drsai-dev.sh status`
+2. 确认后端监听 `0.0.0.0:8086`（而非 `127.0.0.1:8081`）：`./drsai-dev.sh status`
 3. 一键复验：`./drsai-dev.sh verify`
 
 ---
 
 ### 外部 IP 访问失败 / CORS 被拦
 
-**现象**：用 `localhost` 能登录，但用独立 IP（如 `10.5.8.104:4290`）访问时请求失败，控制台报 CORS。
+**现象**：用 `localhost` 能登录，但用独立 IP（如 `10.5.8.104:8001`）访问时请求失败，控制台报 CORS。
 
 **根因**：后端 CORS `allow_origin_regex` 未放行该来源 IP。
 
@@ -45,20 +45,20 @@ curl -s -i "http://localhost:4290/api/auth/me" | head -5
 （`10.x` / `192.168.x` / `172.16-31.x`）与 `localhost`。若访问 IP 不在其中，扩展该正则后重启后端：
 ```bash
 ./drsai-dev.sh restart backend
-curl -s -i -X OPTIONS "http://<你的IP>:4291/api/version" \
-  -H "Origin: http://<你的IP>:4290" -H "Access-Control-Request-Method: GET" \
+curl -s -i -X OPTIONS "http://<你的IP>:8086/api/version" \
+  -H "Origin: http://<你的IP>:8001" -H "Access-Control-Request-Method: GET" \
   | grep -i access-control-allow-origin
 ```
 
 ---
 
-### 后端绑到 `127.0.0.1:8081` 而非 `0.0.0.0:4291`
+### 后端绑到 `127.0.0.1:8081` 而非 `0.0.0.0:8086`
 
 **根因**：`drsai-ui ui` 的 host/port 是 CLI 参数且**不读环境变量**，默认 `127.0.0.1:8081`。
-启动命令没带 `--host 0.0.0.0 --port 4291` 就会绑错地址。
+启动命令没带 `--host 0.0.0.0 --port 8086` 就会绑错地址。
 
 **修复**：用 `./drsai-dev.sh start backend`（已内置正确参数），或手动
-`drsai-ui ui --host 0.0.0.0 --port 4291 --reload`。
+`drsai-ui ui --host 0.0.0.0 --port 8086 --reload`。
 
 ---
 
@@ -77,25 +77,17 @@ curl -s -i -X OPTIONS "http://<你的IP>:4291/api/version" \
 
 ### `drsai-ui: command not found`
 
-**原因**：`drsai_ui` Python 包未安装，或安装的 Python 环境与当前 shell 不一致。
+**原因**：仓库根 `.venv` 未创建，或 `drsai_ui` 未 editable 安装。脚本只认 `$REPO_ROOT/.venv/bin/drsai-ui`，不走 conda。
 
 **解决**：
 ```bash
-# 确认当前 Python 环境
-which python3 && python3 --version
-pip show drsai_ui
+# 确认 venv 里有 drsai-ui
+ls /path/to/drsai/.venv/bin/drsai-ui
 
-# 安装（源码）
-cd /path/to/drsai/apps/webui/backend
-pip install -e .
-
-# 或 pip 安装
-pip install drsai_ui -U
-```
-
-如果使用了 conda 环境，确保先激活：
-```bash
-conda activate drsai
+# 没有则创建 venv 并源码安装
+cd /path/to/drsai
+python3 -m venv .venv
+.venv/bin/pip install -e apps/webui/backend
 ```
 
 ---
@@ -111,14 +103,14 @@ conda activate drsai
 
 ---
 
-### 后端端口 4291 已被占用
+### 后端端口 8086 已被占用
 
 ```bash
 # 查看占用进程
-lsof -i :4291
+lsof -i :8086
 
 # 终止占用进程
-kill $(lsof -t -i :4291)
+kill $(lsof -t -i :8086)
 
 # 或换端口启动（同时前端需用同端口：DRSAI_BACKEND_PORT 也会被脚本读取）
 drsai-ui ui --host 0.0.0.0 --port 4391 --reload
@@ -178,13 +170,13 @@ yarn dev
 
 ---
 
-### 前端端口 8000 已被占用
+### 前端端口 8001 已被占用
 
 ```bash
 # 换端口启动
-GATSBY_DEV_PORT=8001 yarn dev
-# 或
-yarn dev:8001
+DRSAI_FRONTEND_PORT=8002 ./drsai-dev.sh restart frontend
+# 或手动
+GATSBY_DEV_PORT=8002 yarn dev
 ```
 
 ---

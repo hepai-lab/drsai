@@ -310,7 +310,7 @@ This is where OpenDrSai stores its own internal configuration and data. **This i
 **Important Usage Rules:**
 - **User's Project Files:** User's code, config, and project files are NOT in the Agent Internal Storage above. They are in the user's project directory (injected via system prompt).
 - **OpenDrSai Internal Files:** The "Agent Internal Storage" is for OpenDrSai's own configuration. Don't modify files there unless explicitly asked.
-- **File Operations:** Download files to the Download Directory. Generate and test code in the Temporary Directory.
+- **File Operations:** Use the Temporary Directory only for private scripts, caches, and intermediate files. It is not a user delivery location. Any document, spreadsheet, presentation, image, archive, report, or other file requested by the user must be written beneath the current user Workspace's `artifacts/` directory and published as an Artifact. Never present an Agent Internal Storage path as a delivered result.
 """
         self.agents_md.write_text(content, encoding='utf-8')
 

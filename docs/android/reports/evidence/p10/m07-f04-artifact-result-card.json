@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "feature_id": "M07-F04",
+  "acceptance_run_id": "p10-round-036-artifact-result-card",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "type_size_and_source_visible": true,
+    "account_scope_checked_before_materialization": true,
+    "size_and_digest_checked_before_open_or_share": true,
+    "share_uri_is_read_only": true,
+    "expired_and_integrity_failures_are_explicit": true,
+    "regenerate_only_when_recoverable": true
+  },
+  "tests": {
+    "testDebugUnitTest": "705 tests, 0 failures, 2 skipped",
+    "LocalArtifactAccessInstrumentedTest_API35": "3 passed",
+    "artifact_result_card_UI_API35": "1 passed"
+  }
+}

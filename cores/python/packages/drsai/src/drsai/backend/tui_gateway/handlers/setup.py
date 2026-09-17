@@ -268,11 +268,24 @@ def _setup_skills_install(rid, params: dict) -> dict:
         return _err(rid, 4002, "skills must be a list of skill names")
     uninstall_others = params.get("uninstall_others", True)
 
+    # Load the persistent deletion tombstone — skills explicitly removed by the
+    # user via the desktop UI must not be re-installed, even if they appear in
+    # the ``selected`` list from a stale setup flow.
+    deleted_skills: set[str] = set()
+    try:
+        from drsai.backend.skills_api import _load_deleted_skills
+        deleted_skills = _load_deleted_skills(user_id)
+    except Exception:
+        pass
+
     installed: list[str] = []
     failed: list[dict] = []
 
     # Install selected skills
     for skill_name in selected:
+        if skill_name in deleted_skills:
+            logger.info("Skipping tombstoned skill '%s' during setup install", skill_name)
+            continue
         src = builtin_dir / skill_name
         if not src.is_dir():
             failed.append({"name": skill_name, "error": "not found in built-in skills"})
@@ -281,7 +294,7 @@ def _setup_skills_install(rid, params: dict) -> dict:
         try:
             if dst.exists():
                 _shutil.rmtree(dst)
-            _shutil.copytree(src, dst)
+            _shutil.copytree(src, dst, symlinks=False, copy_function=_shutil.copy2)
             installed.append(skill_name)
         except Exception as exc:
             failed.append({"name": skill_name, "error": str(exc)})

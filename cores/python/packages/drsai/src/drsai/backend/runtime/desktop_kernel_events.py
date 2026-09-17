@@ -1,12 +1,18 @@
-"""Translate shared Kernel events to the existing Desktop/TUI Autogen stream."""
+"""Translate shared Kernel events to the existing Desktop/TUI Autogen stream.
+
+ARCHIVED(2026-09-02): Desktop now reuses the TUI legacy path; see
+desktop_agent_kernel_adapter.py for details. Kept importable for legacy
+callers only.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 import ast
 import hashlib
+import re
 import json
-from typing import Any
+from typing import Any, Mapping
 
 from autogen_core import FunctionCall
 from autogen_core.models import FunctionExecutionResult
@@ -22,6 +28,7 @@ from autogen_agentchat.messages import (
 
 from drsai.modules.managers.messages.agent_messages import AgentLogEvent
 
+from .grounded import unwrap_tool_result
 from .mobile_core import MessageType, RuntimeEnvelope
 
 
@@ -60,6 +67,9 @@ def _web_citation_candidates(value: Any) -> list[dict[str, str]]:
     return list(unique.values())
 
 
+_CITATION_MARKER = re.compile(r"\[E(\d{1,3})\]")
+
+
 @dataclass(slots=True)
 class DesktopKernelTurnState:
     assistant_name: str
@@ -67,13 +77,37 @@ class DesktopKernelTurnState:
     terminal_kind: str | None = None
     terminal_payload: dict[str, Any] = field(default_factory=dict)
     citation_candidates: list[dict[str, Any]] = field(default_factory=list)
+    # Set by the run stream when this turn must answer only from supplied
+    # material; it is what lets a refusal still cite the scope it searched.
+    grounded: bool = False
 
     @property
     def final_text(self) -> str:
         return "".join(self.text_parts)
 
     def message_metadata(self, text: str) -> dict[str, str]:
-        citations = [item for item in self.citation_candidates if str(item.get("url") or "") in text]
+        """Select the citations this answer actually stands on.
+
+        A source is cited when the answer names its URL, which is how web
+        answers work. Grounded answers instead carry ``[E1]`` markers, because
+        no model reproduces an internal ``opendrsai://`` identifier verbatim
+        and matching on it would silently yield an answer with no citations at
+        all. Both are honoured, so non-grounded turns behave exactly as before.
+        """
+
+        markers = {int(value) for value in _CITATION_MARKER.findall(text)}
+        citations = [
+            item for item in self.citation_candidates
+            if str(item.get("url") or "") in text or item.get("marker") in markers
+        ]
+        if not citations and self.grounded:
+            # A refusal cites the scope it searched. Emitting nothing here
+            # would make "I checked these documents and they do not say"
+            # indistinguishable from an answer that consulted nothing.
+            citations = [
+                item for item in self.citation_candidates
+                if item.get("relation") == "searched_scope"
+            ]
         return {
             "internal": "no",
             **({"citations_json": json.dumps(citations, ensure_ascii=False, separators=(",", ":"), sort_keys=True)} if citations else {}),
@@ -115,12 +149,16 @@ def translate_kernel_event(
         )], source=state.assistant_name),)
     if kind in {"tool.result", "tool.error"}:
         result = payload.get("result")
-        if kind == "tool.result" and payload.get("name") == "knowledge_search" and isinstance(result, dict):
+        # The host hands this back as a JSON string wrapping {"content": "<json>"},
+        # so requiring a Mapping here skipped every knowledge result and left the
+        # answer with no citations at all — while the model had cited correctly.
+        evidence_result = unwrap_tool_result(result) if kind == "tool.result" else {}
+        if payload.get("name") == "knowledge_search" and isinstance(evidence_result, Mapping):
             documents = {
                 str(item.get("document_path") or ""): item
-                for item in result.get("documents") or [] if isinstance(item, dict)
+                for item in evidence_result.get("documents") or [] if isinstance(item, dict)
             }
-            for item in result.get("evidence") or []:
+            for item in evidence_result.get("evidence") or []:
                 if not isinstance(item, dict) or not item.get("source"):
                     continue
                 document_path = str(item.get("document_path") or item.get("document_id") or "")
@@ -137,6 +175,13 @@ def translate_kernel_event(
                     "revision": item.get("knowledge_base_revision") or document.get("knowledge_base_revision"),
                     "document_path": document_path,
                     "corpus_complete": document.get("corpus_complete") is True,
+                    # Carried so a citation can be opened at the place it came
+                    # from. Naming the file alone leaves the reader to search
+                    # it, which is not a checkable citation.
+                    "locator": item.get("locator") if isinstance(item.get("locator"), dict) else {},
+                    "locator_label": str(item.get("locator_label") or ""),
+                    "document_sha256": str(item.get("document_sha256") or document.get("sha256") or ""),
+                    "marker": len(state.citation_candidates) + 1,
                 })
         if kind == "tool.result" and payload.get("name") in {"web_search", "web_fetch"}:
             existing = {str(item.get("url") or "") for item in state.citation_candidates}
@@ -166,6 +211,60 @@ def translate_kernel_event(
         state.terminal_kind = kind
         state.terminal_payload = payload
         return ()
+    # ARCHIVED(2026-09-02): Desktop now reuses the TUI legacy path, so the
+    # shared desktop-kernel subagent machinery (DrSaiAgentKernel._start_subagents
+    # / _subagent_completed / _subagent_failed / _subagent_cancelled) is
+    # archived and never runs for Desktop. Delegate/subagents are handled
+    # directly by DrSaiAssistant._process_model_result / _execute_subagent.
+    # --- Subagent lifecycle events ---
+    # The kernel emits these from _start_subagents / _subagent_completed /
+    # _subagent_failed / _subagent_cancelled.  Surfacing them as structured
+    # AgentLogEvents with content_type="subagent" lets the front end render a
+    # dedicated subagent panel instead of an opaque generic log line.
+    if kind == "subagent.started":
+        return (AgentLogEvent(
+            source=str(payload.get("agent_name") or state.assistant_name),
+            title=f"subagent.started:{payload.get('subagent_id', '')}",
+            content=str(payload.get("title") or payload.get("summary") or ""),
+            content_type="subagent",
+            metadata={
+                "kernel_event": kind,
+                "subagent_id": str(payload.get("subagent_id") or ""),
+                "subagent_type": str(payload.get("subagent_type") or ""),
+                "child_run_id": str(payload.get("child_run_id") or ""),
+            },
+        ),)
+    if kind == "subagent.thinking":
+        # Streaming text from a child agent.  Emit as a chunk so the UI shows
+        # the subagent working in real time, but tag metadata so the front end
+        # can route it to the subagent panel rather than the main stream.
+        # IMPORTANT: source MUST start with "sub:" so that
+        # tui_gateway/adapter/event_translator._is_subagent_source() routes
+        # this to "subagent.thinking" instead of treating it as a main-agent
+        # "message.delta".  Without the prefix, subagent streaming text would
+        # be silently merged into the parent's message bubble.
+        _agent_name = str(payload.get("agent_name") or state.assistant_name)
+        return (ModelClientStreamingChunkEvent(
+            content=str(payload.get("text") or ""),
+            source=f"sub:{_agent_name}",
+        ),)
+    if kind in {"subagent.completed", "subagent.failed", "subagent.cancelled"}:
+        status = kind.split(".")[-1]
+        summary = str(payload.get("summary") or payload.get("result") or "")
+        if kind == "subagent.failed":
+            summary = f"Subagent failed: {payload.get('code', '')}"
+        return (AgentLogEvent(
+            source=str(payload.get("agent_name") or state.assistant_name),
+            title=f"subagent.{status}:{payload.get('subagent_id', '')}",
+            content=summary,
+            content_type="subagent",
+            metadata={
+                "kernel_event": kind,
+                "subagent_id": str(payload.get("subagent_id") or ""),
+                "child_run_id": str(payload.get("child_run_id") or ""),
+                "retryable": bool(payload.get("retryable", False)) if kind == "subagent.failed" else False,
+            },
+        ),)
     if kind in {
         "run.started", "tool.decision", "verification.required", "verification.unavailable",
         "approval.requested", "approval.decided", "runtime.degraded", "runtime.lifecycle_changed",

@@ -6,9 +6,9 @@ import org.junit.Test
 
 class RemoteAuditPresentationTest {
     @Test fun `internal actions map to stable user readable labels`() {
-        assertEquals("开始任务", remoteAuditActionLabel("run.created"))
-        assertEquals("批准操作", remoteAuditActionLabel("approval.approved"))
-        assertEquals("更新任务", remoteAuditActionLabel("internal.unknown"))
+        assertEquals(RemoteAuditActionKind.RUN_CREATED, remoteAuditActionKind("run.created"))
+        assertEquals(RemoteAuditActionKind.APPROVAL_APPROVED, remoteAuditActionKind("approval.approved"))
+        assertEquals(RemoteAuditActionKind.UPDATED, remoteAuditActionKind("internal.unknown"))
     }
 
     @Test fun `audit screen does not expose internal correlation or content fields`() {

@@ -147,6 +147,7 @@ class RemoteCodexSupervisor:
             schema_digest=str(message["schemaDigest"]), source="remote-bridge", release_safe=True,
             manifest={"binary_digest": str(message["binaryDigest"]), "host_id": host_id,
                       "adapter_protocol": BRIDGE_PROTOCOL},
+            binary_digest=str(message["binaryDigest"]),
         )
         self._process = RemoteCodexProcess(reader, writer, identity=dict(message))
         return self._process

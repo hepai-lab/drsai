@@ -1,0 +1,25 @@
+{
+  "name": "opendrsai-desktop",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "workspaces": [
+    "shared/renderer",
+    "windows",
+    "macos"
+  ],
+  "scripts": {
+    "verify:node": "node shared/test-kit/verify-node-toolchain.mjs",
+    "typecheck": "npm run typecheck:windows && npm run typecheck --workspace opendrsai-macos-desktop",
+    "typecheck:windows": "npm run typecheck --workspace opendrsai-windows-desktop",
+    "verify:windows": "npm run verify --workspace opendrsai-windows-desktop",
+    "verify:macos": "npm run verify --workspace opendrsai-macos-desktop",
+    "verify:architecture": "node shared/test-kit/verify-architecture-boundaries.mjs && node --experimental-strip-types shared/test-kit/verify-platform-contract.mjs",
+    "verify:desktop-surface": "node shared/test-kit/run-typescript-test.mjs shared/test-kit/verify-desktop-surface.mts",
+    "dev": "npm run dev --workspace opendrsai-windows-desktop",
+    "dev:workbench": "npm run dev --workspace opendrsai-windows-desktop",
+    "dev:legacy": "npm run dev:legacy --workspace opendrsai-windows-desktop"
+  }
+}

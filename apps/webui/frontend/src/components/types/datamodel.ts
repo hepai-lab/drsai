@@ -29,8 +29,9 @@ export interface ActionButton {
 // Base message configuration (maps to Python BaseMessage)
 export interface BaseMessageConfig {
   source: string;
+  type?: string;
   models_usage?: RequestUsage;
-  metadata?: Record<string, string>;
+  metadata?: Record<string, any>;
   version?: number;
 }
 
@@ -82,6 +83,7 @@ export type AgentMessageConfig =
 // Database model
 export interface DBModel {
   id?: number;
+  uuid?: string;
   user_id?: string;
   created_at?: string;
   updated_at?: string;
@@ -141,6 +143,83 @@ export interface WebSocketMessage {
   error?: string;
   timestamp?: string;
   prompt?: string;
+}
+
+export type StreamV2Channel = "reasoning" | "content";
+export type StreamV2EventName =
+  | "message.started"
+  | "message.delta"
+  | "message.snapshot"
+  | "message.completed"
+  | "turn.ready"
+  | "interaction.required"
+  | "agent.working";
+
+export interface StreamV2Snapshot {
+  reasoning: string;
+  content: string;
+  status: "streaming" | "completed" | "interrupted";
+}
+
+export interface StreamV2Interaction {
+  kind: "continuation" | "blocking";
+  interaction_type: InputType | string;
+  prompt?: string;
+  request_id?: string;
+}
+
+export interface StreamV2Working {
+  phase: "model" | "tool" | "orchestrator" | string;
+  detail?: string;
+}
+
+export interface StreamV2Event {
+  type: "stream.v2";
+  protocol_version: 2;
+  event_id: string;
+  run_id: string;
+  stream_id: string;
+  message_id: string;
+  seq: number;
+  event: StreamV2EventName;
+  source: string;
+  channel?: StreamV2Channel;
+  delta?: string;
+  snapshot?: StreamV2Snapshot;
+  status?: StreamV2Snapshot["status"] | "ready" | "awaiting_input" | "active";
+  interaction?: StreamV2Interaction;
+  working?: StreamV2Working;
+  /** Assistant hop sealed as the turn's visible reply when ``turn.ready`` fires. */
+  final_message_id?: string;
+}
+
+export type IncomingWebSocketMessage = WebSocketMessage | StreamV2Event;
+
+export function isStreamV2Event(value: unknown): value is StreamV2Event {
+  const event = value as Partial<StreamV2Event> | null;
+  return (
+    !!event &&
+    event.type === "stream.v2" &&
+    event.protocol_version === 2 &&
+    typeof event.message_id === "string" &&
+    typeof event.seq === "number"
+  );
+}
+
+export function isDefaultContinuationPrompt(
+  prompt?: string,
+  inputType?: string
+): boolean {
+  if ((inputType || "text_input") !== "text_input") return false;
+  const normalized = (prompt || "").trim().toLowerCase();
+  if (
+    !normalized ||
+    normalized === "enter your response:" ||
+    normalized === "please enter your response:"
+  ) {
+    return true;
+  }
+  return normalized.endsWith("enter your response:");
 }
 
 export type FileDownloadMethod = "base64" | "url";
@@ -362,6 +441,8 @@ export interface Run {
   updated_at?: string;
   status: RunStatus;
   input_request?: InputRequest;
+  /** Ephemeral v2 signal: backend is waiting on the agent. */
+  agent_working?: StreamV2Working | null;
   task: AgentMessageConfig;
   logs?: RunLogEntry[];
   file_events?: FilesEvent[];
@@ -385,6 +466,7 @@ export interface ApprovalInputRequest extends InputRequest {
 export type RunStatus =
   | "created"
   | "active" // covers 'streaming'
+  | "ready" // turn finished; free-form next message via input_response
   | "awaiting_input"
   | "timeout"
   | "complete"

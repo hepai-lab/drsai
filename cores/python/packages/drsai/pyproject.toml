@@ -91,6 +91,10 @@ dependencies = [
 ]
 
 [project.scripts]
+drsai = "drsai.backend.run_cli:run"
+drsai-tui = "drsai.backend.run_cli:run"
+drsai-gateway = "drsai.backend.tui_gateway.entry:main"
+drsai-security-observability-release = "drsai.backend.runtime.security_boundary.security_observability_release:main"
 opendrsai = "drsai.backend.run_cli:run"
 opendrsai-tui = "drsai.backend.run_cli:run"
 opendrsai-gateway = "drsai.backend.tui_gateway.entry:main"

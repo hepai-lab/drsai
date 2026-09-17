@@ -1,0 +1,51 @@
+{
+  "checks": [
+    {
+      "name": "real_process_initialized",
+      "passed": true
+    },
+    {
+      "name": "source_commit_pinned",
+      "passed": true
+    },
+    {
+      "name": "native_contract_pinned",
+      "passed": true
+    },
+    {
+      "name": "protocol_surface_observed",
+      "passed": true
+    },
+    {
+      "name": "profile_decision_recorded",
+      "passed": true
+    },
+    {
+      "name": "self_contained_production_carrier",
+      "passed": false
+    },
+    {
+      "name": "production_capabilities_complete",
+      "passed": false
+    }
+  ],
+  "deployment_verdict": "no_go",
+  "missing": {
+    "capabilities": [
+      "approval.respond",
+      "run.cancel",
+      "run.terminal",
+      "run.turn-binding",
+      "session.history",
+      "session.resume",
+      "tool.side-effect-ledger",
+      "workspace.containment"
+    ],
+    "methods": [],
+    "notifications": []
+  },
+  "profile_id": "dsh-sdk/0.1.0-rc.5",
+  "schema_version": 1,
+  "server_version": "0.0.1",
+  "source": "real-dsh-process"
+}

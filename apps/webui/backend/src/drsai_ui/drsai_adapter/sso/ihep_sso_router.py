@@ -29,9 +29,8 @@ from drsai_ui.ui_backend.backend.web.routes.desktop_auth import (
     authorize_desktop_state,
     make_desktop_sso_state,
 )
-from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, AgentModeConfig, UserAgents
+from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, AgentModeConfig
 from drsai_ui.agent_factory.agent_mode_cofigs import (
-    get_default_agent_mode_config,
     get_agents_mode
     )
 from dataclasses import dataclass, field, asdict
@@ -223,9 +222,7 @@ async def auth(request: Request, db=Depends(get_db)):
         record_auth_source(db, user_id, "sso")
         response_agent = db.get(AgentModeSettings, filters={"user_id": user_id})
         if not response_agent.status or not response_agent.data:
-            agents_list = get_default_agent_mode_config(user_id)
-            db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
-            db.upsert(UserAgents(user_id=user_id, agents=agents_list))
+            db.upsert(AgentModeSettings(user_id=user_id, agents_mode=[]))
         success_url = f"{str(request.base_url).rstrip('/')}/umt/desktop-auth/success"
         return RedirectResponse(url=success_url)
 
@@ -248,10 +245,7 @@ async def auth(request: Request, db=Depends(get_db)):
     record_auth_source(db, user_id, "sso")
     response_agent = db.get(AgentModeSettings, filters={"user_id": user_id})
     if not response_agent.status or not response_agent.data:
-        # 将默认的配置存储进入对应的数据库
-        agents_list = get_default_agent_mode_config(user_id)
-        db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
-        db.upsert(UserAgents(user_id=user_id, agents=agents_list))
+        db.upsert(AgentModeSettings(user_id=user_id, agents_mode=[]))
 
     return response
     # return RedirectResponse(url='/umt/')  # 回调首页，可以自己改回调页面

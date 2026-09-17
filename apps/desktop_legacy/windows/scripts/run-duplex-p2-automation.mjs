@@ -1,0 +1,21 @@
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { duplexAutomationSourceDigest } from "./duplex-automation-source-snapshot.mjs";
+
+const root = resolve(import.meta.dirname, ".."); const workspace = resolve(root, "../../..");
+const valueAfter = (flag, fallback) => { const i = process.argv.indexOf(flag); return resolve(i < 0 ? fallback : process.argv[i + 1]); };
+const output = valueAfter("--output", resolve(root, "release/duplex-voice/p2-automation-report.json"));
+const logPath = valueAfter("--log", resolve(root, "release/duplex-voice/p2-automation-output.log"));
+const indexPath = resolve(workspace, "docs/voice/duplex-voice-p2-evidence-index.json");
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const safe = (value) => value.replace(/\x1b\[[0-9;]*m/g, "").replace(/(?:sk-|Bearer\s+)[A-Za-z0-9_-]{8,}/gi, "[redacted]").replace(/((?:api[_-]?key|authorization|token)\s*[:=]\s*)\S+/gi, "$1[redacted]");
+const execute = (script) => { const startedAt = new Date().toISOString(); const command = process.platform === "win32" ? (process.env.ComSpec || "cmd.exe") : "npm"; const args = process.platform === "win32" ? ["/d", "/s", "/c", `npm run ${script}`] : ["run", script]; const result = spawnSync(command, args, { cwd: root, encoding: "utf8", maxBuffer: 128 * 1024 * 1024, windowsHide: true }); return { script, command: `npm run ${script}`, startedAt, completedAt: new Date().toISOString(), exitCode: result.status, signal: result.signal ?? null, passed: result.status === 0, ...(result.error ? { launchError: result.error.name } : {}), output: safe(`${result.stdout ?? ""}${result.stderr ?? ""}`) }; };
+const source = duplexAutomationSourceDigest(root); const startedAt = new Date().toISOString(); const runs = [execute("test:voice:duplex"), execute("test:voice:serial")];
+const log = runs.map((run) => `===== ${run.command} =====\n${run.output}`).join("\n"); mkdirSync(dirname(output), { recursive: true }); writeFileSync(logPath, log, "utf8");
+const logBytes = readFileSync(logPath); const indexBytes = readFileSync(indexPath); const packageBytes = readFileSync(resolve(root, "package.json"));
+const payload = { schemaVersion: 1, kind: "duplex-p2-automation", passed: runs.every(({ passed }) => passed), startedAt, completedAt: new Date().toISOString(), suites: runs.map(({ output: _output, ...run }) => run), source, sourceIndexSha256: sha256(indexBytes), packageJsonSha256: sha256(packageBytes), output: { uri: pathToFileURL(logPath).toString(), sha256: sha256(logBytes) }, privacy: { credentialsPersisted: false, transcriptTextPersisted: false } };
+const report = { ...payload, integrity: { algorithm: "sha256", digest: sha256(JSON.stringify(payload)) } }; writeFileSync(output, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+console.log(`Duplex P2 automation report written to ${output} (passed=${report.passed}).`); process.exitCode = report.passed ? 0 : 1;

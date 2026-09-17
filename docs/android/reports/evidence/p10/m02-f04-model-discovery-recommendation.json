@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "feature_id": "M02-F04",
+  "acceptance_run_id": "p10-round-006-model-discovery-recommendation",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "fixtures": [
+    "empty catalog",
+    "case-insensitive duplicate model IDs",
+    "1000 discovered models",
+    "unknown capability model",
+    "verified tool-capable model"
+  ],
+  "selection_contract": {
+    "preserve_user_selection": true,
+    "recommended_model_requires_verified_provider": true,
+    "recommended_model_requires_tools": true,
+    "unchecked_or_chat_only_model_is_never_default": true
+  },
+  "catalog_contract": {
+    "deterministic_merge": true,
+    "preserves_local_only_models": true,
+    "case_insensitive_deduplication": true,
+    "searchable_ui": true
+  },
+  "tests": {
+    "testDebugUnitTest": "656 passed, 2 skipped, 0 failed",
+    "ModelRecommendationPolicyTest": "3 passed",
+    "ModelSettingsScreenUiTest_API35": "5 passed"
+  }
+}

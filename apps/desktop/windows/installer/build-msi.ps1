@@ -10,7 +10,7 @@ param(
     [string]$WixDir = "",
     [switch]$RequireTrustedRuntime,
     [ValidatePattern('^[A-Za-z0-9._-]+\.msi$')]
-    [string]$OutputName = "OpenDrSai-Windows-Installer-x64.msi"
+    [string]$OutputName = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -72,6 +72,9 @@ function Get-InstalledSizeKBFromMetadata([Int64]$ExpandedBytes, [Int64]$ArchiveB
 $windowsAppDir = Resolve-FullPath (Join-Path $PSScriptRoot "..\..\windows")
 if (-not $BootstrapperVersion) {
     $BootstrapperVersion = (Get-Content (Join-Path $windowsAppDir "package.json") -Raw | ConvertFrom-Json).version
+}
+if (-not $OutputName) {
+    $OutputName = "OpenDrSai-Windows-v$BootstrapperVersion-Installer-x64.msi"
 }
 
 if (-not $WixDir) {

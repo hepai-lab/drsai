@@ -1,0 +1,59 @@
+{
+  "fixture_version": "conversation-resource-states-p2/1",
+  "cases": [
+    {
+      "id": "available-preview",
+      "descriptor": {
+        "state": "available",
+        "capabilities": {"read_current": true, "read_snapshot": true, "preview": true, "download": true, "reveal": false, "open_external": false, "copy_logical_path": false},
+        "has_observed_version": true
+      },
+      "expected": {"status": "available", "primary": "preview_current", "secondary": ["preview_observed", "download"], "recovery": []}
+    },
+    {
+      "id": "moved-local",
+      "descriptor": {
+        "state": "moved",
+        "capabilities": {"read_current": true, "read_snapshot": false, "preview": false, "download": true, "reveal": true, "open_external": false, "copy_logical_path": true},
+        "has_observed_version": false
+      },
+      "expected": {"status": "moved", "primary": "reveal_current", "secondary": ["download", "copy_logical_path"], "recovery": []}
+    },
+    {
+      "id": "changed-with-snapshot",
+      "descriptor": {
+        "state": "changed",
+        "capabilities": {"read_current": true, "read_snapshot": true, "preview": true, "download": true, "reveal": false, "open_external": false, "copy_logical_path": false},
+        "has_observed_version": true
+      },
+      "expected": {"status": "changed", "primary": "preview_current", "secondary": ["preview_observed", "download"], "recovery": []}
+    },
+    {
+      "id": "deleted-retained-snapshot",
+      "descriptor": {
+        "state": "deleted",
+        "capabilities": {"read_current": false, "read_snapshot": true, "preview": true, "download": true, "reveal": false, "open_external": false, "copy_logical_path": false},
+        "has_observed_version": true
+      },
+      "expected": {"status": "deleted", "primary": "preview_observed", "secondary": ["download"], "recovery": []}
+    },
+    {
+      "id": "offline",
+      "descriptor": {
+        "state": "offline",
+        "capabilities": {"read_current": false, "read_snapshot": false, "preview": false, "download": false, "reveal": false, "open_external": false, "copy_logical_path": false},
+        "has_observed_version": true
+      },
+      "expected": {"status": "offline", "primary": "details", "secondary": [], "recovery": ["retry", "switch_runtime"]}
+    },
+    {
+      "id": "unsupported-fail-closed",
+      "descriptor": {
+        "state": "unsupported",
+        "capabilities": {"read_current": false, "read_snapshot": false, "preview": false, "download": false, "reveal": false, "open_external": false, "copy_logical_path": false},
+        "has_observed_version": false
+      },
+      "expected": {"status": "unsupported", "primary": "details", "secondary": [], "recovery": []}
+    }
+  ]
+}

@@ -44,7 +44,6 @@ import {
 import type { ChatSubmitOptions, UiMessage } from "../components/ChatWorkspace";
 import { desktopApi } from "../desktopApi";
 import { describeUserFacingError, type UserFacingRecoveryAction } from "../userFacingErrors";
-import { emitAssistantSpeechStreamEvent } from "../voice/streaming/assistantSpeechStream";
 import {
   formatRecentTerminalTestResult,
   readRecentTerminalTestResult,
@@ -53,6 +52,7 @@ import { acceptChatEventSequence, getVisibleChatText } from "../chatOutputModel"
 import { sanitizeSensitiveValue } from "../../../api/sensitiveData";
 import {
   appendDebugLog,
+  appendRendererStage,
   appendRuntimeLogEvent,
   appendStructuredActivityLog,
   appendStructuredProtocolLog,
@@ -79,6 +79,7 @@ export interface DesktopChatAdapter {
   clearCommandAttachments: () => void;
   removeCommandAttachment: (index: number) => void;
   dismissRecoveryActions: (messageId: string) => void;
+  deleteMessage: (messageId: string) => void;
   setInput: (value: string) => void;
   submit: (
     attachments?: ChatAttachment[],
@@ -93,6 +94,24 @@ const LOCAL_COMPACT_MAX_MESSAGES = 10;
 const LOCAL_COMPACT_MAX_REUSABLE_ITEMS = 6;
 const LOCAL_COMPACT_MAX_MESSAGE_CHARS = 360;
 const LOCAL_COMPACT_MAX_ITEM_CHARS = 220;
+
+interface LiveThreadChatView {
+  messages: UiMessage[];
+  activeRequestId: string | null;
+  cancellingRequestId: string | null;
+  currentRuntimeMode: ChatRuntimeMode | null;
+  streamingAssistantByRequest: Record<string, string>;
+  structuredRequests: string[];
+  completedStructuredRequests: string[];
+  lastSequenceByRequest: Record<string, number>;
+  pendingDeltasByRequest: Record<string, { text: string; reasoning: string }>;
+  pendingStructuredEventsByRequest: Record<string, StructuredConversationEvent[]>;
+}
+
+interface ComposerThreadDraft {
+  input: string;
+  commandAttachments: ChatAttachment[];
+}
 
 export function useDesktopChatAdapter({
   availableAgents,
@@ -136,8 +155,15 @@ export function useDesktopChatAdapter({
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [cancellingRequestId, setCancellingRequestId] = useState<string | null>(null);
   const activeRequestIdRef = useRef<string | null>(null);
+  const cancellingRequestIdRef = useRef<string | null>(null);
+  const messagesRef = useRef<UiMessage[]>([createWelcomeMessage(language, [])]);
+  const liveThreadViewsRef = useRef<Map<string, LiveThreadChatView>>(new Map());
+  const composerDraftsRef = useRef<Map<string, ComposerThreadDraft>>(new Map());
+  const backgroundChatEventsRef = useRef<Map<string, ChatEvent[]>>(new Map());
   const [currentRuntimeMode, setCurrentRuntimeMode] = useState<ChatRuntimeMode | null>(null);
   const [commandAttachments, setCommandAttachments] = useState<ChatAttachment[]>([]);
+  const inputRef = useRef("");
+  const commandAttachmentsRef = useRef<ChatAttachment[]>([]);
   const [customCommands, setCustomCommands] = useState<DesktopCustomCommand[]>([]);
   const [projectMemory, setProjectMemory] = useState<DesktopProjectMemoryEntry[]>([]);
   const [userPreferences, setUserPreferences] = useState<DesktopUserPreference[]>([]);
@@ -165,6 +191,11 @@ export function useDesktopChatAdapter({
   const userPreferencesRef = useRef<DesktopUserPreference[]>([]);
 
   onThreadUpdatedRef.current = onThreadUpdated;
+  messagesRef.current = messages;
+  cancellingRequestIdRef.current = cancellingRequestId;
+  languageRef.current = language;
+  inputRef.current = input;
+  commandAttachmentsRef.current = commandAttachments;
 
   function clearStructuredFlush(): void {
     pendingStructuredEventsByRequest.current = {};
@@ -209,7 +240,28 @@ export function useDesktopChatAdapter({
     });
   }
 
-  function restoreActiveStructuredTurns(snapshotMessages: UiMessage[]): void {
+  /**
+   * Terminal events must synchronously drain this turn's queued deltas. A
+   * shared RAF may otherwise run after terminal cleanup and lose the final
+   * reasoning/answer fragment. The reducer still enforces sealed-state
+   * monotonicity, so duplicate terminal events remain harmless.
+   */
+  function takePendingStructuredEvents(requestId: string): StructuredConversationEvent[] {
+    const events = pendingStructuredEventsByRequest.current[requestId] ?? [];
+    delete pendingStructuredEventsByRequest.current[requestId];
+    if (!Object.keys(pendingStructuredEventsByRequest.current).length
+        && structuredFlushFrameRef.current !== null) {
+      window.cancelAnimationFrame(structuredFlushFrameRef.current);
+      structuredFlushFrameRef.current = null;
+    }
+    return events;
+  }
+
+  function restoreActiveStructuredTurns(snapshotMessages: UiMessage[], expectedThreadId = threadIdRef.current): void {
+    // Recovery is asynchronous. A completed recovery from the previous thread
+    // must never mutate the newly selected thread.
+    const isCurrentThread = (): boolean => threadIdRef.current === expectedThreadId;
+    if (!isCurrentThread()) return;
     let latestActiveRequestId: string | null = null;
     const settleUnrecoverableTurn = (requestId: string, turnId: string): void => {
       setMessages((current) => publishAndReturn(current.map((candidate) => {
@@ -252,8 +304,16 @@ export function useDesktopChatAdapter({
       });
       void recovery
         .then((events) => {
+          if (!isCurrentThread()) return;
           if (!events.length) {
             settleUnrecoverableTurn(requestId, turn.turnId);
+            return;
+          }
+          // An in-process startChat still owns this Run. Reattach without
+          // replaying history or dropping the structured live listener.
+          if (isActive && events.length === 1 && events[0]?.type === "start") {
+            setActiveRequestId(requestId);
+            activeRequestIdRef.current = requestId;
             return;
           }
           // Runtime recovery emits the same normalized chunks as a live Codex
@@ -277,6 +337,7 @@ export function useDesktopChatAdapter({
           window.setTimeout(() => events.forEach(applyChatEvent), 0);
         })
         .catch((error) => {
+          if (!isCurrentThread()) return;
           settleUnrecoverableTurn(requestId, turn.turnId);
           appendDebugLog("warn", error instanceof Error ? error.message : `Structured turn recovery failed: ${requestId}`, "chat");
         });
@@ -285,13 +346,82 @@ export function useDesktopChatAdapter({
     activeRequestIdRef.current = latestActiveRequestId;
   }
 
+  function captureLiveThreadView(): LiveThreadChatView {
+    return {
+      messages: messagesRef.current,
+      activeRequestId: activeRequestIdRef.current,
+      cancellingRequestId: cancellingRequestIdRef.current,
+      currentRuntimeMode: currentRuntimeModeRef.current,
+      streamingAssistantByRequest: { ...streamingAssistantByRequest.current },
+      structuredRequests: [...structuredRequests.current],
+      completedStructuredRequests: [...completedStructuredRequests.current],
+      lastSequenceByRequest: { ...lastSequenceByRequest.current },
+      pendingDeltasByRequest: { ...pendingDeltasByRequest.current },
+      pendingStructuredEventsByRequest: { ...pendingStructuredEventsByRequest.current },
+    };
+  }
+
+  function restoreLiveThreadView(view: LiveThreadChatView): void {
+    streamingAssistantByRequest.current = { ...view.streamingAssistantByRequest };
+    structuredRequests.current = new Set(view.structuredRequests);
+    completedStructuredRequests.current = new Set(view.completedStructuredRequests);
+    lastSequenceByRequest.current = { ...view.lastSequenceByRequest };
+    pendingDeltasByRequest.current = { ...view.pendingDeltasByRequest };
+    pendingStructuredEventsByRequest.current = { ...view.pendingStructuredEventsByRequest };
+    currentRuntimeModeRef.current = view.currentRuntimeMode;
+    setCurrentRuntimeMode(view.currentRuntimeMode);
+    setCancellingRequestId(view.cancellingRequestId);
+    cancellingRequestIdRef.current = view.cancellingRequestId;
+    setActiveRequestId(view.activeRequestId);
+    activeRequestIdRef.current = view.activeRequestId;
+    setMessages(view.messages);
+    messagesRef.current = view.messages;
+    if (Object.keys(view.pendingStructuredEventsByRequest).length && structuredFlushFrameRef.current === null) {
+      structuredFlushFrameRef.current = window.requestAnimationFrame(flushStructuredEventDeltas);
+    }
+  }
+
+  function cacheLiveThreadView(threadKey: string): void {
+    if (!activeRequestIdRef.current) {
+      liveThreadViewsRef.current.delete(threadKey);
+      return;
+    }
+    liveThreadViewsRef.current.set(threadKey, captureLiveThreadView());
+  }
+
+  function persistComposerDraft(threadKey: string): void {
+    const draftInput = inputRef.current;
+    const draftAttachments = commandAttachmentsRef.current;
+    if (!draftInput && draftAttachments.length === 0) {
+      composerDraftsRef.current.delete(threadKey);
+      return;
+    }
+    composerDraftsRef.current.set(threadKey, {
+      input: draftInput,
+      commandAttachments: [...draftAttachments],
+    });
+  }
+
   useEffect(() => {
     if (!activeRequestId) setCancellingRequestId(null);
   }, [activeRequestId]);
 
   useEffect(() => {
+    appendRendererStage("chat_adapter.thread_changed", { threadId });
     threadIdRef.current = threadId;
-    languageRef.current = language;
+    const cached = liveThreadViewsRef.current.get(threadId);
+    if (cached?.activeRequestId) {
+      liveThreadViewsRef.current.delete(threadId);
+      restoreLiveThreadView(cached);
+      restoredSnapshotThreadRef.current = threadId;
+      appliedSnapshotUpdatedAtRef.current = threadSnapshot?.threadId === threadId
+        ? threadSnapshot.updatedAt
+        : appliedSnapshotUpdatedAtRef.current;
+      const queued = backgroundChatEventsRef.current.get(threadId) ?? [];
+      backgroundChatEventsRef.current.delete(threadId);
+      if (queued.length) window.setTimeout(() => queued.forEach(applyChatEvent), 0);
+      return () => { cacheLiveThreadView(threadId); };
+    }
     streamingAssistantByRequest.current = {};
     structuredRequests.current.clear();
     completedStructuredRequests.current.clear();
@@ -310,20 +440,18 @@ export function useDesktopChatAdapter({
     setActiveRequestId(null);
     setCurrentRuntimeMode(null);
     currentRuntimeModeRef.current = null;
-    setCommandAttachments([]);
-    setInput("");
     const restoredMessages = threadSnapshot?.messages?.length
       ? hydrateStructuredMessages(threadSnapshot.messages).filter((message) => message.id !== "welcome")
-      : [createWelcomeMessage(language, userPreferencesRef.current)];
+      : [createWelcomeMessage(languageRef.current, userPreferencesRef.current)];
     if (threadSnapshot?.messages?.length) {
       restoreActiveStructuredTurns(restoredMessages);
       restoredSnapshotThreadRef.current = threadId;
     }
     setMessages(restoredMessages);
     return () => {
-      clearStructuredFlush();
+      cacheLiveThreadView(threadId);
     };
-  }, [language, threadId]);
+  }, [threadId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -395,7 +523,7 @@ export function useDesktopChatAdapter({
 
   useEffect(() => {
     if (threadSnapshot?.threadId !== threadId) return;
-    if (activeRequestId) return;
+    if (activeRequestId || activeRequestIdRef.current) return;
     if (threadSnapshot.updatedAt <= appliedSnapshotUpdatedAtRef.current) return;
     if (threadSnapshot.updatedAt <= lastPublishedSnapshotAtRef.current) return;
     const restoredMessages = threadSnapshot.messages.length
@@ -434,21 +562,22 @@ export function useDesktopChatAdapter({
     attachments: ChatAttachment[] = [],
     options?: ChatSubmitOptions,
   ): Promise<boolean> {
-    const skillName = options?.skillName?.trim();
-    const skillPrefix = skillName
-      ? languageRef.current === "zh"
-        ? `用 ${skillName} `
-        : `Use ${skillName} skill to `
-      : "";
-    const rawInput = input.trim();
-    const alreadyPrefixed = Boolean(
-      skillName &&
-        (languageRef.current === "zh"
-          ? new RegExp(`^用\\s+${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(rawInput)
-          : new RegExp(`^Use\\s+${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+skill\\s+to\\b`, "i").test(rawInput)),
-    );
-    const text = (skillPrefix && !alreadyPrefixed ? `${skillPrefix}${rawInput}` : rawInput).trim();
+    // Skills are loaded from the local scan directory on demand by the agent.
+    // Desktop no longer forces a per-turn selected_skill_id via composer chip.
+    const skillName = options?.skillName?.trim() || undefined;
+    const text = (options?.text ?? input).trim();
     if (!text) return false;
+    const preserveComposer = options?.text !== undefined;
+
+    const replaceFromMessageId = options?.replaceFromMessageId?.trim();
+    const replaceIndex = replaceFromMessageId
+      ? messagesRef.current.findIndex((message) => message.id === replaceFromMessageId)
+      : -1;
+    const historyMessages = (replaceIndex >= 0
+      ? messagesRef.current.slice(0, replaceIndex)
+      : messagesRef.current
+    ).filter((message) => message.id !== "welcome");
+    const draftParts = options?.draftParts;
 
     const materialPaths = [...new Set(attachments
       .filter((attachment) => attachment.kind === "file" && !attachment.blockedReason && attachment.path)
@@ -456,8 +585,8 @@ export function useDesktopChatAdapter({
     if (materialPaths.length > 0 && isMaterialInventoryIntent(text)) {
       try {
         const analysis = await desktopApi.analyzeMaterialRoles({ paths: materialPaths });
-        publishLocalAssistantResult(text, formatMaterialInventoryAnswer(analysis, languageRef.current), attachments);
-        setInput("");
+        publishLocalAssistantResult(text, formatMaterialInventoryAnswer(analysis, languageRef.current), attachments, historyMessages);
+        if (!preserveComposer) setInput("");
         return true;
       } catch {
         // Fall through to the normal chat route when local material inspection is unavailable.
@@ -480,15 +609,17 @@ export function useDesktopChatAdapter({
       userPreferencesRef.current = refreshed;
       setUserPreferences(refreshed);
     }
-    const handleSensitiveLocally = memorySafety.hasSensitiveContent;
+    // [DISABLED] Sensitive content local interception disabled — hasSensitiveContent is always false
+    // so handleSensitiveLocally will never be true. The block below is skipped.
+    const handleSensitiveLocally = false; // memorySafety.hasSensitiveContent;
     const handleTemporaryLocally = memorySafety.explicitMemoryRequest && memorySafety.temporary && isPreferenceOnlyRequest(text);
-    if (attachments.length === 0 && (handleSensitiveLocally || handleTemporaryLocally || (saved.length > 0 && isPreferenceOnlyRequest(text)))) {
+    if (attachments.length === 0 && (/* handleSensitiveLocally || */ handleTemporaryLocally || (saved.length > 0 && isPreferenceOnlyRequest(text)))) {
       const response = [
         saved.length ? formatPreferenceConfirmation(saved, languageRef.current) : "",
         formatMemorySafetyNotice(memorySafety, languageRef.current),
       ].filter(Boolean).join("\n\n");
-      publishLocalAssistantResult(memorySafety.hasSensitiveContent ? redactSensitiveMemoryText(text) : text, response);
-      setInput("");
+      publishLocalAssistantResult(/* memorySafety.hasSensitiveContent ? redactSensitiveMemoryText(text) : */ text, response, [], historyMessages);
+      if (!preserveComposer) setInput("");
       return true;
     }
 
@@ -545,12 +676,14 @@ export function useDesktopChatAdapter({
         ]
           .filter((item) => item !== undefined && item !== "")
           .join("\n\n"),
+        [],
+        historyMessages,
       );
       if (forkHandoffResult?.thread) onForkThreadCreated?.(forkHandoffResult.thread);
       forkScheduleResult?.threads?.forEach((thread) => onForkThreadCreated?.(thread));
       forkDispatchResult?.threads?.forEach((thread) => onForkThreadCreated?.(thread));
       forkResult?.threads?.forEach((thread) => onForkThreadCreated?.(thread));
-      if (result.action?.type !== "set-input") {
+      if (result.action?.type !== "set-input" && !preserveComposer) {
         setInput("");
       }
       return true;
@@ -558,7 +691,25 @@ export function useDesktopChatAdapter({
 
     if (!canChat) {
       const liveGateway = await desktopApi.getGatewayStatus().catch(() => null);
-      if (!liveGateway?.ready || liveGateway.externalConflict) return false;
+      if (!liveGateway?.ready || liveGateway.externalConflict) {
+        const friendlyError = describeUserFacingError(
+          { code: liveGateway?.externalConflict ? "gateway_external_conflict" : "GATEWAY_NOT_READY" },
+          languageRef.current,
+        );
+        appendDebugLog("error", friendlyError.diagnosticCode, "chat");
+        setMessages((current) => publishAndReturn([
+          ...current,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `${friendlyError.title} ${friendlyError.action}`,
+            error: true,
+            replyFailed: true,
+            lastEventAt: Date.now(),
+          },
+        ]));
+        return false;
+      }
     }
 
     const userMessage: UiMessage = {
@@ -566,6 +717,8 @@ export function useDesktopChatAdapter({
       role: "user",
       content: text,
       ...(attachments.length ? { attachments } : {}),
+      ...(draftParts?.length ? { draftParts } : {}),
+      ...(skillName ? { skillName } : {}),
     };
     const assistantId = crypto.randomUUID();
     const requestId = crypto.randomUUID();
@@ -577,7 +730,7 @@ export function useDesktopChatAdapter({
     setCancellingRequestId(null);
     activeRequestIdRef.current = requestId;
     const nextMessages: UiMessage[] = [
-      ...messages.filter((message) => message.id !== "welcome"),
+      ...historyMessages,
       userMessage,
       {
         id: assistantId,
@@ -592,10 +745,16 @@ export function useDesktopChatAdapter({
     setMessages(nextMessages);
     publishThreadUpdate(nextMessages);
     streamingAssistantByRequest.current[requestId] = assistantId;
-    setInput("");
+    if (!preserveComposer) setInput("");
     setActiveRequestId(requestId);
 
     try {
+      appendRendererStage("chat_adapter.submit.before_start_chat", {
+        requestId,
+        threadId: threadIdRef.current,
+        workspaceId,
+        agentId: options?.agentId,
+      });
       await desktopApi.startChat({
         requestId,
         agentId: options?.agentId?.trim() || undefined,
@@ -605,11 +764,14 @@ export function useDesktopChatAdapter({
         workspaceName,
         workspacePath,
         attachments,
+        draftParts,
         model: options?.model?.trim() || undefined,
+        reasoningEffort: options?.thinkingEffort,
+        planMode: options?.planMode === true ? true : undefined,
         metadata: {
           selected_agent_id: options?.agentId?.trim() || undefined,
           selected_skill_id: skillName || undefined,
-          goal_confirmation_required: options?.goalConfirmationRequired === true,
+          plan_mode: options?.planMode === true,
           workspace_instructions: workspaceInstructions || [],
           selected_agent: options?.agentName?.trim() || undefined,
           thinking_effort: options?.thinkingEffort,
@@ -622,7 +784,7 @@ export function useDesktopChatAdapter({
           team_memory: teamMemoryRef.current.map(({ id, teamId, content }) => ({ id, teamId, content })),
         },
         messages: buildRequestMessages(
-          [...messages, userMessage]
+          [...historyMessages, userMessage]
             .filter((message) => message.id !== "welcome" && !message.error && message.content.trim().length > 0)
             .map(({ role, content }) => ({ role, content })),
           workspaceInstructions,
@@ -632,8 +794,14 @@ export function useDesktopChatAdapter({
           currentRuntimeModeRef.current,
         ),
       });
+      appendRendererStage("chat_adapter.submit.start_chat_ok", { requestId, threadId: threadIdRef.current });
       return true;
     } catch (error) {
+      appendRendererStage("chat_adapter.submit.start_chat_failed", {
+        requestId,
+        threadId: threadIdRef.current,
+        error: error instanceof Error ? error.message : String(error),
+      }, "error");
       const message = error instanceof Error
         ? error.message
         : languageRef.current === "zh" ? "聊天未能启动。" : "Chat failed to start.";
@@ -646,25 +814,46 @@ export function useDesktopChatAdapter({
       activeRequestIdRef.current = null;
       delete streamingAssistantByRequest.current[requestId];
       setMessages((current) => current.filter((item) => item.id !== assistantId));
-      setInput(text);
+      if (!preserveComposer) setInput(text);
       return false;
     }
   }
 
   async function abort(): Promise<void> {
     const requestId = activeRequestIdRef.current ?? activeRequestId;
-    if (!requestId || cancellingRequestId === requestId) return;
+    if (!requestId) return;
+    // Allow a second Stop click to force-unlock even if the first cancel is still in flight.
+    const forceUnlock = cancellingRequestId === requestId;
     setCancellingRequestId(requestId);
     const assistantId = streamingAssistantByRequest.current[requestId];
+    // Optimistically clear the busy composer so the UI never stays stuck when
+    // cancelChatTurn hangs (e.g. blocked shell / stuck subagent).
+    activeRequestIdRef.current = null;
+    setActiveRequestId((current) => (current === requestId ? null : current));
     setMessages((current) => updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
       ...message,
       streaming: false,
       lastEventAt: Date.now(),
     })));
+    if (forceUnlock) {
+      setCancellingRequestId((current) => (current === requestId ? null : current));
+      setMessages((current) => publishAndReturn(
+        updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+          ...message,
+          streaming: false,
+          structuredTurn: finalizeStructuredTurn(
+            message.structuredTurn,
+            message.id,
+            "cancelled",
+          ),
+          lastEventAt: Date.now(),
+        })),
+      ));
+      return;
+    }
     try {
       const runtimeRunId = messages.find((message) => message.id === assistantId)?.runtimeRunId;
       const result = await desktopApi.cancelChatTurn({ requestId, sessionId: threadIdRef.current, runId: runtimeRunId });
-      if (result.state === "cancelling") return;
       setMessages((current) => publishAndReturn(
         updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
           ...message,
@@ -677,21 +866,26 @@ export function useDesktopChatAdapter({
           lastEventAt: Date.now(),
         })),
       ));
-      setCancellingRequestId((current) => current === requestId ? null : current);
-      setActiveRequestId((current) => current === requestId ? null : current);
-      activeRequestIdRef.current = null;
     } catch (error) {
-      setCancellingRequestId((current) => current === requestId ? null : current);
-      setMessages((current) => updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
-        ...message,
-        streaming: message.structuredTurn?.status === "pending" || message.structuredTurn?.status === "running",
-        lastEventAt: Date.now(),
-      })));
+      setMessages((current) => publishAndReturn(
+        updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+          ...message,
+          streaming: false,
+          structuredTurn: finalizeStructuredTurn(
+            message.structuredTurn,
+            message.id,
+            "cancelled",
+          ),
+          lastEventAt: Date.now(),
+        })),
+      ));
       appendDebugLog(
         "error",
         error instanceof Error ? error.message : "Chat stop request failed.",
         "chat",
       );
+    } finally {
+      setCancellingRequestId((current) => (current === requestId ? null : current));
     }
   }
 
@@ -709,7 +903,12 @@ export function useDesktopChatAdapter({
   }
 
   function applyChatEvent(event: ChatEvent): void {
-    if (event.sessionId && event.sessionId !== threadIdRef.current) return;
+    if (event.sessionId && event.sessionId !== threadIdRef.current) {
+      const queued = backgroundChatEventsRef.current.get(event.sessionId) ?? [];
+      if (queued.length < 4_096) queued.push(event);
+      backgroundChatEventsRef.current.set(event.sessionId, queued);
+      return;
+    }
     if (!acceptChatEventSequence(lastSequenceByRequest.current, event.requestId, event.seq)) return;
     event = sanitizeSensitiveValue(event);
     if (event.type === "start") {
@@ -729,6 +928,15 @@ export function useDesktopChatAdapter({
     }
     if (event.type === "oaep" && event.oaepEvent) {
       const oaep = event.oaepEvent;
+      // High-frequency stream events must not fill the debug ring buffer with
+      // full envelopes — that previously OOMed the renderer on long runs.
+      if (
+        oaep.type === "event.item.delta"
+        || oaep.type === "event.session.updated"
+        || (oaep.type === "event.run.resumed" && !(typeof oaep.data?.reason === "string" && oaep.data.reason.trim()))
+      ) {
+        return;
+      }
       appendRuntimeLogEvent({
         id: oaep.event_id,
         timestamp: oaep.timestamp,
@@ -749,7 +957,11 @@ export function useDesktopChatAdapter({
         sequence: oaep.sequence,
         cursor: oaep.sequence,
         source: oaep.source.backend,
-        details: oaep as unknown as Record<string, unknown>,
+        details: {
+          eventId: oaep.event_id,
+          dedupeKey: oaep.dedupe_key,
+          type: oaep.type,
+        },
       });
       const capabilityConfiguration = capabilityConfigurationPartFromOaep(oaep);
       if (capabilityConfiguration) {
@@ -798,13 +1010,25 @@ export function useDesktopChatAdapter({
           })),
         ));
       }
+      const hadStructuredAuthority = structuredRequests.current.has(event.requestId);
       structuredRequests.current.add(event.requestId);
       delete pendingDeltasByRequest.current[event.requestId];
       const structuredEvent = event.structuredEvent;
-      appendStructuredProtocolLog(structuredEvent);
-      if (structuredEvent.type === "part.delta" && structuredEvent.delta.kind === "markdown.append") {
-        emitAssistantSpeechStreamEvent({ type: "chunk", requestId: event.requestId, content: structuredEvent.delta.text, at: Date.now() });
+      // The first valid structured event permanently owns this turn. Clear
+      // legacy text immediately so a reasoning delta can never flash as the
+      // answer while the structured reducer is waiting for the next frame.
+      if (!hadStructuredAuthority) {
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        setMessages((current) => updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+          ...message,
+          content: "",
+          reasoningContent: "",
+          error: false,
+          replyFailed: false,
+          structuredTurn: message.structuredTurn ?? createStructuredTurnState(event.requestId),
+        })));
       }
+      appendStructuredProtocolLog(structuredEvent);
       if (structuredEvent.type === "activity.updated") {
         appendStructuredActivityLog(structuredEvent.activity);
       }
@@ -818,8 +1042,7 @@ export function useDesktopChatAdapter({
         }
         return;
       }
-      const pendingStructuredEvents = pendingStructuredEventsByRequest.current[event.requestId] ?? [];
-      delete pendingStructuredEventsByRequest.current[event.requestId];
+      const pendingStructuredEvents = takePendingStructuredEvents(event.requestId);
       applyStructuredEventBatch(event.requestId, [...pendingStructuredEvents, structuredEvent]);
       if (structuredEvent.type === "turn.error") {
         const friendly = describeUserFacingError({
@@ -839,11 +1062,6 @@ export function useDesktopChatAdapter({
         structuredEvent.type === "turn.error"
       ) {
         if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
-        emitAssistantSpeechStreamEvent({
-          type: structuredEvent.type === "turn.completed" ? "done" : structuredEvent.type === "turn.cancelled" ? "aborted" : "error",
-          requestId: event.requestId,
-          at: Date.now(),
-        });
         setActiveRequestId((current) => current === event.requestId ? null : current);
         if (!completedStructuredRequests.current.has(event.requestId)) {
           completedStructuredRequests.current.add(event.requestId);
@@ -853,9 +1071,9 @@ export function useDesktopChatAdapter({
           }
           onChatComplete(structuredEvent.type === "turn.completed");
         }
-        structuredRequests.current.delete(event.requestId);
-        delete streamingAssistantByRequest.current[event.requestId];
-        delete lastSequenceByRequest.current[event.requestId];
+        // Keep the sealed turn addressable until the following transport
+        // `done`/`aborted` event. This lets a late terminal reconciliation
+        // update the already-rendered message without reopening the turn.
         delete pendingDeltasByRequest.current[event.requestId];
       }
       return;
@@ -894,7 +1112,6 @@ export function useDesktopChatAdapter({
       (event.type === "chunk" || event.type === "reasoning" || event.type === "status")
     ) return;
     if (event.type === "chunk") {
-      emitAssistantSpeechStreamEvent({ type: "chunk", requestId: event.requestId, content: event.content ?? "", at: Date.now() });
       queueAssistantDelta(event.requestId, "text", event.content ?? "");
       return;
     }
@@ -948,11 +1165,16 @@ export function useDesktopChatAdapter({
     }
     if (event.type === "done" || event.type === "aborted") {
       if (completedStructuredRequests.current.delete(event.requestId)) {
+        // The structured terminal event already sealed and rendered the turn;
+        // this transport sentinel only releases per-request bookkeeping.
+        structuredRequests.current.delete(event.requestId);
+        delete streamingAssistantByRequest.current[event.requestId];
         delete lastSequenceByRequest.current[event.requestId];
+        delete pendingDeltasByRequest.current[event.requestId];
+        delete pendingStructuredEventsByRequest.current[event.requestId];
         return;
       }
       if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
-      emitAssistantSpeechStreamEvent({ type: event.type, requestId: event.requestId, at: Date.now() });
       flushPendingDeltas();
       if (structuredRequests.current.has(event.requestId)) {
         const assistantId = streamingAssistantByRequest.current[event.requestId];
@@ -1007,7 +1229,6 @@ export function useDesktopChatAdapter({
         return;
       }
       if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
-      emitAssistantSpeechStreamEvent({ type: "error", requestId: event.requestId, at: Date.now() });
       flushPendingDeltas();
       const rawError = event.errorEnvelope ?? event.failureRecovery ?? { code: "unexpected_error", retryable: true };
       const friendlyError = describeUserFacingError(rawError, languageRef.current);
@@ -1095,6 +1316,7 @@ export function useDesktopChatAdapter({
   }
 
   function publishAndReturn(nextMessages: UiMessage[]): UiMessage[] {
+    messagesRef.current = nextMessages;
     scheduleThreadUpdate(nextMessages);
     return nextMessages;
   }
@@ -1137,9 +1359,9 @@ export function useDesktopChatAdapter({
     }
   }
 
-  function createThreadSnapshot(nextMessages: UiMessage[]): ChatThreadSnapshot | null {
+  function createThreadSnapshot(nextMessages: UiMessage[], allowEmpty = false): ChatThreadSnapshot | null {
     const nonWelcome = nextMessages.filter((message) => message.id !== "welcome");
-    if (!nonWelcome.length) return null;
+    if (!nonWelcome.length && !allowEmpty) return null;
     const firstUser = nonWelcome.find((message) => message.role === "user");
     const updatedAt = Math.max(Date.now(), lastPublishedSnapshotAtRef.current + 1);
     lastPublishedSnapshotAtRef.current = updatedAt;
@@ -1158,9 +1380,10 @@ export function useDesktopChatAdapter({
     userText: string,
     assistantText: string,
     attachments: ChatAttachment[] = [],
+    baseMessages: UiMessage[] = messagesRef.current,
   ): void {
     const commandMessages: UiMessage[] = [
-      ...messages.filter((message) => message.id !== "welcome"),
+      ...baseMessages.filter((message) => message.id !== "welcome"),
       {
         id: crypto.randomUUID(),
         role: "user",
@@ -1192,10 +1415,9 @@ export function useDesktopChatAdapter({
       return;
     }
     if (action.type === "open-view") {
-      // Temporarily hide Skills management entry — keep for later reuse.
-      // if (action.viewId === "skills_square") {
-      //   onOpenSkillsSquare?.(action.target);
-      // }
+      if (action.viewId === "skills_square") {
+        onOpenSkillsSquare?.(action.target);
+      }
       return;
     }
     if (action.type === "set-input") {
@@ -1890,6 +2112,26 @@ export function useDesktopChatAdapter({
     ));
   }
 
+  function deleteMessage(messageId: string): void {
+    if (!messageId || messageId === "welcome") return;
+    const remaining = messagesRef.current.filter((message) => message.id !== messageId && message.id !== "welcome");
+    const next = remaining.length
+      ? remaining
+      : [createWelcomeMessage(languageRef.current, userPreferencesRef.current)];
+    messagesRef.current = next;
+    setMessages(next);
+    const snapshot = createThreadSnapshot(remaining, true);
+    if (snapshot) notifyThreadUpdated(snapshot);
+  }
+
+  if (threadIdRef.current !== threadId) {
+    persistComposerDraft(threadIdRef.current);
+    const draft = composerDraftsRef.current.get(threadId);
+    threadIdRef.current = threadId;
+    setInput(draft?.input ?? "");
+    setCommandAttachments(draft?.commandAttachments ? [...draft.commandAttachments] : []);
+  }
+
   return {
     activeRequestId,
     cancellingRequestId,
@@ -1901,6 +2143,7 @@ export function useDesktopChatAdapter({
     clearRuntimeMode,
     removeCommandAttachment,
     dismissRecoveryActions,
+    deleteMessage,
     setInput,
     submit,
     abort,
@@ -2607,6 +2850,10 @@ function mergeHydratedAssistantMessages(primary: UiMessage, secondary: UiMessage
     ...primaryTurn,
     parts,
     activities,
+    processTimeline: [
+      ...(primaryTurn.processTimeline ?? []),
+      ...(secondaryTurn.processTimeline ?? []),
+    ].slice(-500),
     lastSequence: Math.max(primaryTurn.lastSequence, secondaryTurn.lastSequence),
     seenDedupeKeys: [...new Set([...primaryTurn.seenDedupeKeys, ...secondaryTurn.seenDedupeKeys])],
     protocolIssues: [...primaryTurn.protocolIssues, ...secondaryTurn.protocolIssues],
@@ -2823,7 +3070,8 @@ function applyLocalStructuredEvent(state: StructuredTurnState, event: LocalStruc
 
 function readStructuredMarkdown(state: StructuredTurnState): string {
   return state.parts
-    .filter((part): part is Extract<StructuredAssistantPart, { kind: "markdown" }> => part.kind === "markdown")
+    .filter((part): part is Extract<StructuredAssistantPart, { kind: "markdown" }> =>
+      part.kind === "markdown" && (part.channel ?? "answer") === "answer" && part.final === true)
     .map((part) => part.markdown)
     .join("\n\n");
 }
@@ -2901,7 +3149,9 @@ function applyStructuredEventToMessage(
     content: content || errorNotice?.message || message.content,
     reasoningContent,
     streaming: structuredTurn.status === "pending" || structuredTurn.status === "running",
-    error: structuredTurn.status === "error" || message.error,
+    error: structuredTurn.status === "completed" || structuredTurn.status === "cancelled"
+      ? false
+      : structuredTurn.status === "error" || Boolean(message.error),
     inputRequest: activeInteraction && activeInteraction.interactionType !== "capability_configuration"
       ? {
           requestId: activeInteraction.requestId,
@@ -2937,7 +3187,11 @@ function sanitizeStructuredAssistantMessage(message: UiMessage): UiMessage {
     // interrupted/cancelled run may still carry the older `streaming: true`
     // flag, which otherwise leaves the elapsed-time indicator running forever.
     streaming: structuredTurn.status === "pending" || structuredTurn.status === "running",
-    error: hadTerminalError ? false : message.error,
+    // A late transport/error event must not keep "Reply failed" after OAEP has
+    // already completed or cancelled the same turn.
+    error: structuredTurn.status === "completed" || structuredTurn.status === "cancelled"
+      ? false
+      : hadTerminalError ? false : Boolean(message.error),
   };
 }
 
@@ -2965,7 +3219,7 @@ function finalizeStructuredTurn(
   if (status === "cancelled") return applyLocalStructuredEvent(state, { type: "turn.cancelled" });
   for (const part of state.parts) {
     if (part.status === "running" || part.status === "pending") {
-      state = applyLocalStructuredEvent(state, { type: "part.completed", part: { ...part, status: "completed" } });
+      state = applyLocalStructuredEvent(state, { type: "part.completed", part: { ...part, status: "completed", final: true } });
     }
   }
   return applyLocalStructuredEvent(state, { type: "turn.completed" });

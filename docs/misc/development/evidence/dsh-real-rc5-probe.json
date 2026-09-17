@@ -1,0 +1,48 @@
+{
+  "carrier": {
+    "executable_sha256": "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de",
+    "kind": "development-node",
+    "platform": "nt"
+  },
+  "compatibility": {
+    "missing_capabilities": [
+      "approval.respond",
+      "run.cancel",
+      "run.terminal",
+      "run.turn-binding",
+      "session.history",
+      "session.resume",
+      "tool.side-effect-ledger",
+      "workspace.containment"
+    ],
+    "missing_methods": [],
+    "missing_notifications": [],
+    "profile_id": "dsh-sdk/0.1.0-rc.5",
+    "reason": "profile_requires_runtime_extension",
+    "state": "probe_only"
+  },
+  "native_identity": {
+    "capabilities": [
+      "run.enqueue-receipt",
+      "session.events.live"
+    ],
+    "contract_sha256": "b9de1f85d14956fb79573d24a220e687e78efe6903e6bae820ad21a41d536878",
+    "methods": [
+      "initialize",
+      "session/prompt",
+      "shutdown"
+    ],
+    "notifications": [
+      "session.event",
+      "session.status",
+      "subagent.finished",
+      "subagent.started"
+    ],
+    "server_name": "deepseek-harness-sdk-runtime",
+    "server_version": "0.0.1"
+  },
+  "probed_at": "2026-08-15T19:47:18.204369+00:00",
+  "production_eligible": false,
+  "schema_version": 1,
+  "source_commit": "47f943859bef60e4160492346772ded9b24f765a"
+}

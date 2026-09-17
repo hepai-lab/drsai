@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "feature_id": "M07-F02",
+  "acceptance_run_id": "p10-round-034-workspace-boundary",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "current_workspace_name_visible": true,
+    "absolute_paths_and_uris_fail_closed": true,
+    "traversal_fails_closed": true,
+    "ambiguous_same_name_fails_closed": true,
+    "oversized_reads_remain_bounded": true,
+    "model_outputs_use_relative_paths_only": true
+  },
+  "tests": {
+    "testDebugUnitTest": "703 tests, 0 failures, 2 skipped",
+    "MainInterfaceTest_API35": "34 passed"
+  }
+}

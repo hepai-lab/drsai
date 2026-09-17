@@ -94,7 +94,7 @@ class PlatformAgentClientTest {
     @Test fun native_stream_parser_ignores_null_and_maps_errors() {
         assertEquals("", nativeTextDelta("""{"choices":[{"delta":{"content":null}}]}"""))
         assertEquals("你好", nativeTextDelta("""{"choices":[{"delta":{"content":"你好"}}]}"""))
-        assertEquals("该智能体暂不支持 Android 对话", nativeApiError(
+        assertEquals("This agent does not support Android chat", nativeApiError(
             409,
             """{"detail":{"code":"agent_chat_unsupported"}}""",
         ).message)

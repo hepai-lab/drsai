@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "feature_id": "M04-F01",
+  "acceptance_run_id": "p10-round-016-user-task-step-model",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "fixture_families": ["message", "web", "file", "plan", "subagent", "artifact", "unknown notice"],
+  "properties": {
+    "deterministic_projection": true,
+    "unknown_event_user_label": "处理中",
+    "unknown_event_advanced_detail_preserved": true,
+    "private_reasoning_not_exposed": true
+  },
+  "tests": {
+    "testDebugUnitTest": "673 tests, 0 failures, 2 skipped",
+    "OaepProjectionTest": "all passed",
+    "OaepToolVisibilityUiTest_API35": "1 passed"
+  }
+}

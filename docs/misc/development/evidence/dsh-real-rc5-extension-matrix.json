@@ -1,0 +1,45 @@
+{
+  "accepted": true,
+  "phase_1": {
+    "attestation": {
+      "contained": false,
+      "enforcement": "partial",
+      "policy": {
+        "mode": "workspace-write",
+        "sessionId": "opendrsai-real-extension-session",
+        "workspaceRoot": "C:\\Users\\win11\\VSProjects\\drsai"
+      }
+    },
+    "cancel_terminal": {
+      "kind": "aborted",
+      "reason": {
+        "kind": "user"
+      }
+    },
+    "first_terminal": {
+      "kind": "completed"
+    },
+    "history_events": 17,
+    "identity": {
+      "capabilities": [
+        "approval.respond",
+        "run.cancel",
+        "run.terminal",
+        "run.turn-binding",
+        "session.history",
+        "session.resume",
+        "tool.side-effect-ledger",
+        "workspace.containment"
+      ],
+      "version": "0.1.0-opendrsai.1"
+    }
+  },
+  "phase_2": {
+    "history_events": 22,
+    "resumed": true,
+    "terminal": {
+      "kind": "completed"
+    }
+  },
+  "schema_version": 1
+}

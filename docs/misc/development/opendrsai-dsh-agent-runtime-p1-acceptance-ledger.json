@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "plan": "opendrsai-dsh-agent-runtime-integration-p1",
+  "updated_at": "2026-08-16",
+  "round": 8,
+  "progress": {
+    "accepted_features": 50,
+    "total_features": 50,
+    "percent": 100,
+    "accepted_modules": 10,
+    "total_modules": 10
+  },
+  "status_rules": {
+    "accepted": "implementation, focused automated test, and authoritative evidence all exist",
+    "partial": "implementation exists but a required test, integration, or release proof is missing",
+    "pending": "required behavior is not implemented"
+  },
+  "round_8_validation": {
+    "upstream_native_profile": "probe_only",
+    "opendrsai_extension_profile": "production",
+    "profile_id": "dsh-sdk/0.1.0-rc.5+opendrsai.1",
+    "source_commit": "47f943859bef60e4160492346772ded9b24f765a",
+    "extension_contract_sha256": "70f0f05b1cca8a37f4dedc92150bd78832bee540c4ad7dbbdb3885d77d2d4909",
+    "oaep_schema_sha256": "e207c75c2f37e121dc613aec040c24fd5bd2c6f4f005826c8996a6bb848770b7",
+    "real_product_matrix": "docs/development/evidence/dsh-real-product-desktop-matrix.json",
+    "real_behavior_matrix": "docs/development/evidence/dsh-real-rc5-extension-matrix.json",
+    "strict_probe": "docs/development/evidence/dsh-real-rc5-extension-probe.json"
+  },
+  "modules": [
+    {
+      "id": "DSH-P1-M01",
+      "name": "Protocol SDK",
+      "status": "accepted",
+      "features": [
+        {"id": "F01", "name": "Independent distribution boundary", "status": "accepted", "evidence": ["cores/python/packages/drsai_dsh_runtime/pyproject.toml", "tests/test_architecture.py"]},
+        {"id": "F02", "name": "Pinned Control and OAEP identities with drift gate", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/contracts.py", "tests/test_contracts.py"]},
+        {"id": "F03", "name": "Generated typed Control DTOs", "status": "accepted", "evidence": ["cores/protocol/runtime/runtime-control.schema.json", "tools/generate_control_types.py", "src/opendrsai_dsh_runtime/control_types.py", "tests/test_control_types.py"]},
+        {"id": "F04", "name": "OAEP conformance fixtures and validator", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/oaep.py", "tests/test_oaep.py", "cores/protocol/oaep/oaep.schema.json"]},
+        {"id": "F05", "name": "Build artifact schema verification", "status": "accepted", "evidence": ["pyproject.toml", "src/opendrsai_dsh_runtime/wheel_verify.py", "tools/verify_wheel.py", "cores/protocol/runtime/runtime-control.schema.json"]}
+      ]
+    },
+    {
+      "id": "DSH-P1-M02",
+      "name": "Native Driver",
+      "status": "accepted",
+      "features": [
+        {"id": "F01", "name": "Strict asynchronous JSON-RPC peer", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/jsonrpc.py", "tests/test_jsonrpc.py"]},
+        {"id": "F02", "name": "Shell-free managed process supervisor", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/process.py", "tests/test_process.py"]},
+        {"id": "F03", "name": "Generation fence, bounded close and redacted stderr", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/process.py", "tests/test_process.py"]},
+        {"id": "F04", "name": "Production server-request handler", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/jsonrpc.py", "src/opendrsai_dsh_runtime/process.py", "src/opendrsai_dsh_runtime/bootstrap.py", "tests/test_jsonrpc.py"]},
+        {"id": "F05", "name": "Real DSH initialize and protocol probe", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/probe.py", "tools/probe_real_dsh.py", "docs/development/evidence/dsh-real-rc5-probe.json"]}
+      ]
+    },
+    {
+      "id": "DSH-P1-M03",
+      "name": "Control Service",
+      "status": "accepted",
+      "features": [
+        {"id": "F01", "name": "Runtime initialize, health and shutdown", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/control.py", "tests/test_control.py"]},
+        {"id": "F02", "name": "Session create, resume and archive", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/control.py", "src/opendrsai_dsh_runtime/store.py", "tests/test_control.py"]},
+        {"id": "F03", "name": "Run create, start and cancel", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/control.py", "tests/test_control.py"]},
+        {"id": "F04", "name": "Approval response", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/approval.py", "src/opendrsai_dsh_runtime/control.py", "tests/test_approval.py"]},
+        {"id": "F05", "name": "Idempotent operation ledger", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/store.py", "tests/test_store.py"]}
+      ]
+    },
+    {
+      "id": "DSH-P1-M04",
+      "name": "Binding and Finalizer",
+      "status": "accepted",
+      "features": [
+        {"id": "F01", "name": "Session to native Session binding", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/store.py", "tests/test_store.py"]},
+        {"id": "F02", "name": "Run to message and turn binding", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/store.py", "tests/test_store.py"]},
+        {"id": "F03", "name": "Item identity binding", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/store.py", "src/opendrsai_dsh_runtime/mapper.py", "tests/test_mapper.py"]},
+        {"id": "F04", "name": "Exactly one authoritative Run terminal", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/store.py", "tests/test_store.py"]},
+        {"id": "F05", "name": "Restart reconciliation", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/reconcile.py", "tests/test_reconcile.py"]}
+      ]
+    },
+    {
+      "id": "DSH-P1-M05",
+      "name": "OAEP Writer",
+      "status": "accepted",
+      "features": [
+        {"id": "F01", "name": "Native fact semantic mapper", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/mapper.py", "src/opendrsai_dsh_runtime/event_disposition/dsh-session-events-v1.json", "tests/test_mapper.py", "tests/test_contracts.py"]},
+        {"id": "F02", "name": "Append-only OAEP journal and item projection", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/oaep.py", "src/opendrsai_dsh_runtime/store.py", "tests/test_oaep.py"]},
+        {"id": "F03", "name": "Snapshot and bounded event page", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/oaep.py", "tests/test_oaep.py"]},
+        {"id": "F04", "name": "Live stream, cursor recovery and expiration", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/oaep.py", "tests/test_oaep.py"]},
+        {"id": "F05", "name": "Terminal flush and replay equivalence", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/mapper.py", "src/opendrsai_dsh_runtime/reconcile.py", "tests/test_mapper.py", "tests/test_reconcile.py"]}
+      ]
+    },
+    {
+      "id": "DSH-P1-M06",
+      "name": "Approval and Tool Authority",
+      "status": "accepted",
+      "features": [
+        {"id": "F01", "name": "Single approval answerer", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/approval.py", "tests/test_approval.py"]},
+        {"id": "F02", "name": "OAEP Interaction waiting and resume sequence", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/approval.py", "tests/test_approval.py"]},
+        {"id": "F03", "name": "Harness-native Tool authority", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/mapper.py", "tests/test_mapper.py"]},
+        {"id": "F04", "name": "Workspace containment", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/security.py", "src/opendrsai_dsh_runtime/process.py", "tests/test_security.py"]},
+        {"id": "F05", "name": "Unknown side-effect fail-closed recovery", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/store.py", "src/opendrsai_dsh_runtime/reconcile.py", "tests/test_reconcile.py"]}
+      ]
+    },
+    {
+      "id": "DSH-P1-M07",
+      "name": "Compatibility",
+      "status": "accepted",
+      "features": [
+        {"id": "F01", "name": "Immutable Protocol Profile schema and registry", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/profiles.py", "src/opendrsai_dsh_runtime/profile_data/dsh-sdk-0.1.0-rc.5.json"]},
+        {"id": "F02", "name": "Unknown version, digest and capability fail-closed", "status": "accepted", "evidence": ["tests/test_contracts.py"]},
+        {"id": "F03", "name": "Complete native event disposition coverage", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/event_disposition/dsh-session-events-v1.json", "tests/test_contracts.py"]},
+        {"id": "F04", "name": "Side-by-side installation profiles", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/carriers.py", "tests/test_carriers.py"]},
+        {"id": "F05", "name": "Candidate canary and rollback", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/carriers.py", "tests/test_carriers.py"]}
+      ]
+    },
+    {
+      "id": "DSH-P1-M08",
+      "name": "Packaging and Registration",
+      "status": "accepted",
+      "features": [
+        {"id": "F01", "name": "Side-effect-free local installation discovery", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/discovery.py", "tests/test_discovery.py"]},
+        {"id": "F02", "name": "Machine-readable status CLI", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/cli.py", "tests/test_cli.py"]},
+        {"id": "F03", "name": "Signed carrier resolution and installation", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/carriers.py", "src/opendrsai_dsh_runtime/discovery.py", "tests/test_carriers.py", "tests/test_discovery.py"]},
+        {"id": "F04", "name": "Runtime Relay and local registration", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/registration.py", "src/opendrsai_dsh_runtime/bootstrap.py", "apps/desktop/shared/main/externalAgentRuntimes.ts", "tests/test_registration.py", "tests/test_bootstrap.py"]},
+        {"id": "F05", "name": "Settings integration and health catalog", "status": "accepted", "evidence": ["apps/desktop/shared/main/agents.ts", "apps/desktop/shared/main/externalAgentRuntimes.ts", "apps/desktop/shared/renderer/src/App.tsx", "apps/desktop/shared/test-kit/verify-dsh-agent-runtime-integration.mts"]}
+      ]
+    },
+    {
+      "id": "DSH-P1-M09",
+      "name": "Product E2E",
+      "status": "accepted",
+      "features": [
+        {"id": "F01", "name": "Desktop generic OAEP consumption", "status": "accepted", "evidence": ["apps/desktop/shared/main/externalOaepRuntimeClient.ts", "apps/desktop/shared/main/chat.ts", "apps/desktop/shared/test-kit/verify-dsh-agent-runtime-integration.mts"]},
+        {"id": "F02", "name": "TUI generic OAEP consumption", "status": "accepted", "evidence": ["apps/ui-tui/src/oaepRuntimeGatewayClient.ts", "apps/ui-tui/src/tests/oaep-runtime-adapter.test.ts", "apps/ui-tui/src/entry.tsx"]},
+        {"id": "F03", "name": "Android or SDK generic OAEP consumption", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/client.py", "tests/test_client.py"]},
+        {"id": "F04", "name": "Installed DSH appears in local Agent catalog", "status": "accepted", "evidence": ["apps/desktop/shared/main/externalAgentRuntimes.ts", "apps/desktop/shared/main/agents.ts", "apps/desktop/shared/test-kit/verify-dsh-agent-runtime-integration.mts"]},
+        {"id": "F05", "name": "Real user journey through completion and recovery", "status": "accepted", "evidence": ["tests/test_product_e2e.py", "src/opendrsai_dsh_runtime/client.py", "src/opendrsai_dsh_runtime/transport.py"]}
+      ]
+    },
+    {
+      "id": "DSH-P1-M10",
+      "name": "Release Gate",
+      "status": "accepted",
+      "features": [
+        {"id": "F01", "name": "Fake native full fixture matrix", "status": "accepted", "evidence": ["tests/test_product_e2e.py", "tests/test_mapper.py", "tests/test_approval.py", "tests/test_reconcile.py"]},
+        {"id": "F02", "name": "Real DSH matrix", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/probe.py", "src/opendrsai_dsh_runtime/release_gate.py", "docs/development/evidence/dsh-real-rc5-probe.json", "docs/development/evidence/dsh-real-rc5-matrix.json"]},
+        {"id": "F03", "name": "Fault, restart and pressure matrix", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/pressure.py", "tests/test_pressure.py", "tests/test_process.py", "tests/test_jsonrpc.py", "tests/test_reconcile.py", "docs/development/evidence/dsh-runtime-pressure-matrix.json"]},
+        {"id": "F04", "name": "Security and secret scan", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/security.py", "src/opendrsai_dsh_runtime/release_gate.py", "tests/test_security.py", "tests/test_release_gate.py", "docs/development/evidence/dsh-runtime-security-scan.json"]},
+        {"id": "F05", "name": "Packaged release evidence and go/no-go", "status": "accepted", "evidence": ["src/opendrsai_dsh_runtime/wheel_verify.py", "src/opendrsai_dsh_runtime/release_gate.py", "tools/build_release_evidence.py", "docs/development/evidence/dsh-runtime-wheel-verification.json", "docs/development/evidence/dsh-runtime-p1-release-report.json"]}
+      ]
+    }
+  ]
+}

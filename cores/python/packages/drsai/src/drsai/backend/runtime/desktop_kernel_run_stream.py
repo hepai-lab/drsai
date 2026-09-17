@@ -1,4 +1,9 @@
-"""Desktop/TUI stream facade whose execution is owned by DrSaiAgentKernel."""
+"""Desktop/TUI stream facade whose execution is owned by DrSaiAgentKernel.
+
+ARCHIVED(2026-09-02): Desktop now reuses the TUI legacy path; see
+desktop_agent_kernel_adapter.py for details. Kept importable for legacy
+callers only.
+"""
 
 from __future__ import annotations
 
@@ -61,7 +66,14 @@ class DesktopKernelRunStream:
         self,
         start: RuntimeEnvelope,
     ) -> AsyncIterator[BaseAgentEvent | BaseChatMessage | TaskResult]:
-        state = DesktopKernelTurnState(self._assistant_name)
+        # The start envelope already carries the Agent config the Kernel will
+        # use, so the grounded decision is read from there rather than passed
+        # down a second, separately maintained channel that could disagree.
+        agent_config = start.payload.get("agent") if isinstance(start.payload, Mapping) else None
+        state = DesktopKernelTurnState(
+            self._assistant_name,
+            grounded=bool(agent_config.get("grounded")) if isinstance(agent_config, Mapping) else False,
+        )
         output: list[BaseAgentEvent | BaseChatMessage] = []
         final_message_emitted = False
         async for runtime_event in self._coordinator.execute(start):

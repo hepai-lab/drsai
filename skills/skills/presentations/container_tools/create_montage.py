@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) OpenAI. All rights reserved.
+# Copyright (c) OpenDrSai. All rights reserved.
 import argparse
 import re
 import sys

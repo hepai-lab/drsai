@@ -185,7 +185,7 @@ when slide PNG renders look clean.
 
 Do not clear text by broad text heuristics. Never run logic equivalent to
 `if (text.trim()) shape.text = ""`, and never blank every text-bearing shape on
-a copied slide. OpenAI wordmarks, brand text, page chrome, footers, source rails,
+a copied slide. Third-party wordmarks, brand text, page chrome, footers, source rails,
 section markers, and master/layout furniture may be editable text objects; keep
 them unless the edit plan explicitly says to change or delete that exact object.
 

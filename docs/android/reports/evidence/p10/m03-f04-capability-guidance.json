@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "feature_id": "M03-F04",
+  "acceptance_run_id": "p10-round-013-capability-guidance",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "categories": ["local_available", "permission_required", "desktop_required", "unsupported"],
+  "pre_run_ui": {
+    "summary_visible": true,
+    "details_expandable": true,
+    "workspace_action": "OpenDocumentTree",
+    "desktop_action": "remote home",
+    "model_action": "model settings"
+  },
+  "schema_boundary": {
+    "shared_projection": "CapabilityGuidancePolicy",
+    "only_local_available_visible": true,
+    "permission_required_excluded": true,
+    "desktop_required_excluded": true,
+    "unsupported_excluded": true
+  },
+  "tests": {
+    "testDebugUnitTest": "666 tests, 0 failures, 2 skipped",
+    "CapabilityGuidancePolicyTest": "2 passed",
+    "MainInterfaceTest_API35": "29 passed"
+  }
+}

@@ -2,6 +2,7 @@ package ai.drsai.remote.runtime.oaep
 
 import ai.drsai.remote.remote.generated.OaepMessageContent
 import ai.drsai.remote.remote.generated.OaepResourceRef
+import ai.drsai.remote.remote.data.OaepJsonCodec
 import ai.drsai.remote.runtime.coordinator.ChatRunRequest
 import ai.drsai.remote.runtime.python.PythonRuntimeEnvelope
 import java.time.Instant
@@ -109,7 +110,7 @@ class RoomAndroidOaepRuntimeSink(
                             role = "user",
                             text = request.input,
                             phase = "final",
-                            parts = listOfNotNull(request.input.takeIf(String::isNotEmpty)?.let { text ->
+                            parts = (listOfNotNull(request.input.takeIf(String::isNotEmpty)?.let { text ->
                                 mapOf("type" to "text", "text" to text)
                             }) + request.attachments.zip(resources).map { (attachment, resource) ->
                                 mapOf(
@@ -129,7 +130,7 @@ class RoomAndroidOaepRuntimeSink(
                                         "digest" to resource.digest,
                                     ).filterValues { it != null },
                                 )
-                            },
+                            }).map(OaepJsonCodec::messagePart),
                             resourceRefs = resources,
                         ),
                     ),

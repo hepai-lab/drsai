@@ -1,5 +1,7 @@
 package ai.drsai.remote.ui
 
+import ai.drsai.remote.R
+
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
@@ -18,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -50,14 +53,14 @@ internal fun UserAvatar(user: User?, modifier: Modifier = Modifier) {
             if (bitmap != null) {
                 Image(
                     bitmap = bitmap!!.asImageBitmap(),
-                    contentDescription = "用户头像",
+                contentDescription = stringResource(R.string.user_avatar),
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
                 )
             } else {
                 val initials = user?.name?.let(::userAvatarInitials).orEmpty()
                 if (initials.isNotEmpty()) Text(initials, style = MaterialTheme.typography.labelMedium)
-                else Icon(Icons.Default.AccountCircle, "默认用户头像", Modifier.fillMaxSize())
+        else Icon(Icons.Default.AccountCircle, stringResource(R.string.default_user_avatar), Modifier.fillMaxSize())
             }
         }
     }

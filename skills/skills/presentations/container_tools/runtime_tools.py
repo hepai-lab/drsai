@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
-# Copyright (c) OpenAI. All rights reserved.
-"""Helpers for public container_tools scripts to resolve Codex runtime dependencies."""
+"""Resolve presentation helper dependencies from the local OpenDrSai environment."""
 
 from __future__ import annotations
 
@@ -18,27 +16,19 @@ def _exe_names(name: str) -> list[str]:
 
 def _candidate_dependency_roots() -> list[Path]:
     roots: list[Path] = []
-    for env_name in (
-        "CODEX_RUNTIME_DEPENDENCIES",
-        "CODEX_WORKSPACE_DEPENDENCIES",
-        "CODEX_DEPENDENCIES",
-    ):
+    for env_name in ("DRSAI_RUNTIME_DEPENDENCIES", "PRESENTATIONS_DEPENDENCIES"):
         value = os.environ.get(env_name)
         if value:
             roots.append(Path(value).expanduser())
 
+    # A virtual environment or project-local runtime may contain helper binaries.
     executable = Path(sys.executable).resolve()
     for parent in executable.parents:
-        if any((parent / "node" / "bin" / exe_name).exists() for exe_name in _exe_names("node")):
+        if (parent / "bin").is_dir() or (parent / "Scripts").is_dir():
             roots.append(parent)
-            break
-        if (parent / "bin").exists() and (parent / "python").exists():
-            roots.append(parent)
-            break
 
-    roots.append(
-        Path.home() / ".cache" / "codex-runtimes" / "codex-primary-runtime" / "dependencies"
-    )
+    project_root = Path.cwd()
+    roots.extend((project_root, project_root / "node_modules"))
 
     seen: set[Path] = set()
     unique: list[Path] = []
@@ -54,46 +44,32 @@ def dependency_root() -> Path:
     for root in _candidate_dependency_roots():
         if root.exists():
             return root
-    return _candidate_dependency_roots()[0]
-
-
-def _override_bin_dir(root: Path) -> Path:
-    return root / "bin" / "override"
-
-
-def _fallback_bin_dir(root: Path) -> Path:
-    return root / "bin" / "fallback"
+    return Path.cwd()
 
 
 def runtime_bin_dir() -> str:
     root = dependency_root()
-    for bin_dir in (_override_bin_dir(root), _fallback_bin_dir(root)):
-        if bin_dir.is_dir():
-            return str(bin_dir)
-    return str(root / "bin" / "override")
+    for name in ("bin", "Scripts"):
+        candidate = root / name
+        if candidate.is_dir():
+            return str(candidate)
+    return str(root)
 
 
 def runtime_binary(name: str) -> str:
     for root in _candidate_dependency_roots():
-        preferred_candidates = [_override_bin_dir(root) / exe_name for exe_name in _exe_names(name)]
-        if name == "node":
-            preferred_candidates = [
-                root / "node" / "bin" / exe_name for exe_name in _exe_names(name)
-            ] + preferred_candidates
-        for candidate in preferred_candidates:
+        for bin_name in ("bin", "Scripts"):
+            for exe_name in _exe_names(name):
+                candidate = root / bin_name / exe_name
+                if candidate.exists():
+                    return str(candidate)
+        for exe_name in _exe_names(name):
+            candidate = root / exe_name
             if candidate.exists():
                 return str(candidate)
 
     path_candidate = shutil.which(name)
-    if path_candidate:
-        return path_candidate
-
-    for root in _candidate_dependency_roots():
-        fallback_candidates = [_fallback_bin_dir(root) / exe_name for exe_name in _exe_names(name)]
-        for candidate in fallback_candidates:
-            if candidate.exists():
-                return str(candidate)
-    return name
+    return path_candidate or name
 
 
 def poppler_bin_dir() -> str | None:
@@ -109,21 +85,18 @@ def node_binary() -> str:
 
 
 def node_modules_dir() -> str:
-    return str(dependency_root() / "node" / "node_modules")
+    configured = os.environ.get("ARTIFACT_TOOL_NODE_MODULES")
+    if configured:
+        return str(Path(configured).expanduser())
+    return str(dependency_root() / "node_modules")
 
 
 def runtime_env() -> dict[str, str]:
     env = os.environ.copy()
-    root = dependency_root()
     path_entries = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
-    ordered_entries: list[str] = []
-    override_bin = _override_bin_dir(root)
-    if override_bin.is_dir():
-        ordered_entries.append(str(override_bin))
-    ordered_entries.extend(path_entries)
-    fallback_bin = _fallback_bin_dir(root)
-    if fallback_bin.is_dir():
-        ordered_entries.append(str(fallback_bin))
-    env["PATH"] = os.pathsep.join(dict.fromkeys(ordered_entries))
+    local_bin = runtime_bin_dir()
+    if local_bin and Path(local_bin).is_dir():
+        path_entries.insert(0, local_bin)
+    env["PATH"] = os.pathsep.join(dict.fromkeys(path_entries))
     env.setdefault("NODE_PATH", node_modules_dir())
     return env

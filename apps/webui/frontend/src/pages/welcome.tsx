@@ -20,12 +20,6 @@ const CHAT_ENTRY_URL = WEBUI_URL
 const WINDOWS_DOWNLOAD_URL =
   process.env.GATSBY_WINDOWS_DOWNLOAD_URL ||
   "https://download-opendrsai.ihep.ac.cn/releases/v1.5.5/windows/OpenDrSai-Windows-Installer-x64.msi";
-const ANDROID_DOWNLOAD_URL =
-  process.env.GATSBY_ANDROID_DOWNLOAD_URL ||
-  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.5/android/OpenDrSai-Android-v1.5.5.apk";
-const MACOS_DOWNLOAD_URL =
-  process.env.GATSBY_MACOS_DOWNLOAD_URL ||
-  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.1/macos/OpenDrSai-macOS-v1.5.1-arm64.dmg";
 const TUI_UNIX_COMMAND =
   "curl -fsSL https://ihepbox.ihep.ac.cn/ihepbox/index.php/s/vQFBjvXqAhxdPFb/download | bash";
 const TUI_WINDOWS_COMMAND =
@@ -63,7 +57,6 @@ const WelcomePage = () => {
     null,
   );
   const clientDetailsRef = useRef<HTMLDivElement>(null);
-  const skipClientScrollRef = useRef(false);
   const isZh = lang === "zh";
 
   useEffect(() => {
@@ -72,17 +65,7 @@ const WelcomePage = () => {
   }, [darkMode]);
 
   useEffect(() => {
-    if (!window.matchMedia("(max-width: 639px)").matches) return;
-    skipClientScrollRef.current = true;
-    setActiveClient("android");
-  }, []);
-
-  useEffect(() => {
     if (!activeClient || !clientDetailsRef.current) return;
-    if (skipClientScrollRef.current) {
-      skipClientScrollRef.current = false;
-      return;
-    }
     clientDetailsRef.current.focus({ preventScroll: true });
     clientDetailsRef.current.scrollIntoView({
       behavior: "smooth",
@@ -91,12 +74,7 @@ const WelcomePage = () => {
   }, [activeClient]);
 
   useEffect(() => {
-    if (
-      activeClient !== "windows" &&
-      activeClient !== "android" &&
-      activeClient !== "macos"
-    )
-      return;
+    if (activeClient !== "windows") return;
     const platform = activeClient;
     const controller = new AbortController();
     setLoadingRelease(platform);
@@ -258,13 +236,7 @@ const WelcomePage = () => {
           <div className="inline-flex flex-1 flex-col items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white/70 px-5 py-2.5 text-sm font-extrabold text-slate-700 no-underline transition hover:border-violet-300 hover:text-violet-700 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:border-violet-400/40">
             <button
               type="button"
-              onClick={() =>
-                openClient(
-                  window.matchMedia("(max-width: 639px)").matches
-                    ? "android"
-                    : "windows",
-                )
-              }
+              onClick={() => openClient("windows")}
               className="inline-flex items-center gap-2 bg-transparent font-extrabold"
             >
               <Download className="h-4 w-4" />
@@ -287,8 +259,13 @@ const WelcomePage = () => {
               <button
                 type="button"
                 onClick={() => toggleClient("macos")}
-                className="rounded-md p-0.5 transition hover:bg-slate-100 dark:hover:bg-white/10"
+                className={`rounded-md p-0.5 transition hover:bg-slate-100 dark:hover:bg-white/10 ${
+                  activeClient === "macos"
+                    ? "bg-slate-100 ring-1 ring-slate-300 dark:bg-white/10 dark:ring-white/25"
+                    : ""
+                }`}
                 aria-label="macOS"
+                title={isZh ? "正在开发中" : "Coming soon"}
               >
                 <span className="block scale-100 sm:scale-75">
                   <AppleLogo />
@@ -303,6 +280,7 @@ const WelcomePage = () => {
                     : ""
                 }`}
                 aria-label="Android"
+                title={isZh ? "正在开发中" : "Coming soon"}
               >
                 <span className="block scale-100 sm:scale-75">
                   <AndroidLogo />
@@ -363,10 +341,8 @@ const WelcomePage = () => {
                 copiedCommand={copiedCommand}
                 onCopy={copyTuiCommand}
                 latestRelease={
-                  activeClient === "windows" ||
-                  activeClient === "android" ||
-                  activeClient === "macos"
-                    ? latestReleases[activeClient]
+                  activeClient === "windows"
+                    ? latestReleases.windows
                     : undefined
                 }
                 loadingRelease={loadingRelease === activeClient}
@@ -678,6 +654,44 @@ const ClientDetails = ({
   latestRelease,
   loadingRelease,
 }: ClientDetailsProps) => {
+  if (active === "macos" || active === "android") {
+    const comingSoon =
+      active === "macos"
+        ? {
+            icon: <AppleLogo />,
+            title: "OpenDrSai for macOS",
+            hint: isZh
+              ? "macOS 客户端正在开发中，敬请期待。"
+              : "The macOS app is still in development. Stay tuned.",
+          }
+        : {
+            icon: <AndroidLogo />,
+            title: "OpenDrSai for Android",
+            hint: isZh
+              ? "Android 客户端正在开发中，敬请期待。"
+              : "The Android app is still in development. Stay tuned.",
+          };
+
+    return (
+      <div className="border-t border-slate-200/80 p-6 dark:border-white/10 sm:p-8">
+        <div className="flex items-center gap-3">
+          <span className="grid h-11 w-11 place-items-center rounded-xl bg-slate-100 dark:bg-white/10">
+            {comingSoon.icon}
+          </span>
+          <div>
+            <h2 className="font-extrabold">{comingSoon.title}</h2>
+            <p className="mt-1 text-sm font-semibold text-amber-600 dark:text-amber-400">
+              {isZh ? "正在开发中" : "Coming soon"}
+            </p>
+          </div>
+        </div>
+        <p className="mt-4 text-sm font-medium leading-6 text-slate-500 dark:text-slate-400">
+          {comingSoon.hint}
+        </p>
+      </div>
+    );
+  }
+
   const releases = {
     windows: {
       icon: <WindowsLogo />,
@@ -691,30 +705,6 @@ const ClientDetails = ({
       programFile: "OpenDrSai-Windows-v1.5.5-x64.zip",
       programSizeBytes: 254032550,
       href: WINDOWS_DOWNLOAD_URL,
-    },
-    android: {
-      icon: <AndroidLogo />,
-      title: "OpenDrSai for Android",
-      version: "v1.5.5",
-      channel: "beta",
-      file: "OpenDrSai-Android-v1.5.5.apk",
-      sizeBytes: 26370437,
-      sha256:
-        "d52b7df0cee4fab11fa817e0ba25be4db7e67a2ca3e3a4596c205e1a641321a6",
-      href: ANDROID_DOWNLOAD_URL,
-    },
-    macos: {
-      icon: <AppleLogo />,
-      title: "OpenDrSai for macOS",
-      version: "v1.5.1",
-      channel: "stable",
-      file: "OpenDrSai-macOS-v1.5.1-arm64.dmg",
-      sizeBytes: 583030073,
-      sha256:
-        "4f814613e02cadcf6c1c4687ad5f4908f0eb703e3dde9f592cd3336c3ebd0679",
-      programFile: "OpenDrSai-macOS-v1.5.1-arm64.zip",
-      programSizeBytes: 117994862,
-      href: MACOS_DOWNLOAD_URL,
     },
   };
 
@@ -874,13 +864,7 @@ const ClientDetails = ({
           className="inline-flex w-full flex-none items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-blue-600 px-5 py-3 text-sm font-extrabold text-white no-underline shadow-lg shadow-violet-500/20 sm:w-auto"
         >
           <Download className="h-4 w-4" />
-          {active === "android"
-            ? isZh
-              ? "下载软件包"
-              : "Download package"
-            : isZh
-              ? "下载安装器"
-              : "Download installer"}
+          {isZh ? "下载安装器" : "Download installer"}
         </a>
       </div>
       <a

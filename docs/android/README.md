@@ -26,9 +26,10 @@
 6. [v1.5.6：移除 Kotlin Lite、默认绑定 Full Runtime 开发测试方案](plans/runtime/ANDROID_V1_5_6_FULL_RUNTIME_DEFAULT_DEVELOPMENT_TEST_PLAN.md)
 7. [第 8 阶段：Android Agent Runtime 完全 OAEP 化开发计划](plans/runtime/ANDROID_STAGE8_AGENT_RUNTIME_OAEP_DEVELOPMENT_PLAN.md)
 8. [第 9 阶段：Desktop Full Agent Runtime 能力对等开发与测试方案](plans/runtime/ANDROID_P9_DESKTOP_FULL_AGENT_RUNTIME_PARITY_DEVELOPMENT_PLAN.md)
-9. [测试与验收报告](testing/reports/)
-10. [第 8 阶段实施进度](reports/progress/ANDROID_STAGE8_AGENT_RUNTIME_OAEP_PROGRESS.md)
-11. [第 9 阶段实施进度](reports/progress/ANDROID_P9_DESKTOP_FULL_AGENT_RUNTIME_PARITY_PROGRESS.md)
+9. [第 10 阶段：用户友好的 Full Agent Runtime 产品化开发与测试方案](plans/runtime/ANDROID_P10_USER_FRIENDLY_FULL_AGENT_RUNTIME_PRODUCTIZATION_PLAN.md)
+10. [测试与验收报告](testing/reports/)
+11. [第 8 阶段实施进度](reports/progress/ANDROID_STAGE8_AGENT_RUNTIME_OAEP_PROGRESS.md)
+12. [第 9 阶段实施进度](reports/progress/ANDROID_P9_DESKTOP_FULL_AGENT_RUNTIME_PARITY_PROGRESS.md)
 
 ## 维护约定
 

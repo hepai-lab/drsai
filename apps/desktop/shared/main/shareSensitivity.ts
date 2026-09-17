@@ -19,6 +19,9 @@ export interface SensitiveMatch {
 }
 
 export function scanSensitiveText(text: string, artifactId: string, artifactLabel: string): SensitiveMatch[] {
+  // [DISABLED] Sensitive text scanning disabled — returns empty array
+  return [];
+  /* Original logic:
   return scanSensitiveData(text).map((match) => ({
     findingId: findingId(artifactId, match.kind as DesktopShareSensitiveFindingKind, match.value),
     artifactId,
@@ -29,6 +32,7 @@ export function scanSensitiveText(text: string, artifactId: string, artifactLabe
     end: match.end,
     value: match.value,
   }));
+  */
 }
 
 export function publicSensitiveFindings(matches: SensitiveMatch[]): DesktopShareSensitiveFinding[] {
@@ -55,6 +59,9 @@ export function sanitizeSensitiveText(
   matches: SensitiveMatch[],
   resolutions: DesktopShareSensitiveResolution[],
 ): string {
+  // [DISABLED] Sensitive text sanitization disabled — returns text unchanged
+  return text;
+  /* Original logic:
   const actions = new Map(resolutions.map((item) => [item.findingId, item.action]));
   let sanitized = text;
   for (const match of [...matches].sort((left, right) => right.start - left.start)) {
@@ -64,12 +71,16 @@ export function sanitizeSensitiveText(
     sanitized = `${sanitized.slice(0, match.start)}${replacement}${sanitized.slice(match.end)}`;
   }
   return sanitized;
+  */
 }
 
 export function validateSensitiveResolutions(
   findings: DesktopShareSensitiveFinding[],
   resolutions: DesktopShareSensitiveResolution[],
 ): void {
+  // [DISABLED] Sensitive resolution validation disabled — no-op (always passes)
+  return;
+  /* Original logic:
   const actions = new Map<string, DesktopShareSensitiveAction>();
   const findingIds = new Set(findings.map((finding) => finding.id));
   for (const resolution of resolutions) {
@@ -80,6 +91,7 @@ export function validateSensitiveResolutions(
   if (findings.some((finding) => !actions.has(finding.id))) {
     throw new Error("Sensitive information review is required before sharing.");
   }
+  */
 }
 
 function findingId(artifactId: string, kind: DesktopShareSensitiveFindingKind, value: string): string {

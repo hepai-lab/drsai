@@ -16,7 +16,7 @@ import { RcFile } from "antd/es/upload";
 import AgentPanel from "./panels/AgentPanel";
 import ToolCallTimeline from "./panels/ToolCallTimeline";
 import LogExecutionDrawer from "./panels/LogExecutionDrawer";
-import { Terminal, X } from "lucide-react";
+import { Terminal, X, Loader2 } from "lucide-react";
 import { AgentConfiguration } from "./config/agentConfigs";
 import { BESIIITask, BESIIIServerGlobalInfo } from "./panels/types";
 import { useRightPanelStore } from "../../store/rightPanel";
@@ -28,9 +28,19 @@ import {
   chatRenderLog,
   collapseMessagesForDisplay,
   classifyMessage,
-  type ChatMsgKind,
 } from "./chatMessagePipeline";
+import { chatTurnLog } from "./chatTurnLog";
 import ProcessMessageGroup from "./ProcessMessageGroup";
+import { streamMessageId } from "./chatStreamReducer";
+import {
+  buildTurnSegments,
+  type MessageSegment,
+} from "./chatTurnDocument";
+import {
+  resolveAgentPresentationProfile,
+  resolvePresentationAgentName,
+} from "./config/agentPresentationProfile";
+import { useModeConfigStore } from "../../store/modeConfig";
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
 const CHAT_INPUT_BASE_HEIGHT_PX = 78;
 
@@ -59,186 +69,53 @@ function isPassiveGrowthFromBottom(
   return wasPinned && container.scrollHeight > prev.scrollHeight;
 }
 
-/** Stable live reply: ThinkBubble + answer in one tree so thinking never remounts away. */
-const StreamingChunkRender = React.memo(
+/** Inline waiting indicator while the backend reports agent.working. */
+const AgentWorkingIndicator = React.memo(
   ({
-    content,
-    thought,
-    thoughtDone,
+    phase,
+    detail,
   }: {
-    content: string;
-    thought?: string;
-    thoughtDone?: boolean;
+    phase?: string;
+    detail?: string;
   }) => {
-    const composed = thought
-      ? thoughtDone || content
-        ? `<think>${thought}</think>\n\n${content || ""}`
-        : `<think>${thought}`
-      : content;
+    const label =
+      phase === "tool"
+        ? "正在调用工具…"
+        : phase === "orchestrator"
+          ? "正在调度智能体…"
+          : "正在等待智能体回复…";
     return (
-      <div className="w-full py-2 px-1 text-sm leading-relaxed">
-        <MarkdownRenderer content={composed} />
+      <div
+        className="w-full py-3 px-1 flex items-center gap-2 text-sm text-secondary"
+        data-testid="agent-working-indicator"
+        aria-live="polite"
+      >
+        <Loader2 size={16} className="animate-spin text-accent flex-shrink-0" />
+        <span>{detail?.trim() ? `${label}（${detail}）` : label}</span>
       </div>
     );
-  },
-  (prev, next) =>
-    prev.content === next.content &&
-    prev.thought === next.thought &&
-    prev.thoughtDone === next.thoughtDone
+  }
 );
-StreamingChunkRender.displayName = "StreamingChunkRender";
+AgentWorkingIndicator.displayName = "AgentWorkingIndicator";
 
-/** Returns true for "process" messages that should be grouped into the scrollable container:
- *  log/AgentLogEvent, ThoughtEvent, ToolCallSummaryMessage, tools content_type. */
-function isProcessMsg(msg: Message): boolean {
-  const cfg = msg.config as any;
-  const meta = (msg.config.metadata || {}) as Record<string, unknown>;
-  return (
-    meta.type === "log" ||
-    cfg.content_type === "log" ||
-    cfg.type === "AgentLogEvent" ||
-    meta.type === "AgentLogEvent" ||
-    cfg.type === "ThoughtEvent" ||
-    meta.type === "ThoughtEvent" ||
-    cfg.type === "ToolCallSummaryMessage" ||
-    meta.type === "ToolCallSummaryMessage" ||
-    cfg.content_type === "tools" ||
-    meta.content_type === "tools"
-  );
-}
-
-type MessageSegment =
-  | { kind: "single"; idx: number; msg: Message }
-  | { kind: "process"; items: Array<{ idx: number; msg: Message }> };
-
-/** True when this reply is the last assistant answer before the next user turn. */
-function isFinalReplyInTurn(messages: Message[], idx: number): boolean {
-  const kind = classifyMessage(messages[idx]);
-  if (kind !== "reply") return false;
-  for (let j = idx + 1; j < messages.length; j++) {
-    const nextKind = classifyMessage(messages[j]);
-    if (nextKind === "user") break;
-    if (nextKind === "reply") return false;
-    if (
-      nextKind === "process" ||
-      nextKind === "thought" ||
-      nextKind === "other"
-    ) {
-      return false;
-    }
+/** One component identity for the full v2 streaming → completed lifecycle. */
+const ChatMessageView = React.memo(
+  (props: React.ComponentProps<typeof RenderMessage>) => {
+    const messageId = (props.message.metadata as any)?.message_id as
+      | string
+      | undefined;
+    useEffect(() => {
+      if (process.env.NODE_ENV === "development" && messageId) {
+        chatRenderLog("message:mount", { messageId });
+        return () => chatRenderLog("message:unmount", { messageId });
+      }
+      return undefined;
+    }, [messageId]);
+    return <RenderMessage {...props} />;
   }
-  return true;
-}
+);
+ChatMessageView.displayName = "ChatMessageView";
 
-function isRunLive(runStatus: string | undefined): boolean {
-  return (
-    runStatus === "active" ||
-    runStatus === "streaming" ||
-    runStatus === "connected" ||
-    runStatus === "pausing" ||
-    runStatus === "resuming"
-  );
-}
-
-/** Any process/thought steps in the current user turn before idx (excludes idx). */
-function hasProcessActivityInTurnBefore(
-  messages: Message[],
-  idx: number
-): boolean {
-  let lastUserIdx = -1;
-  for (let i = 0; i <= idx; i++) {
-    if (classifyMessage(messages[i]) === "user") lastUserIdx = i;
-  }
-  for (let i = lastUserIdx + 1; i < idx; i++) {
-    const k = classifyMessage(messages[i]);
-    if (k === "process" || k === "thought") return true;
-  }
-  return false;
-}
-
-function shouldTreatReplyAsFinal(
-  messages: Message[],
-  idx: number,
-  runStatus: string | undefined
-): boolean {
-  if (!isFinalReplyInTurn(messages, idx)) return false;
-
-  if (isRunLive(runStatus) && idx === messages.length - 1) {
-    // While the run is still going, a trailing TextMessage is usually interim
-    // narration — keep it inside the process group if tools/thoughts already ran.
-    return !hasProcessActivityInTurnBefore(messages, idx);
-  }
-
-  return true;
-}
-
-function shouldRenderAsSingleSegment(
-  msg: Message,
-  idx: number,
-  messages: Message[],
-  runStatus: string | undefined
-): boolean {
-  const kind = classifyMessage(msg);
-  const meta = (msg.config.metadata || {}) as Record<string, unknown>;
-  const cfg = msg.config as any;
-
-  if (kind === "user") return true;
-  if (messageUtils.isPlanMessage(meta) || messageUtils.isStepExecution(meta)) {
-    return true;
-  }
-  if (cfg.type === "FilesEvent" || meta.type === "FilesEvent") return true;
-  if (meta._is_streaming_chunk) return true;
-  if (
-    kind === "reply" &&
-    shouldTreatReplyAsFinal(messages, idx, runStatus)
-  ) {
-    return true;
-  }
-  return false;
-}
-
-function buildMessageSegments(
-  messages: Message[],
-  runStatus: string | undefined
-): MessageSegment[] {
-  const segments: MessageSegment[] = [];
-  let processBatch: Array<{ idx: number; msg: Message }> = [];
-
-  const flushProcess = () => {
-    if (processBatch.length > 0) {
-      segments.push({ kind: "process", items: [...processBatch] });
-      processBatch = [];
-    }
-  };
-
-  for (let idx = 0; idx < messages.length; idx++) {
-    const msg = messages[idx];
-    if (shouldRenderAsSingleSegment(msg, idx, messages, runStatus)) {
-      flushProcess();
-      segments.push({ kind: "single", idx, msg });
-      continue;
-    }
-
-    const kind = classifyMessage(msg) as ChatMsgKind;
-    if (
-      kind === "process" ||
-      kind === "thought" ||
-      kind === "other" ||
-      kind === "reply"
-    ) {
-      processBatch.push({ idx, msg });
-      continue;
-    }
-
-    flushProcess();
-    segments.push({ kind: "single", idx, msg });
-  }
-
-  flushProcess();
-  return segments;
-}
-
-/** Next index that bounds the "segment" after messageIndex (plan, final answer, or next non-duplicate step). */
 function getNextSignificantMessageIndex(
   messages: Message[],
   messageIndex: number
@@ -350,6 +227,8 @@ interface RunViewProps {
   serverFilesPrefill?: ServerUploadedFileInfo[] | null;
   /** Read-only viewer (e.g. shared session link); hides input and actions */
   viewOnly?: boolean;
+  /** Agent display name for per-agent process presentation profiles. */
+  agentName?: string | null;
 }
 
 const RunView: React.FC<RunViewProps> = ({
@@ -363,6 +242,7 @@ const RunView: React.FC<RunViewProps> = ({
   showPanel,
   setShowPanel,
   agentConfig, // 从 parent 接收
+  agentName: agentNameProp = null,
   onApprove,
   onDeny,
   onAcceptPlan,
@@ -378,6 +258,19 @@ const RunView: React.FC<RunViewProps> = ({
   viewOnly = false,
 }) => {
   const { t } = useLang();
+  const storeAgentInfoName = useModeConfigStore((s) => s.agentInfo?.name);
+  const storeSelectedAgentName = useModeConfigStore((s) => s.selectedAgent?.name);
+  const presentationProfile = useMemo(
+    () =>
+      resolveAgentPresentationProfile(
+        resolvePresentationAgentName({
+          sessionAgentName: agentNameProp,
+          agentInfoName: storeAgentInfoName,
+          selectedAgentName: storeSelectedAgentName,
+        })
+      ),
+    [agentNameProp, storeAgentInfoName, storeSelectedAgentName]
+  );
   const resolvedSessionId =
     sessionIdProp && sessionIdProp > 0
       ? sessionIdProp
@@ -1003,7 +896,7 @@ const RunView: React.FC<RunViewProps> = ({
       // renders inside the box as static content — those don't hit this branch.
       if (
         updatedMessages[mi].config.metadata?.start_flag !== undefined ||
-        updatedMessages[mi].config.metadata?._stream_draft === true
+        (updatedMessages[mi].config.metadata as any)?._stream_draft === true
       ) {
         // If a final TextMessage from the same source has already arrived AFTER
         // this specific chunk, drop it — the real message replaces it.
@@ -1057,7 +950,7 @@ const RunView: React.FC<RunViewProps> = ({
             (m) =>
               m.config.source === chunkSource &&
               (m.config.metadata?.start_flag !== undefined ||
-                m.config.metadata?._stream_draft === true)
+                (m.config.metadata as any)?._stream_draft === true)
           );
         if (hasLaterStreamChunk) continue;
         const tagged = {
@@ -1688,10 +1581,105 @@ const RunView: React.FC<RunViewProps> = ({
   // HandoffMessage, StopMessage, MultiModal, or intermediate assistant
   // TextMessages — is grouped into the scrollable box.
   const messageSegments = useMemo(
-    (): MessageSegment[] => buildMessageSegments(localMessages, run.status),
-    [localMessages, run.status]
+    (): MessageSegment[] => buildTurnSegments(localMessages),
+    [localMessages]
   );
 
+  const hasLiveAssistantDraft = useMemo(() => {
+    return localMessages.some((message) => {
+      const meta = (message.config.metadata || {}) as Record<string, unknown>;
+      if (messageUtils.isUser(message.config.source)) return false;
+      return (
+        meta.stream_status === "streaming" ||
+        meta._stream_draft === true ||
+        meta._is_streaming_chunk === true ||
+        typeof meta._stream_raw === "string"
+      );
+    });
+  }, [localMessages]);
+
+  // True when the latest user turn already has a visible assistant answer
+  // (streaming or completed). Prevents the waiting row from sticking after
+  // message.completed while status is still active awaiting turn.ready.
+  const hasAssistantOutputAfterLastUser = useMemo(() => {
+    let lastUserIdx = -1;
+    for (let i = 0; i < localMessages.length; i++) {
+      if (messageUtils.isUser(localMessages[i].config.source)) lastUserIdx = i;
+    }
+    for (let i = lastUserIdx + 1; i < localMessages.length; i++) {
+      const message = localMessages[i];
+      if (messageUtils.isUser(message.config.source)) continue;
+      const kind = classifyMessage(message);
+      if (kind !== "reply" && kind !== "stream") continue;
+      const content = message.config.content;
+      if (typeof content === "string" && content.trim()) return true;
+      const meta = (message.config.metadata || {}) as Record<string, unknown>;
+      if (meta.stream_status === "streaming" || meta.stream_status === "completed") {
+        return true;
+      }
+    }
+    return false;
+  }, [localMessages]);
+
+  // Prefer backend agent.working (e.g. after tool interrupt). Fallback only
+  // covers the gap before the first tokens of the latest user turn.
+  const showAgentWorking =
+    !hasLiveAssistantDraft &&
+    (!!run.agent_working ||
+      (run.status === "active" && !hasAssistantOutputAfterLastUser));
+
+  // message.completed often arrives before turn.ready; keep chat usable and
+  // avoid process-group "进行中" during that settled gap.
+  const turnSettledVisually =
+    run.status === "active" &&
+    hasAssistantOutputAfterLastUser &&
+    !hasLiveAssistantDraft &&
+    !run.agent_working;
+
+  const processGroupStatus = turnSettledVisually ? "ready" : run.status;
+
+  // One busy affordance only: thread "正在调度…" hides status-bar "处理中"
+  // for the whole pre-token wait (no one-frame flash of both).
+  const statusIconStatus =
+    showAgentWorking || turnSettledVisually ? "ready" : run.status;
+
+  // Unlock the composer once the answer is on screen (or turn.ready arrived).
+  // Backend input queue can buffer an early input_response.
+  const composerStatus =
+    turnSettledVisually || run.status === "ready" ? "ready" : run.status;
+
+  useEffect(() => {
+    chatTurnLog("fe:ui:working-flags", {
+      runId: run.id,
+      status: run.status,
+      agentWorking: run.agent_working ?? null,
+      showAgentWorking,
+      hasLiveAssistantDraft,
+      hasAssistantOutputAfterLastUser,
+      turnSettledVisually,
+      composerStatus,
+      processGroupStatus,
+      statusIconStatus,
+      msgCount: localMessages.length,
+    });
+  }, [
+    run.id,
+    run.status,
+    run.agent_working,
+    showAgentWorking,
+    hasLiveAssistantDraft,
+    hasAssistantOutputAfterLastUser,
+    turnSettledVisually,
+    composerStatus,
+    processGroupStatus,
+    statusIconStatus,
+    localMessages.length,
+  ]);
+
+  const canSendInputResponse =
+    run.status === "awaiting_input" ||
+    run.status === "ready" ||
+    turnSettledVisually;
   // Add this effect to handle scrolling when status changes
   useEffect(() => {
     if (run.status === "awaiting_input" && buttonsContainerRef.current) {
@@ -1719,52 +1707,41 @@ const RunView: React.FC<RunViewProps> = ({
           {/* Inner wrapper observed by ResizeObserver — grows with streaming content */}
           <div ref={messagesContentRef}>
           {messageSegments.length > 0 &&
-            messageSegments.map((segment) => {
+            messageSegments.map((segment, segIdx) => {
               if (segment.kind === "process") {
+                const laterFinal = messageSegments
+                  .slice(segIdx + 1)
+                  .some((later) => later.kind === "single");
                 return (
                   <ProcessMessageGroup
-                    key={`process-${segment.items.map((i) => i.idx).join("-")}`}
+                    key={`process-${
+                      streamMessageId(segment.items[0].msg) ||
+                      segment.items[0].msg.id ||
+                      segment.items[0].idx
+                    }`}
                     items={segment.items}
-                    runStatus={run.status}
+                    runStatus={laterFinal ? "ready" : processGroupStatus}
                     onLogMessageClick={handleSwitchToLogExecution}
+                    layout={presentationProfile.processLayout}
+                    processBox={presentationProfile.processBox}
                   />
                 );
               }
 
               const { idx, msg } = segment;
 
-              // Fast path for active streaming chunks: skip the heavy RenderMessage
-              // machinery (avatar, copy buttons, action-button parsing, plan/step
-              // detection) and render plain markdown via a memoized component.
-              // Dramatically reduces per-chunk render cost during live streaming.
+              const cfgAny = msg.config as any;
               const chunkMeta = (msg.config.metadata || {}) as any;
-              if (
-                chunkMeta._is_streaming_chunk &&
-                !chunkMeta._is_final_reply
-              ) {
-                const chunkContent =
-                  typeof msg.config.content === "string" ? msg.config.content : "";
-                const liveThought =
-                  typeof chunkMeta._live_thought === "string"
-                    ? chunkMeta._live_thought
-                    : "";
-                const sourceKey = String(msg.config.source || "assistant");
+              if (cfgAny.type === "FilesEvent" || chunkMeta.type === "FilesEvent") {
                 return (
-                  <StreamingChunkRender
-                    key={`stream-${run.id}-${sourceKey}`}
-                    content={chunkContent}
-                    thought={liveThought || undefined}
-                    thoughtDone={
-                      chunkMeta._thought_done === true ||
-                      chunkMeta._thought_done === "yes"
-                    }
-                  />
+                  <div
+                    key={`files-${run.id}-${streamMessageId(msg) || idx}`}
+                    className="mb-2"
+                  >
+                    <FilesEventCard message={msg.config as unknown as FilesEvent} />
+                  </div>
                 );
               }
-
-              // ThoughtEvent: skip if the live stream for this source already shows
-              // the same reasoning (avoids think appearing → vanishing → reappearing).
-              const cfgAny = msg.config as any;
               if (
                 cfgAny.type === "ThoughtEvent" ||
                 chunkMeta.type === "ThoughtEvent" ||
@@ -1824,9 +1801,11 @@ const RunView: React.FC<RunViewProps> = ({
                 isCurrentMessagePlan && idx !== lastPlanIndex;
 
               const isUserMessage = messageUtils.isUser(msg.config.source);
+              const stableId =
+                streamMessageId(msg) || String(msg.id || `legacy-${idx}`);
 
               return (
-                <React.Fragment key={`seg-${idx}-${run.id}`}>
+                <React.Fragment key={`seg-${run.id}-${stableId}`}>
                 <div
                   className="w-full"
                   data-user-message-index={isUserMessage ? idx : undefined}
@@ -1836,8 +1815,7 @@ const RunView: React.FC<RunViewProps> = ({
                       : null
                   }
                 >
-                  <RenderMessage
-                    key={`render-${idx}-${msg.config.version || 0}`}
+                  <ChatMessageView
                     message={msg.config}
                     sessionId={msg.session_id}
                     messageIdx={idx}
@@ -1879,71 +1857,26 @@ const RunView: React.FC<RunViewProps> = ({
                     onLogMessageClick={handleSwitchToLogExecution}
                   />
                 </div>
-                {/* File cards: FilesEvent messages that arrived in this turn appear
-                    below the final assistant TextMessage, outside the process box. */}
-                {(() => {
-                  const cfg = msg.config as any;
-                  // This block only runs on messages already routed as "single" by
-                  // isSingleSegment (final reply). So we just need to exclude the
-                  // non-content specials that also become singles (users, plans, etc.).
-                  const isRealAssistant =
-                    !messageUtils.isUser(msg.config.source) &&
-                    cfg.type !== "FilesEvent" &&
-                    msg.config.metadata?.type !== "FilesEvent" &&
-                    !isProcessMsg(msg);
-                  if (!isRealAssistant) return null;
-                  // While the run is still actively streaming the tail, defer file
-                  // cards until it settles.
-                  if (idx === localMessages.length - 1 && run.status === "active") return null;
-                  // Verify no later assistant TextMessage exists in this turn
-                  const hasLaterAssistantText = localMessages.slice(idx + 1).some((m) => {
-                    if (
-                      messageUtils.isUser(m.config.source) ||
-                      m.config.source === "user_proxy"
-                    ) return false;
-                    const mc = m.config as any;
-                    return mc.type === "TextMessage";
-                  });
-                  if (hasLaterAssistantText) return null;
-                  // Collect FilesEvent messages that sit between the previous user
-                  // message and this one — skip over ALL intermediate messages
-                  // (tool events, thought events, intermediate text, logs, etc.).
-                  const cards: FilesEvent[] = [];
-                  for (let i = idx - 1; i >= 0; i--) {
-                    const m = localMessages[i].config as any;
-                    if (m.type === "FilesEvent" || localMessages[i].config.metadata?.type === "FilesEvent") {
-                      cards.unshift(m);
-                      continue;
-                    }
-                    if (
-                      messageUtils.isUser(localMessages[i].config.source) ||
-                      localMessages[i].config.source === "user_proxy"
-                    ) {
-                      break;
-                    }
-                  }
-                  if (cards.length === 0) return null;
-                  return (
-                    <div className="mb-2">
-                      {cards.map((event, i) => (
-                        <FilesEventCard key={i} message={event} />
-                      ))}
-                    </div>
-                  );
-                })()}
                 </React.Fragment>
               );
             })}
+
+          {showAgentWorking && (
+            <AgentWorkingIndicator
+              phase={run.agent_working?.phase}
+              detail={run.agent_working?.detail}
+            />
+          )}
 
           {/* Status Icon at top */}
           <div className="pt-2 pb-2 flex-shrink-0">
             <div className="inline-block">
               {getStatusIcon(
-                run.status,
+                statusIconStatus,
                 run.error_message,
                 run.team_result?.task_result?.stop_reason,
                 run.input_request,
-                t
+                (key, ...args) => t(key as any, ...args)
               )}
             </div>
           </div>
@@ -2000,7 +1933,14 @@ const RunView: React.FC<RunViewProps> = ({
                 attachedSkills?: HepaiSkillPickRow[]
               ) => {
                 scrollToBottom("auto", true);
-                if (run.status === "awaiting_input") {
+                chatTurnLog("fe:runview:submit", {
+                  runId: run.id,
+                  runStatus: run.status,
+                  composerStatus,
+                  canSendInputResponse,
+                  path: canSendInputResponse ? "input_response" : "start",
+                });
+                if (canSendInputResponse) {
                   onInputResponse?.(
                     query,
                     accepted,
@@ -2023,7 +1963,7 @@ const RunView: React.FC<RunViewProps> = ({
               }}
               error={error ?? null}
               onCancel={onCancel}
-              runStatus={run.status}
+              runStatus={composerStatus}
               isPlanMessage={isPlanMsg}
               onPause={onPause}
               enable_upload={enable_upload}

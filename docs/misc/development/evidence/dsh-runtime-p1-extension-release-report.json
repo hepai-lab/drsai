@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-16",
+  "source": {
+    "version": "0.1.0-rc.5",
+    "commit": "47f943859bef60e4160492346772ded9b24f765a"
+  },
+  "verdicts": {
+    "p1_delivery": "accepted",
+    "unmodified_upstream_profile": "no_go",
+    "opendrsai_extension_functional_compatibility": "go",
+    "public_release_carrier": "requires_release_signature"
+  },
+  "extension": {
+    "profile_id": "dsh-sdk/0.1.0-rc.5+opendrsai.1",
+    "server_version": "0.1.0-opendrsai.1",
+    "contract_sha256": "70f0f05b1cca8a37f4dedc92150bd78832bee540c4ad7dbbdb3885d77d2d4909",
+    "missing_capabilities": [],
+    "missing_methods": [],
+    "missing_notifications": []
+  },
+  "product_acceptance": {
+    "accepted": true,
+    "agent_id": "runtime:deepseek-harness",
+    "terminal": "event.run.completed",
+    "oaep_schema_sha256": "e207c75c2f37e121dc613aec040c24fd5bd2c6f4f005826c8996a6bb848770b7"
+  },
+  "windows_sandbox": {
+    "enforcement": "partial",
+    "contained": false,
+    "p1_mitigation": "unsafe local shell is not exposed; workspace-scoped filesystem tools only"
+  },
+  "artifact_sha256": {
+    "real_product_matrix": "4356e532ee9784864d2736e237976e3c9e30b5d91635d6185b551657fb42a105",
+    "real_behavior_matrix": "2ac237a62f63a79b70fd578bef96e42048e4b6bdcb6618edb7408d49f59b3eed",
+    "strict_extension_probe": "d86886b0e52c1c10fa23fdcda1df4e8e0dbb575aeb2e7fbdcea553cd1f95904a",
+    "wheel": "c3ae78bea93a028e423e543f8cf3d90ff081e988689f35aefa5a39d2a2aaa472"
+  }
+}

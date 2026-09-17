@@ -8,6 +8,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import ai.drsai.remote.data.ChatDatabase
 import ai.drsai.remote.data.LocalArtifactMaterializer
 import ai.drsai.remote.data.ToolArtifactEntity
+import ai.drsai.remote.data.ConversationEntity
+import ai.drsai.remote.data.MessageEntity
+import ai.drsai.remote.data.MessageAttachmentEntity
 import ai.drsai.remote.data.localArtifactIntent
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -52,5 +55,27 @@ class LocalArtifactAccessInstrumentedTest {
             LocalArtifactMaterializer(context, database.dao()).prepare("bob", "artifact-private", "tool")
         }.exceptionOrNull()
         assertEquals("artifact_not_found", failure?.message)
+    }
+
+    @Test fun attachmentOpenRejectsDigestMismatchAndExpiredLocalContentBeforeIntent() = runBlocking {
+        database.dao().saveConversation(ConversationEntity("session", "alice", "x", "agent", modelId = "m", createdAt = 1, updatedAt = 1))
+        database.dao().saveMessage(MessageEntity("message", "session", "assistant", "result"))
+        val file = java.io.File(context.cacheDir, "artifact-fixture.txt").apply { writeText("actual") }
+        database.dao().saveAttachments(listOf(MessageAttachmentEntity(
+            "bad", "message", "session", null, "bad.txt", "text/plain", file.length(), "file",
+            file.absolutePath, null, "0".repeat(64),
+        )))
+        assertEquals("artifact_digest_mismatch", runCatching {
+            LocalArtifactMaterializer(context, database.dao()).prepare("alice", "bad", "attachment")
+        }.exceptionOrNull()?.message)
+        database.dao().saveAttachments(listOf(MessageAttachmentEntity(
+            "expired", "message", "session", null, "expired.txt", "text/plain", 1, "file",
+            null, null, "",
+        )))
+        assertEquals("artifact_local_content_unavailable", runCatching {
+            LocalArtifactMaterializer(context, database.dao()).prepare("alice", "expired", "attachment")
+        }.exceptionOrNull()?.message)
+        file.delete()
+        Unit
     }
 }

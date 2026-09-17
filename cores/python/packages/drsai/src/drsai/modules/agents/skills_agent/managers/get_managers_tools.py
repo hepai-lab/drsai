@@ -145,10 +145,22 @@ def get_subagent_tools(sub_agents: list[str], description: str, strict: bool = F
     return tool_schema
 
 
-def create_local_venv(work_dir: str|Path) -> LocalCommandLineCodeExecutor:
+def create_local_venv(
+        work_dir: str | Path,
+        *,
+        environment_dir: str | Path | None = None,
+        ) -> LocalCommandLineCodeExecutor:
+    """Create a code executor without coupling its cwd to its private venv.
+
+    ``work_dir`` is the user-visible execution workspace.  The virtual
+    environment is host-managed state and may live elsewhere so Desktop,
+    TUI, and multi-tenant hosts do not have to expose it in the Workspace.
+    """
     work_dir = Path(work_dir)
-    work_dir.mkdir(exist_ok=True)
-    venv_dir = Path(work_dir) / ".venv"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    environment_root = Path(environment_dir) if environment_dir is not None else work_dir
+    environment_root.mkdir(parents=True, exist_ok=True)
+    venv_dir = environment_root / ".venv"
     venv_builder = venv.EnvBuilder(with_pip=True)
     venv_builder.create(venv_dir)
     venv_context = venv_builder.ensure_directories(venv_dir)

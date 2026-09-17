@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "feature_id": "M06-F06",
+  "acceptance_run_id": "p10-round-032-diagnostic-feedback-bundle",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "version_device_and_api_included": true,
+    "stable_code_and_run_event_summary_included": true,
+    "manifest_and_feedback_digests_included": true,
+    "run_id_is_hashed": true,
+    "keys_tokens_private_bodies_and_reasoning_excluded": true,
+    "copy_and_share_use_same_scanned_bundle": true
+  },
+  "tests": {
+    "testDebugUnitTest": "699 tests, 0 failures, 2 skipped",
+    "MainInterfaceTest_API35": "32 passed"
+  }
+}

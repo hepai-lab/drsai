@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from contextlib import contextmanager
@@ -28,6 +31,9 @@ class PlatformAuthContext:
     organization_id: str | None = None
     session_id: str | None = None
     audience: str | None = None
+    # OIDC refresh token for server-side access token renewal. Only present
+    # when the gateway received it via the x-opendrsai-refresh-token header.
+    refresh_token: str | None = None
 
     @property
     def anthropic_base_url(self) -> str:
@@ -246,7 +252,12 @@ def platform_auth_scope(context: PlatformAuthContext) -> Iterator[None]:
         _platform_auth.reset(token)
 
 
-def context_from_bearer(authorization: str | None, expected_subject: str) -> PlatformAuthContext:
+def context_from_bearer(
+    authorization: str | None,
+    expected_subject: str,
+    *,
+    refresh_token: str | None = None,
+) -> PlatformAuthContext:
     if not authorization or not authorization.startswith("Bearer "):
         raise ValueError("invalid_token")
     access_token = authorization.removeprefix("Bearer ").strip()
@@ -290,6 +301,7 @@ def context_from_bearer(authorization: str | None, expected_subject: str) -> Pla
         organization_id=str(organization_id) if organization_id else None,
         session_id=str(session_id) if session_id else None,
         audience=expected_audience or None,
+        refresh_token=refresh_token or None,
     )
 
 
@@ -433,7 +445,8 @@ def _model_base_url(issuer: str) -> str:
     if override:
         if not override.startswith("https://") and os.environ.get("DRSAI_ALLOW_INSECURE_MODEL_URL") != "1":
             raise ValueError("invalid_model_base_url")
-    return resolve_hepai_model_base_url(os.environ, issuer=issuer)
+    result = resolve_hepai_model_base_url(os.environ, issuer=issuer)
+    return result
 
 
 def _decode_verified_claims(token: str) -> dict[str, object]:
@@ -511,3 +524,191 @@ def _verify_rs256(header: dict[str, object], claims: dict[str, object], signing_
         rsa.RSAPublicNumbers(exponent, modulus).public_key().verify(signature, signing_input, padding.PKCS1v15(), hashes.SHA256())
     except Exception as exc:
         raise ValueError("invalid_token_signature") from exc
+
+
+# ---------------------------------------------------------------------------
+# Token expiry checking and proactive refresh (Option C: backend holds
+# refresh_token and can renew the access_token without round-tripping to
+# the frontend).
+# ---------------------------------------------------------------------------
+
+_logger = logging.getLogger("drsai.platform_auth")
+
+#: How many seconds before *exp* the refresh logic should kick in.
+TOKEN_REFRESH_WINDOW_SECONDS = int(
+    os.environ.get("DRSAI_TOKEN_REFRESH_WINDOW", "120")
+)
+
+#: OIDC client_id used when exchanging a refresh_token for a new access_token.
+_OIDC_CLIENT_ID = os.environ.get("OPENDRSAI_OIDC_CLIENT_ID", "opendrsai-desktop")
+
+#: Cache: issuer → (expires_at_float, token_endpoint_url)
+_OIDC_TOKEN_ENDPOINT_CACHE: dict[str, tuple[float, str]] = {}
+
+#: Lazily-initialised asyncio lock so only one refresh request runs at a time.
+_refresh_lock: asyncio.Lock | None = None
+
+
+def _decode_jwt_exp(token: str) -> int | None:
+    """Read the ``exp`` claim from a JWT **without** signature verification.
+
+    The token was already fully verified (signature + claims) by
+    :func:`context_from_bearer` at request entry, so we only need the raw
+    payload here for a cheap expiry pre-check.
+    """
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        payload = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
+        exp = claims.get("exp")
+        return int(exp) if isinstance(exp, (int, float)) else None
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+def is_token_expiring_soon(
+    access_token: str,
+    window: int = TOKEN_REFRESH_WINDOW_SECONDS,
+) -> bool:
+    """Return *True* if *access_token* will expire within *window* seconds."""
+    exp = _decode_jwt_exp(access_token)
+    if exp is None:
+        return False  # not a JWT or undecodable — skip proactive refresh
+    return exp <= int(time.time()) + window
+
+
+def is_token_expired(access_token: str) -> bool:
+    """Return *True* if *access_token* has already passed its ``exp``."""
+    exp = _decode_jwt_exp(access_token)
+    if exp is None:
+        return False
+    return exp <= int(time.time())
+
+
+def _get_oidc_token_endpoint(issuer: str) -> str:
+    """Discover and cache the OIDC ``token_endpoint`` for *issuer*."""
+    cache_key = issuer.rstrip("/")
+    cached = _OIDC_TOKEN_ENDPOINT_CACHE.get(cache_key)
+    if cached and cached[0] > time.time():
+        return cached[1]
+    discovery_url = f"{cache_key}/.well-known/openid-configuration"
+    req = urllib.request.Request(discovery_url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        metadata = json.loads(resp.read().decode("utf-8"))
+    token_endpoint = metadata.get("token_endpoint")
+    if not token_endpoint:
+        raise ValueError("oidc_token_endpoint_not_found")
+    _OIDC_TOKEN_ENDPOINT_CACHE[cache_key] = (time.time() + 300, token_endpoint)
+    return token_endpoint
+
+
+def _exchange_refresh_token(
+    refresh_token: str,
+    issuer: str,
+) -> tuple[str, int]:
+    """Call the OIDC token endpoint to exchange *refresh_token* for a new
+    access_token.
+
+    Returns ``(new_access_token, new_expires_at_unix)``.
+    Raises *ValueError* on any failure.
+    """
+    token_endpoint = _get_oidc_token_endpoint(issuer)
+    data = urllib.parse.urlencode({
+        "grant_type": "refresh_token",
+        "client_id": _OIDC_CLIENT_ID,
+        "refresh_token": refresh_token,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        token_endpoint,
+        data=data,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        token_data = json.loads(resp.read().decode("utf-8"))
+    new_access_token = token_data.get("access_token")
+    if not new_access_token:
+        raise ValueError("oidc_refresh_failed: no access_token in response")
+    new_exp = _decode_jwt_exp(new_access_token)
+    if new_exp is None:
+        expires_in = token_data.get("expires_in", 3600)
+        new_exp = int(time.time()) + int(expires_in)
+    return new_access_token, new_exp
+
+
+async def try_refresh_platform_auth() -> PlatformAuthContext | None:
+    """Check the current platform-auth token and proactively refresh it.
+
+    * **No refresh_token available** — if the token is already expired, raise
+      ``ValueError("token_expired")`` so the caller can surface the error;
+      otherwise return *None* (token still valid, nothing to do).
+    * **Token still valid** — return *None* immediately.
+    * **Token expiring soon** — call the OIDC endpoint, update the
+      :pydata:`_platform_auth` ContextVar, and return the new context.
+
+    Concurrency-safe: an :class:`asyncio.Lock` ensures only one refresh HTTP
+    request is in-flight at a time.  Other callers that entered the lock while
+    waiting will re-read the ContextVar and find the already-refreshed token.
+    """
+    global _refresh_lock
+    if _refresh_lock is None:
+        _refresh_lock = asyncio.Lock()
+
+    current = get_platform_auth()
+    if current is None:
+        return None
+
+    # No refresh_token → can't renew; check if already expired.
+    if not current.refresh_token:
+        if is_token_expired(current.access_token):
+            raise ValueError("token_expired: no refresh_token available for renewal")
+        return None
+
+    # Still valid?
+    if not is_token_expiring_soon(current.access_token):
+        return None
+
+    async with _refresh_lock:
+        # Double-check after acquiring the lock — another coroutine may have
+        # already refreshed while we were waiting.
+        current = get_platform_auth()
+        if current is None:
+            return None
+        if not current.refresh_token:
+            if is_token_expired(current.access_token):
+                raise ValueError("token_expired: refresh_token was removed")
+            return None
+        if not is_token_expiring_soon(current.access_token):
+            return None
+
+        _logger.info(
+            "platform_auth: access_token expiring soon (exp=%d), refreshing via OIDC endpoint…",
+            _decode_jwt_exp(current.access_token) or 0,
+        )
+        # _exchange_refresh_token() uses blocking urllib calls — offload to
+        # thread pool so the async event loop is not blocked during the OIDC
+        # token endpoint HTTP round-trip (up to 25s worst case).
+        new_access_token, new_expires_at = await asyncio.to_thread(
+            _exchange_refresh_token,
+            current.refresh_token,
+            current.issuer,
+        )
+        new_context = PlatformAuthContext(
+            access_token=new_access_token,
+            subject=current.subject,
+            issuer=current.issuer,
+            expires_at=new_expires_at,
+            model_base_url=current.model_base_url,
+            organization_id=current.organization_id,
+            session_id=current.session_id,
+            audience=current.audience,
+            refresh_token=current.refresh_token,
+        )
+        _platform_auth.set(new_context)
+        _logger.info("platform_auth: token refreshed successfully, new exp=%d", new_expires_at)
+        return new_context

@@ -1,0 +1,12 @@
+{
+  "archive": "drsai-backend-source.zip",
+  "sha256": "93d49ab03bb438aa47e1508d0f5882c66e38fe76e0144fad4d4821fcf704d60c",
+  "version": "1.5.3",
+  "source": "local-backend-source",
+  "contents": [
+    "cores/python/packages/drsai/pyproject.toml",
+    "cores/python/packages/drsai/src/drsai",
+    "cores/protocol/owop",
+    "cores/protocol/relay"
+  ]
+}

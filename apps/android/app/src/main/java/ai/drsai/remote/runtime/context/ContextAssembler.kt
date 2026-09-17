@@ -83,7 +83,7 @@ object AttachmentContextBudgeter {
         val full = parts.filter(String::isNotBlank).joinToString("\n\n")
         if (full.length <= maxChars) return BudgetedAttachmentContext(full, 0, false)
         val omitted = full.length - maxChars
-        val suffix = "\n\n[附件上下文已省略约 $omitted 字符；完整内容请通过原附件或结果 Artifact 查看]"
+        val suffix = "\n\n[About $omitted attachment-context characters were omitted; view the original attachment or result Artifact for the full content]"
         val prefix = full.take((maxChars - suffix.length).coerceAtLeast(0))
         return BudgetedAttachmentContext((prefix + suffix).take(maxChars), full.length - prefix.length, true)
     }
@@ -96,7 +96,7 @@ data class BudgetedImageContext(
     val omitted: List<ImageContextCandidate>,
 ) {
     val referenceNotice: String? get() = omitted.takeIf { it.isNotEmpty() }?.joinToString(
-        prefix = "[图片未内联到模型请求，仍可从原附件/Artifact 查看：",
+        prefix = "[Images were not inlined in the model request and remain available from the attachment/Artifact: ",
         postfix = "]",
     ) { "${it.name} (${it.id})" }
 }
@@ -183,7 +183,7 @@ data class MemoryPrivacyPolicy(
     val excludedLabels: Set<String> = setOf("credential", "secret", "medical"),
 ) {
     private val sensitiveContent: Regex get() = Regex(
-        "(?i)(身份证|银行卡|密码\\s*[:：]|病历|诊断结果|medical record|diagnosis|private key)",
+        "(?i)(\\u8eab\\u4efd\\u8bc1|\\u94f6\\u884c\\u5361|\\u5bc6\\u7801\\s*[:\\uFF1A]|\\u75c5\\u5386|\\u8bca\\u65ad\\u7ed3\\u679c|medical record|diagnosis|private key)",
     )
 
     fun mayPersist(label: String, content: String): Boolean =
@@ -220,7 +220,7 @@ object ConversationCompactor {
         val sources = messages.dropLast(keepRecent).filter { it.content.isNotBlank() }
         if (sources.isEmpty()) return null
         val content = buildString {
-            append("较早会话摘要（按原始顺序）：\n")
+            append("Earlier conversation summary (original order):\n")
             sources.forEach { message ->
                 if (length >= maxChars) return@forEach
                 val normalized = message.content.replace(Regex("\\s+"), " ").trim()

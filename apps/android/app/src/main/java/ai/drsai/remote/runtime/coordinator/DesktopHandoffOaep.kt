@@ -8,7 +8,7 @@ import ai.drsai.remote.runtime.oaep.NormalizedAgentEvent
 object DesktopHandoffOaep {
     fun offered(runId: String, handoffId: String, decision: DesktopHandoffDecision): List<NormalizedAgentEvent> {
         require(runId.isNotBlank() && handoffId.isNotBlank()) { "handoff_oaep_identity_required" }
-        require(decision.state == DesktopHandoffState.OFFER && decision.target != null) { "handoff_oaep_offer_invalid" }
+        require(decision.state == DesktopHandoffState.OFFER && decision.targets.isNotEmpty()) { "handoff_oaep_offer_invalid" }
         val itemId = itemId(runId, handoffId)
         return listOf(
             NormalizedAgentEvent.RunStarted,
@@ -24,7 +24,7 @@ object DesktopHandoffOaep {
                     operation = "runtime.handoff",
                     requestSummary = mapOf(
                         "handoff_id" to handoffId,
-                        "target_runtime_id" to decision.target.binding.runtimeId.value,
+                        "candidate_runtime_ids" to decision.targets.map { it.binding.runtimeId.value },
                         "required_capabilities" to decision.required.map { it.name.lowercase() }.sorted(),
                         "execution_location" to "desktop",
                         "kind" to decision.kind.name.lowercase(),

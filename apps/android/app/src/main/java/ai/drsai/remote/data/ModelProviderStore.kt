@@ -78,6 +78,7 @@ class ModelProviderRepository(
     private val dao: ModelProviderDao,
     private val credentials: ModelCredentialStore,
     private val legacyProviders: (() -> List<ModelProviderConfig>)? = null,
+    private val strings: ModelProviderStoreStrings = EnglishModelProviderStoreStrings,
 ) : ModelConfigurationResolver {
     suspend fun ensureBuiltIns(hepaiBaseUrl: String) {
         val current = dao.snapshot()
@@ -121,12 +122,12 @@ class ModelProviderRepository(
     ): String {
         val cleanName = displayName.trim().take(80)
         val cleanUrl = normalizeBaseUrl(baseUrl)
-        require(cleanName.isNotBlank()) { "提供方名称不能为空" }
-        require(wireApi in setOf("openai", "anthropic")) { "不支持的 API 协议" }
-        require(models.isNotEmpty()) { "至少配置一个模型" }
-        require(models.any { it.enabled && it.upstreamId.isNotBlank() }) { "至少启用一个有效模型" }
-        require(models.all { it.upstreamId.isNotBlank() }) { "模型 ID 不能为空" }
-        require(models.map { it.upstreamId.trim().lowercase() }.distinct().size == models.size) { "模型 ID 不能重复" }
+        require(cleanName.isNotBlank()) { strings.text(ModelProviderStoreText.NAME_REQUIRED) }
+        require(wireApi in setOf("openai", "anthropic")) { strings.text(ModelProviderStoreText.API_UNSUPPORTED) }
+        require(models.isNotEmpty()) { strings.text(ModelProviderStoreText.MODEL_REQUIRED) }
+        require(models.any { it.enabled && it.upstreamId.isNotBlank() }) { strings.text(ModelProviderStoreText.ENABLED_MODEL_REQUIRED) }
+        require(models.all { it.upstreamId.isNotBlank() }) { strings.text(ModelProviderStoreText.MODEL_ID_REQUIRED) }
+        require(models.map { it.upstreamId.trim().lowercase() }.distinct().size == models.size) { strings.text(ModelProviderStoreText.MODEL_ID_DUPLICATE) }
         val id = providerId ?: UUID.randomUUID().toString()
         val existing = dao.provider(id)
         if (expectedRevision != null && existing?.revision != expectedRevision) error("config_conflict")
@@ -134,7 +135,7 @@ class ModelProviderRepository(
         val keyChanged = apiKey.isNotBlank()
         if (keyChanged) credentials.saveApiKey(id, apiKey)
         try {
-            require(credentials.hasApiKey(id) || presetId in setOf("hepai", "ollama")) { "API Key 不能为空" }
+            require(credentials.hasApiKey(id) || presetId in setOf("hepai", "ollama")) { strings.text(ModelProviderStoreText.API_KEY_REQUIRED) }
             val now = System.currentTimeMillis()
             val provider = ModelProviderEntity(
                 id, presetId, cleanName, cleanUrl, wireApi,
@@ -161,7 +162,7 @@ class ModelProviderRepository(
     }
 
     suspend fun delete(providerId: String) {
-        require(providerId != "hepai") { "内置 HepAI 不能删除" }
+        require(providerId != "hepai") { strings.text(ModelProviderStoreText.BUILTIN_DELETE) }
         val oldKey = credentials.apiKey(providerId)
         credentials.deleteApiKey(providerId)
         try {
@@ -206,9 +207,9 @@ class ModelProviderRepository(
 
     private fun normalizeBaseUrl(value: String): String {
         val clean = value.trim().trimEnd('/')
-        val uri = runCatching { java.net.URI(clean) }.getOrNull() ?: error("API 地址无效")
-        require(uri.scheme in setOf("https", "http") && !uri.host.isNullOrBlank() && uri.userInfo == null) { "API 地址无效" }
-        require(!clean.contains('\n') && !clean.contains('\r')) { "API 地址无效" }
+        val uri = runCatching { java.net.URI(clean) }.getOrNull() ?: error(strings.text(ModelProviderStoreText.URL_INVALID))
+        require(uri.scheme in setOf("https", "http") && !uri.host.isNullOrBlank() && uri.userInfo == null) { strings.text(ModelProviderStoreText.URL_INVALID) }
+        require(!clean.contains('\n') && !clean.contains('\r')) { strings.text(ModelProviderStoreText.URL_INVALID) }
         return clean
     }
 }

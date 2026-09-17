@@ -10,7 +10,7 @@ import type {
 import type { ExecutionActionKind } from "./executionPolicy";
 import type { DesktopPlatformDescriptor } from "./platform";
 import type { InteractionOption, StructuredConversationEvent, StructuredTurnState } from "./structuredConversation";
-import type { OaepEvent } from "./oaep.generated";
+import type { OaepEvent, OaepResourceRef } from "./oaep.generated";
 export type { InteractionOption } from "./structuredConversation";
 import type {
   RunInspection,
@@ -209,6 +209,14 @@ export interface PrerequisiteStatus {
   problems: string[];
 }
 
+/**
+ * Startup lifecycle of the local Gateway as observed by the Desktop main
+ * process. "starting" means a start attempt is in flight (or the managed
+ * process is alive but has not become ready yet); the renderer must treat
+ * that as progress, never as a failure/blocker.
+ */
+export type GatewayStartState = "idle" | "starting" | "ready" | "failed";
+
 export interface GatewayStatus {
   ready: boolean;
   managed: boolean;
@@ -217,9 +225,12 @@ export interface GatewayStatus {
   baseUrl: string;
   pid: number | null;
   lastLog: string;
+  startState?: GatewayStartState;
   portOpen?: boolean;
   diagnosticCode?: string;
   diagnosticMessage?: string;
+  liveness?: GatewayLiveness;
+  instance?: RuntimeInstanceIdentity;
   endpoints?: {
     health: GatewayEndpointStatus;
     models: GatewayEndpointStatus;
@@ -295,6 +306,43 @@ export interface CodexBackendStatus {
   connectionState?: string;
   transport?: "local-process" | "ssh" | string;
   adapterVersion?: string;
+  readiness?: {
+    runtime?: CodexReadinessFacet;
+    transport?: CodexReadinessFacet;
+    process?: CodexReadinessFacet;
+    installed?: CodexReadinessFacet;
+    contract?: CodexReadinessFacet;
+    account?: CodexReadinessFacet;
+    models?: CodexReadinessFacet;
+    executable?: CodexReadinessFacet & { blockers?: string[] };
+  };
+  binaryIdentity?: {
+    source?: string | null;
+    version?: string | null;
+    binaryDigest?: string | null;
+    schemaDigest?: string | null;
+    releaseSafe?: boolean | null;
+  } | null;
+}
+
+export interface RuntimeInstanceIdentity {
+  mode: "development" | "packaged" | "external" | "remote";
+  home: string;
+  port: number;
+  pid: number | null;
+  instanceId: string;
+  owner: string;
+  startedAt: string | null;
+}
+
+export interface CodexReadinessFacet {
+  state: string;
+  reason?: string | null;
+  observedAt?: string | null;
+  lastSuccessAt?: string | null;
+  retryable?: boolean;
+  actions?: string[];
+  stale?: boolean;
 }
 
 export interface CodexBackendLogin {
@@ -414,11 +462,24 @@ export type DesktopVoiceRuntimeId =
   | "local-whisper"
   | "realtime-provider";
 
-export type DesktopVoiceInteractionMode = "serial" | "streaming" | "duplex";
+export type DesktopVoiceInteractionMode = "serial" | "duplex";
+export type DesktopVoicePreferenceLanguage = "auto" | "zh-CN" | "en-US";
+export interface DesktopVoicePreferences {
+  schemaVersion: 11;
+  revision: number;
+  realtimeOptIn: boolean;
+  selectedMode: DesktopVoiceInteractionMode;
+  serial: { inputDeviceId: string; language: DesktopVoicePreferenceLanguage; confirmBeforeSend: boolean };
+  duplex: { inputDeviceId: string; outputDeviceId: string; language: DesktopVoicePreferenceLanguage; voice: string; volume: number; autoRecovery: boolean; transcriptPolicy: "stable" | "none"; disclosureFingerprint: string };
+  playback: { autoReadResponses: boolean; playbackRate: number; remoteSttConsent: boolean; remoteTtsConsent: boolean; synthesisMode: "system" | "provider"; voiceName: string };
+}
+export interface DesktopVoicePreferencesUpdateRequest {
+  expectedRevision: number;
+  preferences: Omit<DesktopVoicePreferences, "revision">;
+}
 
-export type DesktopStreamingAudioEncoding = "pcm_s16le";
 
-export const DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION = 1 as const;
+export const DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION = 2 as const;
 
 export type DesktopDuplexVoiceAudioEncoding = "pcm_s16le" | "pcm_f32le";
 export type DesktopDuplexVoiceTerminalState = "completed" | "cancelled" | "failed";
@@ -461,6 +522,77 @@ export interface DesktopDuplexVoiceCapabilities {
   maxSessionDurationSeconds?: number;
 }
 
+export type GatewayLivenessState =
+  | "unknown"
+  | "probing"
+  | "ready"
+  | "degraded"
+  | "reconnecting"
+  | "action_required"
+  | "stopped";
+
+export interface GatewayLiveness {
+  state: GatewayLivenessState;
+  observedReady: boolean;
+  effectiveReady: boolean;
+  stale: boolean;
+  generation: number;
+  consecutiveFailures: number;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  degradedSince: string | null;
+  retryAfterMs: number | null;
+}
+
+export type DesktopDuplexVoiceReadinessReasonCode =
+  | "ready"
+  | "rollout_disabled"
+  | "gateway_unavailable"
+  | "credential_unavailable"
+  | "model_unconfigured"
+  | "provider_unsupported"
+  | "model_unsupported"
+  | "audio_worklet_unavailable"
+  | "media_devices_unavailable"
+  | "capability_unverified"
+  | "internal";
+
+export interface DesktopDuplexVoiceReadinessCheck {
+  id: "rollout" | "gateway" | "credential" | "model" | "provider" | "capability";
+  ready: boolean;
+  reasonCode: DesktopDuplexVoiceReadinessReasonCode;
+  message: string;
+}
+
+export interface DesktopDuplexVoiceLiveProbe {
+  status: "verified" | "unavailable";
+  provider_id: string | null;
+  model_id: string | null;
+  checked_at: string;
+  expires_at: string;
+  evidence_kind: "real_provider";
+  error_code?: string;
+  capabilities: Partial<{
+    input_transcription: boolean;
+    output_transcription: boolean;
+    server_vad: boolean;
+    response_cancel: boolean;
+    conversation_truncation: boolean;
+    tool_calling: boolean;
+  }>;
+}
+
+export interface DesktopDuplexVoiceReadiness {
+  available: boolean;
+  reasonCode: DesktopDuplexVoiceReadinessReasonCode;
+  message: string;
+  providerId: string | null;
+  modelId: string | null;
+  checkedAt: string;
+  checks: DesktopDuplexVoiceReadinessCheck[];
+  capabilities: DesktopDuplexVoiceCapabilities | null;
+}
+
 export interface DesktopDuplexVoiceSessionStartRequest {
   protocolVersion: typeof DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION;
   sessionId: string;
@@ -478,6 +610,8 @@ export interface DesktopDuplexVoiceSessionStartRequest {
   enableOutputTranscription: boolean;
   enableServerVad: boolean;
   enableToolCalling: boolean;
+  autoRecovery?: boolean;
+  updateId?: string;
 }
 
 export interface DesktopDuplexVoiceSessionStartResult {
@@ -487,9 +621,18 @@ export interface DesktopDuplexVoiceSessionStartResult {
   providerId: string;
   modelId: string;
   capabilities: DesktopDuplexVoiceCapabilities;
+  uplinkCredit: DesktopDuplexVoiceUplinkCredit;
+}
+
+export interface DesktopDuplexVoiceUplinkCredit {
+  frames: number;
+  bytes: number;
+  audioMs: number;
+  acknowledgedSequence: number;
 }
 
 export interface DesktopDuplexVoiceInterruptRequest {
+  interruptId: string;
   sessionId: string;
   responseId: string;
   itemId: string;
@@ -506,8 +649,13 @@ export interface DesktopDuplexVoiceToolResultRequest {
 
 export interface DesktopDuplexVoiceHistoryAppendRequest {
   threadId: string;
-  messages: Array<{ id: string; role: "user" | "assistant"; content: string; statusContent?: string }>;
+  messages: Array<{ id: string; role: "user" | "assistant"; content: string; revision: number; expectedRevision: number; statusContent?: string; voice?: DesktopVoiceMessageMetadata; toolTimeline?: ChatToolTimelineEvent[]; parts?: ChatMessagePart[] }>;
 }
+export interface DesktopDuplexVoiceToolApprovalRequest { sessionId: string; callId: string; name: string; argumentsSummary: string; scope?: string; risk?: "low" | "medium" | "high" }
+export interface DesktopDuplexVoiceToolApprovalDecision { sessionId: string; callId: string; decision: "allow" | "reject" | "cancel" }
+export interface DesktopDuplexVoiceTextInputRequest { sessionId: string; itemId: string; text: string }
+
+export interface DesktopVoiceMessageMetadata { revision: number; generatedAudioMs?: number; playedAudioMs?: number; interruptedAt?: number; alignmentConfidence?: "none" | "word_timing"; heardContent?: string }
 
 export interface DesktopDuplexVoiceAudioChunk {
   protocolVersion: typeof DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION;
@@ -526,6 +674,7 @@ export interface DesktopDuplexVoiceAudioDelta {
   itemId: string;
   contentIndex: number;
   sequence: number;
+  providerReceivedAtMs: number;
   encoding: DesktopDuplexVoiceAudioEncoding;
   sampleRateHz: number;
   channels: 1;
@@ -552,154 +701,28 @@ export type DesktopDuplexVoiceEvent = {
   sequence: number;
 } & (
   | { type: "session_started"; runtimeId: "realtime-provider" | "mock-local"; providerId: string; modelId: string; capabilities: DesktopDuplexVoiceCapabilities }
-  | { type: "connection_state"; state: DesktopDuplexVoiceConnectionState; attempt?: number }
+  | { type: "session_update_ack"; updateId: string; status: "applied" | "rejected" | "rolled_back" | "requires_restart"; changedFields: string[]; reason?: string }
+  | { type: "connection_state"; state: DesktopDuplexVoiceConnectionState; attempt?: number; segmentId?: number; lostAudioMs?: number; retryAfterMs?: number }
   | { type: "input_audio_ack"; acknowledgedSequence: number; bufferedAudioMs: number }
+  | { type: "uplink_credit"; credit: DesktopDuplexVoiceUplinkCredit; reason: "initial" | "ack" | "reconnect" }
   | { type: "flow_control"; direction: "uplink" | "playback"; paused: boolean; bufferedAudioMs: number; reason: "high_watermark" | "low_watermark" }
   | { type: "input_speech_started"; itemId?: string; audioStartMs?: number }
   | { type: "input_speech_stopped"; itemId?: string; audioEndMs?: number }
   | { type: "input_transcript_delta"; delta: DesktopDuplexVoiceTranscriptDelta }
   | { type: "input_transcript_completed"; itemId: string; text: string }
-  | { type: "response_started"; responseId: string }
+  | { type: "response_started"; responseId: string; firstAudioSequence: number }
   | { type: "response_audio_delta"; delta: DesktopDuplexVoiceAudioDelta }
-  | { type: "response_audio_completed"; responseId: string; itemId: string; contentIndex: number }
+  | { type: "response_audio_completed"; responseId: string; itemId: string; contentIndex: number; finalSequence: number }
   | { type: "response_transcript_delta"; delta: DesktopDuplexVoiceTranscriptDelta }
   | { type: "response_transcript_completed"; responseId: string; itemId: string; text: string }
   | { type: "tool_call"; call: DesktopDuplexVoiceToolCall }
   | { type: "usage_update"; inputAudioMs: number; outputAudioMs: number; inputTokens: number | null; outputTokens: number | null; estimatedCostUsd: number | null; warning: boolean; exceeded: boolean }
   | { type: "diagnostic"; metrics: { connectMs: number | null; firstInputEventMs: number | null; ttfaMs: number | null; reconnects: number; interrupts: number; maxBufferedAudioMs: number; inputAudioMs: number; outputAudioMs: number } }
-  | { type: "interrupted"; responseId: string; playedAudioMs: number; reason: "user_speech" | "manual" | "stop_intent" }
+  | { type: "interrupted"; interruptId: string; responseId: string; playedAudioMs: number; reason: "user_speech" | "manual" | "stop_intent" }
   | { type: "completed"; terminal: "completed" }
   | { type: "cancelled"; terminal: "cancelled" }
   | { type: "failed"; terminal: "failed"; error: DesktopDuplexVoiceError }
 );
-
-export interface DesktopStreamingVoiceCapabilities {
-  serialStt: boolean;
-  serialTts: boolean;
-  streamingStt: boolean;
-  streamingTts: boolean;
-  audioEncodings: DesktopStreamingAudioEncoding[];
-  sampleRatesHz: number[];
-  supportsPartialTranscripts: boolean;
-  supportsProviderEndpointing: boolean;
-  supportsSessionResume: boolean;
-  supportsAdaptiveEndpointing?: boolean;
-  supportsContextualRepair?: boolean;
-  supportsProviderFailover?: boolean;
-  protocolVersion?: 1 | 2;
-  maxBufferedAudioMs: number;
-}
-
-export type DesktopTranscriptRepairSourceType = "later_speech" | "conversation_summary" | "user_dictionary" | "workspace_term";
-
-export interface DesktopTranscriptRepairSource {
-  type: DesktopTranscriptRepairSourceType;
-  label?: string;
-}
-
-export interface DesktopTranscriptRepairCandidate {
-  id: string;
-  revision: number;
-  originalText: string;
-  suggestedText: string;
-  confidence: number;
-  sources: DesktopTranscriptRepairSource[];
-  risk: "none" | "meaning_change" | "sensitive_value" | "command_or_code";
-  autoAccept: boolean;
-  reasons: string[];
-}
-
-export interface DesktopStreamingVoiceStartRequest {
-  protocolVersion?: 1 | 2;
-  turnId: string;
-  languageHint?: string;
-  encoding: DesktopStreamingAudioEncoding;
-  sampleRateHz: number;
-  channels: 1;
-  frameDurationMs: number;
-  providerEndpointing: boolean;
-}
-
-export interface DesktopStreamingVoiceStartResult {
-  sessionId: string;
-  turnId: string;
-  acceptedAt: string;
-  capabilities: DesktopStreamingVoiceCapabilities;
-}
-
-export interface DesktopStreamingVoiceAudioChunk {
-  protocolVersion?: 1 | 2;
-  sessionId: string;
-  turnId: string;
-  sequence: number;
-  capturedAtMs: number;
-  durationMs: number;
-  encoding: DesktopStreamingAudioEncoding;
-  sampleRateHz: number;
-  channels: 1;
-  audioData: Uint8Array;
-}
-
-export interface DesktopStreamingVoiceAudioAck {
-  sessionId: string;
-  turnId: string;
-  acknowledgedSequence: number;
-  bufferedAudioMs: number;
-  receivedAt: string;
-}
-
-export interface DesktopStreamingVoiceTranscriptSegment {
-  text: string;
-  revision: number;
-  confidence?: number;
-  startMs?: number;
-  endMs?: number;
-}
-
-export type DesktopStreamingVoiceTranscriptionEvent = { protocolVersion?: 1 | 2 } & (
-  | { sessionId: string; turnId: string; sequence: number; type: "accepted"; runtimeId: DesktopVoiceRuntimeId }
-  | { sessionId: string; turnId: string; sequence: number; type: "audio_ack"; ack: DesktopStreamingVoiceAudioAck }
-  | { sessionId: string; turnId: string; sequence: number; type: "flow_control"; paused: boolean; bufferedAudioMs: number; reason: "high_watermark" | "low_watermark" }
-  | { sessionId: string; turnId: string; sequence: number; type: "connection_state"; state: "connected" | "reconnecting" | "reconnected"; attempt?: number }
-  | { sessionId: string; turnId: string; sequence: number; type: "partial"; segment: DesktopStreamingVoiceTranscriptSegment }
-  | { sessionId: string; turnId: string; sequence: number; type: "final"; segment: DesktopStreamingVoiceTranscriptSegment }
-  | { sessionId: string; turnId: string; sequence: number; type: "endpoint"; reason: "provider" | "local_vad" | "manual" }
-  | { sessionId: string; turnId: string; sequence: number; type: "completed" }
-  | { sessionId: string; turnId: string; sequence: number; type: "failed"; error: DesktopVoiceError }
-  | { sessionId: string; turnId: string; sequence: number; type: "cancelled" }
-);
-
-export interface DesktopStreamingVoiceTtsSegmentRequest {
-  sessionId: string;
-  turnId: string;
-  messageId: string;
-  segmentId: string;
-  segmentIndex: number;
-  text: string;
-  voice?: string;
-  speed?: number;
-  format: "wav" | "mp3" | "opus";
-}
-
-export interface DesktopStreamingVoiceTtsAudioSegment {
-  sessionId: string;
-  turnId: string;
-  messageId: string;
-  segmentId: string;
-  segmentIndex: number;
-  mimeType: string;
-  durationMs?: number;
-  audioData: Uint8Array;
-  final: boolean;
-}
-
-export type DesktopStreamingVoiceTtsEvent =
-  | { sessionId: string; turnId: string; sequence: number; type: "accepted"; segmentId: string; segmentIndex: number }
-  | { sessionId: string; turnId: string; sequence: number; type: "audio"; segment: DesktopStreamingVoiceTtsAudioSegment }
-  | { sessionId: string; turnId: string; sequence: number; type: "segment_completed"; segmentId: string; segmentIndex: number }
-  | { sessionId: string; turnId: string; sequence: number; type: "completed" }
-  | { sessionId: string; turnId: string; sequence: number; type: "failed"; error: DesktopVoiceError; segmentId?: string }
-  | { sessionId: string; turnId: string; sequence: number; type: "cancelled" };
 
 export interface DesktopVoiceTranscriptionRequest {
   workspacePath?: string;
@@ -899,6 +922,10 @@ export interface ChatAttachment {
   note?: string;
   fileHash?: string;
   blockedReason?: string;
+  resourceRef?: OaepResourceRef;
+  /** P2 renderer identity; authoritative ResourceKey is reloaded in main. */
+  associationId?: string;
+  sessionId?: string;
 }
 
 export interface OaepInputResource {
@@ -916,12 +943,105 @@ export interface OaepInputResource {
   size_bytes?: number;
   sha256?: string;
   captured_at?: string;
+  resource_ref?: OaepResourceRef;
+}
+
+export type OaepInputPart =
+  | { type: "text"; text: string }
+  | { type: "resource"; resource_id: string };
+
+/** Ordered public Composer content. Attachment indexes address ChatRequest.attachments. */
+export type ChatDraftPart =
+  | { type: "text"; text: string }
+  | { type: "attachment"; attachmentIndex: number };
+
+export interface ConversationResourceResolveRequest {
+  workspacePath: string;
+  /** P2 requests use this pair and never submit a path or ResourceKey. */
+  sessionId?: string;
+  associationId?: string;
+  /** P1 wide-read fallback only. */
+  resourceRef?: OaepResourceRef;
+}
+
+export interface ConversationResourceResolveResult {
+  workspaceId: string;
+  resourceId: string;
+  resourceType: "file" | "artifact";
+  state: "available" | "moved" | "changed" | "deleted" | "offline" | "unsupported";
+  path?: string;
+  /** Workspace-relative path; never a remote Host physical path. */
+  logicalPath?: string;
+  name: string;
+  mime?: string;
+  size?: number;
+  digest?: string;
+  modifiedAt?: string;
+  observedVersionAvailable?: boolean;
+  capabilities: {
+    read: boolean;
+    preview: boolean;
+    download: boolean;
+    reveal: boolean;
+    openExternal: boolean;
+    copyLogicalPath?: boolean;
+  };
+}
+
+export interface ConversationResourcePreviewRequest extends ConversationResourceResolveRequest {
+  maxBytes?: number;
+  /** Host resolves the observed token from the Association. */
+  version?: "current" | "observed";
+}
+
+export interface ConversationResourceDownloadRequest extends ConversationResourceResolveRequest {
+  suggestedName?: string;
+  /** Renderer-generated correlation id used only for progress and cancellation. */
+  operationId?: string;
+}
+
+export interface ConversationResourceDownloadProgressEvent {
+  operationId: string;
+  phase: "preparing" | "downloading" | "completed" | "cancelled" | "failed";
+  name: string;
+  transferredBytes: number;
+  totalBytes?: number;
+  percent?: number;
+  errorCode?: string;
+}
+
+export interface ConversationResourceDownloadResult {
+  canceled: boolean;
+  destinationPath?: string;
+  name: string;
+  size?: number;
+  digest?: string;
+}
+
+export interface ConversationResourceSubscriptionRequest {
+  workspacePath: string;
+  sessionId: string;
+  afterSequence?: number;
+}
+
+export interface ConversationResourceStateEvent {
+  subscriptionId: string;
+  workspacePath: string;
+  sessionId: string;
+  sequence: number;
+  eventType: string;
+  resourceId?: string;
+  state?: ConversationResourceResolveResult["state"];
+  versionId?: string;
+  scopeInvalidated?: boolean;
 }
 
 export interface ChatRequest {
   requestId?: string;
   agentId?: string;
   model?: string;
+  reasoningEffort?: ThinkingEffort;
+  planMode?: boolean;
   workspacePath?: string;
   workspaceId?: string;
   workspaceName?: string;
@@ -929,6 +1049,7 @@ export interface ChatRequest {
   sessionId?: string;
   runId?: string;
   attachments?: ChatAttachment[];
+  draftParts?: ChatDraftPart[];
   metadata?: Record<string, unknown>;
   messages: ChatMessage[];
 }
@@ -1453,6 +1574,8 @@ export interface GatewaySkill {
 export interface GatewayAvailableSkill extends GatewaySkill {
   source: string;
   installed: boolean;
+  /** Bundled folder id (may differ from frontmatter name, e.g. ragflow-knowledge). */
+  bundledId?: string;
 }
 
 export interface GatewaySkillInstallRequest {
@@ -1460,6 +1583,142 @@ export interface GatewaySkillInstallRequest {
   content?: string;
   source?: string;
   userId?: string;
+}
+
+/** Skills Square (WebUI GFS marketplace) — auth via HepAI OIDC only. */
+export type SkillsSquareStatusState = "ready" | "requires_login" | "forbidden" | "error";
+
+export interface SkillsSquareStatus {
+  state: SkillsSquareStatusState;
+  message: string;
+  authMode?: "oidc" | "none";
+  lastCheckedAt: string;
+  /** WebUI origin that hosts /share/skill/* (same as Skills API root). */
+  portalUrl?: string;
+}
+
+export interface DesktopSquareSkill {
+  slug: string;
+  name: string;
+  description: string;
+  icon?: string;
+  version?: string;
+  owner?: string;
+  ownerId?: string;
+  author?: string;
+  visibility?: string;
+  source?: string;
+  uskillsType?: string | null;
+  tags?: string[];
+  downloads?: number;
+  collects?: number;
+  collectorIds?: string[];
+  isCollected?: boolean;
+  canEdit?: boolean;
+  profile?: string;
+  changelog?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  installed: boolean;
+  academicGroupId?: string;
+}
+
+export interface DesktopSquareSkillDetail extends DesktopSquareSkill {
+  body: string;
+  /** Higraf / group-restricted skills block download & body (WebUI parity). */
+  restricted?: boolean;
+}
+
+export interface DesktopSquareSkillsPage {
+  items: DesktopSquareSkill[];
+  page: number;
+  pageSize: number;
+  total: number;
+  hasNext: boolean;
+  installedCount: number;
+  notInstalledCount: number;
+  status: SkillsSquareStatus;
+}
+
+export interface DesktopSquareSkillsListRequest {
+  scope?: "public" | "user";
+  page?: number;
+  pageSize?: number;
+  q?: string;
+  tags?: string;
+  sort?: "name" | "time" | "downloads" | "collects";
+  installFilter?: "all" | "installed" | "not_installed";
+  uskillsType?: "created" | "imported";
+  visibility?: string;
+  userId?: string;
+  userEmail?: string;
+}
+
+export interface DesktopSquareSkillStats {
+  totalSkills: number;
+  publicSkills: number;
+  totalDownloads: number;
+  totalCollects: number;
+}
+
+export interface DesktopSquareSkillTag {
+  id: number;
+  uuid?: string;
+  name: string;
+  sortOrder?: number;
+}
+
+export interface DesktopSquareInstallRequest {
+  slug: string;
+  name?: string;
+  userId?: string;
+  threadId?: string;
+}
+
+export interface DesktopSquareUploadRequest {
+  zipBase64?: string;
+  fileName?: string;
+  slug?: string;
+  displayName?: string;
+  icon?: string;
+  description?: string;
+  version?: string;
+  changelog?: string;
+  tags?: string;
+  visibility?: "public" | "private" | "team";
+  source?: string;
+  owner?: string;
+  ownerId?: string;
+  profileBase64?: string;
+  profileFileName?: string;
+}
+
+export interface DesktopSquareUpdateRequest {
+  slug: string;
+  zipBase64?: string;
+  fileName?: string;
+  displayName?: string;
+  name?: string;
+  icon?: string;
+  description?: string;
+  version?: string;
+  changelog?: string;
+  tags?: string;
+  visibility?: string;
+  profileBase64?: string;
+  profileFileName?: string;
+}
+
+export interface DesktopSquareShareInfo {
+  shareId: string;
+  skillSlug?: string;
+  hasPassword: boolean;
+  expiresAt?: string;
+  createdAt?: string;
+  expired?: boolean;
+  accessCount?: number;
+  /** Absolute landing URL on the active Skills Square host (test=drsaiv2, prod=opendrsai). */
+  shareUrl?: string;
 }
 
 export interface GfsObjectInfo {
@@ -1487,9 +1746,59 @@ export interface GfsUploadRequest {
   remotePath: string;
 }
 
+export interface GfsUploadContentRequest {
+  remotePath: string;
+  contentBase64: string;
+  contentType?: string;
+}
+
 export interface GfsDownloadRequest {
   remotePath: string;
   localPath: string;
+}
+
+export interface GfsConfigStatus {
+  configured: boolean;
+  enabled: boolean;
+  needsSetup: boolean;
+  mode: string;
+  bucket?: string;
+  email?: string;
+  endpoint?: string;
+  accessKey?: string;
+  secretKey?: string;
+  accessKeyMasked?: string;
+  secretKeyMasked?: string;
+  portalUrl: string;
+  homeEnvPath?: string;
+  cliConfigPath?: string;
+}
+
+export interface GfsConfigSaveRequest {
+  accessKey: string;
+  secretKey: string;
+  bucket: string;
+  email?: string;
+  endpoint?: string;
+}
+
+export interface GfsConfigSaveResult extends GfsConfigStatus {
+  ok: boolean;
+  message?: string;
+}
+
+export interface GfsConfigClearResult extends GfsConfigStatus {
+  ok: boolean;
+  message?: string;
+}
+
+export interface GfsHealthcheckResult {
+  ok: boolean;
+  bucket?: string;
+  mode?: string;
+  reason?: string;
+  needsSetup?: boolean;
+  portalUrl?: string;
 }
 
 export type DesktopWorkflowTemplateStatus =
@@ -2611,6 +2920,7 @@ export interface DesktopScheduledTaskWorkerStatus {
 
 export type DesktopChannelAdapterProvider =
   | "mobile"
+  | "wechat"
   | "slack"
   | "github"
   | "docs"
@@ -2644,7 +2954,7 @@ export interface DesktopChannelAdapter {
   capabilities: string[];
   description: string;
   setupHint?: string;
-  authMode?: "not_configured" | "local_git_remote" | "oauth" | "provider_token" | "session_stub";
+  authMode?: "not_configured" | "local_git_remote" | "oauth" | "provider_token" | "session_stub" | "ilink_qr";
   accountLabel?: string;
   scopeLabel?: string;
   configuredAt?: string;
@@ -2701,7 +3011,7 @@ export interface DesktopChannelConnection {
   adapterId: string;
   workspacePath: string;
   provider: DesktopChannelAdapterProvider;
-  mode: "local_git_remote" | "oauth" | "provider_token" | "session_stub";
+  mode: "local_git_remote" | "oauth" | "provider_token" | "session_stub" | "ilink_qr";
   configuredAt: string;
   updatedAt: string;
   accountLabel: string;
@@ -2721,6 +3031,96 @@ export interface DesktopChannelAdapterConfigureResult {
   connection: DesktopChannelConnection;
   message: string;
   verification: string;
+}
+
+export interface DesktopDuplexVoicePlaybackAck {
+  protocolVersion: typeof DESKTOP_DUPLEX_VOICE_PROTOCOL_VERSION;
+  sessionId: string;
+  receivedSequence: number;
+  scheduledSequence: number;
+  playedSequence: number;
+  receivedAudioMs: number;
+  scheduledAudioMs: number;
+  playedAudioMs: number;
+}
+
+export interface DesktopDuplexVoiceOccupancy {
+  occupied: boolean;
+  sessionId: string | null;
+  ownerWindowId: number | null;
+  ownerLabel: string | null;
+  startedAt: string | null;
+  ownedByCaller: boolean;
+}
+
+export interface DesktopDuplexVoiceTakeoverRequest {
+  expectedSessionId: string;
+  session: DesktopDuplexVoiceSessionStartRequest;
+}
+
+export type DesktopWeChatCredentialState = "missing" | "valid" | "expired" | "unavailable";
+export type DesktopWeChatRuntimeState = "stopped" | "running" | "failed";
+export interface DesktopWeChatModelRef {
+  providerId: string;
+  modelId: string;
+}
+export interface DesktopWeChatChannelStatus {
+  configured: boolean;
+  credentialState: DesktopWeChatCredentialState;
+  runtimeState: DesktopWeChatRuntimeState;
+  accountLabel?: string;
+  loginTime?: string;
+  expiresAt?: string;
+  startedAt?: string;
+  errorCode?: string;
+  modelPolicy?: {
+    primary?: DesktopWeChatModelRef;
+    imageUnderstanding?: DesktopWeChatModelRef;
+    imageGeneration?: DesktopWeChatModelRef;
+    textToSpeech?: DesktopWeChatModelRef;
+    realtimeVoice?: DesktopWeChatModelRef;
+    speechToText?: DesktopWeChatModelRef;
+  };
+  mediaCapabilities?: {
+    imageUnderstanding: boolean;
+    imageGeneration: boolean;
+  };
+}
+export interface DesktopWeChatLoginStartResult {
+  operationId: string;
+  qrContent: string;
+  status: "waiting";
+  expiresAt: string;
+  pollIntervalSeconds: number;
+}
+export interface DesktopWeChatLoginPollRequest { operationId: string; }
+export interface DesktopWeChatLoginPollResult {
+  operationId: string;
+  status: "waiting" | "scanned" | "confirmed" | "expired" | "cancelled";
+  expiresAt?: string;
+  pollIntervalSeconds?: number;
+  retryAfterSeconds?: number;
+  accountLabel?: string;
+}
+export interface DesktopWeChatLoginCancelResult { operationId: string; status: "cancelled"; cancelled: boolean; }
+export interface DesktopWeChatSessionSummary { count: number; }
+export interface DesktopWeChatReplyCapabilityRequest { sessionId: string; }
+export interface DesktopWeChatReplyCapability {
+  available: boolean;
+  reason?: "feature_disabled" | "channel_not_running" | "waiting_for_inbound" | "runtime_session_unavailable";
+}
+export interface DesktopWeChatOutboundRequest {
+  sessionId: string;
+  text: string;
+  idempotencyKey: string;
+  confirmExternalSend: true;
+}
+export interface DesktopWeChatOutboundResult {
+  deliveryId: string;
+  sessionId: string;
+  status: "pending" | "sent" | "failed" | "unknown";
+  attemptCount: number;
+  errorCode?: string;
 }
 
 export interface DesktopChannelContextImportRequest {
@@ -2883,6 +3283,7 @@ export type DesktopExternalConnectionId =
   | "chrome"
   | "latex"
   | "mobile"
+  | "wechat"
   | "slack"
   | "docs"
   | "calendar"
@@ -3202,6 +3603,8 @@ export interface DesktopAgent {
   description: string;
   localizedDescription?: DesktopAgentLocalizedText;
   owner: string;
+  /** Worker-declared display attribution. Never use this field for authorization. */
+  author?: string;
   source: DesktopAgentSource;
   status: DesktopAgentStatus;
   mode?: string;
@@ -3211,6 +3614,7 @@ export interface DesktopAgent {
   capabilities?: string[];
   lastUsedAt?: string;
   catalogGroup?: "local" | "official" | "mine";
+  catalogVisibility?: "always" | "when_available";
   url?: string;
   model?: string;
   models?: string[];
@@ -3266,6 +3670,31 @@ export interface DesktopAgentPreferenceResult {
   agentId: string;
   saved: boolean;
   message: string;
+}
+
+export interface DesktopAgentPreferences {
+  defaultAgentId: string | null;
+  recentAgentIds: string[];
+}
+
+export interface DesktopRemoteAgentTestRequest {
+  name: string;
+  url: string;
+  apiKey: string;
+}
+
+export interface DesktopRemoteAgentTestResult {
+  ok: boolean;
+  message: string;
+  agentInfo?: Record<string, unknown>;
+}
+
+export interface DesktopRemoteAgentSaveRequest {
+  name: string;
+  url: string;
+  apiKey: string;
+  id?: string;
+  agentInfo?: Record<string, unknown>;
 }
 
 export interface MyDrSaiReasoningConfig {
@@ -3429,11 +3858,14 @@ export interface PerceptorResource {
   perceptor_id: string;
   name?: string | null;
   kind: "public_web" | "large_facility_data";
-  adapter: "tavily" | "facility_gateway";
+  adapter: "tavily" | "hai_managed_tavily" | "facility_gateway";
   enabled: boolean;
   capabilities: string[];
   config: Record<string, unknown>;
   revision: string;
+  dynamic?: boolean;
+  status?: "available" | "login_required" | "permission_denied" | "quota_exhausted" | "worker_unavailable" | "provider_authentication_failed" | "provider_rate_limited" | "provider_quota_exhausted" | "provider_timeout" | "provider_unavailable" | "provider_invalid_response" | "unsafe_web_url" | string;
+  platform?: { available: boolean; enabled: boolean; functions: string[] };
 }
 
 export interface SavePerceptorRequest {
@@ -3444,6 +3876,14 @@ export interface SavePerceptorRequest {
   enabled: boolean;
   capabilities: string[];
   config: Record<string, unknown>;
+}
+
+export type WebSearchProviderMode = "auto" | "managed" | "byok" | "none";
+export interface WebSearchProviderPolicy {
+  mode: WebSearchProviderMode;
+  provider: "hai_managed_tavily" | "tavily" | null;
+  available: boolean;
+  error: string | null;
 }
 
 export interface SaveKnowledgeBaseRequest {
@@ -3744,6 +4184,8 @@ export interface UpdateMyDrSaiConfigRequest {
   dangerous_allowed?: boolean;
 }
 
+export type ThinkingEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface DesktopThread {
   id: string;
   kind: "chat" | "agent_run";
@@ -3751,12 +4193,16 @@ export interface DesktopThread {
   workspacePath?: string;
   boundAgentId?: string;
   boundAgentName?: string;
+  model?: string;
+  reasoningEffort?: ThinkingEffort;
+  planMode?: boolean;
   fork?: DesktopThreadForkMetadata;
   createdAt: string;
   updatedAt: string;
   lastRunId?: string;
   lastRequestId?: string;
   runtimeSessionId?: string;
+  sourceChannel?: "wechat";
   status?: "idle" | "running" | "error";
   messageCount?: number;
   pinned?: boolean;
@@ -3766,11 +4212,26 @@ export interface DesktopThread {
   unread?: boolean;
 }
 
+export interface DesktopThreadListRequest {
+  /** Limit the startup catalog to one Workspace. Omit only for explicit all-Workspace views. */
+  workspacePath?: string;
+  /** Number of recent active and archived entries retained per category. */
+  limit?: number;
+  offset?: number;
+  includeArchived?: boolean;
+  /** Entries required by current selection remain visible even outside the recent window. */
+  requiredThreadIds?: string[];
+  /** Runtime Workspace whose live catalog should be followed by this window. */
+  runtimeWorkspaceId?: string;
+}
+
 export interface DesktopThreadMessageSnapshot extends ChatMessage {
   id: string;
   streaming?: boolean;
   error?: boolean;
+  replyFailed?: boolean;
   statusContent?: string;
+  voice?: DesktopVoiceMessageMetadata;
   reasoningContent?: string;
   toolTimeline?: ChatToolTimelineEvent[];
   /** Canonical structured display representation; legacy fields remain during migration. */
@@ -3778,6 +4239,10 @@ export interface DesktopThreadMessageSnapshot extends ChatMessage {
   structuredTurn?: StructuredTurnState;
   /** User-visible attachment chips; not part of the model prompt text. */
   attachments?: ChatAttachment[];
+  /** Composer-selected skill for this turn; shown as a chip, not message text. */
+  skillName?: string;
+  /** Original text/attachment ordering from the Composer. */
+  draftParts?: ChatDraftPart[];
   inputRequest?: {
     requestId: string;
     prompt: string;
@@ -4126,12 +4591,19 @@ export interface WorkspaceFileNode {
   previewKind?: WorkspacePreviewKind;
   children?: WorkspaceFileNode[];
   truncated?: boolean;
+  /**
+   * True when this directory has (or may have) children.  Lets the renderer
+   * distinguish an empty directory from one whose children were not loaded.
+   */
+  hasChildren?: boolean;
 }
 
 export interface WorkspaceFileTreeRequest {
   workspacePath: string;
   workspaceId?: string;
   query?: string;
+  /** Absolute directory to list directly; omitted means the workspace root. */
+  directoryPath?: string;
   maxDepth?: number;
   maxEntries?: number;
   offset?: number;
@@ -4144,6 +4616,10 @@ export interface WorkspaceFileTreeResult {
   truncated: boolean;
   nextOffset?: number;
   stale?: boolean;
+  /** True when the underlying listing was a flat search/page result. */
+  flat?: boolean;
+  /** Scan budget the server applied when walking the workspace. */
+  scanLimit?: number;
 }
 
 export interface WorkspaceFolderSummaryRequest {
@@ -4201,6 +4677,8 @@ export interface WorkspaceFilePreview {
   fileHash?: string;
   content?: string;
   dataUrl?: string;
+  /** Rendered PPTX slide thumbnails (data URLs) when sibling PNGs exist. */
+  slideImages?: Array<{ label: string; dataUrl: string }>;
   rows?: string[][];
   columns?: string[];
   message?: string;
@@ -4424,6 +4902,18 @@ export interface RemoteSshHost {
   user?: string;
   port: number;
   identityFiles: string[];
+  proxyJump?: string;
+  connected?: boolean;
+  managed?: boolean;
+  enabled?: boolean;
+}
+
+export interface RemoteSshHostDraft {
+  alias: string;
+  hostname: string;
+  user?: string;
+  port?: number;
+  identityFile?: string;
   proxyJump?: string;
 }
 
@@ -4910,6 +5400,9 @@ export interface CreateThreadRequest {
   workspacePath?: string;
   boundAgentId?: string;
   boundAgentName?: string;
+  model?: string;
+  reasoningEffort?: ThinkingEffort;
+  planMode?: boolean;
   fork?: DesktopThreadForkMetadata;
 }
 
@@ -4920,10 +5413,14 @@ export interface UpdateThreadRequest {
   workspacePath?: string;
   boundAgentId?: string;
   boundAgentName?: string;
+  model?: string;
+  reasoningEffort?: ThinkingEffort;
+  planMode?: boolean;
   fork?: DesktopThreadForkMetadata;
   lastRunId?: string;
   lastRequestId?: string;
   runtimeSessionId?: string;
+  sourceChannel?: "wechat";
   status?: DesktopThread["status"];
   messageCount?: number;
   pinned?: boolean;
@@ -5028,6 +5525,8 @@ export interface PickedFileDescriptor {
   sensitiveKinds?: Array<"api_key" | "bearer_token" | "email" | "phone" | "user_secret">;
   sensitiveValueCount?: number;
   privacyNotice?: string;
+  /** Bounded data URL for image chips / chat bubbles (pick-time preview). */
+  previewDataUrl?: string;
 }
 
 export type MaterialRole =
@@ -5346,8 +5845,20 @@ export interface DesktopApi {
   previewDiagnosticPackage(): Promise<DiagnosticPackagePreview>;
   exportProductionDiagnosticPackage(): Promise<DiagnosticPackageResult>;
   importProductionDiagnosticPackage(): Promise<DiagnosticPackageResult | null>;
+  previewFeedback(draft: import("./feedback").FeedbackDraft): Promise<import("./feedback").FeedbackPackagePreview>;
+  submitFeedback(draft: import("./feedback").FeedbackDraft): Promise<import("./feedback").FeedbackSubmitResult>;
+  listPendingFeedback(): Promise<import("./feedback").PendingFeedbackItem[]>;
+  retryPendingFeedback(): Promise<{ sent: number; remaining: number }>;
+  deletePendingFeedback(clientFeedbackId: string): Promise<boolean>;
+  getPendingCrashFeedback(): Promise<import("./feedback").PendingCrashFeedback | null>;
+  clearPendingCrashFeedback(incidentId: string): Promise<boolean>;
+  captureFeedbackScreenshot(): Promise<import("./feedback").FeedbackScreenshotResult>;
+  listFeedbackAdmin(status?: import("./feedback").FeedbackStatus): Promise<import("./feedback").FeedbackAdminRecord[]>;
+  updateFeedbackAdmin(feedbackId: string, update: { status: import("./feedback").FeedbackStatus; fixed_in_version?: string; recommended_owner?: string; note?: string }): Promise<import("./feedback").FeedbackAdminRecord>;
+  deleteFeedbackAdmin(feedbackId: string): Promise<boolean>;
   getAuthSession(): Promise<AuthSession>;
   onAuthSessionInvalidated(callback: () => void): () => void;
+  onAuthSessionRestored(callback: () => void): () => void;
   getA5ServiceGuidanceScenario(): Promise<DesktopA5ServiceGuidanceScenario | null>;
   login(request: LoginRequest): Promise<LoginResult>;
   startOidcLogin(request?: { rememberMe?: boolean }): Promise<LoginResult>;
@@ -5400,6 +5911,7 @@ export interface DesktopApi {
   ): Promise<DesktopMobileAssociation>;
   revokeMobileRuntimeEnrollment(): Promise<DesktopRuntimeEnrollmentRevocation>;
   listSshHosts(): Promise<RemoteSshHost[]>;
+  saveSshHost(host: RemoteSshHostDraft): Promise<RemoteSshHost>;
   diagnoseSshHost(hostAlias: string): Promise<RemoteSshConnectivityResult>;
   inspectSshHostKeys(hostAlias: string): Promise<RemoteSshHostKey[]>;
   testSshHost(hostAlias: string): Promise<boolean>;
@@ -5472,6 +5984,16 @@ export interface DesktopApi {
   ): Promise<MaterialConsistencyAnalysisResult>;
   queryMaterials(request: MaterialQueryRequest): Promise<MaterialQueryResult>;
   previewWorkspaceFile(request: WorkspaceFilePreviewRequest): Promise<WorkspaceFilePreview>;
+  resolveConversationResource(request: ConversationResourceResolveRequest): Promise<ConversationResourceResolveResult>;
+  previewConversationResource(request: ConversationResourcePreviewRequest): Promise<WorkspaceFilePreview>;
+  revealConversationResource(request: ConversationResourceResolveRequest): Promise<boolean>;
+  copyConversationResourceLogicalPath(request: ConversationResourceResolveRequest): Promise<string>;
+  downloadConversationResource(request: ConversationResourceDownloadRequest): Promise<ConversationResourceDownloadResult>;
+  cancelConversationResourceDownload(operationId: string): Promise<boolean>;
+  onConversationResourceDownloadProgress(callback: (event: ConversationResourceDownloadProgressEvent) => void): () => void;
+  startConversationResourceSubscription(request: ConversationResourceSubscriptionRequest): Promise<string>;
+  stopConversationResourceSubscription(subscriptionId: string): Promise<boolean>;
+  onConversationResourceStateEvent(callback: (event: ConversationResourceStateEvent) => void): () => void;
   saveWorkspaceFileAs(request: WorkspaceFileSaveAsRequest): Promise<WorkspaceFileSaveAsResult>;
   writeWorkspaceFile(request: WorkspaceFileWriteRequest): Promise<WorkspaceFileWriteResult>;
   applyAnomalyDecision(
@@ -5498,11 +6020,15 @@ export interface DesktopApi {
   restoreWorkspaceCheckpoint(
     request: WorkspaceCheckpointRestoreRequest,
   ): Promise<WorkspaceCheckpointRestoreResult>;
-  listThreads(): Promise<DesktopThread[]>;
+  listThreads(request?: DesktopThreadListRequest): Promise<DesktopThread[]>;
   listAgents(options?: DesktopAgentListOptions): Promise<DesktopAgent[]>;
   getAgentCatalogSnapshot(options?: DesktopAgentListOptions): Promise<DesktopAgentCatalogSnapshot>;
   setDefaultAgent(agentId: string): Promise<DesktopAgentPreferenceResult>;
   recordAgentUsage(agentId: string): Promise<DesktopAgentPreferenceResult>;
+  getAgentPreferences(): Promise<DesktopAgentPreferences>;
+  testRemoteAgent(request: DesktopRemoteAgentTestRequest): Promise<DesktopRemoteAgentTestResult>;
+  saveRemoteAgent(request: DesktopRemoteAgentSaveRequest): Promise<DesktopAgent>;
+  removeRemoteAgent(agentId: string): Promise<{ removed: boolean }>;
   getPlatformAgentStatus(): Promise<PlatformAgentStatus>;
   getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiConfig>;
   getMyDrSaiRuntimeModelCatalog(): Promise<RuntimeModelCatalog>;
@@ -5521,13 +6047,20 @@ export interface DesktopApi {
   testKnowledgeBase(knowledgeId: string): Promise<{ ok: boolean; knowledge_id: string; type: string; status?: string; dataset_count?: number }>;
   searchKnowledgeBase(knowledgeId: string, query: string): Promise<{ knowledge_id: string; query: string; evidence: KnowledgeSearchEvidence[] }>;
   listKnowledgeBases(): Promise<KnowledgeBaseResource[]>;
+  discoverRagflowDatasets(credential: string): Promise<{ datasets: Array<{ id: string; name: string; chunk_count: number; document_count: number; status: string }> }>;
+  rediscoverRagflowDatasets(): Promise<{ datasets: Array<{ id: string; name: string; chunk_count: number; document_count: number; status: string }> }>;
   listPerceptors(): Promise<PerceptorResource[]>;
+  getWebSearchProviderPolicy(): Promise<WebSearchProviderPolicy>;
+  updateWebSearchProviderPolicy(mode: WebSearchProviderMode): Promise<WebSearchProviderPolicy>;
   savePerceptor(request: SavePerceptorRequest): Promise<PerceptorResource>;
   updatePerceptor(perceptorId: string, request: SavePerceptorRequest): Promise<PerceptorResource>;
   testPerceptor(perceptorId: string, capability?: "search" | "extract"): Promise<{ ok: boolean; perceptor_id: string; status: string; tested?: string; result_count?: number; error?: string }>;
   deletePerceptor(perceptorId: string): Promise<{ status: string; perceptor_id: string }>;
   createKnowledgeBase(request: SaveKnowledgeBaseRequest): Promise<KnowledgeBaseResource>;
   deleteKnowledgeBase(knowledgeId: string): Promise<{ status: string }>;
+  listKnowledgeBaseFiles(knowledgeId: string): Promise<{ knowledge_id: string; data: Array<{ document_id: string; source: string; title: string; status: string; detail: string; chunk_count: number; sha256: string; mtime: number; size: number }> }>;
+  checkKnowledgeBaseStale(knowledgeId: string): Promise<{ knowledge_id: string; stale: boolean; changed: Array<{ source: string }>; added: Array<{ source: string }>; removed: Array<{ source: string }>; error?: string }>;
+  refreshKnowledgeBaseIfStale(knowledgeId: string): Promise<{ knowledge_id: string; stale?: boolean; status?: string }>;
   getMyDrSaiAgentModelCapabilityStatus(agentId?: string): Promise<AgentModelCapabilityStatus>;
   updateMyDrSaiAgentModelPolicy(agentId: string, policy: AgentModelPolicy): Promise<MyDrSaiAgentModelPolicy>;
   migrateMyDrSaiAgentModelPolicy(agentId: string, legacyModel: string, expectedRevision?: string): Promise<MyDrSaiAgentModelPolicy>;
@@ -5612,27 +6145,28 @@ export interface DesktopApi {
   ): Promise<DesktopVoiceTranscriptionStartResult>;
   cancelVoiceTranscription(requestId: string): Promise<boolean>;
   getVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus>;
-  getStreamingVoiceCapabilities(): Promise<DesktopStreamingVoiceCapabilities>;
+  getVoicePreferences(): Promise<DesktopVoicePreferences>;
+  updateVoicePreferences(request: DesktopVoicePreferencesUpdateRequest): Promise<DesktopVoicePreferences>;
+  onVoicePreferencesChanged(listener: (preferences: DesktopVoicePreferences) => void): () => void;
   getDuplexVoiceCapabilities(): Promise<DesktopDuplexVoiceCapabilities>;
+  getDuplexVoiceReadiness(): Promise<DesktopDuplexVoiceReadiness>;
+  getDuplexVoiceOccupancy(): Promise<DesktopDuplexVoiceOccupancy>;
   startDuplexVoiceSession(request: DesktopDuplexVoiceSessionStartRequest): Promise<DesktopDuplexVoiceSessionStartResult>;
+  takeOverDuplexVoiceSession(request: DesktopDuplexVoiceTakeoverRequest): Promise<DesktopDuplexVoiceSessionStartResult>;
   sendDuplexVoiceAudioChunk(chunk: DesktopDuplexVoiceAudioChunk): boolean;
+  sendDuplexVoicePlaybackAck(ack: DesktopDuplexVoicePlaybackAck): boolean;
   updateDuplexVoiceSession(request: DesktopDuplexVoiceSessionStartRequest): Promise<boolean>;
   interruptDuplexVoiceSession(request: DesktopDuplexVoiceInterruptRequest): Promise<boolean>;
   submitDuplexVoiceToolResult(request: DesktopDuplexVoiceToolResultRequest): Promise<boolean>;
+  requestDuplexVoiceToolApproval(request: DesktopDuplexVoiceToolApprovalRequest): Promise<DesktopApprovalProposalResult>;
+  onDuplexVoiceToolApprovalDecision(listener: (decision: DesktopDuplexVoiceToolApprovalDecision) => void): () => void;
+  submitDuplexVoiceTextInput(request: DesktopDuplexVoiceTextInputRequest): Promise<boolean>;
   stopDuplexVoiceSession(sessionId: string): Promise<boolean>;
+  finishDuplexVoiceTurn(sessionId: string): Promise<boolean>;
   cancelDuplexVoiceSession(sessionId: string): Promise<boolean>;
   disposeDuplexVoiceSession(sessionId: string): Promise<boolean>;
   onDuplexVoiceEvents(callback: (events: DesktopDuplexVoiceEvent[]) => void): () => void;
   appendDuplexVoiceHistory(request: DesktopDuplexVoiceHistoryAppendRequest): Promise<DesktopThreadSnapshot>;
-  startStreamingVoiceTranscription(
-    request: DesktopStreamingVoiceStartRequest,
-  ): Promise<DesktopStreamingVoiceStartResult>;
-  sendStreamingVoiceAudioChunk(chunk: DesktopStreamingVoiceAudioChunk): boolean;
-  stopStreamingVoiceTranscription(sessionId: string, reason?: "provider" | "local_vad" | "manual"): Promise<boolean>;
-  cancelStreamingVoiceTranscription(sessionId: string): Promise<boolean>;
-  onStreamingVoiceTranscriptionEvent(
-    callback: (event: DesktopStreamingVoiceTranscriptionEvent) => void,
-  ): () => void;
   onVoiceTranscriptionEvent(
     callback: (event: DesktopVoiceTranscriptionEvent) => void,
   ): () => void;
@@ -5807,6 +6341,16 @@ export interface DesktopApi {
   ): Promise<DesktopScheduledTaskRunResult>;
   getScheduledTaskWorkerStatus(): Promise<DesktopScheduledTaskWorkerStatus>;
   listChannelAdapters(workspacePath?: string): Promise<DesktopChannelAdapterListResult>;
+  getWeChatChannelStatus(): Promise<DesktopWeChatChannelStatus>;
+  startWeChatLogin(): Promise<DesktopWeChatLoginStartResult>;
+  pollWeChatLogin(request: DesktopWeChatLoginPollRequest): Promise<DesktopWeChatLoginPollResult>;
+  cancelWeChatLogin(request: DesktopWeChatLoginPollRequest): Promise<DesktopWeChatLoginCancelResult>;
+  startWeChatChannel(): Promise<DesktopWeChatChannelStatus>;
+  stopWeChatChannel(): Promise<DesktopWeChatChannelStatus>;
+  logoutWeChatChannel(): Promise<DesktopWeChatChannelStatus>;
+  getWeChatSessionSummary(): Promise<DesktopWeChatSessionSummary>;
+  getWeChatReplyCapability(request: DesktopWeChatReplyCapabilityRequest): Promise<DesktopWeChatReplyCapability>;
+  sendToWeChat(request: DesktopWeChatOutboundRequest): Promise<DesktopWeChatOutboundResult>;
   configureChannelAdapter(
     request: DesktopChannelAdapterConfigureRequest,
   ): Promise<DesktopChannelAdapterConfigureResult>;
@@ -5895,14 +6439,95 @@ export interface DesktopApi {
   onTerminalExit(callback: (event: TerminalExitEvent) => void): () => void;
   onBrowserTaskEvent(callback: (event: BrowserTaskEvent) => void): () => void;
 
-  // Skills (gateway-managed)
+  // Skills (gateway-managed, local)
   listInstalledSkills(request?: { userId?: string }): Promise<GatewaySkill[]>;
-  listAvailableSkills(request?: { userId?: string }): Promise<GatewayAvailableSkill[]>;
+  listAvailableSkills(request?: { userId?: string; coreOnly?: boolean }): Promise<GatewayAvailableSkill[]>;
   getSkillContent(request: { skillPath: string }): Promise<{ path: string; content: string }>;
   installSkill(request: GatewaySkillInstallRequest): Promise<{ status: string; name: string; path: string }>;
+  importSkillFolder(request: {
+    folderPath: string;
+    name?: string;
+    userId?: string;
+    threadId?: string;
+  }): Promise<{ status: string; name: string; path: string; files: number }>;
+  installSkillZip(request: {
+    zipPath: string;
+    name?: string;
+    userId?: string;
+    threadId?: string;
+  }): Promise<{ status: string; name: string; path: string; files: number }>;
   updateSkill(request: { name: string; content: string; userId?: string }): Promise<{ status: string; name: string; path: string }>;
   uninstallSkill(request: { name: string; userId?: string }): Promise<{ status: string; name: string }>;
   reloadSkills(request?: { threadId?: string; userId?: string }): Promise<{ ok: boolean; reloaded: boolean }>;
+
+  // Skills Square (WebUI marketplace — public / mine / publish / collect / share)
+  getSkillsSquareStatus(): Promise<SkillsSquareStatus>;
+  listSkillsSquare(request?: DesktopSquareSkillsListRequest): Promise<DesktopSquareSkillsPage>;
+  getSkillsSquareDetail(request: { slug: string; userEmail?: string }): Promise<DesktopSquareSkillDetail>;
+  getSkillsSquareSkillMd(request: { slug: string }): Promise<{ content: string }>;
+  getSkillsSquareStats(): Promise<DesktopSquareSkillStats>;
+  listSkillsSquareTags(request?: { operatorUserId?: string }): Promise<DesktopSquareSkillTag[]>;
+  createSkillsSquareTag(request: {
+    name: string;
+    sortOrder?: number;
+    operatorUserId?: string;
+  }): Promise<DesktopSquareSkillTag>;
+  updateSkillsSquareTag(request: {
+    tagId: number;
+    name?: string;
+    sortOrder?: number;
+    operatorUserId?: string;
+  }): Promise<DesktopSquareSkillTag>;
+  deleteSkillsSquareTag(request: {
+    tagId: number;
+    operatorUserId?: string;
+  }): Promise<{ id: number }>;
+  installSkillsSquare(request: DesktopSquareInstallRequest): Promise<{
+    status: string;
+    name: string;
+    path: string;
+    files: number;
+  }>;
+  /** Download skill ZIP (WebUI parity). */
+  downloadSkillsSquare(request: { slug: string }): Promise<{ fileName: string; base64: string }>;
+  uploadSkillsSquare(request: DesktopSquareUploadRequest): Promise<Record<string, unknown>>;
+  updateSkillsSquare(request: DesktopSquareUpdateRequest): Promise<Record<string, unknown>>;
+  deleteSkillsSquare(request: {
+    slug: string;
+    intent?: "delete" | "uncollect";
+    userId?: string;
+    userEmail?: string;
+  }): Promise<{ slug: string }>;
+  toggleSkillsSquareVisibility(request: {
+    slug: string;
+    visibility: "public" | "private" | "team";
+  }): Promise<{ slug: string; visibility: string }>;
+  collectSkillsSquare(request: {
+    slug: string;
+    displayName?: string;
+    icon?: string;
+    description?: string;
+    version?: string;
+    tags?: string;
+    owner?: string;
+    ownerId?: string;
+    changelog?: string;
+  }): Promise<Record<string, unknown>>;
+  createSkillsSquareShare(request: {
+    slug: string;
+    userId: string;
+    password?: string;
+    expiresInHours?: number;
+  }): Promise<DesktopSquareShareInfo>;
+  listSkillsSquareShares(request: {
+    slug: string;
+    userId: string;
+  }): Promise<DesktopSquareShareInfo[]>;
+  revokeSkillsSquareShare(request: {
+    slug: string;
+    shareId: string;
+    userId: string;
+  }): Promise<void>;
 
   // GFS cloud storage
   gfsList(request: GfsListRequest): Promise<GfsListResult>;
@@ -5914,12 +6539,21 @@ export interface DesktopApi {
     contentType?: string;
   }): Promise<{ path: string; etag: string }>;
   gfsUploadFile(request: GfsUploadRequest): Promise<{ path: string; size: number }>;
+  gfsUploadContent(request: GfsUploadContentRequest): Promise<{ path: string; size: number; etag?: string }>;
   gfsDownloadFile(request: GfsDownloadRequest): Promise<{ localPath: string; size: number }>;
+  gfsDownloadToDisk(request: {
+    path: string;
+  }): Promise<{ canceled: boolean; localPath?: string; size?: number }>;
   gfsDelete(request: { path: string }): Promise<{ path: string }>;
   gfsShareUrl(request: {
     path: string;
     ttlMinutes?: number;
     responseContentType?: string;
   }): Promise<{ url: string; expiresAt: string }>;
-  gfsHealthcheck(): Promise<{ ok: boolean; bucket?: string; mode?: string; reason?: string }>;
+  gfsHealthcheck(): Promise<GfsHealthcheckResult>;
+  gfsGetConfig(): Promise<GfsConfigStatus>;
+  gfsSaveConfig(request: GfsConfigSaveRequest): Promise<GfsConfigSaveResult>;
+  gfsClearConfig(): Promise<GfsConfigClearResult>;
+  /** P1: Send renderer FPS health report to main process for adaptive backpressure control. */
+  sendRenderHealthReport(report: { fps: number; tier: "healthy" | "degraded" | "critical" }): void;
 }

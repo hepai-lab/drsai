@@ -50,9 +50,19 @@ class OpenDrSaiThemeTest {
         listOf(
             OpenDrSaiLightColorScheme.onSurface to OpenDrSaiLightColorScheme.surface,
             OpenDrSaiLightColorScheme.onBackground to OpenDrSaiLightColorScheme.background,
+            OpenDrSaiLightColorScheme.onSurfaceVariant to OpenDrSaiLightColorScheme.surfaceVariant,
+            OpenDrSaiLightColorScheme.onPrimaryContainer to OpenDrSaiLightColorScheme.primaryContainer,
+            OpenDrSaiLightColorScheme.onSecondaryContainer to OpenDrSaiLightColorScheme.secondaryContainer,
+            OpenDrSaiLightColorScheme.onTertiaryContainer to OpenDrSaiLightColorScheme.tertiaryContainer,
+            OpenDrSaiLightColorScheme.onErrorContainer to OpenDrSaiLightColorScheme.errorContainer,
             OpenDrSaiDarkColorScheme.onPrimary to OpenDrSaiDarkColorScheme.primary,
             OpenDrSaiDarkColorScheme.onSurface to OpenDrSaiDarkColorScheme.surface,
             OpenDrSaiDarkColorScheme.onBackground to OpenDrSaiDarkColorScheme.background,
+            OpenDrSaiDarkColorScheme.onSurfaceVariant to OpenDrSaiDarkColorScheme.surfaceVariant,
+            OpenDrSaiDarkColorScheme.onPrimaryContainer to OpenDrSaiDarkColorScheme.primaryContainer,
+            OpenDrSaiDarkColorScheme.onSecondaryContainer to OpenDrSaiDarkColorScheme.secondaryContainer,
+            OpenDrSaiDarkColorScheme.onTertiaryContainer to OpenDrSaiDarkColorScheme.tertiaryContainer,
+            OpenDrSaiDarkColorScheme.onErrorContainer to OpenDrSaiDarkColorScheme.errorContainer,
         ).forEach { (foreground, background) ->
             assertTrue(
                 "contrast ${contrastRatio(foreground, background)} for $foreground on $background",

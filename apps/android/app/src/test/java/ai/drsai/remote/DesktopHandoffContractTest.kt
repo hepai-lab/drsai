@@ -25,14 +25,19 @@ class DesktopHandoffContractTest {
 
     @Test fun handoffIsUserVisibleAndRequiresAnExplicitDecision() {
         val ui = source("src/main/java/ai/drsai/remote/ui/OpenDrSaiApp.kt")
+        val strings = source("src/main/res/values/strings.xml")
         assertTrue(ui.contains("state.pendingDesktopHandoff?.let"))
         assertTrue(ui.contains("viewModel.decideDesktopHandoff(true)"))
         assertTrue(ui.contains("viewModel.decideDesktopHandoff(false)"))
-        assertTrue(ui.contains("交给 Desktop Runtime？"))
-        assertTrue(ui.contains("打开远程 Runtime"))
-        assertTrue(ui.contains("执行位置：${'$'}{handoff.executionLocation}"))
-        assertTrue(ui.contains("Android 本地不执行"))
-        assertTrue(ui.contains("远端工具调用仍需审批"))
+        assertTrue(ui.contains("R.string.handoff_dialog_title"))
+        assertTrue(ui.contains("R.string.create_handoff"))
+        assertTrue(ui.contains("R.string.choose_execution_computer"))
+        assertTrue(ui.contains("handoff.targetRuntimeId != null"))
+        assertTrue(ui.contains("R.string.handoff_target_location"))
+        assertTrue(ui.contains("R.string.handoff_transport"))
+        assertTrue(ui.contains("R.string.handoff_stdio_notice"))
+        assertTrue(strings.contains("交给 Desktop Runtime？"))
+        assertTrue(strings.contains("Android 本地不执行"))
     }
 
     private fun source(relative: String): String {

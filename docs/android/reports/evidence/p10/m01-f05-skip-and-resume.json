@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "feature_id": "M01-F05",
+  "acceptance_run_id": "p10-round-007-skip-and-resume",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "contracts": {
+    "skip_enters_home": true,
+    "home_primary_action": "完成模型配置",
+    "profile_resume_action": "继续完成 Agent 设置",
+    "process_reconstruction_preserves_skip": true,
+    "unready_task_admission": "DEFER_WITHOUT_RUN"
+  },
+  "tests": {
+    "testDebugUnitTest_before_final_gate_extraction": "657 passed, 2 skipped, 0 failed",
+    "SetupJourneyTest_and_LocalRunAdmissionTest": "8 passed",
+    "MainInterfaceTest_API35": "25 passed"
+  }
+}

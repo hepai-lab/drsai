@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "feature_id": "M05-F04",
+  "acceptance_run_id": "p10-round-025-approval-race",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "first_valid_decision_wins": true,
+    "duplicate_and_opposite_decisions_cannot_replace_terminal_state": true,
+    "all_entries_share_durable_state": true,
+    "delayed_clear_cannot_delete_successor": true,
+    "side_effect_executes_at_most_once": true,
+    "recovery_replays_receipt_not_mutation": true
+  },
+  "tests": {
+    "testDebugUnitTest_baseline": "682 tests, 0 failures, 2 skipped",
+    "RemoteApprovalDecisionLedgerTest_and_AndroidOaepStage8StressTest_API35": "4 passed",
+    "LocalStore_first_decision_wins_API35": "1 passed"
+  }
+}

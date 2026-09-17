@@ -8,9 +8,12 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
 import okhttp3.OkHttpClient
 import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLHandshakeException
 import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -41,6 +44,22 @@ class ModelProviderDraftClientTest {
         assertEquals("2023-06-01", request.getHeader("anthropic-version"))
     }
 
+    @Test fun connectionCheckVerifiesConfiguredModelsExist() = runTest {
+        server.enqueue(MockResponse().setBody("""{"data":[{"id":"deepseek-v4-flash"}]}"""))
+        val report = ModelProviderDraftClient().testConnection(
+            server.url("/v1").toString().trimEnd('/'), "openai", "secret", listOf("deepseek-v4-flash"),
+        )
+        assertEquals("CATALOG_VERIFIED", report.stage)
+        assertEquals(listOf("deepseek-v4-flash"), report.verifiedModels)
+
+        server.enqueue(MockResponse().setBody("""{"data":[{"id":"another-model"}]}"""))
+        val missing = runCatching { ModelProviderDraftClient().testConnection(
+            server.url("/v1").toString().trimEnd('/'), "openai", "secret", listOf("deepseek-v4-pro"),
+        ) }.exceptionOrNull() as ApiException
+        assertEquals("provider_model_not_found", missing.code)
+        assertEquals(404, missing.status)
+    }
+
     @Test fun anthropicBaseUrlAlreadyEndingInV1DoesNotDuplicateVersionPath() = runTest {
         server.enqueue(MockResponse().setBody("""{"data":[]}"""))
         ModelProviderDraftClient().discover(
@@ -56,15 +75,16 @@ class ModelProviderDraftClientTest {
         }.exceptionOrNull()
 
         assertTrue(error is ApiException)
-        assertEquals("API Key 无效或已过期", error?.message)
+        assertEquals("The API key is invalid or expired", error?.message)
     }
 
     @Test fun providerHttpFailuresHaveActionableMessages() = runTest {
         val cases = listOf(
-            403 to "当前 API Key 没有访问模型目录的权限",
-            404 to "API 地址不正确，未找到模型目录",
-            429 to "请求过于频繁或额度不足，请稍后重试",
-            500 to "模型服务暂时不可用",
+            402 to "Insufficient model service balance; check the account",
+            403 to "This API key cannot access the model catalog",
+            404 to "The API address is incorrect; model catalog not found",
+            429 to "Requests are too frequent or quota is insufficient; try again later",
+            500 to "The model service is temporarily unavailable",
         )
         cases.forEach { (status, message) ->
             server.enqueue(MockResponse().setResponseCode(status).setBody("{}"))
@@ -82,7 +102,7 @@ class ModelProviderDraftClientTest {
         val empty = runCatching {
             client.discover(server.url("/v1").toString().trimEnd('/'), "openai", "key")
         }.exceptionOrNull()
-        assertEquals("模型服务返回了空响应", empty?.message)
+        assertEquals("The model service returned an empty response", empty?.message)
 
         server.enqueue(MockResponse().setBody("not-json"))
         val malformed = runCatching {
@@ -99,6 +119,29 @@ class ModelProviderDraftClientTest {
             ModelProviderDraftClient(http).discover(server.url("/v1").toString().trimEnd('/'), "openai", "key")
         }.exceptionOrNull()
 
-        assertTrue(error is SocketTimeoutException)
+        assertTrue(error is ApiException)
+        assertEquals("provider_timeout", (error as ApiException).code)
+        assertTrue(error.retryable)
+    }
+
+    @Test fun providerErrorBodyIsPreservedButCredentialsAreRedacted() = runTest {
+        server.enqueue(MockResponse().setResponseCode(403).setBody(
+            """{"error":{"message":"model access denied; api_key=sk-secret-secret"}}""",
+        ))
+        val error = runCatching {
+            ModelProviderDraftClient().discover(server.url("/v1").toString().trimEnd('/'), "openai", "key")
+        }.exceptionOrNull() as ApiException
+        assertEquals("provider_permission_denied", error.code)
+        assertTrue(error.message.orEmpty().contains("model access denied"))
+        assertFalse(error.message.orEmpty().contains("sk-secret"))
+    }
+
+    @Test fun dnsAndTlsFailuresHaveStableNonMisleadingCodes() {
+        val dns = ai.drsai.remote.data.ProviderConnectionFailureClassifier.classify(UnknownHostException("private-host")) as ApiException
+        val tls = ai.drsai.remote.data.ProviderConnectionFailureClassifier.classify(SSLHandshakeException("certificate")) as ApiException
+        assertEquals("provider_dns_failed", dns.code)
+        assertEquals("provider_tls_failed", tls.code)
+        assertTrue(dns.message!!.contains("API host"))
+        assertTrue(tls.message!!.contains("TLS"))
     }
 }

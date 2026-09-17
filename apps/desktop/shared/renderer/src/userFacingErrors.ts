@@ -48,12 +48,119 @@ const LABELS: Record<UserFacingRecoveryAction["id"], { en: string; zh: string }>
 
 export function describeUserFacingError(error: unknown, language: "zh" | "en"): UserFacingError {
   const envelope = normalizeRuntimeErrorEnvelope(error);
+  const webSearch = describeWebSearchFailure(envelope.code, envelope.retryable, language);
+  if (webSearch) return { ...webSearch, diagnosticCode: envelope.diagnostic_reference === "diag-unavailable" ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}` };
   if (envelope.code === "model_image_input_unsupported") {
     return {
       title: language === "zh" ? "当前模型不支持图片理解" : "The selected model cannot understand images",
       action: language === "zh"
         ? "图片附件和输入内容已保留。请选择支持图片输入的模型后重新发送。"
         : "Your image attachment and input were preserved. Select a model that supports image input, then send again.",
+      retryable: false,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (envelope.code === "image_understanding_model_unavailable") {
+    return {
+      title: language === "zh" ? "未配置图像理解模型" : "Image-understanding model is not configured",
+      action: language === "zh"
+        ? "图片附件和输入内容已保留。请在 Agent 模型设置中绑定图像理解模型后再发送。"
+        : "Your image attachment and input were preserved. Bind an image-understanding model in Agent model settings, then send again.",
+      retryable: false,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (envelope.code === "image_generation_model_unavailable") {
+    return {
+      title: language === "zh" ? "未配置图像生成模型" : "Image-generation model is not configured",
+      action: language === "zh"
+        ? "输入内容已保留。请在 Agent 模型设置中绑定图像生成模型后再发送。"
+        : "Your input was preserved. Bind an image-generation model in Agent model settings, then send again.",
+      retryable: false,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (envelope.code === "thread_skill_unavailable" || envelope.code === "thread_skill_invalid") {
+    return {
+      title: language === "zh" ? "所选技能无法用于本轮对话" : "Selected skill cannot be used for this turn",
+      action: language === "zh"
+        ? "请确认技能已安装并在「本地技能」中启用，且当前使用本地 OpenDrSai Agent，然后重新选择技能发送。"
+        : "Confirm the skill is installed and enabled under Local skills, use the local OpenDrSai Agent, then reselect the skill and send again.",
+      retryable: false,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (envelope.code === "image_understanding_failed") {
+    return {
+      title: language === "zh" ? "图像理解失败" : "Image understanding failed",
+      action: language === "zh"
+        ? "图片附件和输入内容已保留。请检查图像理解模型与凭证后重试，或更换可用的识图模型。"
+        : "Your image attachment and input were preserved. Check the image-understanding model and credentials, then retry or select another vision model.",
+      retryable: envelope.retryable,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (envelope.code === "model_unauthorized") {
+    return {
+      title: language === "zh" ? "图像理解模型鉴权失败" : "Image-understanding model authorization failed",
+      action: language === "zh"
+        ? "图片附件已保留。请重新登录 AI 平台账号，确认已开通该识图模型，然后重试。"
+        : "Your image attachment was preserved. Sign in to the AI platform again, confirm the vision model is enabled, then retry.",
+      retryable: envelope.retryable,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (envelope.code === "upstream_unavailable" || envelope.code === "worker_unavailable") {
+    return {
+      title: language === "zh" ? "所选模型暂时不可用" : "The selected model is temporarily unavailable",
+      action: language === "zh"
+        ? "请到 AI 平台确认该模型是否在线，稍后重试，或在 Agent 模型设置中改选其他可用模型。"
+        : "Check the AI platform for model availability, retry later, or select another available model in Agent model settings.",
+      retryable: true,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (envelope.code === "reasoning_effort_unsupported") {
+    return {
+      title: language === "zh" ? "当前模型不支持该推理强度" : "This model does not support the selected reasoning effort",
+      action: language === "zh"
+        ? "请把推理强度改为「无」或不支持推理的模型可用的档位，或改回 DeepSeek 等支持推理的主模型。"
+        : "Clear reasoning effort, pick a supported level, or switch back to a reasoning-capable primary model such as DeepSeek.",
       retryable: false,
       diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
         ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
@@ -78,6 +185,36 @@ export function describeUserFacingError(error: unknown, language: "zh" | "en"): 
       }),
     };
   }
+  if (envelope.code === "agent_error_yielded") {
+    return {
+      title: language === "zh" ? "智能体执行出错" : "Agent execution error",
+      action: language === "zh"
+        ? "模型调用或工具执行过程中发生错误，已收到的内容会保留。请重试，或查看诊断信息了解详情。"
+        : "An error occurred during model invocation or tool execution. Received content is preserved. Retry, or view diagnostics for details.",
+      retryable: envelope.retryable,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: envelope.recovery_actions.map((action) => {
+        const id = ACTION_IDS[action];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
+  if (envelope.code === "run_cancelled") {
+    return {
+      title: language === "zh" ? "任务已取消" : "Task cancelled",
+      action: language === "zh"
+        ? "任务已被取消，已收到的内容会保留。可以重新发送消息重试，或新建任务。"
+        : "The task was cancelled. Received content is preserved. Retry by sending again, or start a new task.",
+      retryable: true,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: ["retry", "new_task", "diagnostics"].map((action) => {
+        const id = ACTION_IDS[action as RuntimeRecoveryAction];
+        return { id, label: LABELS[id][language] };
+      }),
+    };
+  }
   const copy = TEXT[envelope.category][language];
   return {
     title: copy[0], action: copy[1], retryable: envelope.retryable,
@@ -88,4 +225,25 @@ export function describeUserFacingError(error: unknown, language: "zh" | "en"): 
       return { id, label: LABELS[id][language] };
     }),
   };
+}
+
+function describeWebSearchFailure(code: string, retryable: boolean, language: "zh" | "en"): Omit<UserFacingError, "diagnosticCode"> | null {
+  const copy: Record<string, { zh: [string, string]; en: [string, string]; actions: UserFacingRecoveryAction["id"][] }> = {
+    login_required: { zh: ["需要登录后才能使用托管网页搜索", "登录 HAI 后可以继续原任务，无需配置 Tavily Key。"], en: ["Sign in to use managed web search", "Sign in to HAI to continue the original task without configuring a Tavily key."], actions: ["login_codex"] },
+    permission_denied: { zh: ["当前账户未开通托管网页搜索", "可联系管理员开通，或在感知器设置中选择自己的 Tavily Key。"], en: ["Managed web search is not enabled for this account", "Ask an administrator for access or select your own Tavily key in Perceptor settings."], actions: ["diagnostics"] },
+    quota_exhausted: { zh: ["托管网页搜索额度已用尽", "额度恢复后重试，或明确切换到自己的 Tavily Key。"], en: ["Managed web-search quota is exhausted", "Retry after quota is restored or explicitly switch to your own Tavily key."], actions: ["diagnostics"] },
+    rate_limited: { zh: ["网页搜索请求过于频繁", "原任务已保留，请稍后重试。"], en: ["Web-search requests are temporarily rate limited", "The original task is preserved. Retry later."], actions: ["retry", "diagnostics"] },
+    worker_unavailable: { zh: ["网页搜索服务暂时不可用", "原问题和已完成内容已保留，请稍后重试。"], en: ["Web-search service is temporarily unavailable", "Your question and completed work are preserved. Retry later."], actions: ["retry", "diagnostics"] },
+    provider_authentication_failed: { zh: ["平台托管搜索凭据异常", "这是平台配置问题，无需输入自己的 Tavily Key；请查看诊断并联系管理员。"], en: ["The platform-managed search credential failed", "This is a platform configuration issue. Do not enter your own Tavily key; view diagnostics and contact an administrator."], actions: ["diagnostics"] },
+    provider_rate_limited: { zh: ["Tavily 上游暂时限流", "原任务已保留，请稍后重试。"], en: ["Tavily is temporarily rate limited", "The original task is preserved. Retry later."], actions: ["retry", "diagnostics"] },
+    provider_quota_exhausted: { zh: ["平台的 Tavily 上游额度不足", "这是平台额度问题，无需输入自己的 Tavily Key；请查看诊断或联系管理员。"], en: ["The platform Tavily quota is exhausted", "This is a platform quota issue. Do not enter your own Tavily key; view diagnostics or contact an administrator."], actions: ["diagnostics"] },
+    provider_unavailable: { zh: ["上游网页搜索暂时不可用", "无需重新配置登录；请稍后重试或查看脱敏诊断。"], en: ["The upstream web-search provider is unavailable", "You do not need to sign in again. Retry later or view redacted diagnostics."], actions: ["retry", "diagnostics"] },
+    provider_timeout: { zh: ["网页搜索响应超时", "本次请求已停止，稍后重试不会复用失败结果。"], en: ["Web search timed out", "This request has stopped. A later retry will not reuse the failed result."], actions: ["retry", "diagnostics"] },
+    provider_invalid_response: { zh: ["网页搜索返回了异常响应", "请稍后重试；诊断信息中仅保留脱敏请求标识。"], en: ["Web search returned an invalid response", "Retry later. Diagnostics retain only redacted request identifiers."], actions: ["retry", "diagnostics"] },
+    unsafe_web_url: { zh: ["无法访问不安全的网页地址", "请改用公开的 HTTP 或 HTTPS 网页地址。"], en: ["The web address is not safe to access", "Use a public HTTP or HTTPS web address instead."], actions: ["diagnostics"] },
+  };
+  const selected = copy[code];
+  if (!selected) return null;
+  const [title, action] = selected[language];
+  return { title, action, retryable, actions: selected.actions.map((id) => ({ id, label: LABELS[id][language] })) };
 }

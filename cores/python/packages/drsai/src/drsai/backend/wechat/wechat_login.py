@@ -118,8 +118,8 @@ def save_credentials(data: dict, creds_file: str = CREDS_FILE) -> None:
     with open(creds_file, "w", encoding="utf-8") as f:
         json.dump(creds, f, indent=2, ensure_ascii=False)
     print(f"凭据已保存到: {creds_file}")
-    print(f"  account_id : {creds['account_id']}")
-    print(f"  user_id    : {creds['user_id']}")
+    # Provider identifiers are credentials. Do not echo them into terminal or
+    # Desktop diagnostic logs; the saved-file confirmation is sufficient.
 
 
 def is_credentials_valid(max_age_hours: float = 168.0, creds_file: str = CREDS_FILE) -> bool:

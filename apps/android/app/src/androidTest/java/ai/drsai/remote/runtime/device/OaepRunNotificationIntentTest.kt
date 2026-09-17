@@ -14,26 +14,28 @@ class OaepRunNotificationIntentTest {
     fun notification_intent_retains_session_run_and_interaction_scope() {
         val intent = oaepRunOpenIntent(
             ApplicationProvider.getApplicationContext<Context>(),
-            "run-1", "session-1", "interaction-1",
+            "run-1", "session-1", "account-1", "interaction-1",
         )
         assertEquals(ACTION_OPEN_OAEP_RUN, intent.action)
         assertEquals("run-1", intent.getStringExtra(EXTRA_RUN_ID))
         assertEquals("session-1", intent.getStringExtra(EXTRA_SESSION_ID))
+        assertEquals("account-1", intent.getStringExtra(EXTRA_ACCOUNT_SUBJECT))
         assertEquals("interaction-1", intent.getStringExtra(EXTRA_INTERACTION_ID))
     }
 
     @Test
     fun long_run_notification_has_scoped_continue_and_cancel_controls() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val continueIntent = localRunActionIntent(context, ACTION_CONTINUE_LOCAL_RUN, "run-1", "session-1")
-        val cancelIntent = localRunActionIntent(context, ACTION_STOP_LOCAL_RUN, "run-1", "session-1")
-        val notification = localRunNotification(context, "run-1", "session-1", "Running")
+        val continueIntent = localRunActionIntent(context, ACTION_CONTINUE_LOCAL_RUN, "account-1", "run-1", "session-1")
+        val cancelIntent = localRunActionIntent(context, ACTION_STOP_LOCAL_RUN, "account-1", "run-1", "session-1")
+        val notification = localRunNotification(context, "account-1", "run-1", "session-1", "Running")
 
         assertEquals(ACTION_CONTINUE_LOCAL_RUN, continueIntent.action)
         assertEquals(ACTION_STOP_LOCAL_RUN, cancelIntent.action)
         listOf(continueIntent, cancelIntent).forEach {
             assertEquals("run-1", it.getStringExtra(EXTRA_RUN_ID))
             assertEquals("session-1", it.getStringExtra(EXTRA_SESSION_ID))
+            assertEquals("account-1", it.getStringExtra(EXTRA_ACCOUNT_SUBJECT))
         }
         assertEquals(2, notification.actions.size)
         assertTrue(notification.flags and android.app.Notification.FLAG_ONGOING_EVENT != 0)
@@ -42,7 +44,7 @@ class OaepRunNotificationIntentTest {
     @Test
     fun invalid_or_unscoped_notification_actions_fail_closed() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        assertTrue(runCatching { localRunActionIntent(context, "unknown", "run-1", "session-1") }.isFailure)
-        assertTrue(runCatching { localRunActionIntent(context, ACTION_STOP_LOCAL_RUN, "", "session-1") }.isFailure)
+        assertTrue(runCatching { localRunActionIntent(context, "unknown", "account-1", "run-1", "session-1") }.isFailure)
+        assertTrue(runCatching { localRunActionIntent(context, ACTION_STOP_LOCAL_RUN, "account-1", "", "session-1") }.isFailure)
     }
 }

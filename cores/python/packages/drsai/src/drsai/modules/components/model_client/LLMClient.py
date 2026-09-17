@@ -21,7 +21,10 @@ from drsai.platform_auth import (
     DelegatedModelCredentialProvider,
     OidcModelCredentialProvider,
     get_model_credential_provider,
+    is_token_expired,
+    is_token_expiring_soon,
     static_model_credentials_allowed,
+    try_refresh_platform_auth,
 )
 
 from openai.types.chat import ChatCompletionChunk
@@ -302,7 +305,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
     def _to_config(self) -> HepAIClientConfigurationConfigModel:
         return HepAIClientConfigurationConfigModel(**self._raw_config)
 
-    def _bind_platform_auth(self) -> None:
+    async def _bind_platform_auth(self) -> None:
         if not getattr(self, "_uses_platform_auth", True) and not getattr(self, "_oidc_credential_pending", False):
             return
         credential = get_model_credential_provider()
@@ -310,6 +313,20 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             if getattr(self, "_oidc_credential_pending", False):
                 raise RuntimeError("OIDC credential context is unavailable for this model request.")
             return
+
+        # ── Token expiry check + proactive refresh ──
+        # Only applies to OIDC platform auth (not static API keys, not delegated).
+        # If the access token is expiring soon, try to refresh it via the OIDC
+        # refresh_token grant.  If the token is already expired and no refresh
+        # is possible, raise token_expired so the caller can surface the error.
+        if isinstance(credential, OidcModelCredentialProvider):
+            if is_token_expiring_soon(credential.access_token):
+                refreshed = await try_refresh_platform_auth()
+                if refreshed is not None:
+                    credential = OidcModelCredentialProvider(refreshed)
+                elif is_token_expired(credential.access_token):
+                    raise ValueError("token_expired: access token has expired and refresh is unavailable.")
+
         self._client.api_key = credential.access_token
         self._client.base_url = credential.openai_base_url
         if credential.delegation_headers:
@@ -317,7 +334,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
         self._oidc_credential_pending = False
 
     async def create(self, *args: Any, **kwargs: Any):
-        self._bind_platform_auth()
+        await self._bind_platform_auth()
         if self._use_responses_api:
             result = None
             async for item in self.create_stream(*args, **kwargs):
@@ -360,7 +377,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             - `presence_penalty` (float): A value between -2.0 and 2.0 that penalizes new tokens based on whether they appear in the text so far, encouraging the model to talk about new topics.
         """
 
-        self._bind_platform_auth()
+        await self._bind_platform_auth()
 
         if self._use_responses_api:
             responses_emitted = False

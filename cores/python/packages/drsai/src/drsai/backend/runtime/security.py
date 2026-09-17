@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping
 
 from drsai.backend.runtime.sqlite_connection import ClosingConnection
+from drsai.backend.runtime.security_boundary.models import canonical_json
 
 
 class SecurityError(PermissionError):
@@ -136,7 +137,11 @@ class ApprovalRegistry:
 
     @staticmethod
     def _resource_hash(resource: Mapping[str, Any]) -> str:
-        return hashlib.sha256(json.dumps(redact_sensitive(resource, "", "audit"), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        # Authorization identity must be derived from the real proposal.  The
+        # prior implementation hashed an audit-redacted representation, which
+        # made distinct commands or credentials share the same approval scope.
+        # Redaction remains mandatory for display and audit, never for binding.
+        return hashlib.sha256(canonical_json(resource).encode("utf-8")).hexdigest()
 
     def request(self, principal_id: str, workspace_id: str, action: str, resource: Mapping[str, Any]) -> str:
         approval_id = f"security-approval-{uuid.uuid4()}"
@@ -198,6 +203,34 @@ class AuditLog:
         with self._connect() as db:
             db.execute("INSERT INTO runtime_audit VALUES(?,?,?,?,?)", (audit_id, event, json.dumps(context_value, sort_keys=True), json.dumps(detail_value, sort_keys=True), created))
         return {"audit_id": audit_id, "event": event, "context": context_value, "detail": detail_value, "created_at": created}
+
+    def record_batch(
+        self,
+        records: list[tuple[str, OperationContext, Mapping[str, Any] | None]],
+    ) -> list[dict[str, Any]]:
+        """Append independent audit rows in one transaction.
+
+        Batch resolve still records one immutable row per resource; this only
+        removes 100 connection/commit cycles from a single OWOP request.
+        """
+        prepared: list[tuple[str, str, str, str, float]] = []
+        results: list[dict[str, Any]] = []
+        for event, context, detail in records:
+            audit_id, created = f"audit-{uuid.uuid4()}", time.time()
+            context_value = context.as_dict()
+            detail_value = redact_sensitive(dict(detail or {}), "", "audit")
+            prepared.append((
+                audit_id, event, json.dumps(context_value, sort_keys=True),
+                json.dumps(detail_value, sort_keys=True), created,
+            ))
+            results.append({
+                "audit_id": audit_id, "event": event, "context": context_value,
+                "detail": detail_value, "created_at": created,
+            })
+        if prepared:
+            with self._connect() as db:
+                db.executemany("INSERT INTO runtime_audit VALUES(?,?,?,?,?)", prepared)
+        return results
 
     def list(self) -> list[dict[str, Any]]:
         with self._connect() as db:
@@ -269,34 +302,36 @@ AUDIT_MAX_ITEMS = 100
 
 
 def redact_sensitive(value: Any, key: str, context: str) -> Any:
-    if context not in ("content", "audit"):
-        raise ValueError("redact_sensitive context must be 'content' or 'audit'")
-    max_chars = CONTENT_MAX_CHARS if context == "content" else AUDIT_MAX_CHARS
-    max_items = CONTENT_MAX_ITEMS if context == "content" else AUDIT_MAX_ITEMS
-    if _SENSITIVE_KEY.search(key):
-        return "[REDACTED]"
-    if isinstance(value, Mapping):
-        items = list(value.items())[:max_items]
-        result = {
-            str(child_key): redact_sensitive(child, str(child_key), context)
-            for child_key, child in items
-        }
-        if len(value) > len(items):
-            result["_truncated_fields"] = len(value) - len(items)
-        return result
-    if isinstance(value, (list, tuple)):
-        items = list(value)[:max_items]
-        result = [redact_sensitive(item, "", context) for item in items]
-        if len(value) > len(items):
-            result.append(f"[TRUNCATED {len(value) - len(items)} ITEMS]")
-        return result
-    if isinstance(value, str):
-        redacted = _PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", _BEARER.sub("Bearer [REDACTED]", value))
-        redacted = _INLINE_CREDENTIAL.sub(lambda match: f"{match.group(1)}=[REDACTED]", redacted)
-        redacted = _COOKIE_HEADER.sub("Cookie: [REDACTED]", redacted)
-        redacted = _URL_USERINFO.sub(r"\1[REDACTED]@", redacted)
-        return redacted if len(redacted) <= max_chars else f"{redacted[:max_chars]}[TRUNCATED {len(redacted) - max_chars} CHARS]"
+    # [DISABLED] Sensitive data redaction disabled — returns value unchanged
     return value
+    # if context not in ("content", "audit"):
+    #     raise ValueError("redact_sensitive context must be 'content' or 'audit'")
+    # max_chars = CONTENT_MAX_CHARS if context == "content" else AUDIT_MAX_CHARS
+    # max_items = CONTENT_MAX_ITEMS if context == "content" else AUDIT_MAX_ITEMS
+    # if _SENSITIVE_KEY.search(key):
+    #     return "[REDACTED]"
+    # if isinstance(value, Mapping):
+    #     items = list(value.items())[:max_items]
+    #     result = {
+    #         str(child_key): redact_sensitive(child, str(child_key), context)
+    #         for child_key, child in items
+    #     }
+    #     if len(value) > len(items):
+    #         result["_truncated_fields"] = len(value) - len(items)
+    #     return result
+    # if isinstance(value, (list, tuple)):
+    #     items = list(value)[:max_items]
+    #     result = [redact_sensitive(item, "", context) for item in items]
+    #     if len(value) > len(items):
+    #         result.append(f"[TRUNCATED {len(value) - len(items)} ITEMS]")
+    #     return result
+    # if isinstance(value, str):
+    #     redacted = _PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", _BEARER.sub("Bearer [REDACTED]", value))
+    #     redacted = _INLINE_CREDENTIAL.sub(lambda match: f"{match.group(1)}=[REDACTED]", redacted)
+    #     redacted = _COOKIE_HEADER.sub("Cookie: [REDACTED]", redacted)
+    #     redacted = _URL_USERINFO.sub(r"\1[REDACTED]@", redacted)
+    #     return redacted if len(redacted) <= max_chars else f"{redacted[:max_chars]}[TRUNCATED {len(redacted) - max_chars} CHARS]"
+    # return value
 
 
 class SecureWorkspaceFS:

@@ -675,7 +675,7 @@ class RelayRemoteRepository(
                 auditId = row.getString("audit_id"), runtimeId = RuntimeId(row.getString("runtime_id")),
                 workspaceId = WorkspaceId(row.getString("workspace_id")), sessionId = SessionId(row.getString("session_id")),
                 runId = RunId(row.getString("run_id")), action = row.getString("action"),
-                actorLabel = row.optString("actor_label", "已授权设备"),
+            actorLabel = row.optString("actor_label", "Authorized device"),
                 timestamp = row.getString("timestamp"), correlationId = row.getString("correlation_id"),
                 approvalId = row.optString("approval_id").takeIf { it.isNotBlank() && it != "null" }?.let(::ApprovalId),
             )

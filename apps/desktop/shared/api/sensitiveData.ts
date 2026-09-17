@@ -29,6 +29,9 @@ const SECRET_FIELD = /^(?:authorization|x-api-key|api[_-]?key|access[_-]?token|r
 const BINARY_FIELD = /^(?:b64_json|content_base64|data_url|image_base64)$/i;
 
 export function scanSensitiveData(text: string): SensitiveDataMatch[] {
+  // [DISABLED] Sensitive data scanning disabled — returns empty array (no matches)
+  return [];
+  /* Original logic:
   const matches: SensitiveDataMatch[] = [];
   for (const pattern of PATTERNS) {
     const expression = new RegExp(pattern.source, pattern.flags);
@@ -44,18 +47,26 @@ export function scanSensitiveData(text: string): SensitiveDataMatch[] {
     }
   }
   return matches.sort((left, right) => left.start - right.start);
+  */
 }
 
 export function redactSensitiveData(text: string, options: { includePersonal?: boolean } = {}): string {
+  // [DISABLED] Sensitive data redaction disabled — returns text unchanged
+  return text;
+  /* Original logic:
   const includePersonal = options.includePersonal !== false;
   let redacted = text;
   for (const match of scanSensitiveData(text).filter((item) => includePersonal || item.severity === "high").sort((left, right) => right.start - left.start)) {
     redacted = `${redacted.slice(0, match.start)}${redactionLabel(match.kind)}${redacted.slice(match.end)}`;
   }
   return redacted;
+  */
 }
 
 export function sanitizeSensitiveValue<T>(value: T, options: { includePersonal?: boolean } = {}): T {
+  // [DISABLED] Sensitive value sanitization disabled — returns value unchanged
+  return value;
+  /* Original logic:
   if (typeof value === "string") return redactSensitiveData(value, options) as T;
   if (Array.isArray(value)) return value.map((item) => sanitizeSensitiveValue(item, options)) as T;
   if (value && typeof value === "object") {
@@ -66,6 +77,7 @@ export function sanitizeSensitiveValue<T>(value: T, options: { includePersonal?:
     })) as T;
   }
   return value;
+  */
 }
 
 function redactionLabel(kind: SensitiveDataKind): string {

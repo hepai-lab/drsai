@@ -24,6 +24,7 @@ data class CreateApprovalCommand(
     val approvalId: WorkbenchId,
     val binding: ApprovalBinding,
     val expiresAtMillis: Long,
+    val previewJson: String = "{}",
 ) {
     init {
         require(subject.isNotBlank()) { "approval_subject_required" }
@@ -40,6 +41,7 @@ sealed interface ApprovalDecisionResult {
 class ApprovalRepository(
     private val database: ChatDatabase,
     private val auditIdFactory: () -> String = { UUID.randomUUID().toString() },
+    private val previewStrings: ApprovalPreviewStrings = EnglishApprovalPreviewStrings,
 ) {
     suspend fun request(command: CreateApprovalCommand, nowMillis: Long): WorkbenchApprovalEntity =
         database.withTransaction {
@@ -140,6 +142,14 @@ class ApprovalRepository(
     suspend fun pending(subject: String): List<WorkbenchApprovalEntity> =
         database.workbenchDao().pendingApprovalsForSubject(subject)
 
+    suspend fun sessionGrants(subject: String): List<WorkbenchApprovalGrantEntity> =
+        database.workbenchDao().approvalGrantsForSubject(subject)
+
+    suspend fun revokeSessionGrant(grant: WorkbenchApprovalGrantEntity): Boolean =
+        database.workbenchDao().revokeApprovalGrant(
+            grant.subject, grant.organization, grant.runtimeId, grant.sessionId, grant.toolId,
+        ) == 1
+
     suspend fun audit(subject: String, organization: String): List<WorkbenchAuditEntity> =
         database.workbenchDao().audit(subject, organization)
 
@@ -153,6 +163,7 @@ class ApprovalRepository(
         toolCallId = binding.toolCallId,
         operation = binding.toolId,
         argumentsDigest = binding.argumentsDigest,
+        previewJson = ApprovalChangePreviewPolicy.sanitize(binding.toolId, previewJson, previewStrings).safeJson,
         scope = binding.scope,
         status = ApprovalStatus.PENDING.name,
         expiresAt = expiresAtMillis.toString(),
@@ -208,6 +219,7 @@ class RoomToolApprovalGateway(
         val command = CreateApprovalCommand(
             context.accountSubject, "", runtimeId, session, approvalId, binding,
             expiresAtMillis = now() + 10 * 60 * 1_000,
+            previewJson = arguments,
         )
         repository.request(command, now())
         val decided = database.workbenchDao().approvalFlow(

@@ -1,0 +1,76 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Stable stream deterministic E2E</title>
+<main>
+  <div id="thread"></div>
+  <output id="result">RUNNING</output>
+</main>
+<script>
+  const thread = document.querySelector("#thread");
+  const result = document.querySelector("#result");
+  const byId = new Map();
+  let mounts = 0;
+  let previousVisibleLength = 0;
+  let regressions = 0;
+
+  new MutationObserver(() => {
+    const visibleLength = thread.textContent.trim().length;
+    if (previousVisibleLength > 0 && visibleLength === 0) regressions += 1;
+    previousVisibleLength = visibleLength;
+  }).observe(thread, { subtree: true, childList: true, characterData: true });
+
+  function apply(event) {
+    let entity = byId.get(event.message_id);
+    if (!entity) {
+      entity = { content: "", reasoning: "", status: "streaming" };
+      byId.set(event.message_id, entity);
+      const node = document.createElement("article");
+      node.dataset.messageId = event.message_id;
+      thread.append(node);
+      mounts += 1;
+    }
+    if (event.delta) entity[event.channel] += event.delta;
+    if (event.snapshot) {
+      for (const channel of ["reasoning", "content"]) {
+        if (event.snapshot[channel].length >= entity[channel].length) {
+          entity[channel] = event.snapshot[channel];
+        }
+      }
+      entity.status = event.snapshot.status;
+    }
+    const node = thread.querySelector(`[data-message-id="${event.message_id}"]`);
+    node.textContent = `${entity.reasoning}\n${entity.content}`;
+  }
+
+  const id = "stable-message";
+  apply({ message_id: id });
+  apply({ message_id: id, channel: "reasoning", delta: "分析过程" });
+  apply({ message_id: id, channel: "content", delta: "甲".repeat(224) });
+  apply({
+    message_id: id,
+    snapshot: { reasoning: "分析过程", content: "", status: "streaming" },
+  });
+  apply({
+    message_id: id,
+    snapshot: {
+      reasoning: "分析过程",
+      content: "甲".repeat(224) + "\n一、二、三、四、五",
+      status: "completed",
+    },
+  });
+
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      const passed =
+        mounts === 1 &&
+        regressions === 0 &&
+        thread.children.length === 1 &&
+        thread.textContent.includes("一、二、三、四、五");
+      result.textContent = passed
+        ? "PASS"
+        : `FAIL mounts=${mounts} regressions=${regressions}`;
+      result.dataset.mounts = String(mounts);
+      result.dataset.regressions = String(regressions);
+    })
+  );
+</script>

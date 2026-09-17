@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-// Helper used by ensure_raster_image.py to rasterize SVG/SVGZ through the
-// bundled Node + sharp runtime instead of requiring Inkscape.
+// Helper used by ensure_raster_image.py to rasterize SVG/SVGZ through a
+// locally configured Node + sharp installation instead of requiring Inkscape.
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -33,15 +33,32 @@ function requireArg(args, key) {
   return value;
 }
 
-function defaultRuntimeNodeModules() {
-  return path.join(
-    process.env.HOME || process.cwd(),
-    ".cache",
-    "codex-runtimes",
-    "codex-primary-runtime",
-    "dependencies",
-    "node",
-    "node_modules",
+const SKILL_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, "")), "..");
+
+function resolveSharp() {
+  const searchDirs = [
+    process.env.NODE_PATH,
+    path.join(SKILL_DIR, "node_modules"),
+    path.join(process.cwd(), "node_modules"),
+  ].filter(Boolean);
+
+  for (const dir of searchDirs) {
+    try {
+      const requireFromDir = createRequire(path.join(dir, "__runtime__.cjs"));
+      return requireFromDir("sharp");
+    } catch {
+      // continue to next candidate
+    }
+  }
+  throw new Error(
+    [
+      "Could not load the 'sharp' package.",
+      "Install it in one of these ways:",
+      "  npm install sharp   (inside the skill directory or project root)",
+      "  set NODE_PATH to a node_modules directory containing sharp",
+      "",
+      `Searched: ${searchDirs.join(", ")}`,
+    ].join("\n"),
   );
 }
 
@@ -49,9 +66,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const input = path.resolve(requireArg(args, "input"));
   const output = path.resolve(requireArg(args, "output"));
-  const nodeModules = process.env.NODE_PATH || defaultRuntimeNodeModules();
-  const requireFromRuntime = createRequire(path.join(nodeModules, "__runtime__.cjs"));
-  const sharp = requireFromRuntime("sharp");
+  const sharp = resolveSharp();
 
   await fs.mkdir(path.dirname(output), { recursive: true });
   await sharp(input, { limitInputPixels: false }).png().toFile(output);

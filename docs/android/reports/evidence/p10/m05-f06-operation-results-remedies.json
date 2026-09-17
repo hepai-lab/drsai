@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "feature_id": "M05-F06",
+  "acceptance_run_id": "p10-round-027-operation-results-remedies",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "fixtures": ["success", "partial_success", "failure", "irreversible"],
+  "invariants": {
+    "completed_and_not_executed_are_distinct": true,
+    "partial_success_preserves_confirmed_results": true,
+    "undo_requires_real_workspace_mutation_token": true,
+    "undo_starts_new_approved_operation": true,
+    "external_operations_never_claim_nonexistent_rollback": true,
+    "failure_without_receipt_does_not_claim_side_effect": true
+  },
+  "tests": {
+    "testDebugUnitTest": "689 tests, 0 failures, 2 skipped",
+    "OaepToolVisibilityUiTest_API35": "3 passed"
+  }
+}

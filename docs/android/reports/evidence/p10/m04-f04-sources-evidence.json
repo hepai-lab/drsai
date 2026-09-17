@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "feature_id": "M04-F04",
+  "acceptance_run_id": "p10-round-019-sources-evidence",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "source_types": ["web", "local_document", "artifact"],
+  "validation": {
+    "http_https_with_host_only": true,
+    "userinfo_rejected": true,
+    "javascript_and_malformed_rejected": true,
+    "canonical_deduplication": true,
+    "unverified_citation_not_labeled_verified": true,
+    "tool_result_and_completed_local_artifact_verified": true
+  },
+  "tests": {
+    "testDebugUnitTest": "676 tests, 0 failures, 2 skipped",
+    "OaepProjectionTest": "all passed",
+    "OaepToolVisibilityUiTest_API35": "1 passed"
+  }
+}

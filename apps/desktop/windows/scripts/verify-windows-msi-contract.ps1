@@ -1,8 +1,13 @@
 param(
-    [string]$MsiPath = "$PSScriptRoot\..\release\bootstrapper\OpenDrSai-Windows-Installer-x64.msi"
+    [string]$MsiPath = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not $MsiPath) {
+    $version = (Get-Content -LiteralPath (Join-Path $PSScriptRoot "..\package.json") -Raw | ConvertFrom-Json).version
+    $MsiPath = "$PSScriptRoot\..\release\bootstrapper\OpenDrSai-Windows-v$version-Installer-x64.msi"
+}
 
 function Assert-Equal([string]$Actual, [string]$Expected, [string]$Label) {
     if ($Actual -ne $Expected) {

@@ -107,18 +107,19 @@ data class DesktopHandoffDecision(
     val kind: DesktopHandoffKind = DesktopHandoffKind.DESKTOP_NATIVE,
     val resourceId: String? = null,
     val executionLocation: String = "Desktop Runtime",
+    val targets: List<RuntimeDescriptor> = emptyList(),
 )
 
 /** Detects only explicit Desktop-exclusive requests; it never claims that Android executed them. */
 object DesktopHandoffPlanner {
-    private val shell = Regex("(?i)(powershell|pwsh|shell|terminal|cmd(?:\\.exe)?|命令行|终端|执行命令)")
-    private val pty = Regex("(?i)(pty|交互式终端|interactive terminal)")
-    private val git = Regex("(?i)(?:\\bgit\\b|提交代码|创建分支|切换分支|合并分支|查看 diff)")
+    private val shell = Regex("(?i)(powershell|pwsh|shell|terminal|cmd(?:\\.exe)?|\u547d\u4ee4\u884c|\u7ec8\u7aef|\u6267\u884c\u547d\u4ee4)")
+    private val pty = Regex("(?i)(pty|\u4ea4\u4e92\u5f0f\u7ec8\u7aef|interactive terminal)")
+    private val git = Regex("(?i)(?:\\bgit\\b|\u63d0\u4ea4\u4ee3\u7801|\u521b\u5efa\u5206\u652f|\u5207\u6362\u5206\u652f|\u5408\u5e76\u5206\u652f|\u67e5\u770b diff)")
     private val codex = Regex("(?i)(?:\\bcodex\\b|codex cli)")
     private val stdioMcp = Regex(
-        "(?i)(?:stdio\\s*(?:/|-)?\\s*mcp|mcp\\s*(?:/|-)?\\s*stdio|桌面\\s*(?:stdio\\s*)?mcp|本地进程\\s*mcp)",
+        "(?i)(?:stdio\\s*(?:/|-)?\\s*mcp|mcp\\s*(?:/|-)?\\s*stdio|\u684c\u9762\\s*(?:stdio\\s*)?mcp|\u672c\u5730\u8fdb\u7a0b\\s*mcp)",
     )
-    private val namedMcpServer = Regex("(?i)(?:server|服务器)\\s*[:=：]?\\s*([A-Za-z0-9_.-]{1,64})")
+    private val namedMcpServer = Regex("(?i)(?:server|\u670d\u52a1\u5668)\\s*[:=\uFF1A]?\\s*([A-Za-z0-9_.-]{1,64})")
     private val taggedMcpServer = Regex("@([A-Za-z0-9_.-]{1,64})")
 
     fun requiredCapabilities(input: String): Set<RuntimeCapability> = buildSet {
@@ -129,35 +130,34 @@ object DesktopHandoffPlanner {
         if (stdioMcp.containsMatchIn(input)) add(RuntimeCapability.MCP_STDIO)
     }
 
-    fun plan(input: String, remotes: List<RuntimeDescriptor>): DesktopHandoffDecision {
+    fun plan(input: String, remotes: List<RuntimeDescriptor>, strings: HybridRuntimeStrings = EnglishHybridRuntimeStrings): DesktopHandoffDecision {
         val required = requiredCapabilities(input)
         if (required.isEmpty()) return DesktopHandoffDecision(DesktopHandoffState.NOT_REQUIRED)
-        val target = remotes.asSequence()
+        val targets = remotes.asSequence()
             .filter { it.online && it.binding.authority == RuntimeAuthority.REMOTE_RUNTIME }
             .filter { it.capabilities.values.containsAll(required + RuntimeCapability.CHAT) }
             .sortedWith(compareBy<RuntimeDescriptor> { it.displayName }.thenBy { it.binding.runtimeId.value })
-            .firstOrNull()
+            .toList()
+        val target = targets.firstOrNull()
         val isStdioMcp = RuntimeCapability.MCP_STDIO in required
         val kind = if (isStdioMcp) DesktopHandoffKind.MCP_STDIO else DesktopHandoffKind.DESKTOP_NATIVE
         val resource = if (isStdioMcp) requestedMcpServer(input) else null
         return if (target == null) DesktopHandoffDecision(
             DesktopHandoffState.UNAVAILABLE, required,
             message = if (isStdioMcp) {
-                "Android 不支持本地 stdio MCP；当前没有声明 MCP_STDIO 的在线 Desktop Runtime。" +
-                    "即使存在同名 HTTP MCP，也不会冒充 stdio 执行；尚未调用任何工具。"
+                strings.text(HybridRuntimeText.STDIO_UNAVAILABLE)
             } else {
-                "此请求需要 Desktop Runtime 的 ${labels(required)} 能力；当前没有满足条件的在线 Runtime，尚未执行任何命令。"
+                strings.text(HybridRuntimeText.DESKTOP_UNAVAILABLE, labels(required))
             },
-            kind = kind, resourceId = resource,
+            kind = kind, resourceId = resource, targets = emptyList(),
         ) else DesktopHandoffDecision(
             DesktopHandoffState.OFFER, required, target,
             if (isStdioMcp) {
-                "Android 不执行本地 stdio。确认后将把 ${resource?.let { "MCP server $it" } ?: "stdio MCP"} " +
-                    "交给 ${target.displayName}；执行位置为 Desktop Runtime，远端调用仍需审批。"
+                strings.text(HybridRuntimeText.STDIO_OFFER, resource?.let { "MCP server $it" } ?: "stdio MCP", target.displayName)
             } else {
-                "此请求需要交给 ${target.displayName} 执行 ${labels(required)}。确认后将打开远程 Runtime；Android 尚未执行任何命令。"
+                strings.text(HybridRuntimeText.DESKTOP_OFFER, target.displayName, labels(required))
             },
-            kind = kind, resourceId = resource,
+            kind = kind, resourceId = resource, targets = targets,
         )
     }
 
@@ -166,6 +166,12 @@ object DesktopHandoffPlanner {
             ?: taggedMcpServer.find(input)?.groupValues?.get(1)
 
     private fun labels(values: Set<RuntimeCapability>) = values.map { it.name }.sorted().joinToString(" / ")
+}
+
+object DesktopHandoffTargetSelector {
+    fun select(targets: List<RuntimeDescriptor>, runtimeId: String): RuntimeDescriptor =
+        targets.singleOrNull { it.binding.runtimeId.value == runtimeId && it.online }
+            ?: error("handoff_target_unavailable")
 }
 
 data class RuntimeRecommendation(
@@ -182,6 +188,7 @@ object HybridRuntimeCoordinator {
         local: RuntimeDescriptor?,
         remote: RuntimeDescriptor?,
         explicit: RuntimeAuthority? = null,
+        strings: HybridRuntimeStrings = EnglishHybridRuntimeStrings,
     ): RuntimeRecommendation {
         val localSet = local?.capabilities?.takeIf { local.online }
         val remoteSet = remote?.capabilities?.takeIf { remote.online }
@@ -189,10 +196,10 @@ object HybridRuntimeCoordinator {
         val localMissing = requirements.capabilities - localSet?.values.orEmpty()
         val remoteMissing = requirements.capabilities - remoteSet?.values.orEmpty()
         val reason = when (decision) {
-            RuntimeRouteDecision.LOCAL -> "Android 本地能力满足任务要求"
-            RuntimeRouteDecision.REMOTE -> "任务需要远程 Runtime 能力"
-            RuntimeRouteDecision.USER_CHOICE_REQUIRED -> "本地与远程均可执行，请选择运行位置"
-            RuntimeRouteDecision.UNSUPPORTED -> "没有在线 Runtime 满足所需能力"
+            RuntimeRouteDecision.LOCAL -> strings.text(HybridRuntimeText.LOCAL_REASON)
+            RuntimeRouteDecision.REMOTE -> strings.text(HybridRuntimeText.REMOTE_REASON)
+            RuntimeRouteDecision.USER_CHOICE_REQUIRED -> strings.text(HybridRuntimeText.CHOICE_REASON)
+            RuntimeRouteDecision.UNSUPPORTED -> strings.text(HybridRuntimeText.UNSUPPORTED_REASON)
         }
         return RuntimeRecommendation(decision, requirements.capabilities, localMissing, remoteMissing, reason)
     }

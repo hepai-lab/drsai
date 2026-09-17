@@ -70,6 +70,32 @@ export function appendDebugLog(
   append({ level, message, source, timestamp: Date.now() });
 }
 
+/** Record a renderer lifecycle checkpoint in both the local debug buffer and
+ * the persisted diagnostic journal. Diagnostic capture must never affect UI
+ * behavior, so failures are intentionally swallowed. */
+export function appendRendererStage(
+  stage: string,
+  details: Record<string, unknown> = {},
+  level: DebugLogLevel = "info",
+): void {
+  const safeDetails = Object.entries(details)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`)
+    .join(" ");
+  const message = `renderer.stage ${stage}${safeDetails ? ` ${safeDetails}` : ""}`;
+  appendDebugLog(level, message, "diagnostic");
+  void recordDiagnosticSafe({
+    module: "desktop",
+    component: "renderer-chat",
+    operation: `renderer.${stage}`,
+    kind: level === "error" ? "error" : "log",
+    status: level === "error" ? "failed" : "completed",
+    level,
+    message,
+    attributes: details,
+  });
+}
+
 export function appendStructuredActivityLog(activity: StructuredActivityEvent): void {
   const existing = entries.find((entry) => entry.source === "activity" && entry.activityId === activity.id);
   const next: DebugLogEntry = sanitizeSensitiveValue({

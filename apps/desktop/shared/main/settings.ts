@@ -90,7 +90,7 @@ async function syncRunningGatewayConfig(
   }).catch(() => undefined);
 }
 
-function readSavedApiKey(): string {
+export function readSavedApiKey(): string {
   if (!existsSync(DRSAI_ENV_FILE)) return "";
   const line = readFileSync(DRSAI_ENV_FILE, "utf8")
     .split(/\r?\n/)

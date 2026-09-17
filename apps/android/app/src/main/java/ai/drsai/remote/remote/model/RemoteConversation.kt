@@ -28,6 +28,12 @@ data class RemoteTranscriptResource(
     val mimeType: String,
     val size: Long?,
     val digest: String?,
+    val authorityId: String? = null,
+    val workspaceId: String? = null,
+    val resourceType: String? = null,
+    val resourceId: String? = null,
+    val generation: Long? = null,
+    val observedVersionId: String? = null,
 )
 
 fun projectOaepMessages(snapshot: OaepSnapshot): List<RemoteTranscriptMessage> {
@@ -49,17 +55,7 @@ private fun projectOaepMessages(items: List<OaepItem>, preserveOrder: Boolean): 
             is OaepMessageContent -> RemoteTranscriptMessage(
                 item.id, content.role, sanitizeRemoteTranscriptText(content.text), item.status,
                 kind = "message", runId = item.runId, phase = content.phase,
-                resources = content.resourceRefs.map { ref ->
-                    val part = content.parts.firstOrNull { part ->
-                        ((part["resource_ref"] as? Map<*, *>)?.get("resource_id") as? String) == ref.resourceId
-                    }
-                    RemoteTranscriptResource(
-                        ref.resourceId, ref.label ?: (part?.get("name") as? String) ?: ref.resourceId,
-                        (part?.get("type") as? String) ?: ref.resourceType,
-                        (part?.get("mime_type") as? String) ?: "application/octet-stream",
-                        (part?.get("size") as? Number)?.toLong(), ref.digest,
-                    )
-                },
+                resources = content.toTranscriptResources(item.associations),
             )
             is OaepReasoningContent -> RemoteTranscriptMessage(
                 item.id, "reasoning",
@@ -106,6 +102,45 @@ private fun projectOaepMessages(items: List<OaepItem>, preserveOrder: Boolean): 
         }
     }.filter { it.text.isNotBlank() || it.progress != null }
 
+fun OaepMessageContent.toTranscriptResources(
+    associations: List<OaepResourceAssociation> = emptyList(),
+): List<RemoteTranscriptResource> {
+    if (associations.isNotEmpty()) return associations.map { association ->
+        RemoteTranscriptResource(
+            association.associationId,
+            association.labelSnapshot,
+            association.resource.resourceType,
+            association.versionSnapshot?.mimeType ?: "application/octet-stream",
+            association.versionSnapshot?.size,
+            association.versionSnapshot?.digest,
+            association.resource.authorityId,
+            association.resource.workspaceId,
+            association.resource.resourceType,
+            association.resource.resourceId,
+            association.resource.generation,
+            association.versionSnapshot?.versionId,
+        )
+    }
+    val refs = buildList {
+        addAll(resourceRefs)
+        parts.forEach { part ->
+            val ref = (part as? OaepLegacyMessagePart)?.resourceRef ?: return@forEach
+            add(ref)
+        }
+    }.distinctBy { "${it.workspaceId}:${it.resourceType}:${it.resourceId}" }
+    return refs.map { ref ->
+        val part = parts.firstOrNull {
+            (it as? OaepLegacyMessagePart)?.resourceRef?.resourceId == ref.resourceId
+        } as? OaepLegacyMessagePart
+        RemoteTranscriptResource(
+            ref.resourceId, ref.label ?: part?.name ?: ref.resourceId,
+            part?.type ?: ref.resourceType,
+            part?.mimeType ?: "application/octet-stream",
+            null, ref.digest,
+        )
+    }
+}
+
 private fun safeToolResult(result: Any?, status: String): String = when (result) {
     null -> status
     is String -> sanitizeRemoteTranscriptText(result)
@@ -122,7 +157,10 @@ fun sanitizeRemoteTranscriptText(value: String): String =
         .replace(Regex("\\b[A-Za-z]:[\\\\/][^\\s`'\"<>]+"), "[path]")
         .take(20_000)
 
-fun projectConversationMessages(items: List<RemoteConversationItem>): List<RemoteTranscriptMessage> {
+fun projectConversationMessages(
+    items: List<RemoteConversationItem>,
+    strings: RemoteConversationStrings = EnglishRemoteConversationStrings,
+): List<RemoteTranscriptMessage> {
     val ordered = items.distinctBy { it.eventId }.sortedBy { it.sequence }
     require(ordered.zipWithNext().all { (left, right) -> left.sequence < right.sequence }) {
         "conversation_sequence_not_strictly_increasing"
@@ -167,9 +205,9 @@ fun projectConversationMessages(items: List<RemoteConversationItem>): List<Remot
             }
             "run.completed", "run.failed", "run.cancelled" -> {
                 val fallback = when (item.kind) {
-                    "run.completed" -> "任务已完成"
-                    "run.failed" -> "任务执行失败"
-                    else -> "任务已取消"
+                    "run.completed" -> strings.text(RemoteConversationText.COMPLETED)
+                    "run.failed" -> strings.text(RemoteConversationText.FAILED)
+                    else -> strings.text(RemoteConversationText.CANCELLED)
                 }
                 val detail = (
                     item.payload["message"] ?: item.payload["summary"]
@@ -190,7 +228,7 @@ fun projectConversationMessages(items: List<RemoteConversationItem>): List<Remot
                 )?.toString().orEmpty().take(20_000)
                 if (safeText.isNotBlank()) {
                     messages += RemoteTranscriptMessage(
-                        item.eventId, "system", safeText, "未知事件：${item.kind.take(80)}",
+                        item.eventId, "system", safeText, strings.text(RemoteConversationText.UNKNOWN_EVENT, item.kind.take(80)),
                     )
                 }
             }

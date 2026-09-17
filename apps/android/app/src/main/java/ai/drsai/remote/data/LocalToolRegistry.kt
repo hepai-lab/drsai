@@ -20,6 +20,7 @@ class LocalToolRegistry(
         }.toSet()
     },
     private val approvals: ToolApprovalGateway? = null,
+    private val strings: LocalToolExecutionStrings = EnglishLocalToolExecutionStrings,
 ) {
     data class Result(val output: String, val succeeded: Boolean, val code: String? = null)
 
@@ -46,19 +47,19 @@ class LocalToolRegistry(
             is ToolExecutionOutcome.ApprovalRequired -> {
                 val gateway = approvals
                 if (gateway == null || runId == null || sessionId == null) {
-                    rejected("approval_required", "工具 ${call.name} 需要用户批准")
+                    rejected("approval_required", strings.text(LocalToolExecutionText.APPROVAL_REQUIRED, call.name))
                 } else if (gateway.awaitApproval(
                         context, runId, sessionId, call.id, outcome.definition, outcome.arguments,
                     )
                 ) {
                     when (val result = registry.execute(context.copy(approved = true), call.name, call.arguments)) {
                         is ToolExecutionOutcome.Success -> Result(result.output, true)
-                        is ToolExecutionOutcome.Rejected -> rejected(result.code, "工具 ${call.name} 被拒绝：${result.code}")
-                        is ToolExecutionOutcome.ApprovalRequired -> rejected("approval_state_invalid", "工具审批状态无效")
+                        is ToolExecutionOutcome.Rejected -> rejected(result.code, strings.text(LocalToolExecutionText.REJECTED, call.name, result.code))
+                        is ToolExecutionOutcome.ApprovalRequired -> rejected("approval_state_invalid", strings.text(LocalToolExecutionText.APPROVAL_STATE_INVALID))
                     }
-                } else rejected("approval_declined", "用户拒绝了工具 ${call.name}")
+                } else rejected("approval_declined", strings.text(LocalToolExecutionText.APPROVAL_DECLINED, call.name))
             }
-            is ToolExecutionOutcome.Rejected -> rejected(outcome.code, "工具 ${call.name} 被拒绝：${outcome.code}")
+            is ToolExecutionOutcome.Rejected -> rejected(outcome.code, strings.text(LocalToolExecutionText.REJECTED, call.name, outcome.code))
         }.let { it.copy(output = it.output.take(MAX_TOOL_OUTPUT_CHARS)) }
     }
 

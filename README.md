@@ -226,14 +226,17 @@ python examples/agent_groupchat/assistant_base_R1_oai.py
 
 ### 2.4.命令行启动OpenDrSai人机交互后端服务
 
-```shell
-# 确保安装了drsai_ui
+完整步骤（克隆后同时跑 Gatsby 前端 + FastAPI 后端、端口对齐、本地登录）见 **[docs/webui/local-dev.md](docs/webui/local-dev.md)**。
 
-cp .env.example .env # 复制.env.example文件为.env, 可用于高能所部署统一认证
-drsai ui # 启动Dr.Sai-UI人机交互后端和静态前端
+```shell
+# 确保已 pip install -e apps/webui/backend
+cp .env.example apps/webui/.env   # 填写 HEPAI_API_KEY，并保持 SERVICE_MODE="DEV"
+drsai-ui ui --host 0.0.0.0 --port 8086 --reload
 ```
 
-后端和静态前端默认启动在8081端口，``opendrsai --help``获取更多的启动参数，连接2.2启动的R1_test智能体并在前端进行交互的视频如下：
+源码树默认不含已打包的静态前端。只起后端时页面可能是空的，需要另开前端开发服（下一节）或先 `yarn build`。
+
+``drsai-ui --help`` 查看启动参数。连接 2.2 启动的 R1_test 智能体并在前端交互的视频如下：
 
 <video width="80%" controls>
   <source src="assets/video/drsai_ui.mp4" type="video/mp4">
@@ -247,33 +250,21 @@ drsai ui # 启动Dr.Sai-UI人机交互后端和静态前端
 
 ### 2.5.人机交互前端
 
-#### 配置npm环境
-
-安装node
+本地开发请按 **[docs/webui/local-dev.md](docs/webui/local-dev.md)** 把前端代理端口和后端 `--port` 对齐（默认后端 **8086**、前端 **8000**）。不要在 `.env.development` 里写死 `GATSBY_API_URL`。
 
 ```shell
-# install nvm to install node
+# 安装 Node（推荐 22）
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-nvm install node # recommended node version ~ 22
-```
+nvm install 22
 
-安装前端依赖
-
-```shell
 cd apps/webui/frontend
-npm install -g gatsby-cli
 npm install --global yarn
-yarn install
-
-# *********NOTE：*********
-# cp .env.default .env.development or .env.production # 复制.env.default文件为.env.development或.env.production
-# 开发环境变量为frontend/.env.development
-# 生产环境变量为frontend/.env.production
-# ************************
-
-# yarn build # 打包前端静态资源
-yarn run dev # 启动前端开发环境
+cp .env.example .env.development
+yarn install --legacy-peer-deps
+yarn dev
 ```
+
+浏览器打开 http://localhost:8000 ，登录页选「本地登录」，默认账号 `admin` / `admin123456`。
 
 ### 2.6.桌面客户端 (Desktop App) 🆕
 

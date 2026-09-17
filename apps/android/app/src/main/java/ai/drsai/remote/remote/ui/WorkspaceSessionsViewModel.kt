@@ -15,7 +15,6 @@ import ai.drsai.remote.remote.data.RemoteProjectInstructionLoader
 import ai.drsai.remote.remote.data.WorkspaceInstructionVersionStore
 import ai.drsai.remote.remote.data.RelayHttpException
 import ai.drsai.remote.remote.data.AndroidDevicePresence
-import ai.drsai.remote.remote.data.safeRemoteFailureMessage
 import ai.drsai.remote.remote.data.WorkspaceSessionCatalogDecision
 import ai.drsai.remote.remote.data.WorkspaceSessionCatalogGate
 import ai.drsai.remote.remote.data.WorkspaceSessionCatalogProjection
@@ -24,6 +23,8 @@ import ai.drsai.remote.remote.data.RemoteStreamRetryState
 import ai.drsai.remote.runtime.context.PromptFragment
 import ai.drsai.remote.remote.model.RuntimeId
 import ai.drsai.remote.remote.model.WorkspaceId
+import ai.drsai.remote.R
+import ai.drsai.remote.ui.LocalizedText
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -121,7 +122,7 @@ class WorkspaceSessionsViewModel(
     fun refresh(query: String? = mutableState.value.query) = viewModelScope.launch(Dispatchers.IO) {
         val requestGeneration = generation.incrementAndGet()
         val normalizedQuery = normalizedWorkspaceSessionQuery(query)
-        mutableState.update { it.copy(loading = true, error = null) }
+        mutableState.update { it.copy(loading = true, error = null, errorText = null) }
         runCatching {
             container.singleFlight.run("workspace:${runtimeId.value}:${workspaceId.value}:${normalizedQuery.orEmpty()}") {
                 coroutineScope {
@@ -182,13 +183,16 @@ class WorkspaceSessionsViewModel(
                         instructionVersionStore.accept(subject, runtimeId, workspaceId, instructionVersions)
                     }
                 }
-                val instructionStatus = payload.instructions.fold(
+                val instructionStatusText = payload.instructions.fold(
                     onSuccess = { values -> when {
-                        instructionRefreshRequired -> "项目指令版本已变化，请确认后再新建会话"
-                        values.isEmpty() -> "未发现项目指令"
-                        else -> "已校验 ${values.size} 份项目指令"
+                        instructionRefreshRequired -> LocalizedText(R.string.project_instructions_changed)
+                        values.isEmpty() -> LocalizedText(R.string.no_project_instructions)
+                        else -> LocalizedText(R.string.project_instructions_verified, values.size)
                     } },
-                    onFailure = { failure -> "项目指令不可读取：${safeRemoteFailureMessage(failure)}" },
+                    onFailure = { failure -> LocalizedText(
+                        R.string.project_instructions_unreadable,
+                        safeRemoteFailureMessage(getApplication(), failure),
+                    ) },
                 )
                 mutableState.update { it.copy(agentDefinitions = payload.definitions, sessions = sessionItems,
                     capabilities = listOf(
@@ -197,7 +201,8 @@ class WorkspaceSessionsViewModel(
                     ),
                     pendingApprovalCount = payload.approvals.count { approval -> approval.status == "pending" },
                     instructionVersions = instructionVersions,
-                    instructionStatus = instructionStatus,
+                    instructionStatus = null,
+                    instructionStatusText = instructionStatusText,
                     instructionRefreshRequired = instructionRefreshRequired,
                     query = normalizedQuery.orEmpty(), loading = false, creating = false) }
             }
@@ -216,11 +221,11 @@ class WorkspaceSessionsViewModel(
                         } else {
                             it.sessions
                         },
-                        error = if (failure is RelayHttpException && failure.status == 403) {
-                            "当前设备已无权访问此远程主机"
-                        } else {
-                            safeRemoteFailureMessage(failure)
-                        },
+                        error = if (failure is RelayHttpException && failure.status == 403) null
+                            else safeRemoteFailureMessage(getApplication(), failure),
+                        errorText = if (failure is RelayHttpException && failure.status == 403) {
+                            LocalizedText(R.string.remote_host_access_revoked)
+                        } else null,
                     )
                 }
             }
@@ -235,7 +240,10 @@ class WorkspaceSessionsViewModel(
         mutableState.update {
             it.copy(
                 instructionRefreshRequired = false,
-                instructionStatus = if (it.instructionVersions.isEmpty()) "未发现项目指令" else "已确认最新项目指令",
+                instructionStatus = null,
+                instructionStatusText = if (it.instructionVersions.isEmpty()) {
+                    LocalizedText(R.string.no_project_instructions)
+                } else LocalizedText(R.string.latest_project_instructions_confirmed),
             )
         }
     }
@@ -260,18 +268,18 @@ class WorkspaceSessionsViewModel(
     fun createSession(definition: RemoteAgentDefinition) = viewModelScope.launch(Dispatchers.IO) {
         require(definition.version != "latest") { "exact_agent_definition_required" }
         require(!mutableState.value.instructionRefreshRequired) { "project_instruction_refresh_required" }
-        mutableState.update { it.copy(creating = true, error = null) }
+        mutableState.update { it.copy(creating = true, error = null, errorText = null) }
         runCatching {
             sessions.createSession(
                 runtimeId = runtimeId,
                 workspaceId = workspaceId,
-                title = "新会话",
+                title = getApplication<Application>().getString(R.string.new_session),
                 definition = definition,
                 idempotencyKey = java.util.UUID.randomUUID().toString(),
             )
         }.onSuccess { refresh() }
             .onFailure { failure ->
-                mutableState.update { it.copy(creating = false, error = safeRemoteFailureMessage(failure)) }
+                mutableState.update { it.copy(creating = false, error = safeRemoteFailureMessage(getApplication(), failure)) }
             }
     }
 
@@ -301,7 +309,7 @@ class WorkspaceSessionsViewModel(
     ) = viewModelScope.launch(Dispatchers.IO) {
         runCatching { sessions.updateSession(reference, title, lifecycle) }
             .onSuccess { refresh() }
-            .onFailure { failure -> mutableState.update { it.copy(error = safeRemoteFailureMessage(failure)) } }
+            .onFailure { failure -> mutableState.update { it.copy(error = safeRemoteFailureMessage(getApplication(), failure)) } }
     }
 
     companion object {

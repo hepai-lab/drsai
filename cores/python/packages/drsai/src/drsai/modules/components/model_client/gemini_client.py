@@ -25,14 +25,66 @@ from autogen_core.models import (
 from autogen_core.tools import Tool, ToolSchema
 from pydantic import BaseModel
 
+from drsai.platform_auth import (
+    DelegatedModelCredentialProvider,
+    OidcModelCredentialProvider,
+    get_model_credential_provider,
+    static_model_credentials_allowed,
+    is_token_expired,
+    is_token_expiring_soon,
+    try_refresh_platform_auth,
+)
+
 
 class GeminiNativeChatCompletionClient(ChatCompletionClient):
     """Small native Gemini adapter with text, images, and function calls."""
 
-    def __init__(self, *, model: str, base_url: str, api_key: str, max_tokens: int = 8192, timeout: float = 60.0, vision: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        model: str,
+        base_url: str,
+        api_key: str,
+        max_tokens: int = 8192,
+        timeout: float = 60.0,
+        vision: bool = True,
+        allow_deferred_oidc: bool = True,
+    ) -> None:
+        self._allow_deferred_oidc = bool(allow_deferred_oidc)
+        self._oidc_credential_pending = False
+        self._uses_platform_auth = False
+        credential = get_model_credential_provider(
+            api_key,
+            base_url,
+            configured_provider=not self._allow_deferred_oidc,
+        )
+        if credential:
+            api_key = credential.access_token
+            base_url = credential.openai_base_url
+            self._uses_platform_auth = isinstance(
+                credential, (OidcModelCredentialProvider, DelegatedModelCredentialProvider)
+            )
+        else:
+            if not static_model_credentials_allowed():
+                api_key = ""
+            elif not api_key:
+                import os
+                api_key = os.environ.get("HEPAI_API_KEY", "")
+            if not api_key:
+                if not self._allow_deferred_oidc:
+                    raise RuntimeError(
+                        "The configured model provider API credential is unavailable; "
+                        "enter the provider API Key again in Model Settings."
+                    )
+                api_key = "opendrsai-oidc-pending"
+                self._oidc_credential_pending = True
+                self._uses_platform_auth = True
         self._model = model.removeprefix("models/")
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
+        self._delegation_headers: dict[str, str] | None = None
+        if credential and credential.delegation_headers:
+            self._delegation_headers = credential.delegation_headers
         self._max_tokens = max_tokens
         self._client = httpx.AsyncClient(timeout=timeout)
         self._actual = RequestUsage(prompt_tokens=0, completion_tokens=0)
@@ -46,6 +98,34 @@ class GeminiNativeChatCompletionClient(ChatCompletionClient):
             "multiple_system_messages": True,
         }
 
+    async def _bind_platform_auth(self) -> None:
+        """Re-bind OIDC/platform credentials before each model call.
+
+        Mirrors the pattern in HepAIChatCompletionClient and
+        HepAIAnthropicChatCompletionClient: if the ContextVar-scoped
+        credential is an OIDC token, check for impending expiry and
+        proactively refresh via the refresh_token grant.
+        """
+        if not getattr(self, "_uses_platform_auth", True) and not getattr(self, "_oidc_credential_pending", False):
+            return
+        credential = get_model_credential_provider()
+        if not credential:
+            if getattr(self, "_oidc_credential_pending", False):
+                raise RuntimeError("OIDC credential context is unavailable for this model request.")
+            return
+        if isinstance(credential, OidcModelCredentialProvider):
+            if is_token_expiring_soon(credential.access_token):
+                refreshed = await try_refresh_platform_auth()
+                if refreshed is not None:
+                    credential = OidcModelCredentialProvider(refreshed)
+                elif is_token_expired(credential.access_token):
+                    raise ValueError("token_expired: access token has expired and refresh is unavailable.")
+        self._api_key = credential.access_token
+        self._base_url = credential.openai_base_url.rstrip("/")
+        if credential.delegation_headers:
+            self._delegation_headers = credential.delegation_headers
+        self._oidc_credential_pending = False
+
     async def create(
         self,
         messages: Sequence[LLMMessage],
@@ -57,10 +137,14 @@ class GeminiNativeChatCompletionClient(ChatCompletionClient):
     ) -> CreateResult:
         if cancellation_token is not None and cancellation_token.is_cancelled():
             raise RuntimeError("Gemini request cancelled")
+        await self._bind_platform_auth()
         payload = self._request_payload(messages, tools, json_output, extra_create_args)
+        headers: dict[str, str] = {"x-goog-api-key": self._api_key, "content-type": "application/json"}
+        if self._delegation_headers:
+            headers.update(self._delegation_headers)
         response = await self._client.post(
             f"{self._base_url}/models/{self._model}:generateContent",
-            headers={"x-goog-api-key": self._api_key, "content-type": "application/json"},
+            headers=headers,
             json=payload,
         )
         response.raise_for_status()

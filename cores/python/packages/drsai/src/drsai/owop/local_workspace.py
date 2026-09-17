@@ -6,12 +6,14 @@ import base64
 import binascii
 import hashlib
 import json
+import mimetypes
 import os
 import sqlite3
 import stat
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +26,18 @@ from drsai.owop.workspace_checkpoints import WorkspaceCheckpointStore
 
 
 IGNORED_DIRECTORIES = frozenset({".git", ".drsai", "node_modules", "__pycache__"})
+DETERMINISTIC_MIME_TYPES = {
+    ".txt": "text/plain", ".md": "text/markdown", ".markdown": "text/markdown",
+    ".json": "application/json", ".xml": "application/xml", ".csv": "text/csv",
+    ".html": "text/html", ".htm": "text/html", ".css": "text/css",
+    ".js": "text/javascript", ".ts": "text/typescript", ".py": "text/x-python",
+    ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg", ".gif": "image/gif", ".svg": "image/svg+xml",
+}
+
+
+def _mime_type(path: str) -> str | None:
+    return DETERMINISTIC_MIME_TYPES.get(Path(path).suffix.lower()) or mimetypes.guess_type(path)[0]
 
 
 def _now() -> str:
@@ -63,8 +77,24 @@ class WorkspaceWatchJournal:
                   PRIMARY KEY(workspace_id, sequence),
                   UNIQUE(workspace_id, dedupe_key)
                 );
+                CREATE TABLE IF NOT EXISTS owop_file_resources (
+                  workspace_id TEXT NOT NULL,
+                  file_id TEXT NOT NULL,
+                  relative_path TEXT NOT NULL,
+                  kind TEXT NOT NULL,
+                  digest TEXT,
+                  device INTEGER NOT NULL,
+                  inode INTEGER NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  PRIMARY KEY(workspace_id, file_id),
+                  UNIQUE(workspace_id, relative_path)
+                );
                 """
             )
+            columns = {str(row[1]) for row in db.execute("PRAGMA table_info(owop_file_resources)")}
+            if "last_state" not in columns:
+                db.execute("ALTER TABLE owop_file_resources ADD COLUMN last_state TEXT NOT NULL DEFAULT 'available'")
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.database, timeout=30, factory=_ClosingConnection)
@@ -111,6 +141,72 @@ class WorkspaceWatchJournal:
                 (workspace_id, after_sequence, limit),
             ).fetchall()
         return [self._event(row) for row in rows]
+
+    def register_file_resource(
+        self,
+        workspace_id: str,
+        relative_path: str,
+        *,
+        kind: str,
+        digest: str | None,
+        device: int,
+        inode: int,
+    ) -> dict[str, Any]:
+        """Return a stable, Workspace-scoped opaque id for a file-system object."""
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM owop_file_resources WHERE workspace_id=? AND relative_path=?",
+                (workspace_id, relative_path),
+            ).fetchone()
+            now = _now()
+            if existing is None:
+                file_id = f"file-{uuid.uuid4()}"
+                db.execute(
+                    "INSERT INTO owop_file_resources "
+                    "(workspace_id,file_id,relative_path,kind,digest,device,inode,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)",
+                    (workspace_id, file_id, relative_path, kind, digest, device, inode, now, now),
+                )
+            else:
+                file_id = str(existing["file_id"])
+                db.execute(
+                    "UPDATE owop_file_resources SET kind=?, digest=?, device=?, inode=?, updated_at=?, last_state='available' "
+                    "WHERE workspace_id=? AND file_id=?",
+                    (kind, digest, device, inode, now, workspace_id, file_id),
+                )
+            row = db.execute(
+                "SELECT * FROM owop_file_resources WHERE workspace_id=? AND file_id=?",
+                (workspace_id, file_id),
+            ).fetchone()
+            db.commit()
+        return dict(row)
+
+    def file_resource(self, workspace_id: str, file_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM owop_file_resources WHERE workspace_id=? AND file_id=?",
+                (workspace_id, file_id),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def move_file_resource(self, workspace_id: str, source: str, destination: str) -> None:
+        with self._lock, self._connect() as db:
+            db.execute(
+                "UPDATE owop_file_resources SET relative_path=?, updated_at=?, last_state='moved' "
+                "WHERE workspace_id=? AND relative_path=?",
+                (destination, _now(), workspace_id, source),
+            )
+            db.commit()
+
+    def relocate_file_resource(self, workspace_id: str, file_id: str, destination: str) -> None:
+        with self._lock, self._connect() as db:
+            db.execute(
+                "UPDATE owop_file_resources SET relative_path=?, updated_at=?, last_state='moved' "
+                "WHERE workspace_id=? AND file_id=?",
+                (destination, _now(), workspace_id, file_id),
+            )
+            db.commit()
 
     @staticmethod
     def _event(row: sqlite3.Row) -> dict[str, Any]:
@@ -163,6 +259,8 @@ class LocalWorkspaceOperations:
         return {
             "workspace.describe": self.describe,
             "files.list": self.list_files,
+            "files.register": self.register_file,
+            "files.resolve": self.resolve_file,
             "files.stat": self.stat_file,
             "files.read": self.read_file,
             "files.write": self.write_file,
@@ -300,6 +398,187 @@ class LocalWorkspaceOperations:
                 result["digest"] = _digest(snapshot)
         return result
 
+    @staticmethod
+    def _digest_file(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+        return f"sha256:{digest.hexdigest()}"
+
+    @staticmethod
+    def _resource_capabilities(kind: str, mime_type: str | None) -> dict[str, bool]:
+        previewable = kind == "file" and bool(
+            (mime_type or "").startswith(("text/", "image/", "audio/", "video/"))
+            or mime_type in {"application/json", "application/pdf", "application/xml"}
+        )
+        return {
+            "read": kind == "file",
+            "preview": previewable,
+            "download": kind == "file",
+            "reveal": True,
+            "open_external": False,
+        }
+
+    def _file_resource_descriptor(
+        self,
+        file_id: str,
+        relative_path: str,
+        path: Path | None,
+        *,
+        state: str,
+        digest: str | None = None,
+    ) -> dict[str, Any]:
+        if path is None:
+            kind = "file"
+            mime_type = _mime_type(relative_path)
+            return {
+                "file_id": file_id,
+                "path": relative_path,
+                "name": Path(relative_path).name,
+                "kind": kind,
+                "mime_type": mime_type,
+                "size": 0,
+                "modified_ns": 0,
+                "digest": digest,
+                "state": state,
+                "capabilities": {key: False for key in ("read", "preview", "download", "reveal", "open_external")},
+            }
+        info = path.stat()
+        kind = "directory" if path.is_dir() else "file"
+        current_digest = self._digest_file(path) if kind == "file" else None
+        mime_type = _mime_type(relative_path) if kind == "file" else None
+        return {
+            "file_id": file_id,
+            "path": relative_path,
+            "name": path.name,
+            "kind": kind,
+            "mime_type": mime_type,
+            "size": info.st_size,
+            "modified_ns": info.st_mtime_ns,
+            "digest": current_digest,
+            "state": state,
+            "capabilities": self._resource_capabilities(kind, mime_type),
+        }
+
+    def register_file(self, params: Mapping[str, Any]) -> dict[str, Any]:
+        value = str(params["path"])
+        path = self._path(value, strict=True)
+        info = path.stat()
+        relative = path.relative_to(self.root).as_posix()
+        kind = "directory" if path.is_dir() else "file"
+        current_digest = self._digest_file(path) if kind == "file" else None
+        expected_digest = params.get("expected_digest")
+        if expected_digest is not None and expected_digest != current_digest:
+            raise OWOPError(
+                "owop_conflict",
+                "File digest changed before registration.",
+                "operation",
+                details={"expected_digest": expected_digest, "actual_digest": current_digest},
+            )
+        record = self.journal.register_file_resource(
+            self.workspace_id,
+            relative,
+            kind=kind,
+            digest=current_digest,
+            device=int(info.st_dev),
+            inode=int(info.st_ino),
+        )
+        return {"resource": self._file_resource_descriptor(record["file_id"], relative, path, state="available")}
+
+    def _find_relocated_resource(
+        self,
+        record: Mapping[str, Any],
+        *,
+        max_entries: int,
+        deadline: float,
+    ) -> tuple[tuple[str, Path] | None, int, bool]:
+        """Bounded repair helper; never called from foreground resolve."""
+        expected_identity = (int(record["device"]), int(record["inode"]))
+        scanned = 0
+        for directory, names, files in os.walk(self.root):
+            names[:] = [name for name in names if name not in IGNORED_DIRECTORIES]
+            for name in [*names, *files]:
+                if scanned >= max_entries or time.monotonic() >= deadline:
+                    return None, scanned, False
+                scanned += 1
+                candidate = Path(directory) / name
+                try:
+                    info = candidate.lstat()
+                except (FileNotFoundError, PermissionError):
+                    continue
+                attributes = int(getattr(info, "st_file_attributes", 0))
+                if stat.S_ISLNK(info.st_mode) or attributes & int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)):
+                    continue
+                if (int(info.st_dev), int(info.st_ino)) == expected_identity:
+                    relative = candidate.relative_to(self.root).as_posix()
+                    return (relative, candidate), scanned, True
+        return None, scanned, True
+
+    def repair_relocations(
+        self,
+        *,
+        max_entries: int = 10_000,
+        time_budget_seconds: float = 2.0,
+    ) -> dict[str, Any]:
+        """Run an explicitly scheduled, bounded relocation repair pass."""
+
+        if not 1 <= max_entries <= 10_000 or not 0 < time_budget_seconds <= 2.0:
+            raise ValueError("resource_repair_limits_invalid")
+        deadline = time.monotonic() + time_budget_seconds
+        scanned = 0
+        repaired = 0
+        complete = True
+        # A bounded query avoids loading or scanning an unbounded index.
+        with self.journal._connect() as db:
+            records = [dict(row) for row in db.execute(
+                "SELECT * FROM owop_file_resources WHERE workspace_id=? ORDER BY updated_at LIMIT ?",
+                (self.workspace_id, max_entries),
+            ).fetchall()]
+        for record in records:
+            if scanned >= max_entries or time.monotonic() >= deadline:
+                complete = False
+                break
+            try:
+                self._path(str(record["relative_path"]), strict=True)
+                continue
+            except OWOPError as exc:
+                if exc.code not in {"workspace_path_unavailable", "workspace_path_invalid"}:
+                    continue
+            relocated, consumed, search_complete = self._find_relocated_resource(
+                record,
+                max_entries=max_entries - scanned,
+                deadline=deadline,
+            )
+            scanned += consumed
+            complete = complete and search_complete
+            if relocated is not None:
+                relative, _path = relocated
+                self.journal.relocate_file_resource(self.workspace_id, str(record["file_id"]), relative)
+                repaired += 1
+            if not search_complete:
+                break
+        return {"scanned": scanned, "repaired": repaired, "complete": complete}
+
+    def resolve_file(self, params: Mapping[str, Any]) -> dict[str, Any]:
+        file_id = str(params["file_id"])
+        record = self.journal.file_resource(self.workspace_id, file_id)
+        if record is None:
+            raise OWOPError("resource_not_found", "File resource is unavailable.", "operation")
+        relative = str(record["relative_path"])
+        try:
+            path = self._path(relative, strict=True)
+            state = str(record.get("last_state") or "available")
+        except OWOPError as exc:
+            if exc.code not in {"workspace_path_unavailable", "workspace_path_invalid"}:
+                raise
+            return {"resource": self._file_resource_descriptor(file_id, relative, None, state="deleted", digest=record.get("digest"))}
+        descriptor = self._file_resource_descriptor(file_id, relative, path, state=state)
+        expected_digest = params.get("expected_digest") or record.get("digest")
+        if expected_digest and descriptor["digest"] != expected_digest and descriptor["state"] != "moved":
+            descriptor["state"] = "changed"
+        return {"resource": descriptor}
+
     def read_file(self, params: Mapping[str, Any]) -> dict[str, Any]:
         path = self._path(str(params["path"]), strict=True)
         offset, length = int(params["offset"]), int(params["length"])
@@ -379,6 +658,7 @@ class LocalWorkspaceOperations:
         self._secure_recheck(destination_value)
         os.replace(source, destination)
         self._secure_recheck(destination_value, include_leaf=True)
+        self.journal.move_file_resource(self.workspace_id, source_value, destination_value)
         event = self.journal.append(self.workspace_id, "file.renamed", {"source": source_value, "destination": destination_value})
         return {"source": source_value, "destination": destination_value, "event": event}
 

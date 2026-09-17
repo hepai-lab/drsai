@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "feature_id": "M02-F06",
+  "acceptance_run_id": "p10-round-011-first-example-task",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "examples": [
+    {"kind":"chat","required_tool":null,"completed":true},
+    {"kind":"retrieval","required_tool":"web.search","citation":"https://www.hepix.org/","completed":true},
+    {"kind":"local_safe_tool","required_tool":"get_device_info","risk":"read_only","completed":true}
+  ],
+  "contracts": {
+    "capability_filtered":true,
+    "at_least_one_completable_within_ms":180000,
+    "failure_keeps_step":"FIRST_TASK",
+    "failure_requires_relogin":false,
+    "completion_requires_successful_run":true
+  },
+  "tests": {
+    "testDebugUnitTest":"663 tests, 0 failures, 2 skipped",
+    "FirstTaskJourneyInstrumentedTest_API35":"1 passed; all 3 examples completed",
+    "MainInterfaceTest_API35":"27 passed"
+  }
+}

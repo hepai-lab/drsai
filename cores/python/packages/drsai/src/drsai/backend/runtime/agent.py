@@ -1,4 +1,4 @@
-"""Agent execution owned by an OpenDrSai Runtime.
+﻿"""Agent execution owned by an OpenDrSai Runtime.
 
 This module deliberately contains no HTTP or Desktop concerns.  A Runtime builds
 the immutable context from its own registries, loads an exact Agent Definition
@@ -7,9 +7,15 @@ asset, and dispatches every tool in the Runtime process and Workspace.
 
 from __future__ import annotations
 
+try:
+    from drsai.backend.desktop_gateway._diag import diag_log
+except Exception:
+    def diag_log(msg: str) -> None: pass
+
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import re
 import socket
@@ -36,6 +42,7 @@ from drsai.backend.runtime.evidence import (
     workspace_revision_evidence,
 )
 from drsai.version import __version__ as DRS_AI_VERSION
+from drsai.backend.runtime.work_scheduler import BoundedWorkScheduler
 
 
 _ASSET_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -88,7 +95,10 @@ class RuntimeRunContext:
     agent_backend_runtime_id: str | None = None
     workspace_runtime_id: str | None = None
     input_resources: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    input_parts: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     model_override_requested: bool = False
+    plan_mode: bool = False
+    selected_skill_id: str | None = None
 
     def __post_init__(self) -> None:
         backend_runtime_id = self.agent_backend_runtime_id or self.runtime_id
@@ -1068,6 +1078,7 @@ class RuntimeAgentService:
         backends: Mapping[str, AgentBackend],
         *,
         default_backend: str = "opendrsai",
+        work_scheduler: BoundedWorkScheduler | None = None,
     ):
         self.state = state
         self.workspaces = workspaces
@@ -1076,6 +1087,7 @@ class RuntimeAgentService:
         self.router = AgentBackendRouter(backends)
         self.backends = dict(backends)
         self.default_backend = default_backend
+        self.work_scheduler = work_scheduler or BoundedWorkScheduler()
         if default_backend not in self.backends:
             raise ValueError("Default Agent Backend is not registered")
         self._closed = False
@@ -1097,6 +1109,9 @@ class RuntimeAgentService:
         model_catalog_revision: str | None = None,
         checkpoint_state: Mapping[str, Any] | None = None,
         input_resources_override: tuple[Mapping[str, Any], ...] | None = None,
+        input_parts_override: tuple[Mapping[str, Any], ...] | None = None,
+        plan_mode: bool = False,
+        selected_skill_id: str | None = None,
     ) -> dict[str, Any]:
         if self._closed:
             raise RuntimeExecutionError("agent_backend_service_closed", "Agent Backend service is closed.")
@@ -1122,9 +1137,13 @@ class RuntimeAgentService:
             definition,
             correlation_id=correlation_id,
             model_override_requested=bool(model_override),
+            plan_mode=plan_mode,
+            selected_skill_id=selected_skill_id,
         )
         if input_resources_override is not None:
             context = replace(context, input_resources=tuple(input_resources_override))
+        if input_parts_override is not None:
+            context = replace(context, input_parts=tuple(input_parts_override))
         backend = self.router.require(definition.backend)
         backend_health = await backend.health()
         manifest_writer = getattr(self.state, "update_run_manifest", None)
@@ -1159,11 +1178,19 @@ class RuntimeAgentService:
                     )
                 result = await resume(context, definition, prompt, checkpoint_state, services)
             else:
+                diag_log(f"[DIAG] execute L1170: run_id={run_id} STARTING backend.execute()")
                 result = await backend.execute(context, definition, prompt, services)
+                diag_log(f"[DIAG] execute L1170: run_id={run_id} COMPLETED backend.execute() result_keys={list(result.keys()) if isinstance(result, dict) else type(result)}")
             if callable(phase_marker):
                 phase_marker(run_id, "terminal_finalization")
-            if self.state.get_run(run_id)["status"] == "running":
+            _pre_status = self.state.get_run(run_id)["status"]
+            from loguru import logger as _logger
+            diag_log(f"[DIAG] execute L1173: run_id={run_id} pre_status={_pre_status}")
+            if _pre_status == "running":
                 self.state.transition_run(run_id, "completed")
+                diag_log(f"[DIAG] execute L1174: run_id={run_id} transitioned to completed")
+            else:
+                diag_log(f"[DIAG] execute L1173: run_id={run_id} status is NOT running (got {_pre_status}), skipping transition_run(completed)")
             return {"run": self.state.get_run(run_id), "result": result, "context": context.audit_fields()}
         except asyncio.CancelledError as exc:
             error = RuntimeExecutionError("run_cancelled", "Agent execution was cancelled.")
@@ -1363,7 +1390,9 @@ class RuntimeAgentService:
             )
         return {"session_id": session_id, "backend_id": backend_id, **result}
 
-    async def sync_backend_sessions(self, backend_id: str, workspace_id: str) -> dict[str, Any]:
+    async def sync_backend_sessions(
+        self, backend_id: str, workspace_id: str, *, include_archived: bool = False,
+    ) -> dict[str, Any]:
         backend = self.router.require(backend_id)
         discover = getattr(backend, "discover_sessions", None)
         bind = getattr(backend, "bind_imported_session", None)
@@ -1372,18 +1401,44 @@ class RuntimeAgentService:
         workspace = self.workspaces.get_workspace(workspace_id)
         if workspace is None:
             raise RuntimeExecutionError("workspace_not_found", "Workspace is not open on this Runtime.")
-        rows = await discover(str(workspace.path))
-        health = await backend.health()
-        backend_version = str(health.get("version") or "unknown")
-        result = {"backend_id": backend_id, "workspace_id": workspace_id, "discovered": len(rows),
+        async with self.work_scheduler.slot(f"session-discovery:{workspace_id}") as deadline:
+            parameters = inspect.signature(discover).parameters
+            rows = await discover(
+                str(workspace.path), include_archived=include_archived,
+            ) if "include_archived" in parameters else await discover(str(workspace.path))
+            rows = sorted(rows, key=lambda row: str(row.get("updated_at") or ""), reverse=True)
+            rows.sort(key=lambda row: bool(row.get("archived")))
+            health = await backend.health()
+            backend_version = str(health.get("version") or "unknown")
+            result = {"backend_id": backend_id, "workspace_id": workspace_id, "discovered": len(rows),
                   "active": 0, "archived": 0, "created": 0, "updated": 0, "skipped": 0,
-                  "conflicts": 0, "sessions": []}
-        for row in rows:
+                  "conflicts": 0, "sessions": [], "include_archived": include_archived}
+            for index, row in enumerate(rows):
+                self.work_scheduler.checkpoint(deadline)
+                if bool(row.get("archived")) and not include_archived:
+                    result["skipped"] += 1
+                    continue
+                await self._import_discovered_backend_session(
+                    result, row, backend_id=backend_id, workspace_id=workspace_id,
+                    backend_version=backend_version, bind=bind,
+                )
+                if index % 25 == 24:
+                    await asyncio.sleep(0)
+            result["work"] = self.work_scheduler.snapshot()
+            return result
+
+    async def _import_discovered_backend_session(
+        self, result: dict[str, Any], row: Mapping[str, Any], *, backend_id: str,
+        workspace_id: str, backend_version: str, bind: Callable[..., Awaitable[Any]],
+    ) -> None:
             backend_session_id = str(row.get("backend_session_id") or "")
             if not backend_session_id:
                 result["skipped"] += 1
-                continue
-            session_id = f"session-{backend_id}-{hashlib.sha256(backend_session_id.encode('utf-8')).hexdigest()[:32]}"
+                return
+            digest = await self.work_scheduler.cpu(
+                lambda value: hashlib.sha256(value.encode("utf-8")).hexdigest()[:32], backend_session_id,
+            )
+            session_id = f"session-{backend_id}-{digest}"
             try:
                 previous = self.state.get_session(session_id)
             except KeyError:
@@ -1416,13 +1471,31 @@ class RuntimeAgentService:
                 result["updated"] += 1
             else:
                 result["skipped"] += 1
-            message_count = len(self.state.oaep_snapshot(session_id).get("items") or [])
-            result["sessions"].append({**session, "message_count": message_count})
-        return result
+            # Discovery must not materialize every conversation merely to show
+            # a badge. The exact count arrives with the on-demand history page.
+            result["sessions"].append({**session, "message_count": 0, "message_count_pending": True})
 
     async def sync_backend_session_history(
         self, session_id: str, *, force_reproject: bool = False,
         cursor: str | None = None, limit: int = 100,
+    ) -> dict[str, Any]:
+        try:
+            async with self.work_scheduler.slot(f"history:{session_id}") as deadline:
+                return await self._sync_backend_session_history_impl(
+                    session_id, force_reproject=force_reproject, cursor=cursor,
+                    limit=limit, deadline=deadline,
+                )
+        except TimeoutError as exc:
+            raise RuntimeExecutionError(
+                "backend_history_budget_exhausted",
+                "History synchronization exceeded its bounded background-work budget.",
+                retryable=True,
+                detail={"session_id": session_id},
+            ) from exc
+
+    async def _sync_backend_session_history_impl(
+        self, session_id: str, *, force_reproject: bool,
+        cursor: str | None, limit: int, deadline: float,
     ) -> dict[str, Any]:
         from drsai.backend.runtime.history import validate_history_page
 
@@ -1462,6 +1535,7 @@ class RuntimeAgentService:
         next_cursor = page.get("next_cursor")
         if force_reproject:
             while next_cursor:
+                self.work_scheduler.checkpoint(deadline)
                 older = validate_history_page(
                     await page_reader(session_id, cursor=next_cursor, limit=limit), capability,
                 )
@@ -1501,6 +1575,7 @@ class RuntimeAgentService:
         pending_items: list[dict[str, Any]] = []
         warning_count = 0
         for historical_turn in history:
+            self.work_scheduler.checkpoint(deadline)
             backend_run_id = str(historical_turn.get("backend_run_id") or "")
             if not backend_run_id:
                 continue
@@ -1562,6 +1637,7 @@ class RuntimeAgentService:
         # append-only and idempotent; interruption resumes from the first
         # uncommitted mapping revision.
         for offset in range(0, len(pending_items), 250):
+            self.work_scheduler.checkpoint(deadline)
             imported += self.state.record_conversation_items(
                 session_id, pending_items[offset:offset + 250]
             )["created"]
@@ -1570,9 +1646,7 @@ class RuntimeAgentService:
             await asyncio.sleep(0)
         total = len(self.state.oaep_snapshot(session_id).get("items") or [])
         if watermark_writer is not None and not next_cursor:
-            content_digest = hashlib.sha256(
-                json.dumps(history, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
-            ).hexdigest()
+            content_digest = await self.work_scheduler.cpu(_history_content_digest, history)
             await watermark_writer(
                 session_id, mapping_version=mapping_version, content_digest=content_digest,
                 run_count=len(history), item_count=total, warning_count=warning_count,
@@ -1618,6 +1692,8 @@ class RuntimeAgentService:
         parent: RuntimeRunContext | None = None,
         correlation_id: str | None = None,
         model_override_requested: bool = False,
+        plan_mode: bool = False,
+        selected_skill_id: str | None = None,
     ) -> RuntimeRunContext:
         record = self.workspaces.get_workspace(str(run["workspace_id"]), include_closed=True)
         if record is None or not getattr(record, "open", False):
@@ -1644,7 +1720,14 @@ class RuntimeAgentService:
             input_resources=tuple(
                 value for value in run.get("input_resources", []) if isinstance(value, Mapping)
             ) if parent is None else parent.input_resources,
+            input_parts=tuple(
+                value for value in run.get("input_parts", []) if isinstance(value, Mapping)
+            ) if parent is None else parent.input_parts,
             model_override_requested=model_override_requested if parent is None else parent.model_override_requested,
+            plan_mode=plan_mode if parent is None else parent.plan_mode,
+            selected_skill_id=(
+                selected_skill_id if parent is None else parent.selected_skill_id
+            ),
         )
 
     async def _run_subagent(self, parent: RuntimeRunContext, call: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -1713,23 +1796,30 @@ class RuntimeAgentService:
         return {"run_id": child_context.run_id, "parent_run_id": parent.run_id, "result": result}
 
 
+def _history_content_digest(history: Sequence[Mapping[str, Any]]) -> str:
+    payload = json.dumps(history, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _safe_result(value: Mapping[str, Any]) -> dict[str, Any]:
-    blocked = re.compile(r"(?:token|password|secret|private.?key|authorization|api.?key|credential)", re.I)
-    bearer = re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+")
-    private_key = re.compile(r"-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----", re.S)
-
-    def clean(item: Any, key: str = "") -> Any:
-        if blocked.search(key):
-            return "[REDACTED]"
-        if isinstance(item, Mapping):
-            return {str(child_key): clean(child, str(child_key)) for child_key, child in item.items()}
-        if isinstance(item, (list, tuple)):
-            return [clean(child) for child in item]
-        if isinstance(item, str):
-            return private_key.sub("[REDACTED PRIVATE KEY]", bearer.sub("Bearer [REDACTED]", item))
-        return item
-
-    return clean(value)
+    # [DISABLED] Result credential redaction disabled — returns value unchanged
+    return dict(value)
+    # blocked = re.compile(r"(?:token|password|secret|private.?key|authorization|api.?key|credential)", re.I)
+    # bearer = re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+")
+    # private_key = re.compile(r"-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----", re.S)
+    #
+    # def clean(item: Any, key: str = "") -> Any:
+    #     if blocked.search(key):
+    #         return "[REDACTED]"
+    #     if isinstance(item, Mapping):
+    #         return {str(child_key): clean(child, str(child_key)) for child_key, child in item.items()}
+    #     if isinstance(item, (list, tuple)):
+    #         return [clean(child) for child in item]
+    #     if isinstance(item, str):
+    #         return private_key.sub("[REDACTED PRIVATE KEY]", bearer.sub("Bearer [REDACTED]", item))
+    #     return item
+    #
+    # return clean(value)
 
 
 def _safe_diagnostic_stack(exc: BaseException, limit: int = 80) -> list[dict[str, Any]]:

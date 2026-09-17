@@ -2,39 +2,46 @@
 name: presentations
 description: Read, create, edit, render, and verify PowerPoint PPTX decks. Use for presentation, slide deck, PowerPoint, PPT, PPTX, or Google Slides requests.
 compatibility: node, @oai/artifact-tool 2.7.3+, python, LibreOffice or PowerPoint rendering support
-required_tools: [run_bash, run_powershell, get_powershell_task, run_read, run_write, run_edit, run_grep, run_glob]
+required_tools: [exec, read, write, edit, grep, glob]
 ---
 
-## DrSai Port Notes
+## OpenDrSai Integration Notes
 
-This is the standalone DrSai port of the Codex presentation skill. The whole `presentations` folder is the reusable skill package: copy it under any DrSai skill root and point DrSai's skill loader at that parent directory.
+This folder is the reusable OpenDrSai presentation skill package. Copy it under an OpenDrSai skill root and point the skill loader at that parent directory.
 
-Use DrSai's native tools:
+Use OpenDrSai's native tools:
 
-- Use `run_read` to inspect skill resources and existing files.
-- Use `run_write` or `run_edit` to create and update generated `.mjs`, notes, and support files.
-- Use `run_bash` for Node, Python, rendering, montage, and validation commands on Unix-like shells.
-- On Windows or when `run_bash` is unavailable, use `run_powershell` for Node, Python, rendering, montage, and validation commands; use `get_powershell_task` for long-running background checks.
-- Use `run_grep` and `run_glob` to locate files before reading them.
+- Use `read` to inspect skill resources and existing files.
+- Use `write` or `edit` to create and update generated `.mjs`, notes, and support files.
+- Use `exec` for Node, Python, rendering, montage, and validation commands. On Windows, prefer PowerShell commands.
+- Use `grep` and `glob` to locate files before reading them.
 
-Set `SKILL_DIR` to the absolute loaded skill directory shown by the Skill tool. For this standalone package, it is usually `<skill-root>/presentations`. Put temporary work under a writable build directory in the active workspace. Put only the final `.pptx` in the user-requested output path, or in the active workspace when no output path is provided.
-
-This package vendors `@oai/artifact-tool` under `node_modules/@oai/artifact-tool`, so a DrSai-only environment can create PPTX files without a Codex runtime installation.
+Set `SKILL_DIR` to the absolute loaded skill directory. Put temporary work under a writable build directory in the active workspace. Put only the final `.pptx` in the user-requested output path, or in the active workspace when no output path is provided.
 
 `container_tools/setup_artifact_tool_workspace.mjs` resolves `@oai/artifact-tool` in this order:
 
-1. `ARTIFACT_TOOL_PACKAGE_DIR` pointing directly to the `@oai/artifact-tool` package directory.
-2. `ARTIFACT_TOOL_NODE_MODULES` pointing to a `node_modules` directory containing `@oai/artifact-tool`.
+1. `ARTIFACT_TOOL_PACKAGE_DIR` pointing directly to the package directory.
+2. `ARTIFACT_TOOL_NODE_MODULES` pointing to a `node_modules` directory containing the package.
 3. `$TMP_DIR/node_modules/@oai/artifact-tool`.
 4. `SKILL_DIR/node_modules/@oai/artifact-tool`.
-5. The bundled Codex runtime cache, when present on the machine.
+5. A discoverable local `node_modules` installation.
 
-For a DrSai-only deployment without Codex installed, keep the vendored `node_modules/@oai/artifact-tool` directory in this skill package, or provide an override through one of the first three options.
+The package is not assumed to be bundled. A local installation or one of the explicit paths above is required.
+
+### First-time Setup
+
+After installing or updating this skill, run the dependency setup script once:
+
+```bash
+node "$SKILL_DIR/container_tools/setup_dependencies.mjs"
+```
+
+This runs `npm install` inside the skill directory, creating `node_modules/` with `@oai/artifact-tool`, `sharp`, and `lucide`. The `node_modules/` directory is a runtime artifact — do not commit it.
 
 ## Google Slides Routing
 
-- **Existing native Google Slides deck**: use the Google Drive plugin's Google Slides skill. Do not round-trip through a local PPTX unless the user asks.
-- **Net-new native Google Slides deck**: read `routing/google_slides.md`, create and verify a local PPTX with this skill, then import it as a native Google Slides deck.
+- **Existing native Google Slides deck**: if a Google Slides integration is configured in the OpenDrSai environment, use it for edits to an existing native deck. Do not round-trip through a local PPTX unless the user asks.
+- **Net-new native Google Slides deck**: read `routing/google_slides.md`, create and verify a local PPTX with this skill, then import it if a Google Slides integration is available.
 - **PowerPoint or local deck**: continue with the local workflow below.
 
 ## Available Resources
@@ -56,9 +63,9 @@ The following helper scripts are located in the `container_tools/` directory:
 
 For every local PPTX workflow, choose exactly one visual route. The first matching route wins:
 
-1. **User-provided PPTX, reference deck, or template**: treat an existing PPTX being edited as the visual source too. Read `references/template-following.md`, inspect every source slide, duplicate selected source slides, and edit inherited elements in place. Do not mix in Codex Grid or another template.
-2. **Explicit custom visual direction without a reference deck**: create the deck from scratch using the requested theme, brand treatment, mood, or formatting. Do not use Codex Grid.
-3. **No visual direction**: create a clean deck from scratch with a restrained, domain-appropriate theme. Do not depend on the Codex Grid layout library in this minimal DrSai port.
+1. **User-provided PPTX, reference deck, or template**: treat an existing PPTX being edited as the visual source too. Read `references/template-following.md`, inspect every source slide, duplicate selected source slides, and edit inherited elements in place. Do not mix in an unrelated template.
+2. **Explicit custom visual direction without a reference deck**: create the deck from scratch using the requested theme, brand treatment, mood, or formatting. Do not introduce an unrelated template.
+3. **No visual direction**: create a clean deck from scratch with a restrained, domain-appropriate theme. Do not depend on an external layout library in the minimal OpenDrSai port.
 
 User-provided references and explicit visual direction always override the default from-scratch route.
 
