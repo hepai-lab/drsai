@@ -29,6 +29,21 @@ def _normalize_platform_url(url: str | None) -> str:
     return str(url or "").strip().rstrip("/")
 
 
+def _listed_agent_value(model: Any, key: str, default: Any = None) -> Any:
+    if isinstance(model, dict):
+        return model.get(key, default)
+    return getattr(model, key, default)
+
+
+def _listed_ddf_agent_id(model: Any) -> str:
+    return str(_listed_agent_value(model, "id") or "").strip()
+
+
+def _is_online_listed_ddf_agent(model: Any) -> bool:
+    """Treat missing `available` as online; only drop explicit false."""
+    return _listed_agent_value(model, "available", True) is not False
+
+
 def _agent_dict_from_remote_row(row: UserRemoteAgent) -> Dict[str, Any]:
     payload = dict(row.payload or {})
     payload["id"] = row.agent_id
@@ -253,6 +268,8 @@ def assemble_catalog_agents(
         if not isinstance(agent, dict):
             continue
         agent = dict(agent)
+        if str(agent.get("mode") or "").lower() == "ddf" and agent.get("available") is False:
+            continue
         if not agent.get("config"):
             agent["config"] = {
                 "name": agent.get("name"),
@@ -862,7 +879,7 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
                     )
                 if isinstance(agent_info, WorkerInfo):
                     return None
-                agent_info.update({"mode": "ddf"})
+                agent_info.update({"mode": "ddf", "available": True})
                 agent_info.update({"owner": agent_info.get("author")})
                 agent_info.update(
                     {
@@ -887,13 +904,21 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
                 return None
 
         model_ids = []
+        skipped_offline = 0
         for model in getattr(models, "data", None) or []:
-            if isinstance(model, dict):
-                mid = str(model.get("id") or "").strip()
-            else:
-                mid = str(getattr(model, "id", None) or "").strip()
-            if mid and mid != "hepai/custom-model":
-                model_ids.append(mid)
+            mid = _listed_ddf_agent_id(model)
+            if not mid or mid == "hepai/custom-model":
+                continue
+            if not _is_online_listed_ddf_agent(model):
+                skipped_offline += 1
+                continue
+            model_ids.append(mid)
+        if skipped_offline:
+            logger.info(
+                "Skipping %d offline DDF agents from list_agents for user %s",
+                skipped_offline,
+                user_id,
+            )
         if model_ids:
             fetched_agents = await asyncio.gather(
                 *(_fetch_model_info(model_id) for model_id in model_ids)

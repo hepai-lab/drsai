@@ -197,3 +197,45 @@ def test_partial_get_info_success_drops_dead_workers(monkeypatch):
     assert db.deleted is False
     assert db.upserted is not None
     assert db.upserted.agents[0]["name"] == "AliveAgent"
+
+
+def test_offline_listed_agents_skip_get_info(monkeypatch):
+    _patch_platform(monkeypatch)
+    monkeypatch.setattr(
+        configs,
+        "HepAI",
+        _hepai_with_models(
+            [
+                {"id": "worker/online", "available": True},
+                {"id": "worker/offline", "available": False},
+            ]
+        ),
+    )
+    connected = []
+
+    class FakeHRModel:
+        @staticmethod
+        def connect(*, name, **kwargs):  # noqa: ARG004
+            connected.append(name)
+
+            class Worker:
+                def get_info(self):
+                    return {"name": "OnlineAgent", "author": USER_ID}
+
+            return Worker()
+
+    monkeypatch.setattr(configs, "HRModel", FakeHRModel)
+    db = FakeDB()
+
+    result = asyncio.run(
+        configs.get_ddf_agents(
+            USER_ID,
+            authorization="Bearer sk-test",
+            is_refresh=True,
+            db=db,
+        )
+    )
+
+    assert connected == ["worker/online"]
+    assert [agent["name"] for agent in result["data"]] == ["OnlineAgent"]
+    assert result["data"][0]["available"] is True
