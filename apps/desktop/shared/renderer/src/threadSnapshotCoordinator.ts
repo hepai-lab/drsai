@@ -8,6 +8,22 @@ export interface ThreadSnapshotWaterline {
   actionRequired: boolean;
 }
 
+/**
+ * Why a Snapshot envelope cannot advance this Thread's waterline.
+ *
+ * ``generation_regressed`` means Hydration answered with an older projection
+ * (typically a persisted one, which has no Runtime waterline at all);
+ * ``sequence_regressed`` means the envelope is on the current generation but
+ * behind the boundary already displayed.  Both used to be silent, which is why
+ * a permanently stalled Patch stream produced no diagnostic at all.
+ */
+export type ThreadSnapshotEnvelopeRejection = "generation_regressed" | "sequence_regressed";
+
+/** Whether an envelope carries a Runtime waterline a Patch stream can continue from. */
+export function envelopeHasRuntimeWaterline(envelope: Pick<DesktopThreadSnapshotEnvelope, "generation" | "sessionSequence">): boolean {
+  return envelope.generation > 0 || envelope.sessionSequence > 0;
+}
+
 const MAX_RESYNC_FAILURES = 3;
 
 /** Owns the atomic Snapshot/Patch waterline; it never owns message content. */
@@ -23,10 +39,20 @@ export class ThreadSnapshotCoordinator {
     return this.commitEnvelope(envelope, () => undefined);
   }
 
+  /** The rejection ``commitEnvelope`` would report, without mutating anything. */
+  rejectionOf(envelope: DesktopThreadSnapshotEnvelope): ThreadSnapshotEnvelopeRejection | null {
+    const current = this.states.get(envelope.threadId);
+    if (!current) return null;
+    if (envelope.generation < current.generation) return "generation_regressed";
+    if (envelope.generation === current.generation && envelope.sessionSequence < current.appliedSequence) {
+      return "sequence_regressed";
+    }
+    return null;
+  }
+
   commitEnvelope(envelope: DesktopThreadSnapshotEnvelope, applySnapshot: () => void): boolean {
     const current = this.states.get(envelope.threadId);
-    if (current && (envelope.generation < current.generation
-      || (envelope.generation === current.generation && envelope.sessionSequence < current.appliedSequence))) return false;
+    if (this.rejectionOf(envelope)) return false;
     const next = {
       generation: envelope.generation,
       appliedSequence: envelope.sessionSequence,

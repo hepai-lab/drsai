@@ -29,10 +29,14 @@ from drsai.backend.runtime.engine import RuntimeEngine, RuntimeEngineIdentity
 from drsai.backend.runtime.journal import (
     DELTA_ACCUMULATED_KEYS,
     MAX_DELTA_JOURNAL_PAYLOAD_BYTES,
+    RUNTIME_EVENT_BINDING_KEYS,
     compact_delta_payload,
+    compact_journal_item_payload,
     ensure_journal_update_guard,
+    hydrate_delta_binding,
     repair_legacy_delta_rows,
 )
+from drsai.backend.runtime.oaep import project_event
 
 WORKSPACE_ID = "ws-delta"
 CHUNK = "0123456789abcdef" * 4  # 64 chars
@@ -138,6 +142,67 @@ def _as_legacy(database: Path, session_id: str, *, accumulated: str = "L" * 2048
                 **envelope["payload"],
                 "text": accumulated,
                 "content": accumulated,
+            }
+            connection.execute(
+                "UPDATE runtime_session_journal SET payload_json=? WHERE rowid=?",
+                (_canonical(envelope), int(row["rowid"])),
+            )
+            rewritten += 1
+    return rewritten
+
+
+def _stream_with_binding(
+    engine: RuntimeEngine, chunks: list[str]
+) -> tuple[str, str, dict[str, object]]:
+    """Create a Session/Run and stream chunks that carry the Run/Session binding.
+
+    ``RuntimeEngine.append_event`` merges the caller's data into the accumulated
+    Item payload, so passing the binding is what the Backend adapters do on every
+    streamed chunk of a real Run.
+    """
+    session = engine.create_session(WORKSPACE_ID, "delta binding")
+    session_id = str(session["session_id"])
+    run, _created = engine.create_run(
+        session_id, "agent-definition", f"idem-binding-{session_id}"
+    )
+    run_id = str(run["run_id"])
+    binding: dict[str, object] = {
+        "run_id": run_id,
+        "session_id": session_id,
+        "workspace_id": WORKSPACE_ID,
+        "runtime_id": "rt-delta",
+        "instance_id": "inst-delta",
+        "correlation_id": f"corr-{run_id}",
+    }
+    for index, chunk in enumerate(chunks, start=1):
+        engine.append_event(run_id, "message.delta", {**binding, "text": chunk, "index": index})
+    return session_id, run_id, binding
+
+
+def _replay_legacy_binding(database: Path, session_id: str) -> int:
+    """Rewrite a Session's delta rows to repeat the binding of their Item."""
+    rewritten = 0
+    with _journal_maintenance(database) as connection:
+        rows = connection.execute(
+            "SELECT rowid,item_id,payload_json FROM runtime_session_journal "
+            "WHERE session_id=? AND event_kind='conversation.item.delta' ORDER BY rowid",
+            (session_id,),
+        ).fetchall()
+        for row in rows:
+            item_row = connection.execute(
+                "SELECT payload_json FROM runtime_conversation_items WHERE item_id=?",
+                (row["item_id"],),
+            ).fetchone()
+            assert item_row is not None
+            item_payload = json.loads(str(item_row["payload_json"]))
+            envelope = json.loads(str(row["payload_json"]))
+            envelope["payload"] = {
+                **envelope["payload"],
+                **{
+                    key: item_payload[key]
+                    for key in RUNTIME_EVENT_BINDING_KEYS
+                    if key in item_payload
+                },
             }
             connection.execute(
                 "UPDATE runtime_session_journal SET payload_json=? WHERE rowid=?",
@@ -635,3 +700,252 @@ def test_guard_upgrade_enables_repair_on_legacy_databases(tmp_path: Path) -> Non
         set(DELTA_ACCUMULATED_KEYS).isdisjoint(payload)
         for payload in _delta_payloads(database, session_id)
     )
+
+
+# --------------------------------------------------------------------------- #
+# The Run/Session binding is stored once, in the Conversation Item
+# --------------------------------------------------------------------------- #
+
+
+def test_compact_journal_item_payload_drops_only_item_reproduced_binding() -> None:
+    payload = {
+        "run_id": "run-1",
+        "session_id": "session-1",
+        "workspace_id": WORKSPACE_ID,
+        "delta": "abc",
+        "status": "streaming",
+    }
+    canonical = {"run_id": "run-1", "session_id": "session-1"}
+
+    compact = compact_journal_item_payload(
+        "conversation.item.delta", payload, canonical=canonical
+    )
+    assert compact == {
+        "workspace_id": WORKSPACE_ID,
+        "delta": "abc",
+        "status": "streaming",
+    }
+    # the caller's payload is never mutated
+    assert payload["run_id"] == "run-1"
+
+    # a binding the Item does not reproduce is the row's own information
+    assert compact_journal_item_payload(
+        "conversation.item.delta", {**payload, "run_id": "run-elsewhere"}, canonical=canonical
+    ) == {
+        "workspace_id": WORKSPACE_ID,
+        "delta": "abc",
+        "status": "streaming",
+        "run_id": "run-elsewhere",
+    }
+
+    # without a canonical Item, or for a non-delta Event, nothing is dropped
+    assert compact_journal_item_payload("conversation.item.delta", payload) == payload
+    assert (
+        compact_journal_item_payload(
+            "conversation.item.upsert", payload, canonical=canonical
+        )
+        == payload
+    )
+
+
+def test_hydrate_delta_binding_restores_only_the_removed_binding() -> None:
+    canonical = {"run_id": "run-1", "session_id": "session-1", "text": "accumulated"}
+    stripped = {
+        "item_id": "assistant:run-1",
+        "payload": {"delta": "abc", "status": "streaming"},
+    }
+
+    restored = hydrate_delta_binding(stripped, canonical)
+    assert restored["payload"] == {
+        "run_id": "run-1",
+        "session_id": "session-1",
+        "delta": "abc",
+        "status": "streaming",
+    }
+    # the stored row wins: hydration only fills what is missing
+    assert hydrate_delta_binding(
+        {"payload": {"delta": "abc", "run_id": "row-owned"}}, canonical
+    )["payload"] == {"delta": "abc", "run_id": "row-owned", "session_id": "session-1"}
+
+    intact = {"payload": {"delta": "abc", "run_id": "run-1", "session_id": "session-1"}}
+    assert hydrate_delta_binding(intact, canonical) == intact
+    assert hydrate_delta_binding(intact, None) == intact
+    # the stored row is returned as-is, never mutated
+    assert intact["payload"] == {
+        "delta": "abc",
+        "run_id": "run-1",
+        "session_id": "session-1",
+    }
+
+
+def test_delta_row_drops_the_binding_its_item_keeps(tmp_path: Path) -> None:
+    engine, database = _engine(tmp_path)
+    session_id, run_id, binding = _stream_with_binding(engine, [CHUNK, CHUNK])
+    item_payload = _item_payload(database, f"assistant:{run_id}")
+
+    # the accumulated Item keeps the whole binding ...
+    assert {key: item_payload[key] for key in binding} == binding
+    # ... while the delta rows keep only their chunk
+    payloads = _delta_payloads(database, session_id)
+    assert len(payloads) == 2
+    for payload in payloads:
+        assert set(binding).isdisjoint(payload), payload
+        assert payload["delta"] == CHUNK
+        assert payload["status"] == "streaming"
+
+    # readers still see the binding, restored from the Item
+    deltas = [
+        event
+        for event in engine.list_session_events(session_id)
+        if event["kind"] == "conversation.item.delta"
+    ]
+    assert len(deltas) == len(payloads)
+    for event in deltas:
+        projected = event["payload"]["payload"]
+        assert {key: projected[key] for key in binding} == binding
+        assert projected["delta"] == CHUNK
+
+
+def test_repair_removes_the_delta_binding_and_is_idempotent(tmp_path: Path) -> None:
+    engine, database = _engine(tmp_path)
+    session_id, _run_id, binding = _stream_with_binding(engine, [BIG_CHUNK, BIG_CHUNK])
+    assert _replay_legacy_binding(database, session_id) == 2
+    for payload in _delta_payloads(database, session_id):
+        assert set(binding) <= set(payload)
+        # the binding is the only thing left to reclaim: no accumulated keys
+        assert set(DELTA_ACCUMULATED_KEYS).isdisjoint(payload)
+
+    connection = _connection(database)
+    try:
+        report = repair_legacy_delta_rows(connection, dry_run=True)
+        assert report["repaired"] == 2
+        assert report["bytes_before"] > report["bytes_after"] > 0
+        # a dry run must not write
+        assert set(binding) <= set(_delta_payloads(database, session_id)[0])
+        report = repair_legacy_delta_rows(connection)
+    finally:
+        connection.close()
+    assert report["repaired"] == 2
+
+    for payload in _delta_payloads(database, session_id):
+        assert set(binding).isdisjoint(payload), payload
+        assert payload["delta"] == BIG_CHUNK
+
+    connection = _connection(database)
+    try:
+        report = repair_legacy_delta_rows(connection)
+    finally:
+        connection.close()
+    assert report["repaired"] == 0
+    assert report["unchanged"] == 2
+
+
+def test_repair_keeps_a_binding_the_item_cannot_reproduce(tmp_path: Path) -> None:
+    engine, database = _engine(tmp_path)
+    session_id, run_id, binding = _stream_with_binding(engine, [CHUNK])
+
+    # The row's own ``run_id`` disagrees with the Item's, so the compaction must
+    # not assume the Item can replace it.
+    with _journal_maintenance(database) as connection:
+        row = connection.execute(
+            "SELECT rowid,payload_json FROM runtime_session_journal "
+            "WHERE session_id=? AND event_kind='conversation.item.delta'",
+            (session_id,),
+        ).fetchone()
+        envelope = json.loads(str(row["payload_json"]))
+        envelope["payload"] = {
+            **envelope["payload"],
+            **binding,
+            "run_id": "run-elsewhere",
+        }
+        connection.execute(
+            "UPDATE runtime_session_journal SET payload_json=? WHERE rowid=?",
+            (_canonical(envelope), int(row["rowid"])),
+        )
+
+    connection = _connection(database)
+    try:
+        report = repair_legacy_delta_rows(connection)
+    finally:
+        connection.close()
+
+    payload = _delta_payloads(database, session_id)[0]
+    assert report["repaired"] == 1
+    # the differing binding is the row's own information and survives ...
+    assert payload["run_id"] == "run-elsewhere"
+    assert "session_id" not in payload
+    assert "correlation_id" not in payload
+    # ... while the Item keeps the authoritative Run identity
+    assert _item_payload(database, f"assistant:{run_id}")["run_id"] == run_id
+
+
+def test_oaep_delta_projection_is_independent_of_the_stored_binding() -> None:
+    inner = {
+        "run_id": "run-1",
+        "session_id": "session-1",
+        "delta": BIG_CHUNK,
+        "status": "streaming",
+    }
+    event: dict[str, object] = {
+        "event_id": "se-1",
+        "runtime_id": "rt-delta",
+        "workspace_id": WORKSPACE_ID,
+        "session_id": "session-1",
+        "run_id": "run-1",
+        "session_sequence": 7,
+        "kind": "conversation.item.delta",
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "item_id": "assistant:run-1",
+        "item_revision": 3,
+        "payload": {
+            "item_id": "assistant:run-1",
+            "revision": 3,
+            "kind": "message",
+            "role": "assistant",
+            "source_client": "runtime",
+            "source_message_id": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "payload": inner,
+        },
+    }
+    compacted = {
+        **event,
+        "payload": {
+            **event["payload"],  # type: ignore[arg-type]
+            "payload": compact_journal_item_payload(
+                "conversation.item.delta",
+                inner,
+                canonical={"run_id": "run-1", "session_id": "session-1"},
+            ),
+        },
+    }
+    assert set(compacted["payload"]["payload"]) == {"delta", "status"}  # type: ignore[index]
+    # the OAEP envelope is projected from the chunk, so the reduction is invisible
+    assert project_event(compacted) == project_event(event)  # type: ignore[arg-type]
+
+
+def test_journal_maintenance_cli_reclaims_the_delta_binding(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    engine, database = _engine(tmp_path)
+    session_id, run_id, binding = _stream_with_binding(engine, [BIG_CHUNK] * 3)
+    assert _replay_legacy_binding(database, session_id) == 3
+
+    assert journal_maintenance.main(["--database", str(database), "--dry-run"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["repaired"] == 3
+    assert report["bytes_before"] > report["bytes_after"] > 0
+    assert set(binding) <= set(_delta_payloads(database, session_id)[0])
+
+    assert journal_maintenance.main(["--database", str(database), "--no-backup"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["repaired"] == 3
+    assert report["integrity_check"] == "ok"
+    for payload in _delta_payloads(database, session_id):
+        assert set(binding).isdisjoint(payload), payload
+        assert payload["delta"] == BIG_CHUNK
+
+    # the authoritative Item still holds the binding exactly once
+    item_payload = _item_payload(database, f"assistant:{run_id}")
+    assert {key: item_payload[key] for key in binding} == binding

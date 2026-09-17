@@ -231,18 +231,11 @@ class UserProfileManager:
 
 ## Preferences
 
-*(What do they care about? What projects are they working on? What annoys
-them? Build this over time. Edit this file directly — it is injected into your
-system prompt at the start of every session.)*
+*(Fill in over time — what they care about, what projects they work on.
+Edit this file directly; it is injected into the system prompt at session start.)*
 
-[User preferences and the agent's response style. To be filled based on user
-interactions.]
+## Workspace paths
 
----
-
-## Environment
-
-### Internal storage
 OpenDrSai's own workspace for this user — **not the user's project directory**.
 
 ```

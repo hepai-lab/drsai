@@ -366,6 +366,119 @@ try {
   assert.equal(coalesced?.source, "persisted", "Empty Runtime history must fall back to the persisted snapshot.");
   assert.equal(coalesced?.snapshot.messageCount, 2);
 
+  // A request that carries a waterline can only be answered by the Runtime.
+  // Answering it from the persisted projection (generation 0) made the renderer
+  // keep the boundary it already displayed, drop the snapshot, and then refuse
+  // every Patch -- including the event that ends the turn.
+  assert.equal(hydration.threadSnapshotRequestDemandsWaterline({ forceFresh: true }), true);
+  assert.equal(hydration.threadSnapshotRequestDemandsWaterline({ minimumSequence: 0 }), true);
+  assert.equal(hydration.threadSnapshotRequestDemandsWaterline({ historyCursor: "cursor-1" }), true);
+  assert.equal(hydration.threadSnapshotRequestDemandsWaterline({}), false);
+  assert.equal(
+    hydration.threadSnapshotHydrationConsultsRuntime({
+      hasPersistedConversation: true, hasRuntimeBinding: true, request: { forceFresh: true },
+    }),
+    true,
+    "A waterline request must reach the Runtime even when local history is fuller.",
+  );
+  assert.equal(
+    hydration.threadSnapshotHydrationConsultsRuntime({
+      hasPersistedConversation: true, hasRuntimeBinding: true, request: {},
+    }),
+    false,
+    "Opening a Thread must still prefer local history first.",
+  );
+  assert.equal(
+    hydration.threadSnapshotHydrationConsultsRuntime({
+      hasPersistedConversation: true, hasRuntimeBinding: false, request: { forceFresh: true },
+    }),
+    false,
+    "Without a Runtime binding the persisted projection is the only answer there is.",
+  );
+  assert.equal(
+    hydration.threadSnapshotHydrationConsultsRuntime({
+      hasPersistedConversation: false, hasRuntimeBinding: true, request: {},
+    }),
+    true,
+  );
+
+  const coordinatorModule = await import("../renderer/src/threadSnapshotCoordinator.ts");
+  const coordinator = new coordinatorModule.ThreadSnapshotCoordinator();
+  const displayedEnvelope = { ...emptyRuntime, sessionSequence: 6, generation: 2 };
+  assert.equal(coordinator.commitEnvelope(displayedEnvelope, () => undefined), true);
+  const staleEnvelope = {
+    version: 1 as const,
+    projection: "conversation/1" as const,
+    threadId: "thread-w",
+    runtimeSessionId: "persisted:thread-w",
+    sessionSequence: 0,
+    generation: 0,
+    source: "persisted" as const,
+    snapshot: persisted,
+  };
+  assert.equal(coordinatorModule.envelopeHasRuntimeWaterline(staleEnvelope), false);
+  assert.equal(coordinatorModule.envelopeHasRuntimeWaterline(displayedEnvelope), true);
+  assert.equal(coordinator.rejectionOf(staleEnvelope), "generation_regressed");
+  assert.equal(
+    coordinator.commitEnvelope(staleEnvelope, () => undefined),
+    false,
+    "A persisted projection must never rewind a Runtime waterline.",
+  );
+  assert.equal(coordinator.get("thread-w")?.generation, 2, "Dropping a stale envelope must keep the Runtime waterline.");
+  assert.equal(
+    coordinator.acceptPatch({
+      version: 2 as const,
+      threadId: "thread-w",
+      runtimeSessionId: "session-w",
+      baseSequence: 6,
+      sessionSequence: 7,
+      generation: 2,
+      patch: { kind: "run.state" as const, runId: "run-1", updatedAt: 3, messageCount: 3 },
+    }),
+    true,
+    "Patches on the Runtime waterline must stay acceptable after a stale envelope was dropped.",
+  );
+  assert.equal(
+    coordinator.rejectionOf({ ...displayedEnvelope, sessionSequence: 5 }),
+    "sequence_regressed",
+    "An envelope behind the applied sequence on the current generation is a sequence regression.",
+  );
+
+  const rewaterlined = hydration.rewaterlineEnvelope(staleEnvelope, {
+    generation: 8, sessionSequence: 12, runtimeSessionId: "session-w",
+  });
+  assert.equal(rewaterlined.generation, 8);
+  assert.equal(rewaterlined.sessionSequence, 12);
+  assert.equal(rewaterlined.runtimeSessionId, "session-w", "Stamping a persisted projection must adopt the Runtime session id.");
+  assert.equal(rewaterlined.snapshot.messageCount, 2, "Rewaterlining must never touch the conversation body.");
+  const crossSession = hydration.rewaterlineEnvelope(displayedEnvelope, {
+    generation: 9, sessionSequence: 20, runtimeSessionId: "session-other",
+  });
+  assert.equal(crossSession.generation, 2, "A sequence belongs to exactly one Runtime session.");
+  assert.equal(crossSession.sessionSequence, 6);
+
+  // A pushed envelope with an empty body must still commit its waterline when a
+  // Runtime binding produced it; only a waterline-less thinner projection may be
+  // dropped outright.
+  assert.equal(
+    hydration.threadSnapshotBodyDecision({ incomingHasConversation: true, existingHasConversation: true, envelopeHasWaterline: false }),
+    "replace",
+  );
+  assert.equal(
+    hydration.threadSnapshotBodyDecision({ incomingHasConversation: false, existingHasConversation: false, envelopeHasWaterline: false }),
+    "replace",
+  );
+  assert.equal(
+    hydration.threadSnapshotBodyDecision({ incomingHasConversation: false, existingHasConversation: true, envelopeHasWaterline: true }),
+    "keep_richer_body",
+    "An empty Runtime re-publication must advance the waterline without blanking the conversation.",
+  );
+  assert.equal(
+    hydration.threadSnapshotBodyDecision({ incomingHasConversation: false, existingHasConversation: true, envelopeHasWaterline: false }),
+    "ignore",
+    "A waterline-less thinner projection must not touch a displayed conversation.",
+  );
+
   const counted = await threads.createThread({ kind: "chat", title: "count-keep", workspacePath: root });
   await threads.updateThread({ id: counted.id, runtimeSessionId: "session-count-keep", messageCount: 2 });
   const catalogZero = await threads.upsertThreadFromRuntimeCatalog({

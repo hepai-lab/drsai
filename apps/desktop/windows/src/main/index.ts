@@ -284,10 +284,17 @@ import {
 import {
   getRuntimeThreadSnapshot,
   getRuntimeThreadSnapshotEnvelope,
+  snapshotWaterlineFor,
   subscribeRuntimeThreadSnapshot,
 } from "../../../shared/main/threadRuntimeSubscription";
 import type { DesktopThreadSnapshotEnvelope } from "../../../shared/api/desktopApi";
-import { coalesceHydrationEnvelope, persistedThreadSnapshotEnvelope, threadSnapshotHasConversation } from "../../../shared/api/threadSnapshotHydration";
+import {
+  coalesceHydrationEnvelope,
+  persistedThreadSnapshotEnvelope,
+  rewaterlineEnvelope,
+  threadSnapshotHasConversation,
+  threadSnapshotHydrationConsultsRuntime,
+} from "../../../shared/api/threadSnapshotHydration";
 import { runtimeSessionIdForLookup } from "../../../shared/api/threadSidebarCatalog";
 import { setThreadArchived } from "./threadArchive";
 import {
@@ -5966,13 +5973,22 @@ function registerIpc(): void {
       const thread = (await listThreads()).find((item) => item.id === threadId);
       const remote = await getRemoteThreadSnapshot(threadId);
       const persisted = (threadSnapshotHasConversation(remote) ? remote : null) ?? await getThreadSnapshot(threadId);
-      // Open from local history first. An empty/restarted Runtime session must
-      // not block or blank the persisted conversation body.
-      if (threadSnapshotHasConversation(persisted)) {
-        return persistedThreadSnapshotEnvelope(threadId, persisted, thread?.runtimeSessionId);
-      }
+      const runtimeSessionId = runtimeSessionIdForLookup(thread ?? { runtimeSessionId: undefined });
+      // Open from local history first, so an empty/restarted Runtime session
+      // cannot block or blank the persisted conversation body.  A request that
+      // carries a waterline is a different contract: the renderer already
+      // displays a later boundary for this Thread and only the Runtime can
+      // answer at or above it.  Returning the persisted projection (generation
+      // 0) there made the coordinator discard the snapshot and then refuse
+      // every following Patch -- the turn never finished and the next message
+      // looked blocked.
+      const consultRuntime = threadSnapshotHydrationConsultsRuntime({
+        hasPersistedConversation: threadSnapshotHasConversation(persisted),
+        hasRuntimeBinding: Boolean(runtimeSessionId),
+        request: options ?? {},
+      });
       let runtimeEnvelope: DesktopThreadSnapshotEnvelope | null = null;
-      if (runtimeSessionIdForLookup(thread ?? { runtimeSessionId: undefined })) {
+      if (consultRuntime) {
         try {
           runtimeEnvelope = await getRuntimeThreadSnapshotEnvelope(thread!, controller.signal, options);
         } catch (error) {
@@ -5982,7 +5998,21 @@ function registerIpc(): void {
         }
       }
       controller.signal.throwIfAborted();
-      return coalesceHydrationEnvelope(threadId, thread, runtimeEnvelope, persisted);
+      if (runtimeEnvelope) {
+        // ``coalesceHydrationEnvelope`` may still prefer the fuller persisted
+        // body, but the generation/sequence always come from the Runtime: a
+        // waterline that does not match the live Patch stream is worse than a
+        // thinner conversation.
+        const hydrated = coalesceHydrationEnvelope(threadId, thread, runtimeEnvelope, persisted);
+        return hydrated ? rewaterlineEnvelope(hydrated, runtimeEnvelope) : null;
+      }
+      if (threadSnapshotHasConversation(persisted)) {
+        return rewaterlineEnvelope(
+          persistedThreadSnapshotEnvelope(threadId, persisted, thread?.runtimeSessionId),
+          snapshotWaterlineFor(threadId, runtimeSessionId),
+        );
+      }
+      return null;
     } catch (error) {
       // Cancellation is part of the hydration protocol: the renderer cancels
       // stale work when a newer generation starts or the active Thread

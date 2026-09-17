@@ -68,7 +68,12 @@ from drsai.backend.runtime.permission_modes import (
     get_mode,
 )
 from drsai.backend.runtime.goals import normalize_goal
-from drsai.backend.runtime.journal import RuntimeConversationJournal
+from drsai.backend.runtime.journal import (
+    RuntimeConversationJournal,
+    compact_runtime_event_payload,
+    ensure_runtime_event_guards,
+    is_item_projected_event,
+)
 from drsai.backend.runtime.experiments import RuntimeExperimentStore
 from drsai.backend.runtime.replay_planner import ReplayPlanStore
 from drsai.backend.runtime.replay_execution import ReplayExecutionStore
@@ -161,6 +166,21 @@ class _ClosingConnection(sqlite3.Connection):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _runtime_event_data_json(event_type: str, data: Mapping[str, Any]) -> str:
+    """Serialize a Runtime Event payload for the ``runtime_events.data_json`` column.
+
+    Streamed chunks are stored in their reduced form, so the Run/Session binding is
+    not repeated once per token (``compact_runtime_event_payload``); every other
+    Event is serialized exactly as before.  Only the *stored* payload is reduced:
+    callers keep returning the payload they received.
+    """
+    return json.dumps(
+        compact_runtime_event_payload(event_type, data),
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _legacy_agent_event_type(value: Mapping[str, Any]) -> str:
@@ -822,6 +842,13 @@ class RuntimeEngine:
                         data=data,
                         created_at=str(event["created_at"]),
                     ) or changed
+                if is_item_projected_event(str(event["event_type"])):
+                    # Streamed chunks belong to the canonical Item journal, which
+                    # already holds them under the Item's own id. Importing the raw
+                    # Runtime Event as well stored the same text a second time with
+                    # no Item identity -- the pre-Journal equivalent of the mirror
+                    # ``append_event`` deliberately no longer writes.
+                    continue
                 if db.execute(
                     "SELECT 1 FROM runtime_session_journal "
                     "WHERE session_id=? AND dedupe_key=? "
@@ -3966,15 +3993,13 @@ class RuntimeEngine:
             event_id, created = f"event-{uuid.uuid4()}", _now()
             db.execute(
                 "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) VALUES(?,?,?,?,?,?,NULL)",
-                (event_id, run_id, sequence, event_type, json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created),
+                (event_id, run_id, sequence, event_type, _runtime_event_data_json(event_type, safe_data), created),
             )
-            # Message/thinking deltas are projected solely through the canonical
-            # Item journal path. Mirroring the raw Runtime Event as a second
-            # conversation.item.delta (without item_id) used to flood OAEP with
-            # fake event.run.resumed envelopes.
-            item_owns_journal = event_type in {
-                "message.delta", "agent.message.delta", "thinking.delta",
-            } or event_type.startswith("oaep.item.")
+            # Streamed message/thinking/subagent text is projected solely through
+            # the canonical Item journal path. Mirroring the raw Runtime Event as a
+            # second row (without item_id) used to flood OAEP with fake
+            # event.run.resumed and content-free event.session.updated envelopes.
+            item_owns_journal = is_item_projected_event(event_type)
             if not item_owns_journal:
                 self.conversation_journal.append_event_in_transaction(
                     db,
@@ -4022,11 +4047,9 @@ class RuntimeEngine:
             db.execute(
                 "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) VALUES(?,?,?,?,?,?,?)",
                 (event_id, run_id, sequence, event_type,
-                 json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created, backend_event_key),
+                 _runtime_event_data_json(event_type, safe_data), created, backend_event_key),
             )
-            item_owns_journal = event_type in {
-                "message.delta", "agent.message.delta", "thinking.delta",
-            } or event_type.startswith("oaep.item.")
+            item_owns_journal = is_item_projected_event(event_type)
             if not item_owns_journal:
                 self.conversation_journal.append_event_in_transaction(
                     db,
@@ -4054,7 +4077,15 @@ class RuntimeEngine:
             db.commit()
         if not item_owns_journal or item_created:
             self.conversation_journal.notify_committed()
-        return self._event(row)
+        event = self._event(row)
+        # The stored payload is the reduced stream form
+        # (``_runtime_event_data_json``); the returned event keeps the payload the
+        # caller passed, exactly as ``append_event`` and the batch writers do, so
+        # returning a write result never silently drops the Run/Session binding the
+        # caller supplied.  Identity and type still come from the row, so a replayed
+        # Backend Event keeps its canonical Event translation.
+        event["data"] = safe_data
+        return event
 
     def append_normalized_event(
         self,
@@ -4200,7 +4231,7 @@ class RuntimeEngine:
                 "VALUES(?,?,?,?,?,?,?)",
                 (
                     event_id, run_id, sequence, event_type,
-                    json.dumps(compatibility_data, separators=(",", ":"), sort_keys=True),
+                    _runtime_event_data_json(event_type, compatibility_data),
                     created, dedupe_key,
                 ),
             )
@@ -4288,7 +4319,7 @@ class RuntimeEngine:
                     safe_data = redact_sensitive(data, "", "content")
                     inserted_rows.append((
                         event_id, run_id, sequence, event_type,
-                        json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created, backend_event_key,
+                        _runtime_event_data_json(event_type, safe_data), created, backend_event_key,
                     ))
                     result = {"event_id": event_id, "run_id": run_id, "sequence": sequence, "type": event_type,
                               "data": safe_data, "created_at": created, "backend_event_key": backend_event_key}
@@ -4362,7 +4393,7 @@ class RuntimeEngine:
                 safe_data = redact_sensitive(data, "", "content")
                 db.execute(
                     "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) VALUES(?,?,?,?,?,?,?)",
-                    (event_id, run_id, sequence, event_type, json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created, backend_event_key),
+                    (event_id, run_id, sequence, event_type, _runtime_event_data_json(event_type, safe_data), created, backend_event_key),
                 )
                 if event_type in {"message.delta", "agent.message.delta"}:
                     # The raw Runtime Event remains append-only below. OAEP's

@@ -197,6 +197,58 @@ function verifyReasoningRangeRendering(): void {
   assert.deepEqual(rendered(legacy), ["Old"]);
 }
 
+function verifyReasoningDuplicateSuppression(): void {
+  const thought = "开始第一步。先精确读取要改的四处原文。";
+  const turnId = "verify-reasoning-duplicates";
+  const drive = (pushes: Array<[string, string]>): string => {
+    let sequence = 0;
+    const event = (data: Partial<StructuredConversationEvent>): StructuredConversationEvent => {
+      sequence += 1;
+      return {
+        version: STRUCTURED_CONVERSATION_VERSION,
+        turnId,
+        sequence,
+        dedupeKey: `e:${sequence}`,
+        timestamp: new Date(sequence).toISOString(),
+        source: "verify",
+        ...data,
+      } as StructuredConversationEvent;
+    };
+    let state = createStructuredTurnState(turnId);
+    state = applyStructuredConversationEvent(state, event({ type: "turn.started" }));
+    state = applyStructuredConversationEvent(state, event({
+      type: "part.started",
+      part: { id: "p:reason", kind: "reasoning", status: "running", segments: [] },
+    } as Partial<StructuredConversationEvent>));
+    for (const [segmentId, text] of pushes) {
+      state = applyStructuredConversationEvent(state, event({
+        type: "part.delta",
+        partId: "p:reason",
+        delta: { kind: "reasoning.append", segmentId, text },
+      } as Partial<StructuredConversationEvent>));
+    }
+    const part = state.parts.find((candidate) => candidate.kind === "reasoning");
+    if (!part || part.kind !== "reasoning") throw new Error("missing reasoning part");
+    // The process timeline must keep matching the aggregate: that invariant is
+    // what reconcileReasoningRanges trusts when it decides whether to render the
+    // ranges or collapse the whole block.
+    const entries = (state.processTimeline ?? [])
+      .filter((entry) => entry.kind === "reasoning" && entry.partId === part.id);
+    const aggregate = part.segments.map((segment) => segment.text).join("");
+    assert.equal(entries.map((entry) => entry.text).join(""), aggregate);
+    return aggregate;
+  };
+
+  // Codex re-emits the same summaryTextDelta for one segment.
+  assert.equal(drive([["summary-1", thought], ["summary-1", thought], ["summary-1", thought]]), thought);
+  // Schema drift: the same summary is renumbered into new segment ids.
+  assert.equal(drive([["summary-1", thought], ["summary-2", thought], ["summary-3", thought]]), thought);
+  // The backend sends the growing summary instead of the chunk.
+  assert.equal(drive([["s1", "开始"], ["s1", "开始第一步。"], ["s1", thought]]), thought);
+  // Genuine incremental chunks still accumulate in order.
+  assert.equal(drive([["s1", "开始"], ["s1", "第一步。"], ["s1", "先"], ["s1", "读取原文。"]]), "开始第一步。先读取原文。");
+}
+
 function verifyTerminalPartMonotonicity(): void {
   let sequence = 0;
   const makeEvent = (turnId: string) => (
@@ -247,5 +299,6 @@ function verifyTerminalPartMonotonicity(): void {
 verifyReducerTimeline();
 verifyOaepProjectionTimeline();
 verifyReasoningRangeRendering();
+verifyReasoningDuplicateSuppression();
 verifyTerminalPartMonotonicity();
 console.log("Structured process timeline verification passed.");

@@ -4,7 +4,7 @@ import { ThreadPatchFrameBatcher } from "./threadPatchFrameBatcher";
 import { startRenderHealthMonitor } from "./renderHealthMonitor";
 import { executeRecoveryActionOnce } from "./recoveryActionCoordinator";
 import { ThreadSnapshotStore } from "./threadSnapshotStore";
-import { ThreadSnapshotCoordinator } from "./threadSnapshotCoordinator";
+import { envelopeHasRuntimeWaterline, ThreadSnapshotCoordinator } from "./threadSnapshotCoordinator";
 import { threadSyncMetrics } from "./threadSyncMetrics";
 import { CompletionDeliveryTracker } from "./completionDeliveryTracker";
 import { verifyResultProvenance } from "../../api/resultProvenance";
@@ -88,7 +88,7 @@ import {
   canonicalizeSidebarThreads,
   mergeWorkspaceSidebarCatalogPages,
 } from "@shared/threadSidebarCatalog";
-import { threadSnapshotHasConversation } from "../../api/threadSnapshotHydration";
+import { threadSnapshotBodyDecision, threadSnapshotHasConversation } from "../../api/threadSnapshotHydration";
 import { AgentSquareView } from "./components/AgentSquareView";
 import { AgentRunWorkspace } from "./components/AgentRunWorkspace";
 import { ApprovalCenterView } from "./components/ApprovalCenterView";
@@ -236,6 +236,11 @@ interface AwaySummary {
   pending: DesktopBackgroundTask[];
 }
 type NetworkConnectivityState = "online" | "offline" | "restored";
+interface ThreadResyncEntry {
+  promise: Promise<void>;
+  demand: { minimumSequence?: number; expectedGeneration?: number };
+  superseded: boolean;
+}
 
 function App(): React.JSX.Element {
   const auth = useAuth();
@@ -404,6 +409,7 @@ function AuthenticatedApp({
   );
   const threadSnapshotCoordinatorRef = useRef(new ThreadSnapshotCoordinator());
   const threadHydrationsRef = useRef(new Map<string, { generation: number; requestId: string; promise: Promise<void> }>());
+  const threadResyncInFlightRef = useRef(new Map<string, ThreadResyncEntry>());
   useEffect(() => {
     for (const [threadId, hydration] of threadHydrationsRef.current) {
       if (threadId !== activeThreadId) {
@@ -932,10 +938,33 @@ function AuthenticatedApp({
     const removeSnapshot = desktopApi.onThreadSnapshot((event) => {
       if (deletedThreadIdsRef.current.has(event.threadId)) return;
       const existing = threadSnapshotStore.get(event.threadId) ?? undefined;
-      if (!threadSnapshotHasConversation(event.snapshot) && threadSnapshotHasConversation(existing)) return;
       const snapshot = mergeThreadSnapshotForDisplay(event.snapshot, existing);
-      if (!threadSnapshotCoordinatorRef.current.commitEnvelope(event, () => threadSnapshotStore.set(event.threadId, snapshot))) return;
+      // A thinner body must never replace the conversation the reader is in,
+      // but it can still carry the waterline the following Patches build on (a
+      // restarted Runtime republishes the Thread from a fresh generation with
+      // an empty message list).  Committing that waterline is what keeps the
+      // Patches applicable: dropping the whole envelope left the coordinator on
+      // the older generation, where it refused every Patch -- including the
+      // event that ends the turn -- and the turn never finished.
+      const decision = threadSnapshotBodyDecision({
+        incomingHasConversation: threadSnapshotHasConversation(event.snapshot),
+        existingHasConversation: threadSnapshotHasConversation(existing),
+        envelopeHasWaterline: envelopeHasRuntimeWaterline(event),
+      });
+      if (decision === "ignore") return;
+      const committed = threadSnapshotCoordinatorRef.current.commitEnvelope(
+        event,
+        decision === "replace" ? () => threadSnapshotStore.set(event.threadId, snapshot) : () => undefined,
+      );
+      if (!committed) return;
       batcher.clearThread(event.threadId);
+      if (decision === "keep_richer_body") {
+        console.warn("thread_snapshot_body_starved", {
+          threadId: event.threadId, source: event.source, generation: event.generation,
+          sessionSequence: event.sessionSequence, runtimeSessionId: event.runtimeSessionId,
+          keptMessages: existing?.messages.length ?? 0,
+        });
+      }
     });
     const removePatch = desktopApi.onThreadSnapshotPatch((event) => {
       if (deletedThreadIdsRef.current.has(event.threadId)) return;
@@ -2018,12 +2047,24 @@ function AuthenticatedApp({
       }
       const existing = threadSnapshotStore.get(threadId) ?? undefined;
       const snapshot = mergeThreadSnapshotForDisplay(envelope.snapshot, existing);
-      if (!threadSnapshotCoordinatorRef.current.commitEnvelope(envelope, () => threadSnapshotStore.set(threadId, snapshot))) {
+      // A rejected envelope used to be completely silent: Hydration answered
+      // behind the boundary already displayed, the snapshot was dropped, and
+      // the Thread kept refusing Patches with no trace of why.
+      const rejection = threadSnapshotCoordinatorRef.current.rejectionOf(envelope);
+      if (rejection) {
+        console.warn("thread_snapshot_hydration_rejected", {
+          threadId, reason: rejection, source: envelope.source,
+          envelopeGeneration: envelope.generation, envelopeSequence: envelope.sessionSequence,
+          displayedGeneration: threadSnapshotCoordinatorRef.current.get(threadId)?.generation,
+          displayedSequence: threadSnapshotCoordinatorRef.current.get(threadId)?.appliedSequence,
+          runtimeSessionId: envelope.runtimeSessionId,
+        });
         if (threadSnapshotHasConversation(snapshot) && !threadSnapshotHasConversation(existing)) {
           threadSnapshotStore.set(threadId, snapshot);
         }
         return;
       }
+      if (!threadSnapshotCoordinatorRef.current.commitEnvelope(envelope, () => threadSnapshotStore.set(threadId, snapshot))) return;
     } catch (error) {
       if ((error instanceof DOMException && error.name === "AbortError") || (error instanceof Error && /abort|cancel/i.test(error.name))) return;
       // Runtime generation races during sidebar switches are recovered by the
@@ -2054,22 +2095,57 @@ function AuthenticatedApp({
     }
   }
 
+  /**
+   * Ask for a fresh Snapshot after the Patch stream rejected an event.
+   *
+   * At most one resync runs per Thread.  A Runtime that keeps emitting on a
+   * waterline the renderer never accepted used to start one bounded retry loop
+   * per rejected Patch while all of them answered the same question.  A demand
+   * that arrives while a resync runs is remembered, and the higher
+   * ``minimumSequence`` wins: the in-flight request may have been answered
+   * below the boundary that caused the newest rejection.
+   */
   async function scheduleThreadResync(
     threadId: string,
     options: { minimumSequence?: number; expectedGeneration?: number } = {},
   ): Promise<void> {
-    if (!threadSnapshotCoordinatorRef.current.canResync(threadId)) {
-      setThreadHydrationError({ threadId, message: language === "zh"
-        ? "会话同步需要处理：请重新连接 Runtime 或手动重试。"
-        : "Session sync needs attention. Reconnect Runtime or retry manually." });
-      return;
+    const active = threadResyncInFlightRef.current.get(threadId);
+    if (active) {
+      if (options.minimumSequence !== undefined
+        && options.minimumSequence > (active.demand.minimumSequence ?? -1)) {
+        active.demand = { ...options };
+        active.superseded = true;
+      }
+      return active.promise;
     }
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (activeThreadIdRef.current !== threadId) return;
-      await hydrateThreadSnapshot(threadId, { ...options, forceFresh: true });
-      const state = threadSnapshotCoordinatorRef.current.get(threadId);
-      if (!state || state.consecutiveResyncFailures === 0 || state.actionRequired) return;
-      await new Promise((resolve) => window.setTimeout(resolve, 150 * 2 ** attempt));
+    const entry: ThreadResyncEntry = { promise: Promise.resolve(), demand: { ...options }, superseded: false };
+    entry.promise = runThreadResync(threadId, entry).finally(() => {
+      if (threadResyncInFlightRef.current.get(threadId) === entry) threadResyncInFlightRef.current.delete(threadId);
+    });
+    threadResyncInFlightRef.current.set(threadId, entry);
+    return entry.promise;
+  }
+
+  /** Bounded resync rounds; it repeats only for a demand that arrived while it ran. */
+  async function runThreadResync(threadId: string, entry: ThreadResyncEntry): Promise<void> {
+    for (let round = 0; round < 2; round += 1) {
+      if (!threadSnapshotCoordinatorRef.current.canResync(threadId)) {
+        setThreadHydrationError({ threadId, message: language === "zh"
+          ? "会话同步需要处理：请重新连接 Runtime 或手动重试。"
+          : "Session sync needs attention. Reconnect Runtime or retry manually." });
+        return;
+      }
+      entry.superseded = false;
+      const demand = { ...entry.demand };
+      let settled = false;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (activeThreadIdRef.current !== threadId) return;
+        await hydrateThreadSnapshot(threadId, { ...demand, forceFresh: true });
+        const state = threadSnapshotCoordinatorRef.current.get(threadId);
+        if (!state || state.consecutiveResyncFailures === 0 || state.actionRequired) { settled = true; break; }
+        await new Promise((resolve) => window.setTimeout(resolve, 150 * 2 ** attempt));
+      }
+      if (!settled || !entry.superseded) return;
     }
   }
 

@@ -857,12 +857,20 @@ function appendProcessTimelineDelta(
   sequence: number,
 ): StructuredProcessTimelineEntry[] {
   if (part.kind === "reasoning" && delta.kind === "reasoning.append") {
+    const covered = reasoningSegmentCoveredLength(part, delta.segmentId);
     const previous = timeline.at(-1);
     if (previous?.kind === "reasoning" && previous.partId === part.id && previous.segmentId === delta.segmentId && previous.text.length < 16_384) {
-      return [...timeline.slice(0, -1), { ...previous, text: `${previous.text}${delta.text}` }];
+      // The timeline entry mirrors what the part already holds, so a delta that
+      // merely restates it must not be appended a second time here either.
+      const merged = appendReasoningDeltaText(previous.text, covered, delta.text);
+      if (merged === previous.text) return timeline;
+      return [...timeline.slice(0, -1), { ...previous, text: merged }];
     }
+    // The timeline invariant is `entries join === part segments join`. Seeding a
+    // fresh entry with text the part already holds would break it and make
+    // `reconcileReasoningRanges` collapse (or duplicate) the block later.
     const id = `reasoning:${part.id}:${sequence}`;
-    return [...timeline, { id, kind: "reasoning", sequence, partId: part.id, segmentId: delta.segmentId, text: delta.text, status: "running" } as StructuredProcessTimelineEntry].slice(-500);
+    return [...timeline, { id, kind: "reasoning", sequence, partId: part.id, segmentId: delta.segmentId, text: appendReasoningDeltaText("", covered, delta.text), status: "running" } as StructuredProcessTimelineEntry].slice(-500);
   }
   if (part.kind === "markdown" && delta.kind === "markdown.append") {
     const transient = (part.channel ?? "process") === "answer";
@@ -918,6 +926,93 @@ function upsertProcessTimelineSubtask(
   return [...timeline, entry].slice(-500);
 }
 
+/**
+ * Whether a reasoning push adds nothing the reader has not already seen.
+ *
+ * `appendReasoningDeltaText` returns the merged text, so it cannot distinguish
+ * "pure re-statement" from "merge produced the same string". This makes that
+ * distinction explicit for callers that must decide whether to add a segment.
+ */
+function reasoningPushIsRedundant(shown: string, deltaText: string): boolean {
+  if (!shown || !deltaText) return false;
+  return shown.endsWith(deltaText);
+}
+
+/**
+ * Resolve one `reasoning.append` against the text a segment already holds.
+ *
+ * `reasoning.append` is specified as an incremental chunk, but the producers in
+ * this tree are not uniform:
+ *
+ *  - Codex re-emits `item/reasoning/summaryTextDelta` with the same segment, and
+ *    renumbers one summary across `summary-1`/`summary-2` (`native_decoder.py`);
+ *  - the OAEP runtime re-attaches the **accumulated** Item payload to forwarded
+ *    Journal rows (`journal._hydrate_delta_payloads`), and the Desktop projector
+ *    re-derives both the segment id and the delta text from that payload
+ *    (`oaepPresentationProjector.presentationDelta`).
+ *
+ * Concatenating those producers' text verbatim is what makes one thought render
+ * two or three times in a row (and, once the process timeline disagrees with the
+ * aggregate, makes `reconcileReasoningRanges` collapse the block). A push is
+ * therefore interpreted as "advance this segment by its new tail": anything the
+ * segment already holds is not printed again, while genuine incremental chunks
+ * keep concatenating in order.
+ *
+ * A push is only treated as re-statement when it overlaps *what the part has
+ * already received* (`coveredLength`). A chunk that merely echoes a prefix of its
+ * own segment is appended, so intentional repetition ("ha" over "ha") survives.
+ */
+function appendReasoningDeltaText(segmentText: string, coveredLength: number, deltaText: string): string {
+  if (!deltaText) return segmentText;
+  // `coveredLength` is how much of the reasoning the part has already received;
+  // `segmentText` is the slice we are extending. A non-empty covered length with
+  // an empty slice means the whole push is already covered, so nothing is added.
+  if (!segmentText) return coveredLength > 0 ? "" : deltaText;
+  const covered = segmentText.slice(0, Math.max(0, Math.min(coveredLength, segmentText.length)));
+  if (!covered) return `${segmentText}${deltaText}`;
+  // Re-statement: the push is already part of what was written.
+  if (covered.endsWith(deltaText)) return segmentText;
+  // Re-statement plus a new tail: keep only the tail.
+  for (let overlap = Math.min(covered.length, deltaText.length); overlap >= 1; overlap -= 1) {
+    if (covered.endsWith(deltaText.slice(0, overlap))) {
+      return `${segmentText}${deltaText.slice(overlap)}`;
+    }
+  }
+  return `${segmentText}${deltaText}`;
+}
+
+/**
+ * How many characters of `segmentId` the part has already received in order.
+ * Everything before that segment is sealed, later segments have not arrived yet,
+ * and all segments that live in one part are re-statements of the same thought.
+ */
+function reasoningSegmentCoveredLength(
+  part: { segments: ReadonlyArray<Pick<ReasoningSegment, "id" | "text">> },
+  segmentId: string,
+): number {
+  const index = part.segments.findIndex((segment) => segment.id === segmentId);
+  if (index < 0) return leadingSegmentLength(part);
+  return part.segments.slice(0, index + 1).reduce((total, segment) => total + segment.text.length, 0);
+}
+
+/**
+ * Everything a reasoning part holds up to and including its leading segment.
+ * Later segments carry text the reader already saw in the first one, so only the
+ * leading segment can claim "this was already shown"; a segment arriving out of
+ * order must still be able to add its own content.
+ */
+function leadingSegmentLength(
+  part: { segments: ReadonlyArray<Pick<ReasoningSegment, "id" | "text">> },
+): number {
+  return part.segments.length ? part.segments[0].text.length : 0;
+}
+
+function leadingSegmentText(
+  part: { segments: ReadonlyArray<Pick<ReasoningSegment, "id" | "text">> },
+): string {
+  return part.segments.length ? part.segments[0].text : "";
+}
+
 function updatePartWithDelta(part: StructuredAssistantPart, delta: StructuredPartDelta, sequence: number): StructuredAssistantPart | null {
   if (part.kind === "markdown" && delta.kind === "markdown.append") {
     // Missing channel is deliberately process-only. Only an explicitly sealed
@@ -929,18 +1024,42 @@ function updatePartWithDelta(part: StructuredAssistantPart, delta: StructuredPar
   }
   if (part.kind === "reasoning" && delta.kind === "reasoning.append") {
     const index = part.segments.findIndex((segment) => segment.id === delta.segmentId);
-    const segments = index === -1
-      ? [...part.segments, {
+    if (index === -1) {
+      // A new segment id is not proof of new text: the same summary renumbered
+      // into summary-2/summary-3 still describes the same thought. Repeating it
+      // would render it once per id, so the segment is only added for the tail it
+      // has not shown yet. Keeping a renumbered duplicate row would leave the
+      // aggregate reading "AAAAAA" and break the `timeline === aggregate`
+      // invariant that `reconcileReasoningRanges` relies on.
+      const shown = leadingSegmentText(part);
+      if (reasoningPushIsRedundant(shown, delta.text)) return part;
+      const text = appendReasoningDeltaText(shown, leadingSegmentLength(part), delta.text);
+      return {
+        ...part,
+        status: "running",
+        segments: [...part.segments, {
           id: delta.segmentId,
           sequence,
-          text: delta.text,
+          text,
           status: "running" as const,
           ...(delta.source ? { source: delta.source } : {}),
-        }]
-      : part.segments.map((segment, segmentIndex) => segmentIndex === index
-          ? { ...segment, text: `${segment.text}${delta.text}`, status: "running" as const }
-          : segment);
-    return { ...part, segments, status: "running" };
+        }],
+      };
+    }
+    // A segment is a place-holder, not a stream. Some backends re-number one
+    // summary into several segments while others re-send the same one; and a
+    // few emit the growing summary rather than the chunk. Appending blindly
+    // therefore renders the same thought two or three times, once per push.
+    const target = part.segments[index];
+    const merged = appendReasoningDeltaText(target.text, reasoningSegmentCoveredLength(part, delta.segmentId), delta.text);
+    if (merged === target.text) return part;
+    return {
+      ...part,
+      status: "running",
+      segments: part.segments.map((segment, segmentIndex) => segmentIndex === index
+        ? { ...segment, text: merged, status: "running" as const }
+        : segment),
+    };
   }
   if (part.kind === "reasoning" && delta.kind === "reasoning.summary") {
     return { ...part, summary: delta.summary, status: "running" };

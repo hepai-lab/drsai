@@ -69,8 +69,19 @@ USER_SLO_DEFINITIONS: dict[str, dict[str, Any]] = {
 }
 _OPAQUE_SAMPLE_ID = re.compile(r"[A-Za-z0-9._:-]{8,500}")
 CONVERSATION_LATENCY_RETENTION_SECONDS = 30 * 86400
-DEFAULT_CONVERSATION_LATENCY_CAPACITY = 100_000
+# Measured on a one-day-old Runtime database: every retained stage row costs
+# ~420 bytes because it echoes the full Runtime identity (runtime/host/session/
+# run/protocol). The densest stage, ``journal_append``, is written once per
+# appended session event, i.e. several thousand rows per hour on an active
+# desktop workspace, so the previous 100_000 ceiling alone held ~40 MiB of a
+# ~474 MiB database. 20_000 retained samples still cover the most recent hours
+# of the densest stage, which is far more than a p50/p95 percentile report
+# needs; the 30-day retention window remains the outer bound.
+DEFAULT_CONVERSATION_LATENCY_CAPACITY = 20_000
 DEFAULT_CONVERSATION_LATENCY_TRIM_INTERVAL = 256
+# User SLO journeys are deduplicated per (journey, sample, stage) and arrive
+# orders of magnitude less often, so they keep the original ceiling.
+DEFAULT_USER_SLO_CAPACITY = 100_000
 
 _FORBIDDEN_DIMENSIONS = frozenset({
     "command", "output", "content", "snapshot", "terminal_tail", "stderr",
@@ -90,14 +101,18 @@ class RuntimeObservability:
         *,
         conversation_latency_capacity: int = DEFAULT_CONVERSATION_LATENCY_CAPACITY,
         conversation_latency_trim_interval: int = DEFAULT_CONVERSATION_LATENCY_TRIM_INTERVAL,
+        user_slo_capacity: int = DEFAULT_USER_SLO_CAPACITY,
     ):
         if not 5 <= conversation_latency_capacity <= 1_000_000:
             raise ValueError("conversation latency capacity is outside the bounded range")
         if not 1 <= conversation_latency_trim_interval <= 10_000:
             raise ValueError("conversation latency trim interval is outside the bounded range")
+        if not 5 <= user_slo_capacity <= 1_000_000:
+            raise ValueError("user SLO capacity is outside the bounded range")
         self.database = Path(database)
         self.conversation_latency_capacity = conversation_latency_capacity
         self.conversation_latency_trim_interval = conversation_latency_trim_interval
+        self.user_slo_capacity = user_slo_capacity
         self.database.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
@@ -415,7 +430,7 @@ class RuntimeObservability:
                     "DELETE FROM user_slo_stages WHERE rowid IN ("
                     "SELECT rowid FROM user_slo_stages "
                     "ORDER BY observed_at DESC,rowid DESC LIMIT -1 OFFSET ?)",
-                    (self.conversation_latency_capacity,),
+                    (self.user_slo_capacity,),
                 )
         return cursor.rowcount == 1
 

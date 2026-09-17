@@ -33,7 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping
 
 from loguru import logger
 
@@ -103,7 +103,7 @@ class RemoteWorkerBackend:
                 "The remote worker requires a HepAI credential that this Runtime does not have.",
             )
 
-        user_id = _remote_worker_user_id()
+        user_identity = _remote_worker_user_identity()
         cancellation = CancellationToken()
         self._cancellations[context.run_id] = cancellation
         translation = ConversationTranslationState()
@@ -126,7 +126,7 @@ class RemoteWorkerBackend:
                 task,
                 context=context,
                 worker_config=worker_config,
-                user_id=user_id,
+                user_identity=user_identity,
                 cancellation=cancellation,
             )
             async for event in stream:
@@ -209,14 +209,23 @@ class RemoteWorkerBackend:
         *,
         context: RuntimeRunContext,
         worker_config: Mapping[str, str],
-        user_id: str,
+        user_identity: str,
         cancellation: CancellationToken,
     ):
         run_info = {
             "run_id": context.run_id,
             "session_id": context.session_id,
             "trace_id": context.correlation_id or context.run_id,
-            "user_id": user_id,
+            # The remote DrSai worker resolves the caller from ``run_info`` with
+            # ``user.get("email") or user.get("name")`` (dr_sai.py
+            # ``handle_input_info``) and keys its ``UserInput``/``Thread`` rows on
+            # that value (backend/run.py ``lazy_init`` reads
+            # ``run_info.get("email")``). Sending a bare ``user_id`` key therefore
+            # made every Desktop Run land as the literal user "anonymous".
+            # Same normalisation WebUI applies in
+            # agent_factory/magentic_one/task_team.py.
+            "name": user_identity,
+            "email": user_identity,
             "backend": self.backend_id,
         }
         if self._runner is not None:
@@ -412,12 +421,13 @@ def _remote_worker_config(definition: AgentDefinition) -> dict[str, str]:
     }
 
 
-def _remote_worker_user_id() -> str:
+def _remote_worker_user_identity() -> str:
     """The user identity the remote DDF worker keys its users on.
 
     Remote workers identify callers by the HepAI login email, not by the OIDC
-    subject UUID. Prefer the verified ``email`` claim from the platform auth
-    context, fall back to the desktop-supplied login email filled in by the
+    subject UUID, and read it back from ``run_info["email"]`` (falling back to
+    ``run_info["name"]``). Prefer the verified ``email`` claim from the platform
+    auth context, fall back to the desktop-supplied login email filled in by the
     gateway middleware (X-OpenDrSai-User-Email), and finally to the gateway's
     internal user key (offline mode returns "local").
     """

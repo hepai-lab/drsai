@@ -12,6 +12,7 @@ Electron renderer calls during startup and for settings management.
 
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -68,6 +69,61 @@ ROUTERS = (
     # app's route-declaration order (and the frozen OpenAPI snapshot) still.
     skills.router,
 )
+
+#: Uvicorn's access records carry their arguments positionally, in this order
+#: (``uvicorn/protocols/http/httptools_impl.py`` and ``h11_impl.py``):
+#: ``(client_addr, method, full_path, http_version, status_code)``.
+_ACCESS_LOG_PATH_ARG_INDEX = 2
+
+#: Escape hatch: set to a truthy value to keep ``/health`` in the access log.
+_ACCESS_LOG_HEALTH_ENV = "OPENDRSAI_GATEWAY_ACCESS_LOG_HEALTH"
+
+
+class _SuppressHealthAccessLog(logging.Filter):
+    """Drop the ``/health`` probe from uvicorn's access log.
+
+    The Desktop shell probes ``/health`` for the entire session (every couple of
+    seconds) to observe Runtime readiness, so under uvicorn's default access log
+    that single route dominated ``logs/gateway.log`` (~83% of its lines).
+
+    Dropping the lines costs nothing: uvicorn runs ``lifespan.startup()``
+    *before* it creates the listening socket (``uvicorn/server.py``), so while
+    the Runtime is still starting no ``/health`` request can be served and no
+    access line can exist.  Every line removed here was written *after* the
+    Gateway was already answering, and the renderer learns readiness from its
+    own probe result, never from this log.
+
+    Only ``/health`` is dropped; other routes keep their access lines.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) <= _ACCESS_LOG_PATH_ARG_INDEX:
+            return True
+        # The probe is unauthenticated and has no query string, but tolerate one.
+        path = str(args[_ACCESS_LOG_PATH_ARG_INDEX]).partition("?")[0]
+        return path != "/health"
+
+
+def suppress_health_access_logging() -> None:
+    """Silence ``/health`` in the ``uvicorn.access`` logger (idempotent).
+
+    A logger-level filter survives uvicorn's own ``logging.config.dictConfig``,
+    which only reinstalls handlers, so this can be applied at import time and
+    still hold once the server configures logging.
+    """
+
+    if os.environ.get(_ACCESS_LOG_HEALTH_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return
+    access_logger = logging.getLogger("uvicorn.access")
+    if any(isinstance(installed, _SuppressHealthAccessLog) for installed in access_logger.filters):
+        return
+    access_logger.addFilter(_SuppressHealthAccessLog())
 
 
 @asynccontextmanager
@@ -215,6 +271,12 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+# Applied at import time so every launch path is covered, including the
+# hot-reload one (``uvicorn drsai.backend.desktop_gateway.app:app --reload``,
+# see ``apps/desktop/shared/main/gateway.ts``) which imports this module and
+# never calls ``main()``.
+suppress_health_access_logging()
 
 
 def main() -> None:

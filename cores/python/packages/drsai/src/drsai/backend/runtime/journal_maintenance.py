@@ -10,15 +10,38 @@ Stop the desktop Runtime before running this: the repair writes to the Journal a
 ``--vacuum`` needs exclusive access to the database.  ``--dry-run`` is read-only: it
 reports the reclaimable volume without writing rows or touching the schema.
 
+``--purge-legacy-mirrors`` additionally deletes Journal rows that only mirror an
+Item-projected Runtime Event.  ``_reconcile_conversation_journal`` used to import the
+whole pre-Journal ``runtime_events`` table, streamed ``agent.message.delta`` and
+``thinking.delta`` chunks included, and ``append_event`` mirrored
+``subagent.markdown``/``subagent.thinking`` before those types were recognised as
+Item content.  Those rows carry no ``item_id``, so OAEP could only demote them to a
+content-free ``event.session.updated``; the text they hold is already persisted once
+per Item.  Each removed Event is recorded in
+``runtime_session_journal_compacted_runtime_events`` so the importer never writes it
+back.
+
+``--compact-runtime-events`` additionally reduces the stored payload of streamed
+Runtime Events.  ``agent.message.delta``/``thinking.delta``/``subagent.*`` rows written
+before ``compact_runtime_event_payload`` existed repeated the whole Run/Session binding
+next to their chunk, which made a long answer's Event log an order of magnitude larger
+than its text.  The rows themselves are kept -- Run Event cursors, ``list_events``
+replay and the Relay's bounded SSE buffer read this log chunk by chunk -- so only the
+repeated envelope is removed, and ``run_id``/``sequence``/``created_at`` plus the chunk
+text stay in place.  ``runtime_events`` is append-only for ordinary writers, so the
+pass runs under the same explicit maintenance marker the delta repair uses and disarms
+it again for every batch.
+
 Unless ``--no-backup`` is given, a transactionally consistent copy of the database is
 created next to it before the first write and kept as the recovery point.  That and
 the post-repair ``PRAGMA integrity_check`` follow the data-safety rules the offline
-Runtime maintenance tools already use.  The repair itself is idempotent and
-resumable, so it can safely be re-run after an interruption.
+Runtime maintenance tools already use.  Both passes are idempotent and resumable, so
+they can safely be re-run after an interruption.
 
     python -m drsai.backend.runtime.journal_maintenance --database <engine.sqlite3>
         [--session <session-id>] [--limit N] [--batch-size N] [--dry-run] [--vacuum]
-        [--backup PATH] [--no-backup] [--skip-integrity-check]
+        [--purge-legacy-mirrors] [--compact-runtime-events] [--backup PATH] [--no-backup]
+        [--skip-integrity-check]
 """
 
 from __future__ import annotations
@@ -32,7 +55,11 @@ from pathlib import Path
 from typing import Any
 
 from drsai.backend.runtime.journal import (
+    compact_runtime_event_payloads,
+    ensure_journal_delete_guard,
     ensure_journal_update_guard,
+    ensure_runtime_event_guards,
+    purge_legacy_event_mirrors,
     repair_legacy_delta_rows,
 )
 
@@ -100,6 +127,22 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="skip the post-repair PRAGMA integrity_check",
     )
+    parser.add_argument(
+        "--purge-legacy-mirrors",
+        action="store_true",
+        help=(
+            "also delete Journal rows that only mirror an Item-projected Runtime Event "
+            "(streamed deltas and subagent streaming text)"
+        ),
+    )
+    parser.add_argument(
+        "--compact-runtime-events",
+        action="store_true",
+        help=(
+            "also reduce the stored payload of streamed Runtime Events "
+            "(agent.message.delta, thinking.delta, subagent.*) to the chunk they carry"
+        ),
+    )
     args = parser.parse_args(argv)
 
     database = Path(args.database).expanduser()
@@ -132,6 +175,15 @@ def main(argv: list[str] | None = None) -> int:
                 "singleton INTEGER PRIMARY KEY CHECK(singleton=1))"
             )
             ensure_journal_update_guard(connection)
+            if args.purge_legacy_mirrors:
+                ensure_journal_delete_guard(connection)
+            connection.commit()
+        if args.compact_runtime_events and not args.dry_run and connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_events'"
+        ).fetchone():
+            # The Event log is append-only too; upgrade its guard so the payload
+            # compaction can rewrite rows, exactly like the Journal repair above.
+            ensure_runtime_event_guards(connection)
             connection.commit()
         stats.update(
             repair_legacy_delta_rows(
@@ -142,7 +194,26 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run=args.dry_run,
             )
         )
-        if args.vacuum and not args.dry_run and int(stats["repaired"]):
+        if args.purge_legacy_mirrors:
+            stats["purge_legacy_mirrors"] = purge_legacy_event_mirrors(
+                connection,
+                session_id=args.session,
+                batch_size=args.batch_size,
+                dry_run=args.dry_run,
+            )
+        if args.compact_runtime_events:
+            stats["compact_runtime_events"] = compact_runtime_event_payloads(
+                connection,
+                batch_size=args.batch_size,
+                limit=args.limit,
+                dry_run=args.dry_run,
+            )
+        reclaimed = (
+            int(stats["repaired"])
+            + int(stats.get("purge_legacy_mirrors", {}).get("purged", 0))
+            + int(stats.get("compact_runtime_events", {}).get("compacted", 0))
+        )
+        if args.vacuum and not args.dry_run and reclaimed:
             # VACUUM cannot run inside a transaction and needs exclusive access.
             connection.execute("VACUUM")
         if not args.dry_run and not args.skip_integrity_check:

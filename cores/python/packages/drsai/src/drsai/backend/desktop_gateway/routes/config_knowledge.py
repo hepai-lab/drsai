@@ -39,7 +39,6 @@ from drsai.config import (
     delete_knowledge_resource,
     diff_local_knowledge_corpus,
     get_knowledge_resource,
-    index_local_files,
     knowledge_corpus_state,
     knowledge_resource_payload,
     knowledge_status,
@@ -52,6 +51,7 @@ from drsai.config import (
     resolve_credential,
     search_local_knowledge,
     store_credential,
+    validate_local_index_target,
 )
 
 from .. import _state
@@ -87,6 +87,19 @@ class KnowledgeSearchRequest(BaseModel):
     keyword: bool = Field(default=True, description="Enable keyword search (RAGFlow hybrid)")
     rerank_id: str = Field(default="hepai/bge-reranker-v2-m3___OpenAI-API@OpenAI-API-Compatible", description="Rerank model for RAGFlow")
     cross_languages: list[str] = Field(default=["English", "Chinese"], description="Cross-language retrieval for RAGFlow")
+
+
+class IndexBuildRequest(BaseModel):
+    """Optional body for starting a local-file index build.
+
+    ``wait_ms`` lets a caller hold the request open for a build that is expected
+    to be quick, so a small folder still finishes in a single round trip.  It is
+    never a bound on the build: whatever it is set to, the build continues in
+    the background and the response says where it got to.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    wait_ms: int = Field(default=0, ge=0)
 
 
 # =============================================================================
@@ -154,6 +167,100 @@ def _knowledge_evidence_payload(evidence: Any) -> dict[str, object]:
 
 
 # =============================================================================
+# Index-build plumbing
+# =============================================================================
+
+# Longest a single index request will hold the connection open.  A client can
+# always poll again, so this exists only to keep a stalled connection from
+# becoming an indefinite hang; it is not a bound on the build.
+_MAX_INDEX_WAIT_MS = 20_000
+
+# Fields of a finished build worth lifting onto the Knowledge Base's status.
+# The rest of the build result describes the corpus, not the Knowledge Base.
+_INDEX_RESULT_FIELDS = (
+    "document_count",
+    "chunk_count",
+    "corpus_complete",
+    "corpus_revision",
+    "corpus_document_count",
+    "reused_document_count",
+    "parsed_document_count",
+    "skipped_document_count",
+    "failed_document_count",
+    "ignored_file_count",
+    "indexed_at",
+)
+
+
+def _apply_index_job(
+    status: dict[str, object], snapshot: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """Merge a build's live state onto a Knowledge Base's stored status.
+
+    The two answer different questions: the stored status says what can be
+    searched *right now*, the job says what is being built.  While a build runs
+    the caller needs the second, but the first is still true — the previous
+    index stays searchable until the new one publishes — so it is reported
+    alongside as ``previous_status`` rather than thrown away.
+    """
+
+    if not snapshot:
+        return status
+    job_state = str(snapshot.get("job_state") or "")
+    merged = dict(status)
+    merged["job_id"] = snapshot.get("job_id")
+    merged["job_state"] = job_state
+    # A single boolean that answers "should I ask again?", so a caller does not
+    # have to know which job states are final.
+    merged["terminal"] = bool(snapshot.get("terminal"))
+    merged["index_progress"] = {
+        "phase": snapshot.get("phase"),
+        "done": snapshot.get("done"),
+        "total": snapshot.get("total"),
+        "current": snapshot.get("current"),
+        "restarting": bool(snapshot.get("restarting")),
+    }
+    if job_state == "running":
+        merged["in_progress"] = True
+        merged["previous_status"] = status.get("status")
+        merged["status"] = "indexing"
+        return merged
+    merged["in_progress"] = False
+    result = snapshot.get("result")
+    if isinstance(result, Mapping):
+        for key in _INDEX_RESULT_FIELDS:
+            if key in result:
+                merged[key] = result[key]
+    error = snapshot.get("error")
+    if isinstance(error, Mapping):
+        # Reported separately from ``status``: a failed rebuild leaves the
+        # previous index intact, so the Knowledge Base is still usable and the
+        # failure belongs to the attempt, not to the corpus.
+        merged["index_error"] = dict(error)
+    return merged
+
+
+def _knowledge_status_with_job(config_dir: Path, resource: KnowledgeResource) -> dict[str, object]:
+    """Stored status for one Knowledge Base with any live build merged over it."""
+    return _apply_index_job(
+        knowledge_status(config_dir, resource), _state.index_jobs().state(resource.knowledge_id),
+    )
+
+
+def _start_index_job(
+    config_dir: Path, resource: KnowledgeResource, req: IndexBuildRequest | None,
+) -> dict[str, object]:
+    """Start or join this Knowledge Base's build, optionally waiting for it."""
+
+    jobs = _state.index_jobs()
+    snapshot = jobs.start(config_dir, resource)
+    wait_ms = 0 if req is None else max(0, min(req.wait_ms, _MAX_INDEX_WAIT_MS))
+    if wait_ms and not snapshot.get("terminal"):
+        snapshot = jobs.wait(resource.knowledge_id, wait_ms / 1000.0) or snapshot
+    return _apply_index_job(knowledge_status(config_dir, resource), snapshot)
+
+
+# =============================================================================
 # Routes
 # =============================================================================
 
@@ -164,7 +271,7 @@ async def list_knowledge_bases(user_id: str | None = Query(default=None)):
     await asyncio.to_thread(_migrate_legacy_knowledge_config, config_dir)
     resources = await asyncio.to_thread(list_knowledge_resources, config_dir)
     return {"object": "list", "data": [
-        {**knowledge_resource_payload(resource), **knowledge_status(config_dir, resource), "references": _knowledge_agent_references(resource.knowledge_id)}
+        {**knowledge_resource_payload(resource), **_knowledge_status_with_job(config_dir, resource), "references": _knowledge_agent_references(resource.knowledge_id)}
         for resource in resources
     ]}
 
@@ -201,7 +308,7 @@ async def get_knowledge_base(knowledge_id: str, user_id: str | None = Query(defa
         resource = await asyncio.to_thread(get_knowledge_resource, _get_config_dir(user_id), knowledge_id)
     except ModelProviderConfigError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {**knowledge_resource_payload(resource), **knowledge_status(_get_config_dir(user_id), resource), "references": _knowledge_agent_references(resource.knowledge_id)}
+    return {**knowledge_resource_payload(resource), **_knowledge_status_with_job(_get_config_dir(user_id), resource), "references": _knowledge_agent_references(resource.knowledge_id)}
 
 
 @api.put("/v1/config/knowledge-bases/{knowledge_id}", operation_id="updateKnowledgeBase")
@@ -241,6 +348,9 @@ async def delete_knowledge_base(knowledge_id: str, user_id: str | None = Query(d
     references = _knowledge_agent_references(resolved)
     for ref in references:
         _remove_knowledge_from_agent(ref["agent_name"], resolved)
+    # A build for a Knowledge Base that is being deleted must not publish: the
+    # index file would outlive the entry that explains what it is.
+    _state.index_jobs().cancel(resolved)
     try:
         resource = await asyncio.to_thread(delete_knowledge_resource, _get_config_dir(user_id), resolved)
     except ModelProviderConfigError as exc:
@@ -259,7 +369,7 @@ async def get_knowledge_base_status(knowledge_id: str, user_id: str | None = Que
         resource = await asyncio.to_thread(get_knowledge_resource, _get_config_dir(user_id), knowledge_id)
     except ModelProviderConfigError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    status = knowledge_status(_get_config_dir(user_id), resource)
+    status = _knowledge_status_with_job(_get_config_dir(user_id), resource)
     if resource.type == "ragflow" and status["status"] == "configured":
         reference = str((resource.config or {}).get("credential_ref") or "")
         status["status"] = "configured" if reference and resolve_credential(reference) else "credential_required"
@@ -298,15 +408,31 @@ async def test_knowledge_base(knowledge_id: str, user_id: str | None = Query(def
 
 
 @api.post("/v1/config/knowledge-bases/{knowledge_id}/index", operation_id="indexKnowledgeBase")
-async def index_knowledge_base(knowledge_id: str, user_id: str | None = Query(default=None)):
-    """Trigger local-file indexing for a local-files Knowledge Base."""
+async def index_knowledge_base(
+    knowledge_id: str,
+    req: IndexBuildRequest | None = None,
+    user_id: str | None = Query(default=None),
+):
+    """Start (or join) local-file indexing and report where the build stands.
+
+    The build outlives this request on purpose.  A real folder takes longer to
+    walk, parse, and chunk than any client will hold a connection open for, and
+    the previous version of this route proved it: the client timed out while the
+    build kept running, so the caller saw a failure for work that succeeded.
+    The route therefore answers with a job the caller polls.
+    """
+    config_dir = _get_config_dir(user_id)
     try:
-        resource = await asyncio.to_thread(get_knowledge_resource, _get_config_dir(user_id), knowledge_id)
+        resource = await asyncio.to_thread(get_knowledge_resource, config_dir, knowledge_id)
         if resource.type != "local-files":
             raise ModelProviderConfigError("RAGFlow indexing is managed by the configured RAGFlow service")
-        return await asyncio.to_thread(index_local_files, _get_config_dir(user_id), resource)
+        # Refused here rather than inside the job: an unusable root is a fact the
+        # caller can act on immediately, and a job would only report it after a
+        # poll round trip.
+        await asyncio.to_thread(validate_local_index_target, resource)
     except ModelProviderConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _start_index_job(config_dir, resource, req)
 
 
 @api.post("/v1/config/knowledge-bases/{knowledge_id}/search-preview", operation_id="searchPreviewKnowledgeBase")
@@ -357,7 +483,13 @@ def router() -> APIRouter:
     return api
 @api.get("/v1/config/knowledge-bases/{knowledge_id}/files", operation_id="listKnowledgeBaseFiles")
 async def list_knowledge_base_files(knowledge_id: str, user_id: str | None = Query(default=None)):
-    """Return the list of documents indexed in a local-files Knowledge Base."""
+    """Return the documents in a local-files Knowledge Base's published index.
+
+    A corpus that has not been indexed yet answers with an empty list and
+    ``indexed: false`` rather than an error.  "Nothing is published" is a state
+    a caller can render, and treating it as a failure is what turned a build
+    that was merely still running into a reported error.
+    """
     config_dir = _get_config_dir(user_id)
     try:
         resource = await asyncio.to_thread(get_knowledge_resource, config_dir, knowledge_id)
@@ -365,11 +497,22 @@ async def list_knowledge_base_files(knowledge_id: str, user_id: str | None = Que
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if resource.type != "local-files":
         raise HTTPException(status_code=400, detail="Only local-files Knowledge Bases support document listing")
+    status = _knowledge_status_with_job(config_dir, resource)
+    published = str(status.get("status") or "")
+    if published == "indexing":
+        # A build in flight does not unpublish the previous index, so its
+        # documents are still the honest answer to "what is in this corpus".
+        published = str(status.get("previous_status") or "not_indexed")
+    if published != "ready":
+        return {
+            "knowledge_id": knowledge_id, "data": [], "indexed": False,
+            "status": status.get("status"),
+        }
     try:
         state = await asyncio.to_thread(knowledge_corpus_state, config_dir, resource)
     except ModelProviderConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"knowledge_id": knowledge_id, "data": state.get("documents", [])}
+    return {"knowledge_id": knowledge_id, "data": state.get("documents", []), "indexed": True}
 
 
 @api.get("/v1/config/knowledge-bases/{knowledge_id}/stale", operation_id="checkKnowledgeBaseStale")
@@ -389,8 +532,12 @@ async def check_knowledge_base_stale(knowledge_id: str, user_id: str | None = Qu
 
 
 @api.post("/v1/config/knowledge-bases/{knowledge_id}/refresh-if-stale", operation_id="refreshKnowledgeBaseIfStale")
-async def refresh_knowledge_base_if_stale(knowledge_id: str, user_id: str | None = Query(default=None)):
-    """Re-index a local-files Knowledge Base only if it is stale."""
+async def refresh_knowledge_base_if_stale(
+    knowledge_id: str,
+    req: IndexBuildRequest | None = None,
+    user_id: str | None = Query(default=None),
+):
+    """Start an index build only if the corpus changed since the last one."""
     config_dir = _get_config_dir(user_id)
     try:
         resource = await asyncio.to_thread(get_knowledge_resource, config_dir, knowledge_id)
@@ -401,11 +548,16 @@ async def refresh_knowledge_base_if_stale(knowledge_id: str, user_id: str | None
     try:
         diff = await asyncio.to_thread(diff_local_knowledge_corpus, config_dir, resource)
     except ModelProviderConfigError:
+        # Not indexed at all, or indexed by an older build: either way there is
+        # nothing to compare against, which is itself a reason to build.
         diff = {"stale": True}
     if not diff.get("stale", True):
         return {"knowledge_id": knowledge_id, "stale": False, "status": "unchanged"}
-    result = await asyncio.to_thread(index_local_files, config_dir, resource)
-    return {"knowledge_id": knowledge_id, "stale": True, "status": result.get("status", "ready")}
+    try:
+        await asyncio.to_thread(validate_local_index_target, resource)
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {**_start_index_job(config_dir, resource, req), "stale": True}
 
 
 @api.get("/v1/config/knowledge-bases/ragflow/discover", operation_id="rediscoverRagflowDatasets")

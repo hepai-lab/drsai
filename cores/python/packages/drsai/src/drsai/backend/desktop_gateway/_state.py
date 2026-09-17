@@ -35,6 +35,7 @@ _artifact_store: RuntimeArtifactStore | None = None
 _tool_dispatcher: RuntimeToolDispatcher | None = None
 _agent_service: Any = None
 _agent_manager: Any = None
+_index_jobs: Any = None
 _workspace_roots: dict[str, Path] = {}
 
 
@@ -154,6 +155,21 @@ def agent_service():
             {backend.backend_id: backend, remote_backend.backend_id: remote_backend},
         )
     return _agent_service
+
+
+def index_jobs():
+    """Background Knowledge Base index builds, owned by this process.
+
+    A build outlives the HTTP request that started it, so its state cannot live
+    in the route that created it: the job manager is a process singleton for the
+    same reason the Runtime is.
+    """
+    global _index_jobs
+    if _index_jobs is None:
+        from ._index_jobs import KnowledgeIndexJobManager
+
+        _index_jobs = KnowledgeIndexJobManager()
+    return _index_jobs
 
 
 # Agent Definitions are referenced by exact ``id@version``: the store refuses a
@@ -284,13 +300,18 @@ def ensure_remote_agents_workspace() -> str:
 
 def reset_state() -> None:
     """Drop every singleton. Tests call this between state roots."""
-    global _registry, _engine, _artifact_store, _tool_dispatcher, _agent_service, _agent_manager
+    global _registry, _engine, _artifact_store, _tool_dispatcher, _agent_service, _agent_manager, _index_jobs
     _registry = None
     _engine = None
     _artifact_store = None
     _tool_dispatcher = None
     _agent_service = None
     _agent_manager = None
+    if _index_jobs is not None:
+        # A build thread writes into the state root being torn down here, so it
+        # must be stopped before the next test points DRSAI_HOME elsewhere.
+        _index_jobs.shutdown()
+    _index_jobs = None
     _workspace_roots.clear()
     from ._image_tools import reset_image_adapter
 

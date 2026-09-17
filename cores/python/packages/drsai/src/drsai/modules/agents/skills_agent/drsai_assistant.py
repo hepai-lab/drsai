@@ -861,17 +861,30 @@ class DrSaiAssistant(DrSaiAgent):
             ) -> str:
                 """Persistent curated memory across sessions.
 
-                ``MEMORY.md`` is your agent notes — environment facts, conventions,
-                things learned about the project. Entries are injected into the
-                system prompt at session start. Mid-session writes update the file
-                but NOT the live prompt (preserves prefix cache — next session
-                will pick up the latest content).
+                Use this for durable facts worth carrying into future sessions:
+                user preferences and working style, non-obvious project
+                conventions, the root cause of a tricky bug, and user feedback or
+                corrections. Skip trivial reads, routine tool calls, and raw code
+                — reference a file path instead of pasting it.
+
+                Entry format:
+                ``[YYYY-MM-DD] Title: one-line. Files: path1, path2. Fix: brief.``
+                Keep each entry under 200 chars.
+
+                ``MEMORY.md`` is injected into the system prompt at session start.
+                Mid-session writes update the file but NOT the live prompt
+                (preserves prefix cache — next session will pick up the latest
+                content). Never store secrets. Prefer one entry per topic; merge
+                near-duplicates rather than appending a second one. After saving
+                a note, tell the user.
 
                 ``action`` selects the operation:
                   - ``add``: append a new entry to MEMORY.md. ``content`` required.
                   - ``replace``: find an entry containing ``old_text`` and replace it with ``content``. Both required.
                   - ``remove``: delete the entry containing ``old_text``. ``old_text`` required.
-                  - ``read``: list current entries with usage stats.
+                  - ``read``: list current entries with usage stats. Run this
+                    before ``add`` to check for an entry you should update
+                    instead, and when MEMORY.md is near its limit.
 
                 Stores are bounded (MEMORY.md ≤ 2200 chars). Failed mutations return
                 an error JSON with the current usage.

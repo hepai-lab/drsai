@@ -12,6 +12,7 @@ from autogen_core.models._model_client import (
 from ._model_client import (
     ModelFamily,
 )
+from ._trace_log_filters import suppress_token_estimator_schema_warnings
 
 from autogen_core.models._types import (
     AssistantMessage,
@@ -31,5 +32,9 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_ext.models.anthropic import AnthropicChatCompletionClient, AnthropicBedrockClientConfiguration
 # from autogen_ext.models.azure import AzureAIChatCompletionClient, AzureAIChatCompletionClientConfig
 # from autogen_ext.models.llama_cpp import LlamaCppChatCompletionClient
+
+# Import-time so it holds for every entry point that can reach a client's
+# ``count_tokens`` (Desktop Runtime, CLI, daemon, hot-reloaded uvicorn).
+suppress_token_estimator_schema_warnings()
 # from autogen_ext.models.semantic_kernel import SKChatCompletionAdapter
 # from autogen_ext.models.llama_cpp import LlamaCppChatCompletionClient
