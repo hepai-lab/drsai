@@ -13,14 +13,18 @@ import shutil
 import tempfile
 import tomllib
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, get_args
 
-from .defaults import CURRENT_CONFIG_VERSION
+from .defaults import CURRENT_CONFIG_VERSION, provider_models_file, provider_user_models_file
 from .loader import ConfigError, default_config_path
+from .model_catalog import ReasoningEffort
 
 _TABLE_RE = re.compile(r"^\s*\[([^\]]+)]\s*(?:#.*)?$")
 _KEY_RE = re.compile(r"^\s*([A-Za-z0-9_-]+)\s*=")
 _PROVIDER_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# Derived from the canonical Literal so the writer can never drift from the
+# Runtime contract it is writing for.
+_REASONING_EFFORTS = frozenset(get_args(ReasoningEffort))
 
 
 def update_model_selection(
@@ -92,13 +96,33 @@ def upsert_provider(
     if legacy_wire_api == "gemini" and not normalized_values.get("google_base_url") and normalized_values.get("base_url"):
         normalized_values["google_base_url"] = normalized_values["base_url"]
     model_values = normalized_values.pop("models", None)
+    # ``models``            -> the Provider's catalog file (product-owned for
+    #                          Providers OpenDrSai ships; see PRODUCT_PROVIDER_IDS)
+    # ``user_models``       -> the user-owned overlay file, never regenerated
+    # ``disabled_models``   -> kill switches for built-in models, in the overlay
+    user_model_values = normalized_values.pop("user_models", None)
+    disabled_model_values = normalized_values.pop("disabled_models", None)
     legacy_aliases = normalized_values.pop("model_aliases", {})
     legacy_upstream_ids = normalized_values.pop("model_upstream_ids", {})
     legacy_operations = normalized_values.pop("model_operations", {})
     if model_values is not None:
-        normalized_values["models_file"] = normalized_values.get("models_file") or f"configs/models/provider_{name}.toml"
+        normalized_values["models_file"] = (
+            normalized_values.get("models_file") or provider_models_file(name)
+        )
         model_values = _normalize_model_configs(
             model_values,
+            aliases=legacy_aliases,
+            upstream_ids=legacy_upstream_ids,
+            operations=legacy_operations,
+            default_protocol=str(legacy_wire_api or "openai"),
+        )
+    if user_model_values is not None or disabled_model_values is not None:
+        normalized_values["user_models_file"] = (
+            normalized_values.get("user_models_file") or provider_user_models_file(name)
+        )
+    if user_model_values is not None:
+        user_model_values = _normalize_model_configs(
+            user_model_values,
             aliases=legacy_aliases,
             upstream_ids=legacy_upstream_ids,
             operations=legacy_operations,
@@ -114,6 +138,7 @@ def upsert_provider(
         "api_key_credential",
         "requires_api_key",
         "models_file",
+        "user_models_file",
     }
     unknown = set(values) - allowed
     if unknown:
@@ -129,6 +154,15 @@ def upsert_provider(
     if model_values is None and not effective_values.get("models_file") and isinstance(existing.get("models_file"), str):
         effective_values["models_file"] = existing["models_file"]
     if (
+        user_model_values is None
+        and disabled_model_values is None
+        and not effective_values.get("user_models_file")
+        and isinstance(existing.get("user_models_file"), str)
+    ):
+        # Updating unrelated Provider fields must not silently drop the user's
+        # overlay file pointer.
+        effective_values["user_models_file"] = existing["user_models_file"]
+    if (
         effective_values.get("requires_api_key") is not False
         and not any(effective_values.get(key) for key in ("api_key", "api_key_env", "api_key_credential"))
     ):
@@ -136,6 +170,13 @@ def upsert_provider(
             if existing.get(key):
                 effective_values[key] = existing[key]
                 break
+    if effective_values.get("models_file"):
+        # ``models_file`` and an inline ``models`` table are mutually exclusive —
+        # the reader rejects a Provider that sets both — so the legacy sub-table
+        # has to go once the Provider is migrated to the file-backed layout. The
+        # entries have already been routed into the catalog/overlay files above.
+        lines = _strip_legacy_models_table(lines, name)
+
     start, end = _find_provider_table(lines, name)
     rendered = [f"[model_providers.{name}]\n"]
     for key in (
@@ -147,6 +188,7 @@ def upsert_provider(
         "api_key_credential",
         "requires_api_key",
         "models_file",
+        "user_models_file",
     ):
         value = effective_values.get(key)
         if value is None:
@@ -163,6 +205,24 @@ def upsert_provider(
     if model_values is not None:
         models_path = _resolve_models_file(config_path, str(effective_values["models_file"]), provider_name=name)
         _atomic_write(models_path, _render_model_configs(model_values))
+
+    if user_model_values is not None or disabled_model_values is not None:
+        user_models_path = _resolve_models_file(
+            config_path, str(effective_values["user_models_file"]), provider_name=name, field="user_models_file",
+        )
+        # Partial updates must never destroy the other half of the overlay.
+        if user_model_values is None or disabled_model_values is None:
+            existing_overlay = _existing_models_document(user_models_path)
+            if user_model_values is None:
+                existing_models = existing_overlay.get("models")
+                user_model_values = existing_models if isinstance(existing_models, Mapping) else {}
+            if disabled_model_values is None:
+                existing_disabled = existing_overlay.get("disabled")
+                disabled_model_values = existing_disabled if isinstance(existing_disabled, list) else []
+        _atomic_write(
+            user_models_path,
+            _render_user_models_file(user_model_values, disabled=disabled_model_values),
+        )
 
     if start is None:
         if lines and lines[-1].strip():
@@ -208,13 +268,17 @@ def _normalize_model_configs(
     return result
 
 
-def _render_model_configs(value: Mapping[str, object]) -> list[str]:
+def _render_model_configs(
+    value: Mapping[str, object],
+    *,
+    header: str | None = "# Model catalog for this Provider. Managed by OpenDrSai.\n",
+) -> list[str]:
     if len(value) > 500:
         raise ConfigError("models contains too many entries")
     allowed_modalities = {"text", "image", "audio", "video"}
     allowed_protocols = {"openai", "anthropic", "gemini"}
     allowed_capabilities = {"chat", "tool_calling", "reasoning", "image_generation", "image_edit", "speech_to_text", "text_to_speech", "video_generation"}
-    rendered: list[str] = ["# Model catalog for this Provider. Managed by OpenDrSai.\n"]
+    rendered: list[str] = [] if header is None else [header]
     for model_id, raw in value.items():
         if not isinstance(model_id, str) or not model_id.strip() or not isinstance(raw, Mapping):
             raise ConfigError("models contains an invalid entry")
@@ -226,6 +290,9 @@ def _render_model_configs(value: Mapping[str, object]) -> list[str]:
         enabled = raw.get("enabled", True)
         capabilities = raw.get("capabilities", ["chat"])
         upstream_id = raw.get("upstream_id")
+        token_limit = raw.get("token_limit")
+        max_tokens = raw.get("max_tokens")
+        reasoning_efforts = raw.get("reasoning_efforts", [])
         if alias is not None and (not isinstance(alias, str) or not alias.strip()):
             raise ConfigError(f"models.{model_id}.alias is invalid")
         if legacy_modalities is not None and ("input_modalities" in raw or "output_modalities" in raw):
@@ -250,6 +317,21 @@ def _render_model_configs(value: Mapping[str, object]) -> list[str]:
             raise ConfigError(f"models.{model_id}.text_to_speech requires text input and audio output")
         if "video_generation" in capability_set and "video" not in output_set:
             raise ConfigError(f"models.{model_id}.video_generation requires video output")
+        if token_limit is not None and (isinstance(token_limit, bool) or not isinstance(token_limit, int) or token_limit <= 0):
+            raise ConfigError(f"models.{model_id}.token_limit is invalid")
+        if max_tokens is not None and (isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens <= 0):
+            raise ConfigError(f"models.{model_id}.max_tokens is invalid")
+        if isinstance(token_limit, int) and isinstance(max_tokens, int) and max_tokens > token_limit:
+            raise ConfigError(f"models.{model_id}.max_tokens cannot exceed token_limit")
+        if (
+            not isinstance(reasoning_efforts, (list, tuple))
+            or any(not isinstance(item, str) for item in reasoning_efforts)
+            or len(set(reasoning_efforts)) != len(reasoning_efforts)
+            or not set(reasoning_efforts) <= _REASONING_EFFORTS
+        ):
+            raise ConfigError(f"models.{model_id}.reasoning_efforts is invalid")
+        if reasoning_efforts and "reasoning" not in capability_set:
+            raise ConfigError(f"models.{model_id}.reasoning_efforts requires the reasoning capability")
         rendered.extend([
             "\n",
             f"[models.{_toml_string(model_id.strip())}]\n",
@@ -260,21 +342,68 @@ def _render_model_configs(value: Mapping[str, object]) -> list[str]:
             f"enabled = {'true' if enabled else 'false'}\n",
             "capabilities = [" + ", ".join(_toml_string(str(item)) for item in capabilities) + "]\n",
             *([f"upstream_id = {_toml_string(upstream_id.strip())}\n"] if isinstance(upstream_id, str) and upstream_id.strip() else []),
+            *([f"token_limit = {token_limit}\n"] if isinstance(token_limit, int) else []),
+            *([f"max_tokens = {max_tokens}\n"] if isinstance(max_tokens, int) else []),
+            *(
+                ["reasoning_efforts = [" + ", ".join(_toml_string(str(item)) for item in reasoning_efforts) + "]\n"]
+                if reasoning_efforts
+                else []
+            ),
         ])
     return rendered
 
 
-def _resolve_models_file(config_path: Path, value: str, *, provider_name: str) -> Path:
+def _normalize_disabled_models(value: object) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ConfigError("disabled_models must be a list of model IDs")
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip() or len(item) > 256 or any(char in item for char in "\r\n\0"):
+            raise ConfigError("disabled_models must contain valid model IDs")
+        model_id = item.strip()
+        if model_id not in result:
+            result.append(model_id)
+    return result
+
+
+def _render_user_models_file(value: Mapping[str, object], *, disabled: object) -> list[str]:
+    """Render the user-owned overlay file: only the user's own models + kill switches."""
+    rendered = [
+        "# Your own models for this Provider. OpenDrSai never rewrites this file.\n",
+    ]
+    disabled_models = _normalize_disabled_models(disabled)
+    if disabled_models:
+        rendered.append("disabled = [" + ", ".join(_toml_string(item) for item in disabled_models) + "]\n")
+    rendered.extend(_render_model_configs(value, header=None))
+    return rendered
+
+
+def _resolve_models_file(
+    config_path: Path, value: str, *, provider_name: str, field: str = "models_file",
+) -> Path:
     relative = Path(value)
     if relative.is_absolute() or relative.suffix.lower() != ".toml":
-        raise ConfigError(f"model_providers.{provider_name}.models_file must be a relative TOML path")
+        raise ConfigError(f"model_providers.{provider_name}.{field} must be a relative TOML path")
     root = config_path.resolve().parent
     target = (root / relative).resolve()
     try:
         target.relative_to(root)
     except ValueError as exc:
-        raise ConfigError(f"model_providers.{provider_name}.models_file must stay inside the config directory") from exc
+        raise ConfigError(f"model_providers.{provider_name}.{field} must stay inside the config directory") from exc
     return target
+
+
+def _existing_models_document(path: Path) -> Mapping[str, object]:
+    """Best-effort read of an existing catalog file, used for partial updates."""
+    if not path.exists():
+        return {}
+    try:
+        document = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    return document if isinstance(document, Mapping) else {}
 
 
 def delete_provider(name: str, *, path: str | Path | None = None) -> bool:
@@ -297,16 +426,29 @@ def replace_config_text(text: str, *, path: str | Path | None = None) -> None:
     _atomic_write(config_path, text.splitlines(keepends=True))
 
 
+def render_models_file(value: Mapping[str, object]) -> str:
+    """Render a Provider catalog file exactly as this module would store it.
+
+    Callers that regenerate a catalog as a whole (the desktop bootstrap) use
+    this to compare the on-disk file with the catalog the product definitions
+    imply. Comparing rendered text is what makes "regenerate whole file"
+    tamper-evident: a hand-edited or stale product catalog differs and is
+    repaired, while an unchanged one is left byte-for-byte alone.
+    """
+    return "".join(_render_model_configs(value))
+
+
 def replace_models_file_text(
     models_file: str,
     text: str,
     *,
     path: str | Path | None = None,
     provider_name: str = "provider",
+    field: str = "models_file",
 ) -> None:
     """Atomically commit one Provider model catalog below the config root."""
     config_path = Path(path) if path is not None else default_config_path()
-    target = _resolve_models_file(config_path, models_file, provider_name=provider_name)
+    target = _resolve_models_file(config_path, models_file, provider_name=provider_name, field=field)
     _atomic_write(target, text.splitlines(keepends=True))
 
 
@@ -330,6 +472,28 @@ def _set_top_level(lines: list[str], key: str, encoded_value: str) -> list[str]:
     insertion = first_table
     lines.insert(insertion, f"{key} = {encoded_value}\n")
     return lines
+
+
+def _strip_legacy_models_table(lines: list[str], name: str) -> list[str]:
+    """Drop the legacy inline ``models`` sub-table of ``name``.
+
+    ``models`` and ``models_file`` cannot coexist, and the migration to the split
+    layout is one-way, so the inline table is removed rather than rewritten. The
+    sibling tables (``model_aliases`` and friends) stay: they are still legal for
+    a file-backed Provider and are read as overrides.
+    """
+
+    prefix = f"model_providers.{name}.models"
+    kept: list[str] = []
+    skipping = False
+    for line in lines:
+        match = _TABLE_RE.match(line)
+        if match:
+            header = match.group(1).strip()
+            skipping = header == prefix or header.startswith(f"{prefix}.")
+        if not skipping:
+            kept.append(line)
+    return kept
 
 
 def _find_provider_table(lines: list[str], name: str) -> tuple[int | None, int | None]:

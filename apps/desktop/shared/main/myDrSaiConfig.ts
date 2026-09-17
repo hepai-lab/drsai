@@ -58,6 +58,7 @@ export async function getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiC
       reasoning_efforts: descriptor.reasoning_efforts,
       availability: descriptor.availability,
       capability_source: descriptor.capability_source,
+      ...(descriptor.origin ? { origin: descriptor.origin } : {}),
     })), workspacePath);
     const catalogState = runtimeCatalog.models.length > 0
       ? runtimeCatalog.state
@@ -310,12 +311,13 @@ function normalizeProviderModels(raw: unknown): SaveMyDrSaiModelProviderRequest[
   const modalities = new Set(["text", "image", "audio", "video"]);
   const protocols = new Set(["openai", "anthropic", "gemini"]);
   const capabilities = new Set(["chat", "tool_calling", "reasoning", "image_generation", "image_edit", "speech_to_text", "text_to_speech", "video_generation"]);
+  const reasoningEfforts = new Set(["none", "low", "medium", "high", "xhigh", "max"]);
   if (entries.length > 500) throw new Error("models contains too many entries.");
   return Object.fromEntries(entries.map(([model, config]) => {
     if (!model.trim() || model.length > 256 || /[\r\n\0]/.test(model)) throw new Error(`Model ID "${model.slice(0, 80)}" is invalid.`);
     if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error(`Model "${model}" configuration is invalid.`);
     const item = config as Record<string, unknown>;
-    const unsupportedKey = Object.keys(item).find((key) => !["alias", "modalities", "input_modalities", "output_modalities", "api_protocol", "enabled", "capabilities", "upstream_id"].includes(key));
+    const unsupportedKey = Object.keys(item).find((key) => !["alias", "modalities", "input_modalities", "output_modalities", "api_protocol", "enabled", "capabilities", "upstream_id", "token_limit", "max_tokens", "reasoning_efforts"].includes(key));
     if (unsupportedKey) throw new Error(`Model "${model}" contains unsupported field "${unsupportedKey}".`);
     const capabilityValues = Array.isArray(item.capabilities) ? item.capabilities.filter((entry): entry is string => typeof entry === "string") : [];
     const capabilitySet = new Set(capabilityValues);
@@ -345,6 +347,16 @@ function normalizeProviderModels(raw: unknown): SaveMyDrSaiModelProviderRequest[
     if (capabilitySet.has("text_to_speech") && !(inputSet.has("text") && outputSet.has("audio"))) throw new Error(`Model "${model}" speech synthesis requires text input and audio output.`);
     if (capabilitySet.has("video_generation") && !outputSet.has("video")) throw new Error(`Model "${model}" video generation requires video output.`);
     if (item.upstream_id !== undefined && (typeof item.upstream_id !== "string" || !item.upstream_id.trim() || item.upstream_id.length > 256 || /[\r\n\0]/.test(item.upstream_id))) throw new Error(`Model "${model}" upstream ID is invalid.`);
+    const declaredTokenLimit = item.token_limit;
+    const declaredMaxTokens = item.max_tokens;
+    const declaredReasoningEfforts = item.reasoning_efforts;
+    if (declaredTokenLimit !== undefined && (typeof declaredTokenLimit !== "number" || !Number.isInteger(declaredTokenLimit) || declaredTokenLimit <= 0 || declaredTokenLimit > 100_000_000)) throw new Error(`Model "${model}" token limit is invalid.`);
+    if (declaredMaxTokens !== undefined && (typeof declaredMaxTokens !== "number" || !Number.isInteger(declaredMaxTokens) || declaredMaxTokens <= 0 || declaredMaxTokens > 100_000_000)) throw new Error(`Model "${model}" max output tokens is invalid.`);
+    if (typeof declaredTokenLimit === "number" && typeof declaredMaxTokens === "number" && declaredMaxTokens > declaredTokenLimit) throw new Error(`Model "${model}" max output tokens cannot exceed its token limit.`);
+    if (declaredReasoningEfforts !== undefined) {
+      if (!Array.isArray(declaredReasoningEfforts) || declaredReasoningEfforts.length > 6 || new Set(declaredReasoningEfforts).size !== declaredReasoningEfforts.length || declaredReasoningEfforts.some((entry) => typeof entry !== "string" || !reasoningEfforts.has(entry))) throw new Error(`Model "${model}" reasoning efforts are invalid.`);
+      if (declaredReasoningEfforts.length && !capabilitySet.has("reasoning")) throw new Error(`Model "${model}" reasoning efforts require the reasoning capability.`);
+    }
     const { modalities: _legacyModalities, ...normalized } = item;
     return [model, { ...normalized, input_modalities: inputValues, output_modalities: outputValues, api_protocol: protocol }];
   })) as Record<string, MyDrSaiProviderModelConfig>;

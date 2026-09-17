@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import tomllib
 import os
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, get_args
 
 from drsai.configs.constant import FS_DIR
 
-from .schema import DrSaiConfig, ProviderInput, ProviderModelConfig, WireApi
+from .defaults import PRODUCT_PROVIDER_IDS
+from .model_catalog import ReasoningEffort
+from .schema import DrSaiConfig, ModelOrigin, ProviderInput, ProviderModelConfig, WireApi
 
 
 class ConfigError(ValueError):
@@ -100,22 +103,120 @@ def _parse_provider(name: str, raw: Mapping[str, Any], *, source_path: str | Non
         raw, "api_key_credential", prefix=f"model_providers.{name}."
     )
     models_file = _optional_nonempty_string(raw, "models_file", prefix=f"model_providers.{name}.")
+    user_models_file = _optional_nonempty_string(raw, "user_models_file", prefix=f"model_providers.{name}.")
     models_value = raw.get("models")
     if models_file is not None:
         if models_value is not None:
             raise ConfigError(f"model_providers.{name} must not set both models and models_file")
-        models_value = _load_models_file(models_file, source_path=source_path, provider_name=name)
-    structured_models = isinstance(models_value, Mapping)
-    model_configs = _optional_model_configs(models_value, default_protocol=wire_api_value or "openai", prefix=f"model_providers.{name}.models") if structured_models else {}
-    models = tuple(model_configs) if structured_models else _optional_string_list(raw, "models", prefix=f"model_providers.{name}.")
+    default_protocol = wire_api_value or "openai"
+
+    # Ownership is decided by *which file* an entry came from, never by
+    # guessing from the model id:
+    #   models_file      -> the Provider's own catalog file. Product-owned only
+    #                       for Providers OpenDrSai ships and regenerates
+    #                       (PRODUCT_PROVIDER_IDS); user-owned otherwise.
+    #   user_models_file -> user-owned overlay, never rewritten by bootstrap
+    #   inline `models`  -> legacy single-file config, treated as user-owned
+    catalog_origin: ModelOrigin = "product" if name in PRODUCT_PROVIDER_IDS else "user"
+    product_configs: dict[str, ProviderModelConfig] = {}
+    product_ids: tuple[str, ...] = ()
+    user_configs: dict[str, ProviderModelConfig] = {}
+    user_ids: list[str] = []
+    if models_file is not None:
+        product_configs = {
+            model_id: replace(config, origin=catalog_origin)
+            for model_id, config in _optional_model_configs(
+                _load_models_file(models_file, source_path=source_path, provider_name=name),
+                default_protocol=default_protocol,
+                prefix=f"model_providers.{name}.models",
+            ).items()
+        }
+        product_ids = tuple(product_configs)
+    elif isinstance(models_value, Mapping):
+        user_configs = {
+            model_id: replace(config, origin="user")
+            for model_id, config in _optional_model_configs(
+                models_value, default_protocol=default_protocol, prefix=f"model_providers.{name}.models",
+            ).items()
+        }
+        user_ids = list(user_configs)
+    else:
+        # Legacy inline id list: no catalog entry, so capabilities stay derived
+        # from the built-in registry exactly as before.
+        user_ids = list(_optional_string_list(raw, "models", prefix=f"model_providers.{name}."))
+
+    disabled_models: tuple[str, ...] = ()
+    user_models_error: str | None = None
+    if user_models_file is not None:
+        # Fail soft: a broken user file degrades to "product models only"
+        # instead of taking the whole Provider (and Runtime) down. A *missing*
+        # user file is normal — it is created on demand when the user adds a
+        # model, so it must not be reported as degraded.
+        try:
+            user_path = _resolve_models_path(
+                user_models_file, source_path=source_path, provider_name=name, field="user_models_file",
+            )
+            if user_path.exists():
+                user_document = _read_toml_document(user_path)
+                loaded_disabled = _optional_string_list(
+                    user_document, "disabled", prefix=f"model_providers.{name}.user_models_file.",
+                )
+                user_models_value = user_document.get("models")
+                loaded_user_configs = (
+                    _optional_model_configs(
+                        user_models_value,
+                        default_protocol=default_protocol,
+                        prefix=f"model_providers.{name}.user_models_file.models",
+                    )
+                    if user_models_value is not None
+                    else {}
+                )
+            else:
+                loaded_disabled = ()
+                loaded_user_configs = {}
+        except ConfigError as exc:
+            user_models_error = str(exc)
+        else:
+            disabled_models = loaded_disabled
+            for model_id, config in loaded_user_configs.items():
+                user_configs[model_id] = replace(config, origin="user")
+                user_ids.append(model_id)
+
+    user_ids = list(dict.fromkeys(user_ids))
+    # A user entry sharing a product id is reported as shadowed rather than
+    # silently overriding the product definition: "copy as my model" must
+    # create a *new* id in the user file.
+    shadowed_models = tuple(model_id for model_id in user_ids if model_id in product_configs)
+    disabled = frozenset(disabled_models)
+    models = tuple(
+        model_id
+        for model_id in (*product_ids, *(item for item in user_ids if item not in product_configs))
+        if model_id not in disabled
+    )
+    # ``models`` is the selectable list, so the kill switch removes an entry from
+    # it. ``model_configs`` stays complete and marks the disabled entries with
+    # ``enabled=False`` instead: the desktop Settings panel has to keep showing
+    # them, otherwise switching a built-in model off would be irreversible from
+    # the UI. The runtime catalog skips disabled entries explicitly.
+    model_configs: dict[str, ProviderModelConfig] = {
+        model_id: (replace(config, enabled=False) if model_id in disabled else config)
+        for model_id, config in product_configs.items()
+    }
+    for model_id, config in user_configs.items():
+        if model_id not in model_configs:
+            model_configs[model_id] = replace(config, enabled=False) if model_id in disabled else config
+
     model_aliases = _optional_string_map(raw, "model_aliases", prefix=f"model_providers.{name}.")
     model_upstream_ids = _optional_string_map(raw, "model_upstream_ids", prefix=f"model_providers.{name}.")
     model_operations = _optional_model_operations(raw, "model_operations", prefix=f"model_providers.{name}.")
-    if any(model_id not in models for model_id in model_aliases):
+    # Declarations for a model the user disabled stay legal, so disabling is
+    # reversible without hand-editing config.toml.
+    declarable_models = set(models) | disabled
+    if any(model_id not in declarable_models for model_id in model_aliases):
         raise ConfigError(f"model_providers.{name}.model_aliases keys must exist in models")
-    if any(model_id not in models for model_id in model_upstream_ids):
+    if any(model_id not in declarable_models for model_id in model_upstream_ids):
         raise ConfigError(f"model_providers.{name}.model_upstream_ids keys must exist in models")
-    if any(model_id not in models for model_id in model_operations):
+    if any(model_id not in declarable_models for model_id in model_operations):
         raise ConfigError(f"model_providers.{name}.model_operations keys must exist in models")
     if model_operations and wire_api_value not in {None, "openai"}:
         raise ConfigError(
@@ -137,39 +238,57 @@ def _parse_provider(name: str, raw: Mapping[str, Any], *, source_path: str | Non
         api_key_env=api_key_env,
         api_key_credential=api_key_credential,
         models_file=models_file,
+        user_models_file=user_models_file,
         models=models,
         model_aliases=model_aliases,
         model_upstream_ids=model_upstream_ids,
         model_operations=model_operations,
         model_configs=model_configs,
+        disabled_models=disabled_models,
+        shadowed_models=shadowed_models,
+        user_models_error=user_models_error,
     )
 
 
-def _load_models_file(models_file: str, *, source_path: str | None, provider_name: str) -> object:
+def _resolve_models_path(
+    models_file: str, *, source_path: str | None, provider_name: str, field: str = "models_file",
+) -> Path:
     if source_path is None:
-        raise ConfigError(f"model_providers.{provider_name}.models_file requires a config source path")
+        raise ConfigError(f"model_providers.{provider_name}.{field} requires a config source path")
     relative = Path(models_file)
     if relative.is_absolute() or relative.suffix.lower() != ".toml":
-        raise ConfigError(f"model_providers.{provider_name}.models_file must be a relative TOML path")
+        raise ConfigError(f"model_providers.{provider_name}.{field} must be a relative TOML path")
     config_root = Path(source_path).expanduser().resolve().parent
     target = (config_root / relative).resolve()
     try:
         target.relative_to(config_root)
     except ValueError as exc:
-        raise ConfigError(f"model_providers.{provider_name}.models_file must stay inside the config directory") from exc
+        raise ConfigError(f"model_providers.{provider_name}.{field} must stay inside the config directory") from exc
+    return target
+
+
+def _read_toml_document(target: Path) -> Mapping[str, Any]:
     try:
         with target.open("rb") as stream:
-            document = tomllib.load(stream)
+            return tomllib.load(stream)
     except FileNotFoundError as exc:
         raise ConfigError(f"Model configuration file not found: {target}") from exc
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"Invalid TOML in {target}: {exc}") from exc
     except OSError as exc:
         raise ConfigError(f"Cannot read {target}: {exc}") from exc
+
+
+def _load_models_file(models_file: str, *, source_path: str | None, provider_name: str) -> Mapping[str, Any]:
+    target = _resolve_models_path(models_file, source_path=source_path, provider_name=provider_name)
+    document = _read_toml_document(target)
     models = document.get("models")
     if not isinstance(models, Mapping):
         raise ConfigError(f"{target} must contain a [models] table")
     return models
+
+
+_REASONING_EFFORTS = frozenset(get_args(ReasoningEffort))
 
 
 def _optional_model_configs(value: object, *, default_protocol: str, prefix: str) -> dict[str, ProviderModelConfig]:
@@ -225,13 +344,31 @@ def _optional_model_configs(value: object, *, default_protocol: str, prefix: str
             raise ConfigError(f"{prefix}.{model_id}.text_to_speech requires text input and audio output")
         if "video_generation" in capability_set and "video" not in output_set:
             raise ConfigError(f"{prefix}.{model_id}.video_generation requires video output")
+        token_limit = raw_config.get("token_limit")
+        if token_limit is not None and (isinstance(token_limit, bool) or not isinstance(token_limit, int) or token_limit <= 0):
+            raise ConfigError(f"{prefix}.{model_id}.token_limit must be a positive integer")
+        max_tokens = raw_config.get("max_tokens")
+        if max_tokens is not None and (isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens <= 0):
+            raise ConfigError(f"{prefix}.{model_id}.max_tokens must be a positive integer")
+        if isinstance(token_limit, int) and isinstance(max_tokens, int) and max_tokens > token_limit:
+            raise ConfigError(f"{prefix}.{model_id}.max_tokens cannot exceed token_limit")
+        reasoning_efforts = raw_config.get("reasoning_efforts", [])
+        if (
+            not isinstance(reasoning_efforts, list)
+            or any(not isinstance(effort, str) for effort in reasoning_efforts)
+            or len(set(reasoning_efforts)) != len(reasoning_efforts)
+            or not set(reasoning_efforts) <= _REASONING_EFFORTS
+        ):
+            raise ConfigError(f"{prefix}.{model_id}.reasoning_efforts is invalid")
+        if reasoning_efforts and "reasoning" not in capability_set:
+            raise ConfigError(f"{prefix}.{model_id}.reasoning_efforts requires the reasoning capability")
         if protocol not in {"openai", "anthropic", "gemini"}:
             raise ConfigError(f"{prefix}.{model_id}.api_protocol is invalid")
         if not isinstance(enabled, bool):
             raise ConfigError(f"{prefix}.{model_id}.enabled must be a boolean")
         if upstream_id is not None and (not isinstance(upstream_id, str) or not upstream_id.strip() or len(upstream_id) > 256):
             raise ConfigError(f"{prefix}.{model_id}.upstream_id is invalid")
-        result[model_id] = ProviderModelConfig(alias=alias.strip() if isinstance(alias, str) else None, input_modalities=tuple(input_modalities), output_modalities=tuple(output_modalities), api_protocol=protocol, enabled=enabled, capabilities=tuple(capabilities), upstream_id=upstream_id.strip() if isinstance(upstream_id, str) else None)  # type: ignore[arg-type]
+        result[model_id] = ProviderModelConfig(alias=alias.strip() if isinstance(alias, str) else None, input_modalities=tuple(input_modalities), output_modalities=tuple(output_modalities), api_protocol=protocol, enabled=enabled, capabilities=tuple(capabilities), upstream_id=upstream_id.strip() if isinstance(upstream_id, str) else None, token_limit=token_limit, max_tokens=max_tokens, reasoning_efforts=tuple(reasoning_efforts))  # type: ignore[arg-type]
     return result
 
 

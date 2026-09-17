@@ -24591,12 +24591,47 @@ button.structured-activity-compact:hover > span {
 .model-provider-model-row:last-child { border-bottom: 0; }
 
 .model-provider-model-id {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
-  overflow: hidden;
   color: var(--text-primary);
   font-size: 12px;
+}
+
+.model-provider-model-id-text {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.model-provider-model-origin {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  color: var(--app-text-muted);
+  background: var(--surface-subtle);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.model-provider-hint {
+  margin: 8px 0 0;
+  color: var(--app-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.model-provider-hint-warning {
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--app-warning) 38%, var(--border-subtle));
+  border-radius: 7px;
+  color: var(--app-warning-text);
+  background: color-mix(in srgb, var(--app-warning) 9%, transparent);
 }
 
 .model-provider-model-alias {

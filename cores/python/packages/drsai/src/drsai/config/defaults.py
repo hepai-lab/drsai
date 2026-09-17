@@ -18,6 +18,35 @@ from .model_defaults import DEFAULT_CONFIG_NAME
 # config.toml, and Agent TOML all agree on the same default.
 DEFAULT_MODEL = DEFAULT_CONFIG_NAME
 DEFAULT_PROVIDER = "hepai"
+# Providers whose ``models_file`` is a *product-owned* catalog: OpenDrSai ships
+# and regenerates it on every bootstrap, so a model the product removes there
+# disappears, and a model it adds appears.
+#
+# Every other Provider's ``models_file`` is still user-owned: it exists because
+# the user created the Provider, so its entries stay editable and must never be
+# reported as product-owned.
+PRODUCT_PROVIDER_IDS: frozenset[str] = frozenset({DEFAULT_PROVIDER})
+
+
+def provider_models_file(provider_name: str) -> str:
+    """Relative path of a Provider's catalog file below the config directory.
+
+    For a Provider in :data:`PRODUCT_PROVIDER_IDS` this is the *product-owned*
+    file: OpenDrSai regenerates it as a whole on every bootstrap, so it is not
+    a place for user edits. For every other Provider it is simply the file the
+    user's own Provider definition points at.
+    """
+    return f"configs/models/provider_{provider_name}.toml"
+
+
+def provider_user_models_file(provider_name: str) -> str:
+    """Relative path of a Provider's *user-owned* overlay catalog.
+
+    OpenDrSai never regenerates or rewrites this file: it only ever writes it
+    when the user explicitly adds a model, so a user's own models survive every
+    product catalog update.
+    """
+    return f"configs/models/provider_{provider_name}.local.toml"
 
 
 def hepai_openai_base_url(environ: Mapping[str, str] | None = None) -> str:

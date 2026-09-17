@@ -15,6 +15,7 @@ import type {
   AgentSkillPreview, AgentKnowledgePolicy, AgentKnowledgePreview, AgentToolPolicy,
   AgentToolPreview, MyDrSaiModelConfig, MyDrSaiModelApiProtocol,
   MyDrSaiModelCapability, MyDrSaiModelModality, MyDrSaiProviderModelConfig,
+  ModelOwnership,
   MyDrSaiAgentModelPolicy, MyDrSaiModelConnection, MyDrSaiProviderPreset,
   MyDrSaiConfig, RuntimeModelOperation, WorkspaceProject,
 } from "@shared/desktopApi";
@@ -242,6 +243,10 @@ function ModelProviderLogo({ provider }: { provider: string }) {
 
 type ProviderModelModality = "text" | "image" | "audio" | "video";
 
+type ProviderReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
+
+const PROVIDER_REASONING_EFFORT_OPTIONS: ProviderReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
+
 type ProviderModelEditorDraft = {
   originalId: string;
   modelId: string;
@@ -251,7 +256,52 @@ type ProviderModelEditorDraft = {
   apiProtocol: MyDrSaiModelApiProtocol;
   enabled: boolean;
   capabilities: MyDrSaiModelCapability[];
+  // Declared numbers are edited as text: an empty field means "no declaration",
+  // which is not the same as 0 (the Runtime then falls back to the built-in
+  // registry). Keeping them as text also lets the user type before we validate.
+  tokenLimit: string;
+  maxTokens: string;
+  reasoningEfforts: ProviderReasoningEffort[];
+  /** Which catalog file the entry came from. Read-only; null for new entries. */
+  origin: ModelOwnership | null;
 };
+
+/**
+ * Parse a declared token number typed by the user.
+ *
+ * ``absent`` (empty input) is a valid state: it clears the declaration so the
+ * Runtime falls back to the built-in registry for that model.
+ */
+function parseDeclaredTokens(value: string): { ok: true; value: number | null } | { ok: false } {
+  const trimmed = value.trim();
+  if (!trimmed) return { ok: true, value: null };
+  if (!/^\d{1,9}$/.test(trimmed)) return { ok: false };
+  const parsed = Number.parseInt(trimmed, 10);
+  return parsed > 0 && parsed <= 100_000_000 ? { ok: true, value: parsed } : { ok: false };
+}
+
+/** Toggle one reasoning effort while keeping the canonical declaration order. */
+function nextProviderReasoningEfforts(
+  current: ProviderReasoningEffort[],
+  effort: ProviderReasoningEffort,
+  enabled: boolean,
+): ProviderReasoningEffort[] {
+  const selected = new Set(current);
+  if (enabled) selected.add(effort);
+  else selected.delete(effort);
+  return PROVIDER_REASONING_EFFORT_OPTIONS.filter((candidate) => selected.has(candidate));
+}
+
+/**
+ * Shape a model entry for writing back to the Provider.
+ *
+ * ``origin`` is derived from the catalog file on read and is not an accepted
+ * write field, so it must never round-trip to the configuration writer.
+ */
+function providerModelConfigForWrite(config: MyDrSaiProviderModelConfig): MyDrSaiProviderModelConfig {
+  const { origin: _origin, ...rest } = config;
+  return { ...rest, api_protocol: (rest.api_protocol as string) === "google" ? "gemini" : rest.api_protocol };
+}
 
 function knownTextModelCapabilities(modelId: string): MyDrSaiModelCapability[] {
   const normalized = modelId.trim().toLowerCase().split("/").at(-1);
@@ -317,6 +367,22 @@ function providerModelConfigsFor(
   provider: Parameters<typeof providerModelConfigFor>[1],
 ): Record<string, MyDrSaiProviderModelConfig> {
   return Object.fromEntries(modelIds.map((modelId) => [modelId, providerModelConfigFor(modelId, provider)]));
+}
+
+/**
+ * Rows the Settings panel shows for one Provider.
+ *
+ * ``models`` is the *selectable* list, so a disabled model is absent from it.
+ * The disabled entries are appended back so their row (and therefore the switch
+ * that re-enables them) does not disappear after saving.
+ */
+function providerDraftModels(
+  provider: { models?: string[]; disabled_models?: string[] } | undefined,
+  fallback: string[],
+): string[] {
+  const models = provider?.models?.length ? [...provider.models] : [...fallback];
+  for (const model of provider?.disabled_models ?? []) if (!models.includes(model)) models.push(model);
+  return models;
 }
 
 function providerModelDescriptor(modelId: string, providerId: string, catalogModels: MyDrSaiModelConfig[]): MyDrSaiModelConfig | undefined {
@@ -937,7 +1003,7 @@ export function SettingsPanel({
     setApiKeyEnvDraft(connection.provider.api_key_source?.startsWith("env:") ? connection.provider.api_key_source.slice(4) : "");
     setWireApiDraft(connection.provider.wire_api);
     setKeySourceDraft(connection.provider.requires_api_key ? (connection.provider.api_key_source?.startsWith("env:") ? "env" : "secure") : "none");
-    const configuredModels = connection.provider.models?.length ? connection.provider.models : [connection.model];
+    const configuredModels = providerDraftModels(connection.provider, [connection.model]);
     setProviderModelsDraft(configuredModels);
     setProviderModelAliasesDraft(connection.provider.model_aliases ?? {});
     setProviderModelOperationsDraft(connection.provider.model_operations ?? {});
@@ -956,9 +1022,7 @@ export function SettingsPanel({
     const provider = modelProviderInventory.find((item) => item.name === activeModelProviderTab)
       ?? (connection?.provider.name === activeModelProviderTab ? connection.provider : undefined);
     if (!provider) return;
-    const configuredModels = provider.models?.length
-      ? provider.models
-      : connection?.model_provider === provider.name ? [connection.model] : [];
+    const configuredModels = providerDraftModels(provider, connection?.model_provider === provider.name ? [connection.model] : []);
     setProviderDraft(provider.name);
     setBaseUrlDraft(provider.base_url);
     setAnthropicBaseUrlDraft(provider.anthropic_base_url ?? "");
@@ -1127,6 +1191,10 @@ export function SettingsPanel({
       apiProtocol: config.api_protocol,
       enabled: config.enabled,
       capabilities: [...config.capabilities],
+      tokenLimit: config.token_limit !== undefined ? String(config.token_limit) : "",
+      maxTokens: config.max_tokens !== undefined ? String(config.max_tokens) : "",
+      reasoningEfforts: PROVIDER_REASONING_EFFORT_OPTIONS.filter((effort) => (config.reasoning_efforts ?? []).includes(effort)),
+      origin: config.origin ?? null,
     });
     setProviderModelEditorError(null);
   }
@@ -1145,21 +1213,47 @@ export function SettingsPanel({
     if (alias) setProviderModelAliasesDraft((current) => ({ ...current, [copyId]: alias }));
     const operations = [...(providerModelOperationsDraft[model] ?? [])];
     if (operations.length) setProviderModelOperationsDraft((current) => ({ ...current, [copyId]: operations }));
-    const copiedConfig = { ...config, input_modalities: [...config.input_modalities], output_modalities: [...config.output_modalities], capabilities: [...config.capabilities] };
+    // The copy is a brand-new user-owned entry, even when it was cloned from a
+    // built-in model: that is the supported way to customise a Product model.
+    const copiedConfig: MyDrSaiProviderModelConfig = { ...config, input_modalities: [...config.input_modalities], output_modalities: [...config.output_modalities], capabilities: [...config.capabilities], origin: "user" };
     setProviderModelConfigsDraft((current) => ({ ...current, [copyId]: copiedConfig }));
-    setProviderModelEditor({ originalId: copyId, modelId: copyId, alias, inputModalities: [...copiedConfig.input_modalities], outputModalities: [...copiedConfig.output_modalities], apiProtocol: copiedConfig.api_protocol, enabled: copiedConfig.enabled, capabilities: [...copiedConfig.capabilities] });
+    setProviderModelEditor({ originalId: copyId, modelId: copyId, alias, inputModalities: [...copiedConfig.input_modalities], outputModalities: [...copiedConfig.output_modalities], apiProtocol: copiedConfig.api_protocol, enabled: copiedConfig.enabled, capabilities: [...copiedConfig.capabilities], tokenLimit: copiedConfig.token_limit !== undefined ? String(copiedConfig.token_limit) : "", maxTokens: copiedConfig.max_tokens !== undefined ? String(copiedConfig.max_tokens) : "", reasoningEfforts: PROVIDER_REASONING_EFFORT_OPTIONS.filter((effort) => (copiedConfig.reasoning_efforts ?? []).includes(effort)), origin: "user" });
     setProviderModelEditorError(null);
   }
 
   function saveProviderModelEditor(): void {
     if (!providerModelEditor) return;
-    const nextId = providerModelEditor.modelId.trim();
+    // A built-in (Product) entry cannot be redefined: OpenDrSai regenerates that
+    // file on every launch, so the enable flag is the only thing a user may
+    // express here. Switching it off is the reversible kill switch; anything
+    // else must go through "copy as my model", which creates a new id.
+    const productOwned = providerModelEditor.origin === "product";
+    const nextId = productOwned ? providerModelEditor.originalId : providerModelEditor.modelId.trim();
     if (!nextId || nextId.length > 256 || /[\r\n\0]/.test(nextId)) {
       setProviderModelEditorError(zh ? "请输入有效的模型 ID。" : "Enter a valid model ID.");
       return;
     }
     if (providerModelEditor.inputModalities.length === 0 || providerModelEditor.outputModalities.length === 0) {
       setProviderModelEditorError(zh ? "至少选择一种模态。" : "Select at least one modality.");
+      return;
+    }
+    const tokenLimit = parseDeclaredTokens(providerModelEditor.tokenLimit);
+    if (!tokenLimit.ok) {
+      setProviderModelEditorError(zh ? "上下文长度必须是 1 到 100000000 之间的整数，留空表示使用内置默认值。" : "Context window must be an integer between 1 and 100000000, or empty to use the built-in default.");
+      return;
+    }
+    const maxTokens = parseDeclaredTokens(providerModelEditor.maxTokens);
+    if (!maxTokens.ok) {
+      setProviderModelEditorError(zh ? "最大输出长度必须是 1 到 100000000 之间的整数，留空表示使用内置默认值。" : "Max output must be an integer between 1 and 100000000, or empty to use the built-in default.");
+      return;
+    }
+    if (tokenLimit.value !== null && maxTokens.value !== null && maxTokens.value > tokenLimit.value) {
+      setProviderModelEditorError(zh ? "最大输出长度不能超过上下文长度。" : "Max output tokens cannot exceed the context window.");
+      return;
+    }
+    const reasoningEfforts = PROVIDER_REASONING_EFFORT_OPTIONS.filter((effort) => providerModelEditor.reasoningEfforts.includes(effort));
+    if (reasoningEfforts.length && !providerModelEditor.capabilities.includes("reasoning")) {
+      setProviderModelEditorError(zh ? "推理强度需要先启用“推理”能力。" : "Reasoning efforts require the reasoning capability.");
       return;
     }
     const protocolHasHost = providerModelEditor.apiProtocol === wireApiDraft
@@ -1193,7 +1287,10 @@ export function SettingsPanel({
     });
     setProviderModelConfigsDraft((current) => {
       const next = { ...current };
+      const upstreamId = current[providerModelEditor.originalId]?.upstream_id;
       delete next[providerModelEditor.originalId];
+      // Field order mirrors the Provider catalog payload so the unsaved-change
+      // comparison stays a plain JSON diff.
       next[nextId] = {
         ...(providerModelEditor.alias.trim() ? { alias: providerModelEditor.alias.trim() } : {}),
         input_modalities: providerModelEditor.inputModalities,
@@ -1201,6 +1298,11 @@ export function SettingsPanel({
         api_protocol: providerModelEditor.apiProtocol,
         enabled: providerModelEditor.enabled,
         capabilities: providerModelEditor.capabilities,
+        ...(upstreamId ? { upstream_id: upstreamId } : {}),
+        ...(tokenLimit.value !== null ? { token_limit: tokenLimit.value } : {}),
+        ...(maxTokens.value !== null ? { max_tokens: maxTokens.value } : {}),
+        ...(reasoningEfforts.length ? { reasoning_efforts: reasoningEfforts } : {}),
+        ...(productOwned ? { origin: "product" as const } : {}),
       };
       return next;
     });
@@ -1238,7 +1340,7 @@ export function SettingsPanel({
       const capabilities = enabled ? [...new Set([...current.capabilities, capability, ...(["tool_calling", "reasoning"].includes(capability) ? ["chat" as const] : [])])] : current.capabilities.filter((item) => item !== capability);
       const requiredInput: MyDrSaiModelModality[] = capability === "image_edit" ? ["image"] : capability === "speech_to_text" ? ["audio"] : capability === "text_to_speech" || ["chat", "tool_calling", "reasoning", "image_generation", "video_generation"].includes(capability) ? ["text"] : [];
       const requiredOutput: MyDrSaiModelModality[] = ["image_generation", "image_edit"].includes(capability) ? ["image"] : capability === "speech_to_text" || ["chat", "tool_calling", "reasoning"].includes(capability) ? ["text"] : capability === "text_to_speech" ? ["audio"] : capability === "video_generation" ? ["video"] : [];
-      return { ...current, capabilities, inputModalities: enabled ? [...new Set([...current.inputModalities, ...requiredInput])] : current.inputModalities, outputModalities: enabled ? [...new Set([...current.outputModalities, ...requiredOutput])] : current.outputModalities };
+      return { ...current, capabilities, inputModalities: enabled ? [...new Set([...current.inputModalities, ...requiredInput])] : current.inputModalities, outputModalities: enabled ? [...new Set([...current.outputModalities, ...requiredOutput])] : current.outputModalities, ...(capability === "reasoning" && !enabled ? { reasoningEfforts: [] } : {}) };
     });
   }
 
@@ -1298,10 +1400,7 @@ export function SettingsPanel({
         enabled: true,
         capabilities: [...new Set([...defaultTextModelCapabilities(model), ...(providerModelOperationsDraft[model] ?? [])])],
       };
-      return [model, {
-        ...configured,
-        api_protocol: (configured.api_protocol as string) === "google" ? "gemini" : configured.api_protocol,
-      }];
+      return [model, providerModelConfigForWrite(configured)];
     }));
   }
 
@@ -1961,11 +2060,9 @@ export function SettingsPanel({
     ?? (myDrSaiConfig?.modelConnection?.provider.name === providerDraft ? myDrSaiConfig.modelConnection.provider : undefined);
   const selectedProviderConfigured = Boolean(selectedProviderConfig);
   const selectedProviderHasSavedKey = Boolean(selectedProviderConfig?.has_api_key);
-  const savedProviderModels = selectedProviderConfig?.models?.length
-    ? selectedProviderConfig.models
-    : selectedProviderConfig && myDrSaiConfig?.modelConnection?.model_provider === selectedProviderConfig.name
-      ? [myDrSaiConfig.modelConnection.model]
-      : [];
+  const savedProviderModels = selectedProviderConfig
+    ? providerDraftModels(selectedProviderConfig, myDrSaiConfig?.modelConnection?.model_provider === selectedProviderConfig.name ? [myDrSaiConfig.modelConnection.model] : [])
+    : [];
   const providerModelsChanged = savedProviderModels.length !== providerModelsDraft.length
     || savedProviderModels.some((model, index) => model !== providerModelsDraft[index]);
   const normalizedProviderModelAliases = modelAliasesForSave();
@@ -1974,7 +2071,7 @@ export function SettingsPanel({
     || Object.entries(savedProviderModelAliases).some(([model, alias]) => normalizedProviderModelAliases[model] !== alias);
   const savedProviderModelOperations = selectedProviderConfig?.model_operations ?? {};
   const providerOperationsChanged = JSON.stringify(savedProviderModelOperations) !== JSON.stringify(providerModelOperationsDraft);
-  const savedProviderModelConfigs = selectedProviderConfig?.model_configs ?? providerModelConfigsFor(savedProviderModels, selectedProviderConfig);
+  const savedProviderModelConfigs = Object.fromEntries(Object.entries(selectedProviderConfig?.model_configs ?? providerModelConfigsFor(savedProviderModels, selectedProviderConfig)).map(([model, config]) => [model, providerModelConfigForWrite(config)]));
   const providerModelConfigsChanged = JSON.stringify(savedProviderModelConfigs) !== JSON.stringify(modelConfigsForSave());
   const modelProviderDirty = !selectedProviderConfig
     || providerDraft.trim() !== selectedProviderConfig.name
@@ -2154,6 +2251,9 @@ export function SettingsPanel({
                   <div><h3>{zh ? "模型" : "Models"}</h3><small>{zh ? "可为模型设置显示别名；留空时使用原模型名称。" : "Set an optional display alias; an empty alias uses the original model name."}</small></div>
                   <div><button type="button" onClick={addProviderModel}>＋ {zh ? "新建" : "New"}</button><button type="button" onClick={resetProviderModels}>↶ {zh ? "重置" : "Reset"}</button><button type="button" title={!providerDiscoveryCredentialReady ? (zh ? "请先输入并保存 API Key" : "Enter and save an API Key first") : (zh ? "发现模型" : "Discover models")} disabled={modelConfigBusy || !providerDraft.trim() || !baseUrlDraft.trim() || !providerDiscoveryCredentialReady} onClick={() => void discoverModels()}>↻ {zh ? "获取" : "Fetch"}</button></div>
                 </div>
+                {selectedProviderConfig?.user_models_error && <p className="model-provider-hint model-provider-hint-warning" data-testid="model-provider-user-models-error">{zh ? `你的模型文件无法读取，本次仅内置模型生效。请修复或删除该文件后重试：${selectedProviderConfig.user_models_error}` : `Your model file could not be read, so only the built-in models are active. Fix or delete it and try again: ${selectedProviderConfig.user_models_error}`}</p>}
+                {(selectedProviderConfig?.shadowed_models?.length ?? 0) > 0 && <p className="model-provider-hint model-provider-hint-warning" data-testid="model-provider-shadowed-models">{zh ? `这些自定义模型与内置模型重名，已改用内置定义：${(selectedProviderConfig?.shadowed_models ?? []).join("、")}。请改用新的模型 ID。` : `These custom models share a built-in ID, so the built-in definition is used: ${(selectedProviderConfig?.shadowed_models ?? []).join(", ")}. Use a new model ID instead.`}</p>}
+                {selectedProviderConfig?.origin === "product" && <p className="model-provider-hint" data-testid="model-provider-product-origin-hint">{zh ? "内置模型的名称、模态与数值由 OpenDrSai 维护并随版本更新，只能停用；如需调整请用“复制模型”生成你自己的模型。" : "Built-in model names, modalities, and numbers are maintained by OpenDrSai and update with the app, so they can only be disabled. Use “Copy model” to make an editable copy."}</p>}
                 <datalist id="discovered-model-options">{discoveredModels.map((model) => <option key={model} value={model} />)}</datalist>
                 <div className="model-provider-model-list">
                   <div className="model-provider-model-table-header" role="row">
@@ -2168,7 +2268,7 @@ export function SettingsPanel({
                     const probeOperations = config.capabilities.filter((capability) => ["chat", "tool_calling", "reasoning", "image_generation", "image_edit", "speech_to_text", "text_to_speech"].includes(capability)) as import("@shared/desktopApi").ModelCapabilityProbeOperation[];
                     return <div className="model-provider-model-row-wrap" key={model}>
                     <div className="model-provider-model-row">
-                      <code className="model-provider-model-id" title={model}>{model}</code>
+                      <code className="model-provider-model-id" title={model} data-origin={config.origin ?? "user"}><span className="model-provider-model-id-text">{model}</span>{config.origin === "product" && <em className="model-provider-model-origin" title={zh ? "内置模型：随 OpenDrSai 更新，只能停用" : "Built-in model: updates with OpenDrSai and can only be disabled"}>{zh ? "内置" : "Built-in"}</em>}</code>
                       <button type="button" className={`model-provider-model-alias ${config.alias ? "" : "is-placeholder"}`} data-testid={`model-provider-model-alias-${model}`} title={zh ? "点击编辑别名" : "Click to edit alias"} onClick={() => openProviderModelEditor(model)}>{config.alias || model}</button>
                       <div className="model-modality-directional"><ModelModalityBadges zh={zh} direction="input" modalities={config.input_modalities} onClick={() => openProviderModelEditor(model)} /><span className="model-modality-separator" aria-hidden>→</span><ModelModalityBadges zh={zh} direction="output" modalities={config.output_modalities} onClick={() => openProviderModelEditor(model)} /></div>
                       <ModelApiProtocolBadge protocol={config.api_protocol} zh={zh} onClick={() => openProviderModelEditor(model)} />
@@ -2194,16 +2294,24 @@ export function SettingsPanel({
                 const modalityOptions: MyDrSaiModelModality[] = ["text", "image", "audio", "video"];
                 const protocolOptions: Array<{ id: MyDrSaiModelApiProtocol; label: string }> = [{ id: "openai", label: "OpenAI" }, { id: "anthropic", label: "Anthropic" }, { id: "gemini", label: "Gemini" }];
                 const capabilityOptions: MyDrSaiModelCapability[] = ["chat", "tool_calling", "reasoning", "image_generation", "image_edit", "speech_to_text", "text_to_speech", "video_generation"];
+                // A built-in entry may only be switched on or off here: OpenDrSai
+                // regenerates its catalog file on every launch, so every other field
+                // is read-only and customisation goes through "Copy model".
+                const productModel = providerModelEditor.origin === "product";
                 return <div className="model-provider-delete-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setProviderModelEditor(null); }} onKeyDown={(event) => { if (event.key === "Escape") setProviderModelEditor(null); }}>
                   <section className="model-provider-model-editor" role="dialog" aria-modal="true" aria-labelledby="model-provider-model-editor-title" data-testid="model-provider-model-editor">
-                    <header><div><h2 id="model-provider-model-editor-title">{zh ? "编辑模型信息" : "Edit model information"}</h2><p>{zh ? "这些设置按模型保存到 config.toml，并由 Runtime 直接使用。" : "These settings are stored per model in config.toml and consumed directly by the Runtime."}</p></div></header>
+                    <header><div><h2 id="model-provider-model-editor-title">{zh ? "编辑模型信息" : "Edit model information"}</h2><p>{zh ? "这些设置按模型保存到配置文件中，并由 Runtime 直接使用。" : "These settings are stored per model in configuration files and consumed directly by the Runtime."}</p></div></header>
+                    {productModel && <p className="model-provider-hint model-provider-hint-warning" data-testid="model-provider-model-editor-product-notice">{zh ? "这是内置模型：名称、模态、协议、能力与数值由 OpenDrSai 维护并随版本更新，此处只能切换启用状态。如需调整，请先“复制模型”再修改副本。" : "This is a built-in model: OpenDrSai maintains its name, modalities, protocol, capabilities, and numbers, and updates them with the app, so only the enabled state can change here. Use “Copy model” first to adjust a copy."}</p>}
                     <div className="model-provider-model-editor-grid">
-                      <label><span>{zh ? "模型 ID" : "Model ID"}</span><input autoFocus value={providerModelEditor.modelId} maxLength={256} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, modelId: event.target.value } : current); setProviderModelEditorError(null); }} /></label>
-                      <label><span>{zh ? "别名" : "Alias"}</span><input value={providerModelEditor.alias} maxLength={256} placeholder={providerModelEditor.modelId} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, alias: event.target.value } : current)} /></label>
-                      <fieldset><legend>{zh ? "输入模态" : "Input modalities"}</legend><div className="model-provider-capability-options">{modalityOptions.map((modality) => <label key={modality}><input type="checkbox" checked={providerModelEditor.inputModalities.includes(modality)} onChange={(event) => toggleProviderModelEditorModality("input", modality, event.target.checked)} /><span>{modality}</span></label>)}</div></fieldset>
-                      <fieldset><legend>{zh ? "输出模态" : "Output modalities"}</legend><div className="model-provider-capability-options">{modalityOptions.map((modality) => <label key={modality}><input type="checkbox" checked={providerModelEditor.outputModalities.includes(modality)} onChange={(event) => toggleProviderModelEditorModality("output", modality, event.target.checked)} /><span>{modality}</span></label>)}</div></fieldset>
-                      <fieldset><legend>{zh ? "API 协议" : "API protocol"}</legend><div className="model-provider-capability-options">{protocolOptions.map((protocol) => <label key={protocol.id}><input type="radio" name="model-api-protocol" checked={providerModelEditor.apiProtocol === protocol.id} onChange={() => setProviderModelEditor((current) => current ? { ...current, apiProtocol: protocol.id } : current)} /><span>{protocol.label}</span></label>)}</div></fieldset>
-                      <fieldset className="model-provider-model-editor-wide"><legend>{zh ? "能力" : "Capabilities"}</legend><div className="model-provider-capability-options">{capabilityOptions.map((capability) => <label key={capability}><input type="checkbox" checked={providerModelEditor.capabilities.includes(capability)} onChange={(event) => toggleProviderModelEditorCapability(capability, event.target.checked)} /><span>{capability}</span></label>)}</div></fieldset>
+                      <label><span>{zh ? "模型 ID" : "Model ID"}</span><input autoFocus value={providerModelEditor.modelId} maxLength={256} disabled={productModel} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, modelId: event.target.value } : current); setProviderModelEditorError(null); }} /></label>
+                      <label><span>{zh ? "别名" : "Alias"}</span><input value={providerModelEditor.alias} maxLength={256} placeholder={providerModelEditor.modelId} disabled={productModel} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, alias: event.target.value } : current)} /></label>
+                      <fieldset disabled={productModel}><legend>{zh ? "输入模态" : "Input modalities"}</legend><div className="model-provider-capability-options">{modalityOptions.map((modality) => <label key={modality}><input type="checkbox" checked={providerModelEditor.inputModalities.includes(modality)} onChange={(event) => toggleProviderModelEditorModality("input", modality, event.target.checked)} /><span>{modality}</span></label>)}</div></fieldset>
+                      <fieldset disabled={productModel}><legend>{zh ? "输出模态" : "Output modalities"}</legend><div className="model-provider-capability-options">{modalityOptions.map((modality) => <label key={modality}><input type="checkbox" checked={providerModelEditor.outputModalities.includes(modality)} onChange={(event) => toggleProviderModelEditorModality("output", modality, event.target.checked)} /><span>{modality}</span></label>)}</div></fieldset>
+                      <fieldset disabled={productModel}><legend>{zh ? "API 协议" : "API protocol"}</legend><div className="model-provider-capability-options">{protocolOptions.map((protocol) => <label key={protocol.id}><input type="radio" name="model-api-protocol" checked={providerModelEditor.apiProtocol === protocol.id} onChange={() => setProviderModelEditor((current) => current ? { ...current, apiProtocol: protocol.id } : current)} /><span>{protocol.label}</span></label>)}</div></fieldset>
+                      <label><span>{zh ? "上下文长度（token）" : "Context window (tokens)"}</span><input inputMode="numeric" maxLength={9} value={providerModelEditor.tokenLimit} placeholder={zh ? "留空使用内置默认值" : "Empty uses the built-in default"} disabled={productModel} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, tokenLimit: event.target.value } : current); setProviderModelEditorError(null); }} /><small data-testid="model-provider-model-editor-token-limit-hint">{zh ? "1 到 100000000 之间的整数；留空表示沿用模型注册表中的默认值。" : "An integer from 1 to 100000000; empty keeps the default from the model registry."}</small></label>
+                      <label><span>{zh ? "最大输出（token）" : "Max output (tokens)"}</span><input inputMode="numeric" maxLength={9} value={providerModelEditor.maxTokens} placeholder={zh ? "留空使用内置默认值" : "Empty uses the built-in default"} disabled={productModel} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, maxTokens: event.target.value } : current); setProviderModelEditorError(null); }} /><small data-testid="model-provider-model-editor-max-tokens-hint">{zh ? "不能大于上下文长度；留空同样沿用内置默认值。" : "Cannot exceed the context window; empty also keeps the built-in default."}</small></label>
+                      <fieldset className="model-provider-model-editor-wide" disabled={productModel || !providerModelEditor.capabilities.includes("reasoning")}><legend>{zh ? "推理强度" : "Reasoning efforts"}</legend><div className="model-provider-capability-options">{PROVIDER_REASONING_EFFORT_OPTIONS.map((effort) => <label key={effort}><input type="checkbox" checked={providerModelEditor.reasoningEfforts.includes(effort)} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, reasoningEfforts: nextProviderReasoningEfforts(current.reasoningEfforts, effort, event.target.checked) } : current)} /><span>{effort}</span></label>)}</div><small data-testid="model-provider-model-editor-reasoning-hint">{providerModelEditor.capabilities.includes("reasoning") ? (zh ? "声明该模型可用的推理强度，用于界面取值；全部留空表示沿用内置默认值。" : "Declare the reasoning efforts this model offers so the UI can pick one. Leave all unchecked to keep the built-in default.") : (zh ? "请先勾选“能力”中的 reasoning。" : "Select the reasoning capability above first.")}</small></fieldset>
+                      <fieldset className="model-provider-model-editor-wide" disabled={productModel}><legend>{zh ? "能力" : "Capabilities"}</legend><div className="model-provider-capability-options">{capabilityOptions.map((capability) => <label key={capability}><input type="checkbox" checked={providerModelEditor.capabilities.includes(capability)} onChange={(event) => toggleProviderModelEditorCapability(capability, event.target.checked)} /><span>{capability}</span></label>)}</div></fieldset>
                       <label className="model-provider-model-editor-enabled"><input type="checkbox" checked={providerModelEditor.enabled} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, enabled: event.target.checked } : current)} /><span>{zh ? "启用此模型" : "Enable this model"}</span></label>
                     </div>
                     {providerModelEditorError && <p className="settings-message" role="alert">{providerModelEditorError}</p>}

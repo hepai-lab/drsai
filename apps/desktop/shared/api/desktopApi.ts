@@ -3732,7 +3732,10 @@ export type RuntimeModelOperation = "chat" | "tool_calling" | "reasoning" | "ima
 export type RuntimeModelAvailability = "available" | "configured_unverified" | "unavailable" | "stale" | "offline" | "unauthorized" | "error";
 export type RuntimeModelCapabilitySource = "user_override" | "provider" | "builtin" | "unknown";
 export type RuntimeModelCapabilityConfidence = "verified" | "declared" | "inferred" | "unknown";
-export type RuntimeModelCatalogState = "fresh" | "stale" | "offline" | "unauthorized" | "error";
+/** "degraded" = a user-owned catalog file is unreadable; the Product models still load. */
+export type RuntimeModelCatalogState = "fresh" | "degraded" | "stale" | "offline" | "unauthorized" | "error";
+/** Which file a catalog entry came from. Derived and read-only: never written back to TOML. */
+export type ModelOwnership = "product" | "user";
 
 export interface RuntimeModelRef {
   provider_id: string;
@@ -3752,6 +3755,7 @@ export interface RuntimeModelDescriptor {
   availability: RuntimeModelAvailability;
   capability_source: RuntimeModelCapabilitySource;
   capability_confidence: RuntimeModelCapabilityConfidence;
+  origin?: ModelOwnership | null;
   updated_at?: string | null;
 }
 
@@ -3986,6 +3990,8 @@ export interface MyDrSaiModelConfig {
   reasoning_efforts?: Array<"none" | "low" | "medium" | "high" | "xhigh" | "max">;
   availability?: RuntimeModelAvailability;
   capability_source?: RuntimeModelCapabilitySource;
+  /** Which file the catalog entry came from; absent for discovery-only models. */
+  origin?: ModelOwnership;
   reasoning?: MyDrSaiReasoningConfig;
 }
 
@@ -4045,7 +4051,18 @@ export interface MyDrSaiModelProvider {
   requires_api_key: boolean;
   has_api_key: boolean;
   api_key_source?: string;
+  /** "product" for the Providers OpenDrSai ships and regenerates; "user" otherwise. */
+  origin?: ModelOwnership;
+  /** Product-owned catalog file (regenerated on every launch for Product Providers). */
   models_file?: string;
+  /** User-owned overlay, never rewritten by OpenDrSai. Missing is normal. */
+  user_models_file?: string;
+  /** Product models switched off in the user overlay. */
+  disabled_models?: string[];
+  /** User entries whose id collides with a Product model; the Product one wins. */
+  shadowed_models?: string[];
+  /** Set when the user overlay exists but cannot be parsed: models fall back to Product only. */
+  user_models_error?: string | null;
   models?: string[];
   model_aliases?: Record<string, string>;
   model_upstream_ids?: Record<string, string>;
@@ -4065,6 +4082,14 @@ export interface MyDrSaiProviderModelConfig {
   enabled: boolean;
   capabilities: MyDrSaiModelCapability[];
   upstream_id?: string;
+  /** Context window declared in the catalog file (beats the built-in registry). */
+  token_limit?: number;
+  /** Max output tokens declared in the catalog file. */
+  max_tokens?: number;
+  /** Reasoning levels this Provider actually accepts. */
+  reasoning_efforts?: Array<"none" | "low" | "medium" | "high" | "xhigh" | "max">;
+  /** Which file this definition came from. Derived and read-only. */
+  origin?: ModelOwnership;
 }
 
 export interface MyDrSaiModelConnection {

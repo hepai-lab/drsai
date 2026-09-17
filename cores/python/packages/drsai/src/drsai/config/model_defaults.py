@@ -250,44 +250,44 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
     ),
     # ── OpenAI GPT ───────────────────────────────────────────────────
     "gpt-5.6-luna": ModelEntry(
-            model="openai/gpt-5.6-luna",
-            token_limit=1050000,     # max input tokens (output comes from this pool)
-            max_tokens=64000,      # max output per request
-            client_type="openai",
-            reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
-            vision=True,            # GPT-5.x supports image input
+        model="openai/gpt-5.6-luna",
+        token_limit=1050000,     # max input tokens (output comes from this pool)
+        max_tokens=64000,      # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+        vision=True,            # GPT-5.x supports image input
         ),
     "gpt-5.6-terra": ModelEntry(
-                model="openai/gpt-5.6-terra",
-                token_limit=1050000,     # max input tokens (output comes from this pool)
-                max_tokens=64000,      # max output per request
-                client_type="openai",
-                reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
-                vision=True,            # GPT-5.x supports image input
+        model="openai/gpt-5.6-terra",
+        token_limit=1050000,     # max input tokens (output comes from this pool)
+        max_tokens=64000,      # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+        vision=True,            # GPT-5.x supports image input
             ),
     "gpt-5.6-sol": ModelEntry(
-                    model="openai/gpt-5.6-sol",
-                    token_limit=1050000,     # max input tokens (output comes from this pool)
-                    max_tokens=64000,      # max output per request
-                    client_type="openai",
-                    reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
-                    vision=True,            # GPT-5.x supports image input
-                ),
-    # ── GIMINI ────────────────────────────────────────────────────────────
-    "gemini-3.1-pro-preview": ModelEntry(
-        model="google/gemini-3.1-pro-preview",
-        token_limit=1000000,     # context window: 1M (input+output shared)
-        max_tokens=64000,       # max output per request
+        model="openai/gpt-5.6-sol",
+        token_limit=1050000,     # max input tokens (output comes from this pool)
+        max_tokens=64000,      # max output per request
         client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
-        vision=True,            # Gemini supports image input
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+        vision=True,            # GPT-5.x supports image input
     ),
-    "gemini-3-flash-preview": ModelEntry(
-        model="google/gemini-3-flash-preview",
+    "gpt-6-astra": ModelEntry(
+        model="openai/gpt-6-astra",
+        token_limit=1050000,     # max input tokens (output comes from this pool)
+        max_tokens=64000,      # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+        vision=True,            # GPT-5.x supports image input
+    ),
+    # ── GIMINI ────────────────────────────────────────────────────────────
+    "kimi-k3": ModelEntry(
+        model="moonshot/kimi-k3",
         token_limit=1000000,     # context window: 1M (input+output shared)
         max_tokens=64000,       # max output per request
         client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
+        reasoning=ReasoningConfig(supported=True, effort_levels=["max", "low", "high"], param_type="reasoning_effort"),
         vision=True,            # Gemini supports image input
     ),
     # ── Zhipu GLM ────────────────────────────────────────────────────
@@ -312,42 +312,33 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
     # token_limit = total context window (input + output share the same window)
     # max_tokens  = maximum output tokens per request (Anthropic API requires this)
     # Sources: litellm model_prices_and_context_window.json, Anthropic docs
-    "claude-sonnet-4-6": ModelEntry(
-        model="anthropic/claude-sonnet-4-6",
-        token_limit=1000000,      # context window: 200K (input+output shared)
-        max_tokens=64000,       # max output per request
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
-        vision=True,            # Claude Sonnet 4.6 supports image input
-        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
-    ),
-    "claude-sonnet-5": ModelEntry(
-        model="anthropic/claude-sonnet-5",
-        token_limit=1000000,     # context window: 1M (input+output shared)
-        max_tokens=64000,       # max output per request
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
-        vision=True,            # Claude Sonnet 5 supports image input
-        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
-    ),
-    "claude-opus-4-7": ModelEntry(
-        model="anthropic/claude-opus-4-7",
-        token_limit=1000000,     # context window: 1M (input+output shared)
-        max_tokens=64000,      # max output per request
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
-        vision=True,            # Claude Opus 4.7 supports image input
-        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
-    ),
-    "claude-opus-4-8": ModelEntry(
-        model="anthropic/claude-opus-4-8",
-        token_limit=1000000,     # context window: 1M (input+output shared)
-        max_tokens=64000,      # max output per request
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
-        vision=True,            # Claude Opus 4.8 supports image input
-        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
-    ),
+    # "claude-sonnet-5": ModelEntry(
+    #     model="anthropic/claude-sonnet-5",
+    #     token_limit=1000000,     # context window: 1M (input+output shared)
+    #     max_tokens=64000,       # max output per request
+    #     client_type="anthropic",
+    #     reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
+    #     vision=True,            # Claude Sonnet 5 supports image input
+    #     base_url=_DEFAULT_ANTHROPIC_BASE_URL,
+    # ),
+    # "claude-opus-5": ModelEntry(
+    #         model="anthropic/claude-opus-5",
+    #         token_limit=1000000,     # context window: 1M (input+output shared)
+    #         max_tokens=64000,      # max output per request
+    #         client_type="anthropic",
+    #         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
+    #         vision=True,            # Claude Opus 4.8 supports image input
+    #         base_url=_DEFAULT_ANTHROPIC_BASE_URL,
+    # ),
+    # "claude-fable-5-1": ModelEntry(
+    #             model="anthropic/claude-fable-5-1",
+    #             token_limit=1000000,     # context window: 1M (input+output shared)
+    #             max_tokens=64000,      # max output per request
+    #             client_type="anthropic",
+    #             reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
+    #             vision=True,            # Claude Opus 4.8 supports image input
+    #             base_url=_DEFAULT_ANTHROPIC_BASE_URL,
+    # ),
 }
 
 DEFAULT_CONFIG_NAME = "hepai/deepseek-v4-flash"
@@ -494,3 +485,43 @@ def _display_name_from_alias(alias: str) -> str:
         else:
             words.append(word.capitalize())
     return " ".join(words)
+
+
+# ── Product-owned model ownership ─────────────────────────────────────────
+#
+# Ownership is decided by *which file* a catalog entry was read from
+# (``configs/models/provider_<id>.toml`` = product, ``.local.toml`` = user),
+# never by guessing from the model id.  See
+# ``artifacts/DEFAULT_LLM_MODE_CONFIG-前端同步方案.md`` §8.3 candidate 2.
+#
+# Because bootstrap now regenerates the product file *as a whole* instead of
+# merging, a model deleted from the dicts above disappears from every install
+# on the next start — delete propagation needs no name list at all.
+
+
+def product_model_ids() -> frozenset[str]:
+    """Every model id the product catalog owns, derived from one source of truth."""
+
+    return frozenset(DEFAULT_LLM_MODE_CONFIG) | frozenset(DEFAULT_SPECIALIZED_PRODUCT_MODELS)
+
+
+# Ids that used to be product-owned and were later dropped from the dicts
+# above.
+#
+# ONLY the one-time ``provider_<id>.toml`` -> ``.local.toml`` split migration
+# consults this list, to decide which legacy residue must not survive as a
+# user model.  It is append-only and must never be used to purge a user file
+# during normal startup: candidate 2 keeps "product removed + user has the same
+# id" as a live user model, and a routine purge would silently delete user data.
+RETIRED_PRODUCT_MODELS: frozenset[str] = frozenset({
+    # Image models retired before the file split existed.
+    "gemini-3.1-flash-lite-image",
+    "qwen-image-2.0",
+    # Chat residue that lingered in shipped catalogs after leaving the dicts.
+    "claude-sonnet-4-6",
+    "claude-sonnet-5",
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+})

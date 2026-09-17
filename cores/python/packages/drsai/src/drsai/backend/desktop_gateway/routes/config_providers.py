@@ -100,6 +100,12 @@ class ProviderModelDefinitionRequest(BaseModel):
     enabled: bool = True
     capabilities: list[Literal["chat", "tool_calling", "reasoning", "image_generation", "image_edit", "speech_to_text", "text_to_speech", "video_generation"]] = Field(default_factory=lambda: ["chat"], max_length=8)
     upstream_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    # Optional capability numbers. The Provider catalog file has carried
+    # these since the schema extension, but the write API could not accept
+    # them, so a user-authored model was stuck on ``token_limit = undefined``.
+    token_limit: Optional[int] = Field(default=None, gt=0, le=100_000_000)
+    max_tokens: Optional[int] = Field(default=None, gt=0, le=100_000_000)
+    reasoning_efforts: list[Literal["none", "low", "medium", "high", "xhigh", "max"]] = Field(default_factory=list, max_length=6)
 
 
 class ModelProviderConfigRequest(BaseModel):
@@ -481,6 +487,7 @@ async def discover_model_provider_models(req: ModelDiscoveryRequest):
                             else None
                         ),
                         models_file=existing_provider.models_file if existing_provider else None,
+                        user_models_file=existing_provider.user_models_file if existing_provider else None,
                         models=existing_provider.models if existing_provider else (),
                         model_aliases=existing_provider.model_aliases if existing_provider else {},
                         model_upstream_ids=existing_provider.model_upstream_ids if existing_provider else {},
@@ -607,6 +614,7 @@ async def test_model_provider_connection(name: str, req: ModelProviderTestReques
                             api_key_env=None,
                             api_key_credential=None,
                             models_file=existing_provider.models_file,
+                            user_models_file=existing_provider.user_models_file,
                             models=existing_provider.models,
                             model_aliases=existing_provider.model_aliases,
                             model_upstream_ids=existing_provider.model_upstream_ids,
