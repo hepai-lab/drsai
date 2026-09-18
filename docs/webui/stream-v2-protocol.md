@@ -171,6 +171,8 @@ message.started → message.delta(*) → [message.snapshot?] → message.complet
 
 后端正在工作，前端应显示 loading。`phase` 取值: `model`（等模型响应）、`tool`（执行工具）、`orchestrator`（编排器决策）。
 
+助手 `message.completed(keep_open=True)` **不是**回合结束。多 hop（planner 派活 → 子智能体工具）中间若无 token，必须补发本事件，否则前端会把 hop 封口当成 `turn.ready` 并清掉 loading。见 [`stream-v2-planner-hop-loading-gap.md`](./stream-v2-planner-hop-loading-gap.md)。
+
 ---
 
 ## 6. turn_plane: process vs final
@@ -465,7 +467,11 @@ Agent 的 `TextMessage` 完成后，流式 chunk 可能还有迟到的 token（�
   3. `LegacyStreamAdapter` 重建后私有 `seq` 可能撞号，只剩 UUID 可靠
   4. 将来发送层「至少一次」重试且重编了 `seq`
 
-### 13.5 stream_id 与 message_id
+### 13.5 planner hop 封口后的 loading 空窗
+
+助手 `TextMessage` 的 `complete(keep_open=True)` 会先发 `message.completed(status=completed)`。前端若把它映射成 `status=ready` 并清 `agent_working`，MagenticOne / planner 下一跳（非流式 JSON、选 speaker、远程 worker 首包）会静默十几到几十秒，直到工具 `interrupt()`。修复说明见 [`stream-v2-planner-hop-loading-gap.md`](./stream-v2-planner-hop-loading-gap.md)。
+
+### 13.6 stream_id 与 message_id
 
 设计上「流」可比「气泡」更粗（例如多个 interrupted hop 共享一个 stream）。当前实现每次 `_ensure()` 都新开一对 UUID，因此 **一个 hop = 一个 `message_id` = 一个 `stream_id`**。讲协议时勿把 `stream_id` 说成与 `seq`/`event_id` 同级的运行时机制。
 
