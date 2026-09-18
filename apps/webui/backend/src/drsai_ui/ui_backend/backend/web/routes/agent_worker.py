@@ -26,6 +26,7 @@ from .....agent_factory.agent_mode_cofigs import (
     get_user_remote_agents,
     list_user_remote_agents,
     patch_user_agent,
+    upsert_user_remote_agent,
 )
 from ..auth_source import get_user_source
 
@@ -178,16 +179,18 @@ async def test_remote_agent(
     测试远程智能体连接并获取智能体信息
     '''
     try:
-        # 使用用户提供的远程 API key 连接远程智能体
-        worker = HRModel.connect(
+        def _connect_and_get_info():
+            worker = HRModel.connect(
                 name=request.model_name,
                 api_key=request.api_key,
                 base_url=request.base_url,
             )
-        # get_info() is sync and may hang on remote issues; enforce timeout
+            return worker.get_info()
+
+        # connect() and get_info() are sync and may hang; keep them off the event loop
         try:
             agent_info: dict = await asyncio.wait_for(
-                asyncio.to_thread(worker.get_info),
+                asyncio.to_thread(_connect_and_get_info),
                 timeout=float(os.getenv("DRSAI_REMOTE_AGENT_TEST_TIMEOUT", "12")),
             )
             logger.info(f"[test_remote_agent] model={request.model_name}, get_info keys: {list(agent_info.keys())}, announcements: {agent_info.get('announcements')}")
@@ -260,27 +263,7 @@ async def save_remote_agent(
             if not saved_agent_config.get("url"):
                 saved_agent_config["url"] = remote_url
 
-        # 获取用户现有的远程智能体配置
-        response = db.get(UserRemoteAgents, filters={"user_id": request.user_id})
-        if response.status and response.data:
-            # 用户已有配置，更新现有配置
-            user_agents: UserRemoteAgents = response.data[0]
-            agents_list = user_agents.agents or []
-            for agent in agents_list:
-                if _same_agent_id(str(agent.get("id")), agent_id):
-                    agents_list.remove(agent)
-                    break
-            agents_list.append(saved_agent_config)
-            user_agents.agents = agents_list
-            db.upsert(user_agents)
-        else:
-            # 用户没有配置，创建新配置
-            agents_list = [saved_agent_config]
-            user_agents = UserRemoteAgents(
-                user_id=request.user_id,
-                agents=agents_list
-            )
-            db.upsert(user_agents)
+        upsert_user_remote_agent(db, request.user_id, saved_agent_config)
 
         return {"status": True, "message": "智能体配置保存/更新成功"}
 

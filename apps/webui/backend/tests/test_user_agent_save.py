@@ -193,6 +193,53 @@ def test_put_patch_requires_agent_id(monkeypatch):
     assert exc.value.status_code == 400
 
 
+def test_upsert_user_remote_agent_writes_row_not_blob():
+    db = FakeDB()
+    payload = {
+        "id": REMOTE_AGENT_ID,
+        "mode": "remote",
+        "name": "DaisyBCDI Agent",
+        "url": "http://192.168.32.165:42800/apiv2",
+        "api_key": "sk-test",
+        "config": {
+            "name": "DaisyBCDI Agent",
+            "url": "http://192.168.32.165:42800/apiv2",
+        },
+    }
+
+    stored = configs.upsert_user_remote_agent(db, USER_ID, payload)
+
+    assert stored["id"] == REMOTE_AGENT_ID
+    assert stored["name"] == "DaisyBCDI Agent"
+    assert db.tables.get("UserRemoteAgents", []) == []
+    rows = db.tables["UserRemoteAgent"]
+    assert len(rows) == 1
+    assert rows[0].agent_id == REMOTE_AGENT_ID
+    assert rows[0].name == "DaisyBCDI Agent"
+    assert rows[0].payload["url"] == "http://192.168.32.165:42800/apiv2"
+
+
+def test_upsert_user_remote_agent_updates_existing():
+    db = FakeDB()
+    db.tables["UserRemoteAgent"] = [_remote_row()]
+
+    stored = configs.upsert_user_remote_agent(
+        db,
+        USER_ID,
+        {
+            "id": REMOTE_AGENT_ID,
+            "mode": "remote",
+            "name": "Renamed Remote",
+            "url": "https://example.test/apiv2",
+        },
+    )
+
+    assert stored["name"] == "Renamed Remote"
+    assert len(db.tables["UserRemoteAgent"]) == 1
+    assert db.tables["UserRemoteAgent"][0].name == "Renamed Remote"
+    assert db.tables["UserRemoteAgent"][0].payload["name"] == "Renamed Remote"
+
+
 def test_pref_stub_does_not_become_a_catalog_agent():
     defaults = [
         {
