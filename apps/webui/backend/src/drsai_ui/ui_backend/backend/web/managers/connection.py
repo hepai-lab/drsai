@@ -459,9 +459,12 @@ class WebSocketManager:
             # completed plan / termination flag and the orchestrator exits
             # immediately without producing any agent messages.
             terminal = {RunStatus.STOPPED, RunStatus.COMPLETE, RunStatus.ERROR}
+            restarting_interrupted = run.status in {RunStatus.STOPPED, RunStatus.ERROR}
             if run.status in terminal:
                 run.state = None
             state = run.state
+            if restarting_interrupted:
+                task = self._attach_interrupted_run_history(run_id, task)
 
             self.db_manager.upsert(run)
             await self._update_run_status(run_id, RunStatus.ACTIVE)
@@ -2073,6 +2076,46 @@ class WebSocketManager:
                 else None,
             })
         return rows
+
+    def _load_run_message_configs(self, run_id: int) -> list[dict[str, Any]]:
+        existing = self.db_manager.get(
+            Message,
+            filters={"run_id": run_id},
+            return_json=False,
+        )
+        if not existing.status or not existing.data:
+            return []
+        rows = sorted(
+            list(existing.data),
+            key=lambda row: getattr(row, "id", 0) or 0,
+        )
+        configs: list[dict[str, Any]] = []
+        for row in rows:
+            config = getattr(row, "config", None)
+            if isinstance(config, dict):
+                configs.append(config)
+        return configs
+
+    def _attach_interrupted_run_history(
+        self,
+        run_id: int,
+        task: str | ChatMessage | Sequence[ChatMessage] | None,
+    ) -> str | ChatMessage | Sequence[ChatMessage] | None:
+        """Prepend hidden prior-turn recap so continue after ERROR keeps context."""
+        from ..interrupted_run_history import (
+            attach_recap_to_task,
+            build_interrupted_run_recap,
+        )
+
+        recap = build_interrupted_run_recap(self._load_run_message_configs(run_id))
+        if not recap:
+            return task
+        logger.info(
+            "[CHAT_TURN] run=%s attaching interrupted-run recap chars=%s",
+            run_id,
+            len(recap),
+        )
+        return attach_recap_to_task(task, recap)
 
     @staticmethod
     def _inject_skill_metadata_into_task(

@@ -25,7 +25,9 @@ from ..local_agents.ragflow_agent import RAGFlowAgent
 # from ..magentic_one.agents.drsai_agents.drsai_agent import MagenticAgent
 from drsai.modules.baseagent import DrSaiUserProxyAgent # DrSaiAgent,
 from .agents.user_proxy import RoundbinDrSaiUserProxyAgent
-from drsai.modules.agents import HepAIWorkerAgent
+from drsai_ui.agent_factory.remote_agent.persistent_worker import (
+    SessionPersistentHepAIWorkerAgent,
+)
 from drsai_ui.platform_config import get_active_platform
 # from drsai.modules.components.memory.ragflow_memory import RAGFlowMemory, RAGFlowMemoryConfig
 
@@ -432,7 +434,7 @@ async def create_magentic_round_team(
     # same channel as attached_files — do not put them on run_info.
     if agent_mode == "besiii":
         # raise NotImplementedError("BesIII mode not implemented yet")
-        agent = HepAIWorkerAgent(
+        agent = SessionPersistentHepAIWorkerAgent(
             name='besiii',
             model_client=get_model_client(model_client_config = model_config),
             chat_id=chat_id,
@@ -443,6 +445,7 @@ async def create_magentic_round_team(
                 "api_key": api_key
             },
             files = files,
+            stream_timeout=3600,
         )
         # agent = RemoteAgent(
         #     name='besiii',
@@ -534,13 +537,13 @@ async def create_magentic_round_team(
         )
         if requested_model_alias:
             agent_config["defult_config_name"] = requested_model_alias
-        agent = HepAIWorkerAgent(
+        agent = SessionPersistentHepAIWorkerAgent(
             name="RemoteAgent",
             model_client=get_model_client(model_client_config = model_config),
             model_remote_configs = agent_config,
             chat_id=chat_id,
             run_info=run_info,
-            timeout=600,
+            stream_timeout=3600,
             )
         
     elif agent_mode == "pip_install":
