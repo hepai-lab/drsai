@@ -44,6 +44,22 @@ def _is_online_listed_ddf_agent(model: Any) -> bool:
     return _listed_agent_value(model, "available", True) is not False
 
 
+def _list_hepai_agents(api_key: str, base_url: str):
+    """Sync HepAI SDK call — must not run on the asyncio event loop."""
+    client = HepAI(api_key=api_key, base_url=base_url)
+    return client.agents.list()
+
+
+def _ddf_worker_get_info(model_id: str, api_key: str, base_url: str):
+    """Sync connect + get_info — must not run on the asyncio event loop."""
+    worker = HRModel.connect(
+        name=model_id,
+        api_key=api_key,
+        base_url=base_url,
+    )
+    return worker.get_info()
+
+
 def _agent_dict_from_remote_row(row: UserRemoteAgent) -> Dict[str, Any]:
     payload = dict(row.payload or {})
     payload["id"] = row.agent_id
@@ -855,11 +871,11 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
         if not apikey:
             return {"status": True, "data": agents_old}
 
-        client = HepAI(
-            api_key=apikey,
-            base_url=platform.base_url,
+        list_timeout = _float_env("DRSUI_DDF_AGENT_LIST_TIMEOUT", default=15.0, min_value=1.0)
+        models = await asyncio.wait_for(
+            asyncio.to_thread(_list_hepai_agents, apikey, platform.base_url),
+            timeout=list_timeout,
         )
-        models = client.agents.list()
 
         timeout_seconds = _float_env("DRSUI_DDF_AGENT_INFO_TIMEOUT", default=5.0, min_value=0.5)
         max_concurrency = _int_env("DRSUI_DDF_AGENT_INFO_MAX_CONCURRENCY", default=8, min_value=1)
@@ -868,13 +884,13 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
         async def _fetch_model_info(model_id: str) -> Dict[str, Any] | None:
             try:
                 async with semaphore:
-                    worker = HRModel.connect(
-                        name=model_id,
-                        api_key=apikey,
-                        base_url=platform.base_url,
-                    )
                     agent_info: dict | WorkerInfo = await asyncio.wait_for(
-                        asyncio.to_thread(worker.get_info),
+                        asyncio.to_thread(
+                            _ddf_worker_get_info,
+                            model_id,
+                            apikey,
+                            platform.base_url,
+                        ),
                         timeout=timeout_seconds,
                     )
                 if isinstance(agent_info, WorkerInfo):
