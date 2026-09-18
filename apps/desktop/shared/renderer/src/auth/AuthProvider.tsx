@@ -166,19 +166,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   }, []);
 
   // When the main process signals that the auth session has been restored
-  // (e.g. after a successful OIDC re-login), reload the session from the
-  // main process so that session.authenticated becomes true.  Then the
-  // auto-bootstrap useEffect below will see authenticated && !serviceReady
-  // && !serviceBusy && !serviceBlocker and trigger retryBootstrap().
+  // (e.g. after a deep-link OIDC re-login), reload the session from the main
+  // process so that session.authenticated becomes true.  This effect must only
+  // synchronize session state: the auto-bootstrap useEffect below already sees
+  // the resulting `session.authenticated` change and drives retryBootstrap().
+  //
+  // It deliberately does NOT bump bootstrapEpochRef or touch serviceBusy/
+  // serviceBlocker. A UI-initiated sign-in already updates the session through
+  // startOidcLogin()/login(), so mutating bootstrap state here would race that
+  // path (invalidate an in-flight bootstrap without starting a new one) and
+  // could strand the UI on "正在检查服务" after a first-run install.
   useEffect(() => {
     const unsubscribe = desktopApi.onAuthSessionRestored(async () => {
-      // Invalidate any in-flight bootstrap: its result must not overwrite the
-      // freshly restored session state below.
-      bootstrapEpochRef.current += 1;
-      serviceRetryCountRef.current = 0;
-      setServiceBlocker(null);
-      setServiceBusy(false);
-      setMessage("Session restored. Re-checking runtime…");
       try {
         const next = await desktopApi.getAuthSession();
         setSession(next);
@@ -247,7 +246,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       const result = await desktopApi.login(request);
       setMessage(result.message);
       if (result.ok && result.session) {
+        // A login creates a new auth/runtime generation. Prevent a bootstrap
+        // started for the previous session from publishing stale failure state.
+        bootstrapEpochRef.current += 1;
+        serviceRetryCountRef.current = 0;
         setLoginFailed(false);
+        setServiceReady(false);
+        setServiceBusy(false);
         setSession(result.session);
         setServiceBlocker(null);
         if (result.session.authMode === "offline") {
@@ -275,6 +280,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     try {
       const result = await desktopApi.startOidcLogin(request);
       if (result.ok && result.session) {
+        // A browser login also starts a new auth/runtime generation; stale
+        // bootstrap results from the previous account must be ignored.
+        bootstrapEpochRef.current += 1;
+        serviceRetryCountRef.current = 0;
         setLoginFailed(false);
         setSession(result.session);
         setServiceReady(false);
@@ -320,6 +329,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     try {
       const result = await desktopApi.logout({ clearLocalData });
       setMessage(result.message);
+      // Logout invalidates the main-process Runtime registry. Bump the epoch
+      // so an already-running bootstrap cannot restore the old account UI.
+      bootstrapEpochRef.current += 1;
+      serviceRetryCountRef.current = 0;
       setSession(anonymousSession);
       setServiceReady(false);
       setServiceBlocker(null);

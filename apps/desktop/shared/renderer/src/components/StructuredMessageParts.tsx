@@ -166,7 +166,11 @@ export const StructuredMessageParts = memo(function StructuredMessageParts({
     finalAnswerIds.has(part.id)
     || (part.kind === "citation" && (finalCitationIds.has(part.citationId) || (part.markdownPartId !== undefined && finalAnswerIds.has(part.markdownPartId)))),
   );
-  const deliveryArtifactParts = turn.status === "completed"
+  // Delivered files belong below the answer. They are shown once the turn is
+  // no longer pending -- not only after a clean "completed" -- because a remote
+  // agent can deliver a file and then fail, pause or be cancelled, and the file
+  // it already produced must stay reachable rather than disappear with the turn.
+  const deliveryArtifactParts = turn.status !== "pending"
     ? selectDeliveryArtifacts(artifactParts)
     : [];
   // The model writes `[E1]` so the support check can tell which passage each

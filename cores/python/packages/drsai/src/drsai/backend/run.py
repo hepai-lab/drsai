@@ -403,7 +403,7 @@ class DrSaiWorkerConfig(HWorkerConfig):
     daemon: bool = field(default=False, metadata={"help": "Run as daemon"})
     type: str = field(default="agent", metadata={"help": "Worker's type"})
     debug: bool = field(default=False, metadata={"help": "Debug mode"})
-    _metadata: dict = field(default_factory=dict, metadata={"help": "Additional metadata for worker/model"})
+    _metadata: dict = field(default_factory=dict, metadata={"help": "Additional metadata for worker/model", "public": True})
 
 
 _PRIVATE_METADATA_KEYS = {

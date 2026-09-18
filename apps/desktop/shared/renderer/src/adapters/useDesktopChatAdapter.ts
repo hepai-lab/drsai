@@ -55,6 +55,10 @@ import {
   readRecentTerminalTestResult,
 } from "../terminalTestResults";
 import { acceptChatEventSequence, getVisibleChatText, mergeReasoningText } from "../chatOutputModel";
+import {
+  createThreadSnapshotPublishScheduler,
+  type ThreadSnapshotPublishScheduler,
+} from "../threadSnapshotPublishScheduler";
 import { sanitizeSensitiveValue } from "../../../api/sensitiveData";
 import {
   appendDebugLog,
@@ -184,8 +188,8 @@ export function useDesktopChatAdapter({
   const structuredFlushFrameRef = useRef<number | null>(null);
   const appliedSnapshotUpdatedAtRef = useRef(0);
   const lastPublishedSnapshotAtRef = useRef(0);
-  const pendingThreadSnapshotRef = useRef<ChatThreadSnapshot | null>(null);
-  const threadSnapshotPublishQueuedRef = useRef(false);
+  // Coalescing window for streaming publishes; see the module for the rationale.
+  const threadSnapshotSchedulerRef = useRef<ThreadSnapshotPublishScheduler<UiMessage> | null>(null);
   const onThreadUpdatedRef = useRef(onThreadUpdated);
   const threadIdRef = useRef(threadId);
   const languageRef = useRef(language);
@@ -263,11 +267,11 @@ export function useDesktopChatAdapter({
     return events;
   }
 
-  function restoreActiveStructuredTurns(snapshotMessages: UiMessage[], expectedThreadId = threadIdRef.current): void {
+  function restoreActiveStructuredTurns(snapshotMessages: UiMessage[], expectedThreadId = threadIdRef.current): UiMessage[] {
     // Recovery is asynchronous. A completed recovery from the previous thread
     // must never mutate the newly selected thread.
     const isCurrentThread = (): boolean => threadIdRef.current === expectedThreadId;
-    if (!isCurrentThread()) return;
+    if (!isCurrentThread()) return snapshotMessages;
     let latestActiveRequestId: string | null = null;
     const settleUnrecoverableTurn = (requestId: string, turnId: string): void => {
       setMessages((current) => publishAndReturn(current.map((candidate) => {
@@ -285,7 +289,27 @@ export function useDesktopChatAdapter({
       setActiveRequestId((current) => current === requestId ? null : current);
       if (activeRequestIdRef.current === requestId) activeRequestIdRef.current = null;
     };
-    for (const message of snapshotMessages) {
+    // Legacy-format turns ("legacy:<id>") have no Runtime Run binding and are
+    // excluded from recovery below. A persisted `streaming: true` on one of
+    // them must therefore be settled here, or it pins the composer's
+    // "running" state forever (no recovery, no terminal event will ever clear it).
+    const preparedMessages = snapshotMessages.map((message) => {
+      const turn = message.structuredTurn;
+      const isActive = turn?.status === "pending" || turn?.status === "running";
+      if (message.role !== "assistant" || !turn || !isActive || !turn.turnId.startsWith("legacy:")) {
+        return message;
+      }
+      const settled = settleInterruptedStructuredTurn(
+        turn,
+        languageRef.current === "zh"
+          ? "这次运行无法恢复（旧格式快照）。已保留收到的内容，你可以重新发送请求。"
+          : "This run cannot be recovered (legacy snapshot format). Received content was kept; you can send the request again.",
+      );
+      return settled === turn
+        ? message
+        : { ...message, structuredTurn: settled, streaming: false, lastEventAt: Date.now() };
+    });
+    for (const message of preparedMessages) {
       const turn = message.structuredTurn;
       const hasRecoveryNotice = turn?.parts.some((part) =>
         part.kind === "notice" && typeof part.debugRef === "string" && part.debugRef.startsWith("recovery:"),
@@ -350,6 +374,7 @@ export function useDesktopChatAdapter({
     }
     setActiveRequestId(latestActiveRequestId);
     activeRequestIdRef.current = latestActiveRequestId;
+    return preparedMessages;
   }
 
   function captureLiveThreadView(): LiveThreadChatView {
@@ -426,7 +451,13 @@ export function useDesktopChatAdapter({
       const queued = backgroundChatEventsRef.current.get(threadId) ?? [];
       backgroundChatEventsRef.current.delete(threadId);
       if (queued.length) window.setTimeout(() => queued.forEach(applyChatEvent), 0);
-      return () => { cacheLiveThreadView(threadId); };
+      return () => {
+        // threadIdRef already points at the incoming thread (render runs
+        // before cleanup), so the leaving thread must be flushed under its
+        // own id or its tail lands in the new conversation's snapshot store.
+        flushThreadSnapshot(threadId);
+        cacheLiveThreadView(threadId);
+      };
     }
     streamingAssistantByRequest.current = {};
     structuredRequests.current.clear();
@@ -439,22 +470,40 @@ export function useDesktopChatAdapter({
       ? threadSnapshot.updatedAt
       : 0;
     lastPublishedSnapshotAtRef.current = 0;
+    threadSnapshotScheduler().reset();
     if (deltaFlushFrameRef.current !== null) {
       window.cancelAnimationFrame(deltaFlushFrameRef.current);
       deltaFlushFrameRef.current = null;
     }
+    // The leaving thread's in-flight turn stays tracked through its cached
+    // live view (cacheLiveThreadView in the cleanup). The refs themselves
+    // must not keep pointing at it: a stale activeRequestIdRef would make the
+    // next thread's composer act on the old session — Stop would cancel the
+    // wrong run, and the snapshot-restore guard below would reject the new
+    // thread's hydrated history until that stale ref was somehow cleared.
+    activeRequestIdRef.current = null;
+    setCancellingRequestId(null);
+    cancellingRequestIdRef.current = null;
     setActiveRequestId(null);
     setCurrentRuntimeMode(null);
     currentRuntimeModeRef.current = null;
     const restoredMessages = threadSnapshot?.messages?.length
       ? hydrateStructuredMessages(threadSnapshot.messages).filter((message) => message.id !== "welcome")
       : [createWelcomeMessage(languageRef.current, userPreferencesRef.current)];
+    let preparedMessages = restoredMessages;
     if (threadSnapshot?.messages?.length) {
-      restoreActiveStructuredTurns(restoredMessages);
+      preparedMessages = restoreActiveStructuredTurns(restoredMessages);
       restoredSnapshotThreadRef.current = threadId;
     }
-    setMessages(restoredMessages);
+    setMessages(preparedMessages);
     return () => {
+      // The pending publish may belong to the conversation being replaced;
+      // write it out before the switch so a throttled window cannot drop it.
+      // threadIdRef already points at the incoming thread (render runs before
+      // cleanup), so pass the leaving id explicitly — otherwise the flushed
+      // snapshot is persisted under the NEW thread's id and pollutes it with
+      // the old conversation (including its still-streaming messages).
+      flushThreadSnapshot(threadId);
       cacheLiveThreadView(threadId);
     };
   }, [threadId]);
@@ -535,12 +584,13 @@ export function useDesktopChatAdapter({
     const restoredMessages = threadSnapshot.messages.length
       ? hydrateStructuredMessages(threadSnapshot.messages).filter((message) => message.id !== "welcome")
       : [createWelcomeMessage(language, userPreferencesRef.current)];
+    let preparedMessages = restoredMessages;
     if (threadSnapshot.messages.length && restoredSnapshotThreadRef.current !== threadId) {
-      restoreActiveStructuredTurns(restoredMessages);
+      preparedMessages = restoreActiveStructuredTurns(restoredMessages);
       restoredSnapshotThreadRef.current = threadId;
     }
     appliedSnapshotUpdatedAtRef.current = threadSnapshot.updatedAt;
-    setMessages(restoredMessages);
+    setMessages(preparedMessages);
   }, [activeRequestId, language, threadId, threadSnapshot]);
 
   useEffect(() => {
@@ -1067,6 +1117,15 @@ export function useDesktopChatAdapter({
           retryable: false,
           diagnostic_reference: structuredEvent.debugRef,
         }, languageRef.current);
+        // A structured turn.error is terminal: the follow-up transport error
+        // event takes the completed-requests fast path and never attaches
+        // recovery actions. Attach them here so recoverable codes (e.g.
+        // session_busy's "Stop the current run") reach the user.
+        setMessages((current) => current.map((message) =>
+          message.structuredTurn?.turnId === event.requestId && !message.recoveryActions?.length
+            ? { ...message, recoveryActions: friendly.actions }
+            : message,
+        ));
         appendDebugLog(
           "error",
           `${friendly.title} ${friendly.action}\n${friendly.diagnosticCode}`,
@@ -1192,12 +1251,12 @@ export function useDesktopChatAdapter({
         return;
       }
       if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
-      flushPendingDeltas();
+      const terminalDeltas = takePendingDeltas();
       if (structuredRequests.current.has(event.requestId)) {
         const assistantId = streamingAssistantByRequest.current[event.requestId];
         const alreadyCompleted = completedStructuredRequests.current.has(event.requestId);
         setMessages((current) => publishAndReturn(
-          updateAssistantByIdExact(current, assistantId, (message) => ({
+          updateAssistantByIdExact(applyPendingDeltas(current, terminalDeltas), assistantId, (message) => ({
             ...message,
             streaming: false,
             inputRequest: undefined,
@@ -1221,7 +1280,7 @@ export function useDesktopChatAdapter({
       const assistantId = streamingAssistantByRequest.current[event.requestId];
       setMessages((current) =>
         publishAndReturn(
-          updateAssistantByIdExact(current, assistantId, (message) => ({
+          updateAssistantByIdExact(applyPendingDeltas(current, terminalDeltas), assistantId, (message) => ({
             ...message,
             streaming: false,
             inputRequest: undefined,
@@ -1246,7 +1305,7 @@ export function useDesktopChatAdapter({
         return;
       }
       if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
-      flushPendingDeltas();
+      const terminalDeltas = takePendingDeltas();
       const rawError = event.errorEnvelope ?? event.failureRecovery ?? { code: "unexpected_error", retryable: true };
       const friendlyError = describeUserFacingError(rawError, languageRef.current);
       const runtimeVisibleError = `${friendlyError.title} ${friendlyError.action}`;
@@ -1254,7 +1313,7 @@ export function useDesktopChatAdapter({
         const assistantId = streamingAssistantByRequest.current[event.requestId];
         setMessages((current) =>
           publishAndReturn(settleAssistantAfterHiddenError(
-            current,
+            applyPendingDeltas(current, terminalDeltas),
             assistantId,
             runtimeVisibleError,
             friendlyError.actions,
@@ -1277,7 +1336,7 @@ export function useDesktopChatAdapter({
       );
       setMessages((current) =>
         publishAndReturn(settleAssistantAfterHiddenError(
-          current,
+          applyPendingDeltas(current, terminalDeltas),
           assistantId,
           runtimeVisibleError,
           friendlyError.actions,
@@ -1300,23 +1359,33 @@ export function useDesktopChatAdapter({
     deltaFlushFrameRef.current = window.requestAnimationFrame(flushPendingDeltas);
   }
 
-  function flushPendingDeltas(): void {
+  function takePendingDeltas(): Record<string, { text: string; reasoning: string }> {
     if (deltaFlushFrameRef.current !== null) {
       window.cancelAnimationFrame(deltaFlushFrameRef.current);
       deltaFlushFrameRef.current = null;
     }
     const queued = pendingDeltasByRequest.current;
     pendingDeltasByRequest.current = {};
+    return queued;
+  }
+
+  function applyPendingDeltas(
+    current: UiMessage[],
+    queued: Record<string, { text: string; reasoning: string }>,
+  ): UiMessage[] {
+    let next = current;
+    for (const [requestId, delta] of Object.entries(queued)) {
+      const assistantId = streamingAssistantByRequest.current[requestId];
+      if (delta.reasoning) next = appendAssistantReasoning(next, assistantId, delta.reasoning);
+      if (delta.text) next = appendAssistantChunk(next, assistantId, delta.text);
+    }
+    return next;
+  }
+
+  function flushPendingDeltas(): void {
+    const queued = takePendingDeltas();
     if (!Object.keys(queued).length) return;
-    setMessages((current) => {
-      let next = current;
-      for (const [requestId, delta] of Object.entries(queued)) {
-        const assistantId = streamingAssistantByRequest.current[requestId];
-        if (delta.reasoning) next = appendAssistantReasoning(next, assistantId, delta.reasoning);
-        if (delta.text) next = appendAssistantChunk(next, assistantId, delta.text);
-      }
-      return publishAndReturn(next);
-    });
+    setMessages((current) => publishAndReturn(applyPendingDeltas(current, queued)));
   }
 
   function touchStreamingAssistant(requestId: string, metric?: "feedback" | "delta"): void {
@@ -1345,18 +1414,38 @@ export function useDesktopChatAdapter({
     if (snapshot) notifyThreadUpdated(snapshot);
   }
 
+  // The coalescing window itself lives in its own module so the write-path
+  // contract can be verified without this hook; here we only supply the two
+  // facts it needs: whether a request is in flight, and how to persist.
+  function threadSnapshotScheduler(): ThreadSnapshotPublishScheduler<UiMessage> {
+    if (!threadSnapshotSchedulerRef.current) {
+      threadSnapshotSchedulerRef.current = createThreadSnapshotPublishScheduler<UiMessage>({
+        isStreaming: () => Boolean(activeRequestIdRef.current),
+        publish: (nextMessages, publishThreadId) => {
+          const snapshot = createThreadSnapshot(nextMessages, false, publishThreadId);
+          if (!snapshot) return false;
+          notifyThreadUpdated(snapshot);
+          return true;
+        },
+      });
+    }
+    return threadSnapshotSchedulerRef.current;
+  }
+
   function scheduleThreadUpdate(nextMessages: UiMessage[]): void {
-    const snapshot = createThreadSnapshot(nextMessages);
-    if (!snapshot) return;
-    pendingThreadSnapshotRef.current = snapshot;
-    if (threadSnapshotPublishQueuedRef.current) return;
-    threadSnapshotPublishQueuedRef.current = true;
-    queueMicrotask(() => {
-      threadSnapshotPublishQueuedRef.current = false;
-      const pendingSnapshot = pendingThreadSnapshotRef.current;
-      pendingThreadSnapshotRef.current = null;
-      if (pendingSnapshot) notifyThreadUpdated(pendingSnapshot);
-    });
+    // Building the snapshot scans and copies the message list, so it belongs on
+    // the publish path only - never on the frame that produced the update.
+    threadSnapshotScheduler().schedule(nextMessages);
+  }
+
+  // Publish the last coalesced state right away. Used when the thread is about
+  // to be swapped out or the adapter unmounts, so a throttled window can never
+  // drop the tail of a conversation. `leavingThreadId` names the conversation
+  // being flushed: the live thread ref may already point at the incoming
+  // thread (React runs the render before this cleanup), so without the
+  // explicit id the tail is persisted under the WRONG thread.
+  function flushThreadSnapshot(leavingThreadId?: string): void {
+    threadSnapshotScheduler().flush(leavingThreadId);
   }
 
   function notifyThreadUpdated(snapshot: ChatThreadSnapshot): void {
@@ -1378,7 +1467,11 @@ export function useDesktopChatAdapter({
     }
   }
 
-  function createThreadSnapshot(nextMessages: UiMessage[], allowEmpty = false): ChatThreadSnapshot | null {
+  function createThreadSnapshot(
+    nextMessages: UiMessage[],
+    allowEmpty = false,
+    threadIdOverride?: string,
+  ): ChatThreadSnapshot | null {
     const nonWelcome = nextMessages.filter((message) => message.id !== "welcome");
     if (!nonWelcome.length && !allowEmpty) return null;
     const firstUser = nonWelcome.find((message) => message.role === "user");
@@ -1386,7 +1479,10 @@ export function useDesktopChatAdapter({
     lastPublishedSnapshotAtRef.current = updatedAt;
     appliedSnapshotUpdatedAtRef.current = updatedAt;
     return {
-      threadId: threadIdRef.current,
+      // threadIdRef.current is already the incoming thread while a switch is
+      // being cleaned up; an explicit override keeps the leaving thread's
+      // coalesced tail from being persisted under the new conversation's id.
+      threadId: threadIdOverride ?? threadIdRef.current,
       title: firstUser?.content.replace(/[\r\n]+/g, " ").trim().slice(0, 48)
         || (languageRef.current === "zh" ? "新会话" : "New chat"),
       messages: nextMessages,

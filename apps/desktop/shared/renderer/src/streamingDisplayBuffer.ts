@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
+// Minimum spacing between two display releases. The release itself is
+// quantized to an animation frame, so this is a floor, not a timer: without it
+// a 60 Hz frame loop would re-render the whole Markdown subtree every frame.
 export const STREAMING_MARKDOWN_BUDGET_MS = 64;
 const TARGET_DRAIN_TICKS = 3;
 const MIN_GRAPHEMES_PER_TICK = 4;
@@ -28,22 +31,44 @@ export function useStreamingDisplayBuffer(authoritative: string, streaming: bool
   const [displayed, setDisplayed] = useState(authoritative);
   const displayedRef = useRef(displayed);
   const targetRef = useRef(authoritative);
-  const timerRef = useRef<number | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const lastReleaseAtRef = useRef(0);
   displayedRef.current = displayed;
   targetRef.current = authoritative;
 
   useEffect(() => {
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (!streaming || reducedMotion || !authoritative.startsWith(displayedRef.current)) {
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-      timerRef.current = null;
+      if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
       displayedRef.current = authoritative;
       setDisplayed(authoritative);
       return undefined;
     }
 
-    const release = (): void => {
-      timerRef.current = null;
+    function schedule(): void {
+      if (frameRef.current !== null) return;
+      frameRef.current = window.requestAnimationFrame(onFrame);
+    }
+
+    // Releasing on a frame boundary keeps the state update in the same frame as
+    // the paint it produces. A bare timer fired at an arbitrary point in the
+    // frame, so the render it triggered often landed after that frame's paint
+    // and the user saw a stutter instead of a step.
+    function onFrame(): void {
+      frameRef.current = null;
+      if (
+        displayedRef.current !== targetRef.current
+        && performance.now() - lastReleaseAtRef.current < STREAMING_MARKDOWN_BUDGET_MS
+      ) {
+        schedule();
+        return;
+      }
+      lastReleaseAtRef.current = performance.now();
+      release();
+    }
+
+    function release(): void {
       const current = displayedRef.current;
       const target = targetRef.current;
       if (!target.startsWith(current)) {
@@ -74,18 +99,24 @@ export function useStreamingDisplayBuffer(authoritative: string, streaming: bool
       }
       displayedRef.current = next;
       setDisplayed(next);
-      if (next !== targetRef.current) timerRef.current = window.setTimeout(release, STREAMING_MARKDOWN_BUDGET_MS);
-    };
+      if (next !== targetRef.current) schedule();
+    }
 
-    if (displayedRef.current === "" && authoritative) release();
-    else if (timerRef.current === null && displayedRef.current !== authoritative) {
-      timerRef.current = window.setTimeout(release, STREAMING_MARKDOWN_BUDGET_MS);
+    if (displayedRef.current === "" && authoritative) {
+      lastReleaseAtRef.current = performance.now();
+      release();
+    } else if (frameRef.current === null && displayedRef.current !== authoritative) {
+      schedule();
     }
     return undefined;
   }, [authoritative, streaming]);
 
+  // A stalled tail needs no recovery here: leaving `streaming` snaps the
+  // display to the authoritative text, so an occluded window that never ran
+  // the frame callback still ends up showing the whole answer.
   useEffect(() => () => {
-    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
   }, []);
   return streaming ? displayed : authoritative;
 }

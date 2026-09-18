@@ -7,8 +7,9 @@ the parts that look incidental are the parts that matter:
 - **git status overlay** -- a directory shows a change badge when anything
   beneath it changed, which is why the parent lookup walks ``changed_path``
   prefixes instead of matching exact paths.
-- **``.gitignore`` + fixed ignore set** -- without it, one ``node_modules``
-  turns a workspace tree into tens of thousands of entries.
+- **fixed noisy-directory set** -- the file tree does not apply ``.gitignore``;
+  otherwise valid Workspace files disappear. Large dependency and VCS metadata
+  directories remain excluded so one ``node_modules`` cannot exhaust the scan.
 - **``scan_limit``** -- bounds the walk itself, not just the response, so a
   pathological tree cannot hold the event loop.
 - **``resolve(strict=True)`` then ``relative_to(root)``** -- rejects symlinks
@@ -25,7 +26,8 @@ import base64
 import hashlib
 import mimetypes
 import subprocess
-from fnmatch import fnmatch
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +42,18 @@ IGNORED_DIRECTORIES = {
     "__pycache__", ".mypy_cache", ".pytest_cache",
 }
 
+# git.exe is a console application.  When the gateway itself has no console
+# (packaged Electron launch from the Start Menu), spawning git without
+# CREATE_NO_WINDOW makes Windows allocate a console host window that flashes
+# on screen for every file-tree request.  Never do that.
+_NO_WINDOW: int = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+# Short-lived cache so rapidly expanding several folders does not spawn a
+# fresh `git status` (and its console) for each click.  Two seconds matches
+# interactive click rates while staying transparent to real edits.
+_GIT_STATUS_TTL_SECONDS = 2.0
+_GIT_STATUS_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
+
 
 def workspace_path(workspace_id: str, path: str) -> Path:
     """Resolve a Workspace-relative path, refusing anything that escapes it."""
@@ -52,11 +66,31 @@ def workspace_path(workspace_id: str, path: str) -> Path:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _has_git_repo(start: Path) -> bool:
+    """True when a .git marker exists at or above ``start`` (cheap pre-check)."""
+    current = start
+    for _ in range(16):
+        if (current / ".git").exists():
+            return True
+        if current.parent == current:
+            break
+        current = current.parent
+    return False
+
+
 def _git_statuses(root: Path) -> dict[str, str]:
+    if not _has_git_repo(root):
+        # Not a repository (and maybe git is not even installed): skip the
+        # subprocess entirely.  The tree still works, just without badges.
+        return {}
+    cached = _GIT_STATUS_CACHE.get(str(root))
+    if cached is not None and (time.monotonic() - cached[0]) < _GIT_STATUS_TTL_SECONDS:
+        return cached[1]
     try:
         completed = subprocess.run(
             ["git", "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all"],
             capture_output=True, text=True, timeout=10, check=False,
+            creationflags=_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError):
         return {}
@@ -77,19 +111,8 @@ def _git_statuses(root: Path) -> dict[str, str]:
             else "added" if "A" in code
             else "modified"
         )
+    _GIT_STATUS_CACHE[str(root)] = (time.monotonic(), statuses)
     return statuses
-
-
-def _ignore_patterns(root: Path) -> list[str]:
-    try:
-        text = (root / ".gitignore").read_text("utf-8", errors="replace")
-    except OSError:
-        return []
-    return [
-        line.strip()
-        for line in text.splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
 
 
 def list_files(
@@ -107,30 +130,17 @@ def list_files(
         raise HTTPException(status_code=400, detail="Path must be a directory")
 
     git_statuses = _git_statuses(root)
-    patterns = _ignore_patterns(root)
     scan_limit = min(50_000, max(5_000, offset + max_entries + 1_000))
     scanned = 0
     scan_truncated = False
 
     def ignored(relative: str, directory: bool) -> bool:
-        if any(part in IGNORED_DIRECTORIES for part in Path(relative).parts):
-            return True
-        normalized = relative.replace("\\", "/")
-        for raw in patterns:
-            negate = raw.startswith("!")
-            pattern = (raw[1:] if negate else raw)
-            directory_only = pattern.endswith("/")
-            pattern = pattern.rstrip("/")
-            if directory_only and not directory:
-                continue
-            if (
-                fnmatch(normalized, pattern)
-                or fnmatch(Path(normalized).name, pattern)
-                or fnmatch(normalized, f"*/{pattern}")
-            ):
-                if not negate:
-                    return True
-        return False
+        # Only the fixed noisy-directory set is excluded.  The tree must NOT
+        # apply the workspace's .gitignore: doing so hides real files the user
+        # expects to see (e.g. .gitignore itself, build outputs, configs), and
+        # the previous refactor left a dangling `patterns` reference here that
+        # crashed the whole route with NameError.
+        return any(part in IGNORED_DIRECTORIES for part in Path(relative).parts)
 
     def visit(directory: Path, remaining: int) -> list[dict[str, Any]]:
         nonlocal scanned, scan_truncated

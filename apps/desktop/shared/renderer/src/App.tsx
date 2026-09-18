@@ -666,7 +666,8 @@ function AuthenticatedApp({
   );
   const toWorkspaceThread = (
     thread: DesktopThread,
-    liveMessages?: ChatThreadSnapshot["messages"],
+    snapshot: ChatThreadSnapshot | undefined,
+    backgroundTask: DesktopBackgroundTask | undefined,
   ): WorkspaceThread => ({
     id: thread.id,
     title: thread.title,
@@ -681,37 +682,123 @@ function AuthenticatedApp({
     pinned: thread.pinned,
     archived: thread.archived,
     unread: thread.unread,
-    activity: deriveThreadActivity({
-      thread,
-      snapshot: thread.id === activeThreadId && liveMessages?.length
-        ? {
-            threadId: thread.id,
-            title: thread.title,
-            messages: liveMessages,
-            updatedAt: Date.parse(thread.updatedAt) || 0,
-            messageCount: liveMessages.length,
-          }
-        : threadSnapshotStore.get(thread.id)
-          ?? (thread.id === activeThreadId ? activeThreadSnapshot ?? undefined : undefined),
-      backgroundTask: backgroundTaskByThreadId.get(thread.id),
-    }),
+    activity: deriveThreadActivity({ thread, snapshot, backgroundTask }),
     source: thread.sourceChannel === "wechat"
       ? "wechat"
       : workspaces.find((workspace) => getComparablePath(workspace.path) === getComparablePath(thread.workspacePath || ""))?.location === "remote"
       ? "remote"
       : thread.archiveSource === "codex" || thread.boundAgentId === "my-codex" ? "codex" : "opendrsai",
   });
-  const sidebarThreads = canonicalizeSidebarThreads(threads);
-  const scopedThreads =
-    sessionScope === "all"
+  // The sidebar rebuilds one row per thread on every render, and a streaming
+  // turn renders once per animation frame. Almost all of that is redundant:
+  // only the active row's inputs move per frame. Cache each row against the
+  // inputs it was derived from so a re-render reuses every unaffected row -
+  // including its activity derivation, which scans that thread's whole
+  // conversation - and only the row that actually changed is rebuilt.
+  const workspaceRowCacheRef = useRef(new Map<string, {
+    thread: DesktopThread;
+    snapshot: ChatThreadSnapshot | undefined;
+    backgroundTask: DesktopBackgroundTask | undefined;
+    activeThreadId: string;
+    language: AppLanguage;
+    workspaces: WorkspaceProject[];
+    timeLabelKey: number;
+    row: WorkspaceThread;
+  }>());
+  const rowCacheThreadsRef = useRef<DesktopThread[] | null>(null);
+  if (rowCacheThreadsRef.current !== threads) {
+    rowCacheThreadsRef.current = threads;
+    if (workspaceRowCacheRef.current.size) {
+      const liveThreadIds = new Set(threads.map((thread) => thread.id));
+      for (const cachedThreadId of workspaceRowCacheRef.current.keys()) {
+        if (!liveThreadIds.has(cachedThreadId)) workspaceRowCacheRef.current.delete(cachedThreadId);
+      }
+    }
+  }
+  // The active row is derived from the live transcript rather than the store.
+  // Reuse the synthetic snapshot while that transcript is the same array, so an
+  // idle conversation can re-render for other reasons and still hit the cache.
+  const liveRowSnapshotRef = useRef<{
+    thread: DesktopThread;
+    liveMessages: ChatThreadSnapshot["messages"];
+    snapshot: ChatThreadSnapshot;
+  } | null>(null);
+  function resolveRowSnapshot(
+    thread: DesktopThread,
+    liveMessages?: ChatThreadSnapshot["messages"],
+  ): ChatThreadSnapshot | undefined {
+    if (thread.id === activeThreadId && liveMessages?.length) {
+      const cached = liveRowSnapshotRef.current;
+      if (cached && cached.thread === thread && cached.liveMessages === liveMessages) {
+        return cached.snapshot;
+      }
+      const snapshot: ChatThreadSnapshot = {
+        threadId: thread.id,
+        title: thread.title,
+        messages: liveMessages,
+        updatedAt: Date.parse(thread.updatedAt) || 0,
+        messageCount: liveMessages.length,
+      };
+      liveRowSnapshotRef.current = { thread, liveMessages, snapshot };
+      return snapshot;
+    }
+    return threadSnapshotStore.get(thread.id)
+      ?? (thread.id === activeThreadId ? activeThreadSnapshot ?? undefined : undefined);
+  }
+  function buildWorkspaceThread(
+    thread: DesktopThread,
+    liveMessages?: ChatThreadSnapshot["messages"],
+  ): WorkspaceThread {
+    const snapshot = resolveRowSnapshot(thread, liveMessages);
+    const backgroundTask = backgroundTaskByThreadId.get(thread.id);
+    const timeLabelKey = threadTimeLabelKey(thread.updatedAt);
+    const cached = workspaceRowCacheRef.current.get(thread.id);
+    if (
+      cached
+      && cached.thread === thread
+      && cached.snapshot === snapshot
+      && cached.backgroundTask === backgroundTask
+      && cached.activeThreadId === activeThreadId
+      && cached.language === language
+      && cached.workspaces === workspaces
+      && cached.timeLabelKey === timeLabelKey
+    ) {
+      return cached.row;
+    }
+    const row = toWorkspaceThread(thread, snapshot, backgroundTask);
+    workspaceRowCacheRef.current.set(thread.id, {
+      thread,
+      snapshot,
+      backgroundTask,
+      activeThreadId,
+      language,
+      workspaces,
+      timeLabelKey,
+      row,
+    });
+    return row;
+  }
+  // These catalog derivations are pure functions of the thread list, yet they
+  // used to re-run on every render - including every animation frame of a
+  // streaming turn.
+  const sidebarThreads = useMemo(() => canonicalizeSidebarThreads(threads), [threads]);
+  const scopedThreads = useMemo(
+    () => (sessionScope === "all"
       ? sidebarThreads
       : sidebarThreads.filter((thread) => {
           if (thread.id === activeThreadId) return true;
           if (!thread.workspacePath) return true;
           return getComparablePath(thread.workspacePath) === activeWorkspacePathKey;
-        });
-  const visibleThreads = scopedThreads.filter((thread) =>
-    sessionScope === "all" ? true : !thread.archived,
+        })),
+    [activeThreadId, activeWorkspacePathKey, sessionScope, sidebarThreads],
+  );
+  const visibleThreads = useMemo(
+    () => scopedThreads.filter((thread) => (sessionScope === "all" ? true : !thread.archived)),
+    [scopedThreads, sessionScope],
+  );
+  const unarchivedSidebarThreads = useMemo(
+    () => sortThreadsForSidebar(sidebarThreads).filter((thread) => !thread.archived),
+    [sidebarThreads],
   );
   const remotePlatformChatAvailable = Boolean(
     selectedChatAgent?.source === "remote"
@@ -720,8 +807,8 @@ function AuthenticatedApp({
     && selectedChatAgent.status === "running",
   );
   // Keep Runtime-backed adapter prefetches dormant until bootstrap succeeds.
-  // The composer has a separate on-demand gate below so the first send can
-  // bootstrap and continue without requiring a second click.
+  // The composer is locked by the same readiness gate until the service is
+  // actually ready, so a first send can no longer race the bootstrap and fail.
   // When the local Gateway is already external-ready, local agents can chat
   // even if the full Runtime bootstrap (auth.serviceReady) hasn't completed.
   // servicePreparing should only block when the Gateway is still coming up.
@@ -729,33 +816,37 @@ function AuthenticatedApp({
   const runtimeAvailable = remotePlatformChatAvailable || Boolean(health?.installed || health?.gateway?.externalReady);
   const chatUnavailableReason = remotePlatformChatAvailable
     ? undefined
-    : auth.serviceBusy
+    : sessionRestoring
       ? language === "zh"
-        ? "正在后台检查模型服务，完成后即可发送。"
-        : "Checking model services in the background. Sending will be available shortly."
-    : !auth.serviceReady && health?.gateway?.startState === "starting"
-      ? language === "zh"
-        ? "正在启动本地运行时，请稍候。"
-        : "Starting the local runtime; this takes a moment."
-    : !auth.serviceReady
-      ? getServiceUnavailableReason(auth.serviceBlocker, language)
-      : !health
+        ? "正在恢复上次会话，请稍候。"
+        : "Restoring your last conversation; this takes a moment."
+      : auth.serviceBusy
         ? language === "zh"
-          ? "正在初始化桌面端..."
-          : "Initializing the desktop..."
-        : !runtimeAvailable
+          ? "正在后台检查模型服务，完成后即可发送。"
+          : "Checking model services in the background. Sending will be available shortly."
+        : !auth.serviceReady && health?.gateway?.startState === "starting"
           ? language === "zh"
-            ? "本地运行时未安装，请先完成安装。"
-            : "The local runtime is not installed. Install it first."
-          : !effectiveWorkspacePath
-            ? language === "zh"
-              ? "请先创建或打开一个工作区。"
-              : "Create or open a workspace first."
-            : !workspaceTrusted
+            ? "正在启动本地运行时，请稍候。"
+            : "Starting the local runtime; this takes a moment."
+          : !auth.serviceReady
+            ? getServiceUnavailableReason(auth.serviceBlocker, language)
+            : !health
               ? language === "zh"
-                ? "请先信任当前工作区。"
-                : "Trust this workspace before sending."
-              : undefined;
+                ? "正在初始化桌面端..."
+                : "Initializing the desktop..."
+              : !runtimeAvailable
+                ? language === "zh"
+                  ? "本地运行时未安装，请先完成安装。"
+                  : "The local runtime is not installed. Install it first."
+                : !effectiveWorkspacePath
+                  ? language === "zh"
+                    ? "请先创建或打开一个工作区。"
+                    : "Create or open a workspace first."
+                  : !workspaceTrusted
+                    ? language === "zh"
+                      ? "请先信任当前工作区。"
+                      : "Trust this workspace before sending."
+                    : undefined;
   const chat = useDesktopChatAdapter({
     availableAgents: availableChatAgents,
     availableModels: availableChatModels,
@@ -789,13 +880,12 @@ function AuthenticatedApp({
   });
   const recentThreads: WorkspaceThread[] = visibleThreads
     .slice(0, 12)
-    .map((thread) => toWorkspaceThread(thread, chat.messages));
+    .map((thread) => buildWorkspaceThread(thread, chat.messages));
   const searchableThreads: WorkspaceThread[] = visibleThreads.map((thread) =>
-    toWorkspaceThread(thread, chat.messages),
+    buildWorkspaceThread(thread, chat.messages),
   );
-  const workspaceThreads: WorkspaceThread[] = sortThreadsForSidebar(sidebarThreads)
-    .filter((thread) => !thread.archived)
-    .map((thread) => toWorkspaceThread(thread, chat.messages));
+  const workspaceThreads: WorkspaceThread[] = unarchivedSidebarThreads
+    .map((thread) => buildWorkspaceThread(thread, chat.messages));
   const proposeTerminalCommand = useCallback((
     command: string,
     workflow?: { workflowRunId?: string; workflowStepId?: string },
@@ -848,7 +938,7 @@ function AuthenticatedApp({
 
   const canChat = Boolean(
     !sessionRestoring &&
-    (remotePlatformChatAvailable || !auth.serviceBusy) &&
+    !servicePreparing &&
     runtimeAvailable &&
     effectiveWorkspacePath &&
     workspaceTrusted &&
@@ -2209,6 +2299,24 @@ function AuthenticatedApp({
         if (originalInput) chat.setInput(originalInput);
         return;
       }
+      if (action === "stop_running") {
+        // session_busy: another turn on this same session still holds the
+        // Runtime lock. Stop it (by the thread's authoritative Run when the
+        // adapter no longer tracks it), then restore the failed input so one
+        // Enter resends it once the lock is released.
+        const thread = threadsRef.current.find((item) => item.id === activeThreadIdRef.current);
+        if (thread?.lastRunId) {
+          await desktopApi.cancelChatTurn({
+            requestId: thread.lastRequestId || thread.lastRunId,
+            sessionId: thread.id,
+            runId: thread.lastRunId,
+          }).catch(() => undefined);
+        }
+        await chat.abort().catch(() => undefined);
+        chat.dismissRecoveryActions(assistantMessageId);
+        if (originalInput) chat.setInput(originalInput);
+        return;
+      }
       if (action === "retry" || action === "select_model" || action === "remove_resource") {
         if (originalInput) chat.setInput(originalInput);
         return;
@@ -2757,19 +2865,45 @@ function AuthenticatedApp({
     // Handoff/settle while switching must not bump updatedAt — that jumps the
     // previous thread to the top of the sidebar under the newly selected one.
     if (options?.preserveSidebarOrder) {
-      setThreads((current) => current.map((item) =>
-        item.id === snapshot.threadId
-          ? {
-              ...item,
-              title: snapshot.title || item.title,
-              status: nextStatus,
-              messageCount: snapshot.messageCount,
-            }
-          : item,
-      ));
+      setThreads((current) => {
+        const item = current.find((entry) => entry.id === snapshot.threadId);
+        // Returning the same array keeps React from re-rendering the sidebar for
+        // a row that already shows this status/count/title.
+        if (item
+          && item.status === nextStatus
+          && item.messageCount === snapshot.messageCount
+          && (!snapshot.title || item.title === snapshot.title)) {
+          return current;
+        }
+        return current.map((entry) =>
+          entry.id === snapshot.threadId
+            ? {
+                ...entry,
+                title: snapshot.title || entry.title,
+                status: nextStatus,
+                messageCount: snapshot.messageCount,
+              }
+            : entry,
+        );
+      });
       return;
     }
     const existingThread = threads.find((item) => item.id === snapshot.threadId);
+    const boundAgentId = existingThread?.boundAgentId ?? selectedChatAgentId ?? undefined;
+    const boundAgentName = existingThread?.boundAgentName ?? selectedChatAgentName ?? undefined;
+    const remoteScope = existingThread?.sessionScope === "remote_agent";
+    // A streaming publish usually only moves the message body. The catalog row
+    // carries status/count/title plus the identity fields below, so rewriting
+    // threads.json — a full read, dedupe and re-serialize in the main process —
+    // for a row that already matches is pure overhead on the streaming path.
+    const catalogRowIsCurrent = Boolean(existingThread)
+      && existingThread!.status === nextStatus
+      && existingThread!.messageCount === snapshot.messageCount
+      && (!snapshot.title || existingThread!.title === snapshot.title)
+      && existingThread!.boundAgentId === boundAgentId
+      && existingThread!.boundAgentName === boundAgentName
+      && (remoteScope || existingThread!.workspacePath === effectiveWorkspacePath);
+    if (catalogRowIsCurrent) return;
     let thread: DesktopThread;
     try {
       thread = await desktopApi.updateThread({
@@ -2780,15 +2914,15 @@ function AuthenticatedApp({
         // effective workspace here would race the Runtime binding. Preserve
         // the remote identity explicitly and let threads.ts keep
         // workspacePath undefined for the remote_agent scope.
-        ...(existingThread?.sessionScope === "remote_agent"
+        ...(remoteScope
           ? {
               sessionScope: "remote_agent" as const,
-              remoteWorkerId: existingThread.remoteWorkerId,
-              remoteWorkerName: existingThread.remoteWorkerName,
+              remoteWorkerId: existingThread!.remoteWorkerId,
+              remoteWorkerName: existingThread!.remoteWorkerName,
             }
           : { workspacePath: effectiveWorkspacePath }),
-        boundAgentId: existingThread?.boundAgentId ?? selectedChatAgentId ?? undefined,
-        boundAgentName: existingThread?.boundAgentName ?? selectedChatAgentName ?? undefined,
+        boundAgentId,
+        boundAgentName,
         status: nextStatus,
         messageCount: snapshot.messageCount,
       });
@@ -4654,6 +4788,17 @@ function haveSameThreadTaskActivity(
       && candidate.approvalId === task.approvalId
       && (candidate.pendingDecisions?.length ?? 0) === (task.pendingDecisions?.length ?? 0);
   });
+}
+
+// A cached sidebar row also caches its relative time label, so the cache key
+// has to move when that label would. The label is a pure function of how many
+// whole minutes have passed since the thread changed, so that count is the
+// exact key: a row is rebuilt when its label changes and never merely because
+// another frame rendered.
+function threadTimeLabelKey(updatedAt: string): number {
+  const time = Date.parse(updatedAt);
+  if (!Number.isFinite(time)) return -1;
+  return Math.floor(Math.max(0, Date.now() - time) / 60_000);
 }
 
 function formatThreadTime(updatedAt: string, language: AppLanguage): string {

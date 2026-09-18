@@ -51,6 +51,7 @@ verifyRuntimeOwnership(configToml);
 verifyBuilder();
 verifyFirstLaunchSeeding();
 verifyGatewayLauncher();
+verifySkillsSeeding();
 
 if (existsSync(runtimePath)) {
   const archive = inspectArchive(runtimePath);
@@ -65,6 +66,14 @@ if (existsSync(runtimePath)) {
   );
   assert(!names.has("drsai-home/.env"), "Runtime archive contains forbidden drsai-home/.env");
   assert(!names.has("drsai-home/config.yaml"), "Runtime archive contains forbidden legacy drsai-home/config.yaml");
+  assert(
+    [...names].some((name) => /^drsai-agent\/skills\/skills\/[^/]+\/SKILL\.md$/.test(name)),
+    "Runtime archive is missing the bundled Skill catalogue under drsai-agent/skills/skills",
+  );
+  assert(
+    ![...names].some((name) => name.includes("drsai-agent/skills/skills/") && name.includes("/node_modules/")),
+    "Runtime archive must not vendor skills/skills node_modules build output",
+  );
   verifyConfig(archive.files[configEntry], "Runtime archive config.toml");
 } else if (requireArchive) {
   throw new Error(`Runtime archive is required but missing: ${runtimePath}`);
@@ -214,6 +223,18 @@ function verifyBuilder() {
     builder.includes("DrsaiHomeDefaultsDir"),
     "Runtime builder no longer accepts/validates the version-controlled defaults directory",
   );
+  assert(
+    builder.includes("Add-BundledSkills"),
+    "Runtime builder no longer stages the bundled Skill catalogue into the Runtime",
+  );
+  assert(
+    builder.includes('Join-Path $TargetAgent "skills\\skills"'),
+    "Runtime builder must stage bundled Skills at drsai-agent/skills/skills so discovery finds them",
+  );
+  assert(
+    builder.includes('/XD node_modules'),
+    "Runtime builder must skip node_modules when staging bundled Skills",
+  );
 }
 
 function verifyFirstLaunchSeeding() {
@@ -229,6 +250,41 @@ function verifyFirstLaunchSeeding() {
   assert(!desktopPaths.includes("config.yaml"), "packaged first launch still knows about legacy config.yaml");
 }
 
+// The packaged built-in Skill catalogue is a one-time seed, not a live sync
+// source. Guards against a regression back to SYSTEM_SKILLS_DIR, which made the
+// Agent overwrite the user's configs/skills on every cold start.
+function verifySkillsSeeding() {
+  const store = readFileSync(
+    join(pythonPackageRoot, "backend", "desktop_gateway", "_skills_store.py"),
+    "utf8",
+  );
+  assert(
+    store.includes("OPENDRSAI_BUNDLED_SKILLS_DIR"),
+    "Desktop skills store must read the bundled catalogue seed source env var",
+  );
+  assert(
+    store.includes("def seed_user_skills_once"),
+    "Desktop skills store must expose the one-time seeding helper",
+  );
+  assert(
+    store.includes("def seed_marker_path"),
+    "Desktop skills store must guard seeding with a marker so it runs only once",
+  );
+  assert(
+    store.includes("if marker.exists():") && store.includes("return []"),
+    "seed_user_skills_once must no-op once the marker exists",
+  );
+
+  const skillsRoute = readFileSync(
+    join(pythonPackageRoot, "backend", "desktop_gateway", "routes", "skills.py"),
+    "utf8",
+  );
+  assert(
+    (skillsRoute.match(/seed_user_skills_once\(/g) || []).length >= 2,
+    "both /v1/skills and /v1/skills/available must trigger first-run seeding",
+  );
+}
+
 function verifyGatewayLauncher() {
   const gateway = readFileSync(join(root, "..", "shared", "main", "gateway.ts"), "utf8");
   assert(
@@ -240,6 +296,18 @@ function verifyGatewayLauncher() {
   assert(
     gateway.includes("drsai.backend.desktop_gateway"),
     "Gateway no longer launches the v2 desktop Runtime module",
+  );
+  assert(
+    gateway.includes("resolveBundledSkillsDir"),
+    "Gateway spawn no longer exports the bundled Skill catalogue seed source",
+  );
+  assert(
+    gateway.includes("BUNDLED_SKILLS_ENV_VAR"),
+    "Gateway spawn must publish the bundled Skill catalogue as a seed source env var",
+  );
+  assert(
+    !/SYSTEM_SKILLS_DIR\s*[:=]/.test(gateway.replace(/^\s*\/\/.*$/gm, "")),
+    "Gateway must not set SYSTEM_SKILLS_DIR; that re-syncs shipped Skills every launch",
   );
 }
 

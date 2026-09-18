@@ -1239,12 +1239,9 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
            injected immediately after the offending AssistantMessage.
 
         3. **Consecutive user-role messages** – Anthropic (Claude) requires
-           strict user/assistant alternation.  ``FunctionExecutionResultMessage``
-           is serialised as ``role=user`` by ``to_anthropic_type``, so a plain
-           ``UserMessage`` that immediately follows a tool-result block creates
-           two consecutive ``role=user`` turns.  The plain UserMessage's text is
-           merged into a new synthetic AssistantMessage + UserMessage pair so
-           that the turn order becomes: … tool_result | assistant(ack) | user.
+           strict user/assistant alternation.  The provider-only compatibility
+           layer inserts ephemeral acknowledgements into the request copy; this
+           sanitizer deliberately does not persist them in model context.
 
         4. **Empty AssistantMessage stubs** – AssistantMessages with
            ``content=""`` that were stored by the "Your reply is empty" retry
@@ -1327,14 +1324,10 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         #   a) Empty strings (content="") from the "Your reply is empty" retry
         #      loop.  Claude sees its own empty turn and continues to produce
         #      empty responses.
-        #   b) Synthetic "[Continuing]" acknowledgements inserted by Pass 5 to
-        #      fix consecutive user-role messages.  These are *ephemeral* and
-        #      should not persist: they are only needed for the Anthropic
-        #      message alternation constraint during a single LLM call.  On the
-        #      next call the whole context is re-serialised, and the original
-        #      consecutive-user-role problem is still present, so Pass 5 would
-        #      insert yet another "[Continuing]" on top of the old one →
-        #      unbounded accumulation.
+        #   b) Legacy synthetic "[Continuing]" acknowledgements from older
+        #      sanitizer behavior. These are removed from the canonical history;
+        #      current Anthropic compatibility acknowledgements are ephemeral
+        #      request-copy messages and are never persisted.
         # We strip both here, together with the paired "Your reply is empty"
         # UserMessage that follows them (if present), so that each sanitize
         # cycle starts from a clean slate.
@@ -1376,29 +1369,13 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         # Claude requires strict user/assistant alternation.
         # FunctionExecutionResultMessage serialises to role=user, so a plain
         # UserMessage immediately following a tool-result creates two consecutive
-        # role=user turns → Claude returns empty content or 400.
-        # Fix: insert a minimal assistant acknowledgement between them.
-        i = 0
-        while i < len(messages) - 1:
-            cur = messages[i]
-            nxt = messages[i + 1]
-            cur_is_user_role = isinstance(cur, (UserMessage, FunctionExecutionResultMessage))
-            nxt_is_user_role = isinstance(nxt, (UserMessage, FunctionExecutionResultMessage))
-            if cur_is_user_role and nxt_is_user_role:
-                # Insert a minimal assistant turn to restore alternation
-                ack = AssistantMessage(
-                    content="[Continuing]",
-                    source="assistant",
-                )
-                messages.insert(i + 1, ack)
-                dirty = True
-                logger.debug(
-                    f"Inserted assistant ack between consecutive user-role messages "
-                    f"at index {i} ({type(cur).__name__}) and {i+2} ({type(nxt).__name__})"
-                )
-                i += 2  # skip over the newly inserted message
-                continue
-            i += 1
+        # role=user turns → Claude returns empty content or 400. The repair is
+        # applied later to the provider request copy, not to canonical history.
+        # Role alternation is a provider-wire concern, not a canonical-history
+        # concern. Do not insert [Continuing] into `model_context` here: doing so
+        # makes every later sanitize pass delete the old ack and insert a new one
+        # again, producing repeated logs and transient work. Anthropic gets an
+        # ephemeral copy with the ack in _get_compatible_context below.
 
         # ── Always persist if anything changed ────────────────────────────────
         # Use replace_messages() when available (DrSaiSQLiteChatCompletionContext)
@@ -1462,14 +1439,26 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
 
     @staticmethod
     def _get_compatible_context(model_client: ChatCompletionClient, messages: List[LLMMessage]) -> Sequence[LLMMessage]:
-        """Reject unsupported image input instead of silently deleting user content."""
-        if model_client.model_info["vision"]:
-            return messages
-        for message in messages:
-            content = getattr(message, "content", None)
-            if isinstance(content, list) and any(isinstance(item, Image) for item in content):
-                raise ValueError("Model does not support vision and image was provided")
-        return messages
+        """Prepare a provider-only message copy without mutating model history."""
+        if not model_client.model_info["vision"]:
+            for message in messages:
+                content = getattr(message, "content", None)
+                if isinstance(content, list) and any(isinstance(item, Image) for item in content):
+                    raise ValueError("Model does not support vision and image was provided")
+
+        # Anthropic serializes FunctionExecutionResultMessage as role=user and
+        # requires strict user/assistant alternation. Insert the acknowledgement
+        # only into this request copy; canonical model_context must never retain
+        # the ephemeral [Continuing] marker.
+        prepared = list(messages)
+        if ModelFamily.is_claude(model_client.model_info["family"]):
+            alternated: List[LLMMessage] = []
+            for message in prepared:
+                if alternated and isinstance(alternated[-1], (UserMessage, FunctionExecutionResultMessage)) and isinstance(message, UserMessage):
+                    alternated.append(AssistantMessage(content="[Continuing]", source="assistant"))
+                alternated.append(message)
+            prepared = alternated
+        return prepared
         
     def _to_config(self) -> AssistantAgentConfig:
         """Convert the assistant agent to a declarative config."""

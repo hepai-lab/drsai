@@ -18,7 +18,6 @@ export function parseChatOutput(content: string, options: { streaming?: boolean 
   const parts: ChatOutputPart[] = [];
   let mode: "text" | "reasoning" = "text";
   let buffer = "";
-  let index = 0;
 
   const flush = (complete = true): void => {
     if (!buffer) return;
@@ -39,25 +38,30 @@ export function parseChatOutput(content: string, options: { streaming?: boolean 
     buffer = "";
   };
 
-  while (index < content.length) {
-    const rest = content.slice(index);
-    const open = rest.match(OPEN_TAG) ?? rest.match(ESCAPED_OPEN_TAG);
-    const close = rest.match(CLOSE_TAG) ?? rest.match(ESCAPED_CLOSE_TAG);
-    if (mode === "text" && open) {
+  // Scan tag boundaries rather than slicing and matching the remaining string
+  // for every character. The previous loop was quadratic for long answers and
+  // ran several times per displayed frame through the message/search helpers.
+  const tagPattern = /<think(?:\s[^>]*)?>|<\/(?:think|redacted_thinking)>|&lt;think(?:\s.*?)?&gt;|&lt;\/(?:think|redacted_thinking)&gt;/gi;
+  let cursor = 0;
+  for (const match of content.matchAll(tagPattern)) {
+    const index = match.index ?? cursor;
+    const tag = match[0];
+    buffer += content.slice(cursor, index);
+    const isOpen = OPEN_TAG.test(tag) || ESCAPED_OPEN_TAG.test(tag);
+    const isClose = CLOSE_TAG.test(tag) || ESCAPED_CLOSE_TAG.test(tag);
+    if (mode === "text" && isOpen) {
       flush();
       mode = "reasoning";
-      index += open[0].length;
-      continue;
-    }
-    if (mode === "reasoning" && close) {
+    } else if (mode === "reasoning" && isClose) {
       flush(true);
       mode = "text";
-      index += close[0].length;
-      continue;
+    } else {
+      // A close tag outside reasoning, or a nested open tag, is ordinary text.
+      buffer += tag;
     }
-    buffer += content[index];
-    index += 1;
+    cursor = index + tag.length;
   }
+  buffer += content.slice(cursor);
   if (options.streaming) {
     buffer = stripPartialTagSuffix(buffer, mode);
   }

@@ -10,7 +10,7 @@ export interface UserFacingError {
 }
 
 export interface UserFacingRecoveryAction {
-  id: "retry" | "login_codex" | "resync_workspace" | "repair_codex" | "new_task" | "select_model" | "remove_resource" | "reconnect" | "diagnostics" | "continue" | "redo" | "abandon";
+  id: "retry" | "login_codex" | "resync_workspace" | "repair_codex" | "new_task" | "select_model" | "remove_resource" | "reconnect" | "diagnostics" | "continue" | "redo" | "abandon" | "stop_running";
   label: string;
 }
 
@@ -41,6 +41,7 @@ const LABELS: Record<UserFacingRecoveryAction["id"], { en: string; zh: string }>
   new_task: { en: "Start a new task", zh: "新建任务" }, select_model: { en: "Select model", zh: "选择模型" },
   remove_resource: { en: "Review resources", zh: "检查资源" }, reconnect: { en: "Reconnect", zh: "重新连接" },
   diagnostics: { en: "View diagnostics", zh: "查看诊断" },
+  stop_running: { en: "Stop the current run", zh: "停止当前运行" },
   continue: { en: "Continue from saved work", zh: "基于已保留内容继续" },
   redo: { en: "Redo from the start", zh: "从头重做" },
   abandon: { en: "Leave as interrupted", zh: "放弃本次任务" },
@@ -270,6 +271,22 @@ export function describeUserFacingError(error: unknown, language: "zh" | "en"): 
         const id = ACTION_IDS[action as RuntimeRecoveryAction];
         return { id, label: LABELS[id][language] };
       }),
+    };
+  }
+  if (envelope.code === "session_busy") {
+    return {
+      title: language === "zh" ? "该会话已有任务正在运行" : "This session already has a running turn",
+      action: language === "zh"
+        ? "同一会话同时只允许一个任务。可以停止当前运行后重新发送，或等待它完成。"
+        : "Only one turn may run per session at a time. Stop the current run and send again, or wait for it to finish.",
+      retryable: true,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: [
+        { id: "stop_running" as const, label: LABELS.stop_running[language] },
+        { id: "retry" as const, label: LABELS.retry[language] },
+        { id: "diagnostics" as const, label: LABELS.diagnostics[language] },
+      ],
     };
   }
   if (

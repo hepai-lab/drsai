@@ -1,20 +1,35 @@
-import { copyFileSync, existsSync, mkdirSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import { createDesktopPathService } from "./desktopPaths";
 
 const PACKAGED_INSTALL_ROOT = process.resourcesPath
-  ? dirname(process.resourcesPath)
+  ? dirname(dirname(process.resourcesPath))
   : "";
 const PACKAGED_DRSAI_REPO = PACKAGED_INSTALL_ROOT
   ? join(PACKAGED_INSTALL_ROOT, "drsai-agent")
   : "";
+
+function readManagedAgentPath(stateDirectory: string): string | null {
+  try {
+    const statePath = join(stateDirectory, "install-state.json");
+    if (!existsSync(statePath)) return null;
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as { agentPath?: unknown };
+    const value = typeof state.agentPath === "string" ? state.agentPath.trim() : "";
+    return value || null;
+  } catch {
+    // A malformed or unreadable state file must not break startup; fall back to
+    // the derived sibling path so repair can still run.
+    return null;
+  }
+}
 export const DESKTOP_PATH_SERVICE = createDesktopPathService({
   platform: process.platform === "darwin" ? "macos" : "windows",
   userHome: homedir(),
   resourcesPath: process.resourcesPath,
   defaultApp: process.defaultApp,
   environment: process.env,
+  readManagedAgentPath,
 });
 export const WINDOWS_PATH_SERVICE = DESKTOP_PATH_SERVICE;
 export const DRSAI_HOME = DESKTOP_PATH_SERVICE.layout.home;

@@ -53,7 +53,7 @@ from drsai.backend.events.agent_event_translator import (
     translate as translate_conversation_event,
 )
 
-from . import _artifacts
+from . import _artifacts, _remote_files
 from ._auth import effective_user_id
 
 # Default remote worker endpoint. Overridable per Run through the Agent
@@ -153,6 +153,16 @@ class RemoteWorkerBackend:
                         content_parts.append(str(data.get("delta") or ""))
                     elif kind == "citation.added":
                         citations.append(dict(data))
+                    elif kind == "artifact.created":
+                        # A remote worker delivers FilesEvent payloads that point
+                        # at content this Workspace cannot reach (HepAI URL) or
+                        # carry it inline (base64).  Fetch/decode it once here so
+                        # the Desktop receives a normal local Artifact it can
+                        # preview and download; fall through unchanged when that
+                        # is impossible, so the metadata card still renders.
+                        materialized = _remote_files.try_materialize(context, data)
+                        services.emit(context, kind, materialized if materialized is not None else data)
+                        continue
                     services.emit(context, kind, data)
 
             _artifacts.register_new_artifacts(context, baseline, started_at, services.emit)

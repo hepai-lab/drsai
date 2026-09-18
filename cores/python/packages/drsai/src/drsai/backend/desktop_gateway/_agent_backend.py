@@ -53,7 +53,7 @@ from drsai.backend.events.agent_event_translator import (
 )
 from drsai.platform_auth import classify_model_error, get_platform_auth
 
-from . import _artifacts, _state
+from . import _artifacts, _remote_files, _state
 from ._auth import effective_user_id
 
 # The Desktop Kernel ends a Run with a bare RuntimeError code for local policy
@@ -172,6 +172,15 @@ class DesktopAgentBackend:
                         content_parts.extend(text_chunks)
                     elif kind == "citation.added":
                         citations.append(dict(data))
+                    elif kind == "artifact.created":
+                        # A local DrSaiAssistant (or one of its skills) can emit
+                        # the same url/base64 FilesEvent shape a remote worker
+                        # does.  Materialise it into the Workspace so the
+                        # Desktop card can preview and download it; fall through
+                        # unchanged when the payload is not remote materialisable.
+                        materialized = _remote_files.try_materialize(context, data)
+                        services.emit(context, kind, materialized if materialized is not None else data)
+                        continue
                     services.emit(context, kind, data)
             diag_log(f"[DIAG] DesktopAgentBackend.execute: run_id={context.run_id} stream exhausted, event_count={_event_count}")
 

@@ -52,11 +52,88 @@ def skills_dir(user_id: str | None = None) -> Path:
 
 
 def available_skills_dirs() -> list[Path]:
-    """Bundled/extra skills collections shipped with the package."""
+    """Bundled/extra skills collections shipped with the package.
+
+    Prefers the explicit ``SYSTEM_SKILLS_DIR`` catalogue when set (TUI / source
+    checkout). Otherwise falls back to the Desktop's packaged seed source
+    (``OPENDRSAI_BUNDLED_SKILLS_DIR``) so the "install from bundled" catalogue
+    still lists the shipped Skills without re-enabling per-launch syncing.
+    """
     from drsai.modules.components.skills import resolve_builtin_skills_dir
 
     root = resolve_builtin_skills_dir(search_from=(Path(__file__), Path.cwd()))
-    return [root] if root is not None else []
+    if root is not None:
+        return [root]
+    seed = bundled_seed_dir()
+    return [seed] if seed is not None else []
+
+
+def seed_marker_path(user_id: str | None = None) -> Path:
+    """One-time seeding marker beside the user's skills directory.
+
+    Its presence means the packaged built-in catalogue has already been copied
+    into the user's ``configs/skills``. Everything afterwards is user-owned:
+    the catalogue is never re-consulted, so edits and deletions stick.
+    """
+    return skills_dir(user_id).parent / "skills_seeded.json"
+
+
+def bundled_seed_dir() -> Path | None:
+    """The packaged catalogue to seed from, published by the Desktop shell.
+
+    The Desktop exports ``OPENDRSAI_BUNDLED_SKILLS_DIR`` (the payload copy at
+    ``<drsai-agent>/skills/skills``) into the gateway child. This is a **seed
+    source**, not the live ``SYSTEM_SKILLS_DIR`` catalogue: unlike that variable
+    it is never used for per-launch syncing, so seeding a user's directory once
+    has no ongoing effect on it.
+    """
+    import os
+
+    configured = (os.environ.get("OPENDRSAI_BUNDLED_SKILLS_DIR") or "").strip()
+    if not configured:
+        return None
+    candidate = Path(configured).expanduser()
+    return candidate.resolve() if candidate.is_dir() else None
+
+
+def seed_user_skills_once(user_id: str | None = None) -> list[str]:
+    """Copy the packaged catalogue into the user's skills dir exactly once.
+
+    Guarded by :func:`seed_marker_path`: if the marker already exists this is a
+    no-op, so a user who deleted or edited a seeded Skill is never overwritten.
+    Returns the Skill folder names copied on this call (empty once seeded).
+    """
+    target = skills_dir(user_id)
+    marker = seed_marker_path(user_id)
+    if marker.exists():
+        return []
+
+    source = bundled_seed_dir()
+    if source is None:
+        return []
+
+    copied: list[str] = []
+    target.mkdir(parents=True, exist_ok=True)
+    for skill_folder in sorted(source.iterdir()):
+        if not skill_folder.is_dir():
+            continue
+        if not (skill_folder / "SKILL.md").exists():
+            continue
+        destination = target / skill_folder.name
+        if destination.exists():
+            continue
+        copy_physical_tree(skill_folder, destination)
+        copied.append(skill_folder.name)
+
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps(sorted(copied), ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        # A read-only home must not break the skills surface; the marker is an
+        # optimisation, and an unmarked run simply re-checks (and finds) the
+        # already-present folders on the next call.
+        pass
+    return copied
 
 
 def deleted_skills_path(user_id: str | None = None) -> Path:

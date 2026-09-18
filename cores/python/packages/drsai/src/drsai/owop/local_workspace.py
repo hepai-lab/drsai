@@ -24,6 +24,10 @@ from drsai.owop.protocol import OWOPError
 from drsai.owop.process_pty import LocalProcessPtyOperations
 from drsai.owop.workspace_checkpoints import WorkspaceCheckpointStore
 
+# git.exe is a console app: without CREATE_NO_WINDOW every git call from a
+# console-less (packaged/Electron) process flashes a terminal window.
+GIT_CREATIONFLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 
 IGNORED_DIRECTORIES = frozenset({".git", ".drsai", "node_modules", "__pycache__"})
 DETERMINISTIC_MIME_TYPES = {
@@ -776,6 +780,7 @@ class LocalWorkspaceOperations:
                 capture_output=True,
                 text=text,
                 timeout=60,
+                creationflags=GIT_CREATIONFLAGS,
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:

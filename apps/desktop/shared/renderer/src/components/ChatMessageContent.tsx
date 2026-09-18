@@ -304,7 +304,10 @@ const VirtualizedMarkdown = memo(function VirtualizedMarkdown({
           end: Math.min(blocks.length, maxIdx + PRERENDER_BLOCKS + 1),
         });
       },
-      { root: container.closest('.chat-output, .chat-markdown') || null, rootMargin: "200px" },
+      // `.chat-output` / `.chat-markdown` are content wrappers, not scroll
+      // containers. Use the real message list so intersection changes track the
+      // viewport instead of the full message subtree.
+      { root: container.closest(".message-list"), rootMargin: "900px 0px" },
     );
 
     // Observe sentinel elements
@@ -416,18 +419,38 @@ const StableMarkdown = memo(
 
 function MarkdownContent({ content, language, onOpenLink, streaming = false, citations, onOpenCitation, artifactLinks, onOpenArtifactLink, onOpenArtifactLinkMenu }: MarkdownRendererProps): React.JSX.Element {
   const renderStartedAt = performance.now();
-  const displayedContent = useStreamingDisplayBuffer(content, streaming);
+  const [finalLayoutReady, setFinalLayoutReady] = useState(!streaming);
+
+  useEffect(() => {
+    if (streaming) {
+      setFinalLayoutReady(false);
+      return undefined;
+    }
+    if (finalLayoutReady) return undefined;
+    // Keep the incremental Markdown tree through the terminal commit. Reasoning
+    // collapses after 150 ms, so final/virtualized Markdown waits until a later
+    // task and cannot pile onto the same frame. The timeout is deterministic in
+    // Electron and acts as the fallback an idle callback would need anyway.
+    const timer = window.setTimeout(() => setFinalLayoutReady(true), 250);
+    return () => window.clearTimeout(timer);
+  }, [finalLayoutReady, streaming]);
+
+  const incrementalLayout = streaming || !finalLayoutReady;
+  const displayedContent = useStreamingDisplayBuffer(content, incrementalLayout);
   // Track previous split for incremental optimization
   const prevSplitRef = useRef<StreamingMarkdownSplit | null>(null);
   const split = useMemo(() => {
-    if (!streaming) return { stable: "", tail: displayedContent };
+    if (!incrementalLayout) return { stable: "", tail: displayedContent };
     const result = splitStreamingMarkdownIncremental(displayedContent, prevSplitRef.current);
     prevSplitRef.current = result;
     return result;
-  }, [displayedContent, streaming]);
+  }, [displayedContent, incrementalLayout]);
   useLayoutEffect(() => {
-    if (streaming) observeStreamingRenderMetric("commit-layout", performance.now() - renderStartedAt);
-  }, [displayedContent, streaming]);
+    const duration = performance.now() - renderStartedAt;
+    if (streaming) observeStreamingRenderMetric("commit-layout", duration);
+    else if (!finalLayoutReady) observeStreamingRenderMetric("terminal-layout", duration);
+    else observeStreamingRenderMetric("final-layout", duration);
+  }, [displayedContent, finalLayoutReady, streaming]);
 
   // P3: Streaming degraded rendering — when tail exceeds threshold, render as
   // plain <pre> to avoid expensive ReactMarkdown re-parsing every 64ms.
@@ -435,7 +458,7 @@ function MarkdownContent({ content, language, onOpenLink, streaming = false, cit
 
   // P3: Non-streaming virtualization — when final content exceeds block threshold,
   // use VirtualizedMarkdown to avoid rendering all DOM nodes at once.
-  const shouldVirtualize = !streaming && displayedContent.length > MARKDOWN_BLOCK_THRESHOLD;
+  const shouldVirtualize = finalLayoutReady && !streaming && displayedContent.length > MARKDOWN_BLOCK_THRESHOLD;
 
   if (shouldVirtualize) {
     return (
@@ -493,27 +516,71 @@ function isSafeImageSource(src: string): boolean {
 }
 
 function ReasoningPart({ text, complete, language }: { text: string; complete: boolean; language: "en" | "zh" }): React.JSX.Element {
-  // Auto-expand while streaming (complete=false), auto-collapse when done.
-  // User can still manually toggle; the effect only fires on `complete` change.
+  // Keep reasoning expanded while it streams. Completion already commits a
+  // final Markdown tree and changes the list height; collapsing in the same
+  // task doubled that work and fought the follow-to-bottom scroll. Defer the
+  // collapse until the terminal layout has painted, and cancel it if the user
+  // explicitly toggles the disclosure in the meantime.
   const [open, setOpen] = useState(!complete);
   const previousCompleteRef = useRef(complete);
+  const collapseTimerRef = useRef<number | null>(null);
+  const automaticToggleRef = useRef(false);
+
   useEffect(() => {
     const wasComplete = previousCompleteRef.current;
-    if (!complete && wasComplete) setOpen(true);   // streaming started → expand
-    else if (complete && !wasComplete) setOpen(false); // streaming ended → collapse
     previousCompleteRef.current = complete;
+    if (!complete && wasComplete) {
+      if (collapseTimerRef.current !== null) window.clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = null;
+      automaticToggleRef.current = true;
+      setOpen(true);
+      return;
+    }
+    if (!complete || wasComplete) return;
+    const frame = window.requestAnimationFrame(() => {
+      collapseTimerRef.current = window.setTimeout(() => {
+        collapseTimerRef.current = null;
+        automaticToggleRef.current = true;
+        setOpen(false);
+      }, 150);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (collapseTimerRef.current !== null) window.clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = null;
+    };
   }, [complete]);
+
+  useEffect(() => () => {
+    if (collapseTimerRef.current !== null) window.clearTimeout(collapseTimerRef.current);
+  }, []);
+
   const labels = { reasoning: "Reasoning", thinking: "Thinking" };
   const title = complete ? labels.reasoning : labels.thinking;
   return (
-    <details className="chat-reasoning" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details
+      className="chat-reasoning"
+      open={open}
+      onToggle={(event) => {
+        const nextOpen = event.currentTarget.open;
+        if (automaticToggleRef.current) {
+          automaticToggleRef.current = false;
+          return;
+        }
+        if (collapseTimerRef.current !== null) window.clearTimeout(collapseTimerRef.current);
+        collapseTimerRef.current = null;
+        setOpen(nextOpen);
+      }}
+    >
       <summary>
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         <span>{title}</span>
       </summary>
-      <div className="chat-reasoning-content">
-        <MarkdownContent content={text} streaming={!complete} language={language} onOpenLink={() => undefined} />
-      </div>
+      {open ? (
+        <div className="chat-reasoning-content">
+          <MarkdownContent content={text} streaming={!complete} language={language} onOpenLink={() => undefined} />
+        </div>
+      ) : null}
     </details>
   );
 }

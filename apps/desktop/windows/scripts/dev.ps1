@@ -21,7 +21,7 @@ $LaunchModeName = $LaunchMode.ToLowerInvariant()
 # Default desktop entry is workbench → desktop_gateway on 28643.
 # V2 surface: Electron owns desktop_gateway directly, no legacy gateway on 28642.
 if ($GatewayPort -eq 0) {
-    $GatewayPort = 28643
+    $GatewayPort = 28644
 }
 $StartupStopwatch = [Diagnostics.Stopwatch]::StartNew()
 $env:OPENDRSAI_DEV_START_EPOCH_MS = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString()
@@ -910,6 +910,10 @@ try {
     $env:OPENDRSAI_RUNTIME_ROOT = $InstallDir
     $env:OPENDRSAI_ELECTRON_USER_DATA = $ElectronUserData
     $env:OPENDRSAI_GATEWAY_STARTUP = if ($GatewayEnabled) { "eager" } else { "on-demand" }
+    # Mark the Electron process so it never adopts a packaged/legacy Gateway
+    # left behind on the development port. The source Desktop Runtime must be
+    # the only owner during `npm run dev`.
+    $env:OPENDRSAI_DESKTOP_DEV = "1"
     # Source Runtime ownership is session-scoped: workbench Electron owns
     # desktop_gateway on 28643. Legacy hot-load is refused above.
     $env:OPENDRSAI_RUNTIME_PERSIST = "0"

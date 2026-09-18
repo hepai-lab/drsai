@@ -1,9 +1,15 @@
-export type StreamingRenderMetricKind = "markdown-render" | "commit-layout";
+export type StreamingRenderMetricKind =
+  | "markdown-render"
+  | "commit-layout"
+  | "terminal-layout"
+  | "final-layout";
 
 const MAX_SAMPLES = 240;
 const samples: Record<StreamingRenderMetricKind, number[]> = {
   "markdown-render": [],
   "commit-layout": [],
+  "terminal-layout": [],
+  "final-layout": [],
 };
 
 export function observeStreamingRenderMetric(kind: StreamingRenderMetricKind, durationMs: number): void {
@@ -30,4 +36,6 @@ export function getStreamingRenderMetrics() {
 export function resetStreamingRenderMetrics(): void {
   samples["markdown-render"] = [];
   samples["commit-layout"] = [];
+  samples["terminal-layout"] = [];
+  samples["final-layout"] = [];
 }

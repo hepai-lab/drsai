@@ -76,6 +76,126 @@ from autogen_ext.models.openai.config import (
 logger = logging.getLogger(EVENT_LOGGER_NAME)
 
 
+def merge_duplicate_function_calls(calls: Sequence[FunctionCall]) -> List[FunctionCall]:
+    """Collapse accumulated calls that carry the same ``id``.
+
+    A single logical call can be observed more than once while a stream is
+    being assembled (see :class:`StreamedFunctionCallAssembler`). A
+    ``CreateResult`` listing the same ``id`` twice cannot be executed: Tool
+    results are addressed by ``call_id``, and
+    ``agent_kernel.validate_tool_call_batch`` rejects the whole turn with
+    ``tool_call_id_duplicate``. Keeping the first-seen position and the richest
+    field population preserves the model's intent while making the batch
+    executable again.
+    """
+    merged: List[FunctionCall] = []
+    by_id: Dict[str, FunctionCall] = {}
+    for call in calls:
+        call_id = getattr(call, "id", "") or ""
+        existing = by_id.get(call_id) if call_id else None
+        if existing is None:
+            merged.append(call)
+            if call_id:
+                by_id[call_id] = call
+            continue
+        if not getattr(existing, "name", ""):
+            existing.name = getattr(call, "name", "") or ""
+        incoming = getattr(call, "arguments", "") or ""
+        if len(incoming) > len(getattr(existing, "arguments", "") or ""):
+            existing.arguments = incoming
+    return merged
+
+
+class StreamedFunctionCallAssembler:
+    """Assemble the function calls of one streamed Responses turn.
+
+    A streamed turn identifies a single logical call through up to three
+    different fields -- ``item.id`` (the item id, e.g. ``fc_...``),
+    ``item.call_id`` (the id the Tool layer receives, e.g. ``call_...``) and
+    the ``item_id`` echoed on ``response.function_call_arguments.delta`` -- and
+    deployments do not populate them uniformly. Some OpenAI-compatible
+    gateways omit ``item.id`` on ``response.output_item.added`` and report it
+    only on the final ``response.completed`` item.
+
+    Keying an accumulator on a single field therefore splits one call into two
+    entries carrying the same ``call_id``, and ``agent_kernel`` fails the whole
+    run with ``tool_call_id_duplicate``. This assembler indexes every alias it
+    ever sees onto the same entry, re-matches the final item by emitted call id
+    as a backstop, and merges duplicate ids before the result leaves the client.
+    """
+
+    def __init__(self) -> None:
+        self.calls: List[FunctionCall] = []
+        self._alias_to_index: Dict[str, int] = {}
+
+    def resolve(self, *aliases: Any) -> Optional[int]:
+        for alias in aliases:
+            if isinstance(alias, str) and alias:
+                index = self._alias_to_index.get(alias)
+                if index is not None:
+                    return index
+        return None
+
+    def register(self, index: int, *aliases: Any) -> None:
+        for alias in aliases:
+            if isinstance(alias, str) and alias:
+                self._alias_to_index.setdefault(alias, index)
+
+    def resolve_by_call_id(self, call_id: Any) -> Optional[int]:
+        if not isinstance(call_id, str) or not call_id:
+            return None
+        for index, call in enumerate(self.calls):
+            if (getattr(call, "id", "") or "") == call_id:
+                return index
+        return None
+
+    def append(self, item: Any) -> int:
+        self.calls.append(FunctionCall(
+            id=getattr(item, "call_id", None) or getattr(item, "id", "") or "",
+            name=getattr(item, "name", "") or "",
+            arguments=getattr(item, "arguments", "") or "",
+        ))
+        return len(self.calls) - 1
+
+    def merge(self, index: int, item: Any) -> None:
+        """Backfill an entry from a later item describing the same call.
+
+        ``output_item.added`` normally carries the header, but some deployments
+        only populate name/id on the final item; backfill them alongside the
+        arguments so a nameless call cannot survive to the end of the stream.
+        """
+        call = self.calls[index]
+        name = getattr(item, "name", "") or ""
+        if name and not call.name:
+            call.name = name
+        call_id = getattr(item, "call_id", None) or getattr(item, "id", "") or ""
+        if call_id and not call.id:
+            call.id = call_id
+        arguments = getattr(item, "arguments", "") or ""
+        if arguments and len(arguments) >= len(call.arguments or ""):
+            call.arguments = arguments
+
+    def finalized(self) -> List[FunctionCall]:
+        calls = merge_duplicate_function_calls(self.calls)
+        # An `output_item.added` whose header was lost entirely (no id, no name,
+        # no arguments) can never be executed -- the Tool layer addresses calls
+        # by `call_id` -- yet `assert_well_formed_model_result` would turn the
+        # whole turn into a retryable failure. When a well-formed entry for the
+        # same turn exists, that stub carries no information, so drop it. Keep
+        # the stub when it is all we have: an empty model result must still
+        # surface as a transport error instead of a silent empty answer.
+        if len(calls) > 1:
+            informative = [
+                call for call in calls
+                if (getattr(call, "id", "") or "")
+                or (getattr(call, "name", "") or "")
+                or (getattr(call, "arguments", "") or "")
+            ]
+            if informative:
+                calls = informative
+        return calls
+
+
 class HepAIModelInfo(ModelInfo):
     token_model: Required[str]
 
@@ -659,8 +779,11 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
         thought: str | None = None
         # Determine the content and thought based on what was collected
         if full_tool_calls:
-            # This is a tool call response
-            content = list(full_tool_calls.values())
+            # This is a tool call response.
+            # A provider may reuse one id across indexes; merging duplicates
+            # keeps the batch executable instead of failing the whole turn
+            # downstream with `tool_call_id_duplicate`.
+            content = merge_duplicate_function_calls(list(full_tool_calls.values()))
             if thought_deltas:
                 thought = "".join(thought_deltas).lstrip("<think>").rstrip("</think>")
             else:
@@ -745,8 +868,10 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
 
         content_deltas: list[str] = []
         thought_deltas: list[str] = []
-        function_calls: dict[str, FunctionCall] = {}
-        function_order: list[str] = []
+        # One logical call can surface as several stream events with different
+        # field populations; assemble them through a single alias index so one
+        # call can never be emitted twice (see the assembler docstring).
+        tool_calls = StreamedFunctionCallAssembler()
         usage = RequestUsage(prompt_tokens=0, completion_tokens=0)
         finish_reason = "stop"
 
@@ -765,48 +890,57 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             elif event_type == "response.output_item.added":
                 item = getattr(event, "item", None)
                 if getattr(item, "type", "") == "function_call":
-                    key = getattr(item, "id", None) or getattr(item, "call_id", None) or str(getattr(event, "output_index", len(function_order)))
-                    function_calls[key] = FunctionCall(
-                        id=getattr(item, "call_id", None) or getattr(item, "id", ""),
-                        name=getattr(item, "name", ""),
-                        arguments=getattr(item, "arguments", "") or "",
+                    output_index = getattr(event, "output_index", None)
+                    index = tool_calls.resolve(
+                        getattr(item, "id", None),
+                        getattr(item, "call_id", None),
+                        getattr(event, "item_id", None),
                     )
-                    function_order.append(key)
+                    if index is None:
+                        index = tool_calls.append(item)
+                    else:
+                        tool_calls.merge(index, item)
+                    tool_calls.register(
+                        index,
+                        getattr(item, "id", None),
+                        getattr(item, "call_id", None),
+                        getattr(event, "item_id", None),
+                        None if output_index is None else str(output_index),
+                    )
             elif event_type == "response.function_call_arguments.delta":
-                key = getattr(event, "item_id", None)
-                call = function_calls.get(key)
-                if call is None and function_order:
-                    call = function_calls[function_order[-1]]
-                if call is not None:
-                    call.arguments += getattr(event, "delta", "") or ""
+                index = tool_calls.resolve(getattr(event, "item_id", None))
+                if index is None and tool_calls.calls:
+                    index = len(tool_calls.calls) - 1
+                if index is not None:
+                    call = tool_calls.calls[index]
+                    call.arguments = (call.arguments or "") + (getattr(event, "delta", "") or "")
             elif event_type == "response.completed":
                 response = getattr(event, "response", None)
                 for item in getattr(response, "output", None) or []:
                     if getattr(item, "type", "") != "function_call":
                         continue
-                    key = getattr(item, "id", None) or getattr(item, "call_id", None)
-                    if key not in function_calls:
-                        function_calls[key] = FunctionCall(
-                            id=getattr(item, "call_id", None) or getattr(item, "id", ""),
-                            name=getattr(item, "name", ""),
-                            arguments=getattr(item, "arguments", "") or "",
+                    index = tool_calls.resolve(
+                        getattr(item, "call_id", None),
+                        getattr(item, "id", None),
+                    )
+                    if index is None:
+                        # Gateways may omit `item.id` on `output_item.added` and
+                        # report it only here, so the alias lookup can miss. The
+                        # emitted call id is the identity that reaches the Tool
+                        # layer: match it before creating a second entry for a
+                        # call that was already accumulated.
+                        index = tool_calls.resolve_by_call_id(
+                            getattr(item, "call_id", None) or getattr(item, "id", None)
                         )
-                        function_order.append(key)
+                    if index is None:
+                        index = tool_calls.append(item)
                     else:
-                        call = function_calls[key]
-                        # `output_item.added` normally carries the header, but
-                        # some deployments only populate name/id on the final
-                        # item; backfill them alongside arguments so a nameless
-                        # call cannot survive to the end of the stream.
-                        if not call.name:
-                            call.name = getattr(item, "name", "") or ""
-                        if not call.id:
-                            call.id = (
-                                getattr(item, "call_id", None)
-                                or getattr(item, "id", "")
-                                or ""
-                            )
-                        call.arguments = getattr(item, "arguments", "") or call.arguments
+                        tool_calls.merge(index, item)
+                    tool_calls.register(
+                        index,
+                        getattr(item, "id", None),
+                        getattr(item, "call_id", None),
+                    )
                 response_usage = getattr(response, "usage", None)
                 if response_usage is not None:
                     usage = RequestUsage(
@@ -818,8 +952,8 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
 
         content: Union[str, List[FunctionCall]]
         thought = "".join(thought_deltas) or None
-        if function_calls:
-            content = [function_calls[key] for key in function_order]
+        if tool_calls.calls:
+            content = tool_calls.finalized()
             if content_deltas and thought is None:
                 thought = "".join(content_deltas)
         else:

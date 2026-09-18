@@ -296,6 +296,21 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
         description = getattr(content, "description", None) or ""
         for index, file_info in enumerate(files):
             name = getattr(file_info, "name", None) or f"artifact-{index + 1}"
+            # A remote DrSaiAssistant yields a FilesEvent whose FileInfo may
+            # carry only ``url`` (HepAI filesystem) or ``base64_content`` (the
+            # upload fallback), selected by ``download_method``.  Both must
+            # survive translation so the desktop gateway can materialize the
+            # payload as a real Workspace Artifact; dropping them here left the
+            # desktop with a name-only card that could be neither previewed nor
+            # downloaded.  ``path`` is the remote host's own path and is
+            # deliberately not forwarded: it is meaningless (and unsafe) on the
+            # client.
+            download_method = str(getattr(file_info, "download_method", "url") or "url")
+            downloadable = getattr(file_info, "downloadable", None)
+            if downloadable is None:
+                # A URL/base64 payload is deliverable by construction; only an
+                # explicit False (e.g. the internal tool-output spill) disables it.
+                downloadable = download_method in {"url", "base64"}
             out.append(("artifact.created", {
                 "artifact_id": getattr(file_info, "artifact_id", None) or f"file:{name}:{index}",
                 "artifact_type": _artifact_type(name, getattr(file_info, "mime_type", None)),
@@ -303,11 +318,13 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
                 "title": title,
                 "summary": getattr(file_info, "description", None) or description,
                 "url": getattr(file_info, "url", None),
+                "base64_content": getattr(file_info, "base64_content", None),
+                "download_method": download_method,
                 "mime": getattr(file_info, "mime_type", None),
                 "size": getattr(file_info, "size", None),
                 "sha256": getattr(file_info, "sha256", None),
                 "previewable": getattr(file_info, "previewable", None),
-                "downloadable": getattr(file_info, "downloadable", None),
+                "downloadable": downloadable,
                 "source_call_id": getattr(file_info, "source_call_id", None),
                 "source": getattr(message, "source", "") or "agent",
             }))

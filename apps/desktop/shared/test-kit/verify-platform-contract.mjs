@@ -85,12 +85,39 @@ assert.equal(
 const packagedWindowsPaths = createDesktopPathService({
   platform: "windows",
   userHome: "C:/Users/tester",
-  resourcesPath: "C:/Program Files/OpenDrSai/resources",
+  // Real layout: electron-builder output lives in <installRoot>/app, and its
+  // resources sit at <installRoot>/app/resources. The managed Runtime is
+  // <installRoot>/drsai-agent, a sibling of app/.
+  resourcesPath: "C:/Program Files/OpenDrSai/app/resources",
   defaultApp: false,
   environment: { DRSAI_HOME: "C:/Users/tester/.drsai" },
 });
-assert.equal(packagedWindowsPaths.layout.repository.replaceAll("\\", "/"), "C:/Program Files/OpenDrSai/drsai-agent", "packaged Windows Runtime must resolve inside the application directory");
+assert.equal(packagedWindowsPaths.layout.repository.replaceAll("\\", "/"), "C:/Program Files/OpenDrSai/drsai-agent", "packaged Windows Runtime must resolve beside the application directory");
 assert.equal(packagedWindowsPaths.layout.pythonExecutable.replaceAll("\\", "/"), "C:/Program Files/OpenDrSai/drsai-agent/venv/Scripts/python.exe");
+
+// install-state.json records the installer's resolved agentPath and must win
+// over path re-derivation so custom installation roots keep working.
+const customInstallRoot = "D:/software/opendrsai";
+const packagedWindowsCustomRoot = createDesktopPathService({
+  platform: "windows",
+  userHome: "C:/Users/tester",
+  resourcesPath: "D:/software/opendrsai/app/resources",
+  defaultApp: false,
+  environment: { DRSAI_HOME: "C:/Users/tester/.drsai" },
+  readManagedAgentPath: (stateDirectory) =>
+    stateDirectory.replaceAll("\\", "/") === customInstallRoot
+      ? "D:\\software\\opendrsai\\drsai-agent"
+      : null,
+});
+assert.equal(
+  packagedWindowsCustomRoot.layout.repository.replaceAll("\\", "/"),
+  "D:/software/opendrsai/drsai-agent",
+  "install-state.json agentPath must take precedence over derived layout",
+);
+assert.equal(
+  packagedWindowsCustomRoot.layout.pythonExecutable.replaceAll("\\", "/"),
+  "D:/software/opendrsai/drsai-agent/venv/Scripts/python.exe",
+);
 
 const macosPaths = createDesktopPathService({
   platform: "macos",

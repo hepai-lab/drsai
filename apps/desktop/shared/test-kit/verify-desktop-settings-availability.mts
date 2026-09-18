@@ -116,6 +116,7 @@ check(
 
 // 4. Unavailable panes are disabled with a reason, never silently opened.
 check(settingsPanel, "export const UNAVAILABLE_SETTINGS_PANES", "UNAVAILABLE_SETTINGS_PANES registry");
+check(settingsPanel, '"agent-defaults": {', "agent-defaults pane marked unavailable (feature not implemented yet)");
 check(settingsPanel, "perceptors: {", "perceptors pane marked unavailable");
 check(settingsPanel, "GET /v1/config/perceptors returns 404", "perceptors reason names the missing route");
 check(settingsPanel, "executors: {", "executors pane marked unavailable");

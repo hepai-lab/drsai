@@ -34,6 +34,7 @@ from .._skills_store import (
     parse_skill_frontmatter,
     resolve_bundled_skill_root,
     save_deleted_skills,
+    seed_user_skills_once,
     skill_summary_from_dir,
     skills_dir,
 )
@@ -62,6 +63,10 @@ api = APIRouter(tags=["skills"])
 
 @api.get("/v1/skills")
 async def list_skills(user_id: str | None = Query(default=None)):
+    # First-run seeding: copy the packaged catalogue into this user's directory
+    # exactly once. Guarded by a marker, so later edits/deletions stick and the
+    # catalogue is never re-imposed. No-op after the first call.
+    seed_user_skills_once(user_id)
     directory = skills_dir(user_id)
     skills: list[dict] = []
     if directory.exists():
@@ -118,6 +123,7 @@ async def list_available_skills(
     user_id: str | None = Query(default=None),
     core_only: bool = Query(default=False),
 ):
+    seed_user_skills_once(user_id)
     installed_names: set[str] = set()
     user_skills_dir = skills_dir(user_id)
     if user_skills_dir.exists():

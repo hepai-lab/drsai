@@ -35,7 +35,7 @@ import {
 } from "./rendererIpcTarget";
 import { listRecordedChatRunEvents, recordChatRunEvent } from "./chatRunJournal";
 import { codexContinuationAction } from "./codexSessionResumePolicy";
-import { selectCurrentUserInput } from "./chatInput";
+import { assertRequestMessageCount, selectCurrentUserInput } from "./chatInput";
 import { isOaepSyncDegradedError, isPresentationNoiseOaepEvent, materializeOaepDeltaShadow, presentationItemForOaepEvent, reduceOaepEvent, subscribeOaepSession, type OaepDeltaShadow } from "./oaepSessionStream";
 import { selectRuntimeConversationProtocolResult } from "./runtimeProtocolSelection";
 import { decideRuntimeRestartRecovery } from "../api/runtimeRestartRecovery";
@@ -147,7 +147,6 @@ export function configureChatRemoteRouting(_routing: ChatRemoteRouting): void {
 }
 
 const MAX_ACTIVE_CHATS = 3;
-const MAX_MESSAGES = 40;
 const MAX_MODEL_CHARS = 120;
 const MAX_AGENT_ID_CHARS = 160;
 const MAX_WORKSPACE_PATH_CHARS = 2048;
@@ -476,7 +475,17 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   ) return [];
   const requestId = request.requestId;
   const sessionId = request.sessionId;
-  const existingTurn = chatTurns.get(requestId);
+  let existingTurn = chatTurns.get(requestId);
+  if (existingTurn && existingTurn.sessionId !== sessionId) {
+    // A snapshot restored under the wrong thread can ask one session to
+    // reattach another session's in-flight run (e.g. a thread-switch flush
+    // that was persisted under the incoming thread's id by an older build).
+    // Reattaching here would bind this renderer to a run whose events are
+    // scoped to a different session, leaving the composer stuck on "running"
+    // and making Stop cancel a task this view cannot even see. Recover this
+    // session from its own Thread binding instead.
+    existingTurn = undefined;
+  }
   if (eventTarget && existingTurn) existingTurn.eventTarget = eventTarget;
   // Switching sidebar threads rehydrates the renderer and calls recoverChatRun
   // while startChat still owns the OAEP Session. Stealing that listener closes
@@ -979,9 +988,10 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
   ) {
     throw new Error("Chat model is invalid.");
   }
-  if (!Array.isArray(request.messages) || request.messages.length === 0) {
+  if (!Array.isArray(request.messages)) {
     throw new Error("Chat request must include messages.");
   }
+  assertRequestMessageCount(request.messages.length);
   if (
     request.workspacePath !== undefined &&
     (typeof request.workspacePath !== "string" ||
@@ -1021,9 +1031,6 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
     (typeof request.runId !== "string" || !SESSION_ID_PATTERN.test(request.runId))
   ) {
     throw new Error("Chat run id is invalid.");
-  }
-  if (request.messages.length > MAX_MESSAGES) {
-    throw new Error(`Chat request cannot exceed ${MAX_MESSAGES} messages.`);
   }
   const attachments = normalizeChatAttachments(request.attachments);
   const messages = request.messages.map((message) => {

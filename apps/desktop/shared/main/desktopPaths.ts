@@ -7,6 +7,12 @@ export interface CreateDesktopPathServiceOptions {
   resourcesPath?: string;
   defaultApp?: boolean;
   environment?: Readonly<Record<string, string | undefined>>;
+  /**
+   * Reads the installer-owned `install-state.json` for the given directory and
+   * returns its parsed `agentPath`, or null when the file is absent or
+   * unreadable. Injected so this module keeps no filesystem dependency.
+   */
+  readManagedAgentPath?: (stateDirectory: string) => string | null;
 }
 
 export function createDesktopPathService(options: CreateDesktopPathServiceOptions): DesktopPathService {
@@ -15,11 +21,24 @@ export function createDesktopPathService(options: CreateDesktopPathServiceOption
   const path = windows ? win32 : posix;
   const { dirname, join } = path;
   const home = environment.DRSAI_HOME?.trim() || join(options.userHome, ".drsai");
-  // Electron resources live directly below the application directory on
-  // Windows (OpenDrSai/resources). The managed Runtime is its sibling at
-  // OpenDrSai/drsai-agent, not a sibling of the application directory.
-  const packagedInstallRoot = options.resourcesPath ? dirname(options.resourcesPath) : "";
-  const packagedRepository = packagedInstallRoot ? join(packagedInstallRoot, "drsai-agent") : "";
+  // Windows install layout (see installer/contract/docs/install-contract.md):
+  //   <installRoot>/app/          <- electron-builder output, holds OpenDrSai.exe
+  //   <installRoot>/app/resources <- Electron resourcesPath
+  //   <installRoot>/drsai-agent   <- managed Runtime
+  //   <installRoot>/install-state.json
+  // So resourcesPath is two levels below the install root, and `drsai-agent` is
+  // a sibling of `app/`, not of `resources/`.
+  const packagedInstallRoot = options.resourcesPath
+    ? dirname(dirname(options.resourcesPath))
+    : "";
+  // `install-state.json` is written by the installer after a successful
+  // install and records the resolved `agentPath`, which stays correct for
+  // custom installation directories. Prefer it over path re-derivation.
+  const managedAgentPath = packagedInstallRoot
+    ? options.readManagedAgentPath?.(packagedInstallRoot)?.trim() || ""
+    : "";
+  const packagedRepository = managedAgentPath
+    || (packagedInstallRoot ? join(packagedInstallRoot, "drsai-agent") : "");
   const usePackagedRepository = windows && !options.defaultApp && Boolean(packagedRepository);
   const repository = environment.DRSAI_REPO?.trim()
     || (usePackagedRepository ? packagedRepository : join(home, "drsai-agent"));

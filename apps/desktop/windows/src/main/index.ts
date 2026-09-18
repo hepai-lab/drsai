@@ -55,7 +55,7 @@ import {
 } from "./gateway";
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { bootstrapDesktop } from "./bootstrap";
-import { connectRuntimeClientForWorkspace, isLocalRuntimeUnavailableError, LocalRuntimeClient, withRuntimeClientForWorkspace } from "./runtimeClient";
+import { connectRuntimeClientForWorkspace, invalidateRuntimeClientRegistry, isLocalRuntimeUnavailableError, LocalRuntimeClient, withRuntimeClientForWorkspace } from "./runtimeClient";
 import type { RuntimeSession } from "../../../shared/main/runtimeClient";
 import { registerConversationResourceReadIpc } from "../../../shared/main/conversationResourceIpc";
 import { registerConversationResourceDownloadIpc } from "../../../shared/main/conversationResourceDownloadIpc";
@@ -3461,7 +3461,7 @@ function registerDevelopmentDeepLinkCommand(): void {
     "/d",
     command,
     "/f",
-  ], (error) => {
+  ], { windowsHide: true }, (error) => {
     if (error) {
       console.warn("[desktop] Failed to register development deep link command:", error.message);
     }
@@ -3482,7 +3482,7 @@ function registerDeepLinkDisplayName(): void {
     "/d",
     displayName,
     "/f",
-  ], (error) => {
+  ], { windowsHide: true }, (error) => {
     if (error) {
       console.warn("[desktop] Failed to register deep link display name:", error.message);
     }
@@ -4846,7 +4846,17 @@ function registerIpc(): void {
   secureHandle("desktop:e2e-a5-service-guidance-scenario", () =>
     getA5ServiceGuidanceScenario(),
   );
-  secureHandle("desktop:login", (_event, request) => login(request));
+  secureHandle("desktop:login", async (_event, request) => {
+    const result = await login(request);
+    if (result.ok && result.session) {
+      const userId = result.session.user?.id || result.session.user?.email;
+      if (userId) await syncAuthIdentityToGateway(userId).catch(() => undefined);
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send("desktop:auth-session-restored");
+      }
+    }
+    return result;
+  });
   secureHandle("desktop:start-oidc-login", async (event, request) => {
     const result = await startOidcLogin(request, (debugEvent) => {
       if (!event.sender.isDestroyed()) {
@@ -4869,6 +4879,10 @@ function registerIpc(): void {
   });
   secureHandle("desktop:cancel-oidc-login", () => cancelOidcLogin());
   secureHandle("desktop:logout", async (_event, options) => {
+    // Logout is a hard auth/runtime generation boundary. Invalidate clients
+    // before stopping the Gateway so in-flight renderer work cannot retain a
+    // transport authenticated as the previous user across re-login.
+    invalidateRuntimeClientRegistry();
     await stopGateway();
     return logout(options);
   });

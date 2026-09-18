@@ -92,10 +92,15 @@ export type SettingsPane = "general" | "voice" | "agent-defaults" | "model-provi
 /** Settings panes that are still rendered in the navigation but have no working
  * implementation behind them. They stay visible so the surface stays honest
  * about what exists, but they are disabled instead of opening a pane that fails
- * at mount (Perceptors 404s against the Desktop Runtime; Executors and Memories
- * are placeholders for the next stage). Remove an entry here once its backend
+ * at mount (Agent configuration has not shipped its feature yet; Perceptors
+ * 404s against the Desktop Runtime; Executors and Memories are placeholders
+ * for the next stage). Remove an entry here once its backend
  * and pane content actually ship. */
 export const UNAVAILABLE_SETTINGS_PANES: Partial<Record<SettingsPane, { zh: string; en: string }>> = {
+  "agent-defaults": {
+    zh: "智能体配置功能尚未实现，暂时不可用。",
+    en: "Agent configuration is not implemented yet and is temporarily unavailable.",
+  },
   perceptors: {
     zh: "桌面运行时尚未提供感知器接口（GET /v1/config/perceptors 返回 404）。",
     en: "The desktop runtime does not expose the Perceptor API yet (GET /v1/config/perceptors returns 404).",
@@ -1909,6 +1914,11 @@ export function SettingsPanel({
   // navigate into a pane that this build disables.
   const codexIntegrationUnavailableReason = capabilityDisabledPaneReason("codex", featureCapabilities, zh);
 
+  // Agent configuration is rendered but disabled, so every cross-link that
+  // would navigate into it must be disabled with the same reason instead of
+  // silently landing on another pane.
+  const agentDefaultsUnavailableReason = settingsPaneUnavailableReason("agent-defaults", zh);
+
   const refreshDuplexVoiceReadiness = useCallback(async () => {
     setDuplexVoiceReadinessBusy(true);
     try {
@@ -1955,7 +1965,10 @@ export function SettingsPanel({
       : duplexVoiceReadiness?.reasonCode ?? "internal",
   );
   const runDuplexVoiceReadinessAction = (action: DuplexVoiceReadinessActionId): void => {
-    if (action === "open_agent_settings") setActivePane("agent-defaults");
+    if (action === "open_agent_settings") {
+      if (agentDefaultsUnavailableReason) return;
+      setActivePane("agent-defaults");
+    }
     else if (action === "switch_to_serial") updateVoicePreferences({ interactionMode: "serial" });
     else void refreshDuplexVoiceReadiness();
   };
@@ -2493,14 +2506,14 @@ export function SettingsPanel({
                 <strong>{zh ? "实时对话状态" : "Realtime conversation status"}</strong>
                 <p>{duplexVoiceAvailable ? (zh ? "已就绪，可开始实时对话。" : "Ready to start a Realtime conversation.") : duplexVoiceReason}</p>
                 {!duplexVoiceAvailable && <div className="settings-actions">
-                  <button type="button" disabled={duplexVoiceReadinessBusy} onClick={() => runDuplexVoiceReadinessAction(duplexVoiceActions.primary)}>{duplexVoiceActions.primary === "open_agent_settings" ? (zh ? "打开智能体配置" : "Open Agent configuration") : duplexVoiceActions.primary === "switch_to_serial" ? (zh ? "使用单次语音输入" : "Use single voice input") : duplexVoiceReadinessBusy ? (zh ? "检查中…" : "Checking…") : (zh ? "重新检查" : "Check again")}</button>
+                  <button type="button" disabled={duplexVoiceReadinessBusy || (duplexVoiceActions.primary === "open_agent_settings" && Boolean(agentDefaultsUnavailableReason))} title={duplexVoiceActions.primary === "open_agent_settings" ? agentDefaultsUnavailableReason ?? undefined : undefined} onClick={() => runDuplexVoiceReadinessAction(duplexVoiceActions.primary)}>{duplexVoiceActions.primary === "open_agent_settings" ? (zh ? "打开智能体配置" : "Open Agent configuration") : duplexVoiceActions.primary === "switch_to_serial" ? (zh ? "使用单次语音输入" : "Use single voice input") : duplexVoiceReadinessBusy ? (zh ? "检查中…" : "Checking…") : (zh ? "重新检查" : "Check again")}</button>
                   {duplexVoiceActions.fallback && <button type="button" onClick={() => runDuplexVoiceReadinessAction(duplexVoiceActions.fallback!)}>{zh ? "使用单次语音输入" : "Use single voice input"}</button>}
                 </div>}
               </div>
             </section>
             <section className="settings-section" data-testid="realtime-voice-settings">
               <div><h2>{zh ? "实时对话" : "Realtime conversation"}</h2><p>{zh ? "这些设置只影响全双工实时会话，并直接映射到下一次 Session。" : "These settings affect only full-duplex Realtime Sessions and map directly to the next Session payload."}</p></div>
-              <div className="settings-row"><span><strong>{zh ? "实时模型" : "Realtime model"}</strong><small>{zh ? "模型在智能体配置中独立绑定；切换模型需要重启会话。" : "Bound independently in Agent configuration; changing it requires a new Session."}</small></span><button type="button" onClick={() => setActivePane("agent-defaults")}>{duplexVoiceReadiness?.providerId && duplexVoiceReadiness?.modelId ? `${duplexVoiceReadiness.providerId} / ${duplexVoiceReadiness.modelId}` : (zh ? "打开智能体配置" : "Open Agent configuration")}</button></div>
+              <div className="settings-row"><span><strong>{zh ? "实时模型" : "Realtime model"}</strong><small>{zh ? "模型在智能体配置中独立绑定；切换模型需要重启会话。" : "Bound independently in Agent configuration; changing it requires a new Session."}</small></span><button type="button" disabled={Boolean(agentDefaultsUnavailableReason)} title={agentDefaultsUnavailableReason ?? undefined} onClick={() => setActivePane("agent-defaults")}>{duplexVoiceReadiness?.providerId && duplexVoiceReadiness?.modelId ? `${duplexVoiceReadiness.providerId} / ${duplexVoiceReadiness.modelId}` : (zh ? "打开智能体配置" : "Open Agent configuration")}</button></div>
               <div className="settings-row"><span><strong>Provider voice</strong><small>{zh ? "留空使用 Provider 默认声音；变更后下一次会话生效。" : "Leave blank for the Provider default; changes apply to the next Session."}</small></span><input data-testid="realtime-voice-name" value={voicePreferences.realtimeVoiceName} maxLength={80} placeholder={zh ? "默认" : "Default"} onChange={(event) => updateVoicePreferences({ realtimeVoiceName: event.target.value })} /></div>
               <div className="settings-row"><span><strong>{zh ? "实时识别语言" : "Realtime language"}</strong><small>{zh ? "独立于单次语音输入。" : "Independent from single voice input."}</small></span><select data-testid="realtime-voice-language" value={voicePreferences.realtimeLanguage} onChange={(event) => updateVoicePreferences({ realtimeLanguage: event.target.value as "auto" | "zh-CN" | "en-US" })}><option value="auto">{zh ? "自动检测" : "Automatic"}</option><option value="zh-CN">中文</option><option value="en-US">English</option></select></div>
               <div className="settings-row"><span><strong>{zh ? "实时麦克风" : "Realtime microphone"}</strong><small>{zh ? "会话中也可无缝切换。" : "Can also be switched during a Session."}</small></span><select data-testid="realtime-input-device" value={voicePreferences.realtimeInputDeviceId} onChange={(event) => updateVoicePreferences({ realtimeInputDeviceId: event.target.value })}><option value="">{zh ? "系统默认" : "System default"}</option>{realtimeAudioDevices.filter((device) => device.kind === "audioinput" && device.deviceId).map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `${zh ? "麦克风" : "Microphone"} ${index + 1}`}</option>)}</select></div>
@@ -2889,7 +2902,7 @@ export function SettingsPanel({
                 </div>
                 {expandedIntegrationCard === "deepseek-harness" && <div className="settings-connection-card-body">
                   <p>{deepSeekHarnessAgent ? (zh ? "当前 Runtime 已发现 DeepSeek Harness，可在智能体配置中设置模型和运行偏好。" : "The Runtime has discovered DeepSeek Harness. Configure its model and runtime preferences in Agent configuration.") : (zh ? "当前未启用。启用对应 Runtime 集成后，它会出现在智能体列表中。" : "It is currently disabled. Once its Runtime integration is enabled, it appears in the Agent list.")}</p>
-                  <div className="settings-integration-actions"><button type="button" disabled={!deepSeekHarnessAgent} onClick={() => { if (!deepSeekHarnessAgent) return; selectConfigurationAgent(deepSeekHarnessAgent); setActivePane("agent-defaults"); }}>{zh ? "配置智能体" : "Configure Agent"}</button></div>
+                  <div className="settings-integration-actions"><button type="button" disabled={!deepSeekHarnessAgent || Boolean(agentDefaultsUnavailableReason)} title={agentDefaultsUnavailableReason ?? undefined} onClick={() => { if (!deepSeekHarnessAgent) return; selectConfigurationAgent(deepSeekHarnessAgent); setActivePane("agent-defaults"); }}>{zh ? "配置智能体" : "Configure Agent"}</button></div>
                 </div>}
               </article>
             </div>

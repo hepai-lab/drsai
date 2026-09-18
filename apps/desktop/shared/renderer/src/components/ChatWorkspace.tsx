@@ -1228,7 +1228,6 @@ function ChatWorkspaceImpl({
   const shouldFollowOutputRef = useRef(true);
   const programmaticScrollRef = useRef(false);
   const programmaticScrollTimerRef = useRef<number | null>(null);
-  const finalScrollSettleTimerRef = useRef<number | null>(null);
   const [smoothFollowOutput] = useState(() => createSmoothFollowOutputController({
     scrollToBottom: (behavior) => {
       const list = messageListRef.current;
@@ -1740,6 +1739,7 @@ function ChatWorkspaceImpl({
       })
       .map((message) => message.id);
   }, [searchQuery, searchableMessages]);
+  const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches]);
 
   const activeMatchId =
     searchMatches.length > 0
@@ -1994,13 +1994,21 @@ function ChatWorkspaceImpl({
       return;
     }
     if (!hasStreamingMessage) {
-      scrollMessageListToLatest("smooth");
-      if (finalScrollSettleTimerRef.current !== null) window.clearTimeout(finalScrollSettleTimerRef.current);
-      finalScrollSettleTimerRef.current = window.setTimeout(() => {
-        finalScrollSettleTimerRef.current = null;
-        if (shouldFollowOutputRef.current) scrollMessageListToLatest("auto");
-      }, 360);
-      return;
+      // Terminal rendering can replace the streaming Markdown tree and collapse
+      // reasoning, both of which change the message height. A smooth scroll
+      // started before those layouts settle fights the ResizeObserver and can
+      // keep retargeting for hundreds of milliseconds. Wait two frames for the
+      // terminal DOM to settle, then perform one deterministic jump.
+      let settleFrame = 0;
+      const layoutFrame = window.requestAnimationFrame(() => {
+        settleFrame = window.requestAnimationFrame(() => {
+          if (shouldFollowOutputRef.current) scrollMessageListToLatest("auto");
+        });
+      });
+      return () => {
+        window.cancelAnimationFrame(layoutFrame);
+        if (settleFrame) window.cancelAnimationFrame(settleFrame);
+      };
     }
     // During streaming, directly scroll to the latest content on every
     // messages update. Use auto (not smooth) for immediate tracking and
@@ -2043,7 +2051,6 @@ function ChatWorkspaceImpl({
   }, [visibleMessages.at(-1)?.id, smoothFollowOutput]);
 
   useEffect(() => () => {
-    if (finalScrollSettleTimerRef.current !== null) window.clearTimeout(finalScrollSettleTimerRef.current);
     if (programmaticScrollTimerRef.current !== null) window.clearTimeout(programmaticScrollTimerRef.current);
   }, []);
 
@@ -2525,6 +2532,12 @@ function ChatWorkspaceImpl({
   }
 
   async function submitWithAttachments(): Promise<void> {
+    // Readiness gate for every text-submission path (form submit, Enter key,
+    // voice auto-submit, Send & Stop). While the runtime/bootstrap is still
+    // starting (or the service is otherwise not ready), keep the draft in the
+    // composer instead of dispatching a turn that the backend can only reject.
+    // Queueing while a task is already running (showStop) stays allowed.
+    if (!canChat && !showStop) return;
     // Reset scroll-follow state so the view tracks the latest streaming output.
     shouldFollowOutputRef.current = true;
     programmaticScrollRef.current = false;
@@ -4057,7 +4070,7 @@ function ChatWorkspaceImpl({
           <VirtualizedMessage
             key={message.id}
             message={message}
-            className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatches.includes(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""} ${message.structuredTurn?.turnId === highlightedTurnId ? "structured-turn-focus" : ""}`}
+            className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatchSet.has(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""} ${message.structuredTurn?.turnId === highlightedTurnId ? "structured-turn-focus" : ""}`}
             pinned={message.streaming === true || visibleMessages.length - messageIndex <= 12}
             scrollRootRef={messageListRef}
             now={message.streaming ? now : undefined}
@@ -4269,6 +4282,11 @@ function ChatWorkspaceImpl({
         data-voice-turn-phase={displayedVoicePhase}
         onSubmit={handleSubmit}
       >
+        {!canChat && !showStop && chatUnavailableReason ? (
+          <div className="composer-locked-notice" role="status" aria-live="polite" data-testid="composer-locked-notice">
+            {chatUnavailableReason}
+          </div>
+        ) : null}
         <div className="composer-shell">
           {pendingReplaceFromMessageId ? (
             <div className="composer-edit-resend" data-testid="composer-edit-resend" role="status">
@@ -5482,7 +5500,7 @@ function ChatWorkspaceImpl({
                     </button>
                   )
                 ) : (
-                  <button className="composer-submit" type="submit" title={zh ? "发送消息" : "Send message"}>
+                  <button className="composer-submit" type="submit" title={zh ? "发送消息" : "Send message"} disabled={!canChat}>
                     <Send size={16} />
                   </button>
                 )}
@@ -5539,22 +5557,33 @@ function ChatWorkspaceImpl({
   );
 }
 
+// Streaming appends at the tail, so the newest message is almost always the
+// element that differs. Comparing from the end finds that mismatch on the
+// first step instead of walking the whole array - which, on a long
+// conversation, meant touching thousands of elements per rendered frame
+// before reaching the one that moved.
 function shallowArrayEqual(left: readonly unknown[] | undefined, right: readonly unknown[] | undefined): boolean {
   if (left === right) return true;
   if (!left || !right || left.length !== right.length) return false;
-  return left.every((item, index) => Object.is(item, right[index]));
+  for (let index = left.length - 1; index >= 0; index -= 1) {
+    if (!Object.is(left[index], right[index])) return false;
+  }
+  return true;
 }
 
+// Hoisted out of the comparator: it runs on every parent render and used to
+// allocate a fresh Set each time.
+const CHAT_WORKSPACE_ARRAY_PROPS: ReadonlySet<keyof ChatWorkspaceProps> = new Set<keyof ChatWorkspaceProps>([
+  "messages", "agentOptions", "modelOptions", "imageGenerationModelOptions", "samplePrompts",
+  "externalAttachments", "workspaceInstructions", "workspaceOptions",
+]);
+
 function chatWorkspacePropsEqual(previous: ChatWorkspaceProps, next: ChatWorkspaceProps): boolean {
-  const arrayProps = new Set<keyof ChatWorkspaceProps>([
-    "messages", "agentOptions", "modelOptions", "samplePrompts", "externalAttachments",
-    "workspaceInstructions", "workspaceOptions",
-  ]);
   return (Object.keys(next) as Array<keyof ChatWorkspaceProps>).every((key) => {
     const nextValue = next[key];
     if (typeof nextValue === "function") return true;
     const previousValue = previous[key];
-    if (arrayProps.has(key)) {
+    if (CHAT_WORKSPACE_ARRAY_PROPS.has(key)) {
       return shallowArrayEqual(previousValue as readonly unknown[] | undefined, nextValue as readonly unknown[] | undefined);
     }
     return Object.is(previousValue, nextValue);
@@ -7313,8 +7342,14 @@ function isEmptyAssistantShell(message: UiMessage): boolean {
   return !body;
 }
 
+const assistantDisplayContentCache = new WeakMap<UiMessage, string>();
+
 function getAssistantDisplayContent(message: UiMessage): string {
-  return stripAgentToolDebugText(getAssistantSpeechText(message, getVisibleChatText));
+  const cached = assistantDisplayContentCache.get(message);
+  if (cached !== undefined) return cached;
+  const content = stripAgentToolDebugText(getAssistantSpeechText(message, getVisibleChatText));
+  assistantDisplayContentCache.set(message, content);
+  return content;
 }
 
 function getWorkspaceDisplayName(workspacePath: string | undefined, zh: boolean): string {

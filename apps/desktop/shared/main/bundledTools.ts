@@ -8,11 +8,24 @@
 // `DRSAI_RG_PATH` into the gateway child environment. The Python resolver still
 // probes PATH and its own bundled candidates, so the TUI and an unpackaged CLI
 // install work without this module.
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 /** Environment variable the Python side treats as an explicit ripgrep override. */
 export const RIPGREP_ENV_VAR = "DRSAI_RG_PATH";
+
+/**
+ * Environment variable the Python side reads as the *seed source* for the
+ * bundled built-in Skill catalogue.
+ *
+ * This deliberately does NOT reuse `SYSTEM_SKILLS_DIR`. That variable means
+ * "the live built-in catalogue to sync from on every launch", which made the
+ * Agent re-scan and re-copy the shipped Skills into the user's directory on
+ * every cold start (and re-impose them after the user edited or deleted one).
+ * The Desktop wants a one-time seed instead, so it publishes the catalogue
+ * under a distinct name that only the first-run seeding path reads.
+ */
+export const BUNDLED_SKILLS_ENV_VAR = "OPENDRSAI_BUNDLED_SKILLS_DIR";
 
 /** Payload-relative directory of the vendored ripgrep release. */
 export const BUNDLED_RIPGREP_SEGMENTS = ["resources", "tools", "ripgrep"] as const;
@@ -82,4 +95,34 @@ export function resolveBundledRipgrep(): string | null {
     if (isRunnableFile(candidate)) return candidate;
   }
   return null;
+}
+
+/** A deployable skills root is a directory holding at least one `<skill>/SKILL.md`. */
+function isSkillsCatalogue(directory: string): boolean {
+  try {
+    if (!statSync(directory).isDirectory()) return false;
+  } catch {
+    return false;
+  }
+  return existsSync(join(directory, "anysearch", "SKILL.md"));
+}
+
+/**
+ * Absolute path of the bundled built-in Skill catalogue to seed from, or null.
+ *
+ * The Runtime packager stages the catalogue at `<drsai-agent>/skills/skills`.
+ * `repositoryRoot` is `DRSAI_REPO`: the managed Runtime directory for a packaged
+ * install, or the source checkout in development — so one candidate covers both.
+ *
+ * The returned path is exported to the gateway child as
+ * `OPENDRSAI_BUNDLED_SKILLS_DIR`, a **seed source only**. The Desktop gateway
+ * copies it into the user's `configs/skills` exactly once (guarded by a marker)
+ * and never consults it again, so a user's edits and deletions stick.
+ *
+ * Returns null when the caller already set `OPENDRSAI_BUNDLED_SKILLS_DIR`.
+ */
+export function resolveBundledSkillsDir(repositoryRoot: string): string | null {
+  if (process.env[BUNDLED_SKILLS_ENV_VAR]?.trim()) return null;
+  const candidate = join(repositoryRoot, "skills", "skills");
+  return isSkillsCatalogue(candidate) ? candidate : null;
 }

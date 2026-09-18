@@ -8,8 +8,9 @@ param(
     [string]$CodexTrustedPublishersPath = "",
     [string]$OpenSshDir = "$env:WINDIR\System32\OpenSSH",
     [string]$RipgrepDir = "$PSScriptRoot\..\resources\tools\ripgrep",
+    [string]$BundledSkillsDir = "$PSScriptRoot\..\..\..\..\skills\skills",
     [string]$Version = "",
-    [string]$Channel = "dev",
+    [string]$Channel = $(if ($env:OPENDRSAI_UPDATE_CHANNEL) { $env:OPENDRSAI_UPDATE_CHANNEL.Trim() } else { "stable" }),
     [ValidateSet("Fastest", "Optimal", "NoCompression")]
     [string]$CompressionLevel = "Optimal",
     [ValidateRange(1, 128)]
@@ -46,12 +47,18 @@ function Copy-DirectoryContents([string]$Source, [string]$Destination) {
 }
 
 function Remove-PythonCaches([string]$Root) {
-    Get-ChildItem -LiteralPath $Root -Recurse -Directory -Filter "__pycache__" -Force -ErrorAction SilentlyContinue |
-        Sort-Object { $_.FullName.Length } -Descending |
-        Remove-Item -Recurse -Force
+    # Delete .pyc/.pyo files first, then the now-empty __pycache__ directories.
+    # Removing directories in a single pipeline pass can invalidate entries that
+    # the earlier -Recurse enumeration already produced: once a parent directory
+    # is removed, the queued child paths no longer resolve and Remove-Item fails
+    # with "Could not find a part of the path". Deleting files first and
+    # re-resolving each directory path individually avoids that race.
     Get-ChildItem -LiteralPath $Root -Recurse -File -Force -ErrorAction SilentlyContinue |
         Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
-        Remove-Item -Force
+        Remove-Item -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -LiteralPath $Root -Recurse -Directory -Filter "__pycache__" -Force -ErrorAction SilentlyContinue |
+        Sort-Object { $_.FullName.Length } -Descending |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 function Remove-NodePtyBuildSources([string]$AppRoot) {
@@ -113,6 +120,59 @@ function Add-BundledRipgrep([string]$Source, [string]$AppRoot) {
     }
 }
 
+function Add-BundledSkills([string]$Source, [string]$TargetAgent) {
+    # The built-in Skill catalogue (`skills/skills`) must travel inside the
+    # Runtime so a packaged install can seed it without a source checkout.
+    # The Desktop exports OPENDRSAI_BUNDLED_SKILLS_DIR pointing here, and the
+    # desktop gateway copies it into the user's configs/skills exactly once
+    # (marker-guarded) on first run. This is a seed source, not the live
+    # SYSTEM_SKILLS_DIR catalogue, so it is never re-synced over the user's
+    # directory after seeding.
+    #
+    # `node_modules` is skipped on purpose: `presentations` vendors an ~113 MB
+    # reinstalable tree of npm output, and Runtime trust sealing
+    # (runtime-build-trust.mjs walk()) skips `node_modules` too — shipping it
+    # would make disk contents and the sealed file manifest disagree.
+    if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
+        throw "Bundled Skills source directory was not found: $Source"
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $Source "anysearch\SKILL.md") -PathType Leaf) -and
+        -not (Get-ChildItem -LiteralPath $Source -Directory -ErrorAction SilentlyContinue)) {
+        throw "Bundled Skills source directory has no Skill folders: $Source"
+    }
+
+    $target = Join-Path $TargetAgent "skills\skills"
+    Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $target | Out-Null
+
+    $robocopy = Get-Command robocopy.exe -ErrorAction SilentlyContinue
+    if ($robocopy) {
+        & $robocopy.Source $Source $target /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 "/MT:$CopyThreads" /XD node_modules /NFL /NDL /NJH /NJS /NP
+        $copyExitCode = $LASTEXITCODE
+        if ($copyExitCode -gt 7) {
+            throw "robocopy failed while staging bundled Skills with exit code ${copyExitCode}: $Source"
+        }
+        return
+    }
+
+    $stack = [Collections.Generic.Stack[string]]::new()
+    $stack.Push($Source)
+    while ($stack.Count -gt 0) {
+        $current = $stack.Pop()
+        $relative = $current.Substring($Source.Length).TrimStart("\")
+        $destination = if ($relative) { Join-Path $target $relative } else { $target }
+        New-Item -ItemType Directory -Force -Path $destination | Out-Null
+        foreach ($entry in Get-ChildItem -LiteralPath $current -Force) {
+            if ($entry.PSIsContainer) {
+                if ($entry.Name -eq "node_modules") { continue }
+                $stack.Push($entry.FullName)
+            } else {
+                Copy-Item -LiteralPath $entry.FullName -Destination (Join-Path $destination $entry.Name) -Force
+            }
+        }
+    }
+}
+
 function Add-PortablePythonBase([string]$SourceAgent, [string]$TargetAgent) {
     $sourceVenv = Join-Path $SourceAgent "venv"
     $targetVenv = Join-Path $TargetAgent "venv"
@@ -148,7 +208,7 @@ function Set-RelocatablePythonLauncher([string]$TargetAgent) {
     # repair the configuration, so a CI-produced runtime would fail validation
     # on every customer machine. Replace it with the bundled base launcher and
     # an isolated, relative search path that remains valid after extraction.
-    foreach ($name in @("python.exe", "pythonw.exe", "python3.exe", "python3.dll", "python311.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
+    foreach ($name in @("python.exe", "pythonw.exe", "python3.exe", "python3.dll", "python312.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
         $source = Join-Path $venvRoot $name
         if (Test-Path -LiteralPath $source -PathType Leaf) {
             Copy-Item -LiteralPath $source -Destination (Join-Path $scriptsDir $name) -Force
@@ -177,7 +237,7 @@ function Set-RelocatablePythonLauncher([string]$TargetAgent) {
         }
     }
     [IO.File]::WriteAllLines(
-        (Join-Path $scriptsDir "python311._pth"),
+        (Join-Path $scriptsDir "python312._pth"),
         $relativePaths,
         (New-Object Text.UTF8Encoding($false))
     )
@@ -263,6 +323,7 @@ Materialize-CurrentDrsaiPackage (Join-Path $payloadRoot "drsai-agent") $backendS
 Remove-PythonCaches (Join-Path $payloadRoot "drsai-agent")
 Add-PortablePythonBase $drsaiAgentDir (Join-Path $payloadRoot "drsai-agent")
 Set-RelocatablePythonLauncher (Join-Path $payloadRoot "drsai-agent")
+Add-BundledSkills $BundledSkillsDir (Join-Path $payloadRoot "drsai-agent")
 
 $payloadPython = Join-Path $payloadRoot "drsai-agent\venv\Scripts\python.exe"
 $payloadPythonw = Join-Path $payloadRoot "drsai-agent\venv\Scripts\pythonw.exe"
@@ -280,6 +341,13 @@ if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch [regex]::Escape($Version)) 
     throw "Materialized backend version does not match runtime $Version. Output: $versionOutput"
 }
 Write-Host "Verified materialized backend version: $versionOutput" -ForegroundColor DarkGray
+$stagedSkillsDir = Join-Path $payloadRoot "drsai-agent\skills\skills"
+$stagedSkillCount = @(Get-ChildItem -LiteralPath $stagedSkillsDir -Directory -ErrorAction SilentlyContinue |
+    Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") }).Count
+if ($stagedSkillCount -lt 1) {
+    throw "Bundled Skills were not staged into the Runtime: $stagedSkillsDir"
+}
+Write-Host "Staged $stagedSkillCount bundled Skill(s): $stagedSkillsDir" -ForegroundColor DarkGray
 Remove-PythonCaches (Join-Path $payloadRoot "drsai-agent")
 $pythonCacheFiles = @(Get-ChildItem -LiteralPath (Join-Path $payloadRoot "drsai-agent") -Recurse -Force -ErrorAction SilentlyContinue |
     Where-Object { $_.PSIsContainer -and $_.Name -eq "__pycache__" -or -not $_.PSIsContainer -and $_.Extension -in @(".pyc", ".pyo") })
@@ -359,6 +427,7 @@ $manifest = [ordered]@{
         drsai = "drsai-agent/venv/Scripts/drsai.cmd"
         gateway = "drsai-agent/venv/Scripts/drsai-gateway.cmd"
         ssh = "app/resources/tools/openssh/ssh.exe"
+        skills = "drsai-agent/skills/skills"
     }
     managedCodex = $managedCodex
 }

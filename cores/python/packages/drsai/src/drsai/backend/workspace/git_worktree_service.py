@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -13,6 +14,10 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from drsai.backend.runtime.registry import RuntimeRegistry, WorktreeRecord
+
+# git.exe is a console app: without CREATE_NO_WINDOW every git call from a
+# console-less (packaged/Electron) process flashes a terminal window.
+GIT_CREATIONFLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
 _BRANCH_PATTERN = re.compile(r"^[A-Za-z0-9._/-]{1,255}$")
@@ -326,8 +331,7 @@ class GitWorktreeService:
                 self._commit_adoption(source, worktree_id, operation_id)
                 self.fault_injector("after_commit")
             except Exception:
-                subprocess.run(
-                    ["git", "restore", "--staged", "--worktree", "--", *sorted(selected)],
+                subprocess.run(["git", "restore", "--staged", "--worktree", "--", *sorted(selected)], creationflags=GIT_CREATIONFLAGS,
                     cwd=source, capture_output=True, text=True, check=False, timeout=self.command_timeout_seconds,
                 )
                 raise
@@ -362,8 +366,7 @@ class GitWorktreeService:
         if not changed or not changed <= selected:
             return False
         for path in selected:
-            compared = subprocess.run(
-                ["git", "diff", "--quiet", candidate_head, "--", path], cwd=source,
+            compared = subprocess.run(["git", "diff", "--quiet", candidate_head, "--", path], creationflags=GIT_CREATIONFLAGS, cwd=source,
                 capture_output=True, text=True, timeout=self.command_timeout_seconds,
             )
             if compared.returncode != 0:
@@ -452,8 +455,7 @@ class GitWorktreeService:
                 unmerged = self._git_output(
                     source, ["diff", "--name-only", "--diff-filter=U"], "worktree_merge_failed", allow_empty=True
                 )
-                subprocess.run(
-                    ["git", "merge", "--abort"], cwd=source, capture_output=True, text=True,
+                subprocess.run(["git", "merge", "--abort"], creationflags=GIT_CREATIONFLAGS, cwd=source, capture_output=True, text=True,
                     check=False, timeout=self.command_timeout_seconds,
                 )
                 if unmerged:
@@ -600,8 +602,7 @@ class GitWorktreeService:
             disk_path = disk_path.parent
         if shutil.disk_usage(disk_path).free < self.minimum_free_bytes:
             raise GitWorktreeError("worktree_disk_space_low", "Insufficient free space for Worktree creation.")
-        branch_check = subprocess.run(
-            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+        branch_check = subprocess.run(["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], creationflags=GIT_CREATIONFLAGS,
             cwd=repo, capture_output=True, check=False, timeout=self.command_timeout_seconds,
         )
         if branch_check.returncode == 0:
@@ -623,8 +624,7 @@ class GitWorktreeService:
 
     def _git(self, cwd: Path, args: list[str], code: str = "git_worktree_failed") -> subprocess.CompletedProcess[str]:
         try:
-            completed = subprocess.run(
-                ["git", *args], cwd=cwd, capture_output=True, text=True, check=False,
+            completed = subprocess.run(["git", *args], creationflags=GIT_CREATIONFLAGS, cwd=cwd, capture_output=True, text=True, check=False,
                 timeout=self.command_timeout_seconds,
             )
         except subprocess.TimeoutExpired as exc:

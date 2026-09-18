@@ -9371,11 +9371,38 @@ button.structured-activity-detail:hover {
   );
 }
 
+/* Readiness notice: the composer is visible but cannot send yet (runtime
+   starting / service check in progress). Explains why, so typing and pressing
+   Enter is understood as "not ready" instead of a backend error. */
+.composer-locked-notice {
+  width: min(var(--chat-content-max-width, 860px), 100%);
+  max-width: var(--chat-content-max-width, 860px);
+  margin: 0 auto 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--app-panel-soft);
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+}
+
 .chat-primary-pane:not(.empty-chat) .composer-shell {
   width: min(var(--chat-content-max-width), 100%);
   max-width: var(--chat-content-max-width);
   padding-right: 18px;
   padding-left: 18px;
+}
+
+/* The docked (non-empty) composer drops its side padding, so the notice has to
+   carry the same 18px inset as the shell to stay aligned with the input. */
+.chat-primary-pane:not(.empty-chat) .composer-locked-notice {
+  width: min(var(--chat-content-max-width), 100%);
+  max-width: var(--chat-content-max-width);
+  margin-right: auto;
+  margin-left: auto;
+  padding-right: 30px;
+  padding-left: 30px;
 }
 
 .composer-shell {
@@ -13602,8 +13629,10 @@ button.structured-activity-detail:hover {
 }
 
 .files-tree-branch {
-  min-width: 0;
-  width: 100%;
+  /* Expand to content width so long file names create a horizontal scrollbar
+     in .files-context-tree-scroll instead of being clipped. */
+  width: max-content;
+  min-width: 100%;
 }
 
 .files-tree-row {
@@ -13613,10 +13642,8 @@ button.structured-activity-detail:hover {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  max-width: 100%;
   height: 24px;
   padding-right: 8px;
-  overflow: hidden;
   border: 0;
   border-radius: 4px;
   background: transparent;
@@ -13698,10 +13725,10 @@ button.structured-activity-detail:hover {
 }
 
 .files-tree-name {
+  /* Let names render at natural width; the tree pane scrolls horizontally
+     when a row is wider than the pane. */
   min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 
@@ -15016,16 +15043,14 @@ button.structured-activity-detail:hover {
   min-width: 0;
   flex: 1 1 0;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   overscroll-behavior: contain;
 }
 
 .files-context-tree {
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
+  min-width: 100%;
+  width: max-content;
   padding-bottom: 8px;
-  overflow: hidden;
 }
 
 .files-tree-truncated {
