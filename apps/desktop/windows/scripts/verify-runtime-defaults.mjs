@@ -157,6 +157,10 @@ function verifyRuntimeOwnership(configToml) {
     /^def ensure_desktop_runtime_config\(/m.test(bootstrap),
     "drsai.config.ensure_desktop_runtime_config is gone; the Runtime no longer owns first-launch config generation",
   );
+  assert(
+    /Seed that product-owned dependency before[\s\S]*replace_models_file_text\([\s\S]*config = load_user_config\(target\)/m.test(bootstrap),
+    "Runtime bootstrap must create the packaged product catalog before its first strict config load",
+  );
   // The non-chat product models live in model_defaults.DEFAULT_SPECIALIZED_PRODUCT_MODELS
   // and desktop_bootstrap merges them into the product catalog, so assert both halves.
   assert(
@@ -190,6 +194,10 @@ function verifyRuntimeOwnership(configToml) {
   assert(
     gatewayApp.includes("ensure_desktop_runtime_config"),
     "desktop gateway lifespan no longer runs the Runtime config bootstrap",
+  );
+  assert(
+    gatewayApp.includes('raise RuntimeError("Desktop Runtime configuration bootstrap failed") from exc'),
+    "desktop gateway must fail startup when required Runtime configuration cannot be generated",
   );
 }
 

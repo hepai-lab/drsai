@@ -149,8 +149,12 @@ async def lifespan(app: FastAPI):
         )
     except Exception as exc:
         logger.exception(
-            "Desktop Runtime configuration bootstrap failed: {}", type(exc).__name__,
+            "Desktop Runtime configuration bootstrap failed: %s", type(exc).__name__,
         )
+        # Configuration is a hard dependency for every authenticated route.
+        # Advertising a healthy Gateway here leaves the renderer polling
+        # endpoints that can only return 500 and looks like an endless startup.
+        raise RuntimeError("Desktop Runtime configuration bootstrap failed") from exc
 
     # Re-arm the WeChat channel only when the user left it enabled.  A channel
     # that cannot be restored must never keep the gateway from becoming ready.
