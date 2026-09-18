@@ -19,7 +19,7 @@ const CHAT_ENTRY_URL = WEBUI_URL
   : "/login";
 const WINDOWS_DOWNLOAD_URL =
   process.env.GATSBY_WINDOWS_DOWNLOAD_URL ||
-  "https://download-opendrsai.ihep.ac.cn/releases/v1.5.5/windows/OpenDrSai-Windows-Installer-x64.msi";
+  "https://download-opendrsai.ihep.ac.cn/releases/v2.0.2/windows/OpenDrSai-Windows-v2.0.2-Installer-x64.msi";
 const TUI_UNIX_COMMAND =
   "curl -fsSL https://ihepbox.ihep.ac.cn/ihepbox/index.php/s/vQFBjvXqAhxdPFb/download | bash";
 const TUI_WINDOWS_COMMAND =
@@ -249,7 +249,11 @@ const WelcomePage = () => {
               <button
                 type="button"
                 onClick={() => toggleClient("windows")}
-                className="rounded-md p-0.5 transition hover:bg-blue-50 dark:hover:bg-white/10"
+                className={`rounded-md p-0.5 transition hover:bg-blue-50 dark:hover:bg-white/10 ${
+                  activeClient === "windows"
+                    ? "bg-blue-50 ring-1 ring-blue-300 dark:bg-blue-500/15 dark:ring-blue-500/40"
+                    : ""
+                }`}
                 aria-label="Windows"
               >
                 <span className="block scale-100 sm:scale-75">
@@ -299,9 +303,9 @@ const WelcomePage = () => {
         </div>
       </section>
 
-      <section id="clients" className="relative z-10 mx-auto max-w-3xl px-4 sm:px-8">
+      <section id="clients" className="relative z-10 mx-auto max-w-5xl px-4 sm:px-8">
         <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/80 shadow-[0_18px_60px_-36px_rgba(76,29,149,0.35)] backdrop-blur dark:border-white/10 dark:bg-white/[0.035]">
-          <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-2">
+          <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-3">
             <ClientItem
               icon={<WebBrowserLogo />}
               title="WebUI"
@@ -309,6 +313,15 @@ const WelcomePage = () => {
               action={isZh ? "开始对话" : "Open"}
               href="/login"
               orderClass="order-2 sm:order-1"
+            />
+            <ClientItem
+              icon={<WindowsLogo />}
+              title="Windows"
+              detail={isZh ? "连接本地工作区" : "Connect local workspaces"}
+              action={isZh ? "查看" : "View"}
+              active={activeClient === "windows"}
+              onClick={() => toggleClient("windows")}
+              orderClass="order-3 sm:order-2"
             />
             <button
               type="button"
@@ -696,14 +709,14 @@ const ClientDetails = ({
     windows: {
       icon: <WindowsLogo />,
       title: "OpenDrSai for Windows",
-      version: "v1.5.5",
+      version: "v2.0.2",
       channel: "beta",
-      file: "OpenDrSai-Windows-Installer-x64.msi",
+      file: "OpenDrSai-Windows-v2.0.2-Installer-x64.msi",
       sizeBytes: 647168,
       sha256:
-        "682d930676e2299fd6b13fe131af13bad771d04b290c430652802466f496902f",
-      programFile: "OpenDrSai-Windows-v1.5.5-x64.zip",
-      programSizeBytes: 254032550,
+        "e1b52c7b4f605bf20e1314fd24fd40456d10ae5561da18f0f327c1db76b47c34",
+      programFile: "OpenDrSai-Windows-v2.0.2-x64.zip",
+      programSizeBytes: 352913867,
       href: WINDOWS_DOWNLOAD_URL,
     },
   };
@@ -861,7 +874,7 @@ const ClientDetails = ({
         <a
           href={release.href}
           download=""
-          className="inline-flex w-full flex-none items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-blue-600 px-5 py-3 text-sm font-extrabold text-white no-underline shadow-lg shadow-violet-500/20 sm:w-auto"
+          className="inline-flex w-full flex-none items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-blue-600 px-5 py-3 text-sm font-extrabold !text-white no-underline shadow-lg shadow-violet-500/20 hover:!text-white sm:w-auto"
         >
           <Download className="h-4 w-4" />
           {isZh ? "下载安装器" : "Download installer"}
