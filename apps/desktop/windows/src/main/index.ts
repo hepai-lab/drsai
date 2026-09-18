@@ -55,6 +55,7 @@ import {
 } from "./gateway";
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { bootstrapDesktop } from "./bootstrap";
+import { broadcastAuthSessionRestored } from "./authSessionBroadcast";
 import { connectRuntimeClientForWorkspace, invalidateRuntimeClientRegistry, isLocalRuntimeUnavailableError, LocalRuntimeClient, withRuntimeClientForWorkspace } from "./runtimeClient";
 import type { RuntimeSession } from "../../../shared/main/runtimeClient";
 import { registerConversationResourceReadIpc } from "../../../shared/main/conversationResourceIpc";
@@ -4846,14 +4847,12 @@ function registerIpc(): void {
   secureHandle("desktop:e2e-a5-service-guidance-scenario", () =>
     getA5ServiceGuidanceScenario(),
   );
-  secureHandle("desktop:login", async (_event, request) => {
+  secureHandle("desktop:login", async (event, request) => {
     const result = await login(request);
     if (result.ok && result.session) {
       const userId = result.session.user?.id || result.session.user?.email;
       if (userId) await syncAuthIdentityToGateway(userId).catch(() => undefined);
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.isDestroyed()) window.webContents.send("desktop:auth-session-restored");
-      }
+      broadcastAuthSessionRestored(BrowserWindow.getAllWindows(), event.sender);
     }
     return result;
   });
@@ -4868,11 +4867,7 @@ function registerIpc(): void {
       if (userId) await syncAuthIdentityToGateway(userId);
       // Broadcast auth-session-restored so the renderer can clear any
       // auth_required blocker and re-trigger bootstrap automatically.
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.isDestroyed()) {
-          window.webContents.send("desktop:auth-session-restored");
-        }
-      }
+      broadcastAuthSessionRestored(BrowserWindow.getAllWindows(), event.sender);
       focusMainWindow();
     }
     return result;
