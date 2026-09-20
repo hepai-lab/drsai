@@ -19,7 +19,7 @@ const CHAT_ENTRY_URL = WEBUI_URL
   : "/login";
 const WINDOWS_DOWNLOAD_URL =
   process.env.GATSBY_WINDOWS_DOWNLOAD_URL ||
-  "https://download-opendrsai.ihep.ac.cn/releases/v2.0.2/windows/OpenDrSai-Windows-v2.0.2-Installer-x64.msi";
+  "https://download-opendrsai.ihep.ac.cn/releases/v2.0.5/windows/OpenDrSai-Windows-v2.0.5-Installer-x64.msi";
 const TUI_UNIX_COMMAND =
   "curl -fsSL https://ihepbox.ihep.ac.cn/ihepbox/index.php/s/vQFBjvXqAhxdPFb/download | bash";
 const TUI_WINDOWS_COMMAND =
@@ -74,8 +74,7 @@ const WelcomePage = () => {
   }, [activeClient]);
 
   useEffect(() => {
-    if (activeClient !== "windows") return;
-    const platform = activeClient;
+    const platform: ReleasePlatform = "windows";
     const controller = new AbortController();
     setLoadingRelease(platform);
 
@@ -101,7 +100,7 @@ const WelcomePage = () => {
       });
 
     return () => controller.abort();
-  }, [activeClient]);
+  }, []);
 
   const copyTuiCommand = async (
     command: string,
@@ -709,14 +708,14 @@ const ClientDetails = ({
     windows: {
       icon: <WindowsLogo />,
       title: "OpenDrSai for Windows",
-      version: "v2.0.2",
+      version: "v2.0.5",
       channel: "beta",
-      file: "OpenDrSai-Windows-v2.0.2-Installer-x64.msi",
+      file: "OpenDrSai-Windows-v2.0.5-Installer-x64.msi",
       sizeBytes: 647168,
       sha256:
-        "e1b52c7b4f605bf20e1314fd24fd40456d10ae5561da18f0f327c1db76b47c34",
-      programFile: "OpenDrSai-Windows-v2.0.2-x64.zip",
-      programSizeBytes: 352913867,
+        "d0b649c5df99f3e11aa54e698a32bc29c7e43103770c4b4b74d10b7a41f755ee",
+      programFile: "OpenDrSai-Windows-v2.0.5-x64.zip",
+      programSizeBytes: 352919562,
       href: WINDOWS_DOWNLOAD_URL,
     },
   };

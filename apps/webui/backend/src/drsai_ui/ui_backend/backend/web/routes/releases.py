@@ -134,6 +134,50 @@ async def _fetch_yaml(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
     return payload
 
 
+def _windows_installer_candidates(version: str) -> tuple[str, ...]:
+    return (
+        f"OpenDrSai-Windows-v{version}-Installer-x64.msi",
+        "OpenDrSai-Windows-Installer-x64.msi",
+    )
+
+
+async def _resolve_windows_installer(
+    client: httpx.AsyncClient, version: str
+) -> tuple[str, str, int | None]:
+    candidates = _windows_installer_candidates(version)
+    for installer_name in candidates:
+        installer_url = f"{CDN_ORIGIN}/releases/v{version}/windows/{installer_name}"
+        try:
+            installer_response = await client.head(installer_url)
+            installer_response.raise_for_status()
+            content_length = installer_response.headers.get("content-length")
+            installer_size = (
+                int(content_length)
+                if content_length and int(content_length) > 0
+                else None
+            )
+            return installer_name, installer_url, installer_size
+        except (httpx.HTTPError, ValueError):
+            continue
+    preferred = candidates[0]
+    return preferred, f"{CDN_ORIGIN}/releases/v{version}/windows/{preferred}", None
+
+
+def _channels_to_try(selected_channels: tuple[str, ...]) -> tuple[str, ...]:
+    ordered: list[str] = []
+    for channel in selected_channels:
+        if channel not in SUPPORTED_RELEASE_CHANNELS:
+            raise ValueError(f"Unsupported OpenDrSai release channel: {channel}")
+        if channel not in ordered:
+            ordered.append(channel)
+    # Website downloads should still surface the latest published installer
+    # when the preferred channel pointer is missing (currently stable 404s).
+    for channel in SUPPORTED_RELEASE_CHANNELS:
+        if channel not in ordered:
+            ordered.append(channel)
+    return tuple(ordered)
+
+
 async def _windows_release(
     client: httpx.AsyncClient, manifest: dict[str, Any], selected_channel: str
 ) -> dict[str, Any]:
@@ -147,19 +191,9 @@ async def _windows_release(
     if runtime_size < 1:
         raise ValueError("Windows runtime size must be positive")
 
-    installer_name = "OpenDrSai-Windows-Installer-x64.msi"
-    installer_url = (
-        f"{CDN_ORIGIN}/releases/v{version}/windows/{installer_name}"
+    installer_name, installer_url, installer_size = await _resolve_windows_installer(
+        client, version
     )
-    installer_size: int | None = None
-    try:
-        installer_response = await client.head(installer_url)
-        installer_response.raise_for_status()
-        content_length = installer_response.headers.get("content-length")
-        if content_length and int(content_length) > 0:
-            installer_size = int(content_length)
-    except (httpx.HTTPError, ValueError):
-        pass
 
     channel = _manifest_channel(manifest, selected_channel)
     build_label, release_label = _release_labels(
@@ -289,9 +323,8 @@ async def fetch_latest_release(
         verify=ssl_context,
     )
     try:
-        for index, channel in enumerate(selected_channels):
-            if channel not in SUPPORTED_RELEASE_CHANNELS:
-                raise ValueError(f"Unsupported OpenDrSai release channel: {channel}")
+        channels_to_try = _channels_to_try(selected_channels)
+        for index, channel in enumerate(channels_to_try):
             manifest_url = _manifest_url(platform, channel)
             try:
                 manifest = (
@@ -300,7 +333,7 @@ async def fetch_latest_release(
                     else await _fetch_json(active_client, manifest_url)
                 )
             except httpx.HTTPStatusError as exc:
-                has_fallback = index + 1 < len(selected_channels)
+                has_fallback = index + 1 < len(channels_to_try)
                 if exc.response.status_code == 404 and has_fallback:
                     continue
                 raise
