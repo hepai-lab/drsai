@@ -41,33 +41,15 @@ import {
   resolvePresentationAgentName,
 } from "./config/agentPresentationProfile";
 import { useModeConfigStore } from "../../store/modeConfig";
+import {
+  generatedMediaShouldKeepFollow,
+  isPassiveGrowthFromBottom,
+  isUserScrollUp,
+  shouldLockAutoScrollOnScroll,
+  type ScrollMetrics,
+} from "./chatScroll";
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
 const CHAT_INPUT_BASE_HEIGHT_PX = 78;
-
-type ScrollMetrics = {
-  scrollHeight: number;
-  scrollTop: number;
-  clientHeight: number;
-};
-
-/** True when the user actively scrolled up (not content growth lag during auto-follow). */
-function isUserScrollUp(
-  container: HTMLDivElement,
-  prev: ScrollMetrics
-): boolean {
-  return prev.scrollHeight > 0 && container.scrollTop < prev.scrollTop - 2;
-}
-
-/** True when content grew while the view was pinned to the bottom (streaming/images). */
-function isPassiveGrowthFromBottom(
-  container: HTMLDivElement,
-  prev: ScrollMetrics
-): boolean {
-  if (prev.scrollHeight <= 0) return false;
-  const wasPinned =
-    prev.scrollTop >= prev.scrollHeight - prev.clientHeight - 48;
-  return wasPinned && container.scrollHeight > prev.scrollHeight;
-}
 
 /** Inline waiting indicator while the backend reports agent.working. */
 const AgentWorkingIndicator = React.memo(
@@ -599,26 +581,14 @@ const RunView: React.FC<RunViewProps> = ({
         container.scrollHeight - container.scrollTop - container.clientHeight;
       const isAtBottom = distanceFromBottom <= 32;
 
-      // When content passively grows (e.g. an image finishes loading and
-      // increases scrollHeight without the user scrolling), scrollTop stays
-      // the same or increases.  Treating that as the user scrolling away
-      // would lock auto-scroll too early and make the view "stuck" at the
-      // image message.  Skip the lock when scrollHeight grew but scrollTop
-      // did not decrease.
-      const contentPassivelyGrew =
-        prev.scrollHeight > 0 &&
-        container.scrollHeight > prev.scrollHeight &&
-        container.scrollTop >= prev.scrollTop;
-      const passiveGrowthFromBottom = isPassiveGrowthFromBottom(container, prev);
-
+      // Image decode / markdown remount changes scrollHeight (and overflow
+      // anchoring may move scrollTop). That is not a user gesture.
       if (
-        !isAtBottom &&
         !autoScrollLockedRef.current &&
-        !contentPassivelyGrew &&
-        !passiveGrowthFromBottom
+        shouldLockAutoScrollOnScroll(container, prev)
       ) {
         autoScrollLockedRef.current = true;
-        console.log("[DEBUG-scroll] handleScroll: LOCKED. distanceFromBottom:", distanceFromBottom, "scrollTop:", container.scrollTop, "scrollHeight:", container.scrollHeight, "contentPassivelyGrew:", contentPassivelyGrew);
+        console.log("[DEBUG-scroll] handleScroll: LOCKED. distanceFromBottom:", distanceFromBottom, "scrollTop:", container.scrollTop, "scrollHeight:", container.scrollHeight);
       } else if (isAtBottom && autoScrollLockedRef.current) {
         autoScrollLockedRef.current = false;
         console.log("[DEBUG-scroll] handleScroll: UNLOCKED");
@@ -696,6 +666,37 @@ const RunView: React.FC<RunViewProps> = ({
 
     ro.observe(content);
     return () => ro.disconnect();
+  }, [scrollToBottom]);
+
+  // Markdown images decode after the token arrives. Follow the final height
+  // unless the user has already scrolled away.
+  useEffect(() => {
+    const container = threadContainerRef.current;
+    if (!container) return;
+
+    const followGeneratedMedia = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLImageElement)) return;
+      if (!container.contains(target)) return;
+      const imgRect = target.getBoundingClientRect();
+      if (imgRect.height < 72) return;
+      const box = container.getBoundingClientRect();
+      const keepFollow = generatedMediaShouldKeepFollow(
+        autoScrollLockedRef.current,
+        { top: imgRect.top, bottom: imgRect.bottom },
+        { top: box.top, bottom: box.bottom }
+      );
+      if (!keepFollow) return;
+      if (autoScrollLockedRef.current) {
+        autoScrollLockedRef.current = false;
+      }
+      scrollToBottom("auto");
+    };
+
+    container.addEventListener("load", followGeneratedMedia, true);
+    return () => {
+      container.removeEventListener("load", followGeneratedMedia, true);
+    };
   }, [scrollToBottom]);
 
   // Combine scroll behavior when messages or status change
@@ -1702,7 +1703,7 @@ const RunView: React.FC<RunViewProps> = ({
         <div className="relative w-full max-w-4xl mx-auto h-full question-nav-scroll-wrap">
         <div
           ref={threadContainerRef}
-          className="question-nav-scroll w-full h-full overflow-y-auto scroll px-3 sm:px-6 lg:pl-8 pt-4 pb-4"
+          className="question-nav-scroll w-full h-full overflow-y-auto scroll px-3 sm:px-6 lg:pl-8 pt-4 pb-4 [overflow-anchor:none]"
         >
           {/* Inner wrapper observed by ResizeObserver — grows with streaming content */}
           <div ref={messagesContentRef}>

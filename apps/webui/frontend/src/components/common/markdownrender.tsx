@@ -45,7 +45,15 @@ function MarkdownImage({
   ...rest
 }: React.ComponentPropsWithoutRef<"img"> & ExtraProps) {
   if (!isOriginalImageSrc(src)) return null;
-  return <img src={src} alt={alt || ""} {...rest} />;
+  return (
+    <img
+      src={src}
+      alt={alt || ""}
+      {...rest}
+      className={`max-w-full h-auto rounded-md [overflow-anchor:none] ${rest.className || ""}`}
+      style={{ display: "block", ...rest.style }}
+    />
+  );
 }
 
 function keepOriginalImageSrcs(html: string): string {
