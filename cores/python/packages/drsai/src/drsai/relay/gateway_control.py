@@ -610,9 +610,24 @@ class GatewayRuntimeControlHandler:
     def _read_local_session_events(
         self, session_id: str, after_sequence: int
     ) -> list[dict[str, Any]]:
-        """Read the legacy Session Journal without a loopback HTTP request."""
+        """Read the legacy Session Journal without a loopback HTTP request.
+
+        This is a local fast path for ``GET /v1/sessions/{id}/events``, so it must
+        return the same page that route returns.  ``conversation.item.delta`` rows
+        are incremental by contract — they carry one chunk and never the accumulated
+        Item payload nor a second copy of the Item's Run/Session binding — so they are
+        hydrated against the canonical Conversation Item exactly like
+        ``ConversationJournal.list_session_events`` does.
+        """
         if not self.journal_database.is_file():
             return []
+        # Imported here so Relay start-up does not depend on the Runtime package: the
+        # hydration contract belongs to the Journal that owns the rows.
+        from drsai.backend.runtime.journal import (
+            JOURNAL_ITEM_DELTA_EVENT_KIND,
+            canonical_item_payloads,
+        )
+
         with sqlite3.connect(self.journal_database, timeout=5) as journal:
             journal.row_factory = sqlite3.Row
             state = journal.execute(
@@ -632,22 +647,42 @@ class GatewayRuntimeControlHandler:
                 "ORDER BY session_sequence LIMIT 2000",
                 (session_id, after_sequence),
             ).fetchall()
-        return [
-            {
-                "event_id": str(row["event_id"]),
-                "runtime_id": str(row["runtime_id"]),
-                "workspace_id": str(row["workspace_id"]),
-                "session_id": str(row["session_id"]),
-                "run_id": str(row["run_id"]) if row["run_id"] is not None else None,
-                "session_sequence": int(row["session_sequence"]),
-                "kind": str(row["event_kind"]),
-                "timestamp": str(row["created_at"]),
-                "item_id": str(row["item_id"]) if row["item_id"] is not None else None,
-                "item_revision": int(row["item_revision"]) if row["item_revision"] is not None else None,
-                "payload": json.loads(str(row["payload_json"])),
-            }
-            for row in rows
-        ]
+            canonical_payloads = canonical_item_payloads(
+                journal,
+                [
+                    str(row["item_id"])
+                    for row in rows
+                    if row["item_id"] is not None
+                    and str(row["event_kind"]) == JOURNAL_ITEM_DELTA_EVENT_KIND
+                ],
+            )
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(str(row["payload_json"]))
+            item_id = str(row["item_id"]) if row["item_id"] is not None else None
+            canonical = canonical_payloads.get(item_id) if item_id is not None else None
+            if (
+                canonical is not None
+                and isinstance(payload, dict)
+                and isinstance(payload.get("payload"), dict)
+            ):
+                payload = {**payload, "payload": canonical}
+            events.append(
+                {
+                    "event_id": str(row["event_id"]),
+                    "runtime_id": str(row["runtime_id"]),
+                    "workspace_id": str(row["workspace_id"]),
+                    "session_id": str(row["session_id"]),
+                    "run_id": str(row["run_id"]) if row["run_id"] is not None else None,
+                    "session_sequence": int(row["session_sequence"]),
+                    "kind": str(row["event_kind"]),
+                    "timestamp": str(row["created_at"]),
+                    "item_id": item_id,
+                    "item_revision": int(row["item_revision"]) if row["item_revision"] is not None else None,
+                    "payload": payload,
+                }
+            )
+        return events
 
     def _read_local_run_events(
         self, run_id: str, after_sequence: int

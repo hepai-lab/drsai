@@ -96,6 +96,9 @@ export interface WorkspaceThread {
   unread?: boolean;
   activity: ThreadActivityState;
   source?: "codex" | "opendrsai" | "remote" | "wechat";
+  sessionScope?: "workspace" | "remote_agent";
+  remoteWorkerId?: string;
+  remoteWorkerName?: string;
 }
 
 export interface ForkConflictFile {
@@ -299,6 +302,7 @@ export function WorkspaceShell({
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(true);
+  const [skillsOpen, setSkillsOpen] = useState(true);
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
   const [sidebarScrolled, setSidebarScrolled] = useState(false);
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
@@ -392,16 +396,51 @@ export function WorkspaceShell({
     ? getEnabledNavItems(navSections, "agents").filter((item) => {
         if (item.id === MENU_IDS.skillsSquare) return false;
         if (item.id === MENU_IDS.agentSquare) return sidebarComponents.agents;
+        if (item.id === MENU_IDS.skillsLocal || item.id === MENU_IDS.skillsOnline) {
+          return sidebarComponents.skills;
+        }
         return true;
       })
     : [];
+  const agentSquareItems = agentItems.filter((item) => item.id === MENU_IDS.agentSquare);
+  const skillChildItems = agentItems.filter(
+    (item) => item.id === MENU_IDS.skillsLocal || item.id === MENU_IDS.skillsOnline,
+  );
+  const skillsChildActive =
+    activeNav === MENU_IDS.skillsLocal ||
+    activeNav === MENU_IDS.skillsOnline ||
+    activeNav === MENU_IDS.skillsSquare;
   const agentSectionLabel = navSections.find((section) => section.id === "agents")?.label ?? (zh ? "广场" : "Square");
   const libraryItem = getEnabledNavItems(navSections, "chat").find((item) => item.id === MENU_IDS.library);
   const knowledgeBaseItem = getEnabledNavItems(navSections, "chat").find((item) => item.id === MENU_IDS.knowledgeBase);
   const skillsItem = getEnabledNavItems(navSections, "agents").find((item) => item.id === MENU_IDS.skillsSquare);
+  const skillsGroupLabel = skillsItem?.label ?? (zh ? "技能" : "Skills");
+  const SkillsGroupIcon = navIcons[MENU_IDS.skillsSquare];
   const workspaceItems = getEnabledNavItems(navSections, "workspace");
   const workspaceDetails = workspaces.find((workspace) => workspace.id === workspaceDetailsId) ?? null;
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0] ?? null;
+  // Threads written by the agent square carry the catalog id ("platform:<name>")
+  // while the Runtime binding writes the bare routable name. Normalize both to
+  // the bare name so one remote worker always renders as one sidebar group,
+  // including for threads persisted before this fix.
+  const normalizeRemoteWorkerKey = (workerId: string): string => workerId.replace(/^platform:/, "");
+  const remoteWorkerGroups = useMemo(() => {
+    const groups = new Map<string, { workerId: string; workerName: string; threads: WorkspaceThread[] }>();
+    for (const thread of workspaceThreads) {
+      if (thread.sessionScope !== "remote_agent" || !thread.remoteWorkerId) continue;
+      const workerId = normalizeRemoteWorkerKey(thread.remoteWorkerId);
+      const entry = groups.get(workerId) ?? {
+        workerId,
+        workerName: thread.remoteWorkerName || workerId,
+        threads: [],
+      };
+      entry.workerName = thread.remoteWorkerName || entry.workerName;
+      entry.threads.push(thread);
+      groups.set(workerId, entry);
+    }
+    return [...groups.values()].sort((a, b) => a.workerName.localeCompare(b.workerName));
+  }, [workspaceThreads]);
+
   const workspaceThreadsById = useMemo(() => {
     const normalizePath = (path: string | undefined): string =>
       (path ?? "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
@@ -427,6 +466,12 @@ export function WorkspaceShell({
       return next;
     });
   }, [activeWorkspaceId]);
+
+  useEffect(() => {
+    if (!skillsChildActive) return;
+    setAgentsOpen(true);
+    setSkillsOpen(true);
+  }, [skillsChildActive]);
 
   const isRightPanelExpanded = rightPanelExpanded && !rightPanelCollapsed;
   const rightPanelExpandLabel = isRightPanelExpanded
@@ -619,11 +664,6 @@ export function WorkspaceShell({
     onToggleRightPanel();
   }
 
-  function openDebugPanelFromMenu(): void {
-    closeWorkbenchMenu();
-    if (rightPanelCollapsed) onToggleRightPanel();
-  }
-
   function resetLayoutFromMenu(): void {
     closeWorkbenchMenu();
     if (sidebarCollapsed) onToggleSidebar();
@@ -729,19 +769,20 @@ export function WorkspaceShell({
 
   function startSidebarResize(event: React.PointerEvent<HTMLDivElement>): void {
     event.preventDefault();
-    startResize((clientX) => {
+    startResize(event.currentTarget, event.pointerId, (clientX) => {
       setSidebarWidth(clamp(clientX, 204, 380));
     });
   }
 
   function startRightPanelResize(event: React.PointerEvent<HTMLDivElement>): void {
     event.preventDefault();
-    const grid = event.currentTarget.parentElement;
+    const handle = event.currentTarget;
+    const grid = handle.parentElement;
     if (!grid) return;
     const rect = grid.getBoundingClientRect();
-    const maxRightPanelWidth = Math.max(420, Math.floor(rect.width * (2 / 3)));
+    const maxRightPanelWidth = Math.max(480, Math.floor(rect.width * 0.8));
     let collapseRequested = false;
-    startResize((clientX) => {
+    startResize(handle, event.pointerId, (clientX) => {
       const nextWidth = rect.right - clientX;
       if (nextWidth < 160) {
         if (!collapseRequested && !rightPanelCollapsed) {
@@ -1266,7 +1307,7 @@ export function WorkspaceShell({
           className={`thread-item workspace-thread-item ${showSourceIcon ? "has-source-icon " : ""}${thread.active ? "active" : ""}${thread.activity.kind === "error" ? " failed" : ""}`}
           onClick={() => onThreadSelect(thread.id)}
         >
-          <span>
+          <span className="thread-item-label">
             {thread.unread && <b className="thread-unread-dot" aria-hidden />}
             {thread.pinned && <b className="thread-pinned-mark" aria-hidden>{"\u2022"}</b>}
             {thread.fork && (
@@ -1280,7 +1321,7 @@ export function WorkspaceShell({
                 {thread.fork.queueStatus === "waiting_approval" ? "Wait" : thread.fork.queueStatus === "ready" ? "Ready" : "Fork"}
               </b>
             )}
-            {thread.title}
+            <ThreadTitleScroll title={thread.title} />
           </span>
           <span className="thread-item-status">
             {thread.activity.kind === "idle" ? (
@@ -1963,12 +2004,6 @@ export function WorkspaceShell({
             shortcut: shortcutDrafts.toggleRightPanel,
             onClick: toggleRightPanelFromMenu,
           })}
-          {renderMenuItem({
-            label: zh ? "打开调试面板" : "Open debug panel",
-            icon: HelpCircle,
-            shortcut: shortcutDrafts.debug,
-            onClick: openDebugPanelFromMenu,
-          })}
           <div className="workbench-menu-separator" role="separator" />
           {renderMenuItem({
             label: zh ? "重置布局" : "Reset layout",
@@ -2310,7 +2345,7 @@ export function WorkspaceShell({
               </div>
               {agentsOpen && (
                 <div className="sidebar-nested-list">
-                  {agentItems.map(({ id, label }) => {
+                  {agentSquareItems.map(({ id, label }) => {
                     const Icon = navIcons[id];
                     return (
                       <SidebarButton
@@ -2323,6 +2358,45 @@ export function WorkspaceShell({
                       />
                     );
                   })}
+                  {skillChildItems.length > 0 ? (
+                    <div className="sidebar-skills-group">
+                      <button
+                        type="button"
+                        className={`sidebar-button nested sidebar-skills-parent${skillsChildActive ? " is-skills-active" : ""}`}
+                        aria-expanded={skillsOpen}
+                        aria-label={skillsOpen
+                          ? (zh ? "收起技能" : "Collapse skills")
+                          : (zh ? "展开技能" : "Expand skills")}
+                        title={skillsGroupLabel}
+                        onClick={() => setSkillsOpen((open) => !open)}
+                      >
+                        <SkillsGroupIcon size={16} />
+                        <span>{skillsGroupLabel}</span>
+                        <ChevronDown
+                          size={14}
+                          className={`sidebar-skills-chevron${skillsOpen ? " is-open" : ""}`}
+                          aria-hidden
+                        />
+                      </button>
+                      {skillsOpen ? (
+                        <div className="sidebar-skills-sublist">
+                          {skillChildItems.map(({ id, label }) => {
+                            const Icon = navIcons[id];
+                            return (
+                              <SidebarButton
+                                key={id}
+                                active={id === activeNav}
+                                icon={Icon}
+                                label={label}
+                                subnested
+                                onClick={() => onNavChange(id)}
+                              />
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -2475,6 +2549,22 @@ export function WorkspaceShell({
                     </div>
                   );
                 })}
+                {remoteWorkerGroups.length > 0 && (
+                  <div className="remote-worker-tree-node">
+                    <div className="workspace-row remote-workers-header">
+                      <span className="workspace-item remote-workers-title">
+                        <span className="workspace-item-name">{zh ? "远程智能体" : "Remote Agents"}</span>
+                      </span>
+                    </div>
+                    {remoteWorkerGroups.map((group) => (
+                      <div className="workspace-thread-list remote-worker-group" key={group.workerId}>
+                        <p className="remote-worker-group-name" title={group.workerId}>{group.workerName}</p>
+                        {group.threads.slice(0, 5).map((thread) => renderWorkspaceThread(thread, true))}
+                        {group.threads.length === 0 && <p>{zh ? "暂无会话" : "No sessions yet"}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -3564,12 +3654,54 @@ export function WorkspaceShell({
   );
 }
 
+function ThreadTitleScroll({ title }: { title: string }): React.JSX.Element {
+  const viewportRef = useRef<HTMLSpanElement>(null);
+  const chunkRef = useRef<HTMLSpanElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const chunk = chunkRef.current;
+    if (!viewport || !chunk) return;
+    setOverflowing(chunk.scrollWidth > viewport.clientWidth + 1);
+  }, [title]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const chunk = chunkRef.current;
+      if (!chunk) return;
+      setOverflowing(chunk.scrollWidth > viewport.clientWidth + 1);
+    });
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [title]);
+
+  const durationSec = Math.min(18, Math.max(4, title.length * 0.14));
+
+  return (
+    <span
+      ref={viewportRef}
+      className={`thread-item-title-viewport${overflowing ? " is-overflowing" : ""}`}
+      style={{ "--thread-title-duration": `${durationSec}s` } as React.CSSProperties}
+      title={title}
+    >
+      <span className="thread-item-title-track">
+        <span className="thread-item-title-chunk" ref={chunkRef}>{title}</span>
+        {overflowing ? <span className="thread-item-title-chunk" aria-hidden="true">{title}</span> : null}
+      </span>
+    </span>
+  );
+}
+
 function SidebarButton({
   active,
   icon: Icon,
   label,
   navId,
   nested,
+  subnested,
   onClick,
 }: {
   active?: boolean;
@@ -3577,12 +3709,13 @@ function SidebarButton({
   label: string;
   navId?: NavId;
   nested?: boolean;
+  subnested?: boolean;
   onClick: () => void;
 }): React.JSX.Element {
   return (
     <button
       type="button"
-      className={`sidebar-button ${nested ? "nested" : ""} ${active ? "active" : ""}`}
+      className={`sidebar-button ${nested ? "nested" : ""} ${subnested ? "subnested" : ""} ${active ? "active" : ""}`}
       data-nav-id={navId}
       onClick={onClick}
       title={label}
@@ -3763,23 +3896,45 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function startResize(onMove: (clientX: number) => void): void {
+function startResize(
+  handle: HTMLElement,
+  pointerId: number,
+  onMove: (clientX: number) => void,
+): void {
   const previousCursor = document.body.style.cursor;
   const previousUserSelect = document.body.style.userSelect;
   document.body.style.cursor = "col-resize";
   document.body.style.userSelect = "none";
+  document.body.classList.add("is-panel-resizing");
+  try {
+    handle.setPointerCapture(pointerId);
+  } catch {
+    // Some hosts reject capture; window listeners below still help.
+  }
 
   function handlePointerMove(event: PointerEvent): void {
     onMove(event.clientX);
   }
 
-  function handlePointerUp(): void {
+  function cleanup(): void {
     document.body.style.cursor = previousCursor;
     document.body.style.userSelect = previousUserSelect;
+    document.body.classList.remove("is-panel-resizing");
     window.removeEventListener("pointermove", handlePointerMove);
-    window.removeEventListener("pointerup", handlePointerUp);
+    window.removeEventListener("pointerup", cleanup);
+    window.removeEventListener("pointercancel", cleanup);
+    window.removeEventListener("blur", cleanup);
+    try {
+      if (handle.hasPointerCapture(pointerId)) {
+        handle.releasePointerCapture(pointerId);
+      }
+    } catch {
+      // Ignore release errors after the handle unmounts.
+    }
   }
 
   window.addEventListener("pointermove", handlePointerMove);
-  window.addEventListener("pointerup", handlePointerUp, { once: true });
+  window.addEventListener("pointerup", cleanup);
+  window.addEventListener("pointercancel", cleanup);
+  window.addEventListener("blur", cleanup);
 }

@@ -63,6 +63,7 @@ export interface ArtifactPart extends StructuredPartBase {
   url?: string;
   mime?: string;
   size?: number;
+  sha256?: string;
   previewable?: boolean;
   downloadable?: boolean;
   citationIds?: string[];
@@ -131,6 +132,8 @@ export interface SubtaskPart extends StructuredPartBase {
   activities?: StructuredActivityEvent[];
   /** 子代理中间 markdown 输出（折叠展示） */
   markdownSummary?: string;
+  /** 子代理内部按首次发生顺序排列的 reasoning / tool / markdown 时间线。 */
+  timeline?: StructuredProcessTimelineEntry[];
   /** 子代理状态详情 */
   startedAt?: string;
   completedAt?: string;
@@ -159,8 +162,12 @@ export type StructuredAssistantPart =
 
 interface ActivityEventBase {
   id: string;
-  /** Structured event order for stable interleaving with reasoning. */
+  /** First appearance order. Immutable after the activity is created. */
   sequence?: number;
+  /** Most recent update order. */
+  updatedSequence?: number;
+  /** Terminal update order, when available. */
+  completedSequence?: number;
   /** Stable child identity when the activity belongs to a subagent. */
   subtaskId?: string;
   /** Present only when this activity is projected from a durable OAEP Item. */
@@ -183,6 +190,11 @@ export type StructuredActivityEvent =
       input?: unknown;
       output?: unknown;
       durationMs?: number;
+      /** Terminal metadata when projected from a command_execution item. */
+      cwd?: string;
+      exitCode?: number | null;
+      /** Semantic renderer category assigned by the runtime projection. */
+      toolCategory?: "skill" | "todo" | "subagent" | "config" | "schedule" | "search" | "file" | "shell" | "generic";
     })
   | (ActivityEventBase & {
       kind: "model";
@@ -305,6 +317,13 @@ export type StructuredProcessTimelineEntry =
       kind: "activity";
       sequence: number;
       activityId: string;
+    }
+  | {
+      id: string;
+      kind: "subtask";
+      sequence: number;
+      partId: string;
+      taskId: string;
     };
 
 export interface StructuredTurnState {
@@ -607,22 +626,35 @@ export function applyStructuredConversationEvent(
       return completePart(next, event.part, event.sequence);
     case "activity.updated": {
       const activity = event.activity;
+      const previous = next.activities.find((item) => item.id === activity.id);
+      const startedSequence = previous?.sequence ?? activity.sequence ?? event.sequence;
+      const terminal = activity.status === "completed" || activity.status === "error" || activity.status === "cancelled";
+      const updatedActivity: StructuredActivityEvent = {
+        ...previous,
+        ...activity,
+        sequence: startedSequence,
+        updatedSequence: event.sequence,
+        ...(terminal ? { completedSequence: event.sequence } : {}),
+      } as StructuredActivityEvent;
       let updatedParts = next.parts;
       if (activity.subtaskId) {
         updatedParts = next.parts.map((part) => {
           if (part.kind !== "subtask" || part.taskId !== activity.subtaskId) return part;
+          const previousChild = part.activities?.find((item) => item.id === activity.id);
+          const childActivity = { ...previousChild, ...updatedActivity, sequence: previousChild?.sequence ?? startedSequence } as StructuredActivityEvent;
           return {
             ...part,
-            activities: upsertById(part.activities ?? [], { ...activity, sequence: event.sequence }),
+            activities: upsertById(part.activities ?? [], childActivity),
+            timeline: upsertProcessTimelineActivity(part.timeline ?? [], activity.id, childActivity.sequence ?? event.sequence),
           };
         });
       }
       const processTimeline = activity.subtaskId
         ? (next.processTimeline ?? [])
-        : upsertProcessTimelineActivity(next.processTimeline ?? [], activity.id, event.sequence);
+        : upsertProcessTimelineActivity(next.processTimeline ?? [], activity.id, startedSequence);
       return {
         ...next,
-        activities: upsertById(next.activities, { ...activity, sequence: event.sequence }),
+        activities: upsertById(next.activities, updatedActivity),
         parts: updatedParts,
         processTimeline,
       };
@@ -632,6 +664,10 @@ export function applyStructuredConversationEvent(
         ...next,
         status: "completed",
         sealed: true,
+        // A finished turn must not leave parts "running". The reasoning
+        // disclosure derives its open/close transition from the part status, so
+        // an unterminated part would stay expanded forever after the turn ends.
+        parts: sealOpenParts(next.parts),
         // Final-answer authority belongs to part.completed / the backend. A
         // terminal turn event must never promote unclassified process text.
         meta: { ...next.meta, ...event.meta },
@@ -707,19 +743,55 @@ export function isStructuredAssistantPart(part: unknown): part is StructuredAssi
   }
 }
 
-function startPart(state: StructuredTurnState, part: StructuredAssistantPart, _sequence: number): StructuredTurnState {
-  return { ...state, parts: upsertById(state.parts, { ...part, sequence: part.sequence ?? _sequence }) };
+function sealOpenParts(parts: StructuredAssistantPart[]): StructuredAssistantPart[] {
+  return parts.map((part) => {
+    // Interaction and notice parts carry their own lifecycle (an unanswered
+    // approval must stay actionable) and never drive the process disclosure.
+    if (part.kind === "interaction" || part.kind === "notice") return part;
+    if (part.status !== "running" && part.status !== "pending") return part;
+    // Mirror the local completion path: a markdown part that is still open when
+    // the turn ends is the final answer, otherwise the result pane (which only
+    // renders `final` answer markdown) would show nothing at all.
+    return {
+      ...part,
+      status: "completed",
+      ...(part.kind === "markdown" ? { final: true } : {}),
+    } as StructuredAssistantPart;
+  });
+}
+
+function isTerminalPartStatus(status: StructuredPartStatus): boolean {
+  return status === "completed" || status === "error" || status === "cancelled";
+}
+
+function startPart(state: StructuredTurnState, part: StructuredAssistantPart, sequence: number): StructuredTurnState {
+  const existing = state.parts.find((item) => item.id === part.id);
+  // Terminal states are monotonic. A late duplicate `part.started` (or a stale
+  // "running" replay from a snapshot) must not reopen a part that already
+  // finished, otherwise a collapsed reasoning disclosure pops back open.
+  if (existing && isTerminalPartStatus(existing.status) && (part.status === "running" || part.status === "pending")) {
+    return state;
+  }
+  return { ...state, parts: upsertById(state.parts, { ...existing, ...part, sequence: existing?.sequence ?? part.sequence ?? sequence } as StructuredAssistantPart) };
 }
 
 function startPartWithRelatedActivities(state: StructuredTurnState, part: StructuredAssistantPart, sequence: number): StructuredTurnState {
   const next = startPart(state, part, sequence);
   if (part.kind !== "subtask") return next;
   const related = next.activities.filter((activity) => activity.subtaskId === part.taskId);
-  if (!related.length) return next;
+  const processTimeline = upsertProcessTimelineSubtask(next.processTimeline ?? [], part.id, part.taskId, part.sequence ?? sequence);
   return {
     ...next,
+    processTimeline,
     parts: next.parts.map((item) => item.kind === "subtask" && item.id === part.id
-      ? { ...item, activities: related }
+      ? {
+          ...item,
+          ...(related.length ? { activities: related } : {}),
+          timeline: related.reduce(
+            (timeline, activity) => upsertProcessTimelineActivity(timeline, activity.id, activity.sequence ?? sequence),
+            item.timeline ?? [],
+          ),
+        }
       : item),
   };
 }
@@ -738,10 +810,12 @@ function completePart(state: StructuredTurnState, part: StructuredAssistantPart,
       reasoningSegments: part.reasoningSegments ?? existing.reasoningSegments,
       activities: part.activities ?? existing.activities,
       markdownSummary: part.markdownSummary ?? existing.markdownSummary,
+      timeline: part.timeline ?? existing.timeline,
+      sequence: existing.sequence ?? part.sequence ?? _sequence,
     };
     return { ...state, parts: upsertById(state.parts, merged) };
   }
-  const merged = { ...existing, ...part, status } as StructuredAssistantPart;
+  const merged = { ...existing, ...part, status, sequence: existing.sequence ?? part.sequence ?? _sequence } as StructuredAssistantPart;
   return { ...state, parts: upsertById(state.parts, merged) };
 }
 
@@ -764,10 +838,15 @@ function applyPartDelta(
       sequence,
     });
   }
+  const updatedWithTimeline = updated.kind === "subtask"
+    ? { ...updated, timeline: appendProcessTimelineDelta(updated.timeline ?? [], part, delta, sequence) }
+    : updated;
   return {
     ...state,
-    parts: state.parts.map((item, index) => index === partIndex ? updated : item),
-    processTimeline: appendProcessTimelineDelta(state.processTimeline ?? [], part, delta, sequence),
+    parts: state.parts.map((item, index) => index === partIndex ? updatedWithTimeline : item),
+    processTimeline: part.kind === "subtask"
+      ? (state.processTimeline ?? [])
+      : appendProcessTimelineDelta(state.processTimeline ?? [], part, delta, sequence),
   };
 }
 
@@ -778,12 +857,20 @@ function appendProcessTimelineDelta(
   sequence: number,
 ): StructuredProcessTimelineEntry[] {
   if (part.kind === "reasoning" && delta.kind === "reasoning.append") {
+    const covered = reasoningSegmentCoveredLength(part, delta.segmentId);
     const previous = timeline.at(-1);
     if (previous?.kind === "reasoning" && previous.partId === part.id && previous.segmentId === delta.segmentId && previous.text.length < 16_384) {
-      return [...timeline.slice(0, -1), { ...previous, text: `${previous.text}${delta.text}` }];
+      // The timeline entry mirrors what the part already holds, so a delta that
+      // merely restates it must not be appended a second time here either.
+      const merged = appendReasoningDeltaText(previous.text, covered, delta.text);
+      if (merged === previous.text) return timeline;
+      return [...timeline.slice(0, -1), { ...previous, text: merged }];
     }
+    // The timeline invariant is `entries join === part segments join`. Seeding a
+    // fresh entry with text the part already holds would break it and make
+    // `reconcileReasoningRanges` collapse (or duplicate) the block later.
     const id = `reasoning:${part.id}:${sequence}`;
-    return [...timeline, { id, kind: "reasoning", sequence, partId: part.id, segmentId: delta.segmentId, text: delta.text, status: "running" } as StructuredProcessTimelineEntry].slice(-500);
+    return [...timeline, { id, kind: "reasoning", sequence, partId: part.id, segmentId: delta.segmentId, text: appendReasoningDeltaText("", covered, delta.text), status: "running" } as StructuredProcessTimelineEntry].slice(-500);
   }
   if (part.kind === "markdown" && delta.kind === "markdown.append") {
     const transient = (part.channel ?? "process") === "answer";
@@ -797,6 +884,22 @@ function appendProcessTimelineDelta(
   if (part.kind === "progress" && delta.kind === "progress.update") {
     return [...timeline, { id: `progress:${part.id}:${sequence}`, kind: "progress", sequence, partId: part.id, summary: delta.summary, status: "running", ...(delta.phase ? { phase: delta.phase } : {}), ...(delta.completed !== undefined ? { completed: delta.completed } : {}), ...(delta.total !== undefined ? { total: delta.total } : {}) } as StructuredProcessTimelineEntry].slice(-500);
   }
+  if (part.kind === "subtask" && delta.kind === "subtask.reasoning.append") {
+    const previous = timeline.at(-1);
+    if (previous?.kind === "reasoning" && previous.partId === part.id && previous.segmentId === delta.segmentId && previous.text.length < 16_384) {
+      return [...timeline.slice(0, -1), { ...previous, text: `${previous.text}${delta.text}` }];
+    }
+    const entry: StructuredProcessTimelineEntry = { id: `reasoning:${part.id}:${sequence}`, kind: "reasoning", sequence, partId: part.id, segmentId: delta.segmentId, text: delta.text, status: "running" };
+    return [...timeline, entry].slice(-500);
+  }
+  if (part.kind === "subtask" && delta.kind === "subtask.markdown.append") {
+    const previous = timeline.at(-1);
+    if (previous?.kind === "markdown" && previous.partId === part.id && previous.text.length < 16_384) {
+      return [...timeline.slice(0, -1), { ...previous, text: `${previous.text}${delta.text}` }];
+    }
+    const entry: StructuredProcessTimelineEntry = { id: `markdown:${part.id}:${sequence}`, kind: "markdown", sequence, partId: part.id, text: delta.text, status: "running", transient: false };
+    return [...timeline, entry].slice(-500);
+  }
   return timeline;
 }
 
@@ -807,8 +910,107 @@ function upsertProcessTimelineActivity(
 ): StructuredProcessTimelineEntry[] {
   const id = `activity:${activityId}`;
   const existing = timeline.find((entry) => entry.id === id);
-  if (existing) return timeline.map((entry) => entry.id === id ? { ...entry, sequence } : entry);
+  if (existing) return timeline;
   return [...timeline, { id, kind: "activity", sequence, activityId } as StructuredProcessTimelineEntry].slice(-500);
+}
+
+function upsertProcessTimelineSubtask(
+  timeline: StructuredProcessTimelineEntry[],
+  partId: string,
+  taskId: string,
+  sequence: number,
+): StructuredProcessTimelineEntry[] {
+  const id = `subtask:${partId}`;
+  if (timeline.some((entry) => entry.id === id)) return timeline;
+  const entry: StructuredProcessTimelineEntry = { id, kind: "subtask", sequence, partId, taskId };
+  return [...timeline, entry].slice(-500);
+}
+
+/**
+ * Whether a reasoning push adds nothing the reader has not already seen.
+ *
+ * `appendReasoningDeltaText` returns the merged text, so it cannot distinguish
+ * "pure re-statement" from "merge produced the same string". This makes that
+ * distinction explicit for callers that must decide whether to add a segment.
+ */
+function reasoningPushIsRedundant(shown: string, deltaText: string): boolean {
+  if (!shown || !deltaText) return false;
+  return shown.endsWith(deltaText);
+}
+
+/**
+ * Resolve one `reasoning.append` against the text a segment already holds.
+ *
+ * `reasoning.append` is specified as an incremental chunk, but the producers in
+ * this tree are not uniform:
+ *
+ *  - Codex re-emits `item/reasoning/summaryTextDelta` with the same segment, and
+ *    renumbers one summary across `summary-1`/`summary-2` (`native_decoder.py`);
+ *  - the OAEP runtime re-attaches the **accumulated** Item payload to forwarded
+ *    Journal rows (`journal._hydrate_delta_payloads`), and the Desktop projector
+ *    re-derives both the segment id and the delta text from that payload
+ *    (`oaepPresentationProjector.presentationDelta`).
+ *
+ * Concatenating those producers' text verbatim is what makes one thought render
+ * two or three times in a row (and, once the process timeline disagrees with the
+ * aggregate, makes `reconcileReasoningRanges` collapse the block). A push is
+ * therefore interpreted as "advance this segment by its new tail": anything the
+ * segment already holds is not printed again, while genuine incremental chunks
+ * keep concatenating in order.
+ *
+ * A push is only treated as re-statement when it overlaps *what the part has
+ * already received* (`coveredLength`). A chunk that merely echoes a prefix of its
+ * own segment is appended, so intentional repetition ("ha" over "ha") survives.
+ */
+function appendReasoningDeltaText(segmentText: string, coveredLength: number, deltaText: string): string {
+  if (!deltaText) return segmentText;
+  // `coveredLength` is how much of the reasoning the part has already received;
+  // `segmentText` is the slice we are extending. A non-empty covered length with
+  // an empty slice means the whole push is already covered, so nothing is added.
+  if (!segmentText) return coveredLength > 0 ? "" : deltaText;
+  const covered = segmentText.slice(0, Math.max(0, Math.min(coveredLength, segmentText.length)));
+  if (!covered) return `${segmentText}${deltaText}`;
+  // Re-statement: the push is already part of what was written.
+  if (covered.endsWith(deltaText)) return segmentText;
+  // Re-statement plus a new tail: keep only the tail.
+  for (let overlap = Math.min(covered.length, deltaText.length); overlap >= 1; overlap -= 1) {
+    if (covered.endsWith(deltaText.slice(0, overlap))) {
+      return `${segmentText}${deltaText.slice(overlap)}`;
+    }
+  }
+  return `${segmentText}${deltaText}`;
+}
+
+/**
+ * How many characters of `segmentId` the part has already received in order.
+ * Everything before that segment is sealed, later segments have not arrived yet,
+ * and all segments that live in one part are re-statements of the same thought.
+ */
+function reasoningSegmentCoveredLength(
+  part: { segments: ReadonlyArray<Pick<ReasoningSegment, "id" | "text">> },
+  segmentId: string,
+): number {
+  const index = part.segments.findIndex((segment) => segment.id === segmentId);
+  if (index < 0) return leadingSegmentLength(part);
+  return part.segments.slice(0, index + 1).reduce((total, segment) => total + segment.text.length, 0);
+}
+
+/**
+ * Everything a reasoning part holds up to and including its leading segment.
+ * Later segments carry text the reader already saw in the first one, so only the
+ * leading segment can claim "this was already shown"; a segment arriving out of
+ * order must still be able to add its own content.
+ */
+function leadingSegmentLength(
+  part: { segments: ReadonlyArray<Pick<ReasoningSegment, "id" | "text">> },
+): number {
+  return part.segments.length ? part.segments[0].text.length : 0;
+}
+
+function leadingSegmentText(
+  part: { segments: ReadonlyArray<Pick<ReasoningSegment, "id" | "text">> },
+): string {
+  return part.segments.length ? part.segments[0].text : "";
 }
 
 function updatePartWithDelta(part: StructuredAssistantPart, delta: StructuredPartDelta, sequence: number): StructuredAssistantPart | null {
@@ -822,18 +1024,42 @@ function updatePartWithDelta(part: StructuredAssistantPart, delta: StructuredPar
   }
   if (part.kind === "reasoning" && delta.kind === "reasoning.append") {
     const index = part.segments.findIndex((segment) => segment.id === delta.segmentId);
-    const segments = index === -1
-      ? [...part.segments, {
+    if (index === -1) {
+      // A new segment id is not proof of new text: the same summary renumbered
+      // into summary-2/summary-3 still describes the same thought. Repeating it
+      // would render it once per id, so the segment is only added for the tail it
+      // has not shown yet. Keeping a renumbered duplicate row would leave the
+      // aggregate reading "AAAAAA" and break the `timeline === aggregate`
+      // invariant that `reconcileReasoningRanges` relies on.
+      const shown = leadingSegmentText(part);
+      if (reasoningPushIsRedundant(shown, delta.text)) return part;
+      const text = appendReasoningDeltaText(shown, leadingSegmentLength(part), delta.text);
+      return {
+        ...part,
+        status: "running",
+        segments: [...part.segments, {
           id: delta.segmentId,
           sequence,
-          text: delta.text,
+          text,
           status: "running" as const,
           ...(delta.source ? { source: delta.source } : {}),
-        }]
-      : part.segments.map((segment, segmentIndex) => segmentIndex === index
-          ? { ...segment, text: `${segment.text}${delta.text}`, status: "running" as const }
-          : segment);
-    return { ...part, segments, status: "running" };
+        }],
+      };
+    }
+    // A segment is a place-holder, not a stream. Some backends re-number one
+    // summary into several segments while others re-send the same one; and a
+    // few emit the growing summary rather than the chunk. Appending blindly
+    // therefore renders the same thought two or three times, once per push.
+    const target = part.segments[index];
+    const merged = appendReasoningDeltaText(target.text, reasoningSegmentCoveredLength(part, delta.segmentId), delta.text);
+    if (merged === target.text) return part;
+    return {
+      ...part,
+      status: "running",
+      segments: part.segments.map((segment, segmentIndex) => segmentIndex === index
+        ? { ...segment, text: merged, status: "running" as const }
+        : segment),
+    };
   }
   if (part.kind === "reasoning" && delta.kind === "reasoning.summary") {
     return { ...part, summary: delta.summary, status: "running" };
@@ -992,6 +1218,9 @@ function sanitizeProcessTimelineEntry(entry: unknown): StructuredProcessTimeline
   if (value.kind === "activity" && isNonEmptyString(value.activityId)) {
     return [{ ...base, kind: "activity", activityId: value.activityId.slice(0, 200) }] as StructuredProcessTimelineEntry[];
   }
+  if (value.kind === "subtask" && isNonEmptyString(value.partId) && isNonEmptyString(value.taskId)) {
+    return [{ ...base, kind: "subtask", partId: value.partId.slice(0, 200), taskId: value.taskId.slice(0, 200) }] as StructuredProcessTimelineEntry[];
+  }
   return [];
 }
 
@@ -1012,6 +1241,7 @@ function sanitizeStructuredPart(part: StructuredAssistantPart): StructuredAssist
       ...(part.summary ? { summary: part.summary.slice(0, 10_000) } : {}),
       segments: part.segments.slice(0, 32).map((segment) => ({
         id: segment.id.slice(0, 200),
+        ...(Number.isSafeInteger(segment.sequence) ? { sequence: segment.sequence } : {}),
         text: segment.text.slice(0, 80_000),
         status: segment.status,
         ...(segment.source ? { source: segment.source.slice(0, 200) } : {}),
@@ -1040,6 +1270,7 @@ function sanitizeStructuredPart(part: StructuredAssistantPart): StructuredAssist
       ...(part.url ? { url: part.url.slice(0, 4_096) } : {}),
       ...(part.mime ? { mime: part.mime.slice(0, 160) } : {}),
       ...(Number.isFinite(part.size) ? { size: Math.max(0, Number(part.size)) } : {}),
+      ...(part.sha256 ? { sha256: part.sha256.slice(0, 128) } : {}),
       ...(typeof part.previewable === "boolean" ? { previewable: part.previewable } : {}),
       ...(typeof part.downloadable === "boolean" ? { downloadable: part.downloadable } : {}),
       ...(part.citationIds ? { citationIds: sanitizeRelationIds(part.citationIds) } : {}),
@@ -1081,6 +1312,7 @@ function sanitizeStructuredPart(part: StructuredAssistantPart): StructuredAssist
       })) } : {}),
       ...(part.activities ? { activities: part.activities.slice(0, 50).filter(isStructuredActivityEvent) } : {}),
       ...(part.markdownSummary ? { markdownSummary: part.markdownSummary.slice(0, 40_000) } : {}),
+      ...(part.timeline ? { timeline: part.timeline.slice(-500).flatMap(sanitizeProcessTimelineEntry) } : {}),
       ...(part.startedAt ? { startedAt: part.startedAt.slice(0, 80) } : {}),
       ...(part.completedAt ? { completedAt: part.completedAt.slice(0, 80) } : {}),
       ...(Number.isFinite(part.durationMs) ? { durationMs: part.durationMs } : {}),
@@ -1098,10 +1330,13 @@ function sanitizeStructuredActivity(activity: StructuredActivityEvent): Structur
   const base = {
     id: activity.id.slice(0, 200),
     ...(Number.isSafeInteger(activity.sequence) ? { sequence: activity.sequence } : {}),
+    ...(Number.isSafeInteger(activity.updatedSequence) ? { updatedSequence: activity.updatedSequence } : {}),
+    ...(Number.isSafeInteger(activity.completedSequence) ? { completedSequence: activity.completedSequence } : {}),
     turnId: activity.turnId.slice(0, 200),
     timestamp: activity.timestamp.slice(0, 80), source: activity.source.slice(0, 200),
     status: activity.status, title: activity.title.slice(0, 1_000),
     ...(activity.subtaskId ? { subtaskId: activity.subtaskId.slice(0, 200) } : {}),
+    ...(activity.oaepItemId ? { oaepItemId: activity.oaepItemId.slice(0, 200) } : {}),
   };
   if (activity.kind === "tool") return {
     ...base, kind: activity.kind, toolName: activity.toolName.slice(0, 300), callId: activity.callId.slice(0, 200),
@@ -1111,6 +1346,9 @@ function sanitizeStructuredActivity(activity: StructuredActivityEvent): Structur
     ...(activity.input !== undefined ? { input: boundStructuredPayload(activity.input) } : {}),
     ...(activity.output !== undefined ? { output: boundStructuredPayload(activity.output) } : {}),
     ...(Number.isFinite(activity.durationMs) ? { durationMs: activity.durationMs } : {}),
+    ...(activity.cwd ? { cwd: activity.cwd.slice(0, 2_048) } : {}),
+    ...(activity.exitCode !== undefined ? { exitCode: activity.exitCode } : {}),
+    ...(activity.toolCategory ? { toolCategory: activity.toolCategory } : {}),
   };
   if (activity.kind === "model") return {
     ...base, kind: activity.kind,

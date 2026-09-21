@@ -3,15 +3,19 @@ EdgeAgent User Profile Manager Module
 用户画像与文件管理模块
 
 管理EdgeAgent的用户特定文件结构:
-work_dir/{user_id}/configs/
-├── AGENTS.md            # 统一系统提示词 (System + User Profile + Skills + Tools prefs)
-├── MEMORY.md            # 智能体笔记摘要 (由 CuratedMemoryStore 管理)
-├── USER_CONFIG.json     # 结构化用户配置 (user_name, agent_name, ask_before_plan)
-├── TOOLS_CONFIG.json    # 工具配置
-├── SUBAGENT_CONFIG.json # 子智能体配置
-├── THREAD_CONFIG.json   # 线程配置
-├── SCHEDULED_TASKS.json # 定时任务
-└── skills/              # 用户学习到的 skills
+work_dir/{user_id}/
+├── configs/             # 配置文件 (AGENTS.md / MEMORY.md / *.json / skills/)
+├── tmp/                 # 临时脚本与缓存
+└── downloads/           # 下载文件
+
+AGENTS.md 只承载"用户可写层"：User Profile + scratch 目录路径。
+配置文件清单不在此列出——要么由工具管理 (UpdateUserConfig / memory)，
+要么由 Skill 记录 (update_tools)，在 system prompt 里再抄一份会成为
+第三个事实源并每轮消耗数百字符。
+
+框架行为规范 (Workflow / MEMORY 规则 / 输出风格) 位于
+drsai.backend.prompt_registry.BEHAVIOR_PROMPT，由
+build_base_system_message() 追加进 system message。
 """
 
 from pathlib import Path
@@ -129,7 +133,7 @@ class UserProfileManager:
         self.thread_id = thread_id
 
         # 定义各个文件路径
-        self.agents_md = self.config_path / "AGENTS.md" # 统一系统提示词：System + User Profile + Skills + Tools
+        self.agents_md = self.config_path / "AGENTS.md" # 用户可写层：User Profile + Environment 路径
         self.subagent_config_path = self.config_path / "SUBAGENT_CONFIG.json" # 子智能体配置
         self.memorie_path = self.config_path / "MEMORY.md" # 智能体笔记摘要 (由 CuratedMemoryStore 管理)
         self.skills_dir = self.config_path / "skills" # 用户的所有skills
@@ -194,123 +198,56 @@ class UserProfileManager:
             json.dump(self.user_config.model_dump(), f, indent=4, ensure_ascii=False)
 
     def _create_agents_md(self):
-        """创建统一的 AGENTS.md — 直接包含 System + User Profile + Skills + Tools 偏好
+        """Create AGENTS.md — the user-writable half of the system prompt.
+
+        This file carries only what is specific to *this user and machine*: the
+        profile they own and the scratch directories they may use.  Framework
+        policy ("how to work", memory rules, output style) belongs to
+        :mod:`drsai.backend.prompt_registry` and is appended to the system
+        message separately.
+
+        The split matters because users are invited to edit AGENTS.md.  When it
+        also held the framework rules, an edit could silently drop them, and the
+        ``# System`` heading repeated an identity the kernel had already stated
+        in different words.
+
+        Config files (subagents, tools, thread defaults) are deliberately *not*
+        enumerated here.  Either a tool manages them (``UpdateUserConfig``,
+        ``memory``) or a Skill documents them (``update_tools``), so a copy in
+        the system prompt would be a third source of truth that drifts -- and it
+        cost several hundred characters on every turn.
+
+        ``BEHAVIOR_PROMPT`` (in :mod:`drsai.backend.prompt_registry`) deliberately
+        is *not* written into this file: it is appended to the system message by
+        ``build_base_system_message``, so embedding it here would put the
+        framework rules in the prompt twice.
         """
-        content = f"""# System
-
-You are an interactive tool that helps users with software engineering and scientific data analysis tasks. In addition to these tasks, you should provide educational insights about user's task along the way.
-
-## Workflow
-1. Receive user task → Analyze if planning is needed
-2. If planning needed → Generate plan → Get user approval
-3. Execute tasks:
-   - Use `TodoWrite` to track multi-step work progress
-   - Use `Skill` tool IMMEDIATELY when a task matches a skill description
-   - Use `Delegate` tool to dispatch long-running subtasks (e.g. reading large files, complex code exploration, multi-file refactoring) to sub-agents
-   - Prefer tools over prose — act, don't just explain
-4. When reading code/files: prioritize `grep` for keyword searches → then `read`-related functions; avoid reading entire files first
-5. For long-running tasks: stop polling after 2 rounds, remind user to schedule a task
-6. Record all actions, tool calls, errors in session memory
-7. Learn from execution → Save skills if requested by user
-8. Handle errors → Request user help if blocked
-9. After finishing, summarize what changed
-
-## Proactive Memory Management
-MEMORY.md is your persistent notebook across sessions — it survives process restarts and is injected into your system prompt at the start of every new session. Use it to **proactively learn** about the user, their projects, and lessons from past work.
-
-### What belongs in MEMORY.md
-- **User preferences & working style** — what they care about, what annoys them, coding conventions they enforce
-- **Project context** — architecture, key file locations, non-obvious dependencies, deployment steps
-- **Bug fixes & lessons learned** — root cause + fix approach for non-trivial issues (not "changed a typo")
-- **Important task outcomes** — what was accomplished, what remains, key decisions made
-- **User feedback & corrections** — "don't do X", "I prefer Y", "this is wrong because Z"
-
-### When to proactively save to MEMORY.md
-
-| Trigger | Action |
-|---------|--------|
-| Complex multi-step task completed (especially multi-interaction modifications) | `memory add` — summarize root cause + fix + key files. **Remind user afterwards.** |
-| User gives explicit feedback or correction | `memory add` — record the preference/correction |
-| Non-trivial bug fix | `memory add` — root cause + fix approach |
-| Discovering project convention or architecture that isn't obvious from code | `memory add` — record for future sessions |
-| Existing memory entry is outdated or wrong | `memory replace` — update with corrected info |
-
-**After saving, always remind the user:** "I've saved this to memory for future sessions."
-
-### When to save a session summary
-- Use `summry_conversation_to_memory` at the end of **complex sessions** (multi-turn tasks, debugging sessions, architecture discussions)
-- Include `keywords` (for searchability) and `questions` (natural-language queries that this summary answers)
-- Simple single-question sessions don't need a summary
-
-### When to retrieve from memory
-- At session start: MEMORY.md content is **auto-injected** into your system prompt — no action needed
-- When the user references past work: use `retrieve_from_memory` to search session summaries
-- Before adding a new entry: use `memory read` to check for duplicates and stay within the 2200-char limit
-- If MEMORY.md is near capacity: use `memory replace` to merge/condense older entries
-
-### MEMORY.md entry format
-Each entry should follow this structure:
-```
-[YYYY-MM-DD] Title: one-line summary. Key files: path1, path2. Fix/approach: brief details.
-```
-Rules:
-- Start with a **date** tag `[YYYY-MM-DD]`
-- Keep each entry **under 200 chars** when possible (hard limit ~300 chars)
-- Reference **file paths + line numbers**, not raw code
-- One topic per entry — don't merge unrelated items
-
-### What NOT to save
-- Trivial single-file reads, simple Q&A, routine tool calls
-- Duplicate or near-duplicate entries (merge instead)
-- Raw code snippets (reference file paths + line numbers instead)
-- Sensitive data (API keys, passwords, tokens)
-
-# User Profile
+        content = f"""# User Profile
 
 ## Basic Information
 - **User ID:** {self.user_id}
 - **User Name:** {self.user_name}
 - **What does the user call you:** {self.agent_name}
-- **Pronouns:** *(optional)*
-- **Timezone:** 
-- **Notes:** 
 
 ## Preferences
 
-*(What do they care about? What projects are they working on? What annoys them? What makes them laugh? Build this over time.)*
+*(Fill in over time — what they care about, what projects they work on.
+Edit this file directly; it is injected into the system prompt at session start.)*
 
-[User preferences and the agent's response style. To be filled based on user interactions]
+## Workspace paths
 
----
+OpenDrSai's own workspace for this user — **not the user's project directory**.
 
-The more you know, the better you can help. But remember — you're learning about a person, not building a dossier. Respect the difference.
+```
+root:      {self.work_dir}
+tmp:       {self.tmp_dir}
+downloads: {self.download_dir}
+```
 
-## Environment Setup
+Use `tmp` for throwaway scripts and caches, `downloads` for fetched files.
+Both are private scratch space, not a delivery location.
 
-### Agent Internal Storage (OpenDrSai Workspace)
-This is where OpenDrSai stores its own internal configuration and data. **This is NOT the user's project directory.**
-
-#### Root Directory
-    - {self.work_dir}
-
-#### Configuration Files
-    - {self.config_path}/AGENTS.md            # This file — unified system prompt
-    - {self.config_path}/MEMORY.md            # Agent notes (managed by CuratedMemoryStore)
-    - {self.config_path}/SUBAGENT_CONFIG.json  # Subagent settings
-    - {self.config_path}/TOOLS_CONFIG.json     # Tool configuration
-    - {self.config_path}/USER_CONFIG.json      # Structured user settings
-    - {self.config_path}/THREAD_CONFIG.json    # Thread-level config
-    - {self.config_path}/SCHEDULED_TASKS.json  # Scheduled tasks
-    - {self.config_path}/skills/              # User's learned skills
-
-### Temporary & Download Directories
-    - {self.tmp_dir}        # For code generation/testing
-    - {self.download_dir}   # For downloaded files
-
-**Important Usage Rules:**
-- **User's Project Files:** User's code, config, and project files are NOT in the Agent Internal Storage above. They are in the user's project directory (injected via system prompt).
-- **OpenDrSai Internal Files:** The "Agent Internal Storage" is for OpenDrSai's own configuration. Don't modify files there unless explicitly asked.
-- **File Operations:** Use the Temporary Directory only for private scripts, caches, and intermediate files. It is not a user delivery location. Any document, spreadsheet, presentation, image, archive, report, or other file requested by the user must be written beneath the current user Workspace's `artifacts/` directory and published as an Artifact. Never present an Agent Internal Storage path as a delivered result.
+Don't modify anything under `root` unless explicitly asked.
 """
         self.agents_md.write_text(content, encoding='utf-8')
 

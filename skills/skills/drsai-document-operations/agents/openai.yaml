@@ -1,0 +1,4 @@
+interface:
+  display_name: "Drsai Contract & Related-Business"
+  short_description: "Fill/review contracts and audit related-business materials"
+  default_prompt: "Use $drsai-document-operations for this contract or related-business workflow."

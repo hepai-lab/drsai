@@ -56,18 +56,19 @@ set "DRSAI_GATEWAY_DEV_MANAGED="
 set "DRSAI_GATEWAY_HOT_RELOAD="
 set "OPENDRSAI_WORKBENCH_EXTERNAL_RUNTIME="
 
-REM Platform URLs — align with WebUI test (drsaiv2):
-REM OIDC/portal on ai-dev; DDF agent catalog on HepAI aiapi (same as WebUI get_ddf_agents).
+REM --- Development platform endpoints ---
+REM PLATFORM_BASE_URL: dev portal + model gateway (ai-dev).
+REM OIDC_ISSUER: same host as platform (ai-dev) in dev.
+REM DDF_API_BASE_URL: DDF agent catalog lives on production aiapi (diff host).
+REM MODEL_BASE_URL: explicitly set to prevent DDF_API_BASE_URL from overriding
+REM   the model endpoint — dev OIDC tokens (issued by ai-dev) cannot be
+REM   verified by the production aiapi server (401 JWKS unavailable).
+REM SKILLS_API_BASE_URL: Skills Square REST APIs on WebUI test (drsaiv2).
 set "OPENDRSAI_PLATFORM_BASE_URL=https://ai-dev.ihep.ac.cn"
-set "OPENDRSAI_PLATFORM_API_BASE_URL=https://aiapi.ihep.ac.cn/apiv2"
-REM Skills Square REST APIs are served by WebUI (test=drsaiv2), not the HepAI portal.
-set "OPENDRSAI_SKILLS_API_BASE_URL=https://drsaiv2.ihep.ac.cn"
-REM OPENDRSAI_MODEL_BASE_URL intentionally NOT set to aiapi.ihep.ac.cn — the
-REM OIDC token is issued by ai-dev.ihep.ac.cn, and the production aiapi server
-REM cannot verify it (401 "OIDC signing keys are unavailable"). Let
-REM resolve_hepai_model_base_url() resolve the correct URL from the OIDC issuer.
 set "OPENDRSAI_DDF_API_BASE_URL=https://aiapi.ihep.ac.cn/apiv2"
+set "OPENDRSAI_MODEL_BASE_URL=https://ai-dev.ihep.ac.cn/apiv2/v1"
 set "OPENDRSAI_OIDC_ISSUER=https://ai-dev.ihep.ac.cn/api"
+set "OPENDRSAI_SKILLS_API_BASE_URL=https://drsaiv2.ihep.ac.cn"
 
 REM Built-in skills directory
 set "SYSTEM_SKILLS_DIR=%REPO_ROOT%\skills\skills"

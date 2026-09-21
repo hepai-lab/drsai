@@ -4,7 +4,7 @@ import { ThreadPatchFrameBatcher } from "./threadPatchFrameBatcher";
 import { startRenderHealthMonitor } from "./renderHealthMonitor";
 import { executeRecoveryActionOnce } from "./recoveryActionCoordinator";
 import { ThreadSnapshotStore } from "./threadSnapshotStore";
-import { ThreadSnapshotCoordinator } from "./threadSnapshotCoordinator";
+import { envelopeHasRuntimeWaterline, ThreadSnapshotCoordinator } from "./threadSnapshotCoordinator";
 import { threadSyncMetrics } from "./threadSyncMetrics";
 import { CompletionDeliveryTracker } from "./completionDeliveryTracker";
 import { verifyResultProvenance } from "../../api/resultProvenance";
@@ -24,6 +24,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Stethoscope,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -58,7 +59,6 @@ import type {
   DesktopIdeContextSnapshot,
   DesktopMcpContextResult,
   DesktopThread,
-  ExperimentReleaseGateState,
   InstallProgress,
   AgentModelSelection,
   MyDrSaiModelConfig,
@@ -67,7 +67,6 @@ import type {
   RemoteSshHost,
   RemoteSshHostKey,
   RemoteDirectoryEntry,
-  RunInspectionOpenRequest,
   WorkspaceFilePreview,
   WorkspaceProject,
 } from "@shared/desktopApi";
@@ -76,10 +75,11 @@ import { copyTextSafely } from "./clipboard";
 import { describeUserFacingError, type UserFacingRecoveryAction } from "./userFacingErrors";
 import { appendRendererStage } from "./debugLogStore";
 import { userFacingBusinessText, userFacingFailureMessage } from "./userFacingLanguage";
-import { supportsFullAgentPrimaryRuntime } from "./modelCatalogRecovery";
-import { getAgentModelOptions } from "./agentModelOptions";
+import { supportsFullAgentPrimaryRuntime, supportsImageGenerationModel } from "./modelCatalogRecovery";
+import { getAgentModelOptions, getImageGenerationModelOptions } from "./agentModelOptions";
 import { formatUpdateStatus } from "./statusFormatting";
 import { normalizeWorkspaceSortMode, sortWorkspacesForSidebar, type WorkspaceSortMode } from "./workspaceOrdering";
+import { describeMissingWorkspacePreview, isMissingWorkspacePreview, loadWorkspacePreview } from "./workspacePreview";
 import { LoginScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
 import { deriveOperationalState, shouldShowOperationalStateBar, type OperationalStateFacts } from "@shared/operationalState";
@@ -88,7 +88,7 @@ import {
   canonicalizeSidebarThreads,
   mergeWorkspaceSidebarCatalogPages,
 } from "@shared/threadSidebarCatalog";
-import { threadSnapshotHasConversation } from "../../api/threadSnapshotHydration";
+import { threadSnapshotBodyDecision, threadSnapshotHasConversation } from "../../api/threadSnapshotHydration";
 import { AgentSquareView } from "./components/AgentSquareView";
 import { AgentRunWorkspace } from "./components/AgentRunWorkspace";
 import { ApprovalCenterView } from "./components/ApprovalCenterView";
@@ -106,6 +106,7 @@ import { FeedbackAdminDialog } from "./components/FeedbackAdminDialog";
 import { KnowledgeBasePanel } from "./components/KnowledgeBasePanel";
 import { AppDecisionDialogHost, requestAppDecision, showAppNotice } from "./components/AppDecisionDialog";
 import { FilesContextPanel } from "./components/files/FilesContextPanel";
+import { ChatDiagnosticsPanel } from "./components/diagnostics/ChatDiagnosticsPanel";
 import { CitationSourcePanel } from "./components/files/CitationSourcePanel";
 import type { CitationPart } from "@shared/structuredConversation";
 import {
@@ -178,6 +179,7 @@ interface TerminalCommandProposal {
 
 const rightTabIcons: Record<RightTab, LucideIcon> = {
   files: FileText,
+  diagnostics: Stethoscope,
 };
 
 const WORKSPACE_SORT_STORAGE_KEY = "opendrsai.workspaceSortMode";
@@ -224,6 +226,7 @@ interface SidebarComponentVisibility {
 }
 interface RightSidebarComponentVisibility {
   files: boolean;
+  diagnostics: boolean;
 }
 interface AwaySummary {
   startedAt: string;
@@ -233,6 +236,11 @@ interface AwaySummary {
   pending: DesktopBackgroundTask[];
 }
 type NetworkConnectivityState = "online" | "offline" | "restored";
+interface ThreadResyncEntry {
+  promise: Promise<void>;
+  demand: { minimumSequence?: number; expectedGeneration?: number };
+  superseded: boolean;
+}
 
 function App(): React.JSX.Element {
   const auth = useAuth();
@@ -323,7 +331,7 @@ function AuthenticatedApp({
   ]);
   const [navHistoryIndex, setNavHistoryIndex] = useState(0);
   const [activeRightTab, setActiveRightTab] = useState<RightTab>("files");
-  const [debugViewRequest, setDebugViewRequest] = useState<{ view: "activity" | "app-errors"; nonce: number; runId?: string } | null>(null);
+  const [selectedDiagnosticTraceId, setSelectedDiagnosticTraceId] = useState<string>();
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(() => loadRestoredWorkspaceId());
   const [storedWorkspaces, setStoredWorkspaces] = useState<WorkspaceProject[]>(
     [],
@@ -380,9 +388,13 @@ function AuthenticatedApp({
   const [threadsLoaded, setThreadsLoaded] = useState(false);
   const [activeThreadId, setActiveThreadId] = useState(() => loadRestoredThreadId());
   const activeThreadIdRef = useRef(activeThreadId);
+  // Latest thread list for async flows (loadChatChoices) that must not re-run
+  // whenever the thread catalog refreshes.
+  const threadsRef = useRef<DesktopThread[]>(threads);
+  useEffect(() => { threadsRef.current = threads; }, [threads]);
   // Deleted ids must ignore late abort/handoff/catalog upserts that would recreate the row.
   const deletedThreadIdsRef = useRef(new Set<string>());
-  useEffect(() => { activeThreadIdRef.current = activeThreadId; }, [activeThreadId]);
+  useEffect(() => { activeThreadIdRef.current = activeThreadId; }, [activeThreadId]);;
   const threadSnapshotStoreRef = useRef<ThreadSnapshotStore | null>(null);
   if (!threadSnapshotStoreRef.current) threadSnapshotStoreRef.current = new ThreadSnapshotStore();
   const threadSnapshotStore = threadSnapshotStoreRef.current;
@@ -397,6 +409,7 @@ function AuthenticatedApp({
   );
   const threadSnapshotCoordinatorRef = useRef(new ThreadSnapshotCoordinator());
   const threadHydrationsRef = useRef(new Map<string, { generation: number; requestId: string; promise: Promise<void> }>());
+  const threadResyncInFlightRef = useRef(new Map<string, ThreadResyncEntry>());
   useEffect(() => {
     for (const [threadId, hydration] of threadHydrationsRef.current) {
       if (threadId !== activeThreadId) {
@@ -412,16 +425,6 @@ function AuthenticatedApp({
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(true);
-  const [runInspectionRequest, setRunInspectionRequest] = useState<(RunInspectionOpenRequest & { focusedItemId?: string }) | null>(null);
-  const [experimentReleaseGate, setExperimentReleaseGate] = useState<ExperimentReleaseGateState>({
-    schema_version: "opendrsai.experiment-release-gate/1",
-    enabled: false,
-    required_features: ["M31-02", "M31-03", "M31-04", "M31-05"],
-    passed_features: [],
-    blocking_features: ["M31-02", "M31-03", "M31-04", "M31-05"],
-    source_ledger_sha256: null,
-    reason: "release_gate_resource_missing",
-  });
 
   useEffect(() => {
     const openFeedback = (event: KeyboardEvent): void => {
@@ -449,37 +452,16 @@ function AuthenticatedApp({
     return () => { active = false; };
   }, [sessionRestoring, user]);
 
-  useEffect(() => {
-    let disposed = false;
-    void desktopApi.getExperimentReleaseGate()
-      .then((gate) => { if (!disposed) setExperimentReleaseGate(gate); })
-      .catch(() => undefined);
-    return () => { disposed = true; };
-  }, []);
-
-  useEffect(() => {
-    function openRunInspection(event: Event): void {
-      const detail = (event as CustomEvent<Partial<RunInspectionOpenRequest> & { focusedItemId?: string }>).detail;
-      if (!detail || typeof detail.runId !== "string" || !/^[A-Za-z0-9._:-]{1,200}$/.test(detail.runId)) return;
-      if (typeof detail.workspacePath !== "string" || !detail.workspacePath.trim()) return;
-      setRunInspectionRequest({
-        workspacePath: detail.workspacePath,
-        ...(typeof detail.workspaceId === "string" && detail.workspaceId ? { workspaceId: detail.workspaceId } : {}),
-        runId: detail.runId,
-        ...(detail.createExperiment === true && experimentReleaseGate.enabled ? { createExperiment: true } : {}),
-        ...(typeof detail.focusedItemId === "string" ? { focusedItemId: detail.focusedItemId } : {}),
-      });
-      setActiveRightTab("files");
-      setRightPanelCollapsed(false);
-    }
-    window.addEventListener("opendrsai:open-run-inspection", openRunInspection);
-    return () => window.removeEventListener("opendrsai:open-run-inspection", openRunInspection);
-  }, [experimentReleaseGate.enabled]);
   const [sessionScope, setSessionScope] = useState<"workspace" | "all">(() => loadSessionScope());
   const [availableChatAgents, setAvailableChatAgents] = useState<DesktopAgent[]>([]);
   const [agentCatalogLoaded, setAgentCatalogLoaded] = useState(false);
   const [availableChatModels, setAvailableChatModels] = useState<MyDrSaiModelConfig[]>([]);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(() => loadOptionalSetting(DEFAULT_AGENT_STORAGE_KEY));
+  // Latest selection for effects that refresh the agent catalog without
+  // depending on selectedChatAgentId (adding it would re-run the whole
+  // catalog/model fetch on every agent switch).
+  const selectedChatAgentIdRef = useRef(selectedChatAgentId);
+  useEffect(() => { selectedChatAgentIdRef.current = selectedChatAgentId; }, [selectedChatAgentId]);
   const [selectedChatAgentName, setSelectedChatAgentName] = useState("OpenDrSai");
   const [selectedChatModel, setSelectedChatModel] = useState<string | null>(null);
   const [defaultThinkingEffort, setDefaultThinkingEffort] = useState<ThinkingEffort>(() => loadThinkingEffort());
@@ -513,6 +495,18 @@ function AuthenticatedApp({
       selectedChatModelRef,
     ),
     [availableChatModels, selectedChatAgent, selectedChatModel, selectedChatModelRef],
+  );
+  const selectedImageGenerationModelRef = selectedChatAgentId === myDrSaiAgentModelPolicy?.agent_id
+    ? (myDrSaiAgentModelPolicy.image_generation_model?.mode === "explicit"
+      ? myDrSaiAgentModelPolicy.image_generation_model.ref
+      : myDrSaiAgentModelPolicy.effective_image_generation_ref)
+      ?? undefined
+    : undefined;
+  const imageGenerationModelOptions = useMemo(
+    () => (selectedChatAgent?.source === "local" && selectedChatAgent.id !== "my-codex"
+      ? getImageGenerationModelOptions(availableChatModels, selectedImageGenerationModelRef)
+      : []),
+    [availableChatModels, selectedChatAgent, selectedImageGenerationModelRef],
   );
   const [pendingChatInput, setPendingChatInput] = useState<string | null>(null);
   const resultsContainer = useResultsContainerController();
@@ -672,49 +666,139 @@ function AuthenticatedApp({
   );
   const toWorkspaceThread = (
     thread: DesktopThread,
-    liveMessages?: ChatThreadSnapshot["messages"],
+    snapshot: ChatThreadSnapshot | undefined,
+    backgroundTask: DesktopBackgroundTask | undefined,
   ): WorkspaceThread => ({
     id: thread.id,
     title: thread.title,
     timeLabel: formatThreadTime(thread.updatedAt, language),
     workspaceId: resolveThreadWorkspaceId(thread, workspaces),
     workspacePath: thread.workspacePath,
+    sessionScope: thread.sessionScope,
+    remoteWorkerId: thread.remoteWorkerId,
+    remoteWorkerName: thread.remoteWorkerName,
     fork: thread.fork,
     active: thread.id === activeThreadId,
     pinned: thread.pinned,
     archived: thread.archived,
     unread: thread.unread,
-    activity: deriveThreadActivity({
-      thread,
-      snapshot: thread.id === activeThreadId && liveMessages?.length
-        ? {
-            threadId: thread.id,
-            title: thread.title,
-            messages: liveMessages,
-            updatedAt: Date.parse(thread.updatedAt) || 0,
-            messageCount: liveMessages.length,
-          }
-        : threadSnapshotStore.get(thread.id)
-          ?? (thread.id === activeThreadId ? activeThreadSnapshot ?? undefined : undefined),
-      backgroundTask: backgroundTaskByThreadId.get(thread.id),
-    }),
+    activity: deriveThreadActivity({ thread, snapshot, backgroundTask }),
     source: thread.sourceChannel === "wechat"
       ? "wechat"
       : workspaces.find((workspace) => getComparablePath(workspace.path) === getComparablePath(thread.workspacePath || ""))?.location === "remote"
       ? "remote"
       : thread.archiveSource === "codex" || thread.boundAgentId === "my-codex" ? "codex" : "opendrsai",
   });
-  const sidebarThreads = canonicalizeSidebarThreads(threads);
-  const scopedThreads =
-    sessionScope === "all"
+  // The sidebar rebuilds one row per thread on every render, and a streaming
+  // turn renders once per animation frame. Almost all of that is redundant:
+  // only the active row's inputs move per frame. Cache each row against the
+  // inputs it was derived from so a re-render reuses every unaffected row -
+  // including its activity derivation, which scans that thread's whole
+  // conversation - and only the row that actually changed is rebuilt.
+  const workspaceRowCacheRef = useRef(new Map<string, {
+    thread: DesktopThread;
+    snapshot: ChatThreadSnapshot | undefined;
+    backgroundTask: DesktopBackgroundTask | undefined;
+    activeThreadId: string;
+    language: AppLanguage;
+    workspaces: WorkspaceProject[];
+    timeLabelKey: number;
+    row: WorkspaceThread;
+  }>());
+  const rowCacheThreadsRef = useRef<DesktopThread[] | null>(null);
+  if (rowCacheThreadsRef.current !== threads) {
+    rowCacheThreadsRef.current = threads;
+    if (workspaceRowCacheRef.current.size) {
+      const liveThreadIds = new Set(threads.map((thread) => thread.id));
+      for (const cachedThreadId of workspaceRowCacheRef.current.keys()) {
+        if (!liveThreadIds.has(cachedThreadId)) workspaceRowCacheRef.current.delete(cachedThreadId);
+      }
+    }
+  }
+  // The active row is derived from the live transcript rather than the store.
+  // Reuse the synthetic snapshot while that transcript is the same array, so an
+  // idle conversation can re-render for other reasons and still hit the cache.
+  const liveRowSnapshotRef = useRef<{
+    thread: DesktopThread;
+    liveMessages: ChatThreadSnapshot["messages"];
+    snapshot: ChatThreadSnapshot;
+  } | null>(null);
+  function resolveRowSnapshot(
+    thread: DesktopThread,
+    liveMessages?: ChatThreadSnapshot["messages"],
+  ): ChatThreadSnapshot | undefined {
+    if (thread.id === activeThreadId && liveMessages?.length) {
+      const cached = liveRowSnapshotRef.current;
+      if (cached && cached.thread === thread && cached.liveMessages === liveMessages) {
+        return cached.snapshot;
+      }
+      const snapshot: ChatThreadSnapshot = {
+        threadId: thread.id,
+        title: thread.title,
+        messages: liveMessages,
+        updatedAt: Date.parse(thread.updatedAt) || 0,
+        messageCount: liveMessages.length,
+      };
+      liveRowSnapshotRef.current = { thread, liveMessages, snapshot };
+      return snapshot;
+    }
+    return threadSnapshotStore.get(thread.id)
+      ?? (thread.id === activeThreadId ? activeThreadSnapshot ?? undefined : undefined);
+  }
+  function buildWorkspaceThread(
+    thread: DesktopThread,
+    liveMessages?: ChatThreadSnapshot["messages"],
+  ): WorkspaceThread {
+    const snapshot = resolveRowSnapshot(thread, liveMessages);
+    const backgroundTask = backgroundTaskByThreadId.get(thread.id);
+    const timeLabelKey = threadTimeLabelKey(thread.updatedAt);
+    const cached = workspaceRowCacheRef.current.get(thread.id);
+    if (
+      cached
+      && cached.thread === thread
+      && cached.snapshot === snapshot
+      && cached.backgroundTask === backgroundTask
+      && cached.activeThreadId === activeThreadId
+      && cached.language === language
+      && cached.workspaces === workspaces
+      && cached.timeLabelKey === timeLabelKey
+    ) {
+      return cached.row;
+    }
+    const row = toWorkspaceThread(thread, snapshot, backgroundTask);
+    workspaceRowCacheRef.current.set(thread.id, {
+      thread,
+      snapshot,
+      backgroundTask,
+      activeThreadId,
+      language,
+      workspaces,
+      timeLabelKey,
+      row,
+    });
+    return row;
+  }
+  // These catalog derivations are pure functions of the thread list, yet they
+  // used to re-run on every render - including every animation frame of a
+  // streaming turn.
+  const sidebarThreads = useMemo(() => canonicalizeSidebarThreads(threads), [threads]);
+  const scopedThreads = useMemo(
+    () => (sessionScope === "all"
       ? sidebarThreads
       : sidebarThreads.filter((thread) => {
           if (thread.id === activeThreadId) return true;
           if (!thread.workspacePath) return true;
           return getComparablePath(thread.workspacePath) === activeWorkspacePathKey;
-        });
-  const visibleThreads = scopedThreads.filter((thread) =>
-    sessionScope === "all" ? true : !thread.archived,
+        })),
+    [activeThreadId, activeWorkspacePathKey, sessionScope, sidebarThreads],
+  );
+  const visibleThreads = useMemo(
+    () => scopedThreads.filter((thread) => (sessionScope === "all" ? true : !thread.archived)),
+    [scopedThreads, sessionScope],
+  );
+  const unarchivedSidebarThreads = useMemo(
+    () => sortThreadsForSidebar(sidebarThreads).filter((thread) => !thread.archived),
+    [sidebarThreads],
   );
   const remotePlatformChatAvailable = Boolean(
     selectedChatAgent?.source === "remote"
@@ -723,8 +807,8 @@ function AuthenticatedApp({
     && selectedChatAgent.status === "running",
   );
   // Keep Runtime-backed adapter prefetches dormant until bootstrap succeeds.
-  // The composer has a separate on-demand gate below so the first send can
-  // bootstrap and continue without requiring a second click.
+  // The composer is locked by the same readiness gate until the service is
+  // actually ready, so a first send can no longer race the bootstrap and fail.
   // When the local Gateway is already external-ready, local agents can chat
   // even if the full Runtime bootstrap (auth.serviceReady) hasn't completed.
   // servicePreparing should only block when the Gateway is still coming up.
@@ -732,33 +816,37 @@ function AuthenticatedApp({
   const runtimeAvailable = remotePlatformChatAvailable || Boolean(health?.installed || health?.gateway?.externalReady);
   const chatUnavailableReason = remotePlatformChatAvailable
     ? undefined
-    : auth.serviceBusy
+    : sessionRestoring
       ? language === "zh"
-        ? "正在后台检查模型服务，完成后即可发送。"
-        : "Checking model services in the background. Sending will be available shortly."
-    : !auth.serviceReady && health?.gateway?.startState === "starting"
-      ? language === "zh"
-        ? "正在启动本地运行时，请稍候。"
-        : "Starting the local runtime; this takes a moment."
-    : !auth.serviceReady
-      ? getServiceUnavailableReason(auth.serviceBlocker, language)
-      : !health
+        ? "正在恢复上次会话，请稍候。"
+        : "Restoring your last conversation; this takes a moment."
+      : auth.serviceBusy
         ? language === "zh"
-          ? "正在初始化桌面端..."
-          : "Initializing the desktop..."
-        : !runtimeAvailable
+          ? "正在后台检查模型服务，完成后即可发送。"
+          : "Checking model services in the background. Sending will be available shortly."
+        : !auth.serviceReady && health?.gateway?.startState === "starting"
           ? language === "zh"
-            ? "本地运行时未安装，请先完成安装。"
-            : "The local runtime is not installed. Install it first."
-          : !effectiveWorkspacePath
-            ? language === "zh"
-              ? "请先创建或打开一个工作区。"
-              : "Create or open a workspace first."
-            : !workspaceTrusted
+            ? "正在启动本地运行时，请稍候。"
+            : "Starting the local runtime; this takes a moment."
+          : !auth.serviceReady
+            ? getServiceUnavailableReason(auth.serviceBlocker, language)
+            : !health
               ? language === "zh"
-                ? "请先信任当前工作区。"
-                : "Trust this workspace before sending."
-              : undefined;
+                ? "正在初始化桌面端..."
+                : "Initializing the desktop..."
+              : !runtimeAvailable
+                ? language === "zh"
+                  ? "本地运行时未安装，请先完成安装。"
+                  : "The local runtime is not installed. Install it first."
+                : !effectiveWorkspacePath
+                  ? language === "zh"
+                    ? "请先创建或打开一个工作区。"
+                    : "Create or open a workspace first."
+                  : !workspaceTrusted
+                    ? language === "zh"
+                      ? "请先信任当前工作区。"
+                      : "Trust this workspace before sending."
+                    : undefined;
   const chat = useDesktopChatAdapter({
     availableAgents: availableChatAgents,
     availableModels: availableChatModels,
@@ -792,13 +880,12 @@ function AuthenticatedApp({
   });
   const recentThreads: WorkspaceThread[] = visibleThreads
     .slice(0, 12)
-    .map((thread) => toWorkspaceThread(thread, chat.messages));
+    .map((thread) => buildWorkspaceThread(thread, chat.messages));
   const searchableThreads: WorkspaceThread[] = visibleThreads.map((thread) =>
-    toWorkspaceThread(thread, chat.messages),
+    buildWorkspaceThread(thread, chat.messages),
   );
-  const workspaceThreads: WorkspaceThread[] = sortThreadsForSidebar(sidebarThreads)
-    .filter((thread) => !thread.archived)
-    .map((thread) => toWorkspaceThread(thread, chat.messages));
+  const workspaceThreads: WorkspaceThread[] = unarchivedSidebarThreads
+    .map((thread) => buildWorkspaceThread(thread, chat.messages));
   const proposeTerminalCommand = useCallback((
     command: string,
     workflow?: { workflowRunId?: string; workflowStepId?: string },
@@ -851,7 +938,7 @@ function AuthenticatedApp({
 
   const canChat = Boolean(
     !sessionRestoring &&
-    (remotePlatformChatAvailable || !auth.serviceBusy) &&
+    !servicePreparing &&
     runtimeAvailable &&
     effectiveWorkspacePath &&
     workspaceTrusted &&
@@ -941,10 +1028,33 @@ function AuthenticatedApp({
     const removeSnapshot = desktopApi.onThreadSnapshot((event) => {
       if (deletedThreadIdsRef.current.has(event.threadId)) return;
       const existing = threadSnapshotStore.get(event.threadId) ?? undefined;
-      if (!threadSnapshotHasConversation(event.snapshot) && threadSnapshotHasConversation(existing)) return;
       const snapshot = mergeThreadSnapshotForDisplay(event.snapshot, existing);
-      if (!threadSnapshotCoordinatorRef.current.commitEnvelope(event, () => threadSnapshotStore.set(event.threadId, snapshot))) return;
+      // A thinner body must never replace the conversation the reader is in,
+      // but it can still carry the waterline the following Patches build on (a
+      // restarted Runtime republishes the Thread from a fresh generation with
+      // an empty message list).  Committing that waterline is what keeps the
+      // Patches applicable: dropping the whole envelope left the coordinator on
+      // the older generation, where it refused every Patch -- including the
+      // event that ends the turn -- and the turn never finished.
+      const decision = threadSnapshotBodyDecision({
+        incomingHasConversation: threadSnapshotHasConversation(event.snapshot),
+        existingHasConversation: threadSnapshotHasConversation(existing),
+        envelopeHasWaterline: envelopeHasRuntimeWaterline(event),
+      });
+      if (decision === "ignore") return;
+      const committed = threadSnapshotCoordinatorRef.current.commitEnvelope(
+        event,
+        decision === "replace" ? () => threadSnapshotStore.set(event.threadId, snapshot) : () => undefined,
+      );
+      if (!committed) return;
       batcher.clearThread(event.threadId);
+      if (decision === "keep_richer_body") {
+        console.warn("thread_snapshot_body_starved", {
+          threadId: event.threadId, source: event.source, generation: event.generation,
+          sessionSequence: event.sessionSequence, runtimeSessionId: event.runtimeSessionId,
+          keptMessages: existing?.messages.length ?? 0,
+        });
+      }
     });
     const removePatch = desktopApi.onThreadSnapshotPatch((event) => {
       if (deletedThreadIdsRef.current.has(event.threadId)) return;
@@ -1078,7 +1188,12 @@ function AuthenticatedApp({
   }, [sessionScope]);
 
   useEffect(() => {
-    persistOptionalSetting(DEFAULT_AGENT_STORAGE_KEY, selectedChatAgentId);
+    // The global default is for local workspaces. Remote agents are bound to
+    // their remote session and must not become the next local chat default.
+    persistOptionalSetting(
+      DEFAULT_AGENT_STORAGE_KEY,
+      selectedChatAgentId?.startsWith("platform:") ? null : selectedChatAgentId,
+    );
   }, [selectedChatAgentId]);
 
   useEffect(() => {
@@ -1222,6 +1337,52 @@ function AuthenticatedApp({
     workspacesLoaded,
   ]);
 
+
+  // One-shot per restored thread: the persisted selected agent may not match
+  // that thread's bound agent (e.g. a remote-agent session that would silently
+  // show the local OpenDrSai composer). Rebind the selection from the restored
+  // thread, mirroring handleThreadSelect. Remote bindings are stored either as
+  // the catalog id ("platform:<name>") or as the bare Runtime routable name, so
+  // match both and prefer the canonical catalog id — chat sends resolve the
+  // execution descriptor by that id. The local thread store loads faster than
+  // the platform catalog, so keep this armed until the binding is fully
+  // applied (id, name, model, examples); bind remote ids optimistically so the
+  // composer never falls back to the local agent while the catalog syncs.
+  const restoredAgentReboundRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!threadsLoaded || !activeThreadId) return;
+    if (restoredAgentReboundRef.current === activeThreadId) return;
+    const thread = threads.find((item) => item.id === activeThreadId);
+    const boundAgentId = thread?.boundAgentId?.trim();
+    if (!boundAgentId) return;
+    const boundAgent = availableChatAgents.find((agent) => agent.id === boundAgentId)
+      ?? availableChatAgents.find((agent) => agent.source === "remote" && isSameRemoteAgentBinding(agent.id, boundAgentId));
+    if (boundAgent) {
+      restoredAgentReboundRef.current = activeThreadId;
+      if (selectedChatAgentIdRef.current === boundAgent.id && selectedChatAgentName === boundAgent.name) return;
+      setSelectedChatAgentId(boundAgent.id);
+      setSelectedChatAgentName(boundAgent.name);
+      setSelectedChatModel(thread?.model
+        && (boundAgent.source !== "remote" || isRemoteModelAlias(boundAgent, thread?.model))
+        ? thread?.model
+        : boundAgent.source === "remote"
+          ? remoteAgentPreferredModel(boundAgent)
+          : boundAgent.model ?? boundAgent.models?.[0] ?? null);
+      if (boundAgent.examples) setSelectedChatExamples(boundAgent.examples);
+      return;
+    }
+    // Bare local names (e.g. "my-codex") must wait for the local catalog; the
+    // loadChatChoices preference arbitration covers that window. Remote
+    // bindings can be selected optimistically as their canonical platform: id.
+    const remoteBinding = boundAgentId.startsWith("platform:") || thread?.sessionScope === "remote_agent";
+    if (!remoteBinding) return;
+    const canonicalAgentId = boundAgentId.startsWith("platform:") ? boundAgentId : `platform:${boundAgentId}`;
+    if (selectedChatAgentIdRef.current === canonicalAgentId) return;
+    setSelectedChatAgentId(canonicalAgentId);
+    setSelectedChatAgentName(thread?.boundAgentName ?? boundAgentId);
+    setSelectedChatModel(thread?.model ?? null);
+  }, [activeThreadId, availableChatAgents, selectedChatAgentName, selectedChatAgentIdRef, threads, threadsLoaded]);
+
   // When switching workspaces, do not keep showing a conversation from another path.
   useEffect(() => {
     if (!threadsLoaded || !workspacesLoaded || !activeWorkspace.id || !activeWorkspace.path) return;
@@ -1265,6 +1426,12 @@ function AuthenticatedApp({
       setAgentCatalogLoaded(true);
       if (agents.length === 0) return;
       setSelectedChatAgentId((current) => {
+        // During early startup the cached catalog may not contain the remote
+        // platform agents yet. Keep a persisted "platform:" selection instead
+        // of downgrading it to the local agent before the full catalog loads.
+        if (current?.startsWith("platform:") && !agents.some((agent) => agent.id === current)) {
+          return current;
+        }
         const preferredAgent = agents.find((agent) => agent.id === current)
           ?? agents.find((agent) => agent.source === "local" && agent.id !== "my-codex")
           ?? agents.find((agent) => agent.status === "running")
@@ -1368,23 +1535,66 @@ function AuthenticatedApp({
           scheduleRetry();
         }
         if (cancelled || agents.length === 0) return;
+        const previousAgentId = selectedChatAgentIdRef.current;
+        // The conversation being viewed owns the composer: its bound agent
+        // overrides the workspace preference. Otherwise a restored
+        // remote-agent session is silently rebound to the local OpenDrSai agent
+        // whenever this (faster, local-first) catalog refresh lands while the
+        // platform catalog is still syncing.
+        const activeThread = threadsRef.current.find((item) => item.id === activeThreadIdRef.current);
+        // A remote platform agent can transiently vanish from the refreshed
+        // catalog. Keep it only while the active conversation is explicitly
+        // remote-bound; a fresh local chat must still recover a local agent.
+        const previousRemoteAgentMissing = previousAgentId !== null
+          && !agents.some((agent) => agent.id === previousAgentId)
+          && (previousAgentId.startsWith("platform:")
+            || availableChatAgents.find((agent) => agent.id === previousAgentId)?.source === "remote")
+          && (activeThread?.sessionScope === "remote_agent" || Boolean(activeThread?.boundAgentId));
+        if (previousRemoteAgentMissing) return;
+        const activeBindingId = activeThread?.boundAgentId?.trim() || null;
+        const boundAgent = activeBindingId
+          ? agents.find((agent) => agent.id === activeBindingId)
+            ?? agents.find((agent) => agent.source === "remote" && isSameRemoteAgentBinding(agent.id, activeBindingId))
+          : undefined;
+        if (activeBindingId && !boundAgent) {
+          // The bound agent is not in this catalog snapshot yet. Never fall
+          // back to the workspace preference here — the restore rebind effect
+          // (above) completes the binding once the catalog catches up.
+          return;
+        }
+        // A fresh/unbound local chat must never inherit the previous remote
+        // selection. Thread binding wins above; only local agents participate
+        // in workspace/previous-selection fallback for an unbound chat.
+        const localAgents = agents.filter((agent) => agent.source !== "remote");
         const defaultAgent =
-          agents.find((agent) => agent.isDefault) ??
-          agents.find((agent) => agent.id === agentModelPolicy.agent_id) ??
-          agents.find((agent) => agent.status === "running") ??
+          localAgents.find((agent) => agent.isDefault) ??
+          localAgents.find((agent) => agent.id === agentModelPolicy.agent_id) ??
+          localAgents.find((agent) => agent.status === "running") ??
+          localAgents[0] ??
           agents[0];
         const workspaceAgentId = loadWorkspaceAgentPreference(activeWorkspaceId);
-        const preferredAgent = agents.find((agent) => agent.id === workspaceAgentId)
-          ?? agents.find((agent) => agent.id === selectedChatAgentId)
+        const preferredAgent = boundAgent
+          ?? agents.find((agent) => agent.source !== "remote" && agent.id === workspaceAgentId)
+          ?? agents.find((agent) => agent.source !== "remote" && agent.id === previousAgentId)
           ?? defaultAgent;
         setSelectedChatAgentId(preferredAgent.id);
         setSelectedChatAgentName(preferredAgent.name);
         setSelectedChatModel((current) => {
-          const preferredModel = preferredAgent.id === agentModelPolicy.agent_id
-            ? agentModelPolicy.effective_ref?.model_id ?? null
-            : preferredAgent.model ?? preferredAgent.models?.[0] ?? null;
-          if (preferredAgent.id === agentModelPolicy.agent_id) return preferredModel;
-          return current ?? preferredModel;
+          if (preferredAgent.id === agentModelPolicy.agent_id) {
+            return agentModelPolicy.effective_ref?.model_id ?? null;
+          }
+          // Remote workers own their model namespace: the selected model must
+          // be one of the worker's declared config aliases, defaulting to the
+          // worker's default config rather than the routable worker name.
+          if (preferredAgent.source === "remote") {
+            if (current && isRemoteModelAlias(preferredAgent, current)) return current;
+            return remoteAgentPreferredModel(preferredAgent);
+          }
+          const localModels = [preferredAgent.model, ...(preferredAgent.models ?? [])]
+            .filter((model): model is string => Boolean(model?.trim()));
+          return current && localModels.includes(current)
+            ? current
+            : localModels[0] ?? null;
         });
         setSelectedChatExamples(preferredAgent.examples);
       } catch {
@@ -1777,6 +1987,7 @@ function AuthenticatedApp({
 
   async function handleNewChat(): Promise<void> {
     setRightPanelCollapsed(true);
+    resetComposerToLocalAgent();
     setActiveThreadId(createLocalThreadId());
     setComposerFocusRequest((current) => current + 1);
     navigateTo(MENU_IDS.currentSession);
@@ -1806,16 +2017,35 @@ function AuthenticatedApp({
   function handleThreadSelect(threadId: string, messageId?: string): void {
     const thread = threads.find((item) => item.id === threadId);
     if (thread?.boundAgentId) {
-      const boundAgent = availableChatAgents.find((agent) => agent.id === thread.boundAgentId);
+      const boundAgentId: string = thread.boundAgentId;
+      // Normalize both sides: the thread may store a bare routable name (e.g.
+      // "agent-ltsc") while the catalog agent's id has the "platform:" prefix.
+      const boundAgent = availableChatAgents.find((agent) => agent.id === boundAgentId)
+        ?? availableChatAgents.find((agent) => agent.source === "remote" && isSameRemoteAgentBinding(agent.id, boundAgentId));
       if (boundAgent) {
         setSelectedChatAgentId(boundAgent.id);
         setSelectedChatAgentName(boundAgent.name);
-        // Restore model from thread config first, then fall back to agent defaults
+        // Restore model from thread config first, then fall back to agent
+        // defaults. For remote agents a stale/non-alias thread model (e.g. the
+        // routable worker name saved by an older build) is ignored in favour
+        // of the worker's declared default config.
         setSelectedChatModel(thread.model
-          || (boundAgent.id === myDrSaiAgentModelPolicy?.agent_id
+          && (boundAgent.source !== "remote" || isRemoteModelAlias(boundAgent, thread.model))
+          ? thread.model
+          : boundAgent.id === myDrSaiAgentModelPolicy?.agent_id
             ? myDrSaiAgentModelPolicy?.effective_ref?.model_id ?? boundAgent.model ?? boundAgent.models?.[0] ?? null
-            : boundAgent.model || boundAgent.models?.[0] || null));
+            : boundAgent.source === "remote"
+              ? remoteAgentPreferredModel(boundAgent)
+              : boundAgent.model || boundAgent.models?.[0] || null);
         setSelectedChatExamples(boundAgent.examples);
+      } else if (thread.boundAgentId.startsWith("platform:") || thread.sessionScope === "remote_agent") {
+        // Remote agent not yet in catalog — set optimistically with canonical id
+        const canonicalAgentId = thread.boundAgentId.startsWith("platform:")
+          ? thread.boundAgentId
+          : `platform:${thread.boundAgentId}`;
+        setSelectedChatAgentId(canonicalAgentId);
+        setSelectedChatAgentName(thread.boundAgentName ?? thread.boundAgentId);
+        setSelectedChatModel(thread.model ?? null);
       }
     }
     // Restore reasoning effort and plan mode from thread config
@@ -1907,12 +2137,24 @@ function AuthenticatedApp({
       }
       const existing = threadSnapshotStore.get(threadId) ?? undefined;
       const snapshot = mergeThreadSnapshotForDisplay(envelope.snapshot, existing);
-      if (!threadSnapshotCoordinatorRef.current.commitEnvelope(envelope, () => threadSnapshotStore.set(threadId, snapshot))) {
+      // A rejected envelope used to be completely silent: Hydration answered
+      // behind the boundary already displayed, the snapshot was dropped, and
+      // the Thread kept refusing Patches with no trace of why.
+      const rejection = threadSnapshotCoordinatorRef.current.rejectionOf(envelope);
+      if (rejection) {
+        console.warn("thread_snapshot_hydration_rejected", {
+          threadId, reason: rejection, source: envelope.source,
+          envelopeGeneration: envelope.generation, envelopeSequence: envelope.sessionSequence,
+          displayedGeneration: threadSnapshotCoordinatorRef.current.get(threadId)?.generation,
+          displayedSequence: threadSnapshotCoordinatorRef.current.get(threadId)?.appliedSequence,
+          runtimeSessionId: envelope.runtimeSessionId,
+        });
         if (threadSnapshotHasConversation(snapshot) && !threadSnapshotHasConversation(existing)) {
           threadSnapshotStore.set(threadId, snapshot);
         }
         return;
       }
+      if (!threadSnapshotCoordinatorRef.current.commitEnvelope(envelope, () => threadSnapshotStore.set(threadId, snapshot))) return;
     } catch (error) {
       if ((error instanceof DOMException && error.name === "AbortError") || (error instanceof Error && /abort|cancel/i.test(error.name))) return;
       // Runtime generation races during sidebar switches are recovered by the
@@ -1943,22 +2185,57 @@ function AuthenticatedApp({
     }
   }
 
+  /**
+   * Ask for a fresh Snapshot after the Patch stream rejected an event.
+   *
+   * At most one resync runs per Thread.  A Runtime that keeps emitting on a
+   * waterline the renderer never accepted used to start one bounded retry loop
+   * per rejected Patch while all of them answered the same question.  A demand
+   * that arrives while a resync runs is remembered, and the higher
+   * ``minimumSequence`` wins: the in-flight request may have been answered
+   * below the boundary that caused the newest rejection.
+   */
   async function scheduleThreadResync(
     threadId: string,
     options: { minimumSequence?: number; expectedGeneration?: number } = {},
   ): Promise<void> {
-    if (!threadSnapshotCoordinatorRef.current.canResync(threadId)) {
-      setThreadHydrationError({ threadId, message: language === "zh"
-        ? "会话同步需要处理：请重新连接 Runtime 或手动重试。"
-        : "Session sync needs attention. Reconnect Runtime or retry manually." });
-      return;
+    const active = threadResyncInFlightRef.current.get(threadId);
+    if (active) {
+      if (options.minimumSequence !== undefined
+        && options.minimumSequence > (active.demand.minimumSequence ?? -1)) {
+        active.demand = { ...options };
+        active.superseded = true;
+      }
+      return active.promise;
     }
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (activeThreadIdRef.current !== threadId) return;
-      await hydrateThreadSnapshot(threadId, { ...options, forceFresh: true });
-      const state = threadSnapshotCoordinatorRef.current.get(threadId);
-      if (!state || state.consecutiveResyncFailures === 0 || state.actionRequired) return;
-      await new Promise((resolve) => window.setTimeout(resolve, 150 * 2 ** attempt));
+    const entry: ThreadResyncEntry = { promise: Promise.resolve(), demand: { ...options }, superseded: false };
+    entry.promise = runThreadResync(threadId, entry).finally(() => {
+      if (threadResyncInFlightRef.current.get(threadId) === entry) threadResyncInFlightRef.current.delete(threadId);
+    });
+    threadResyncInFlightRef.current.set(threadId, entry);
+    return entry.promise;
+  }
+
+  /** Bounded resync rounds; it repeats only for a demand that arrived while it ran. */
+  async function runThreadResync(threadId: string, entry: ThreadResyncEntry): Promise<void> {
+    for (let round = 0; round < 2; round += 1) {
+      if (!threadSnapshotCoordinatorRef.current.canResync(threadId)) {
+        setThreadHydrationError({ threadId, message: language === "zh"
+          ? "会话同步需要处理：请重新连接 Runtime 或手动重试。"
+          : "Session sync needs attention. Reconnect Runtime or retry manually." });
+        return;
+      }
+      entry.superseded = false;
+      const demand = { ...entry.demand };
+      let settled = false;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (activeThreadIdRef.current !== threadId) return;
+        await hydrateThreadSnapshot(threadId, { ...demand, forceFresh: true });
+        const state = threadSnapshotCoordinatorRef.current.get(threadId);
+        if (!state || state.consecutiveResyncFailures === 0 || state.actionRequired) { settled = true; break; }
+        await new Promise((resolve) => window.setTimeout(resolve, 150 * 2 ** attempt));
+      }
+      if (!settled || !entry.superseded) return;
     }
   }
 
@@ -1969,8 +2246,12 @@ function AuthenticatedApp({
     const key = `${assistantMessageId}:${action}`;
     await executeRecoveryActionOnce(recoveryActionInFlightRef.current, key, async () => {
       if (action === "diagnostics") {
-        setDebugViewRequest((current) => ({ view: "activity", nonce: (current?.nonce ?? 0) + 1 }));
-        setActiveRightTab("files"); setRightPanelCollapsed(false); return;
+        const diagnosticMessage = chat.messages.find((message) => message.id === assistantMessageId);
+        setSelectedDiagnosticTraceId(diagnosticMessage?.errorPresentation?.traceId ?? diagnosticMessage?.runtimeRunId);
+        setCitationSource(null);
+        setActiveRightTab("diagnostics");
+        setRightPanelCollapsed(false);
+        return;
       }
       if (action === "abandon") {
         chat.dismissRecoveryActions(assistantMessageId);
@@ -2018,6 +2299,24 @@ function AuthenticatedApp({
         if (originalInput) chat.setInput(originalInput);
         return;
       }
+      if (action === "stop_running") {
+        // session_busy: another turn on this same session still holds the
+        // Runtime lock. Stop it (by the thread's authoritative Run when the
+        // adapter no longer tracks it), then restore the failed input so one
+        // Enter resends it once the lock is released.
+        const thread = threadsRef.current.find((item) => item.id === activeThreadIdRef.current);
+        if (thread?.lastRunId) {
+          await desktopApi.cancelChatTurn({
+            requestId: thread.lastRequestId || thread.lastRunId,
+            sessionId: thread.id,
+            runId: thread.lastRunId,
+          }).catch(() => undefined);
+        }
+        await chat.abort().catch(() => undefined);
+        chat.dismissRecoveryActions(assistantMessageId);
+        if (originalInput) chat.setInput(originalInput);
+        return;
+      }
       if (action === "retry" || action === "select_model" || action === "remove_resource") {
         if (originalInput) chat.setInput(originalInput);
         return;
@@ -2027,14 +2326,81 @@ function AuthenticatedApp({
     });
   }
 
+  /**
+   * The model a remote agent should show by default: the worker's declared
+   * default LLM config (`defult_config_name` from get_info), then the first
+   * declared model config. `agent.model` is only the routable worker name —
+   * it is not a model config alias and must not shadow the declared default.
+   */
+  function remoteAgentPreferredModel(agent: DesktopAgent): string | null {
+    const configNames = (agent.remoteModelConfigs ?? [])
+      .map((config) => config.name)
+      .filter((name): name is string => Boolean(name?.trim()));
+    return agent.remoteDefaultModel?.trim() || configNames[0] || agent.model?.trim() || null;
+  }
+
+  /** True when a model id is a valid selectable alias for a remote agent. */
+  function isRemoteModelAlias(agent: DesktopAgent, model: string | null | undefined): boolean {
+    if (!model?.trim()) return false;
+    const normalized = model.trim();
+    if (agent.remoteDefaultModel?.trim() === normalized) return true;
+    return (agent.remoteModelConfigs ?? []).some((config) => config.name?.trim() === normalized);
+  }
+
   function applyChatAgent(agent: DesktopAgent): void {
     const configuration = agentConfigurations[agent.id];
     setSelectedChatAgentId(agent.id);
     setSelectedChatAgentName(agent.name);
-    setSelectedChatModel(configuration?.model || agent.model || agent.models?.[0] || selectedChatModel);
+    if (agent.source === "remote") {
+      // Remote workers own their model namespace: never inherit the previous
+      // local model selection. Prefer a saved remote choice, then the worker's
+      // declared default config, then the first declared model config.
+      const remoteModelNames = (agent.remoteModelConfigs ?? [])
+        .map((config) => config.name)
+        .filter((name): name is string => Boolean(name?.trim()));
+      // A saved choice is only honoured when it is still a valid remote alias
+      // (declared default or one of the worker's model configs); anything else
+      // (e.g. the routable worker name persisted by older builds) falls back
+      // to the declared default below.
+      const savedRemoteModel = isRemoteModelAlias(agent, configuration?.model)
+        ? configuration?.model
+        : undefined;
+      setSelectedChatModel(
+        savedRemoteModel
+          ?? agent.remoteDefaultModel?.trim()
+          ?? remoteModelNames[0]
+          ?? agent.model
+          ?? null,
+      );
+    } else {
+      setSelectedChatModel(configuration?.model || agent.model || agent.models?.[0] || selectedChatModel);
+    }
     setDefaultThinkingEffort(configuration?.thinkingEffort || loadThinkingEffort());
     setSelectedChatExamples(agent.examples);
-    persistWorkspaceAgentPreference(activeWorkspaceId, agent.id);
+    // A remote agent belongs to its remote session, not to the local
+    // workspace's default-agent preference.
+    if (agent.source !== "remote") {
+      persistWorkspaceAgentPreference(activeWorkspaceId, agent.id);
+    }
+  }
+
+  function resetComposerToLocalAgent(workspaceId: string = activeWorkspaceId): void {
+    const localAgents = availableChatAgents.filter((agent) => agent.source !== "remote");
+    if (localAgents.length === 0) return;
+    const workspaceAgentId = loadWorkspaceAgentPreference(workspaceId);
+    const agent = localAgents.find((item) => item.id === workspaceAgentId)
+      ?? localAgents.find((item) => item.isDefault)
+      ?? localAgents.find((item) => item.id === myDrSaiAgentModelPolicy?.agent_id)
+      ?? localAgents.find((item) => item.status === "running")
+      ?? localAgents[0];
+    if (!agent) return;
+    setSelectedChatAgentId(agent.id);
+    setSelectedChatAgentName(agent.name);
+    setSelectedChatModel(agent.id === myDrSaiAgentModelPolicy?.agent_id
+      ? myDrSaiAgentModelPolicy.effective_ref?.model_id ?? null
+      : agentConfigurations[agent.id]?.model ?? agent.model ?? agent.models?.[0] ?? null);
+    setSelectedChatExamples(agent.examples);
+    persistWorkspaceAgentPreference(workspaceId, agent.id);
   }
 
   function handleOpenWorkspaceResults(workspaceId: string): void {
@@ -2057,6 +2423,7 @@ function AuthenticatedApp({
   async function handleNewWorkspaceChat(workspace: WorkspaceProject): Promise<void> {
     setRightPanelCollapsed(true);
     setActiveWorkspaceId(workspace.id);
+    resetComposerToLocalAgent(workspace.id);
     setActiveThreadId(createLocalThreadId());
     navigateTo(MENU_IDS.currentSession);
   }
@@ -2083,7 +2450,10 @@ function AuthenticatedApp({
       const thread = await desktopApi.createThread({
         kind: "chat",
         title: language === "zh" ? `与 ${agent.name} 的新会话` : `New chat with ${agent.name}`,
-        workspacePath: effectiveWorkspacePath,
+        workspacePath: agent.source === "remote" ? undefined : effectiveWorkspacePath,
+        sessionScope: agent.source === "remote" ? "remote_agent" : "workspace",
+        remoteWorkerId: agent.source === "remote" ? agent.id : undefined,
+        remoteWorkerName: agent.source === "remote" ? agent.name : undefined,
         boundAgentId: agent.id,
         boundAgentName: agent.name,
       });
@@ -2117,7 +2487,10 @@ function AuthenticatedApp({
       const thread = await desktopApi.createThread({
         kind: "chat",
         title: language === "zh" ? `与 ${agent.name} 的新会话` : `New chat with ${agent.name}`,
-        workspacePath: effectiveWorkspacePath,
+        workspacePath: agent.source === "remote" ? undefined : effectiveWorkspacePath,
+        sessionScope: agent.source === "remote" ? "remote_agent" : "workspace",
+        remoteWorkerId: agent.source === "remote" ? agent.id : undefined,
+        remoteWorkerName: agent.source === "remote" ? agent.name : undefined,
         boundAgentId: agent.id,
         boundAgentName: agent.name,
       });
@@ -2128,7 +2501,14 @@ function AuthenticatedApp({
     applyChatAgent(agent);
     if (activeThread && !hasConversation) {
       const persistSelection = desktopApi
-        .updateThread({ id: activeThread.id, boundAgentId: agent.id, boundAgentName: agent.name })
+        .updateThread({
+          id: activeThread.id,
+          boundAgentId: agent.id,
+          boundAgentName: agent.name,
+          sessionScope: agent.source === "remote" ? "remote_agent" : "workspace",
+          remoteWorkerId: agent.source === "remote" ? agent.id : undefined,
+          remoteWorkerName: agent.source === "remote" ? agent.name : undefined,
+        })
         .then((updated) => {
           setThreads((current) => current.map((item) => item.id === updated.id ? updated : item));
         });
@@ -2177,11 +2557,74 @@ function AuthenticatedApp({
     }
     setSelectedChatModel(model);
     if (selectedChatAgentId) {
+      // A remote worker owns its model namespace: its options carry a synthetic
+      // ``remote:<agentId>`` provider. Persist that ref so the composer can
+      // resolve the selection back to the remote option after a re-render or a
+      // thread restore. Local agents keep the legacy alias-only behaviour:
+      // their authoritative provider comes from the Agent model policy.
+      const isRemoteSelection = selectedChatAgent?.source === "remote";
       setAgentConfigurations((current) => ({
         ...current,
-        [selectedChatAgentId]: { ...current[selectedChatAgentId], model },
+        [selectedChatAgentId]: {
+          ...current[selectedChatAgentId],
+          model,
+          ...(isRemoteSelection && providerId
+            ? { modelRef: { provider_id: providerId, model_id: model } }
+            : {}),
+        },
       }));
     }
+  }
+
+  function handleChatImageGenerationModelSelect(model: string, providerId?: string): void {
+    if (!selectedChatAgentId || selectedChatAgentId !== myDrSaiAgentModelPolicy?.agent_id) return;
+    void configureAgentImageGenerationModel(selectedChatAgentId, model, providerId).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      void showAppNotice({
+        id: "chat-image-generation-model-switch-failed",
+        title: language === "zh" ? "切换图像生成模型失败" : "Image-generation model switch failed",
+        description: message,
+      });
+    });
+  }
+
+  async function configureAgentImageGenerationModel(agentId: string, model: string, providerId?: string): Promise<void> {
+    const activeProvider = myDrSaiConfig?.modelConnection?.model_provider;
+    const candidates = availableChatModels.filter((item) => {
+      if (!item.provider_id || !supportsImageGenerationModel(item)) return false;
+      const normalized = model.trim().toLowerCase();
+      return [item.alias, item.model, item.display_name]
+        .filter((value): value is string => Boolean(value))
+        .some((value) => value.trim().toLowerCase() === normalized);
+    });
+    const selected = candidates.find((item) => item.provider_id === providerId)
+      ?? candidates.find((item) => item.provider_id === activeProvider)
+      ?? candidates[0];
+    if (!selected?.provider_id) {
+      throw new Error(language === "zh"
+        ? "所选图像生成模型不在 Provider 目录中。"
+        : "The selected image-generation model is not in the Provider catalog.");
+    }
+    const latestPolicy = await desktopApi.getMyDrSaiAgentModelPolicy(agentId);
+    setMyDrSaiAgentModelPolicy(latestPolicy);
+    const modelId = selected.alias || selected.model;
+    if (!modelId) {
+      throw new Error(language === "zh"
+        ? "所选图像生成模型缺少模型标识。"
+        : "The selected image-generation model has no model identifier.");
+    }
+    const updated = await desktopApi.updateMyDrSaiAgentModelPolicy(agentId, {
+      agent_id: agentId,
+      primary_model: latestPolicy.primary_model,
+      image_understanding_model: latestPolicy.image_understanding_model ?? null,
+      image_generation_model: { mode: "explicit", ref: { provider_id: selected.provider_id, model_id: modelId } },
+      text_to_speech_model: latestPolicy.text_to_speech_model ?? null,
+      realtime_voice_model: latestPolicy.realtime_voice_model ?? null,
+      speech_to_text_model: latestPolicy.speech_to_text_model ?? null,
+      reasoning_effort: latestPolicy.reasoning_effort ?? null,
+      expected_revision: latestPolicy.revision,
+    });
+    setMyDrSaiAgentModelPolicy(updated);
   }
 
   async function configureAgentModel(agentId: string, model: string, providerId?: string): Promise<void> {
@@ -2422,28 +2865,64 @@ function AuthenticatedApp({
     // Handoff/settle while switching must not bump updatedAt — that jumps the
     // previous thread to the top of the sidebar under the newly selected one.
     if (options?.preserveSidebarOrder) {
-      setThreads((current) => current.map((item) =>
-        item.id === snapshot.threadId
-          ? {
-              ...item,
-              title: snapshot.title || item.title,
-              status: nextStatus,
-              messageCount: snapshot.messageCount,
-            }
-          : item,
-      ));
+      setThreads((current) => {
+        const item = current.find((entry) => entry.id === snapshot.threadId);
+        // Returning the same array keeps React from re-rendering the sidebar for
+        // a row that already shows this status/count/title.
+        if (item
+          && item.status === nextStatus
+          && item.messageCount === snapshot.messageCount
+          && (!snapshot.title || item.title === snapshot.title)) {
+          return current;
+        }
+        return current.map((entry) =>
+          entry.id === snapshot.threadId
+            ? {
+                ...entry,
+                title: snapshot.title || entry.title,
+                status: nextStatus,
+                messageCount: snapshot.messageCount,
+              }
+            : entry,
+        );
+      });
       return;
     }
     const existingThread = threads.find((item) => item.id === snapshot.threadId);
+    const boundAgentId = existingThread?.boundAgentId ?? selectedChatAgentId ?? undefined;
+    const boundAgentName = existingThread?.boundAgentName ?? selectedChatAgentName ?? undefined;
+    const remoteScope = existingThread?.sessionScope === "remote_agent";
+    // A streaming publish usually only moves the message body. The catalog row
+    // carries status/count/title plus the identity fields below, so rewriting
+    // threads.json — a full read, dedupe and re-serialize in the main process —
+    // for a row that already matches is pure overhead on the streaming path.
+    const catalogRowIsCurrent = Boolean(existingThread)
+      && existingThread!.status === nextStatus
+      && existingThread!.messageCount === snapshot.messageCount
+      && (!snapshot.title || existingThread!.title === snapshot.title)
+      && existingThread!.boundAgentId === boundAgentId
+      && existingThread!.boundAgentName === boundAgentName
+      && (remoteScope || existingThread!.workspacePath === effectiveWorkspacePath);
+    if (catalogRowIsCurrent) return;
     let thread: DesktopThread;
     try {
       thread = await desktopApi.updateThread({
         id: snapshot.threadId,
         kind: existingThread?.kind ?? "chat",
         title: snapshot.title,
-        workspacePath: effectiveWorkspacePath,
-        boundAgentId: existingThread?.boundAgentId ?? selectedChatAgentId ?? undefined,
-        boundAgentName: existingThread?.boundAgentName ?? selectedChatAgentName ?? undefined,
+        // Remote-agent sessions own no workspace path: re-stamping the local
+        // effective workspace here would race the Runtime binding. Preserve
+        // the remote identity explicitly and let threads.ts keep
+        // workspacePath undefined for the remote_agent scope.
+        ...(remoteScope
+          ? {
+              sessionScope: "remote_agent" as const,
+              remoteWorkerId: existingThread!.remoteWorkerId,
+              remoteWorkerName: existingThread!.remoteWorkerName,
+            }
+          : { workspacePath: effectiveWorkspacePath }),
+        boundAgentId,
+        boundAgentName,
         status: nextStatus,
         messageCount: snapshot.messageCount,
       });
@@ -2465,21 +2944,35 @@ function AuthenticatedApp({
     const generation = ++threadCatalogRequestGenerationRef.current;
     try {
       const targets = workspaces.filter((workspace) => workspace.id && workspace.path);
-      const settled = await Promise.allSettled(targets.map(async (workspace) => ({
-        workspace,
-        threads: await desktopApi.listThreads({
-          workspacePath: workspace.path,
-          limit: workspace.id === activeWorkspace.id ? 50 : 5,
+      const settled = await Promise.allSettled([
+        ...targets.map(async (workspace) => ({
+          workspace,
+          threads: await desktopApi.listThreads({
+            workspacePath: workspace.path,
+            limit: workspace.id === activeWorkspace.id ? 50 : 5,
+            includeArchived: sessionScope === "all",
+            requiredThreadIds: workspace.id === activeWorkspace.id && activeThreadId
+              ? [activeThreadId]
+              : [],
+            runtimeWorkspaceId: workspace.id,
+          }),
+        })),
+        // Remote-agent sessions have no workspace; fetch them separately so
+        // they survive restarts and sidebar refreshes.
+        desktopApi.listThreads({
+          sessionScope: "remote_agent",
+          limit: 50,
           includeArchived: sessionScope === "all",
-          requiredThreadIds: workspace.id === activeWorkspace.id && activeThreadId
-            ? [activeThreadId]
-            : [],
-          runtimeWorkspaceId: workspace.id,
-        }),
-      })));
+          requiredThreadIds: activeThreadId ? [activeThreadId] : [],
+        }).then((threads) => ({ workspace: null, threads })),
+      ]);
       if (generation !== threadCatalogRequestGenerationRef.current) return;
       const pages = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-      const activePage = pages.find(({ workspace }) => workspace.id === activeWorkspace.id);
+      const remoteAgentThreads = pages
+        .filter((page): page is { workspace: null; threads: DesktopThread[] } => page.workspace === null)
+        .flatMap((page) => page.threads);
+      const workspacePages = pages.filter((page): page is typeof pages[number] & { workspace: NonNullable<typeof page.workspace> } => page.workspace !== null);
+      const activePage = workspacePages.find(({ workspace }) => workspace.id === activeWorkspace.id);
       const activeCatalog = activePage?.threads ?? [];
       const protectedIds = new Set(activeCatalog.filter((thread) => !thread.archived && (
         thread.id === activeThreadId || thread.pinned || thread.status === "running"
@@ -2490,12 +2983,15 @@ function AuthenticatedApp({
           activeCatalog.filter((thread) => !thread.archived && !protectedIds.has(thread.id)).length === 50,
         );
       }
-      const cleanPages = pages.map(({ workspace, threads: page }) => ({
+      const cleanPages = workspacePages.map(({ workspace, threads: page }) => ({
         workspace,
         threads: page.filter((thread) =>
           !deletedThreadIdsRef.current.has(thread.id)
           && !(thread.runtimeSessionId && deletedThreadIdsRef.current.has(thread.runtimeSessionId))),
       }));
+      const cleanRemoteAgentThreads = remoteAgentThreads.filter((thread) =>
+        !deletedThreadIdsRef.current.has(thread.id)
+        && !(thread.runtimeSessionId && deletedThreadIdsRef.current.has(thread.runtimeSessionId)));
       setThreads((current) => mergeWorkspaceSidebarCatalogPages(current, cleanPages, {
         activeThreadId,
         activeWorkspaceId: activeWorkspace.id,
@@ -2503,6 +2999,7 @@ function AuthenticatedApp({
         activeLimit: 50,
         workspacePreviewLimit: 5,
         archivedLimit: Math.max(sessionScope === "all" ? 50 : 0, archivedThreadOffsetRef.current),
+        extraThreads: cleanRemoteAgentThreads,
       }));
     } finally {
       if (generation === threadCatalogRequestGenerationRef.current) setThreadsLoaded(true);
@@ -2892,12 +3389,21 @@ function AuthenticatedApp({
           defaultPlanMode={defaultPlanMode}
           selectedAgentId={selectedChatAgentId ?? undefined}
           selectedAgentName={selectedChatAgentName}
+          selectedAgentSource={selectedChatAgent?.source}
           selectedModelName={selectedChatModel ?? undefined}
           selectedModelProviderId={selectedChatAgentId === myDrSaiAgentModelPolicy?.agent_id
             ? myDrSaiAgentModelPolicy?.effective_ref?.provider_id
-            : selectedChatAgentId ? agentConfigurations[selectedChatAgentId]?.modelRef?.provider_id : undefined}
+            : selectedChatAgent?.source === "remote"
+              // Remote worker options declare a synthetic ``remote:<agentId>``
+              // provider. Without it the composer cannot disambiguate a remote
+              // alias that collides with a local catalog entry.
+              ? `remote:${selectedChatAgent.id}`
+              : selectedChatAgentId ? agentConfigurations[selectedChatAgentId]?.modelRef?.provider_id : undefined}
+          selectedImageGenerationModelName={selectedImageGenerationModelRef?.model_id}
+          selectedImageGenerationProviderId={selectedImageGenerationModelRef?.provider_id}
           agentOptions={availableChatAgents}
           modelOptions={chatModelOptions}
+          imageGenerationModelOptions={imageGenerationModelOptions}
           samplePrompts={selectedChatAgent?.examples ?? selectedChatExamples}
           messageFocus={messageFocus}
           structuredTurnFocus={structuredTurnFocus}
@@ -2921,37 +3427,11 @@ function AuthenticatedApp({
           onSelectAgent={handleChatAgentSelect}
           onSelectWorkspace={(workspaceId) => void handleEmptyChatWorkspaceSelect(workspaceId)}
           onSelectModel={handleChatModelSelect}
+          onSelectImageGenerationModel={handleChatImageGenerationModelSelect}
           onOpenExternal={(url) => desktopApi.openExternal(url)}
-          onOpenDebug={platformDescriptor?.capabilities.features.debugger !== true ? undefined : (runId, view = "activity") => {
-            setDebugViewRequest((current) => ({ view, nonce: (current?.nonce ?? 0) + 1, ...(runId ? { runId } : {}) }));
-            setRightSidebarComponents((current) => current);
-            setActiveRightTab("files");
-            setRightPanelCollapsed(false);
-          }}
           onOpenAgentSettings={() => {
             setRequestedSettingsPane("agent-defaults");
             navigateTo(MENU_IDS.profile);
-          }}
-          onOpenRun={platformDescriptor?.capabilities.features.runtime !== true ? undefined : (runId, itemId) => {
-            setRunInspectionRequest({
-              workspacePath: effectiveWorkspacePath,
-              workspaceId: effectiveRuntimeWorkspaceId,
-              runId,
-              ...(itemId ? { focusedItemId: itemId } : {}),
-            });
-            setActiveRightTab("files");
-            setRightPanelCollapsed(false);
-          }}
-          onCreateRunExperiment={platformDescriptor?.capabilities.features.runtime !== true || !experimentReleaseGate.enabled ? undefined : (runId, itemId) => {
-            setRunInspectionRequest({
-              workspacePath: effectiveWorkspacePath,
-              workspaceId: effectiveRuntimeWorkspaceId,
-              runId,
-              createExperiment: true,
-              ...(itemId ? { focusedItemId: itemId } : {}),
-            });
-            setActiveRightTab("files");
-            setRightPanelCollapsed(false);
           }}
           onRetryMessage={async (assistantMessageId, mode) => {
             const assistantIndex = chat.messages.findIndex((message) => message.id === assistantMessageId);
@@ -2988,12 +3468,17 @@ function AuthenticatedApp({
             setActiveRightTab("files");
             setRightPanelCollapsed(false);
           }}
-          onOpenConversationResourcePreview={(preview, _logicalPath) => {
-            // Runtime-owned and remote resources do not have to be present in
-            // the local workspace tree. The preview itself is authoritative;
-            // using its logical path as a tree focus would show a false
-            // "missing artifact" warning beside a valid preview.
-            setFilesPanelFocusPath(undefined);
+          onOpenConversationResourcePreview={(preview, logicalPath) => {
+            // Prefer revealing a workspace path in the file tree. Runtime-only
+            // resources may have no tree entry — keep preview without a false
+            // "missing file" focus when the path is not workspace-local.
+            const candidate = (logicalPath || preview.relativePath || "").trim();
+            const focusable = Boolean(
+              candidate
+              && !candidate.startsWith("artifact://")
+              && !/^https?:\/\//i.test(candidate),
+            );
+            setFilesPanelFocusPath(focusable ? candidate : undefined);
             setFilesPanelResourcePreview(preview);
             setActiveRightTab("files");
             setRightPanelCollapsed(false);
@@ -3052,15 +3537,6 @@ function AuthenticatedApp({
           workspacePath={activeWorkspace.path}
           onOpenSourceTask={(task) => {
             setDeliveryTask(task);
-          }}
-          onOpenSourceRun={(task, runId) => {
-            const sourceWorkspacePath = task.workspacePath || effectiveWorkspacePath;
-            const sourceWorkspaceId = sortedWorkspaces.find((workspace) =>
-              getComparablePath(workspace.path) === getComparablePath(sourceWorkspacePath),
-            )?.id || effectiveRuntimeWorkspaceId;
-            setRunInspectionRequest({ workspacePath: sourceWorkspacePath, workspaceId: sourceWorkspaceId, runId });
-            setActiveRightTab("files");
-            setRightPanelCollapsed(false);
           }}
           onContinueQuestion={(question) => {
             setPendingChatInput(question);
@@ -3174,10 +3650,12 @@ function AuthenticatedApp({
     ) : activeNav === MENU_IDS.knowledgeBase ? (
       selectedChatAgentId ? (
         selectedChatAgent?.source === "local" && selectedChatAgentId !== "my-codex" ? (
-          <KnowledgeBasePanel
-            agentId={selectedChatAgentId}
-            language={language}
-          />
+          <section className="skills-square-panel skills-manager-panel">
+            <KnowledgeBasePanel
+              agentId={selectedChatAgentId}
+              language={language}
+            />
+          </section>
         ) : (
           <div className="empty-state">
             {language === "zh"
@@ -3189,7 +3667,9 @@ function AuthenticatedApp({
         <div className="empty-state">{language === "zh" ? "正在准备 Agent…" : "Preparing Agent…"}</div>
       )
     ) : activeNav === MENU_IDS.library ? (
-      <GfsView language={language} />
+      <section className="skills-square-panel skills-manager-panel">
+        <GfsView language={language} />
+      </section>
     ) : activeNav === MENU_IDS.profile ? (
       <ModelSettingsContainer
         initialProvider={myDrSaiConfig?.modelConnection?.model_provider}
@@ -3376,6 +3856,19 @@ function AuthenticatedApp({
         language={language}
         onClose={() => setCitationSource(null)}
       />
+    ) : activeRightTab === "diagnostics" ? (
+      <ChatDiagnosticsPanel
+        language={language}
+        traceId={selectedDiagnosticTraceId}
+        onClose={() => {
+          setSelectedDiagnosticTraceId(undefined);
+          if (rightSidebarComponents.files) {
+            setActiveRightTab("files");
+          } else {
+            setRightPanelCollapsed(true);
+          }
+        }}
+      />
     ) : (
       <FilesContextPanel
         language={language}
@@ -3383,12 +3876,17 @@ function AuthenticatedApp({
         workspacePath={filesWorkspacePath}
         focusPath={filesPanelFocusPath}
         resourcePreview={filesPanelResourcePreview}
+        onFocusPathConsumed={() => setFilesPanelFocusPath(undefined)}
+        onClearResourcePreview={() => setFilesPanelResourcePreview(undefined)}
       />
     );
 
   const getPreviewContent = useCallback((preview: WorkspaceFilePreview): string => {
+    // A deleted/moved file resolves to a placeholder preview; say that instead of
+    // rendering an empty pane that reads like a 0-byte file.
+    if (isMissingWorkspacePreview(preview)) return describeMissingWorkspacePreview(language);
     return preview.content ?? preview.message ?? `${preview.kind} preview is metadata-only.`;
-  }, []);
+  }, [language]);
 
   const loadForkConflictContent = useCallback(
     async (
@@ -3404,16 +3902,14 @@ function AuthenticatedApp({
           path: file.path,
           maxBytes: 80_000,
         }),
-        desktopApi.previewWorkspaceFile({
-          workspacePath: fork.sourceWorkspacePath,
-          path: file.path,
-          maxBytes: 80_000,
-        }),
-        desktopApi.previewWorkspaceFile({
-          workspacePath: fork.worktreePath,
-          path: file.path,
-          maxBytes: 80_000,
-        }),
+        loadWorkspacePreview(
+          { workspacePath: fork.sourceWorkspacePath, path: file.path, maxBytes: 80_000 },
+          { cacheMissing: false },
+        ),
+        loadWorkspacePreview(
+          { workspacePath: fork.worktreePath, path: file.path, maxBytes: 80_000 },
+          { cacheMissing: false },
+        ),
         desktopApi.getWorkspaceGitDiff({
           workspacePath: fork.sourceWorkspacePath,
           path: file.path,
@@ -4110,12 +4606,14 @@ function loadSidebarComponents(): SidebarComponentVisibility {
 function loadRightSidebarComponents(): RightSidebarComponentVisibility {
   const defaults: RightSidebarComponentVisibility = {
     files: true,
+    diagnostics: true,
   };
   try {
     const value = JSON.parse(window.localStorage.getItem(RIGHT_SIDEBAR_COMPONENTS_STORAGE_KEY) ?? "null") as Partial<RightSidebarComponentVisibility> | null;
     if (!value || typeof value !== "object") return defaults;
     return {
       files: typeof value.files === "boolean" ? value.files : defaults.files,
+      diagnostics: typeof value.diagnostics === "boolean" ? value.diagnostics : defaults.diagnostics,
     };
   } catch {
     return defaults;
@@ -4141,7 +4639,13 @@ function loadWorkspaceAgentPreference(workspaceId: string): string | null {
     const value = JSON.parse(window.localStorage.getItem(WORKSPACE_AGENT_STORAGE_KEY) ?? "null") as unknown;
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const selected = (value as Record<string, unknown>)[workspaceId];
-    return typeof selected === "string" && /^[A-Za-z0-9_.:-]{1,200}$/.test(selected) ? selected : null;
+    // Remote agents are session-bound and must never be restored as a local
+    // workspace default. Treat old persisted remote values as stale data.
+    return typeof selected === "string"
+      && !selected.startsWith("platform:")
+      && /^[A-Za-z0-9_.:-]{1,200}$/.test(selected)
+      ? selected
+      : null;
   } catch {
     return null;
   }
@@ -4162,6 +4666,27 @@ function persistWorkspaceAgentPreference(workspaceId: string, agentId: string): 
   }
   preferences[workspaceId] = agentId;
   window.localStorage.setItem(WORKSPACE_AGENT_STORAGE_KEY, JSON.stringify(preferences));
+}
+
+// Remote-agent threads store either the agent-square catalog id
+// ("platform:<routableName>") or the bare Runtime routable name written by
+// runtime-initiated sessions (chat.ts binds `requestedAgentName`). Normalize
+// both forms so a restored binding still matches the catalog, and canonical
+// ids sent to the Runtime resolve their execution descriptor.
+function normalizeRemoteAgentId(agentId: string): string {
+  return agentId.trim().replace(/^platform:/, "");
+}
+
+function isSameRemoteAgentBinding(left: string, right: string): boolean {
+  const a = left.trim();
+  const b = right.trim();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  // Only treat differing forms as equal when at least one side carries the
+  // platform: prefix — a local agent sharing a remote worker's name must not
+  // collide with the remote catalog entry.
+  if (!a.startsWith("platform:") && !b.startsWith("platform:")) return false;
+  return normalizeRemoteAgentId(a) === normalizeRemoteAgentId(b);
 }
 
 function loadThinkingEffort(): ThinkingEffort {
@@ -4263,6 +4788,17 @@ function haveSameThreadTaskActivity(
       && candidate.approvalId === task.approvalId
       && (candidate.pendingDecisions?.length ?? 0) === (task.pendingDecisions?.length ?? 0);
   });
+}
+
+// A cached sidebar row also caches its relative time label, so the cache key
+// has to move when that label would. The label is a pure function of how many
+// whole minutes have passed since the thread changed, so that count is the
+// exact key: a row is rebuilt when its label changes and never merely because
+// another frame rendered.
+function threadTimeLabelKey(updatedAt: string): number {
+  const time = Date.parse(updatedAt);
+  if (!Number.isFinite(time)) return -1;
+  return Math.floor(Math.max(0, Date.now() - time) / 60_000);
 }
 
 function formatThreadTime(updatedAt: string, language: AppLanguage): string {
@@ -4596,7 +5132,6 @@ function ResultsCenterView({
   workspaceName,
   workspacePath,
   onOpenSourceTask,
-  onOpenSourceRun,
   onContinueQuestion,
 }: {
   language: AppLanguage;
@@ -4604,7 +5139,6 @@ function ResultsCenterView({
   workspaceName: string;
   workspacePath: string;
   onOpenSourceTask: (task: DesktopBackgroundTask) => void;
-  onOpenSourceRun: (task: DesktopBackgroundTask, runId: string) => void;
   onContinueQuestion: (question: string) => void;
 }): React.JSX.Element {
   const zh = language === "zh";
@@ -5314,11 +5848,16 @@ function ResultsCenterView({
     setLocalEditScope(null);
     setPreviewState({ artifact, state: "loading", message: zh ? "正在准备预览…" : "Preparing preview…" });
     try {
-      const preview = await desktopApi.previewWorkspaceFile({
-        workspacePath: artifact.sourceWorkspacePath,
-        path: artifact.path,
-        maxBytes: 500_000,
-      });
+      const preview = await loadWorkspacePreview(
+        { workspacePath: artifact.sourceWorkspacePath, path: artifact.path, maxBytes: 500_000 },
+        { cacheMissing: false },
+      );
+      // The artifact was deleted/moved after it was recorded: report it as a failed
+      // preview so the localized-edit and chart actions stay hidden.
+      if (isMissingWorkspacePreview(preview)) {
+        setPreviewState({ artifact, state: "failed", message: describeMissingWorkspacePreview(zh ? "zh" : "en") });
+        return;
+      }
       if (preview.kind === "table" && preview.columns && preview.columns.length >= 2) {
         const anomalyColumn = preview.columns.find((column) => /anomaly|异常/i.test(column)) || "";
         const yColumn = preview.columns.find((column, index) => index > 0 && column !== anomalyColumn) || preview.columns[1];
@@ -5386,9 +5925,25 @@ function ResultsCenterView({
     setCompareState({ artifact, state: "loading", message: zh ? "正在读取原版和修改版…" : "Loading original and edited versions…" });
     try {
       const [source, edited] = await Promise.all([
-        desktopApi.previewWorkspaceFile({ workspacePath: artifact.sourceWorkspacePath, path: artifact.editLineage.sourcePath, maxBytes: 500_000 }),
-        desktopApi.previewWorkspaceFile({ workspacePath: artifact.sourceWorkspacePath, path: artifact.path, maxBytes: 500_000 }),
+        loadWorkspacePreview(
+          { workspacePath: artifact.sourceWorkspacePath, path: artifact.editLineage.sourcePath, maxBytes: 500_000 },
+          { cacheMissing: false },
+        ),
+        loadWorkspacePreview(
+          { workspacePath: artifact.sourceWorkspacePath, path: artifact.path, maxBytes: 500_000 },
+          { cacheMissing: false },
+        ),
       ]);
+      if (isMissingWorkspacePreview(source) || isMissingWorkspacePreview(edited)) {
+        setCompareState({
+          artifact,
+          state: "failed",
+          message: zh
+            ? "原始文件或修改版已被删除、移动或重命名，无法比较。"
+            : "The original or the edited file was deleted, moved or renamed, so they cannot be compared.",
+        });
+        return;
+      }
       setCompareState({ artifact, state: "ready", source, edited, message: zh ? "新旧版本已就绪" : "Comparison ready" });
     } catch (caught) {
       setCompareState({ artifact, state: "failed", message: caught instanceof Error ? caught.message : String(caught) });
@@ -5444,7 +5999,13 @@ function ResultsCenterView({
     const sourceTask = tasks.find((task) => task.id === artifact.sourceTaskId);
     if (!sourceTask?.deliverySummary) return;
     const sourcePath = artifact.chartQuality.sourcePath;
-    const sourcePreview = await desktopApi.previewWorkspaceFile({ workspacePath: artifact.sourceWorkspacePath, path: sourcePath, maxBytes: 250_000 }).catch(() => null);
+    // A deleted source file now resolves to a `missing` placeholder instead of
+    // rejecting with ENOENT. `content` is empty either way, so the insights are
+    // built from an empty string exactly as they were before.
+    const sourcePreview = await loadWorkspacePreview(
+      { workspacePath: artifact.sourceWorkspacePath, path: sourcePath, maxBytes: 250_000 },
+      { cacheMissing: false },
+    ).catch(() => null);
     const insights = buildAnalysisRouteInsights(sourcePreview?.content || "", artifact.chartQuality, zh);
     const routeGroupId = artifact.analysisRoute?.routeGroupId || `analysis-${reviewFingerprint(sourcePath)}`;
     const inputFingerprint = reviewFingerprint([
@@ -5900,10 +6461,6 @@ function ResultsCenterView({
                               const sourceTask = tasks.find((task) => task.id === artifact.sourceTaskId);
                               if (sourceTask) onOpenSourceTask(sourceTask);
                             }}>{zh ? "返回原任务" : "Open source task"}</button>
-                            <button type="button" data-testid="results-open-source-run" onClick={() => {
-                              const sourceTask = tasks.find((task) => task.id === artifact.sourceTaskId);
-                              if (sourceTask) onOpenSourceRun(sourceTask, artifact.provenance!.sourceRunId);
-                            }}>{zh ? "查看 Run" : "Open Run"}</button>
                             <button type="button" data-testid="results-verify-provenance" disabled={provenanceState?.artifactId === artifact.id && provenanceState.state === "checking"} onClick={() => void verifyArtifactSource(artifact)}>{zh ? "验证来源" : "Verify source"}</button>
                           </div>
                           {provenanceState?.artifactId === artifact.id ? <output data-testid="results-provenance-status" data-state={provenanceState.state} role="status">{provenanceState.message}</output> : null}

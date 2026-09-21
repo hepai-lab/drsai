@@ -6,6 +6,11 @@ import type {
 
 export type ModelCatalogRecoveryState = RuntimeModelCatalogState | RuntimeModelAvailability | "unconfigured" | "empty" | "timeout";
 
+/** Retired product image models — must not appear in the image-generation picker. */
+const RETIRED_IMAGE_GENERATION_MODEL_IDS = new Set([
+  "gemini-3.1-flash-lite-image", // former display name: Nano Banana 2 Lite
+]);
+
 /** Full Agent Runtime primary models must declare chat + tool_calling (Gateway gate). */
 export function supportsFullAgentPrimaryRuntime(model: Pick<MyDrSaiModelConfig, "operations" | "input_modalities" | "output_modalities">): boolean {
   const operations = model.operations ?? [];
@@ -13,6 +18,15 @@ export function supportsFullAgentPrimaryRuntime(model: Pick<MyDrSaiModelConfig, 
   if (model.input_modalities && !model.input_modalities.includes("text")) return false;
   if (model.output_modalities && !model.output_modalities.includes("text")) return false;
   return true;
+}
+
+/** Image-generation catalog entries declare image output + image_generation operation. */
+export function supportsImageGenerationModel(
+  model: Pick<MyDrSaiModelConfig, "alias" | "model" | "operations" | "output_modalities">,
+): boolean {
+  const modelId = (model.alias || model.model || "").trim().toLowerCase();
+  if (modelId && RETIRED_IMAGE_GENERATION_MODEL_IDS.has(modelId)) return false;
+  return Boolean(model.operations?.includes("image_generation") && model.output_modalities?.includes("image"));
 }
 
 const COPY: Record<string, { zh: [string, string]; en: [string, string] }> = {

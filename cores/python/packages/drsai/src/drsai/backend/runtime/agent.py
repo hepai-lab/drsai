@@ -99,6 +99,8 @@ class RuntimeRunContext:
     model_override_requested: bool = False
     plan_mode: bool = False
     selected_skill_id: str | None = None
+    remote_files: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    remote_skills: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         backend_runtime_id = self.agent_backend_runtime_id or self.runtime_id
@@ -1112,6 +1114,8 @@ class RuntimeAgentService:
         input_parts_override: tuple[Mapping[str, Any], ...] | None = None,
         plan_mode: bool = False,
         selected_skill_id: str | None = None,
+        remote_files: tuple[Mapping[str, Any], ...] | None = None,
+        remote_skills: tuple[Mapping[str, Any], ...] | None = None,
     ) -> dict[str, Any]:
         if self._closed:
             raise RuntimeExecutionError("agent_backend_service_closed", "Agent Backend service is closed.")
@@ -1121,7 +1125,11 @@ class RuntimeAgentService:
             definition = replace(
                 definition,
                 model=model_override or definition.model,
-                reasoning_effort=reasoning_effort,
+                # ``None`` means "not supplied for this run"; never let an
+                # unrelated override (e.g. a model switch) silently wipe the
+                # effort stored on the definition, or the reasoning control in
+                # the UI would stop matching what the backend sends.
+                reasoning_effort=reasoning_effort or definition.reasoning_effort,
                 model_provider=model_provider,
                 model_id=model_id,
                 model_config_revision=model_config_revision,
@@ -1140,6 +1148,10 @@ class RuntimeAgentService:
             plan_mode=plan_mode,
             selected_skill_id=selected_skill_id,
         )
+        if remote_files is not None:
+            context = replace(context, remote_files=tuple(remote_files))
+        if remote_skills is not None:
+            context = replace(context, remote_skills=tuple(remote_skills))
         if input_resources_override is not None:
             context = replace(context, input_resources=tuple(input_resources_override))
         if input_parts_override is not None:

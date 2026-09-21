@@ -66,12 +66,29 @@ $LogFile = if ($LogFileOverride) { $LogFileOverride } else { Join-Path $LogDir "
 $ExpandedRoot = Join-Path $StagingRoot "runtime-current"
 $RollbackStatePath = Join-Path $StagingRoot "install-rollback.json"
 
+# The Runtime payload carries ~19k individual files. Anything the installer
+# pays per file (a managed cmdlet call, a progress-file write) is therefore
+# multiplied by tens of thousands, which used to dominate the whole install,
+# so the loops below coalesce progress reporting and use .NET directly.
+$ProgressIntervalMs = 400
+$ProgressLastWriteMs = [Int64]-1000000
+$ProgressLastPercent = -1
+$ProgressLastDetail = ""
+$ProgressDirectoryReady = $false
+$LogDirectoryReady = $false
+
 function New-Directory([string]$Path) {
-    New-Item -ItemType Directory -Force -Path $Path | Out-Null
+    # [IO.Directory]::CreateDirectory is a single syscall; New-Item has to go
+    # through the PowerShell provider, which costs ~1.4 ms even when the
+    # directory already exists.
+    $null = [IO.Directory]::CreateDirectory($Path)
 }
 
 function Write-Log([string]$Message) {
-    New-Directory $LogDir
+    if (-not $LogDirectoryReady) {
+        New-Directory $LogDir
+        $LogDirectoryReady = $true
+    }
     $line = "[$((Get-Date).ToString("s"))] $Message"
     Add-Content -LiteralPath $LogFile -Value $line
     if (-not $Quiet) {
@@ -79,13 +96,31 @@ function Write-Log([string]$Message) {
     }
 }
 
-function Write-StageProgress([int]$Percent, [string]$Detail) {
+function Write-StageProgress([int]$Percent, [string]$Detail, [switch]$Force) {
     if (-not $ProgressFile) { return }
     $boundedPercent = [Math]::Max(0, [Math]::Min(100, $Percent))
-    $payload = "$boundedPercent`t$($Detail -replace '[\r\n]+', ' ')"
+    $payloadDetail = ($Detail -replace '[\r\n]+', ' ')
+    $nowMs = [Int64][Environment]::TickCount64
+
+    # Coalesce hot-loop reporting into at most one write per ProgressIntervalMs.
+    # The MSI bridge polls this file every 100 ms and only forwards a percent or
+    # detail that actually changed, so sub-interval updates are invisible to the
+    # user while the per-file cost of writing them is not.
+    if (-not $Force) {
+        if ($boundedPercent -eq $ProgressLastPercent -and $payloadDetail -eq $ProgressLastDetail) { return }
+        if (($nowMs - $ProgressLastWriteMs) -lt $ProgressIntervalMs) { return }
+    }
+    $script:ProgressLastPercent = $boundedPercent
+    $script:ProgressLastDetail = $payloadDetail
+    $script:ProgressLastWriteMs = $nowMs
+
+    $payload = "$boundedPercent`t$payloadDetail"
     $stream = $null
     try {
-        New-Directory (Split-Path -Parent $ProgressFile)
+        if (-not $ProgressDirectoryReady) {
+            $null = [IO.Directory]::CreateDirectory((Split-Path -Parent $ProgressFile))
+            $script:ProgressDirectoryReady = $true
+        }
         $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($payload)
         $stream = New-Object IO.FileStream(
             $ProgressFile,
@@ -99,6 +134,7 @@ function Write-StageProgress([int]$Percent, [string]$Detail) {
         # Progress reporting is best-effort. A short-lived UI reader, antivirus
         # scanner, or indexer must never turn a healthy Runtime install into MSI
         # error 1603.
+        $script:ProgressDirectoryReady = $false
     } finally {
         if ($stream) { $stream.Dispose() }
     }
@@ -248,7 +284,9 @@ function Assert-RuntimeArchive {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [System.IO.Compression.ZipFile]::OpenRead($target)
     try {
-        [Int64]$expandedBytes = ($archive.Entries | Measure-Object -Property Length -Sum).Sum
+        # A plain loop beats piping every entry through Measure-Object.
+        [Int64]$expandedBytes = 0
+        foreach ($entry in $archive.Entries) { $expandedBytes += [Int64]$entry.Length }
     } finally {
         $archive.Dispose()
     }
@@ -263,29 +301,47 @@ function Assert-RuntimeArchive {
     if ($installDrive.Name -ne $stagingDrive.Name -and $stagingDrive.AvailableFreeSpace -lt ($expandedBytes + $marginBytes)) {
         throw ("OpenDrSai staging needs {0:N1} GB free on {1}, but only {2:N1} GB is available." -f (($expandedBytes + $marginBytes) / 1GB), $stagingDrive.Name, ($stagingDrive.AvailableFreeSpace / 1GB))
     }
-    Write-StageProgress 100 ("100%   Package verified; {0:N1} MB will be installed" -f ($expandedBytes / 1MB))
+    Write-StageProgress 100 ("100%   Package verified; {0:N1} MB will be installed" -f ($expandedBytes / 1MB)) -Force
 }
 
 function Expand-ZipClean([string]$Archive, [string]$Destination) {
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Destination
-    New-Directory $Destination
+    if (Test-Path -LiteralPath $Destination) {
+        try {
+            Remove-Item -LiteralPath $Destination -Recurse -Force -ErrorAction Stop
+        } catch {
+            Write-Log "Could not clear the previous staging directory: $($_.Exception.Message)"
+        }
+    }
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archiveFile = [System.IO.Compression.ZipFile]::OpenRead($Archive)
     try {
-        [Int64]$totalBytes = ($archiveFile.Entries | Measure-Object -Property Length -Sum).Sum
-        [Int64]$expandedBytes = 0
         $destinationRoot = [IO.Path]::GetFullPath($Destination).TrimEnd('\') + '\'
+        $null = [IO.Directory]::CreateDirectory($destinationRoot)
+        [Int64]$totalBytes = 0
+        foreach ($entry in $archiveFile.Entries) { $totalBytes += [Int64]$entry.Length }
+        [Int64]$expandedBytes = 0
         $buffer = New-Object byte[] (1024 * 1024)
+        # Entries are grouped by directory in the archive, so remembering the
+        # last prepared directory removes nearly all CreateDirectory calls.
+        $preparedDirectory = ""
         foreach ($entry in $archiveFile.Entries) {
-            $targetPath = [IO.Path]::GetFullPath((Join-Path $Destination $entry.FullName))
+            $name = $entry.FullName
+            # Concatenating onto a trailing separator keeps the per-entry cost
+            # off the Join-Path cmdlet; the archive stores '\' separators.
+            $targetPath = [IO.Path]::GetFullPath($destinationRoot + $name)
             if (-not $targetPath.StartsWith($destinationRoot, [StringComparison]::OrdinalIgnoreCase)) {
-                throw "Runtime archive contains an unsafe path: $($entry.FullName)"
+                throw "Runtime archive contains an unsafe path: $name"
             }
-            if ($entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('\')) {
-                New-Directory $targetPath
+            if ($name.EndsWith('/') -or $name.EndsWith('\')) {
+                $null = [IO.Directory]::CreateDirectory($targetPath)
+                $preparedDirectory = $targetPath
                 continue
             }
-            New-Directory (Split-Path -Parent $targetPath)
+            $parentDirectory = [IO.Path]::GetDirectoryName($targetPath)
+            if ($parentDirectory -ne $preparedDirectory) {
+                $null = [IO.Directory]::CreateDirectory($parentDirectory)
+                $preparedDirectory = $parentDirectory
+            }
             $source = $null
             $target = $null
             try {
@@ -299,13 +355,13 @@ function Expand-ZipClean([string]$Archive, [string]$Destination) {
                 }
             } catch {
                 $exception = $_.Exception
-                throw ("Failed to extract Runtime entry '{0}' to '{1}': {2} (type={3}, hresult=0x{4:X8})" -f $entry.FullName, $targetPath, $exception.Message, $exception.GetType().FullName, $exception.HResult)
+                throw ("Failed to extract Runtime entry '{0}' to '{1}': {2} (type={3}, hresult=0x{4:X8})" -f $name, $targetPath, $exception.Message, $exception.GetType().FullName, $exception.HResult)
             } finally {
                 if ($target) { $target.Dispose() }
                 if ($source) { $source.Dispose() }
             }
         }
-        Write-StageProgress 100 ("100%   {0:N1} MB extracted" -f ($totalBytes / 1MB))
+        Write-StageProgress 100 ("100%   {0:N1} MB extracted" -f ($totalBytes / 1MB)) -Force
     } finally {
         $archiveFile.Dispose()
     }
@@ -399,6 +455,40 @@ function Copy-DirectoryWithProgress([string]$Source, [string]$Destination, [int]
     }
 }
 
+function Test-SameVolume([string]$First, [string]$Second) {
+    $firstRoot = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($First))
+    $secondRoot = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Second))
+    return ($firstRoot -eq $secondRoot)
+}
+
+function Install-DirectoryWithProgress([string]$Source, [string]$Destination, [int]$StartPercent, [int]$EndPercent) {
+    $label = Split-Path -Leaf $Source
+    Remove-PathWithRetry $Destination
+    # The verified staging payload normally sits on the install volume (an
+    # elevated MSI stages under ProgramData), so activating it is a directory
+    # rename: O(1) instead of ~19k buffered file copies plus a full second copy
+    # of the bytes on disk. Staging on another volume (a redirected TEMP on
+    # another drive) still needs the byte copy, so that path is kept.
+    if (Test-SameVolume $Source $Destination) {
+        $null = [IO.Directory]::CreateDirectory((Split-Path -Parent $Destination))
+        Write-StageProgress $StartPercent ("{0}%   Activating the {1} runtime..." -f $StartPercent, $label) -Force
+        try {
+            [IO.Directory]::Move($Source, $Destination)
+            Write-StageProgress $EndPercent ("{0}%   The {1} runtime is in place" -f $EndPercent, $label) -Force
+            return
+        } catch {
+            # A filter driver or a process still holding the staged tree can
+            # refuse the rename, so fall back to the byte copy that the
+            # installer used before activation existed instead of failing an
+            # install that would otherwise have succeeded.
+            Write-Log "Could not activate the $label runtime by rename ($($_.Exception.Message)); copying the payload instead."
+        }
+    } else {
+        Write-Log "Staging directory '$Source' is on a different volume than '$Destination'; copying the payload instead of activating it."
+    }
+    Copy-DirectoryWithProgress $Source $Destination $StartPercent $EndPercent
+}
+
 function Remove-PreviousDirectories {
     foreach ($path in @(
         (Join-Path $InstallRoot "app.previous"),
@@ -421,7 +511,7 @@ function Repair-InstalledWrappers([string]$AgentDir) {
         $config = @(
             "home = $venvRoot",
             "include-system-site-packages = false",
-            "version = 3.11.0",
+            "version = 3.12.0",
             "executable = $(Join-Path $venvRoot 'python.exe')"
         ) -join [Environment]::NewLine
         [IO.File]::WriteAllText($pyvenvConfig, ($config + [Environment]::NewLine), (New-Object Text.UTF8Encoding($false)))
@@ -510,11 +600,11 @@ function Install-RuntimePayload {
     $appCandidate = Join-Path $InstallRoot "app.installing"
     $agentCandidate = Join-Path $InstallRoot "drsai-agent.installing"
     Write-Log "Installing desktop app..."
-    Write-StageProgress 2 "Preparing the desktop application..."
-    Copy-DirectoryWithProgress (Join-Path $runtimeRoot "app") $appCandidate 2 48
+    Write-StageProgress 2 "Preparing the desktop application..." -Force
+    Install-DirectoryWithProgress (Join-Path $runtimeRoot "app") $appCandidate 2 48
 
     Write-Log "Installing OpenDrSai agent runtime..."
-    Copy-DirectoryWithProgress (Join-Path $runtimeRoot "drsai-agent") $agentCandidate 48 90
+    Install-DirectoryWithProgress (Join-Path $runtimeRoot "drsai-agent") $agentCandidate 48 90
     Write-RollbackState
     Stop-InstalledProcessTrees
     Write-StageProgress 92 "Activating the desktop application..."
@@ -549,20 +639,32 @@ function Install-RuntimePayload {
     }
 
     Write-InstallState $runtimeManifest $desktopExe $AgentDir
-    Write-StageProgress 100 "100%   OpenDrSai files installed"
+    Write-StageProgress 100 "100%   OpenDrSai files installed" -Force
 }
 
 function Remove-PathsWithProgress([string[]]$Paths, [int]$StartPercent, [int]$EndPercent) {
+    # One recursive delete per tree instead of one Remove-Item per file. The
+    # per-file sweep spent ~10.6 ms on each of ~19k files, and the trees are
+    # mutually exclusive, so removing them in sequence is equivalent.
     $existingPaths = @($Paths | Where-Object { Test-Path -LiteralPath $_ })
-    $files = @($existingPaths | ForEach-Object { Get-ChildItem -LiteralPath $_ -File -Recurse -Force -ErrorAction SilentlyContinue })
-    $total = [Math]::Max(1, $files.Count)
-    for ($index = 0; $index -lt $files.Count; $index++) {
-        Remove-Item -LiteralPath $files[$index].FullName -Force -ErrorAction SilentlyContinue
-        $percent = [int]($StartPercent + (($EndPercent - $StartPercent) * (($index + 1) / $total)))
-        Write-StageProgress $percent ("{0}%   {1} / {2} temporary files removed" -f $percent, ($index + 1), $total)
+    if ($existingPaths.Count -eq 0) {
+        Write-StageProgress $EndPercent ("{0}%   No temporary files to remove" -f $EndPercent) -Force
+        return
     }
-    foreach ($path in $existingPaths) {
-        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+    $total = $existingPaths.Count
+    for ($index = 0; $index -lt $total; $index++) {
+        $target = $existingPaths[$index]
+        $percent = [int]($StartPercent + (($EndPercent - $StartPercent) * ($index / $total)))
+        Write-StageProgress $percent ("{0}%   Removing {1} ({2} of {3})..." -f $percent, (Split-Path -Leaf $target), ($index + 1), $total) -Force
+        try {
+            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction Stop
+        } catch {
+            # Cleanup must never fail an otherwise healthy install: report the
+            # leftover path and continue, like the previous per-file sweep did.
+            Write-Log "Could not remove $target during cleanup: $($_.Exception.Message)"
+        }
+        $donePercent = [int]($StartPercent + (($EndPercent - $StartPercent) * (($index + 1) / $total)))
+        Write-StageProgress $donePercent ("{0}%   Cleaned up {1} of {2} temporary trees" -f $donePercent, ($index + 1), $total) -Force
     }
 }
 
@@ -599,21 +701,21 @@ function Complete-RuntimeInstall {
     if (-not (Test-Path -LiteralPath $desktopExe)) {
         throw "OpenDrSai executable was not installed: $desktopExe"
     }
-    Write-StageProgress 20 "Checking the installed application..."
+    Write-StageProgress 20 "Checking the installed application..." -Force
     Remove-PathsWithProgress @(
         (Join-Path $InstallRoot "app.previous"),
         "$AgentDir.previous",
         $ExpandedRoot
     ) 20 97
     Remove-Item -LiteralPath $RollbackStatePath -Force -ErrorAction SilentlyContinue
-    Write-StageProgress 99 "Cleaning temporary installation files..."
+    Write-StageProgress 99 "Cleaning temporary installation files..." -Force
 
     Write-Log "OpenDrSai Runtime installation complete."
     if (-not $NoLaunch) {
         Write-Log "Launching OpenDrSai..."
         Start-Process -FilePath $desktopExe -WorkingDirectory (Split-Path -Parent $desktopExe)
     }
-    Write-StageProgress 100 "100%   OpenDrSai installation complete"
+    Write-StageProgress 100 "100%   OpenDrSai installation complete" -Force
 }
 
 try {
@@ -630,23 +732,23 @@ try {
         Download-RuntimeArchive
     }
     if ($Stage -in @("All", "Verify")) {
-        Write-StageProgress 0 "Checking the Runtime package..."
+        Write-StageProgress 0 "Checking the Runtime package..." -Force
         Write-Log "Verifying OpenDrSai Runtime..."
         Assert-RuntimeArchive
     }
     if ($Stage -in @("All", "Extract")) {
-        Write-StageProgress 0 "Preparing to extract the Runtime..."
+        Write-StageProgress 0 "Preparing to extract the Runtime..." -Force
         Write-Log "Extracting OpenDrSai Runtime..."
         Expand-ZipClean (Get-RuntimeArchivePath) $ExpandedRoot
         $null = Get-ExpandedRuntime
     }
     if ($Stage -in @("All", "Install")) {
-        Write-StageProgress 0 "Preparing to install OpenDrSai..."
+        Write-StageProgress 0 "Preparing to install OpenDrSai..." -Force
         Write-Log "Preparing the new OpenDrSai runtime before activation..."
         Install-RuntimePayload
     }
     if ($Stage -in @("All", "Complete")) {
-        Write-StageProgress 0 "Finishing OpenDrSai installation..."
+        Write-StageProgress 0 "Finishing OpenDrSai installation..." -Force
         Complete-RuntimeInstall
     }
     if ($Stage -eq "Rollback") {

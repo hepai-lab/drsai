@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { FileText, TriangleAlert, X } from "lucide-react";
 import type { WorkspaceFilePreview } from "@shared/desktopApi";
 import type { CitationPart } from "@shared/structuredConversation";
-import { desktopApi } from "../../desktopApi";
+import { isMissingWorkspacePreview, loadWorkspacePreview } from "../../workspacePreview";
 import { resolveCitationSource } from "../../knowledgeSources";
 import type { AppLanguage } from "../../navigation";
 import { FilePreviewer } from "./file_previewer/FilePreviewer";
@@ -55,13 +55,25 @@ export function CitationSourcePanel({
             ? "找不到该引用所属的本地知识库，无法定位原文。"
             : "The Knowledge Base this citation belongs to is not available locally.");
         }
-        const loaded = await desktopApi.previewWorkspaceFile({
-          workspacePath: target.rootPath,
-          path: target.relativePath,
-          // Ask for the largest slice the preview allows: a citation is useless
-          // if the lines it points at fall outside what was loaded.
-          maxBytes: 500_000,
-        });
+        const loaded = await loadWorkspacePreview(
+          {
+            workspacePath: target.rootPath,
+            path: target.relativePath,
+            // Ask for the largest slice the preview allows: a citation is useless
+            // if the lines it points at fall outside what was loaded.
+            maxBytes: 500_000,
+          },
+          { cacheMissing: false },
+        );
+        // A deleted file now resolves to a placeholder instead of failing, which
+        // would render as an empty pane. Citations travel with the excerpt they
+        // quote, and the error branch below keeps that excerpt on screen, so
+        // sending a missing source there preserves the only thing left to check.
+        if (isMissingWorkspacePreview(loaded)) {
+          throw new Error(zh
+            ? `被引文件已不存在（可能已被删除、移动或重命名）：${target.relativePath}`
+            : `The cited file no longer exists (it may have been deleted, moved or renamed): ${target.relativePath}`);
+        }
         // A preview root that does not exist falls back to the default
         // workspace instead of failing, which would quietly show a same-named
         // file from somewhere else as the source of the claim. Nothing about

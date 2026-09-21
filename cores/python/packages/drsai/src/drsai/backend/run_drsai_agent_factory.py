@@ -19,6 +19,11 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 from drsai.backend.cli.config import load_config, save_config
+from drsai.backend.prompt_registry import (
+    PLAN_MODE_SYSTEM_PROMPT,
+    SURFACE_CLI,
+    build_base_system_message,
+)
 from drsai.backend.runtime.agent_kernel import (
     AgentRunConfig,
     DEFAULT_MAX_MESSAGES,
@@ -61,11 +66,9 @@ logger = logging.getLogger(__name__)
 
 
 # ── Plan Mode Prompt ─────────────────────────────────────────────────────────
-PLAN_MODE_SYSTEM_PROMPT = """Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
-
-Ask the questions one at a time.
-
-If a question can be answered by exploring the codebase, explore the codebase instead."""
+# Moved to drsai.backend.prompt_registry (single source of truth for prompt
+# fragments) and re-imported above so existing callers keep working:
+#     from drsai.backend.run_drsai_agent_factory import PLAN_MODE_SYSTEM_PROMPT
 
 OPENDRSAI_ASSISTANT_NAME = "OpenDrSai"
 OPENDRSAI_IDENTITY_SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
@@ -335,52 +338,18 @@ def _overlay_live_gfs_config(cli_cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_cwd_prompt(cli_cfg: dict[str, Any], work_dir: str = "") -> str:
-    """Compose a small system-prompt prefix that tells the agent the user's
-    current working directory.
+    """Compose the developer message handed to ``DrSaiAssistant``.
 
-    The CLI injects this each time a session starts so the agent can
-    resolve relative paths and skill searches against the user's project.
-    An explicit ``cli_cfg['system_message']`` or env ``DRSAI_SYSTEM_MESSAGE``
-    is appended on top for user-supplied context.
-
-    If ``cli_cfg['plan_mode']`` is True, the plan mode prompt is prepended
-    to guide the agent to interview the user about their plan.
+    Thin wrapper over :func:`drsai.backend.prompt_registry.build_base_system_message`
+    kept for the historical private name.  The wording, the layer order and the
+    injected system prompt all come from the registry now -- this function owns
+    no prompt text of its own.
     """
-    if work_dir:
-        cwd = work_dir
-    else:
-        try:
-            cwd = os.getcwd()
-        except Exception:
-            cwd = ""
-    # This is the same versioned authoritative base prompt used by Android.
-    # Surface-specific environment/project content is appended afterwards.
-    lines: list[str] = [AgentRunConfig().authoritative_prompt()]
-
-    # Plan mode: prepend the plan mode prompt
-    if cli_cfg.get("plan_mode"):
-        lines.append(PLAN_MODE_SYSTEM_PROMPT)
-        lines.append("")  # Empty line separator
-
-    if cwd:
-        lines.append(
-            "## Environment\n"
-            f"The user launched drsai-cli from this working directory:\n"
-            f"  {cwd}\n"
-            "Resolve relative file paths against this directory unless the "
-            "user specifies otherwise. Treat it as the project root when "
-            "searching for code or config.\n"
-            "Files requested as user deliverables must be written beneath "
-            "the `artifacts/` directory in this Workspace. Use private "
-            "temporary storage only for scripts, caches, and intermediate "
-            "files, and never report an internal storage path as a delivered "
-            "result."
-        )
-    extra = os.environ.get("DRSAI_SYSTEM_MESSAGE") or cli_cfg.get("system_message") or ""
-    extra = str(extra).strip()
-    if extra:
-        lines.append(extra)
-    return "\n\n".join(lines) if lines else ""
+    return build_base_system_message(
+        surface=SURFACE_CLI,
+        cli_cfg=cli_cfg,
+        work_dir=work_dir,
+    )
 
 
 def _build_gfs_tools(
@@ -596,9 +565,13 @@ def create_agent(
         )
 
     # Default alias: explicit arg > env var > cli_cfg > module default.
+    # When provider/model_id are supplied, resolve_model_ref above produces the
+    # canonical upstream model and it must remain authoritative below.
     env_alias = os.environ.get("LLM_DEFAULT_ALIAS")
     resolved_config_name = (
-        resolved_user_model.model
+        resolved_user_model.model_id
+        if resolved_user_model is not None and resolved_user_model.model_id in llm_mode_config
+        else resolved_user_model.model
         if resolved_user_model is not None
         else (
             defult_config_name
@@ -751,7 +724,24 @@ def create_agent(
             entry = llm_mode_config.get(alias)
             if entry is None:
                 entry = llm_mode_config[resolved_config_name]
-        llm_model = entry.model
+        # In Unified TOML mode, the Resolver's model/upstream_id is the
+        # authoritative wire model.  DEFAULT_LLM_MODE_CONFIG supplies
+        # metadata only; using entry.model here would silently replace a TOML
+        # selection with the legacy built-in model (for example v4-flash).
+        llm_model = (
+            active_user_model.model
+            if unified_model_config_active and active_user_model is not None
+            else entry.model
+        )
+        logger.info(
+            "Resolved model client: requested_provider=%s requested_model_id=%s "
+            "config_alias=%s upstream_model=%s metadata_alias=%s",
+            model_provider,
+            model_id,
+            alias,
+            llm_model,
+            entry.model,
+        )
         token_limit = entry.token_limit
         max_tokens = entry.max_tokens if entry.max_tokens > 0 else int(token_limit * 0.25)
         client_type = entry.client_type
@@ -760,10 +750,14 @@ def create_agent(
         # ── Determine client_type ──
         # Priority: platform_auth > yaml entry (explicit) > config.toml provider > model-name heuristic
         platform_auth = get_platform_auth()
-        if platform_auth is not None:
-            # The OIDC model service is the authoritative transport for this
-            # request. A static Provider selected in config.toml must not force
-            # an Anthropic-prefixed catalog model through the OpenAI wire API.
+        is_hepai_provider = (
+            active_user_model is None
+            or active_user_model.provider.name in {"hepai", "hepai-anthropic"}
+        )
+        if platform_auth is not None and is_hepai_provider:
+            # OIDC is authoritative only for the HepAI provider. An active
+            # desktop session must not change a third-party provider's wire
+            # protocol or credentials.
             client_type = "anthropic" if llm_model.casefold().startswith("anthropic/") else "openai"
         elif entry.client_type in ("openai", "anthropic", "gemini"):
             # yaml entry is authoritative when explicitly set (not "auto")
@@ -839,6 +833,10 @@ def create_agent(
                 api_key=active_api_key,
                 model_info=model_info,
                 max_tokens=max_tokens,
+                allow_deferred_oidc=bool(
+                    active_user_model is None
+                    or active_user_model.provider.name in {"hepai", "hepai-anthropic"}
+                ),
             )
 
         # OpenAI-compatible client: use vision from the config entry

@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 
 def normalize_hepai_base_url(base_url: str | None = None) -> str:
     """Normalize a controller/file-service URL to one canonical API base."""
-    normalized = (base_url or "https://aiapi.ihep.ac.cn/apiv2").strip().rstrip("/")
+    normalized = (base_url or "https://ddf.ihep.ac.cn/apiv2").strip().rstrip("/")
     return normalized if normalized.endswith("/apiv2") else f"{normalized}/apiv2"
 
 

@@ -426,7 +426,7 @@ class AgentSession:
         *,
         images: Optional[list[dict]] = None,
     ) -> str:
-        from .event_translator import TurnState, finalize, translate
+        from drsai.backend.events.agent_event_translator import TurnState, finalize, translate
 
         state = TurnState()
         status = "complete"
@@ -762,10 +762,11 @@ class AgentSession:
         state[key] = value
         # Apply certain keys directly to agent attributes
         if key == "plan_mode":
-            # Inject the real PLAN_MODE_SYSTEM_PROMPT (not a placeholder string).
-            # Import lazily to avoid a circular import at module load time.
-            from drsai.backend.run_drsai_agent_factory import PLAN_MODE_SYSTEM_PROMPT
-            self.agent._injected_prefix = PLAN_MODE_SYSTEM_PROMPT if value else ""
+            # Same source as Desktop: build_turn_prefix() owns the wording, so
+            # toggling plan mode here and in the Desktop gateway cannot drift.
+            from drsai.backend.prompt_registry import build_turn_prefix
+
+            self.agent._injected_prefix = build_turn_prefix(plan_mode=bool(value))
             # Rebuild the system message so the prefix takes effect on the next turn.
             try:
                 if hasattr(self.agent, "update_system_prompt"):

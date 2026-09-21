@@ -4,7 +4,7 @@
  */
 
 import { execFile } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, type Dirent } from "fs";
 import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, cp, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { basename, join } from "path";
@@ -90,7 +90,7 @@ export async function findSkillRoot(extractDir: string): Promise<string> {
     if (depth > 0 && (await dirHasSkillMd(dir))) return dir;
     if (depth >= maxDepth) continue;
 
-    let children: Awaited<ReturnType<typeof readdir>>;
+    let children: Dirent[];
     try {
       children = await readdir(dir, { withFileTypes: true });
     } catch {

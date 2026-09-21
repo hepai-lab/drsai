@@ -8,54 +8,35 @@ import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest, ChatTurnCance
 import { LEGACY_MY_DRSAI_AGENT_ID, LOCAL_OPENDRSAI_AGENT_NAME } from "../api/desktopApi";
 import { normalizeRuntimeErrorEnvelope } from "../api/errorEnvelope";
 import { RemoteProtocolError } from "../api/remoteSshProtocol";
-import { invalidateAuthSession, refreshAuthContextAfterUnauthorized, requireAuthContext, AuthSessionError, type AuthContext } from "./auth";
-import { getPlatformAgentChatUrl, getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable, respondToDdfChatInput, respondToPlatformChatInput, resolvePlatformBearerToken, stopPlatformChat } from "./agents";
+import { requireAuthContext, AuthSessionError, type AuthContext } from "./auth";
+import { getPlatformAgentExecutionDescriptor, isPlatformAgentExecutionAvailable } from "./agents";
 import { getMyDrSaiAgentModelPolicy, listConfiguredAgents } from "./myDrSaiConfig";
-import {
-  createChatToolTimelineAccumulator,
-  createChatContentNormalizer,
-  ChatSseError,
-  isCompletionDoneFrame,
-  parseAgentInputRequestSseFrame,
-  parseAgentLogSseFrame,
-  parseChatReasoningSseFrame,
-  parseChatSseErrorFrame,
-  parseChatSseFrame,
-  parseStructuredConversationSseFrame,
-  parseProviderErrorAnalyticsSseFrame,
-  parseProviderStatusSseFrame,
-  parseProviderUsageAnalyticsSseFrame,
-  parseAgentRunSseFileEvents,
-} from "./sseParser";
+
 import { expectRuntimeSessionBind, listThreads, normalizeThinkingEffort, rememberRuntimeSessionOwner, updateThread, upsertThreadFromRun } from "./threads";
 import { sanitizeDesktopThreadTitle } from "../api/threadSidebarCatalog";
-import { persistProviderErrorAnalytics } from "./providerErrorAnalytics";
-import { persistProviderUsageAnalytics } from "./providerUsageAnalytics";
 import { recordAgentTelemetry } from "./agentTelemetry";
 import { analyzeMaterialRoles } from "./workspaceContext";
 import { assertAgentCircuitAvailable, recordAgentCircuitFailure, recordAgentCircuitSuccess } from "./agentCircuitBreaker";
-import { createFailureEscalation, getFailureRecovery } from "./failureRecovery";
+import { getFailureRecovery } from "./failureRecovery";
 import { startGateway } from "./gateway";
 import { resolveGatewayPort } from "./gatewayEnvironment";
-import { acquireRuntimeClientLease, bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, retainRuntimeClient, type OaepEvent, type OaepItem, type RuntimeAgentRun, type RuntimeClient, type RuntimeExecutionAuth, type RuntimeGoal, type RuntimeIdentity } from "./runtimeClient";
+import { acquireRuntimeClientLease, bindRuntimeThreadToWorkspace, connectRuntimeClientForWorkspace, isRuntimeClientGenerationInvalidated, LocalRuntimeClient, retainRuntimeClient, type OaepEvent, type OaepItem, type RuntimeAgentRun, type RuntimeClient, type RuntimeExecutionAuth, type RuntimeGoal, type RuntimeIdentity } from "./runtimeClient";
 import { sessionPayloadHash, sessionSyncState } from "./sessionSyncState";
 import { isUncertainRunCreateFailure, recoverRunCreation } from "./messageDelivery";
-import {
-  RecoverableStreamError,
-  appendResumedContent,
-  createStreamAttemptCursor,
-  isRecoverableNetworkError,
-  networkRetryDelayMs,
-  waitForNetworkRetry,
-  type StreamResumeState,
-} from "./networkRecovery";
+import { isRecoverableNetworkError } from "./networkRecovery";
 import { desktopDiagnostics, type DiagnosticOperationHandle } from "./diagnostics";
 import { BoundedEventDispatcher } from "./boundedEventDispatcher";
 import { BackpressureController } from "./backpressureController";
+import {
+  isRendererIpcTargetGone,
+  resumeRendererIpc,
+  suspendRendererIpc,
+  trySendToRenderer,
+} from "./rendererIpcTarget";
 import { listRecordedChatRunEvents, recordChatRunEvent } from "./chatRunJournal";
 import { codexContinuationAction } from "./codexSessionResumePolicy";
-import { selectCurrentUserInput } from "./chatInput";
-import { isPresentationNoiseOaepEvent, materializeOaepDeltaShadow, presentationItemForOaepEvent, reduceOaepEvent, subscribeOaepSession, type OaepDeltaShadow } from "./oaepSessionStream";
+import { assertRequestMessageCount, selectCurrentUserInput } from "./chatInput";
+import { isOaepSyncDegradedError, isPresentationNoiseOaepEvent, materializeOaepDeltaShadow, presentationItemForOaepEvent, reduceOaepEvent, subscribeOaepSession, type OaepDeltaShadow } from "./oaepSessionStream";
 import { selectRuntimeConversationProtocolResult } from "./runtimeProtocolSelection";
 import { decideRuntimeRestartRecovery } from "../api/runtimeRestartRecovery";
 import { OAEP_VERSION } from "../api/oaep.generated";
@@ -69,6 +50,10 @@ export interface ChatEventTarget {
   send(channel: string, ...args: unknown[]): void;
   /** When true the renderer frame is gone; the dispatcher must stop sending. */
   isDestroyed?(): boolean;
+  /** True while the main frame is (re)loading — IPC to the old frame is unsafe. */
+  isLoadingMainFrame?(): boolean;
+  /** Electron WebContents main frame; used to detect reload disposal gaps. */
+  mainFrame?: { isDestroyed(): boolean };
 }
 
 const chatEventDispatchers = new WeakMap<ChatEventTarget, BoundedEventDispatcher<ChatEvent>>();
@@ -106,12 +91,12 @@ function getChatEventDispatcher(target: ChatEventTarget): BoundedEventDispatcher
   const dispatcher = new BoundedEventDispatcher<ChatEvent>({
     capacity: 256,
     deliver: (event) => {
-      // Do NOT swallow errors here. If target.send() throws (frame disposed),
-      // the error propagates to flush() which calls close() and permanently
-      // stops the dispatcher. The previous try/catch swallowed the error so
-      // flush() never saw it and close() was never called -- the dispatcher
-      // stayed open and spammed "Render frame was disposed" errors forever.
-      target.send("desktop:chat-event", event);
+      // Never call send() on a disposed frame — Electron often logs
+      // "Render frame was disposed" without throwing, so shouldClose alone
+      // (isDestroyed) is not enough. Skip + throw so flush() closes.
+      if (!trySendToRenderer(target, "desktop:chat-event", event)) {
+        throw new Error("Render frame was disposed");
+      }
     },
     merge: (previous, next) => {
       if (previous.requestId !== next.requestId || previous.type !== next.type) return null;
@@ -144,7 +129,7 @@ function getChatEventDispatcher(target: ChatEventTarget): BoundedEventDispatcher
       return null;
     },
     schedule: controller.createAdaptiveScheduler(),
-    shouldClose: () => target.isDestroyed?.() ?? false,
+    shouldClose: () => isRendererIpcTargetGone(target),
   });
   chatEventDispatchers.set(target, dispatcher);
   return dispatcher;
@@ -162,9 +147,6 @@ export function configureChatRemoteRouting(_routing: ChatRemoteRouting): void {
 }
 
 const MAX_ACTIVE_CHATS = 3;
-const MAX_MESSAGES = 40;
-const MAX_MESSAGE_CHARS = 16_000;
-const MAX_TOTAL_CHARS = 80_000;
 const MAX_MODEL_CHARS = 120;
 const MAX_AGENT_ID_CHARS = 160;
 const MAX_WORKSPACE_PATH_CHARS = 2048;
@@ -177,17 +159,13 @@ export const NATIVE_IMAGE_FILE_LIMIT_BYTES = 20 * 1024 * 1024;
 export const NATIVE_IMAGE_TOTAL_LIMIT_BYTES = 50 * 1024 * 1024;
 const NATIVE_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 const MAX_BROWSER_SCREENSHOT_DATA_URL_CHARS = 2_000_000;
-const MAX_SSE_BUFFER_CHARS = 1_000_000;
-const MAX_ERROR_BODY_BYTES = 64_000;
 // Execution time limits disabled: the backend has its own safeguards
 // (DEFAULT_MAX_TOOL_ROUNDS, max_turn_count, etc.). Frontend total-time
 // limits caused premature session interruption at ~50-68 operations.
 // Set OPENDRSAI_CHAT_TIMEOUT_MS > 0 to re-enable the absolute timeout.
 const CHAT_TIMEOUT_MS = getPositiveIntEnv("OPENDRSAI_CHAT_TIMEOUT_MS", 0);
-const NETWORK_RECOVERY_WINDOW_MS = getPositiveIntEnv("OPENDRSAI_NETWORK_RECOVERY_WINDOW_MS", Number.MAX_SAFE_INTEGER);
 const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{8,80}$/;
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_.:-]{1,160}$/;
-const platformInputTargets = new Map<string, { agentId: string; chatId: string; runId: string }>();
 interface RuntimeProjectionTarget {
   approvalId?: string;
   projection: OaepPresentationProjection;
@@ -213,7 +191,6 @@ interface ChatTurnRecord {
   eventTarget: ChatEventTarget;
   request?: ChatRequest;
   runtime?: RuntimeChatTarget;
-  platform?: { agentId: string; threadId: string; mode: string };
   subscription?: { stop(): void };
 }
 
@@ -251,6 +228,7 @@ export function hasActiveChats(): boolean {
  * releaseChatQuarantine() when the new frame is ready (did-finish-load).
  */
 export function quarantineChatDispatcher(target: ChatEventTarget): void {
+  suspendRendererIpc(target);
   chatQuarantinedTargets.add(target);
   disposeChatEventDispatcher(target);
 }
@@ -262,6 +240,7 @@ export function quarantineChatDispatcher(target: ChatEventTarget): void {
 export function releaseChatQuarantine(target: ChatEventTarget): void {
   chatQuarantinedTargets.delete(target);
   chatEventDispatchers.delete(target);
+  resumeRendererIpc(target);
 }
 
 /**
@@ -367,6 +346,43 @@ export function startChat(webContents: ChatEventTarget, request: unknown): strin
   return requestId;
 }
 
+/**
+ * User Stop unlocks the composer immediately, but Run cleanup (e.g. image HTTP
+ * still in `to_thread`) can take a long time. Release this turn's outbox as soon
+ * as cancel is accepted so the next send on the same Session is not blocked by
+ * "awaiting Runtime acknowledgement".
+ */
+async function releaseCancelledTurnOutbox(turn: ChatTurnRecord): Promise<void> {
+  let runtimeSessionId = turn.runtimeSessionId;
+  if (!runtimeSessionId) {
+    runtimeSessionId = (await listThreads()).find((candidate) => candidate.id === turn.sessionId)?.runtimeSessionId;
+  }
+  if (!runtimeSessionId) return;
+  await sessionSyncState.completeOutbox(runtimeSessionId, `desktop:${turn.requestId}`).catch(() => undefined);
+}
+
+/** Free an outbox whose owning Desktop turn is gone or already cancelling. */
+async function releaseStaleSessionOutbox(runtimeSessionId: string): Promise<boolean> {
+  const outbox = (await sessionSyncState.get(runtimeSessionId)).outbox;
+  if (!outbox) return false;
+  const match = /^desktop:(.+)$/.exec(outbox.sourceMessageId);
+  const ownerRequestId = match?.[1];
+  const owner = ownerRequestId ? chatTurns.get(ownerRequestId) : undefined;
+  if (owner && owner.phase !== "cancelling" && !owner.cancelRequested && !owner.controller.signal.aborted) {
+    return false;
+  }
+  await sessionSyncState.completeOutbox(runtimeSessionId, outbox.sourceMessageId).catch(() => undefined);
+  return true;
+}
+
+function isSessionOutboxBusyError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { code?: unknown }).code;
+  if (code === "session_outbox_busy") return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("awaiting Runtime acknowledgement");
+}
+
 export async function cancelChatTurn(rawIdentity: unknown): Promise<ChatTurnCancelResult> {
   const identity = validateChatTurnIdentity(rawIdentity);
   if (!identity) return { accepted: false, state: "not_found" };
@@ -380,22 +396,28 @@ export async function cancelChatTurn(rawIdentity: unknown): Promise<ChatTurnCanc
     if (!run) return { accepted: false, state: "not_found" };
     if (run.status === "completed") return { accepted: false, state: "completed" };
     if (run.status === "failed") return { accepted: false, state: "failed" };
-    if (run.status === "cancelled") return { accepted: true, state: "cancelled" };
+    if (run.status === "cancelled") {
+      if (thread.runtimeSessionId) {
+        await sessionSyncState.completeOutbox(thread.runtimeSessionId, `desktop:${identity.requestId}`).catch(() => undefined);
+      }
+      return { accepted: true, state: "cancelled" };
+    }
     await resolved.client.cancelAgentRun(runId);
+    if (thread.runtimeSessionId) {
+      await sessionSyncState.completeOutbox(thread.runtimeSessionId, `desktop:${identity.requestId}`).catch(() => undefined);
+    }
     return { accepted: true, state: "cancelling" };
   }
   if (!turn) return { accepted: false, state: "not_found" };
-  if (turn.phase === "cancelling") return { accepted: true, state: "cancelling" };
+  if (turn.phase === "cancelling") {
+    await releaseCancelledTurnOutbox(turn);
+    return { accepted: true, state: "cancelling" };
+  }
   const requestId = identity.requestId;
   turn.cancelRequested = true;
   turn.phase = "cancelling";
-  const platformTarget = turn.platform;
-  // DDF runs are streamed through /apiv2/chat/completions. Aborting the fetch
-  // is authoritative unless HAI publishes a matching DDF stop contract; the
-  // Portal Native thread-stop endpoint belongs only to Native agents.
-  if (platformTarget && platformTarget.mode !== "ddf") {
-    void stopPlatformChat(platformTarget.agentId, platformTarget.threadId).catch(() => undefined);
-  }
+  // Free the Session outbox before Runtime cancel finishes so Stop → send works.
+  await releaseCancelledTurnOutbox(turn);
   const runtimeTarget = turn.runtime;
   if (runtimeTarget) void runtimeTarget.client.cancelAgentRun(runtimeTarget.runId).catch(() => undefined);
   turn.controller.abort("user");
@@ -439,11 +461,6 @@ function validateChatTurnIdentity(value: unknown): ChatTurnIdentity | null {
   return identity;
 }
 
-function isRuntimeClientGenerationInvalidated(error: unknown): boolean {
-  return Boolean(error && typeof error === "object"
-    && (error as { code?: unknown }).code === "runtime_client_generation_invalidated");
-}
-
 /**
  * Rebuild the Desktop-facing portion of a Runtime chat after Electron restarts.
  * The authoritative Run and its event log remain in the Runtime, so recovery
@@ -458,7 +475,17 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
   ) return [];
   const requestId = request.requestId;
   const sessionId = request.sessionId;
-  const existingTurn = chatTurns.get(requestId);
+  let existingTurn = chatTurns.get(requestId);
+  if (existingTurn && existingTurn.sessionId !== sessionId) {
+    // A snapshot restored under the wrong thread can ask one session to
+    // reattach another session's in-flight run (e.g. a thread-switch flush
+    // that was persisted under the incoming thread's id by an older build).
+    // Reattaching here would bind this renderer to a run whose events are
+    // scoped to a different session, leaving the composer stuck on "running"
+    // and making Stop cancel a task this view cannot even see. Recover this
+    // session from its own Thread binding instead.
+    existingTurn = undefined;
+  }
   if (eventTarget && existingTurn) existingTurn.eventTarget = eventTarget;
   // Switching sidebar threads rehydrates the renderer and calls recoverChatRun
   // while startChat still owns the OAEP Session. Stealing that listener closes
@@ -637,7 +664,47 @@ export async function recoverChatRun(rawRequest: unknown, eventTarget?: ChatEven
             timestamp: new Date().toISOString(), source: authoritativeRun.backend_id === "opendrsai" ? "opendrsai-runtime" : "codex-runtime",
           } });
         },
+      }, {
+        // The recovery transaction's own lease must not be the subscription's
+        // only transport ownership: it is released when this function returns.
+        // A later generation change re-resolves through the thread's Workspace
+        // routing instead of retrying an already-aborted client.
+        resolveClient: async () => {
+          const lease = await acquireRuntimeClientLease(() =>
+            connectRuntimeClientForWorkspace(thread!.workspacePath!, thread!.execution?.workspaceId));
+          return { client: lease.client as RuntimeClient, release: lease.release };
+        },
       }));
+      // A degraded or fatal subscription can end without ever publishing the Run
+      // terminal, while a healthy subscription stopped by this function leaves
+      // `terminalError` unset. Settle the durable acknowledgement only in the
+      // first case: the Session must not stay blocked on an ack this Desktop can
+      // no longer observe, but the row itself is kept for restart recovery.
+      const recoveringSubscription = recoveredSubscription;
+      void recoveringSubscription.done.then(async () => {
+        const terminalError = recoveringSubscription.terminalError;
+        if (!terminalError) return;
+        const pending = (await sessionSyncState.get(thread!.runtimeSessionId!)).outbox;
+        if (!pending) return;
+        const released = await sessionSyncState.abandonOutbox(
+          thread!.runtimeSessionId!, pending.sourceMessageId,
+        ).catch(() => false);
+        if (!released) return;
+        await desktopDiagnostics.record({
+          traceId: requestId,
+          module: "runtime",
+          component: "oaep-session",
+          operation: "oaep.recovery.degraded",
+          message: "Recovered OAEP subscription ended without a Run terminal; released the pending Runtime acknowledgement.",
+          status: "failed",
+          level: "warn",
+          domain: "protocol",
+          agentPhase: "responding",
+          sessionId: thread!.runtimeSessionId!,
+          runId: thread.lastRunId,
+          attributes: { degraded: isOaepSyncDegradedError(terminalError) },
+        }).catch(() => undefined);
+      });
     }
     const events: OaepEvent[] = [];
     let cursor = 0;
@@ -795,23 +862,7 @@ export async function respondChatInput(
   response: string | Record<string, unknown>,
 ): Promise<boolean> {
   if (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId)) return false;
-  const inputTarget = platformInputTargets.get(requestId);
-  if (inputTarget) {
-    const accepted = await respondToDdfChatInput(
-      inputTarget.agentId,
-      inputTarget.chatId,
-      inputTarget.runId,
-      requestId,
-      response,
-    );
-    if (accepted) platformInputTargets.delete(requestId);
-    return accepted;
-  }
   const matched = findChatTurn(requestId);
-  const target = matched?.turn.platform;
-  if (target && target.mode !== "ddf") {
-    return respondToPlatformChatInput(target.agentId, target.threadId, response);
-  }
   const runtime = matched?.turn.runtime ?? chatTurns.get(requestId)?.runtime;
   if (runtime?.capabilityConfiguration) {
     const action = typeof response === "string"
@@ -937,9 +988,10 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
   ) {
     throw new Error("Chat model is invalid.");
   }
-  if (!Array.isArray(request.messages) || request.messages.length === 0) {
+  if (!Array.isArray(request.messages)) {
     throw new Error("Chat request must include messages.");
   }
+  assertRequestMessageCount(request.messages.length);
   if (
     request.workspacePath !== undefined &&
     (typeof request.workspacePath !== "string" ||
@@ -980,11 +1032,7 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
   ) {
     throw new Error("Chat run id is invalid.");
   }
-  if (request.messages.length > MAX_MESSAGES) {
-    throw new Error(`Chat request cannot exceed ${MAX_MESSAGES} messages.`);
-  }
   const attachments = normalizeChatAttachments(request.attachments);
-  let totalChars = 0;
   const messages = request.messages.map((message) => {
     if (!message || typeof message !== "object") {
       throw new Error("Chat messages must be objects.");
@@ -1005,6 +1053,7 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
     model: request.model?.trim() || undefined,
     reasoningEffort: normalizeThinkingEffort(request.reasoningEffort),
     planMode: request.planMode === true ? true : undefined,
+    privateMode: request.privateMode === true ? true : undefined,
     workspacePath: request.workspacePath?.trim() || undefined,
     workspaceId: request.workspaceId?.trim() || undefined,
     workspaceName: request.workspaceName?.trim() || undefined,
@@ -1162,22 +1211,6 @@ async function runChat(
   const boundAgentName = isCodexBackend ? "Codex" : platformDescriptor?.name || localAgent?.display_name || LOCAL_OPENDRSAI_AGENT_NAME;
   const executionStartedAt = Date.now();
   recordAgentTelemetry({ event: "execution_started", agentId: boundAgentId, mode: platformDescriptor?.mode || "local", source: platformDescriptor ? "platform" : "local", requestId, runId });
-  if (platformDescriptor && request.agentId) {
-    const turn = chatTurns.get(requestId);
-    if (turn) turn.platform = {
-      agentId: request.agentId,
-      threadId: sessionId,
-      mode: platformDescriptor.mode,
-    };
-  }
-  // Platform runs use the request ID as their stable execution identity. Local
-  // Runtime runs do not: createAgentRun() assigns the authoritative ID later.
-  // Publishing the provisional request ID here makes the renderer treat it as
-  // a persisted Runtime Run and race a manifest read against a row that can
-  // never exist.
-  if (platformDescriptor) {
-    emit(webContents, { requestId, sessionId, runId, type: "start" });
-  }
   await upsertThreadFromRun({
     id: sessionId,
     kind: "chat",
@@ -1224,185 +1257,51 @@ async function runChat(
   // wall-clock timeout that prematurely aborts long agent sessions.
   const timeout = CHAT_TIMEOUT_MS > 0 ? setTimeout(() => controller.abort("timeout"), CHAT_TIMEOUT_MS) : null;
   try {
-    if (!platformDescriptor) {
-      // Local agents talk to a localhost gateway and do not require a valid
-      // OIDC session. Try to obtain the real auth context (so that OIDC
-      // bearer tokens still reach the gateway for model inference), but
-      // fall back to an offline context if the session is expired or
-      // unrefreshable. This prevents an expired login from blocking local
-      // agent workflows entirely.
-      if (!auth) {
-        try {
-          auth = await requireAuthContext();
-          writeChatDiagnostic(requestId, "stage: authenticated");
-        } catch (authError) {
-          if (authError instanceof AuthSessionError) {
-            auth = {
-              session: { authenticated: false, user: null, expiresAt: null, authMode: null },
-              userId: "local",
-              authMode: "offline",
-            };
-            writeChatDiagnostic(requestId, `stage: auth unavailable (${authError.code}), using offline context for local agent`);
-          } else {
-            throw authError;
-          }
-        }
-      }
-      await runRuntimeBackendChat(
-        webContents,
-        requestId,
-        sessionId,
-        enrichedRequest,
-        controller,
-        isCodexBackend ? "codex@1" : "opendrsai@1",
-        auth,
-      );
-      recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: "local", source: "local", durationMs: Date.now() - executionStartedAt, requestId, runId: chatTurns.get(requestId)?.runtime?.runId ?? runId });
-      await upsertThreadFromRun({ id: sessionId, kind: "chat", title: deriveThreadTitle(request.messages),
-        workspacePath: request.workspacePath, boundAgentId, boundAgentName, lastRunId: chatTurns.get(requestId)?.runtime?.runId ?? runId,
-        lastRequestId: requestId, runtimeSessionId: chatTurns.get(requestId)?.runtimeSessionId, status: "idle", messageCount: request.messages.length });
-      // OAEP event.run.* is the only Runtime terminal source. The shared
-      // projector already sent the terminal Structured Event.
-      structuredTerminalRequests.delete(requestId);
-      chatTurns.delete(requestId);
-      return;
-    }
-    // Only HAI Platform Agents reach this branch. OpenDrSai and Codex have
-    // already entered the Runtime-authoritative Session/Run path above.
-    // Platform agents require a valid OIDC bearer token — enforce it now.
+    // Local and official platform agents share one Runtime/OAEP path. The only
+    // distinction is the Agent Definition selected by the Runtime backend.
     if (!auth) {
-      auth = await requireAuthContext();
-      writeChatDiagnostic(requestId, "stage: authenticated (platform)");
-    }
-    const messages = enrichedRequest.messages;
-    const resumeState: StreamResumeState = { content: "", fileEventKeys: new Set() };
-    const recoveryStartedAt = Date.now();
-    const send = async (authContext: AuthContext, recoveryAttempt: number): Promise<boolean> => {
-      const bearer = resolvePlatformBearerToken(authContext);
-      if (!bearer) {
-        throw new Error("Sign in with HepAI or save a HepAI API key before using a platform agent.");
-      }
-      const response = await fetch(getPlatformAgentChatUrl(platformDescriptor.platformId), {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "text/event-stream",
-            Authorization: `Bearer ${bearer}`,
-            "Idempotency-Key": `desktop-chat-${requestId}`,
-          },
-          body: JSON.stringify({
-            messages,
-            stream: true,
-            thread_id: sessionId,
-            run_id: runId,
-            // For a DDF platform agent the catalog ID is the routable worker
-            // model name. Never let the chat UI's ordinary LLM selection
-            // replace it (for example with deepseek-ai/deepseek-v4-pro).
-            model: platformDescriptor.platformId,
-            attachments: request.attachments || [],
-            metadata: {
-              ...(enrichedRequest.metadata || {}),
-              desktop_request_id: requestId,
-              network_retry_attempt: recoveryAttempt,
-              resume_from_chars: resumeState.content.length,
-            },
-          }),
-          signal: controller.signal,
-      });
-      if (response.status === 401) {
-        const authError = await formatHttpError(response);
-        if (authError instanceof ChatSseError && authError.code === "token_expired") {
-          throw new ChatSseError(authError.message, authError.code, true);
-        }
-        throw authError;
-      }
-      if (!response.ok || !response.body) {
-        // A generic HTTP 500 from DDF means the selected worker invocation
-        // already failed. Retrying it as a transport interruption keeps the
-        // UI waiting for the full recovery window and can duplicate work.
-        // Only statuses that explicitly describe a temporary edge/gateway
-        // condition participate in automatic stream recovery.
-        if (
-          response.status === 408
-          || response.status === 429
-          || response.status === 502
-          || response.status === 503
-          || response.status === 504
-        ) {
-          throw new RecoverableStreamError(`Service temporarily unavailable (HTTP ${response.status}).`);
-        }
-        throw await formatHttpError(response);
-      }
-      return readSse(webContents, requestId, sessionId, runId, response.body, controller.signal, resumeState);
-    };
-
-    let sawDone = false;
-    let recoveryAttempt = 0;
-    let refreshedToken = false;
-    while (!sawDone) {
       try {
-        sawDone = await send(auth!, recoveryAttempt);
-        if (!sawDone) throw new RecoverableStreamError("Chat stream ended before completion.");
-      } catch (error) {
-        if (error instanceof ChatSseError && error.code === "invalid_token") {
-          invalidateAuthSession();
-          webContents.send("desktop:auth-session-invalidated");
+        auth = await requireAuthContext();
+        writeChatDiagnostic(requestId, `stage: authenticated (${platformDescriptor ? "remote-worker" : "local"})`);
+      } catch (authError) {
+        if (authError instanceof AuthSessionError) {
+          auth = {
+            session: { authenticated: false, user: null, expiresAt: null, authMode: null },
+            userId: "local",
+            authMode: "offline",
+          };
+          writeChatDiagnostic(requestId, `stage: auth unavailable (${authError.code}), using offline context for local agent`);
+        } else {
+          throw authError;
         }
-        if (error instanceof ChatSseError && error.code === "token_expired" && error.retryable && !refreshedToken) {
-          auth = await refreshAuthContextAfterUnauthorized();
-          refreshedToken = true;
-          continue;
-        }
-        if (!isRecoverableNetworkError(error) || Date.now() - recoveryStartedAt >= NETWORK_RECOVERY_WINDOW_MS) {
-          if (isRecoverableNetworkError(error)) {
-            throw createFailureEscalation(error, Math.max(1, recoveryAttempt), Math.max(1, recoveryAttempt));
-          }
-          throw error;
-        }
-        recoveryAttempt += 1;
-        const retryDelayMs = networkRetryDelayMs(recoveryAttempt);
-        emit(webContents, {
-          requestId,
-          sessionId,
-          runId,
-          type: "connection",
-          connection: {
-            status: "retrying",
-            attempt: recoveryAttempt,
-            delayMs: retryDelayMs,
-            timestamp: new Date().toISOString(),
-            source: "gateway",
-          },
-        });
-        emit(webContents, {
-          requestId, sessionId, runId, type: "status", level: "WARNING",
-          content: recoveryAttempt === 1
-            ? "网络连接中断，现有回复已保留；正在等待恢复并安全续传…"
-            : `网络仍未恢复，正在第 ${recoveryAttempt} 次重连…`,
-        });
-        await waitForNetworkRetry(retryDelayMs, controller.signal);
       }
     }
-    if (recoveryAttempt > 0) {
-      emit(webContents, {
-        requestId,
-        sessionId,
-        runId,
-        type: "connection",
-        connection: {
-          status: "restored",
-          attempt: recoveryAttempt,
-          timestamp: new Date().toISOString(),
-          source: "gateway",
-        },
-      });
-      emit(webContents, { requestId, sessionId, runId, type: "status", level: "INFO", content: "网络已恢复，回复已从保存位置继续。" });
-    }
-    if (controller.signal.aborted) {
-      throw new Error("Chat request was aborted.");
-    }
+    const agentDefinition = isCodexBackend ? "codex@1" : platformDescriptor ? "" : "opendrsai@1";
+    await runRuntimeBackendChat(
+      webContents,
+      requestId,
+      sessionId,
+      enrichedRequest,
+      controller,
+      agentDefinition,
+      auth,
+      platformDescriptor?.platformId,
+      // The agent square writes remoteWorkerName from the catalog, but this
+      // main-process upsert can run before that field exists on the thread
+      // (fresh placeholder). Fall back to the platform catalog name so the
+      // sidebar group label never degrades to the bare worker id.
+      platformDescriptor?.name,
+    );
     if (platformDescriptor && request.agentId) recordAgentCircuitSuccess(request.agentId);
-    recordAgentTelemetry({ event: "execution_completed", agentId: boundAgentId, mode: platformDescriptor?.mode || "local", source: platformDescriptor ? "platform" : "local", durationMs: Date.now() - executionStartedAt, requestId, runId });
+    recordAgentTelemetry({
+      event: "execution_completed",
+      agentId: boundAgentId,
+      mode: platformDescriptor?.mode || "local",
+      source: platformDescriptor ? "platform" : "local",
+      durationMs: Date.now() - executionStartedAt,
+      requestId,
+      runId: chatTurns.get(requestId)?.runtime?.runId ?? runId,
+    });
     await upsertThreadFromRun({
       id: sessionId,
       kind: "chat",
@@ -1410,13 +1309,16 @@ async function runChat(
       workspacePath: request.workspacePath,
       boundAgentId,
       boundAgentName,
-      lastRunId: chatTurns.get(requestId)?.runtime?.runId ?? (isCodexBackend ? undefined : runId),
+      lastRunId: chatTurns.get(requestId)?.runtime?.runId ?? runId,
       lastRequestId: requestId,
       runtimeSessionId: chatTurns.get(requestId)?.runtimeSessionId,
       status: "idle",
       messageCount: request.messages.length,
     });
-    emit(webContents, { requestId, sessionId, runId, type: "done" });
+    // OAEP event.run.* is the only Runtime terminal source.
+    structuredTerminalRequests.delete(requestId);
+    chatTurns.delete(requestId);
+    return;
   } catch (error) {
     if (platformDescriptor && request.agentId && !controller.signal.aborted) {
       recordAgentCircuitFailure(request.agentId);
@@ -1429,8 +1331,6 @@ async function runChat(
       durationMs: Date.now() - executionStartedAt,
       errorCode: typeof (error as { code?: unknown })?.code === "string"
         ? String((error as { code: string }).code)
-        : error instanceof ChatSseError
-        ? error.code || "sse_error"
         : controller.signal.reason === "timeout"
           ? "timeout"
           : controller.signal.aborted
@@ -1521,14 +1421,14 @@ export async function stageAttachments(
           });
           staged.push({ ...attachment, kind: "file", path: stagedImage.destPath, name: stagedImage.destName });
           refs.push(stagedImage.destRel);
-          // Include base64 data as content so the Runtime can create
-          // multimodal messages (matching ui-tui's design).
-          const clipboardImageContent = `data:${mime};base64,${bytes.toString("base64")}`;
+          // The Runtime builds multimodal content from `reference` inside the
+          // Workspace (Image.from_file); it never reads `content` for file
+          // resources. Inlining the Base64 data URL here duplicated the bytes
+          // and tripped the Runtime's per-resource content cap (HTTP 422).
           resources.push({
             protocol: "oaep.input/1", resource_id: resourceId, kind: "file",
             name: stagedImage.destName, permission: "read", status: "encoded",
             reference: stagedImage.destRel, size_bytes: bytes.length, sha256: stagedImage.sha256, mime,
-            content: clipboardImageContent,
           });
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
@@ -1596,18 +1496,15 @@ export async function stageAttachments(
         refs.push(reference);
         const size = sourceInfo.size;
         const sha256 = await sha256File(sourceAbs, signal);
-        // For image files, include base64 data as content so the Runtime can
-        // create multimodal messages (matching ui-tui's design).
-        let imageContent: string | undefined;
-        if (imageMime) {
-          const imageBuffer = await readFile(sourceAbs);
-          imageContent = `data:${imageMime};base64,${imageBuffer.toString("base64")}`;
-        }
+        // The Runtime builds multimodal content from `reference` inside the
+        // Workspace (Image.from_file) and never reads `content` for file
+        // resources. Inlining the Base64 data URL here duplicated the bytes
+        // and tripped the Runtime's per-resource content cap (HTTP 422) for
+        // every image larger than ~75 KB.
         resources.push({
           protocol: "oaep.input/1", resource_id: resourceId, kind: "file",
           name: attachment.name, permission: "read", status: "encoded", reference, size_bytes: size, sha256,
           ...(imageMime ? { mime: imageMime } : {}),
-          ...(imageContent ? { content: imageContent } : {}),
         });
         continue;
       }
@@ -1636,13 +1533,11 @@ export async function stageAttachments(
       const destRel = relative(root, destPath).replace(/\\/g, "/");
       const size = (await stat(destPath).catch(() => null))?.size;
       const sha256 = await sha256File(destPath, signal);
-      // For image files, include base64 data as content so the Runtime can
-      // create multimodal messages (matching ui-tui's design).
-      let imageContent: string | undefined;
-      if (imageMime) {
-        const imageBuffer = await readFile(destPath);
-        imageContent = `data:${imageMime};base64,${imageBuffer.toString("base64")}`;
-      }
+      // The Runtime builds multimodal content from `reference` inside the
+      // Workspace (Image.from_file) and never reads `content` for file
+      // resources. Inlining the Base64 data URL here duplicated the bytes and
+      // tripped the Runtime's per-resource content cap (HTTP 422) for every
+      // image larger than ~75 KB.
       staged.push({ ...attachment, path: destPath, name: destName });
       refs.push(destRel);
       resources.push({
@@ -1651,7 +1546,6 @@ export async function stageAttachments(
         ...(typeof size === "number" ? { size_bytes: size } : {}),
         ...(imageMime ? { mime: imageMime } : {}),
         sha256,
-        ...(imageContent ? { content: imageContent } : {}),
       });
     } catch (error) {
       if (signal?.aborted) throw signal.reason ?? error;
@@ -2023,13 +1917,24 @@ function formatBytes(bytes: number): string {
 
 async function runRuntimeBackendChat(
   webContents: ChatEventTarget, requestId: string, displaySessionId: string, request: ChatRequest, controller: AbortController,
-  agentDefinition: "codex@1" | "opendrsai@1",
+  initialAgentDefinition: string,
   auth: AuthContext,
+  remoteWorker?: string,
+  remoteWorkerName?: string,
 ): Promise<void> {
-  if (!request.workspacePath) throw new Error("Runtime Agent requires an open Workspace.");
-  const resolved = await runChatStage(requestId, "runtime_connect", () => acquireRuntimeClientLease(() =>
-    connectRuntimeClientForWorkspace(request.workspacePath!, request.workspaceId, request.workspaceName)));
+  const isRemoteWorker = Boolean(remoteWorker);
+  if (!isRemoteWorker && !request.workspacePath) throw new Error("Runtime Agent requires an open Workspace.");
+  if (isRemoteWorker && !remoteWorker) throw new Error("The selected remote worker has no stable worker id.");
+  // Shared by the initial lease and by a mid-stream Runtime generation change:
+  // a subscription that lost its transport must re-resolve the same Workspace
+  // through the same routing instead of inventing a new target.
+  const resolveRuntimeClient = async () => {
+    if (request.workspacePath) return connectRuntimeClientForWorkspace(request.workspacePath, request.workspaceId, request.workspaceName);
+    return { client: await LocalRuntimeClient.connect(), workspaceId: "" };
+  };
+  const resolved = await runChatStage(requestId, "runtime_connect", () => acquireRuntimeClientLease(resolveRuntimeClient));
   const client = resolved.client;
+  let agentDefinition = initialAgentDefinition;
   try {
   if (agentDefinition === "codex@1") {
     const capability = (await client.getCapabilities()).agent_backends?.codex;
@@ -2058,7 +1963,10 @@ async function runRuntimeBackendChat(
       throw error;
     }
   }
-  await preflightAttachments(request.attachments, request.workspacePath, controller.signal);
+  if (!isRemoteWorker && request.attachments?.length && !request.workspacePath) {
+    throw new Error("Workspace attachments require an open Workspace.");
+  }
+  if (!isRemoteWorker && request.workspacePath) await preflightAttachments(request.attachments, request.workspacePath, controller.signal);
   const runtimeProtocol = selectRuntimeConversationProtocolResult(await client.getCapabilities(), {
     forceLegacy: process.env.OPENDRSAI_DESKTOP_PROTOCOL_ROLLBACK === "conversation/1",
   });
@@ -2109,12 +2017,16 @@ async function runRuntimeBackendChat(
   if (!runtimeSessionId) {
     controller.signal.throwIfAborted();
     const title = deriveThreadTitle(request.messages);
-    expectRuntimeSessionBind({
-      threadId: displaySessionId,
-      workspacePath: request.workspacePath,
-      title,
-    });
-    runtimeSessionId = (await runChatStage(requestId, "session_create", () => client.createSession(resolved.workspaceId, title))).session_id;
+    if (isRemoteWorker) {
+      const session = await runChatStage(requestId, "session_create", () => client.createRemoteWorkerSession(remoteWorker!, title));
+      if (session.remote_worker_id !== remoteWorker) throw new Error("Runtime created a Session for a different remote worker.");
+      if (!session.agent_definition) throw new Error("Runtime remote Session did not provide an Agent Definition.");
+      runtimeSessionId = session.session_id;
+      agentDefinition = session.agent_definition;
+    } else {
+      expectRuntimeSessionBind({ threadId: displaySessionId, workspacePath: request.workspacePath!, title });
+      runtimeSessionId = (await runChatStage(requestId, "session_create", () => client.createSession(resolved.workspaceId, title))).session_id;
+    }
     rememberRuntimeSessionOwner(displaySessionId, runtimeSessionId);
     const turn = chatTurns.get(requestId);
     if (turn) turn.runtimeSessionId = runtimeSessionId;
@@ -2122,21 +2034,48 @@ async function runRuntimeBackendChat(
       id: displaySessionId,
       kind: "chat",
       title,
-      workspacePath: request.workspacePath,
+      workspacePath: isRemoteWorker ? undefined : request.workspacePath,
+      sessionScope: isRemoteWorker ? "remote_agent" : "workspace",
+      remoteWorkerId: remoteWorker,
+      remoteWorkerName: existingThread?.remoteWorkerName ?? remoteWorkerName,
+      boundAgentId: existingThread?.boundAgentId,
+      boundAgentName: existingThread?.boundAgentName,
       runtimeSessionId,
       status: "running",
       messageCount: request.messages.length,
     });
   } else {
+    if (isRemoteWorker) {
+      const session = await runChatStage(requestId, "session_verify", () => client.getSession(runtimeSessionId!));
+      if (session.remote_worker_id !== remoteWorker) throw new Error("Runtime Session belongs to a different remote worker.");
+      if (!session.agent_definition) throw new Error("Runtime remote Session did not provide an Agent Definition.");
+      agentDefinition = session.agent_definition;
+    }
     rememberRuntimeSessionOwner(displaySessionId, runtimeSessionId);
     const turn = chatTurns.get(requestId);
     if (turn) turn.runtimeSessionId = runtimeSessionId;
   }
   controller.signal.throwIfAborted();
-  bindRuntimeThreadToWorkspace(displaySessionId, resolved.workspaceId, runtimeSessionId);
+  if (!isRemoteWorker) bindRuntimeThreadToWorkspace(displaySessionId, resolved.workspaceId, runtimeSessionId);
   const sourceMessageId = `desktop:${requestId}`;
   const idempotencyKey = `desktop-runtime-${requestId}`;
-  await sessionSyncState.beginOutbox(runtimeSessionId, {
+  // A previous failed UI turn can leave a durable outbox row behind if the
+  // process died between the Runtime terminal event and cleanup. Reconcile a
+  // terminal Run before rejecting the next message on this Session.
+  const existingOutbox = (await sessionSyncState.get(runtimeSessionId)).outbox;
+  if (existingOutbox && existingOutbox.sourceMessageId !== sourceMessageId) {
+    const outboxAgeMs = Date.now() - Date.parse(existingOutbox.createdAt);
+    let stale = existingOutbox.deliveryState === "failed" || existingOutbox.deliveryState === "terminal"
+      // An optimistic row without a Run ID older than the grace period means
+      // the previous Desktop process died before Runtime acknowledgement.
+      || (!existingOutbox.runId && Number.isFinite(outboxAgeMs) && outboxAgeMs > 30_000);
+    if (!stale && existingOutbox.runId) {
+      const previousRun = await client.getAgentRun(existingOutbox.runId).catch(() => null);
+      stale = Boolean(previousRun && ["completed", "failed", "cancelled", "aborted", "error"].includes(previousRun.status.toLowerCase()));
+    }
+    if (stale) await sessionSyncState.completeOutboxIfMatches(runtimeSessionId, existingOutbox.sourceMessageId);
+  }
+  const outboxEntry = {
     sourceMessageId,
     idempotencyKey,
     payloadHash: sessionPayloadHash({
@@ -2146,7 +2085,18 @@ async function runRuntimeBackendChat(
       })),
       agentDefinition,
     }),
-  });
+  };
+  try {
+    await sessionSyncState.beginOutbox(runtimeSessionId, outboxEntry);
+  } catch (error) {
+    // Stop unlocks the UI before the previous Run fully unwinds. If that turn
+    // is already cancelling (or its map entry was dropped), supersede its
+    // outbox so the user can send again on the same Session.
+    if (!isSessionOutboxBusyError(error) || !(await releaseStaleSessionOutbox(runtimeSessionId))) {
+      throw error;
+    }
+    await sessionSyncState.beginOutbox(runtimeSessionId, outboxEntry);
+  }
   let activeRuntimeRunId: string | undefined;
   let sourceMessageObserved = false;
   let runtimeTerminalStatus: "completed" | "failed" | "cancelled" | undefined;
@@ -2156,7 +2106,7 @@ async function runRuntimeBackendChat(
   const liveProjectionTarget: RuntimeProjectionTarget = {
     projection: createOaepPresentationProjection(
       requestId,
-      request.workspaceName || basename(request.workspacePath),
+      request.workspaceName || (request.workspacePath ? basename(request.workspacePath) : undefined) || "Remote agent",
     ),
   };
   controller.signal.throwIfAborted();
@@ -2166,7 +2116,32 @@ async function runRuntimeBackendChat(
         const source = (event.data.item as OaepItem).source;
         if (source.message_id === sourceMessageId) sourceMessageObserved = true;
       }
-      if (!activeRuntimeRunId || event.run_id !== activeRuntimeRunId) return;
+      if (!activeRuntimeRunId) return;
+      if (event.run_id !== activeRuntimeRunId) {
+        // Keep the run-scoped filter strict, but make a protocol/run binding
+        // regression observable instead of silently dropping all output.
+        void desktopDiagnostics.record({
+          traceId: requestId,
+          module: "runtime",
+          component: "oaep-session",
+          operation: "oaep.event.run-mismatch",
+          message: "Ignored OAEP event for a different Runtime Run.",
+          status: "failed",
+          level: "warn",
+          domain: "protocol",
+          agentPhase: "responding",
+          visibility: "detail",
+          sessionId: runtimeSessionId,
+          runId: activeRuntimeRunId,
+          attributes: {
+            eventType: event.type,
+            eventRunId: event.run_id ?? "missing",
+            eventItemId: event.item_id ?? "",
+            eventSequence: event.sequence,
+          },
+        }).catch(() => undefined);
+        return;
+      }
       emitRuntimeOaepEvent(
         webContents, requestId, displaySessionId, activeRuntimeRunId, event, liveProjectionTarget,
         presentationItemForOaepEvent(state, event),
@@ -2244,11 +2219,21 @@ async function runRuntimeBackendChat(
         status: status === "connected" ? "restored" : "retrying",
         attempt, delayMs: status === "retrying" ? Math.min(2000, 100 * 2 ** Math.min(4, Math.max(0, attempt - 1))) : undefined,
         timestamp: new Date().toISOString(),
-        source: agentDefinition === "opendrsai@1" ? "opendrsai-runtime" : "codex-runtime",
+        source: agentDefinition === "codex@1" ? "codex-runtime" : isRemoteWorker ? "remote-worker-runtime" : "opendrsai-runtime",
       } });
     },
+  }, {
+    // A catalog/config read or a superseding Runtime generation retires the
+    // shared transport this Session subscribed on. Retrying such a client can
+    // never succeed - its AbortController is already aborted, so every request
+    // fails pre-flight - and the subscription would burn the whole retry budget
+    // without emitting a single packet before degrading.
+    resolveClient: async () => {
+      const lease = await acquireRuntimeClientLease(resolveRuntimeClient);
+      return { client: lease.client as RuntimeClient, release: lease.release };
+    },
   }));
-  let run;
+  let run: RuntimeAgentRun | null = null;
   await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "sending");
   try {
     controller.signal.throwIfAborted();
@@ -2302,7 +2287,7 @@ async function runRuntimeBackendChat(
     visibility: "milestone",
     sessionId: runtimeSessionId,
     runId: run.run_id,
-    backendId: agentDefinition === "codex@1" ? "codex" : "opendrsai",
+    backendId: agentDefinition === "codex@1" ? "codex" : isRemoteWorker ? "remote-worker" : "opendrsai",
     attributes: { model: request.model || "default" },
   }));
   await awaitWithSubscriptionCleanup(sessionSyncState.attachRun(runtimeSessionId, sourceMessageId, run.run_id));
@@ -2311,7 +2296,10 @@ async function runRuntimeBackendChat(
   await awaitWithSubscriptionCleanup(upsertThreadFromRun({
     id: displaySessionId,
     kind: "chat",
-    workspacePath: request.workspacePath,
+    workspacePath: isRemoteWorker ? undefined : request.workspacePath,
+    sessionScope: isRemoteWorker ? "remote_agent" : "workspace",
+    remoteWorkerId: remoteWorker,
+    remoteWorkerName: existingThread?.remoteWorkerName ?? remoteWorkerName,
     lastRunId: run.run_id,
     lastRequestId: requestId,
     runtimeSessionId,
@@ -2402,18 +2390,37 @@ async function runRuntimeBackendChat(
     }
   }
 
-  // Stage file attachments into the workspace so the Agent can read them.
+  // Local agents stage files into their workspace. Remote workers receive
+  // bounded path-free Base64 payloads through execute metadata instead.
   let staged: StagedAttachments;
+  let remoteFiles: Array<{ name: string; base64: string }> = [];
   try {
-    staged = await awaitWithSubscriptionCleanup(
-      stageAttachments(request.attachments, request.workspacePath, run.run_id, controller.signal),
-    );
+    if (isRemoteWorker) {
+      const attachments = request.attachments ?? [];
+      if (attachments.some((item) => item.kind === "folder" || !item.remoteDataUrl)) {
+        throw new Error("Remote agents accept files up to 10 MB; folders and local-path-only context are unsupported.");
+      }
+      const totalBytes = attachments.reduce((sum, item) => sum + (item.sizeBytes ?? 0), 0);
+      if (attachments.some((item) => (item.sizeBytes ?? 0) > 10 * 1024 * 1024) || totalBytes > 10 * 1024 * 1024) {
+        throw new Error("Remote attachments must not exceed 10 MB in total.");
+      }
+      remoteFiles = attachments.map((item) => ({ name: item.name, base64: item.remoteDataUrl! }));
+      staged = { attachments, refs: [], resources: [] };
+    } else {
+      staged = await awaitWithSubscriptionCleanup(
+        stageAttachments(request.attachments, request.workspacePath!, run!.run_id, controller.signal),
+      );
+    }
   } catch (error) {
     await client.cancelAgentRun(run.run_id).catch(() => undefined);
     throw error;
   }
   let failure: unknown;
-  const modelSelection = agentDefinition === "opendrsai@1" && client.location === "local"
+  // Private Mode is pinned by the Gateway, so the client must not resolve — or
+  // gate on — the Agent's model policy here: a missing primary model, or a
+  // missing image-understanding model, must never block a private Run.
+  const privateMode = request.privateMode === true;
+  const modelSelection = !privateMode && agentDefinition === "opendrsai@1" && client.location === "local"
     ? await getMyDrSaiAgentModelPolicy(request.agentId).then((policy) => {
         if (!policy.valid || !policy.effective_ref) {
           throw new Error(policy.error || "Configure a primary model for this OpenDrSai Agent before starting a Run.");
@@ -2464,16 +2471,32 @@ async function runRuntimeBackendChat(
       sourceMessageId,
       attachmentRefs: staged.refs,
       inputResources: staged.resources,
-      ...(modelSelection ? { modelSelection } : { model: request.model }),
+      // In Private Mode the client deliberately sends no model at all: the
+      // Gateway's private_model override is the only thing that decides.
+      ...(modelSelection ? { modelSelection } : privateMode ? {} : { model: request.model }),
       metadata: {
         ...(request.metadata ?? {}),
         ...(agentDefinition === "opendrsai@1" && request.agentId ? { agent_name: request.agentId } : {}),
         desktop_request_id: requestId,
         ...(goalConfirmationRequired ? { goal_required: true } : {}),
+        ...(privateMode ? { private_mode: true } : {}),
+        ...(isRemoteWorker && remoteFiles.length ? { remote_files: remoteFiles } : {}),
+        ...(isRemoteWorker && Array.isArray(request.metadata?.remote_skills)
+          ? { remote_skills: request.metadata.remote_skills }
+          : {}),
       },
     };
   const executionAuth: RuntimeExecutionAuth | undefined = isPlatformBearerAuth(auth)
-      ? { authMode: "oidc", accessToken: auth.accessToken, refreshToken: auth.refreshToken, userId: auth.userId }
+      ? {
+          authMode: "oidc",
+          accessToken: auth.accessToken,
+          refreshToken: auth.refreshToken,
+          userId: auth.userId,
+          // Remote DDF workers identify users by HepAI email, not the OIDC
+          // subject UUID; forward the login email so the gateway can key the
+          // worker run on it.
+          userEmail: auth.session?.user?.email ?? undefined,
+        }
       : auth.authMode === "offline"
         ? { authMode: "offline", userId: auth.userId }
         : undefined;
@@ -2511,9 +2534,9 @@ async function runRuntimeBackendChat(
     traceId: requestId,
     parentSpanId: diagnosticOperation?.spanId,
     module: "runtime",
-    component: agentDefinition === "codex@1" ? "codex-adapter" : "opendrsai-backend",
+    component: agentDefinition === "codex@1" ? "codex-adapter" : isRemoteWorker ? "remote-worker-backend" : "opendrsai-backend",
     operation: "agent.waiting-backend",
-    message: `Waiting for ${agentDefinition === "codex@1" ? "Codex" : LOCAL_OPENDRSAI_AGENT_NAME} backend progress`,
+    message: `Waiting for ${agentDefinition === "codex@1" ? "Codex" : isRemoteWorker ? "remote worker" : LOCAL_OPENDRSAI_AGENT_NAME} backend progress`,
     status: "waiting",
     level: "warn",
     domain: "agent",
@@ -2521,7 +2544,7 @@ async function runRuntimeBackendChat(
     visibility: "milestone",
     sessionId: runtimeSessionId,
     runId: run.run_id,
-    backendId: agentDefinition === "codex@1" ? "codex" : "opendrsai",
+    backendId: agentDefinition === "codex@1" ? "codex" : isRemoteWorker ? "remote-worker" : "opendrsai",
     attributes: { model: request.model || "default", waitingFor: "backend_progress" },
   }));
   await Promise.race([
@@ -2559,13 +2582,38 @@ async function runRuntimeBackendChat(
   // message. Definitive failures/cancels/timeouts must release it, otherwise
   // every later send on this Session dies with "awaiting Runtime acknowledgement".
   const runtimeReachedTerminal = runtimeTerminalStatus !== undefined;
+  // A degraded subscription (retry budget exhausted, Runtime unreachable for
+  // minutes) is the case that used to leave the acknowledgement pending
+  // forever. The Run may still exist on the Runtime, so the durable row is kept
+  // for restart recovery, but it must stop blocking this Session.
+  const degradedSyncFailure = Boolean(failure && isOaepSyncDegradedError(failure) && !runtimeReachedTerminal);
   const keepOutboxForRetry = Boolean(
     failure
     && isRecoverableNetworkError(failure)
     && !runtimeReachedTerminal
   );
   try {
-    if ((!failure && sourceMessageObserved) || (failure && !keepOutboxForRetry)) {
+    if (degradedSyncFailure) {
+      await awaitWithSubscriptionCleanup(desktopDiagnostics.record({
+        traceId: requestId,
+        parentSpanId: diagnosticOperation?.spanId,
+        module: "runtime",
+        component: "oaep-session",
+        operation: "oaep.session.degraded",
+        message: "OAEP Session subscription degraded; released the pending Runtime acknowledgement so restart recovery can resolve this message.",
+        status: "failed",
+        level: "warn",
+        domain: "protocol",
+        agentPhase: "responding",
+        sessionId: runtimeSessionId,
+        runId: run.run_id,
+        attributes: {
+          authoritativeRunMayStillExist: true,
+          generationRebinds: liveSubscription.metrics.reconnects,
+        },
+      })).catch(() => undefined);
+      await sessionSyncState.abandonOutbox(runtimeSessionId, sourceMessageId).catch(() => undefined);
+    } else if ((!failure && sourceMessageObserved) || (failure && !keepOutboxForRetry)) {
       if (runtimeReachedTerminal) {
         await sessionSyncState.markOutboxDelivery(runtimeSessionId, sourceMessageId, "terminal").catch(() => undefined);
       }
@@ -3040,391 +3088,6 @@ function describeAttachmentLoad(item: AttachmentContextItem): string | undefined
   return undefined;
 }
 
-async function readSse(
-  webContents: ChatEventTarget,
-  requestId: string,
-  sessionId: string,
-  runId: string,
-  body: ReadableStream<Uint8Array>,
-  signal: AbortSignal,
-  resumeState: StreamResumeState,
-): Promise<boolean> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let sawDone = false;
-  const cursor = createStreamAttemptCursor(resumeState);
-  const toolTimelineAccumulator = createChatToolTimelineAccumulator();
-  const contentNormalizer = createChatContentNormalizer();
-
-  const emitNormalizedContent = (content: string): void => {
-    const normalized = contentNormalizer.pushContent(content);
-    normalized.reasoning.forEach((reasoning) => {
-      emit(webContents, { requestId, sessionId, runId, type: "reasoning", content: reasoning });
-    });
-    normalized.text.forEach((text) => {
-      emit(webContents, { requestId, sessionId, runId, type: "chunk", content: text });
-    });
-  };
-
-  const emitTimelineEvents = (frame: string): boolean => {
-    let emitted = false;
-    for (const fileEvent of parseAgentRunSseFileEvents(frame)) {
-      const key = `file:${JSON.stringify(fileEvent)}`;
-      if (!resumeState.fileEventKeys.has(key)) {
-        resumeState.fileEventKeys.add(key);
-        emit(webContents, {
-          requestId,
-          sessionId,
-          runId,
-          type: "tool_timeline",
-          toolTimeline: toChatFileTimelineEvent(fileEvent),
-        });
-        emitted = true;
-      }
-    }
-    for (const toolTimeline of toolTimelineAccumulator.parseFrame(frame)) {
-      const key = `tool:${JSON.stringify(toolTimeline)}`;
-      if (!resumeState.fileEventKeys.has(key)) {
-        resumeState.fileEventKeys.add(key);
-        emit(webContents, { requestId, sessionId, runId, type: "tool_timeline", toolTimeline });
-        emitted = true;
-      }
-    }
-    return emitted;
-  };
-
-  while (!signal.aborted) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    if (buffer.length > MAX_SSE_BUFFER_CHARS) {
-      throw new Error("Gateway chat stream exceeded the maximum buffered response size.");
-    }
-
-    const frames = buffer.split(/\r?\n\r?\n/);
-    buffer = frames.pop() ?? "";
-    for (const frame of frames) {
-      if (isCompletionDoneFrame(frame)) {
-        sawDone = true;
-      }
-      const structuredEvent = parseStructuredConversationSseFrame(frame);
-      if (structuredEvent) {
-        emit(webContents, { requestId, sessionId, runId, type: "structured", structuredEvent });
-        continue;
-      }
-      const agentLog = parseAgentLogSseFrame(frame);
-      if (agentLog) {
-        emitAgentLog(webContents, requestId, sessionId, runId, agentLog);
-        continue;
-      }
-      const inputRequest = parseAgentInputRequestSseFrame(frame);
-      if (inputRequest) {
-        const interactionRequestId = inputRequest.requestId || requestId;
-        const platformTarget = chatTurns.get(requestId)?.platform;
-        if (platformTarget?.mode === "ddf") {
-          platformInputTargets.set(interactionRequestId, {
-            agentId: platformTarget.agentId,
-            chatId: inputRequest.chatId || sessionId,
-            runId: inputRequest.runId || runId,
-          });
-        }
-        emit(webContents, {
-          requestId,
-          sessionId,
-          runId,
-          type: "input_request",
-          prompt: inputRequest.prompt,
-          inputRequestId: interactionRequestId,
-          inputType: inputRequest.inputType,
-          inputOptions: inputRequest.options,
-          inputDefault: inputRequest.defaultValue,
-          inputAllowCustom: inputRequest.allowCustom,
-          inputTimeoutAt: inputRequest.timeoutAt,
-        });
-        continue;
-      }
-      const reasoningLog = parseChatReasoningSseFrame(frame);
-      if (reasoningLog) {
-        const reasoning = contentNormalizer.pushNativeReasoning(reasoningLog.content ?? "");
-        if (reasoning) {
-          emit(webContents, {
-            requestId,
-            sessionId,
-            runId,
-            type: "reasoning",
-            content: reasoning,
-            level: reasoningLog.level,
-          });
-        }
-        continue;
-      }
-      const streamError = parseChatSseErrorFrame(frame);
-      if (streamError) {
-        recordProviderErrorAnalytics(requestId, sessionId, runId, frame);
-        throw streamError;
-      }
-      if (emitTimelineEvents(frame)) {
-        continue;
-      }
-      const providerStatus = parseProviderStatusSseFrame(frame);
-      if (providerStatus) {
-        recordProviderUsageAnalytics(requestId, sessionId, runId, frame);
-        emit(webContents, {
-          requestId,
-          sessionId,
-          runId,
-          type: "status",
-          content: formatAgentLogStatus(providerStatus),
-          level: providerStatus.level,
-        });
-        continue;
-      }
-      try {
-        parseChatSseFrame(frame).forEach((content) => {
-          const novel = appendResumedContent(resumeState, cursor, content);
-          if (novel) emitNormalizedContent(novel);
-        });
-      } catch (error) {
-        if (error instanceof ChatSseError) {
-          recordProviderErrorAnalytics(requestId, sessionId, runId, frame);
-        }
-        throw error;
-      }
-    }
-  }
-
-  if (!signal.aborted) {
-    if (isCompletionDoneFrame(buffer)) {
-      sawDone = true;
-    }
-    const structuredEvent = parseStructuredConversationSseFrame(buffer);
-    if (structuredEvent) {
-      emit(webContents, { requestId, sessionId, runId, type: "structured", structuredEvent });
-      return sawDone;
-    }
-    const agentLog = parseAgentLogSseFrame(buffer);
-    if (agentLog) {
-      emitAgentLog(webContents, requestId, sessionId, runId, agentLog);
-      return sawDone;
-    }
-    const inputRequest = parseAgentInputRequestSseFrame(buffer);
-    if (inputRequest) {
-      const interactionRequestId = inputRequest.requestId || requestId;
-      const platformTarget = chatTurns.get(requestId)?.platform;
-      if (platformTarget?.mode === "ddf") {
-        platformInputTargets.set(interactionRequestId, {
-          agentId: platformTarget.agentId,
-          chatId: inputRequest.chatId || sessionId,
-          runId: inputRequest.runId || runId,
-        });
-      }
-      emit(webContents, {
-        requestId,
-        sessionId,
-        runId,
-        type: "input_request",
-        prompt: inputRequest.prompt,
-        inputRequestId: interactionRequestId,
-        inputType: inputRequest.inputType,
-        inputOptions: inputRequest.options,
-        inputDefault: inputRequest.defaultValue,
-        inputAllowCustom: inputRequest.allowCustom,
-        inputTimeoutAt: inputRequest.timeoutAt,
-      });
-      return sawDone;
-    }
-    const reasoningLog = parseChatReasoningSseFrame(buffer);
-    if (reasoningLog) {
-      const reasoning = contentNormalizer.pushNativeReasoning(reasoningLog.content ?? "");
-      if (reasoning) {
-        emit(webContents, {
-          requestId,
-          sessionId,
-          runId,
-          type: "reasoning",
-          content: reasoning,
-          level: reasoningLog.level,
-        });
-      }
-      return sawDone;
-    }
-    const streamError = parseChatSseErrorFrame(buffer);
-    if (streamError) {
-      recordProviderErrorAnalytics(requestId, sessionId, runId, buffer);
-      throw streamError;
-    }
-    if (emitTimelineEvents(buffer)) {
-      return sawDone;
-    }
-    const providerStatus = parseProviderStatusSseFrame(buffer);
-    if (providerStatus) {
-      recordProviderUsageAnalytics(requestId, sessionId, runId, buffer);
-      emit(webContents, {
-        requestId,
-        sessionId,
-        runId,
-        type: "status",
-        content: formatAgentLogStatus(providerStatus),
-        level: providerStatus.level,
-      });
-      return sawDone;
-    }
-    try {
-      parseChatSseFrame(buffer).forEach((content) => {
-        const novel = appendResumedContent(resumeState, cursor, content);
-        if (novel) emitNormalizedContent(novel);
-      });
-    } catch (error) {
-      if (error instanceof ChatSseError) {
-        recordProviderErrorAnalytics(requestId, sessionId, runId, buffer);
-      }
-      throw error;
-    }
-  }
-  const trailing = contentNormalizer.finish();
-  trailing.reasoning.forEach((content) => {
-    emit(webContents, { requestId, sessionId, runId, type: "reasoning", content });
-  });
-  trailing.text.forEach((content) => {
-    emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
-  });
-  return sawDone;
-}
-
-function formatAgentLogStatus(log: { title?: string; content?: string; level?: string }): string {
-  const title = log.title?.trim() || "Agent status";
-  const content = log.content?.trim() || "";
-  if (!content) return "";
-  return `**${title}**\n\n${content}\n\n`;
-}
-
-function emitAgentLog(
-  webContents: ChatEventTarget,
-  requestId: string,
-  sessionId: string,
-  runId: string,
-  log: { title?: string; content?: string; level?: string },
-): void {
-  const title = log.title?.trim() || "Agent status";
-  const toolNames = title.match(/^I am using tools:\s*(.+)$/i)?.[1]?.trim();
-  if (toolNames) {
-    emit(webContents, {
-      requestId,
-      sessionId,
-      runId,
-      type: "tool_timeline",
-      toolTimeline: {
-        id: `agent-log:${toolNames}:${log.content?.slice(0, 160) ?? ""}`,
-        kind: "tool_call",
-        title: "Tool call",
-        toolName: toolNames,
-        status: "running",
-        content: log.content?.trim() || undefined,
-      },
-    });
-    return;
-  }
-  emit(webContents, {
-    requestId,
-    sessionId,
-    runId,
-    type: "status",
-    content: formatAgentLogStatus(log),
-    level: log.level,
-  });
-}
-
-function recordProviderUsageAnalytics(
-  requestId: string,
-  sessionId: string,
-  runId: string,
-  frame: string,
-): void {
-  const event = parseProviderUsageAnalyticsSseFrame(frame);
-  if (!event) return;
-  void persistProviderUsageAnalytics({ requestId, sessionId, runId, event }).catch(() => undefined);
-}
-
-function recordProviderErrorAnalytics(
-  requestId: string,
-  sessionId: string,
-  runId: string,
-  frame: string,
-): void {
-  const event = parseProviderErrorAnalyticsSseFrame(frame);
-  if (!event) return;
-  void persistProviderErrorAnalytics({ requestId, sessionId, runId, event }).catch(() => undefined);
-}
-
-async function formatHttpError(response: Response): Promise<Error> {
-  let body = "";
-  try {
-    body = (await readLimitedText(response, MAX_ERROR_BODY_BYTES)).trim();
-  } catch {
-    body = "";
-  }
-  if (!body) return new Error(`Gateway chat failed with HTTP ${response.status}.`);
-  try {
-    const parsed = JSON.parse(body);
-    const structured = extractStructuredError(parsed);
-    if (structured) return new ChatSseError(structured.message, structured.code, structured.retryable);
-    const detail = extractErrorMessage(parsed);
-    if (detail) return new Error(`Gateway chat failed: ${String(detail)}`);
-  } catch {
-    // Keep the raw body below.
-  }
-  return new Error(`Gateway chat failed with HTTP ${response.status}: ${body.slice(0, 600)}`);
-}
-
-function extractStructuredError(value: unknown): { code: string; message: string; retryable: boolean } | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Record<string, unknown>;
-  const candidate = (record.error && typeof record.error === "object" ? record.error : record.detail) as Record<string, unknown> | undefined;
-  if (!candidate) return null;
-  const code = typeof candidate.code === "string"
-    ? candidate.code
-    : typeof candidate.error_code === "string"
-      ? candidate.error_code
-      : "";
-  if (!code) return null;
-  return {
-    code,
-    message: typeof candidate.message === "string" ? candidate.message : "HepAI request failed.",
-    retryable: candidate.retryable === true,
-  };
-}
-
-function extractErrorMessage(value: unknown): string | null {
-  if (!value) return null;
-  if (typeof value === "string") return value;
-  if (typeof value !== "object") return String(value);
-
-  const record = value as Record<string, unknown>;
-  return extractErrorMessage(record.detail) ||
-    extractErrorMessage(record.message) ||
-    extractErrorMessage(record.error) ||
-    null;
-}
-
-async function readLimitedText(response: Response, maxBytes: number): Promise<string> {
-  if (!response.body) return "";
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (total < maxBytes) {
-    const { done, value } = await reader.read();
-    if (done || !value) break;
-    const remaining = maxBytes - total;
-    const chunk = value.byteLength > remaining ? value.slice(0, remaining) : value;
-    chunks.push(chunk);
-    total += chunk.byteLength;
-    if (value.byteLength > remaining) break;
-  }
-  await reader.cancel().catch(() => undefined);
-  return new TextDecoder().decode(Buffer.concat(chunks));
-}
-
 function emit(webContents: ChatEventTarget, event: ChatEvent): void {
   const seq = (chatEventSequences.get(event.requestId) ?? 0) + 1;
   chatEventSequences.set(event.requestId, seq);
@@ -3634,20 +3297,6 @@ function summarizeChatDiagnosticEvent(event: ChatEvent): string {
   if (event.type === "tool_timeline") return `Tool activity: ${event.toolTimeline?.title ?? event.toolTimeline?.kind ?? "tool"}`;
   if (event.type === "start") return "Backend stream started";
   return `Chat ${event.type}`;
-}
-
-function toChatFileTimelineEvent(fileEvent: ReturnType<typeof parseAgentRunSseFileEvents>[number]): NonNullable<ChatEvent["toolTimeline"]> {
-  const kind = fileEvent.diff ? "diff" : "artifact";
-  const target = fileEvent.targetPath ? ` → ${fileEvent.targetPath}` : "";
-  return {
-    id: `file:${fileEvent.action}:${fileEvent.path}:${fileEvent.hash ?? ""}`,
-    kind,
-    title: `${fileEvent.action}: ${fileEvent.name || fileEvent.path}`,
-    status: "completed",
-    content: fileEvent.diff || `${fileEvent.source ?? ""}${target}`.trim() || undefined,
-    path: fileEvent.path,
-    timestamp: fileEvent.timestamp,
-  };
 }
 
 function getPositiveIntEnv(name: string, fallback: number): number {

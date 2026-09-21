@@ -68,7 +68,12 @@ from drsai.backend.runtime.permission_modes import (
     get_mode,
 )
 from drsai.backend.runtime.goals import normalize_goal
-from drsai.backend.runtime.journal import RuntimeConversationJournal
+from drsai.backend.runtime.journal import (
+    RuntimeConversationJournal,
+    compact_runtime_event_payload,
+    ensure_runtime_event_guards,
+    is_item_projected_event,
+)
 from drsai.backend.runtime.experiments import RuntimeExperimentStore
 from drsai.backend.runtime.replay_planner import ReplayPlanStore
 from drsai.backend.runtime.replay_execution import ReplayExecutionStore
@@ -161,6 +166,21 @@ class _ClosingConnection(sqlite3.Connection):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _runtime_event_data_json(event_type: str, data: Mapping[str, Any]) -> str:
+    """Serialize a Runtime Event payload for the ``runtime_events.data_json`` column.
+
+    Streamed chunks are stored in their reduced form, so the Run/Session binding is
+    not repeated once per token (``compact_runtime_event_payload``); every other
+    Event is serialized exactly as before.  Only the *stored* payload is reduced:
+    callers keep returning the payload they received.
+    """
+    return json.dumps(
+        compact_runtime_event_payload(event_type, data),
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _legacy_agent_event_type(value: Mapping[str, Any]) -> str:
@@ -422,7 +442,7 @@ class RuntimeEngine:
                   archived INTEGER NOT NULL DEFAULT 0, lifecycle TEXT NOT NULL DEFAULT 'active',
                   revision INTEGER NOT NULL DEFAULT 1, agent_definition TEXT, backend_id TEXT,
                   model TEXT, reasoning_effort TEXT, plan_mode INTEGER,
-                  removed_at TEXT, origin_kind TEXT, origin_provider TEXT, origin_binding_id TEXT,
+                  remote_worker_id TEXT, remote_worker_name TEXT, removed_at TEXT, origin_kind TEXT, origin_provider TEXT, origin_binding_id TEXT,
                   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_runtime_sessions_workspace ON runtime_sessions(workspace_id, updated_at DESC);
@@ -586,6 +606,11 @@ class RuntimeEngine:
                 db.execute("ALTER TABLE runtime_sessions ADD COLUMN reasoning_effort TEXT")
             if "plan_mode" not in session_columns:
                 db.execute("ALTER TABLE runtime_sessions ADD COLUMN plan_mode INTEGER")
+            if "remote_worker_id" not in session_columns:
+                db.execute("ALTER TABLE runtime_sessions ADD COLUMN remote_worker_id TEXT")
+            if "remote_worker_name" not in session_columns:
+                db.execute("ALTER TABLE runtime_sessions ADD COLUMN remote_worker_name TEXT")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_runtime_sessions_remote_worker ON runtime_sessions(remote_worker_id, updated_at DESC)")
             if "removed_at" not in session_columns:
                 db.execute("ALTER TABLE runtime_sessions ADD COLUMN removed_at TEXT")
             if "origin_kind" not in session_columns:
@@ -817,6 +842,13 @@ class RuntimeEngine:
                         data=data,
                         created_at=str(event["created_at"]),
                     ) or changed
+                if is_item_projected_event(str(event["event_type"])):
+                    # Streamed chunks belong to the canonical Item journal, which
+                    # already holds them under the Item's own id. Importing the raw
+                    # Runtime Event as well stored the same text a second time with
+                    # no Item identity -- the pre-Journal equivalent of the mirror
+                    # ``append_event`` deliberately no longer writes.
+                    continue
                 if db.execute(
                     "SELECT 1 FROM runtime_session_journal "
                     "WHERE session_id=? AND dedupe_key=? "
@@ -865,6 +897,8 @@ class RuntimeEngine:
         model: str | None = None,
         reasoning_effort: str | None = None,
         plan_mode: bool | None = None,
+        remote_worker_id: str | None = None,
+        remote_worker_name: str | None = None,
     ) -> dict[str, Any]:
         if not workspace_id or not self.workspace_exists(workspace_id):
             raise KeyError("Unknown or closed Workspace")
@@ -875,11 +909,11 @@ class RuntimeEngine:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 "INSERT INTO runtime_sessions(session_id,workspace_id,worktree_id,title,archived,lifecycle,"
-                "revision,agent_definition,backend_id,model,reasoning_effort,plan_mode,removed_at,created_at,updated_at) "
-                "VALUES(?,?,?,?,0,'active',1,?,?,?,?,?,NULL,?,?)",
+                "revision,agent_definition,backend_id,model,reasoning_effort,plan_mode,remote_worker_id,remote_worker_name,removed_at,created_at,updated_at) "
+                "VALUES(?,?,?,?,0,'active',1,?,?,?,?,?,?,?,NULL,?,?)",
                 (session_id, workspace_id, worktree_id, title[:240] or "New session",
                  agent_definition, backend_id, model, reasoning_effort,
-                 None if plan_mode is None else int(plan_mode), now, now),
+                 None if plan_mode is None else int(plan_mode), remote_worker_id, remote_worker_name, now, now),
             )
             self.conversation_journal.append_event_in_transaction(
                 db,
@@ -931,36 +965,47 @@ class RuntimeEngine:
                 row = db.execute(
                     "SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)
                 ).fetchone()
-                if row is None:
-                    db.rollback()
-                    raise RuntimeError("Channel binding references a missing Session")
-                if str(row["lifecycle"]) == "removed":
-                    db.rollback()
-                    raise RuntimeError("Channel binding references a removed Session")
-                if str(row["lifecycle"]) == "archived":
-                    revision = int(row["revision"]) + 1
-                    db.execute(
-                        "UPDATE runtime_sessions SET archived=0,lifecycle='active',revision=?,updated_at=? "
-                        "WHERE session_id=?",
-                        (revision, now, session_id),
-                    )
-                    self.conversation_journal.append_event_in_transaction(
+                if row is None or str(row["lifecycle"]) == "removed":
+                    # A binding outlives the Session it names: the Desktop can
+                    # remove a channel Session, and a Session can go missing with
+                    # the Workspace that held it.  Rebuilding the Session keeps the
+                    # conversation reachable; refusing here would fail every later
+                    # turn of a channel this installation still has linked,
+                    # because nothing else ever re-points the binding.
+                    session_id = self._replace_binding_session_in_transaction(
                         db,
-                        session_id,
-                        "session.updated",
-                        {
-                            "title": str(row["title"]),
-                            "lifecycle": "active",
-                            "revision": revision,
-                            "origin": {"kind": "channel", "provider": provider},
-                        },
-                        dedupe_key=f"session-revision:{session_id}:{revision}",
-                        created_at=now,
+                        binding,
+                        title_prefix=title_prefix,
+                        now=now,
+                        workspace_id=workspace_id,
+                        worktree_id=worktree_id,
                     )
-                db.execute(
-                    "UPDATE runtime_channel_bindings SET updated_at=? WHERE binding_id=?",
-                    (now, str(binding["binding_id"])),
-                )
+                    created = True
+                else:
+                    if str(row["lifecycle"]) == "archived":
+                        revision = int(row["revision"]) + 1
+                        db.execute(
+                            "UPDATE runtime_sessions SET archived=0,lifecycle='active',revision=?,updated_at=? "
+                            "WHERE session_id=?",
+                            (revision, now, session_id),
+                        )
+                        self.conversation_journal.append_event_in_transaction(
+                            db,
+                            session_id,
+                            "session.updated",
+                            {
+                                "title": str(row["title"]),
+                                "lifecycle": "active",
+                                "revision": revision,
+                                "origin": {"kind": "channel", "provider": provider},
+                            },
+                            dedupe_key=f"session-revision:{session_id}:{revision}",
+                            created_at=now,
+                        )
+                    db.execute(
+                        "UPDATE runtime_channel_bindings SET updated_at=? WHERE binding_id=?",
+                        (now, str(binding["binding_id"])),
+                    )
                 db.commit()
             else:
                 display_index = int(db.execute(
@@ -1002,6 +1047,67 @@ class RuntimeEngine:
         self.conversation_journal.notify_committed()
         return self.get_session(session_id), created
 
+    def relocate_channel_session(self, session_id: str, *, workspace_id: str) -> dict[str, Any]:
+        """Move one channel Session to another Workspace, atomically.
+
+        A channel binding is keyed by ``(provider, account, user)`` alone, so its
+        Session outlives the Workspace the channel resolves to.  A Run copies
+        the Session's Workspace when it is created, which is how a channel
+        inherits the working directory, environment section and project
+        instructions of the Workspace it belongs to -- so moving the Session is
+        what re-points the channel at its user-visible space.  Runs that already
+        happened keep the Workspace they actually ran in.
+        """
+        if not session_id or not workspace_id or not self.workspace_exists(workspace_id):
+            raise KeyError("Unknown or closed Workspace")
+        worktree_id = self.worktree_for_workspace(workspace_id)
+        now = _now()
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)
+            ).fetchone()
+            if row is None:
+                db.rollback()
+                raise KeyError("Session not found")
+            if str(row["origin_kind"]) != "channel" or row["origin_binding_id"] is None:
+                db.rollback()
+                raise ValueError("Only a channel Session can be relocated")
+            if str(row["lifecycle"]) == "removed":
+                db.rollback()
+                raise ValueError("A removed Session cannot be relocated")
+            if str(row["workspace_id"]) == workspace_id:
+                db.commit()
+                return self._session(row)
+            revision = int(row["revision"]) + 1
+            payload = {
+                "title": str(row["title"]),
+                "lifecycle": str(row["lifecycle"]),
+                "revision": revision,
+                "origin": {"kind": "channel", "provider": str(row["origin_provider"] or "")},
+            }
+            # ``append_event_in_transaction`` stamps the Session's Workspace onto
+            # the event, so the Workspace being left is notified while the
+            # Session still points at it and the new one after the move.  Both
+            # catalogs would otherwise keep serving a list that is no longer
+            # true.
+            self.conversation_journal.append_event_in_transaction(
+                db, session_id, "session.updated", payload,
+                dedupe_key=f"session-workspace-out:{session_id}:{revision}", created_at=now,
+            )
+            db.execute(
+                "UPDATE runtime_sessions SET workspace_id=?,worktree_id=?,revision=?,updated_at=? "
+                "WHERE session_id=?",
+                (workspace_id, worktree_id, revision, now, session_id),
+            )
+            self.conversation_journal.append_event_in_transaction(
+                db, session_id, "session.updated", payload,
+                dedupe_key=f"session-workspace-in:{session_id}:{revision}", created_at=now,
+            )
+            db.commit()
+        self.conversation_journal.notify_committed()
+        return self.get_session(session_id)
+
     def rotate_channel_session(self, binding_id: str, *, title_prefix: str) -> dict[str, Any]:
         """Create a fresh Session and atomically make it active for a binding."""
         if not binding_id or not title_prefix:
@@ -1015,38 +1121,19 @@ class RuntimeEngine:
             if binding is None:
                 db.rollback()
                 raise KeyError("Channel binding not found")
-            previous = db.execute(
-                "SELECT * FROM runtime_sessions WHERE session_id=?",
-                (str(binding["active_session_id"]),),
-            ).fetchone()
-            if previous is None:
-                db.rollback()
-                raise RuntimeError("Channel binding references a missing Session")
             display_index = int(db.execute(
                 "SELECT COALESCE(MAX(display_index),0)+1 FROM runtime_channel_bindings "
                 "WHERE provider=? AND account_fingerprint=?",
                 (str(binding["provider"]), str(binding["account_fingerprint"])),
             ).fetchone()[0])
-            session_id = f"session-{uuid.uuid4()}"
-            title = f"{title_prefix} {display_index}"[:240]
-            db.execute(
-                "INSERT INTO runtime_sessions(session_id,workspace_id,worktree_id,title,archived,lifecycle,"
-                "revision,agent_definition,backend_id,removed_at,origin_kind,origin_provider,origin_binding_id,"
-                "created_at,updated_at) VALUES(?,?,?,?,0,'active',1,?,?,NULL,'channel',?,?,?,?)",
-                (session_id, str(previous["workspace_id"]), previous["worktree_id"], title,
-                 previous["agent_definition"], previous["backend_id"], str(binding["provider"]),
-                 binding_id, now, now),
-            )
-            db.execute(
-                "UPDATE runtime_channel_bindings SET active_session_id=?,display_index=?,updated_at=? "
-                "WHERE binding_id=?",
-                (session_id, display_index, now, binding_id),
-            )
-            self.conversation_journal.append_event_in_transaction(
-                db, session_id, "session.updated",
-                {"title": title, "lifecycle": "active", "revision": 1,
-                 "origin": {"kind": "channel", "provider": str(binding["provider"])}},
-                dedupe_key=f"session-created:{session_id}", created_at=now,
+            # An explicit rotation asks for a new conversation, so it takes the
+            # next display number rather than the slot it replaces.
+            session_id = self._replace_binding_session_in_transaction(
+                db,
+                binding,
+                title_prefix=title_prefix,
+                now=now,
+                display_index=display_index,
             )
             db.commit()
         self.conversation_journal.notify_committed()
@@ -1075,6 +1162,130 @@ class RuntimeEngine:
                 "SELECT COUNT(*) FROM runtime_sessions WHERE origin_kind='channel' "
                 "AND origin_provider=? AND lifecycle<>'removed'", (provider,),
             ).fetchone()[0])
+
+    def _replace_binding_session_in_transaction(
+        self,
+        db: sqlite3.Connection,
+        binding: sqlite3.Row,
+        *,
+        now: str,
+        title_prefix: str | None = None,
+        display_index: int | None = None,
+        workspace_id: str | None = None,
+        worktree_id: str | None = None,
+    ) -> str:
+        """Give a binding a fresh Session inside the caller's transaction.
+
+        The caller already holds ``BEGIN IMMEDIATE`` on ``db``, so this cannot go
+        through :meth:`rotate_channel_session`: a second connection would block
+        on the caller's own write transaction.
+
+        The replacement inherits the Workspace, worktree, Agent Definition and
+        Agent Backend of the Session it stands in for, and keeps that Session's
+        display slot unless the caller asks for another number.  ``title_prefix``
+        is omitted by callers that only preserve an existing name (a removed
+        Session is replaced under the title the Desktop already shows).
+        """
+        previous = db.execute(
+            "SELECT * FROM runtime_sessions WHERE session_id=?",
+            (str(binding["active_session_id"]),),
+        ).fetchone()
+        target_workspace = (
+            str(previous["workspace_id"]) if previous is not None else workspace_id
+        )
+        if not target_workspace:
+            # Nothing describes where the replacement belongs: a binding has no
+            # Workspace column of its own.
+            raise RuntimeError("Channel binding references a missing Session")
+        slot = int(binding["display_index"]) if display_index is None else int(display_index)
+        if title_prefix is None:
+            if previous is None:
+                raise RuntimeError("Channel Session replacement requires a title")
+            title = str(previous["title"])[:240]
+        else:
+            title = f"{title_prefix} {slot}"[:240]
+        provider = str(binding["provider"])
+        session_id = f"session-{uuid.uuid4()}"
+        db.execute(
+            "INSERT INTO runtime_sessions(session_id,workspace_id,worktree_id,title,archived,lifecycle,"
+            "revision,agent_definition,backend_id,removed_at,origin_kind,origin_provider,origin_binding_id,"
+            "created_at,updated_at) VALUES(?,?,?,?,0,'active',1,?,?,NULL,'channel',?,?,?,?)",
+            (
+                session_id,
+                target_workspace,
+                previous["worktree_id"] if previous is not None else worktree_id,
+                title,
+                previous["agent_definition"] if previous is not None else None,
+                previous["backend_id"] if previous is not None else None,
+                provider,
+                str(binding["binding_id"]),
+                now,
+                now,
+            ),
+        )
+        db.execute(
+            "UPDATE runtime_channel_bindings SET active_session_id=?,display_index=?,updated_at=? "
+            "WHERE binding_id=?",
+            (session_id, slot, now, str(binding["binding_id"])),
+        )
+        self.conversation_journal.append_event_in_transaction(
+            db, session_id, "session.updated",
+            {"title": title, "lifecycle": "active", "revision": 1,
+             "origin": {"kind": "channel", "provider": provider}},
+            dedupe_key=f"session-created:{session_id}", created_at=now,
+        )
+        return session_id
+
+    def archive_stale_channel_sessions(
+        self, *, provider: str, account_fingerprint: str
+    ) -> int:
+        """Retire the channel Sessions of an Account this link no longer holds.
+
+        A channel keeps one Account at a time, so after a re-login every binding
+        written for the previous Account describes a conversation the provider can
+        still deliver if that Account is linked again -- but not while another one
+        is.  Its Session is archived rather than deleted or re-pointed: the
+        Desktop stops showing a second "Provider Session N" beside the live one,
+        the transcript survives, and logging that Account back in revives the very
+        Session through the existing archived-Session path.
+
+        Returns how many Sessions were archived.
+        """
+        if not provider or not account_fingerprint:
+            raise ValueError("Channel Account identity is required")
+        now = _now()
+        archived = 0
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            bindings = db.execute(
+                "SELECT * FROM runtime_channel_bindings WHERE provider=? AND account_fingerprint<>?",
+                (provider, account_fingerprint),
+            ).fetchall()
+            for binding in bindings:
+                session = db.execute(
+                    "SELECT * FROM runtime_sessions WHERE session_id=?",
+                    (str(binding["active_session_id"]),),
+                ).fetchone()
+                if session is None or str(session["lifecycle"]) != "active":
+                    continue
+                session_id = str(session["session_id"])
+                revision = int(session["revision"]) + 1
+                db.execute(
+                    "UPDATE runtime_sessions SET archived=1,lifecycle='archived',revision=?,updated_at=? "
+                    "WHERE session_id=?",
+                    (revision, now, session_id),
+                )
+                self.conversation_journal.append_event_in_transaction(
+                    db, session_id, "session.archived",
+                    {"title": str(session["title"]), "lifecycle": "archived", "revision": revision,
+                     "origin": {"kind": "channel", "provider": provider}},
+                    dedupe_key=f"session-revision:{session_id}:{revision}", created_at=now,
+                )
+                archived += 1
+            db.commit()
+        if archived:
+            self.conversation_journal.notify_committed()
+        return archived
 
     def record_channel_migration(
         self, *, provider: str, source_version: str, source_digest: str,
@@ -1437,11 +1648,17 @@ class RuntimeEngine:
             raise KeyError("Session not found")
         return self._session(row)
 
-    def list_sessions(self, workspace_id: str, *, offset: int = 0, limit: int = 50, archived: bool | None = False) -> dict[str, Any]:
-        if not workspace_id or not self.workspace_exists(workspace_id):
-            raise KeyError("Unknown or closed Workspace")
-        where = "workspace_id=?"
-        args: list[Any] = [workspace_id]
+    def list_sessions(self, workspace_id: str | None = None, *, remote_worker_id: str | None = None, offset: int = 0, limit: int = 50, archived: bool | None = False) -> dict[str, Any]:
+        if bool(workspace_id) == bool(remote_worker_id):
+            raise ValueError("Exactly one Session owner is required")
+        if workspace_id:
+            if not self.workspace_exists(workspace_id):
+                raise KeyError("Unknown or closed Workspace")
+            where = "workspace_id=? AND remote_worker_id IS NULL"
+            args: list[Any] = [workspace_id]
+        else:
+            where = "remote_worker_id=?"
+            args = [remote_worker_id]
         if archived is False:
             where += " AND lifecycle='active'"
         elif archived is True:
@@ -1547,6 +1764,20 @@ class RuntimeEngine:
                 dedupe_key=f"session-revision:{session_id}:{revision}",
                 created_at=updated_at,
             )
+            if wanted == "removed":
+                # Removing a channel Session must not leave its binding pointing at
+                # a Session that can never be used again.  The polling task resolves
+                # through the binding, so the next WeChat turn would fail, and the
+                # binding would stay broken until that Account logs in again.  The
+                # replacement keeps the name and the Workspace, so the channel --
+                # and the Desktop list -- reads the same as before the deletion.
+                for binding in db.execute(
+                    "SELECT * FROM runtime_channel_bindings WHERE active_session_id=?",
+                    (session_id,),
+                ).fetchall():
+                    self._replace_binding_session_in_transaction(
+                        db, binding, now=updated_at
+                    )
             db.commit()
         self.conversation_journal.notify_committed()
         return self.get_session(session_id)
@@ -3663,6 +3894,14 @@ class RuntimeEngine:
                 if event_type in {"tool.complete", "tool.completed"}
                 else ("failed" if event_type == "tool.failed" else "running")
             )
+        # ``payload`` here is the accumulated Item payload: it must be persisted in
+        # ``runtime_conversation_items`` so the Item projection can advance.  For
+        # delta events the Journal stores only the incremental chunk instead of a
+        # second copy of the accumulation (see
+        # ``ConversationJournal.upsert_item_in_transaction``), which keeps
+        # ``runtime_session_journal`` linear in the answer length instead of
+        # quadratic.  Every delta branch above sets ``payload["delta"]``, so the
+        # chunk survives the reduction.
         self.conversation_journal.upsert_item_in_transaction(
             db,
             session_id,
@@ -3754,15 +3993,13 @@ class RuntimeEngine:
             event_id, created = f"event-{uuid.uuid4()}", _now()
             db.execute(
                 "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) VALUES(?,?,?,?,?,?,NULL)",
-                (event_id, run_id, sequence, event_type, json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created),
+                (event_id, run_id, sequence, event_type, _runtime_event_data_json(event_type, safe_data), created),
             )
-            # Message/thinking deltas are projected solely through the canonical
-            # Item journal path. Mirroring the raw Runtime Event as a second
-            # conversation.item.delta (without item_id) used to flood OAEP with
-            # fake event.run.resumed envelopes.
-            item_owns_journal = event_type in {
-                "message.delta", "agent.message.delta", "thinking.delta",
-            } or event_type.startswith("oaep.item.")
+            # Streamed message/thinking/subagent text is projected solely through
+            # the canonical Item journal path. Mirroring the raw Runtime Event as a
+            # second row (without item_id) used to flood OAEP with fake
+            # event.run.resumed and content-free event.session.updated envelopes.
+            item_owns_journal = is_item_projected_event(event_type)
             if not item_owns_journal:
                 self.conversation_journal.append_event_in_transaction(
                     db,
@@ -3810,11 +4047,9 @@ class RuntimeEngine:
             db.execute(
                 "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) VALUES(?,?,?,?,?,?,?)",
                 (event_id, run_id, sequence, event_type,
-                 json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created, backend_event_key),
+                 _runtime_event_data_json(event_type, safe_data), created, backend_event_key),
             )
-            item_owns_journal = event_type in {
-                "message.delta", "agent.message.delta", "thinking.delta",
-            } or event_type.startswith("oaep.item.")
+            item_owns_journal = is_item_projected_event(event_type)
             if not item_owns_journal:
                 self.conversation_journal.append_event_in_transaction(
                     db,
@@ -3842,7 +4077,15 @@ class RuntimeEngine:
             db.commit()
         if not item_owns_journal or item_created:
             self.conversation_journal.notify_committed()
-        return self._event(row)
+        event = self._event(row)
+        # The stored payload is the reduced stream form
+        # (``_runtime_event_data_json``); the returned event keeps the payload the
+        # caller passed, exactly as ``append_event`` and the batch writers do, so
+        # returning a write result never silently drops the Run/Session binding the
+        # caller supplied.  Identity and type still come from the row, so a replayed
+        # Backend Event keeps its canonical Event translation.
+        event["data"] = safe_data
+        return event
 
     def append_normalized_event(
         self,
@@ -3988,7 +4231,7 @@ class RuntimeEngine:
                 "VALUES(?,?,?,?,?,?,?)",
                 (
                     event_id, run_id, sequence, event_type,
-                    json.dumps(compatibility_data, separators=(",", ":"), sort_keys=True),
+                    _runtime_event_data_json(event_type, compatibility_data),
                     created, dedupe_key,
                 ),
             )
@@ -4076,7 +4319,7 @@ class RuntimeEngine:
                     safe_data = redact_sensitive(data, "", "content")
                     inserted_rows.append((
                         event_id, run_id, sequence, event_type,
-                        json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created, backend_event_key,
+                        _runtime_event_data_json(event_type, safe_data), created, backend_event_key,
                     ))
                     result = {"event_id": event_id, "run_id": run_id, "sequence": sequence, "type": event_type,
                               "data": safe_data, "created_at": created, "backend_event_key": backend_event_key}
@@ -4150,7 +4393,7 @@ class RuntimeEngine:
                 safe_data = redact_sensitive(data, "", "content")
                 db.execute(
                     "INSERT INTO runtime_events(event_id,run_id,sequence,event_type,data_json,created_at,backend_event_key) VALUES(?,?,?,?,?,?,?)",
-                    (event_id, run_id, sequence, event_type, json.dumps(safe_data, separators=(",", ":"), sort_keys=True), created, backend_event_key),
+                    (event_id, run_id, sequence, event_type, _runtime_event_data_json(event_type, safe_data), created, backend_event_key),
                 )
                 if event_type in {"message.delta", "agent.message.delta"}:
                     # The raw Runtime Event remains append-only below. OAEP's
@@ -5039,6 +5282,8 @@ class RuntimeEngine:
             "model": row["model"] if "model" in row.keys() else None,
             "reasoning_effort": row["reasoning_effort"] if "reasoning_effort" in row.keys() else None,
             "plan_mode": bool(row["plan_mode"]) if "plan_mode" in row.keys() and row["plan_mode"] is not None else None,
+            "remote_worker_id": row["remote_worker_id"] if "remote_worker_id" in row.keys() else None,
+            "remote_worker_name": row["remote_worker_name"] if "remote_worker_name" in row.keys() else None,
             "removed_at": row["removed_at"] if "removed_at" in row.keys() else None,
             "created_at": row["created_at"], "updated_at": row["updated_at"],
         }

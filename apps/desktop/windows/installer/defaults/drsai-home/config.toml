@@ -5,8 +5,12 @@ model = "deepseek-v4-flash"
 model_provider = "hepai"
 
 [model_providers.hepai]
-base_url = "https://ai-dev.ihep.ac.cn/apiv2/v1"
-anthropic_base_url = "https://ai-dev.ihep.ac.cn/apiv2/anthropic"
-google_base_url = "https://ai-dev.ihep.ac.cn/apiv2/v1"
+base_url = "https://ddf.ihep.ac.cn/apiv2"
+anthropic_base_url = "https://ddf.ihep.ac.cn/apiv2/anthropic"
+google_base_url = "https://ddf.ihep.ac.cn/apiv2"
 requires_api_key = false
 models_file = "configs/models/provider_hepai.toml"
+# User-owned overlay: OpenDrSai never rewrites this file, so models you add
+# (and the `disabled` kill switch) survive every upgrade. Optional — a missing
+# file is normal and simply means "no user models yet".
+user_models_file = "configs/models/provider_hepai.local.toml"

@@ -6,6 +6,7 @@ import type {
   LoginRequest,
 } from "@shared/desktopApi";
 import { desktopApi } from "../desktopApi";
+import { LatestOperationGate } from "./latestOperationGate";
 
 interface AuthContextValue {
   loading: boolean;
@@ -53,8 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   const [loginFailed, setLoginFailed] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
-  const bootstrapPromiseRef = useRef<Promise<boolean> | null>(null);
-  const bootstrapEpochRef = useRef(0);
+  const bootstrapGateRef = useRef(new LatestOperationGate<boolean>());
   const initialLoadPromiseRef = useRef<Promise<void> | null>(null);
 
   function applyA5ServiceGuidanceScenario(scenario: DesktopA5ServiceGuidanceScenario): void {
@@ -98,38 +98,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   }
 
   function retryBootstrap(): Promise<boolean> {
-    if (bootstrapPromiseRef.current) return bootstrapPromiseRef.current;
-    // Epoch-guard bootstrap results: a session-restore/logout that happens
-    // while a bootstrap is in flight must never let that older result
-    // overwrite the newer state (stale errors popping after a fresh attempt).
-    const epoch = bootstrapEpochRef.current + 1;
-    bootstrapEpochRef.current = epoch;
+    const gate = bootstrapGateRef.current;
+    if (gate.current) return gate.current;
     setServiceBusy(true);
-    const operation = (async () => {
+    const ticket = gate.start(async (isCurrent) => {
       try {
         const bootstrap = await desktopApi.bootstrapDesktop();
-        if (epoch !== bootstrapEpochRef.current) return bootstrap.ready;
+        if (!isCurrent()) return bootstrap.ready;
         setServiceReady(bootstrap.ready);
         setServiceBlocker(bootstrap.ready ? null : bootstrap.blocker ?? classifyBootstrapBlocker(bootstrap.message));
         setMessage(bootstrap.message);
         if (bootstrap.ready) serviceRetryCountRef.current = 0;
         return bootstrap.ready;
       } catch (error) {
-        if (epoch !== bootstrapEpochRef.current) return false;
+        if (!isCurrent()) return false;
         setServiceReady(false);
         const nextMessage = error instanceof Error ? error.message : "OpenDrSai service preparation failed.";
         setServiceBlocker(classifyBootstrapBlocker(nextMessage));
         setMessage(nextMessage);
         return false;
       }
-    })();
-    bootstrapPromiseRef.current = operation;
+    });
     const clear = (): void => {
-      if (bootstrapPromiseRef.current === operation) bootstrapPromiseRef.current = null;
-      setServiceBusy(false);
+      if (ticket.release()) setServiceBusy(false);
     };
-    void operation.then(clear, clear);
-    return operation;
+    void ticket.promise.then(clear, clear);
+    return ticket.promise;
+  }
+
+  function adoptSession(next: AuthSession): void {
+    // A session change replaces any bootstrap for the previous identity. The
+    // stale operation may still finish in main, but it can no longer publish
+    // state or clear the busy flag of the replacement operation.
+    bootstrapGateRef.current.invalidate();
+    serviceRetryCountRef.current = 0;
+    setServiceBusy(false);
+    setServiceReady(next.authenticated && next.authMode === "offline");
+    setServiceBlocker(null);
+    setSession(next);
   }
 
   function loadInitialSession(): Promise<void> {
@@ -148,6 +154,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
 
   useEffect(() => {
     const unsubscribe = desktopApi.onAuthSessionInvalidated(() => {
+      bootstrapGateRef.current.invalidate();
+      serviceRetryCountRef.current = 0;
+      setServiceBusy(false);
       setSession(anonymousSession);
       setServiceReady(false);
       setServiceBlocker({
@@ -166,22 +175,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   }, []);
 
   // When the main process signals that the auth session has been restored
-  // (e.g. after a successful OIDC re-login), reload the session from the
-  // main process so that session.authenticated becomes true.  Then the
-  // auto-bootstrap useEffect below will see authenticated && !serviceReady
-  // && !serviceBusy && !serviceBlocker and trigger retryBootstrap().
+  // (e.g. after a deep-link OIDC re-login), reload the session from the main
+  // process so that session.authenticated becomes true.  This effect must only
+  // synchronize session state: the auto-bootstrap useEffect below already sees
+  // the resulting `session.authenticated` change and drives retryBootstrap().
+  //
+  // The initiating window does not receive this event; it consumes the login
+  // IPC result directly. Other windows adopt the restored session as a new
+  // generation and replace any bootstrap belonging to the previous identity.
   useEffect(() => {
     const unsubscribe = desktopApi.onAuthSessionRestored(async () => {
-      // Invalidate any in-flight bootstrap: its result must not overwrite the
-      // freshly restored session state below.
-      bootstrapEpochRef.current += 1;
-      serviceRetryCountRef.current = 0;
-      setServiceBlocker(null);
-      setServiceBusy(false);
-      setMessage("Session restored. Re-checking runtime…");
       try {
         const next = await desktopApi.getAuthSession();
-        setSession(next);
+        adoptSession(next);
       } catch {
         // If session reload fails, the user can still retry manually.
       }
@@ -248,11 +254,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       setMessage(result.message);
       if (result.ok && result.session) {
         setLoginFailed(false);
-        setSession(result.session);
-        setServiceBlocker(null);
-        if (result.session.authMode === "offline") {
-          setServiceReady(true);
-        }
+        adoptSession(result.session);
         return true;
       }
       setLoginFailed(true);
@@ -276,9 +278,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       const result = await desktopApi.startOidcLogin(request);
       if (result.ok && result.session) {
         setLoginFailed(false);
-        setSession(result.session);
-        setServiceReady(false);
-        setServiceBlocker(null);
+        adoptSession(result.session);
         return true;
       }
       const cancelled = /cancel/i.test(result.message);
@@ -320,9 +320,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     try {
       const result = await desktopApi.logout({ clearLocalData });
       setMessage(result.message);
-      setSession(anonymousSession);
-      setServiceReady(false);
-      setServiceBlocker(null);
+      adoptSession(anonymousSession);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Sign-out failed.");
     } finally {

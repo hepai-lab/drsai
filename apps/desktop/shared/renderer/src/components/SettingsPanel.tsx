@@ -15,6 +15,7 @@ import type {
   AgentSkillPreview, AgentKnowledgePolicy, AgentKnowledgePreview, AgentToolPolicy,
   AgentToolPreview, MyDrSaiModelConfig, MyDrSaiModelApiProtocol,
   MyDrSaiModelCapability, MyDrSaiModelModality, MyDrSaiProviderModelConfig,
+  ModelOwnership,
   MyDrSaiAgentModelPolicy, MyDrSaiModelConnection, MyDrSaiProviderPreset,
   MyDrSaiConfig, RuntimeModelOperation, WorkspaceProject,
 } from "@shared/desktopApi";
@@ -39,6 +40,7 @@ import {
   isSelectableModelAvailability,
   modelCatalogRecoveryCopy,
   supportsFullAgentPrimaryRuntime,
+  supportsImageGenerationModel,
 } from "../modelCatalogRecovery";
 import { knownVoiceModelCapabilities, mergeKnownVoiceModalities } from "../modelVoiceCapabilities";
 import { getAgentModelOptions } from "../agentModelOptions";
@@ -79,12 +81,79 @@ function getAgentConfigurationTab(agent: DesktopAgent): AgentConfigurationTab {
 interface SidebarComponentVisibility { square: boolean; agents: boolean; skills: boolean; }
 interface RightSidebarComponentVisibility {
   files: boolean;
+  diagnostics: boolean;
 }
 const DEFAULT_AGENT_TEXT_MODEL = "deepseek-v4-pro";
 const LAST_THREAD_STORAGE_KEY = "opendrsai.lastThread";
 const AWAY_STARTED_AT_STORAGE_KEY = "opendrsai.awayStartedAt";
 
 export type SettingsPane = "general" | "voice" | "agent-defaults" | "model-providers" | "perceptors" | "executors" | "memories" | "agent-task" | "approvals" | "analytics" | "integrations" | "codex" | "remote-workspace" | "channels" | "archived-sessions" | "other";
+
+/** Settings panes that are still rendered in the navigation but have no working
+ * implementation behind them. They stay visible so the surface stays honest
+ * about what exists, but they are disabled instead of opening a pane that fails
+ * at mount (Agent configuration has not shipped its feature yet; Perceptors
+ * 404s against the Desktop Runtime; Executors and Memories are placeholders
+ * for the next stage). Remove an entry here once its backend
+ * and pane content actually ship. */
+export const UNAVAILABLE_SETTINGS_PANES: Partial<Record<SettingsPane, { zh: string; en: string }>> = {
+  "agent-defaults": {
+    zh: "智能体配置功能尚未实现，暂时不可用。",
+    en: "Agent configuration is not implemented yet and is temporarily unavailable.",
+  },
+  perceptors: {
+    zh: "桌面运行时尚未提供感知器接口（GET /v1/config/perceptors 返回 404）。",
+    en: "The desktop runtime does not expose the Perceptor API yet (GET /v1/config/perceptors returns 404).",
+  },
+  executors: {
+    zh: "执行器注册表将在下一阶段开放。",
+    en: "Executor registry is coming next.",
+  },
+  memories: {
+    zh: "记忆器注册表将在下一阶段开放。",
+    en: "Memory registry is coming next.",
+  },
+};
+
+/** Whether the Desktop Runtime serves the Perceptor registry. Probing a route
+ * the runtime does not serve costs a rejected ipcMain handler, and Electron logs
+ * every rejected handler even when the renderer catches the rejection — so no
+ * call site may probe while the registry is absent. Derived from the registry
+ * above so re-enabling the pane also re-enables the probes. */
+export const PERCEPTOR_REGISTRY_AVAILABLE = !UNAVAILABLE_SETTINGS_PANES.perceptors;
+
+/** Localized explanation for a disabled pane, or null when the pane is usable. */
+export function settingsPaneUnavailableReason(pane: SettingsPane, zh: boolean): string | null {
+  const entry = UNAVAILABLE_SETTINGS_PANES[pane];
+  if (!entry) return null;
+  return zh ? entry.zh : entry.en;
+}
+
+/** Panes that this desktop build cannot serve even though the pane itself is
+ * implemented. They are derived from the platform feature capabilities so a
+ * platform (or a future runtime) that really serves the capability keeps the
+ * pane enabled. */
+export function capabilityDisabledPaneReason(
+  pane: SettingsPane,
+  features: DesktopPlatformDescriptor["capabilities"]["features"] | undefined,
+  zh: boolean,
+): string | null {
+  if (pane === "codex" && features?.codexBackend === false) {
+    return zh
+      ? "当前桌面运行时只注册了 opendrsai 后端，未注册 Codex 后端，因此 Codex 集成在此构建中不可用。"
+      : "This desktop runtime registers only the opendrsai backend, not the Codex backend, so Codex integration is unavailable in this build.";
+  }
+  return null;
+}
+
+/** Single entry point for "this navigation item is rendered but disabled". */
+function disabledPaneReason(
+  pane: SettingsPane,
+  features: DesktopPlatformDescriptor["capabilities"]["features"] | undefined,
+  zh: boolean,
+): string | null {
+  return settingsPaneUnavailableReason(pane, zh) ?? capabilityDisabledPaneReason(pane, features, zh);
+}
 
 function modelProviderRuntimeSummary(connection: MyDrSaiModelConnection, zh: boolean): string | undefined {
   switch (connection.runtime?.runtime_status) {
@@ -146,7 +215,7 @@ const bundledModelProviderLogos: Record<string, string> = {
 };
 
 const BUILTIN_MODEL_PROVIDER_PRESETS: MyDrSaiProviderPreset[] = [
-  { id: "hepai", label: "HepAI", base_url: "https://aiapi.ihep.ac.cn/apiv2", default_model: "deepseek-v4-pro", wire_api: "openai", requires_api_key: false, base_url_editable: false, supports_model_discovery: true, auth_mode: "oidc" },
+  { id: "hepai", label: "HepAI", base_url: "https://ddf.ihep.ac.cn/apiv2", default_model: "deepseek-v4-pro", wire_api: "openai", requires_api_key: false, base_url_editable: false, supports_model_discovery: true, auth_mode: "oidc" },
   { id: "deepseek", label: "DeepSeek", base_url: "https://api.deepseek.com/v1", default_model: "deepseek-chat", wire_api: "openai", requires_api_key: true, api_key_env: "DEEPSEEK_API_KEY", base_url_editable: false, supports_model_discovery: true, auth_mode: "api_key" },
   { id: "openai", label: "OpenAI", base_url: "https://api.openai.com/v1", default_model: "gpt-5.4", wire_api: "openai", requires_api_key: true, api_key_env: "OPENAI_API_KEY", base_url_editable: false, supports_model_discovery: true, auth_mode: "api_key" },
   { id: "anthropic", label: "Anthropic", base_url: "https://api.anthropic.com/v1", anthropic_base_url: "https://api.anthropic.com/v1", default_model: "claude-sonnet-4-6", wire_api: "anthropic", requires_api_key: true, api_key_env: "ANTHROPIC_API_KEY", base_url_editable: false, supports_model_discovery: true, auth_mode: "api_key" },
@@ -179,6 +248,10 @@ function ModelProviderLogo({ provider }: { provider: string }) {
 
 type ProviderModelModality = "text" | "image" | "audio" | "video";
 
+type ProviderReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
+
+const PROVIDER_REASONING_EFFORT_OPTIONS: ProviderReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
+
 type ProviderModelEditorDraft = {
   originalId: string;
   modelId: string;
@@ -188,7 +261,52 @@ type ProviderModelEditorDraft = {
   apiProtocol: MyDrSaiModelApiProtocol;
   enabled: boolean;
   capabilities: MyDrSaiModelCapability[];
+  // Declared numbers are edited as text: an empty field means "no declaration",
+  // which is not the same as 0 (the Runtime then falls back to the built-in
+  // registry). Keeping them as text also lets the user type before we validate.
+  tokenLimit: string;
+  maxTokens: string;
+  reasoningEfforts: ProviderReasoningEffort[];
+  /** Which catalog file the entry came from. Read-only; null for new entries. */
+  origin: ModelOwnership | null;
 };
+
+/**
+ * Parse a declared token number typed by the user.
+ *
+ * ``absent`` (empty input) is a valid state: it clears the declaration so the
+ * Runtime falls back to the built-in registry for that model.
+ */
+function parseDeclaredTokens(value: string): { ok: true; value: number | null } | { ok: false } {
+  const trimmed = value.trim();
+  if (!trimmed) return { ok: true, value: null };
+  if (!/^\d{1,9}$/.test(trimmed)) return { ok: false };
+  const parsed = Number.parseInt(trimmed, 10);
+  return parsed > 0 && parsed <= 100_000_000 ? { ok: true, value: parsed } : { ok: false };
+}
+
+/** Toggle one reasoning effort while keeping the canonical declaration order. */
+function nextProviderReasoningEfforts(
+  current: ProviderReasoningEffort[],
+  effort: ProviderReasoningEffort,
+  enabled: boolean,
+): ProviderReasoningEffort[] {
+  const selected = new Set(current);
+  if (enabled) selected.add(effort);
+  else selected.delete(effort);
+  return PROVIDER_REASONING_EFFORT_OPTIONS.filter((candidate) => selected.has(candidate));
+}
+
+/**
+ * Shape a model entry for writing back to the Provider.
+ *
+ * ``origin`` is derived from the catalog file on read and is not an accepted
+ * write field, so it must never round-trip to the configuration writer.
+ */
+function providerModelConfigForWrite(config: MyDrSaiProviderModelConfig): MyDrSaiProviderModelConfig {
+  const { origin: _origin, ...rest } = config;
+  return { ...rest, api_protocol: (rest.api_protocol as string) === "google" ? "gemini" : rest.api_protocol };
+}
 
 function knownTextModelCapabilities(modelId: string): MyDrSaiModelCapability[] {
   const normalized = modelId.trim().toLowerCase().split("/").at(-1);
@@ -254,6 +372,22 @@ function providerModelConfigsFor(
   provider: Parameters<typeof providerModelConfigFor>[1],
 ): Record<string, MyDrSaiProviderModelConfig> {
   return Object.fromEntries(modelIds.map((modelId) => [modelId, providerModelConfigFor(modelId, provider)]));
+}
+
+/**
+ * Rows the Settings panel shows for one Provider.
+ *
+ * ``models`` is the *selectable* list, so a disabled model is absent from it.
+ * The disabled entries are appended back so their row (and therefore the switch
+ * that re-enables them) does not disappear after saving.
+ */
+function providerDraftModels(
+  provider: { models?: string[]; disabled_models?: string[] } | undefined,
+  fallback: string[],
+): string[] {
+  const models = provider?.models?.length ? [...provider.models] : [...fallback];
+  for (const model of provider?.disabled_models ?? []) if (!models.includes(model)) models.push(model);
+  return models;
 }
 
 function providerModelDescriptor(modelId: string, providerId: string, catalogModels: MyDrSaiModelConfig[]): MyDrSaiModelConfig | undefined {
@@ -375,8 +509,14 @@ function AgentResourcesSettings({ agentId, zh, onManagePerceptors }: { agentId: 
   const refresh = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [perceptorRows, tools, toolsPreview, skills, skillsPreview, knowledge, knowledgePreviewResult] = await Promise.all([
-        desktopApi.listPerceptors(),
+      // The Perceptor API is not served by the Desktop Runtime yet, so do not
+      // probe it at all: the .catch() below would still leave a rejected
+      // ipcMain handler behind, which Electron logs as "Error occurred in
+      // handler for 'desktop:list-perceptors'". The catch stays as a guard for
+      // the day the route ships and misbehaves — it must never take the
+      // tool/skill/knowledge panels down with it.
+      const perceptorRows = PERCEPTOR_REGISTRY_AVAILABLE ? await desktopApi.listPerceptors().catch(() => []) : [];
+      const [tools, toolsPreview, skills, skillsPreview, knowledge, knowledgePreviewResult] = await Promise.all([
         desktopApi.getMyDrSaiAgentToolPolicy(agentId),
         desktopApi.previewMyDrSaiAgentTools(agentId),
         desktopApi.getMyDrSaiAgentSkillPolicy(agentId),
@@ -438,7 +578,7 @@ function AgentResourcesSettings({ agentId, zh, onManagePerceptors }: { agentId: 
     {tab === "perception" && <div role="tabpanel" data-testid="agent-perception-settings">
       <div className="settings-row">
         <span><strong>{zh ? "可用感知器资源" : "Available perceptor resources"}</strong><small>{zh ? "连接地址和凭据由全局感知器配置管理；这里仅展示当前智能体可引用的资源和运行时能力。" : "Global Perceptor configuration owns endpoints and credentials; this view only shows resources and runtime capabilities available for Agent binding."}</small></span>
-        <button type="button" onClick={onManagePerceptors}>{zh ? "管理感知器资源" : "Manage perceptors"}</button>
+        <button type="button" onClick={onManagePerceptors} disabled title={settingsPaneUnavailableReason("perceptors", zh) ?? undefined}>{zh ? "管理感知器资源" : "Manage perceptors"}</button>
       </div>
       {perceptors.map((perceptor) => <div className="settings-row" key={perceptor.perceptor_id} data-testid={`perceptor-${perceptor.perceptor_id}`}>
         <span><strong>{perceptor.name || perceptor.perceptor_id}</strong><small>{perceptor.adapter} · {perceptor.capabilities.join(", ")}</small><span className="perceptor-runtime-status">
@@ -447,7 +587,7 @@ function AgentResourcesSettings({ agentId, zh, onManagePerceptors }: { agentId: 
           <em className={(toolPreview?.tools ?? []).some((tool) => tool.tool_id === "builtin.web-search" && tool.selected) ? "ok" : "warning"}>{(toolPreview?.tools ?? []).some((tool) => tool.tool_id === "builtin.web-search" && tool.selected) ? (zh ? "当前智能体已加载" : "Loaded by this Agent") : (zh ? "当前智能体未加载" : "Not loaded by this Agent")}</em>
         </span></span>
       </div>)}
-      {!busy && perceptors.length === 0 && <p>{zh ? "尚未配置感知器，请前往全局感知器配置创建资源。" : "No perceptor is configured. Create one in global Perceptor configuration."}</p>}
+      {!busy && perceptors.length === 0 && <p>{zh ? "当前运行时未提供感知器接口，感知器资源暂不可用；工具、技能与知识库不受影响。" : "This runtime does not expose the Perceptor API yet, so perceptor resources are unavailable. Tools, skills, and knowledge keep working."}</p>}
     </div>}
     {tab === "tools" && <div role="tabpanel">
       {(toolPreview?.tools ?? []).map((tool) => <div className="settings-toggle" key={tool.tool_id} data-testid={`agent-tool-${tool.tool_id}`}>
@@ -766,7 +906,7 @@ export function SettingsPanel({
     selection: AgentModelSelection | null | undefined;
   }> = [
     { role: "image_understanding_model", testId: "agent-image-understanding-model-setting", label: zh ? "图像理解" : "Image understanding", description: zh ? "接收图片并输出文字理解结果。" : "Accepts images and returns a text understanding.", models: selectableCapabilityModels("image", "text"), selection: agentModelPolicyDraft?.image_understanding_model },
-    { role: "image_generation_model", testId: "agent-image-generation-model-setting", label: zh ? "图像生成" : "Image generation", description: zh ? "根据文字或图片生成图像。" : "Generates images from text or image input.", models: models.filter((model) => model.provider_id && ["available", "configured_unverified"].includes(model.availability ?? "") && model.output_modalities?.includes("image")), selection: agentModelPolicyDraft?.image_generation_model },
+    { role: "image_generation_model", testId: "agent-image-generation-model-setting", label: zh ? "图像生成" : "Image generation", description: zh ? "选定主模型后，可再选择图像生成模型；系统有默认值，也可手动切换。根据文字或图片生成图像。" : "After the primary model, pick an image-generation model (system default available; you can switch). Generates images from text or image input.", models: models.filter((model) => Boolean(model.provider_id) && supportsImageGenerationModel(model)), selection: agentModelPolicyDraft?.image_generation_model },
     { role: "text_to_speech_model", testId: "agent-text-to-speech-model-setting", label: zh ? "文字转语音" : "Text to speech", description: zh ? "将文字合成为语音。" : "Synthesizes speech from text.", models: selectableCapabilityModels("text", "audio"), selection: agentModelPolicyDraft?.text_to_speech_model },
     { role: "realtime_voice_model", testId: "agent-realtime-voice-model-setting", label: zh ? "实时" : "Realtime", description: zh ? "用于全双工实时语音输入与输出。" : "Handles full-duplex realtime voice input and output.", models: selectableRealtimeVoiceModels, selection: agentModelPolicyDraft?.realtime_voice_model },
     { role: "speech_to_text_model", testId: "agent-speech-to-text-model-setting", label: zh ? "语音转文字" : "Speech to text", description: zh ? "将语音识别为文字。" : "Transcribes speech into text.", models: selectableCapabilityModels("audio", "text"), selection: agentModelPolicyDraft?.speech_to_text_model },
@@ -868,7 +1008,7 @@ export function SettingsPanel({
     setApiKeyEnvDraft(connection.provider.api_key_source?.startsWith("env:") ? connection.provider.api_key_source.slice(4) : "");
     setWireApiDraft(connection.provider.wire_api);
     setKeySourceDraft(connection.provider.requires_api_key ? (connection.provider.api_key_source?.startsWith("env:") ? "env" : "secure") : "none");
-    const configuredModels = connection.provider.models?.length ? connection.provider.models : [connection.model];
+    const configuredModels = providerDraftModels(connection.provider, [connection.model]);
     setProviderModelsDraft(configuredModels);
     setProviderModelAliasesDraft(connection.provider.model_aliases ?? {});
     setProviderModelOperationsDraft(connection.provider.model_operations ?? {});
@@ -887,9 +1027,7 @@ export function SettingsPanel({
     const provider = modelProviderInventory.find((item) => item.name === activeModelProviderTab)
       ?? (connection?.provider.name === activeModelProviderTab ? connection.provider : undefined);
     if (!provider) return;
-    const configuredModels = provider.models?.length
-      ? provider.models
-      : connection?.model_provider === provider.name ? [connection.model] : [];
+    const configuredModels = providerDraftModels(provider, connection?.model_provider === provider.name ? [connection.model] : []);
     setProviderDraft(provider.name);
     setBaseUrlDraft(provider.base_url);
     setAnthropicBaseUrlDraft(provider.anthropic_base_url ?? "");
@@ -1058,6 +1196,10 @@ export function SettingsPanel({
       apiProtocol: config.api_protocol,
       enabled: config.enabled,
       capabilities: [...config.capabilities],
+      tokenLimit: config.token_limit !== undefined ? String(config.token_limit) : "",
+      maxTokens: config.max_tokens !== undefined ? String(config.max_tokens) : "",
+      reasoningEfforts: PROVIDER_REASONING_EFFORT_OPTIONS.filter((effort) => (config.reasoning_efforts ?? []).includes(effort)),
+      origin: config.origin ?? null,
     });
     setProviderModelEditorError(null);
   }
@@ -1076,21 +1218,47 @@ export function SettingsPanel({
     if (alias) setProviderModelAliasesDraft((current) => ({ ...current, [copyId]: alias }));
     const operations = [...(providerModelOperationsDraft[model] ?? [])];
     if (operations.length) setProviderModelOperationsDraft((current) => ({ ...current, [copyId]: operations }));
-    const copiedConfig = { ...config, input_modalities: [...config.input_modalities], output_modalities: [...config.output_modalities], capabilities: [...config.capabilities] };
+    // The copy is a brand-new user-owned entry, even when it was cloned from a
+    // built-in model: that is the supported way to customise a Product model.
+    const copiedConfig: MyDrSaiProviderModelConfig = { ...config, input_modalities: [...config.input_modalities], output_modalities: [...config.output_modalities], capabilities: [...config.capabilities], origin: "user" };
     setProviderModelConfigsDraft((current) => ({ ...current, [copyId]: copiedConfig }));
-    setProviderModelEditor({ originalId: copyId, modelId: copyId, alias, inputModalities: [...copiedConfig.input_modalities], outputModalities: [...copiedConfig.output_modalities], apiProtocol: copiedConfig.api_protocol, enabled: copiedConfig.enabled, capabilities: [...copiedConfig.capabilities] });
+    setProviderModelEditor({ originalId: copyId, modelId: copyId, alias, inputModalities: [...copiedConfig.input_modalities], outputModalities: [...copiedConfig.output_modalities], apiProtocol: copiedConfig.api_protocol, enabled: copiedConfig.enabled, capabilities: [...copiedConfig.capabilities], tokenLimit: copiedConfig.token_limit !== undefined ? String(copiedConfig.token_limit) : "", maxTokens: copiedConfig.max_tokens !== undefined ? String(copiedConfig.max_tokens) : "", reasoningEfforts: PROVIDER_REASONING_EFFORT_OPTIONS.filter((effort) => (copiedConfig.reasoning_efforts ?? []).includes(effort)), origin: "user" });
     setProviderModelEditorError(null);
   }
 
   function saveProviderModelEditor(): void {
     if (!providerModelEditor) return;
-    const nextId = providerModelEditor.modelId.trim();
+    // A built-in (Product) entry cannot be redefined: OpenDrSai regenerates that
+    // file on every launch, so the enable flag is the only thing a user may
+    // express here. Switching it off is the reversible kill switch; anything
+    // else must go through "copy as my model", which creates a new id.
+    const productOwned = providerModelEditor.origin === "product";
+    const nextId = productOwned ? providerModelEditor.originalId : providerModelEditor.modelId.trim();
     if (!nextId || nextId.length > 256 || /[\r\n\0]/.test(nextId)) {
       setProviderModelEditorError(zh ? "请输入有效的模型 ID。" : "Enter a valid model ID.");
       return;
     }
     if (providerModelEditor.inputModalities.length === 0 || providerModelEditor.outputModalities.length === 0) {
       setProviderModelEditorError(zh ? "至少选择一种模态。" : "Select at least one modality.");
+      return;
+    }
+    const tokenLimit = parseDeclaredTokens(providerModelEditor.tokenLimit);
+    if (!tokenLimit.ok) {
+      setProviderModelEditorError(zh ? "上下文长度必须是 1 到 100000000 之间的整数，留空表示使用内置默认值。" : "Context window must be an integer between 1 and 100000000, or empty to use the built-in default.");
+      return;
+    }
+    const maxTokens = parseDeclaredTokens(providerModelEditor.maxTokens);
+    if (!maxTokens.ok) {
+      setProviderModelEditorError(zh ? "最大输出长度必须是 1 到 100000000 之间的整数，留空表示使用内置默认值。" : "Max output must be an integer between 1 and 100000000, or empty to use the built-in default.");
+      return;
+    }
+    if (tokenLimit.value !== null && maxTokens.value !== null && maxTokens.value > tokenLimit.value) {
+      setProviderModelEditorError(zh ? "最大输出长度不能超过上下文长度。" : "Max output tokens cannot exceed the context window.");
+      return;
+    }
+    const reasoningEfforts = PROVIDER_REASONING_EFFORT_OPTIONS.filter((effort) => providerModelEditor.reasoningEfforts.includes(effort));
+    if (reasoningEfforts.length && !providerModelEditor.capabilities.includes("reasoning")) {
+      setProviderModelEditorError(zh ? "推理强度需要先启用“推理”能力。" : "Reasoning efforts require the reasoning capability.");
       return;
     }
     const protocolHasHost = providerModelEditor.apiProtocol === wireApiDraft
@@ -1124,7 +1292,10 @@ export function SettingsPanel({
     });
     setProviderModelConfigsDraft((current) => {
       const next = { ...current };
+      const upstreamId = current[providerModelEditor.originalId]?.upstream_id;
       delete next[providerModelEditor.originalId];
+      // Field order mirrors the Provider catalog payload so the unsaved-change
+      // comparison stays a plain JSON diff.
       next[nextId] = {
         ...(providerModelEditor.alias.trim() ? { alias: providerModelEditor.alias.trim() } : {}),
         input_modalities: providerModelEditor.inputModalities,
@@ -1132,6 +1303,11 @@ export function SettingsPanel({
         api_protocol: providerModelEditor.apiProtocol,
         enabled: providerModelEditor.enabled,
         capabilities: providerModelEditor.capabilities,
+        ...(upstreamId ? { upstream_id: upstreamId } : {}),
+        ...(tokenLimit.value !== null ? { token_limit: tokenLimit.value } : {}),
+        ...(maxTokens.value !== null ? { max_tokens: maxTokens.value } : {}),
+        ...(reasoningEfforts.length ? { reasoning_efforts: reasoningEfforts } : {}),
+        ...(productOwned ? { origin: "product" as const } : {}),
       };
       return next;
     });
@@ -1169,7 +1345,7 @@ export function SettingsPanel({
       const capabilities = enabled ? [...new Set([...current.capabilities, capability, ...(["tool_calling", "reasoning"].includes(capability) ? ["chat" as const] : [])])] : current.capabilities.filter((item) => item !== capability);
       const requiredInput: MyDrSaiModelModality[] = capability === "image_edit" ? ["image"] : capability === "speech_to_text" ? ["audio"] : capability === "text_to_speech" || ["chat", "tool_calling", "reasoning", "image_generation", "video_generation"].includes(capability) ? ["text"] : [];
       const requiredOutput: MyDrSaiModelModality[] = ["image_generation", "image_edit"].includes(capability) ? ["image"] : capability === "speech_to_text" || ["chat", "tool_calling", "reasoning"].includes(capability) ? ["text"] : capability === "text_to_speech" ? ["audio"] : capability === "video_generation" ? ["video"] : [];
-      return { ...current, capabilities, inputModalities: enabled ? [...new Set([...current.inputModalities, ...requiredInput])] : current.inputModalities, outputModalities: enabled ? [...new Set([...current.outputModalities, ...requiredOutput])] : current.outputModalities };
+      return { ...current, capabilities, inputModalities: enabled ? [...new Set([...current.inputModalities, ...requiredInput])] : current.inputModalities, outputModalities: enabled ? [...new Set([...current.outputModalities, ...requiredOutput])] : current.outputModalities, ...(capability === "reasoning" && !enabled ? { reasoningEfforts: [] } : {}) };
     });
   }
 
@@ -1229,10 +1405,7 @@ export function SettingsPanel({
         enabled: true,
         capabilities: [...new Set([...defaultTextModelCapabilities(model), ...(providerModelOperationsDraft[model] ?? [])])],
       };
-      return [model, {
-        ...configured,
-        api_protocol: (configured.api_protocol as string) === "google" ? "gemini" : configured.api_protocol,
-      }];
+      return [model, providerModelConfigForWrite(configured)];
     }));
   }
 
@@ -1685,7 +1858,7 @@ export function SettingsPanel({
       ).then((hosts) => {
         if (cancelled) return;
         setRemoteHostCount(hosts.length);
-        if (featureCapabilities?.remoteWorkspace === true) void refreshAndroidDevices();
+        if (featureCapabilities?.remoteWorkspace === true && featureCapabilities?.mobilePairing !== false) void refreshAndroidDevices();
       });
     };
     refresh();
@@ -1722,6 +1895,29 @@ export function SettingsPanel({
     window.speechSynthesis.addEventListener("voiceschanged", refreshVoices);
     return () => window.speechSynthesis.removeEventListener("voiceschanged", refreshVoices);
   }, [activePane]);
+
+  // The V2 Desktop Runtime does not serve POST /v1/audio/speech, so provider
+  // (online) reading cannot run here; see
+  // WINDOWS_PLATFORM_DESCRIPTOR.features.remoteSpeechSynthesis.  Windows system
+  // speech stays available, so only the online paths are disabled.
+  const remoteSynthesisAvailable = featureCapabilities?.remoteSpeechSynthesis !== false;
+  const onlineSynthesisUnavailableReason = zh
+    ? "此桌面运行时未提供在线朗读接口（POST /v1/audio/speech 返回 404），当前只能使用 Windows 本地朗读。"
+    : "This desktop runtime does not expose online speech synthesis (POST /v1/audio/speech returns 404); only Windows system speech is available.";
+  useEffect(() => {
+    if (remoteSynthesisAvailable) return;
+    if (voicePreferences.synthesisMode !== "provider") return;
+    updateVoicePreferences({ synthesisMode: "system" });
+  }, [remoteSynthesisAvailable, voicePreferences.synthesisMode, updateVoicePreferences]);
+
+  // Capability-gated Codex entry point in the Integrations pane: it must not
+  // navigate into a pane that this build disables.
+  const codexIntegrationUnavailableReason = capabilityDisabledPaneReason("codex", featureCapabilities, zh);
+
+  // Agent configuration is rendered but disabled, so every cross-link that
+  // would navigate into it must be disabled with the same reason instead of
+  // silently landing on another pane.
+  const agentDefaultsUnavailableReason = settingsPaneUnavailableReason("agent-defaults", zh);
 
   const refreshDuplexVoiceReadiness = useCallback(async () => {
     setDuplexVoiceReadinessBusy(true);
@@ -1769,7 +1965,10 @@ export function SettingsPanel({
       : duplexVoiceReadiness?.reasonCode ?? "internal",
   );
   const runDuplexVoiceReadinessAction = (action: DuplexVoiceReadinessActionId): void => {
-    if (action === "open_agent_settings") setActivePane("agent-defaults");
+    if (action === "open_agent_settings") {
+      if (agentDefaultsUnavailableReason) return;
+      setActivePane("agent-defaults");
+    }
     else if (action === "switch_to_serial") updateVoicePreferences({ interactionMode: "serial" });
     else void refreshDuplexVoiceReadiness();
   };
@@ -1838,9 +2037,9 @@ export function SettingsPanel({
   })).filter((group) => group.items.length > 0);
   const visiblePaneIds = visibleGroups.flatMap((group) => group.items.map((item) => item.id));
   useEffect(() => {
-    if (visiblePaneIds.includes(activePane)) return;
+    if (visiblePaneIds.includes(activePane) && !disabledPaneReason(activePane, featureCapabilities, zh)) return;
     setActivePane("general");
-  }, [activePane, visiblePaneIds.join("|")]);
+  }, [activePane, visiblePaneIds.join("|"), featureCapabilities]);
   const presetModelProviderTabs = effectiveModelProviderPresets
     .filter((preset) => !preset.id.startsWith("custom-"))
     .sort((left, right) => {
@@ -1874,11 +2073,9 @@ export function SettingsPanel({
     ?? (myDrSaiConfig?.modelConnection?.provider.name === providerDraft ? myDrSaiConfig.modelConnection.provider : undefined);
   const selectedProviderConfigured = Boolean(selectedProviderConfig);
   const selectedProviderHasSavedKey = Boolean(selectedProviderConfig?.has_api_key);
-  const savedProviderModels = selectedProviderConfig?.models?.length
-    ? selectedProviderConfig.models
-    : selectedProviderConfig && myDrSaiConfig?.modelConnection?.model_provider === selectedProviderConfig.name
-      ? [myDrSaiConfig.modelConnection.model]
-      : [];
+  const savedProviderModels = selectedProviderConfig
+    ? providerDraftModels(selectedProviderConfig, myDrSaiConfig?.modelConnection?.model_provider === selectedProviderConfig.name ? [myDrSaiConfig.modelConnection.model] : [])
+    : [];
   const providerModelsChanged = savedProviderModels.length !== providerModelsDraft.length
     || savedProviderModels.some((model, index) => model !== providerModelsDraft[index]);
   const normalizedProviderModelAliases = modelAliasesForSave();
@@ -1887,7 +2084,7 @@ export function SettingsPanel({
     || Object.entries(savedProviderModelAliases).some(([model, alias]) => normalizedProviderModelAliases[model] !== alias);
   const savedProviderModelOperations = selectedProviderConfig?.model_operations ?? {};
   const providerOperationsChanged = JSON.stringify(savedProviderModelOperations) !== JSON.stringify(providerModelOperationsDraft);
-  const savedProviderModelConfigs = selectedProviderConfig?.model_configs ?? providerModelConfigsFor(savedProviderModels, selectedProviderConfig);
+  const savedProviderModelConfigs = Object.fromEntries(Object.entries(selectedProviderConfig?.model_configs ?? providerModelConfigsFor(savedProviderModels, selectedProviderConfig)).map(([model, config]) => [model, providerModelConfigForWrite(config)]));
   const providerModelConfigsChanged = JSON.stringify(savedProviderModelConfigs) !== JSON.stringify(modelConfigsForSave());
   const modelProviderDirty = !selectedProviderConfig
     || providerDraft.trim() !== selectedProviderConfig.name
@@ -1914,6 +2111,16 @@ export function SettingsPanel({
   ).size;
   const androidRemoteEnabled = mobilePairingReadiness?.state === "ready"
     || (mobilePairingReadiness?.state === "offline" && Boolean(mobilePairingReadiness.runtime_id));
+  // Android device management is served by the Runtime's /v1/mobile-pairing
+  // routes (status / enrollment / associations / diagnostics); see
+  // WINDOWS_PLATFORM_DESCRIPTOR.features.mobilePairing.  When the runtime does
+  // not expose them the card is informational only instead of failing at
+  // request time.
+  const mobilePairingUnavailableReason = featureCapabilities?.mobilePairing === false
+    ? (zh
+      ? "此桌面运行时未提供 Android 远程设备管理接口（/v1/mobile-pairing 返回 404），无法启用或管理设备。"
+      : "This desktop runtime does not expose the Android remote device management API (/v1/mobile-pairing returns 404), so Android access cannot be enabled or managed.")
+    : null;
   const androidDeviceStateText: Record<DesktopMobileAssociation["access_state"], string> = zh ? {
     accessing: "正在访问",
     online: "在线",
@@ -1969,17 +2176,22 @@ export function SettingsPanel({
             <h2>{group.label}</h2>
             {group.items.map((item) => {
               const Icon = item.icon;
+              const unavailableReason = disabledPaneReason(item.id, featureCapabilities, zh);
               return (
                 <button
                   key={item.id}
                   type="button"
                   data-testid={`settings-pane-${item.id}`}
                   autoFocus={item.id === "general"}
-                  className={activePane === item.id ? "active" : ""}
-                  onClick={() => setActivePane(item.id)}
+                  className={[activePane === item.id ? "active" : "", unavailableReason ? "settings-pane-unavailable" : ""].filter(Boolean).join(" ")}
+                  disabled={Boolean(unavailableReason)}
+                  aria-disabled={Boolean(unavailableReason)}
+                  title={unavailableReason ?? undefined}
+                  onClick={() => { if (unavailableReason) return; setActivePane(item.id); }}
                 >
                   <Icon size={15} />
                   <span>{item.label}</span>
+                  {unavailableReason ? <em className="settings-pane-unavailable-tag">{zh ? "不可用" : "Unavailable"}</em> : null}
                 </button>
               );
             })}
@@ -2052,6 +2264,9 @@ export function SettingsPanel({
                   <div><h3>{zh ? "模型" : "Models"}</h3><small>{zh ? "可为模型设置显示别名；留空时使用原模型名称。" : "Set an optional display alias; an empty alias uses the original model name."}</small></div>
                   <div><button type="button" onClick={addProviderModel}>＋ {zh ? "新建" : "New"}</button><button type="button" onClick={resetProviderModels}>↶ {zh ? "重置" : "Reset"}</button><button type="button" title={!providerDiscoveryCredentialReady ? (zh ? "请先输入并保存 API Key" : "Enter and save an API Key first") : (zh ? "发现模型" : "Discover models")} disabled={modelConfigBusy || !providerDraft.trim() || !baseUrlDraft.trim() || !providerDiscoveryCredentialReady} onClick={() => void discoverModels()}>↻ {zh ? "获取" : "Fetch"}</button></div>
                 </div>
+                {selectedProviderConfig?.user_models_error && <p className="model-provider-hint model-provider-hint-warning" data-testid="model-provider-user-models-error">{zh ? `你的模型文件无法读取，本次仅内置模型生效。请修复或删除该文件后重试：${selectedProviderConfig.user_models_error}` : `Your model file could not be read, so only the built-in models are active. Fix or delete it and try again: ${selectedProviderConfig.user_models_error}`}</p>}
+                {(selectedProviderConfig?.shadowed_models?.length ?? 0) > 0 && <p className="model-provider-hint model-provider-hint-warning" data-testid="model-provider-shadowed-models">{zh ? `这些自定义模型与内置模型重名，已改用内置定义：${(selectedProviderConfig?.shadowed_models ?? []).join("、")}。请改用新的模型 ID。` : `These custom models share a built-in ID, so the built-in definition is used: ${(selectedProviderConfig?.shadowed_models ?? []).join(", ")}. Use a new model ID instead.`}</p>}
+                {selectedProviderConfig?.origin === "product" && <p className="model-provider-hint" data-testid="model-provider-product-origin-hint">{zh ? "内置模型的名称、模态与数值由 OpenDrSai 维护并随版本更新，只能停用；如需调整请用“复制模型”生成你自己的模型。" : "Built-in model names, modalities, and numbers are maintained by OpenDrSai and update with the app, so they can only be disabled. Use “Copy model” to make an editable copy."}</p>}
                 <datalist id="discovered-model-options">{discoveredModels.map((model) => <option key={model} value={model} />)}</datalist>
                 <div className="model-provider-model-list">
                   <div className="model-provider-model-table-header" role="row">
@@ -2066,7 +2281,7 @@ export function SettingsPanel({
                     const probeOperations = config.capabilities.filter((capability) => ["chat", "tool_calling", "reasoning", "image_generation", "image_edit", "speech_to_text", "text_to_speech"].includes(capability)) as import("@shared/desktopApi").ModelCapabilityProbeOperation[];
                     return <div className="model-provider-model-row-wrap" key={model}>
                     <div className="model-provider-model-row">
-                      <code className="model-provider-model-id" title={model}>{model}</code>
+                      <code className="model-provider-model-id" title={model} data-origin={config.origin ?? "user"}><span className="model-provider-model-id-text">{model}</span>{config.origin === "product" && <em className="model-provider-model-origin" title={zh ? "内置模型：随 OpenDrSai 更新，只能停用" : "Built-in model: updates with OpenDrSai and can only be disabled"}>{zh ? "内置" : "Built-in"}</em>}</code>
                       <button type="button" className={`model-provider-model-alias ${config.alias ? "" : "is-placeholder"}`} data-testid={`model-provider-model-alias-${model}`} title={zh ? "点击编辑别名" : "Click to edit alias"} onClick={() => openProviderModelEditor(model)}>{config.alias || model}</button>
                       <div className="model-modality-directional"><ModelModalityBadges zh={zh} direction="input" modalities={config.input_modalities} onClick={() => openProviderModelEditor(model)} /><span className="model-modality-separator" aria-hidden>→</span><ModelModalityBadges zh={zh} direction="output" modalities={config.output_modalities} onClick={() => openProviderModelEditor(model)} /></div>
                       <ModelApiProtocolBadge protocol={config.api_protocol} zh={zh} onClick={() => openProviderModelEditor(model)} />
@@ -2092,16 +2307,24 @@ export function SettingsPanel({
                 const modalityOptions: MyDrSaiModelModality[] = ["text", "image", "audio", "video"];
                 const protocolOptions: Array<{ id: MyDrSaiModelApiProtocol; label: string }> = [{ id: "openai", label: "OpenAI" }, { id: "anthropic", label: "Anthropic" }, { id: "gemini", label: "Gemini" }];
                 const capabilityOptions: MyDrSaiModelCapability[] = ["chat", "tool_calling", "reasoning", "image_generation", "image_edit", "speech_to_text", "text_to_speech", "video_generation"];
+                // A built-in entry may only be switched on or off here: OpenDrSai
+                // regenerates its catalog file on every launch, so every other field
+                // is read-only and customisation goes through "Copy model".
+                const productModel = providerModelEditor.origin === "product";
                 return <div className="model-provider-delete-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setProviderModelEditor(null); }} onKeyDown={(event) => { if (event.key === "Escape") setProviderModelEditor(null); }}>
                   <section className="model-provider-model-editor" role="dialog" aria-modal="true" aria-labelledby="model-provider-model-editor-title" data-testid="model-provider-model-editor">
-                    <header><div><h2 id="model-provider-model-editor-title">{zh ? "编辑模型信息" : "Edit model information"}</h2><p>{zh ? "这些设置按模型保存到 config.toml，并由 Runtime 直接使用。" : "These settings are stored per model in config.toml and consumed directly by the Runtime."}</p></div></header>
+                    <header><div><h2 id="model-provider-model-editor-title">{zh ? "编辑模型信息" : "Edit model information"}</h2><p>{zh ? "这些设置按模型保存到配置文件中，并由 Runtime 直接使用。" : "These settings are stored per model in configuration files and consumed directly by the Runtime."}</p></div></header>
+                    {productModel && <p className="model-provider-hint model-provider-hint-warning" data-testid="model-provider-model-editor-product-notice">{zh ? "这是内置模型：名称、模态、协议、能力与数值由 OpenDrSai 维护并随版本更新，此处只能切换启用状态。如需调整，请先“复制模型”再修改副本。" : "This is a built-in model: OpenDrSai maintains its name, modalities, protocol, capabilities, and numbers, and updates them with the app, so only the enabled state can change here. Use “Copy model” first to adjust a copy."}</p>}
                     <div className="model-provider-model-editor-grid">
-                      <label><span>{zh ? "模型 ID" : "Model ID"}</span><input autoFocus value={providerModelEditor.modelId} maxLength={256} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, modelId: event.target.value } : current); setProviderModelEditorError(null); }} /></label>
-                      <label><span>{zh ? "别名" : "Alias"}</span><input value={providerModelEditor.alias} maxLength={256} placeholder={providerModelEditor.modelId} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, alias: event.target.value } : current)} /></label>
-                      <fieldset><legend>{zh ? "输入模态" : "Input modalities"}</legend><div className="model-provider-capability-options">{modalityOptions.map((modality) => <label key={modality}><input type="checkbox" checked={providerModelEditor.inputModalities.includes(modality)} onChange={(event) => toggleProviderModelEditorModality("input", modality, event.target.checked)} /><span>{modality}</span></label>)}</div></fieldset>
-                      <fieldset><legend>{zh ? "输出模态" : "Output modalities"}</legend><div className="model-provider-capability-options">{modalityOptions.map((modality) => <label key={modality}><input type="checkbox" checked={providerModelEditor.outputModalities.includes(modality)} onChange={(event) => toggleProviderModelEditorModality("output", modality, event.target.checked)} /><span>{modality}</span></label>)}</div></fieldset>
-                      <fieldset><legend>{zh ? "API 协议" : "API protocol"}</legend><div className="model-provider-capability-options">{protocolOptions.map((protocol) => <label key={protocol.id}><input type="radio" name="model-api-protocol" checked={providerModelEditor.apiProtocol === protocol.id} onChange={() => setProviderModelEditor((current) => current ? { ...current, apiProtocol: protocol.id } : current)} /><span>{protocol.label}</span></label>)}</div></fieldset>
-                      <fieldset className="model-provider-model-editor-wide"><legend>{zh ? "能力" : "Capabilities"}</legend><div className="model-provider-capability-options">{capabilityOptions.map((capability) => <label key={capability}><input type="checkbox" checked={providerModelEditor.capabilities.includes(capability)} onChange={(event) => toggleProviderModelEditorCapability(capability, event.target.checked)} /><span>{capability}</span></label>)}</div></fieldset>
+                      <label><span>{zh ? "模型 ID" : "Model ID"}</span><input autoFocus value={providerModelEditor.modelId} maxLength={256} disabled={productModel} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, modelId: event.target.value } : current); setProviderModelEditorError(null); }} /></label>
+                      <label><span>{zh ? "别名" : "Alias"}</span><input value={providerModelEditor.alias} maxLength={256} placeholder={providerModelEditor.modelId} disabled={productModel} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, alias: event.target.value } : current)} /></label>
+                      <fieldset disabled={productModel}><legend>{zh ? "输入模态" : "Input modalities"}</legend><div className="model-provider-capability-options">{modalityOptions.map((modality) => <label key={modality}><input type="checkbox" checked={providerModelEditor.inputModalities.includes(modality)} onChange={(event) => toggleProviderModelEditorModality("input", modality, event.target.checked)} /><span>{modality}</span></label>)}</div></fieldset>
+                      <fieldset disabled={productModel}><legend>{zh ? "输出模态" : "Output modalities"}</legend><div className="model-provider-capability-options">{modalityOptions.map((modality) => <label key={modality}><input type="checkbox" checked={providerModelEditor.outputModalities.includes(modality)} onChange={(event) => toggleProviderModelEditorModality("output", modality, event.target.checked)} /><span>{modality}</span></label>)}</div></fieldset>
+                      <fieldset disabled={productModel}><legend>{zh ? "API 协议" : "API protocol"}</legend><div className="model-provider-capability-options">{protocolOptions.map((protocol) => <label key={protocol.id}><input type="radio" name="model-api-protocol" checked={providerModelEditor.apiProtocol === protocol.id} onChange={() => setProviderModelEditor((current) => current ? { ...current, apiProtocol: protocol.id } : current)} /><span>{protocol.label}</span></label>)}</div></fieldset>
+                      <label><span>{zh ? "上下文长度（token）" : "Context window (tokens)"}</span><input inputMode="numeric" maxLength={9} value={providerModelEditor.tokenLimit} placeholder={zh ? "留空使用内置默认值" : "Empty uses the built-in default"} disabled={productModel} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, tokenLimit: event.target.value } : current); setProviderModelEditorError(null); }} /><small data-testid="model-provider-model-editor-token-limit-hint">{zh ? "1 到 100000000 之间的整数；留空表示沿用模型注册表中的默认值。" : "An integer from 1 to 100000000; empty keeps the default from the model registry."}</small></label>
+                      <label><span>{zh ? "最大输出（token）" : "Max output (tokens)"}</span><input inputMode="numeric" maxLength={9} value={providerModelEditor.maxTokens} placeholder={zh ? "留空使用内置默认值" : "Empty uses the built-in default"} disabled={productModel} onChange={(event) => { setProviderModelEditor((current) => current ? { ...current, maxTokens: event.target.value } : current); setProviderModelEditorError(null); }} /><small data-testid="model-provider-model-editor-max-tokens-hint">{zh ? "不能大于上下文长度；留空同样沿用内置默认值。" : "Cannot exceed the context window; empty also keeps the built-in default."}</small></label>
+                      <fieldset className="model-provider-model-editor-wide" disabled={productModel || !providerModelEditor.capabilities.includes("reasoning")}><legend>{zh ? "推理强度" : "Reasoning efforts"}</legend><div className="model-provider-capability-options">{PROVIDER_REASONING_EFFORT_OPTIONS.map((effort) => <label key={effort}><input type="checkbox" checked={providerModelEditor.reasoningEfforts.includes(effort)} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, reasoningEfforts: nextProviderReasoningEfforts(current.reasoningEfforts, effort, event.target.checked) } : current)} /><span>{effort}</span></label>)}</div><small data-testid="model-provider-model-editor-reasoning-hint">{providerModelEditor.capabilities.includes("reasoning") ? (zh ? "声明该模型可用的推理强度，用于界面取值；全部留空表示沿用内置默认值。" : "Declare the reasoning efforts this model offers so the UI can pick one. Leave all unchecked to keep the built-in default.") : (zh ? "请先勾选“能力”中的 reasoning。" : "Select the reasoning capability above first.")}</small></fieldset>
+                      <fieldset className="model-provider-model-editor-wide" disabled={productModel}><legend>{zh ? "能力" : "Capabilities"}</legend><div className="model-provider-capability-options">{capabilityOptions.map((capability) => <label key={capability}><input type="checkbox" checked={providerModelEditor.capabilities.includes(capability)} onChange={(event) => toggleProviderModelEditorCapability(capability, event.target.checked)} /><span>{capability}</span></label>)}</div></fieldset>
                       <label className="model-provider-model-editor-enabled"><input type="checkbox" checked={providerModelEditor.enabled} onChange={(event) => setProviderModelEditor((current) => current ? { ...current, enabled: event.target.checked } : current)} /><span>{zh ? "启用此模型" : "Enable this model"}</span></label>
                     </div>
                     {providerModelEditorError && <p className="settings-message" role="alert">{providerModelEditorError}</p>}
@@ -2211,8 +2434,8 @@ export function SettingsPanel({
               </div>
               <div className="settings-component-list">
                 <strong>{zh ? "右侧栏组件" : "Right sidebar components"}</strong>
-                {(["files"] as Array<keyof RightSidebarComponentVisibility>).map((component) => {
-                  const label = zh ? "文件" : "Files";
+                {(["files", "diagnostics"] as Array<keyof RightSidebarComponentVisibility>).map((component) => {
+                  const label = component === "files" ? (zh ? "文件" : "Files") : (zh ? "诊断" : "Diagnostics");
                   return (
                     <label className="settings-toggle" key={component}>
                       <span><strong>{label}</strong><small>{zh ? `在右侧栏中显示${label}标签。` : `Show the ${label} tab in the right sidebar.`}</small></span>
@@ -2283,14 +2506,14 @@ export function SettingsPanel({
                 <strong>{zh ? "实时对话状态" : "Realtime conversation status"}</strong>
                 <p>{duplexVoiceAvailable ? (zh ? "已就绪，可开始实时对话。" : "Ready to start a Realtime conversation.") : duplexVoiceReason}</p>
                 {!duplexVoiceAvailable && <div className="settings-actions">
-                  <button type="button" disabled={duplexVoiceReadinessBusy} onClick={() => runDuplexVoiceReadinessAction(duplexVoiceActions.primary)}>{duplexVoiceActions.primary === "open_agent_settings" ? (zh ? "打开智能体配置" : "Open Agent configuration") : duplexVoiceActions.primary === "switch_to_serial" ? (zh ? "使用单次语音输入" : "Use single voice input") : duplexVoiceReadinessBusy ? (zh ? "检查中…" : "Checking…") : (zh ? "重新检查" : "Check again")}</button>
+                  <button type="button" disabled={duplexVoiceReadinessBusy || (duplexVoiceActions.primary === "open_agent_settings" && Boolean(agentDefaultsUnavailableReason))} title={duplexVoiceActions.primary === "open_agent_settings" ? agentDefaultsUnavailableReason ?? undefined : undefined} onClick={() => runDuplexVoiceReadinessAction(duplexVoiceActions.primary)}>{duplexVoiceActions.primary === "open_agent_settings" ? (zh ? "打开智能体配置" : "Open Agent configuration") : duplexVoiceActions.primary === "switch_to_serial" ? (zh ? "使用单次语音输入" : "Use single voice input") : duplexVoiceReadinessBusy ? (zh ? "检查中…" : "Checking…") : (zh ? "重新检查" : "Check again")}</button>
                   {duplexVoiceActions.fallback && <button type="button" onClick={() => runDuplexVoiceReadinessAction(duplexVoiceActions.fallback!)}>{zh ? "使用单次语音输入" : "Use single voice input"}</button>}
                 </div>}
               </div>
             </section>
             <section className="settings-section" data-testid="realtime-voice-settings">
               <div><h2>{zh ? "实时对话" : "Realtime conversation"}</h2><p>{zh ? "这些设置只影响全双工实时会话，并直接映射到下一次 Session。" : "These settings affect only full-duplex Realtime Sessions and map directly to the next Session payload."}</p></div>
-              <div className="settings-row"><span><strong>{zh ? "实时模型" : "Realtime model"}</strong><small>{zh ? "模型在智能体配置中独立绑定；切换模型需要重启会话。" : "Bound independently in Agent configuration; changing it requires a new Session."}</small></span><button type="button" onClick={() => setActivePane("agent-defaults")}>{duplexVoiceReadiness?.providerId && duplexVoiceReadiness?.modelId ? `${duplexVoiceReadiness.providerId} / ${duplexVoiceReadiness.modelId}` : (zh ? "打开智能体配置" : "Open Agent configuration")}</button></div>
+              <div className="settings-row"><span><strong>{zh ? "实时模型" : "Realtime model"}</strong><small>{zh ? "模型在智能体配置中独立绑定；切换模型需要重启会话。" : "Bound independently in Agent configuration; changing it requires a new Session."}</small></span><button type="button" disabled={Boolean(agentDefaultsUnavailableReason)} title={agentDefaultsUnavailableReason ?? undefined} onClick={() => setActivePane("agent-defaults")}>{duplexVoiceReadiness?.providerId && duplexVoiceReadiness?.modelId ? `${duplexVoiceReadiness.providerId} / ${duplexVoiceReadiness.modelId}` : (zh ? "打开智能体配置" : "Open Agent configuration")}</button></div>
               <div className="settings-row"><span><strong>Provider voice</strong><small>{zh ? "留空使用 Provider 默认声音；变更后下一次会话生效。" : "Leave blank for the Provider default; changes apply to the next Session."}</small></span><input data-testid="realtime-voice-name" value={voicePreferences.realtimeVoiceName} maxLength={80} placeholder={zh ? "默认" : "Default"} onChange={(event) => updateVoicePreferences({ realtimeVoiceName: event.target.value })} /></div>
               <div className="settings-row"><span><strong>{zh ? "实时识别语言" : "Realtime language"}</strong><small>{zh ? "独立于单次语音输入。" : "Independent from single voice input."}</small></span><select data-testid="realtime-voice-language" value={voicePreferences.realtimeLanguage} onChange={(event) => updateVoicePreferences({ realtimeLanguage: event.target.value as "auto" | "zh-CN" | "en-US" })}><option value="auto">{zh ? "自动检测" : "Automatic"}</option><option value="zh-CN">中文</option><option value="en-US">English</option></select></div>
               <div className="settings-row"><span><strong>{zh ? "实时麦克风" : "Realtime microphone"}</strong><small>{zh ? "会话中也可无缝切换。" : "Can also be switched during a Session."}</small></span><select data-testid="realtime-input-device" value={voicePreferences.realtimeInputDeviceId} onChange={(event) => updateVoicePreferences({ realtimeInputDeviceId: event.target.value })}><option value="">{zh ? "系统默认" : "System default"}</option>{realtimeAudioDevices.filter((device) => device.kind === "audioinput" && device.deviceId).map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `${zh ? "麦克风" : "Microphone"} ${index + 1}`}</option>)}</select></div>
@@ -2328,11 +2551,12 @@ export function SettingsPanel({
                   onChange={(event) => updateVoicePreferences({ autoReadResponses: event.target.checked })}
                 />
               </label>
-              <label className="settings-toggle">
-                <span><strong>{zh ? "允许在线朗读" : "Allow online speech synthesis"}</strong><small>{zh ? "允许将回复文本发送给当前配置的语音服务；关闭后仅使用 Windows 本地朗读。" : "Allow response text to be sent to the configured speech provider; when off, only Windows system speech is used."}</small></span>
+              <label className="settings-toggle" title={remoteSynthesisAvailable ? undefined : onlineSynthesisUnavailableReason}>
+                <span><strong>{zh ? "允许在线朗读" : "Allow online speech synthesis"}</strong><small>{remoteSynthesisAvailable ? (zh ? "允许将回复文本发送给当前配置的语音服务；关闭后仅使用 Windows 本地朗读。" : "Allow response text to be sent to the configured speech provider; when off, only Windows system speech is used.") : onlineSynthesisUnavailableReason}</small></span>
                 <input
                   type="checkbox"
                   data-testid="voice-remote-tts-consent"
+                  disabled={!remoteSynthesisAvailable}
                   checked={voicePreferences.remoteTtsConsent}
                   onChange={(event) => updateVoicePreferences({
                     remoteTtsConsent: event.target.checked,
@@ -2341,16 +2565,18 @@ export function SettingsPanel({
                 />
               </label>
               <div className="settings-row">
-                <span><strong>{zh ? "朗读引擎" : "Reading engine"}</strong><small>{zh ? "Provider 不可用时会显示错误；切换到 Windows 系统声音需由你确认。" : "Provider failures are shown explicitly; switching to Windows system speech requires your choice."}</small></span>
+                <span><strong>{zh ? "朗读引擎" : "Reading engine"}</strong><small>{remoteSynthesisAvailable ? (zh ? "Provider 不可用时会显示错误；切换到 Windows 系统声音需由你确认。" : "Provider failures are shown explicitly; switching to Windows system speech requires your choice.") : onlineSynthesisUnavailableReason}</small></span>
                 <select
                   data-testid="voice-synthesis-mode"
                   value={voicePreferences.synthesisMode}
                   onChange={(event) => updateVoicePreferences({ synthesisMode: event.target.value as "system" | "provider" })}
+                  aria-describedby={remoteSynthesisAvailable ? undefined : "voice-online-synthesis-unavailable"}
                 >
                   <option value="system">{zh ? "Windows 系统声音" : "Windows system speech"}</option>
-                  <option value="provider" disabled={!voicePreferences.remoteTtsConsent}>{zh ? "语音服务 Provider" : "Speech provider"}</option>
+                  <option value="provider" disabled={!voicePreferences.remoteTtsConsent || !remoteSynthesisAvailable}>{zh ? "语音服务 Provider" : "Speech provider"}</option>
                 </select>
               </div>
+              {!remoteSynthesisAvailable ? <p id="voice-online-synthesis-unavailable" className="settings-privacy-note" role="note" data-testid="voice-online-synthesis-unavailable">{onlineSynthesisUnavailableReason}</p> : null}
               <div className="settings-row">
                 <span><strong>{zh ? "语速" : "Reading speed"}</strong><small>{voicePreferences.playbackRate.toFixed(1)}x</small></span>
                 <input
@@ -2510,9 +2736,30 @@ export function SettingsPanel({
                       setAgentModelPolicyDirty(true);
                       setAgentModelPolicyMessage(null);
                     }} disabled={setting.models.length === 0}>
-                      <option value="">{setting.models.length === 0 ? (zh ? "暂无匹配模型" : "No matching model") : (zh ? "未指定" : "Not assigned")}</option>
+                      <option value="">{setting.models.length === 0
+                        ? (zh ? "暂无匹配模型" : "No matching model")
+                        : setting.role === "image_generation_model"
+                          ? (zh ? "默认" : "Default")
+                          : (zh ? "未指定" : "Not assigned")}</option>
                       {Object.entries(groups).map(([provider, providerModels]) => <optgroup key={provider} label={provider}>
-                        {providerModels.map((model) => <option key={`${model.provider_id}:${model.alias}`} value={`${encodeURIComponent(model.provider_id || "")}::${encodeURIComponent(model.alias)}`}>{model.display_name || model.alias}</option>)}
+                        {providerModels.map((model) => {
+                          const selected = setting.selection?.mode === "explicit"
+                            && setting.selection.ref?.provider_id === model.provider_id
+                            && setting.selection.ref?.model_id === model.alias;
+                          const usable = ["available", "configured_unverified"].includes(model.availability ?? "");
+                          const status = !usable
+                            ? (model.availability === "unauthorized"
+                              ? (zh ? "（需重新登录）" : " (sign in again)")
+                              : model.availability === "unavailable" || model.availability === "offline"
+                                ? (zh ? "（维护中/不可用）" : " (unavailable)")
+                                : (zh ? "（不可选）" : " (not selectable)"))
+                            : "";
+                          return <option
+                            key={`${model.provider_id}:${model.alias}`}
+                            disabled={!usable && !selected}
+                            value={`${encodeURIComponent(model.provider_id || "")}::${encodeURIComponent(model.alias)}`}
+                          >{`${model.display_name || model.alias}${status}`}</option>;
+                        })}
                       </optgroup>)}
                     </select>
                     {selectedProvider && <small className="settings-model-provider" data-testid={`agent-${setting.role.replaceAll("_", "-")}-provider`}>{zh ? `提供方：${selectedProvider}` : `Provider: ${selectedProvider}`}</small>}
@@ -2568,7 +2815,7 @@ export function SettingsPanel({
           </>
         )}
 
-        {activePane === "perceptors" && <><PerceptorSettingsPanel language={language} />{dataPerceptorsPanel ? <div className="settings-embedded-view settings-data-perceptors">{dataPerceptorsPanel}</div> : null}</>}
+        {activePane === "perceptors" && <PerceptorSettingsPanel language={language} />}
 
         {activePane === "executors" && (
           <>
@@ -2603,7 +2850,10 @@ export function SettingsPanel({
 
         {activePane === "approvals" && <div className="settings-embedded-view">{approvalCenterPanel}</div>}
         {activePane === "analytics" && <div className="settings-embedded-view">{usageAnalyticsPanel}</div>}
-        {activePane === "channels" && <div className="settings-embedded-view">{channelsPanel}</div>}
+        {activePane === "channels" && <>
+          <div className="settings-embedded-view">{channelsPanel}</div>
+          {dataPerceptorsPanel ? <div className="settings-embedded-view settings-data-perceptors">{dataPerceptorsPanel}</div> : null}
+        </>}
 
         {activePane === "codex" && <CodexIntegrationSettings
           busy={updateBusy}
@@ -2632,13 +2882,13 @@ export function SettingsPanel({
                   <button type="button" className="settings-connection-card-summary" aria-expanded={expandedIntegrationCard === "codex"} onClick={() => setExpandedIntegrationCard((current) => current === "codex" ? null : "codex")}>
                     <span className="settings-connection-card-logo"><OpenAiBrandIcon size={25} /></span>
                     <span><strong>Codex</strong><small>{zh ? "OpenAI 官方编程智能体，通过 OpenDrSai Codex Adapter 接入。" : "OpenAI's official coding Agent, connected through the OpenDrSai Codex Adapter."}</small></span>
-                    <em className={codexConfigurationAgent ? "is-ready" : ""}>{codexConfigurationAgent ? (zh ? "已启用" : "Enabled") : (zh ? "未启用" : "Disabled")}</em>
+                    <em className={codexIntegrationUnavailableReason ? "" : codexConfigurationAgent ? "is-ready" : ""}>{codexIntegrationUnavailableReason ? (zh ? "不可用" : "Unavailable") : codexConfigurationAgent ? (zh ? "已启用" : "Enabled") : (zh ? "未启用" : "Disabled")}</em>
                     {expandedIntegrationCard === "codex" ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </button>
                 </div>
                 {expandedIntegrationCard === "codex" && <div className="settings-connection-card-body">
-                  <p>{zh ? "任务过程遵循 OpenDrSai 智能体执行协议，可保留运行记录，并将工作区数据和技能资产沉淀下来。" : "Runs follow the OpenDrSai Agent execution protocol so records remain reproducible and workspace data and skills can be retained."}</p>
-                  <div className="settings-integration-actions"><button type="button" onClick={() => setActivePane("codex")}>{zh ? "管理 Codex" : "Manage Codex"}</button></div>
+                  <p>{codexIntegrationUnavailableReason ?? (zh ? "任务过程遵循 OpenDrSai 智能体执行协议，可保留运行记录，并将工作区数据和技能资产沉淀下来。" : "Runs follow the OpenDrSai Agent execution protocol so records remain reproducible and workspace data and skills can be retained.")}</p>
+                  <div className="settings-integration-actions"><button type="button" disabled={Boolean(codexIntegrationUnavailableReason)} title={codexIntegrationUnavailableReason ?? undefined} onClick={() => { if (codexIntegrationUnavailableReason) return; setActivePane("codex"); }}>{zh ? "管理 Codex" : "Manage Codex"}</button></div>
                 </div>}
               </article>
               <article className={`settings-connection-card ${expandedIntegrationCard === "deepseek-harness" ? "is-expanded" : ""}`}>
@@ -2652,7 +2902,7 @@ export function SettingsPanel({
                 </div>
                 {expandedIntegrationCard === "deepseek-harness" && <div className="settings-connection-card-body">
                   <p>{deepSeekHarnessAgent ? (zh ? "当前 Runtime 已发现 DeepSeek Harness，可在智能体配置中设置模型和运行偏好。" : "The Runtime has discovered DeepSeek Harness. Configure its model and runtime preferences in Agent configuration.") : (zh ? "当前未启用。启用对应 Runtime 集成后，它会出现在智能体列表中。" : "It is currently disabled. Once its Runtime integration is enabled, it appears in the Agent list.")}</p>
-                  <div className="settings-integration-actions"><button type="button" disabled={!deepSeekHarnessAgent} onClick={() => { if (!deepSeekHarnessAgent) return; selectConfigurationAgent(deepSeekHarnessAgent); setActivePane("agent-defaults"); }}>{zh ? "配置智能体" : "Configure Agent"}</button></div>
+                  <div className="settings-integration-actions"><button type="button" disabled={!deepSeekHarnessAgent || Boolean(agentDefaultsUnavailableReason)} title={agentDefaultsUnavailableReason ?? undefined} onClick={() => { if (!deepSeekHarnessAgent) return; selectConfigurationAgent(deepSeekHarnessAgent); setActivePane("agent-defaults"); }}>{zh ? "配置智能体" : "Configure Agent"}</button></div>
                 </div>}
               </article>
             </div>
@@ -2685,14 +2935,17 @@ export function SettingsPanel({
                       <strong>Android</strong>
                       <small>{zh ? "OpenDrSai Android 远程连接与设备管理。" : "OpenDrSai Android remote connection and device management."}</small>
                     </span>
-                    <em className={androidRemoteEnabled ? "is-ready" : ""}>{androidRemoteEnabled ? (zh ? "可用" : "Available") : (zh ? "未启用" : "Disabled")}</em>
+                    <em className={mobilePairingUnavailableReason ? "" : androidRemoteEnabled ? "is-ready" : ""}>{mobilePairingUnavailableReason ? (zh ? "不可用" : "Unavailable") : androidRemoteEnabled ? (zh ? "可用" : "Available") : (zh ? "未启用" : "Disabled")}</em>
                     {androidPanelExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </button>
                   <div className="settings-integration-actions">
-                    <button type="button" role="switch" aria-checked={androidRemoteEnabled} aria-label={androidRemoteEnabled ? (zh ? "暂停 Android 远程访问" : "Pause Android remote access") : (zh ? "恢复 Android 远程访问" : "Resume Android remote access")} className={`settings-connection-switch ${androidRemoteEnabled ? "is-enabled" : ""}`} data-testid="android-remote-toggle" disabled={mobileEnrollmentBusy || mobileAssociationsState === "loading"} onClick={() => { if (androidRemoteEnabled) void pauseMobileRemoteAccess(); else void enableMobileRemoteAccess(); }}><span aria-hidden="true" /></button>
+                    <button type="button" role="switch" aria-checked={androidRemoteEnabled} aria-label={androidRemoteEnabled ? (zh ? "暂停 Android 远程访问" : "Pause Android remote access") : (zh ? "恢复 Android 远程访问" : "Resume Android remote access")} className={`settings-connection-switch ${androidRemoteEnabled ? "is-enabled" : ""}`} data-testid="android-remote-toggle" title={mobilePairingUnavailableReason ?? undefined} disabled={Boolean(mobilePairingUnavailableReason) || mobileEnrollmentBusy || mobileAssociationsState === "loading"} onClick={() => { if (mobilePairingUnavailableReason) return; if (androidRemoteEnabled) void pauseMobileRemoteAccess(); else void enableMobileRemoteAccess(); }}><span aria-hidden="true" /></button>
                   </div>
                 </div>
                 {androidPanelExpanded && <div className="settings-connection-card-body android-remote-body">
+                {mobilePairingUnavailableReason ? (
+                  <p className="android-remote-message" data-state="unavailable" data-testid="android-device-state">{mobilePairingUnavailableReason}</p>
+                ) : (<>
                 <div className="android-remote-counts" data-testid="android-device-counts">
                   <span>{zh ? `已授权设备 ${activeAndroidAssociations.length}` : `Authorized devices ${activeAndroidAssociations.length}`}</span>
                   <span>{zh ? `当前在线 ${androidOnlineDeviceCount}` : `Online now ${androidOnlineDeviceCount}`}</span>
@@ -2777,6 +3030,7 @@ export function SettingsPanel({
                   <button type="button" className="danger" disabled={mobileEnrollmentBusy || activeAndroidAssociations.length === 0} onClick={() => void revokeAllAndroidDevices()} data-testid="android-revoke-all">{zh ? "撤销全部设备" : "Revoke all devices"}</button>
                   <button type="button" className="danger" disabled={mobileEnrollmentBusy || mobilePairingReadiness?.state === "not_registered"} onClick={() => void revokeMobileEnrollment()} data-testid="android-revoke-enrollment">{zh ? "注销此电脑" : "Unregister this computer"}</button>
                 </div>
+                </>)}
                 </div>}
               </div>
             </div>

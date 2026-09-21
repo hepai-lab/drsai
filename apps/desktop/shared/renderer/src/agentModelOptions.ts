@@ -1,5 +1,5 @@
 import type { DesktopAgent, MyDrSaiModelConfig } from "@shared/desktopApi";
-import { supportsFullAgentPrimaryRuntime } from "./modelCatalogRecovery";
+import { supportsFullAgentPrimaryRuntime, supportsImageGenerationModel } from "./modelCatalogRecovery";
 
 export function getAgentModelOptions(
   catalog: MyDrSaiModelConfig[],
@@ -38,6 +38,41 @@ export function getAgentModelOptions(
     }];
     return [];
   }
+  // A remote worker owns its model configuration namespace. Never fall back
+  // to Desktop's local provider catalog when get_info omits or limits models.
+  if (agent?.source === "remote") {
+    // The remote default config must always appear in the menu even when a
+    // stale/partial catalog omits it from model_configs.
+    const configNames = (agent.remoteModelConfigs ?? [])
+      .map((config) => config.name)
+      .filter((name): name is string => Boolean(name?.trim()));
+    const defaultName = agent.remoteDefaultModel?.trim() || "";
+    const requested = configNames.length
+      ? (defaultName && !configNames.includes(defaultName) ? [...configNames, defaultName] : configNames)
+      : defaultName
+        ? [defaultName]
+        // Last-resort fallback: the routable worker name is itself a usable
+        // remote model handle when get_info returned no model metadata at all.
+        : agent.model?.trim()
+          ? [agent.model.trim()]
+          : [];
+    return requested.map((name) => ({
+      alias: name,
+      display_name: agent.remoteModelConfigs?.find((config) => config.name === name)?.label || name,
+      model: name,
+      provider_id: `remote:${agent.id}`,
+      // Remote workers declare chat-capable, tool-calling model endpoints; mark
+      // them primary-capable so the composer does not filter them out.
+      operations: ["chat", "tool_calling"],
+      input_modalities: ["text", "image", "audio"],
+      output_modalities: ["text"],
+      // Explicit, remote-only marker consumed by the composer's primary-ready
+      // gate. Local catalog entries never carry it, so the local capability
+      // gate (chat + tool_calling) is unaffected.
+      capability_source: "provider",
+    }));
+  }
+
   const byIdentity = new Map<string, MyDrSaiModelConfig>();
   for (const model of catalog) {
     for (const identity of [model.alias, model.model]) {
@@ -64,4 +99,32 @@ export function getAgentModelOptions(
     result.push(model);
   }
   return result;
+}
+
+/** Image-generation options for Composer / Settings — from backend catalog only. */
+export function getImageGenerationModelOptions(
+  catalog: MyDrSaiModelConfig[],
+  selectedRef?: { provider_id: string; model_id: string } | null,
+): MyDrSaiModelConfig[] {
+  const byKey = new Map<string, MyDrSaiModelConfig>();
+  for (const model of catalog) {
+    if (!model.provider_id || !model.alias || !supportsImageGenerationModel(model)) continue;
+    byKey.set(`${model.provider_id}\0${model.alias}`, model);
+  }
+  if (selectedRef?.provider_id && selectedRef.model_id) {
+    const key = `${selectedRef.provider_id}\0${selectedRef.model_id}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        alias: selectedRef.model_id,
+        display_name: selectedRef.model_id,
+        model: selectedRef.model_id,
+        provider_id: selectedRef.provider_id,
+        output_modalities: ["image"],
+        operations: ["image_generation"],
+        availability: "unavailable",
+        capability_source: "unknown",
+      });
+    }
+  }
+  return [...byKey.values()];
 }

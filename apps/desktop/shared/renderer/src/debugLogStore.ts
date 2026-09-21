@@ -2,7 +2,7 @@ import type {
   StructuredActivityEvent,
   StructuredConversationEvent,
 } from "@shared/structuredConversation";
-import type { DiagnosticDomain, DiagnosticEvent, DiagnosticEventInput, DiagnosticStackFrame, DiagnosticStatus } from "@shared/diagnostics";
+import type { DiagnosticDomain, DiagnosticEvent, DiagnosticEventInput, DiagnosticLevel, DiagnosticStackFrame, DiagnosticStatus } from "@shared/diagnostics";
 import type { DesktopRuntimeLogEvent } from "@shared/desktopApi";
 import { sanitizeSensitiveValue } from "../../api/sensitiveData";
 
@@ -90,9 +90,9 @@ export function appendRendererStage(
     operation: `renderer.${stage}`,
     kind: level === "error" ? "error" : "log",
     status: level === "error" ? "failed" : "completed",
-    level,
+    level: level as DiagnosticLevel,
     message,
-    attributes: details,
+    attributes: details as Record<string, string | number | boolean | null>,
   });
 }
 

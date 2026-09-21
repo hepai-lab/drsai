@@ -113,7 +113,7 @@ export function AgentSquareView({
     setRefreshing(true);
     setError(null);
     try {
-      applyCatalogSnapshot(await loadAgentCatalogSnapshot({ refresh: forceRefresh }));
+      applyCatalogSnapshot(await loadAgentCatalogSnapshot({ refresh: forceRefresh, force: forceRefresh }));
     } catch (agentError) {
       setError(userFacingFailureMessage(agentError, language, "connection"));
     } finally {
@@ -984,12 +984,12 @@ function getPlatformStatusMessage(status: PlatformAgentStatus, zh: boolean): str
 }
 
 async function loadAgentCatalogSnapshot(
-  options: { refresh?: boolean; preferCache?: boolean },
+  options: { refresh?: boolean; preferCache?: boolean; force?: boolean },
 ): Promise<DesktopAgentCatalogSnapshot> {
   const bridge = window.openDrSai as
     | {
-        getAgentCatalogSnapshot?: (options?: { refresh?: boolean; preferCache?: boolean }) => Promise<DesktopAgentCatalogSnapshot>;
-        listAgents?: (options?: { refresh?: boolean; preferCache?: boolean }) => Promise<DesktopAgent[]>;
+        getAgentCatalogSnapshot?: (options?: { refresh?: boolean; preferCache?: boolean; force?: boolean }) => Promise<DesktopAgentCatalogSnapshot>;
+        listAgents?: (options?: { refresh?: boolean; preferCache?: boolean; force?: boolean }) => Promise<DesktopAgent[]>;
       }
     | undefined;
   if (typeof bridge?.getAgentCatalogSnapshot === "function") {

@@ -33,6 +33,12 @@ import {
 import { listRecordedAgentRunEvents, recordAgentRunEvent } from "./agentRunJournal";
 import { BoundedEventDispatcher } from "./boundedEventDispatcher";
 import { BackpressureController } from "./backpressureController";
+import {
+  isRendererIpcTargetGone,
+  resumeRendererIpc,
+  suspendRendererIpc,
+  trySendToRenderer,
+} from "./rendererIpcTarget";
 import { cancelChatTurn, startChat } from "./chat";
 import { createOaepAgentRunBridge } from "./oaepAgentRunBridge";
 
@@ -95,13 +101,10 @@ function getAgentEventDispatcher(webContents: WebContents): BoundedEventDispatch
   const dispatcher = new BoundedEventDispatcher<AgentRunEvent>({
     capacity: 256,
     deliver: (event) => {
-      // Do not swallow renderer/frame disposal errors here. A WebContents can
-      // remain alive while its current render frame is being replaced; in that
-      // state isDestroyed() is false but send() throws. Let flush() observe the
-      // exception and close this dispatcher, otherwise every later event keeps
-      // hitting the disposed frame and Electron logs the same error forever.
-      if (!webContents.isDestroyed()) {
-        webContents.send("desktop:agent-run-event", event);
+      // Never call send() on a disposed frame — Electron often logs
+      // "Render frame was disposed" without throwing while WebContents lives.
+      if (!trySendToRenderer(webContents, "desktop:agent-run-event", event)) {
+        throw new Error("Render frame was disposed");
       }
     },
     merge: (previous, next) => previous.requestId === next.requestId && previous.type === "chunk" && next.type === "chunk"
@@ -109,7 +112,7 @@ function getAgentEventDispatcher(webContents: WebContents): BoundedEventDispatch
       ? { ...next, content: `${previous.content ?? ""}${next.content ?? ""}` }
       : null,
     schedule: controller.createAdaptiveScheduler(),
-    shouldClose: () => webContents.isDestroyed(),
+    shouldClose: () => isRendererIpcTargetGone(webContents),
   });
   agentEventDispatchers.set(webContents, dispatcher);
   return dispatcher;
@@ -137,6 +140,7 @@ export function hasActiveAgentRuns(): boolean {
  * releaseAgentQuarantine() when the new frame is ready (did-finish-load).
  */
 export function quarantineAgentDispatcher(webContents: WebContents): void {
+  suspendRendererIpc(webContents);
   agentQuarantinedWebContents.add(webContents);
   disposeAgentEventDispatcher(webContents);
 }
@@ -148,6 +152,7 @@ export function quarantineAgentDispatcher(webContents: WebContents): void {
 export function releaseAgentQuarantine(webContents: WebContents): void {
   agentQuarantinedWebContents.delete(webContents);
   agentEventDispatchers.delete(webContents);
+  resumeRendererIpc(webContents);
 }
 
 /**
@@ -899,7 +904,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function emit(webContents: WebContents, event: AgentRunEvent): void {
   recordAgentRunEvent(event);
   const currentTarget = activeRuns.get(event.requestId)?.webContents ?? webContents;
-  if (!currentTarget.isDestroyed()) getAgentEventDispatcher(currentTarget).enqueue(event);
+  if (!isRendererIpcTargetGone(currentTarget)) getAgentEventDispatcher(currentTarget).enqueue(event);
   const request = activeRuns.get(event.requestId)?.request;
   if (!request) return;
   for (const listener of lifecycleListeners) {

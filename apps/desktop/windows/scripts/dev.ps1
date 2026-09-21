@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet("Development", "Production")]
     [string]$LaunchMode = "Development",
     [string]$DrsaiHome,
@@ -21,7 +21,7 @@ $LaunchModeName = $LaunchMode.ToLowerInvariant()
 # Default desktop entry is workbench → desktop_gateway on 28643.
 # V2 surface: Electron owns desktop_gateway directly, no legacy gateway on 28642.
 if ($GatewayPort -eq 0) {
-    $GatewayPort = 28643
+    $GatewayPort = 28644
 }
 $StartupStopwatch = [Diagnostics.Stopwatch]::StartNew()
 $env:OPENDRSAI_DEV_START_EPOCH_MS = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds().ToString()
@@ -673,15 +673,21 @@ $env:OPENDRSAI_DESKTOP_DEV = if ($IsProductionLaunch) { "0" } else { "1" }
 $env:OPENDRSAI_ACTIVE_PLATFORM = if ($IsProductionLaunch) { "production" } else { "development" }
 $env:OPENDRSAI_OIDC_ONLY = "1"
 $env:VITE_OPENDRSAI_OIDC_ONLY = "1"
-$PlatformPortalUrl = if ($IsProductionLaunch) { "https://ai.ihep.ac.cn" } else { "https://ai-dev.ihep.ac.cn" }
-# WebUI test (drsaiv2) and production both use HepAI production base_url for
-# get_ddf_agents (aiapi). Desktop mirrors that for Agent Square in both launch
-# modes. Portal/OIDC stay on the launch-mode portal (ai-dev for Development).
-$PlatformApiBaseUrl = "https://aiapi.ihep.ac.cn/apiv2"
-$env:OPENDRSAI_PLATFORM_BASE_URL = $PlatformPortalUrl
-$env:OPENDRSAI_PLATFORM_API_BASE_URL = $PlatformApiBaseUrl
+# All platform/DDF/model endpoints derive from PLATFORM_BASE_URL + /apiv2.
+# Development: DDF catalog is on aiapi.ihep.ac.cn (different host from ai-dev).
+# MODEL_BASE_URL is explicitly set in dev to prevent DDF_API_BASE_URL from
+# overriding the model endpoint (dev OIDC tokens can't be verified by aiapi).
+if ($IsProductionLaunch) {
+    $env:OPENDRSAI_PLATFORM_BASE_URL = "https://ddf.ihep.ac.cn"
+    $env:OPENDRSAI_OIDC_ISSUER = "https://ai.ihep.ac.cn/api"
+} else {
+    $env:OPENDRSAI_PLATFORM_BASE_URL = "https://ai-dev.ihep.ac.cn"
+    $env:OPENDRSAI_DDF_API_BASE_URL = "https://aiapi.ihep.ac.cn/apiv2"
+    $env:OPENDRSAI_MODEL_BASE_URL = "https://ai-dev.ihep.ac.cn/apiv2/v1"
+    $env:OPENDRSAI_OIDC_ISSUER = "https://ai-dev.ihep.ac.cn/api"
+}
 # Skills Square APIs are on WebUI hosts (not HepAI portal used for OIDC):
-# test → drsaiv2 ; production → opendrsai.
+# test -> drsaiv2 ; production -> opendrsai.
 $env:OPENDRSAI_SKILLS_API_BASE_URL = if ($env:OPENDRSAI_SKILLS_API_BASE_URL) {
     $env:OPENDRSAI_SKILLS_API_BASE_URL
 } elseif ($IsProductionLaunch) {
@@ -689,15 +695,6 @@ $env:OPENDRSAI_SKILLS_API_BASE_URL = if ($env:OPENDRSAI_SKILLS_API_BASE_URL) {
 } else {
     "https://drsaiv2.ihep.ac.cn"
 }
-# OPENDRSAI_MODEL_BASE_URL must NOT override to the production aiapi server.
-# The OIDC token is issued by $PlatformPortalUrl/api (e.g. ai-dev.ihep.ac.cn).
-# Sending a dev OIDC token to the production aiapi.ihep.ac.cn server causes
-# 401 "OIDC signing keys are unavailable" because the production server
-# cannot fetch JWKS from the dev OIDC issuer. Instead, let
-# resolve_hepai_model_base_url() in platform_upstream.py resolve the correct
-# model base URL based on the OIDC issuer (DEVELOPMENT_OIDC_ISSUER → ai-dev).
-$env:OPENDRSAI_DDF_API_BASE_URL = $PlatformApiBaseUrl
-$env:OPENDRSAI_OIDC_ISSUER = "$PlatformPortalUrl/api"
 $BuiltInSkillsDir = Join-Path $RepoRoot "skills\skills"
 if (-not (Test-Path -LiteralPath $BuiltInSkillsDir -PathType Container)) {
     throw "Cannot find the built-in Skills directory: $BuiltInSkillsDir"
@@ -781,7 +778,7 @@ Write-Host "  DrSai home:  $DrsaiHome" -ForegroundColor Green
 Write-Host "  User data:   $ElectronUserData" -ForegroundColor Green
 Write-Host "  Gateway:     http://127.0.0.1:$GatewayPort" -ForegroundColor Green
 Write-Host "  DRSAI_HOME:  $DrsaiHome" -ForegroundColor Green
-Write-Host "  Platform:    $(if ($IsProductionLaunch) { 'WebUI prod portal + HepAI aiapi (DDF)' } else { 'WebUI test: ai-dev OIDC + HepAI aiapi (DDF)' })" -ForegroundColor Green
+Write-Host "  Platform:    $(if ($IsProductionLaunch) { 'DDF prod: ddf.ihep.ac.cn (unified)' } else { 'Dev: ai-dev OIDC + aiapi DDF catalog' })" -ForegroundColor Green
 Write-Host "  Skills API:  $($env:OPENDRSAI_SKILLS_API_BASE_URL)" -ForegroundColor Green
 Write-Host "  Skills:      $BuiltInSkillsDir" -ForegroundColor Green
 Write-Host "  Pip index:   $($env:PIP_INDEX_URL)" -ForegroundColor Green
@@ -913,6 +910,10 @@ try {
     $env:OPENDRSAI_RUNTIME_ROOT = $InstallDir
     $env:OPENDRSAI_ELECTRON_USER_DATA = $ElectronUserData
     $env:OPENDRSAI_GATEWAY_STARTUP = if ($GatewayEnabled) { "eager" } else { "on-demand" }
+    # Mark the Electron process so it never adopts a packaged/legacy Gateway
+    # left behind on the development port. The source Desktop Runtime must be
+    # the only owner during `npm run dev`.
+    $env:OPENDRSAI_DESKTOP_DEV = "1"
     # Source Runtime ownership is session-scoped: workbench Electron owns
     # desktop_gateway on 28643. Legacy hot-load is refused above.
     $env:OPENDRSAI_RUNTIME_PERSIST = "0"
@@ -926,7 +927,7 @@ try {
         $env:OPENDRSAI_ENABLE_DUPLEX_VOICE = "1"
     }
     # Never leave legacy "already managed" flags set: workbench would otherwise
-    # stand down for a 28642 process that does not speak desktop-v2.
+    # stand down for a legacy gateway process that does not speak desktop-v2.
     Remove-Item Env:DRSAI_GATEWAY_DEV_MANAGED -ErrorAction SilentlyContinue
     Remove-Item Env:DRSAI_GATEWAY_HOT_RELOAD -ErrorAction SilentlyContinue
     Remove-Item Env:OPENDRSAI_WORKBENCH_EXTERNAL_RUNTIME -ErrorAction SilentlyContinue

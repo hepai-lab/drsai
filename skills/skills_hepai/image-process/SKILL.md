@@ -1,9 +1,21 @@
 ---
 name: image-process
-description: 需要进行画图、图像生成和图像编辑时，请使用此技能。
+description: 仅在没有 Host 工具 image_generation / image_edit 时，才用本技能做画图、图像生成或图像编辑。OpenDrSai Desktop 已注入上述 Host 工具时，禁止加载本技能，必须直接调用 image_generation 或 image_edit。
 ---
 
-使用 `scripts/image_generation_openai.py` 进行图像生成。
+# 重要（Desktop / 已注入 Host 工具时）
+
+若当前工具列表中已有 `image_generation` 或 `image_edit`：
+
+1. **不要**加载本技能  
+2. **不要**运行下面的 Python 脚本或自写 HTTP 调用  
+3. **直接**调用 Host 工具 `image_generation` / `image_edit`（模型与凭证由 Host / Agent 设置处理）
+
+只有在确认工具列表中**没有**这两个 Host 工具时，才使用下文脚本路径。
+
+---
+
+使用 `scripts/image_generation_openai.py` 进行图像生成（仅无 Host 工具时）。
 
 ## 快速使用示例
 
@@ -23,7 +35,7 @@ python scripts/list_models.py
 
 ## 主要支持的图像生成模型
 
-### 🎨 OpenAI 系列
+### OpenAI 系列
 - `openai/gpt-image-1` - 基础图像生成模型
 - `openai/gpt-image-1-mini` - 轻量版本
 - `openai/gpt-image-1.5` - 增强版本
@@ -31,14 +43,14 @@ python scripts/list_models.py
 - `openai/chatgpt-image-latest` - 最新ChatGPT图像
 - `openai/dall-e-3` - DALL-E 3
 
-### 🌐 字节跳动豆包系列
+### 字节跳动豆包系列
 - `bytedance/doubao-seedream-5-0-260128` - 豆包5.0图像生成
 - `bytedance/doubao-seedream-4-5-251128` - 豆包4.5图像生成
 - `bytedance/doubao-seedream-3-0-t2i-250415` - 豆包3.0图像生成
 - `bytedance/doubao-seedream-5-0-lite-260128` - 豆包5.0轻量版
 - `bytedance/doubao-seedance-2-0-260128` - 豆包视频生成2.0
 
-### 🏢 阿里云通义系列
+### 阿里云通义系列
 - `aliyun/qwen-image-2.0` - 通义2.0图像生成
 - `aliyun/qwen-image-2.0-pro` - 通义专业版
 - `aliyun/qwen-image-2.0-max` - 通义最大值
@@ -46,11 +58,11 @@ python scripts/list_models.py
 - `aliyun/qwen-image-edit` - 通义图像编辑
 - `aliyun/qwen-image-edit-plus` - 通义图像编辑增强版
 
-### 🔵 Google Gemini 系列
+### Google Gemini 系列
 - `google/gemini-2.5-flash-image` - Gemini 2.5 图像生成
 - `google/gemini-3-pro-image-preview` - Gemini 3 图像预览
 
-### 🤖 xAI Grok 系列
+### xAI Grok 系列
 - `xAI/grok-2-image` - Grok 2 图像生成
 - `xAI/grok-imagine-image` - Grok 图像想象
 

@@ -38,9 +38,28 @@ api = APIRouter(tags=["sessions"])
 @api.post("/v1/sessions", status_code=201, operation_id="createSession")
 async def session_create(request: SessionCreateRequest):
     """Start a new conversation in a Workspace (feature 2.1)."""
-    with _errors.http_errors(not_found="Unknown or closed Workspace"):
+    with _errors.http_errors(not_found="Unknown or closed Workspace", invalid=422):
+        if request.remote_worker_id:
+            worker_id = request.remote_worker_id.strip()
+            definition = _state.write_remote_worker_definition({
+                "backend": "remote-worker",
+                "instructions": "Proxy a remote HepAI/DDF worker agent through this Runtime.",
+                "permissions": [],
+                "remote_worker": {"name": worker_id},
+            })
+            return _state.runtime_engine().create_session(
+                _state.ensure_remote_agents_workspace(),
+                request.title,
+                agent_definition=definition,
+                backend_id="remote-worker",
+                model=request.model,
+                reasoning_effort=request.reasoning_effort,
+                plan_mode=request.plan_mode,
+                remote_worker_id=worker_id,
+                remote_worker_name=(request.remote_worker_name or worker_id).strip(),
+            )
         return _state.runtime_engine().create_session(
-            request.workspace_id,
+            request.workspace_id or "",
             request.title,
             agent_definition=_state.DEFAULT_AGENT_DEFINITION,
             backend_id="opendrsai",
@@ -52,7 +71,8 @@ async def session_create(request: SessionCreateRequest):
 
 @api.get("/v1/sessions", operation_id="listSessions")
 async def session_list(
-    workspace_id: str,
+    workspace_id: str | None = None,
+    remote_worker_id: str | None = None,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
     archived: bool | None = False,
@@ -60,7 +80,8 @@ async def session_list(
     """History list for one Workspace (features 2.2 and 2.5)."""
     with _errors.http_errors(not_found="Unknown Workspace"):
         return _state.runtime_engine().list_sessions(
-            workspace_id, offset=offset, limit=limit, archived=archived,
+            workspace_id, remote_worker_id=remote_worker_id,
+            offset=offset, limit=limit, archived=archived,
         )
 
 

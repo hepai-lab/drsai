@@ -7,6 +7,7 @@ import { dirname, join } from "path";
 import type { GatewayEndpointStatus, GatewayLiveness, GatewayStartState, GatewayStatus } from "../api/desktopApi";
 import type { DesktopProcessService } from "../api";
 import { DRSAI_HOME, DRSAI_PYTHON, DRSAI_REPO, getEnhancedPath } from "./paths";
+import { BUNDLED_SKILLS_ENV_VAR, RIPGREP_ENV_VAR, resolveBundledRipgrep, resolveBundledSkillsDir } from "./bundledTools";
 import { collectMigrationAliases, getCliConfigUserId, rememberUserIdAlias, setCliConfigUserId } from "./userIdentity";
 import { managedProcessRegistry, type ManagedProcessRegistration } from "./managedProcessRegistry";
 import { redactDesktopSecrets } from "./secretRedaction";
@@ -490,9 +491,25 @@ async function startGatewayOnce(): Promise<boolean> {
     return preflight.ready;
   }
   if (preflight.ready) {
-    adoptedPersistentRuntime = true;
-    if (desktopUserId) await syncAuthIdentityToGateway(desktopUserId);
-    return true;
+    // A development Electron launch must not silently adopt a packaged Gateway
+    // left on the same port. That process commonly has a different
+    // DRSAI_HOME/token and every subsequent request then fails with the opaque
+    // `Gateway caller is not authorized` 401. Only adopt a dev-managed source
+    // Gateway; otherwise clear the foreign occupant and spawn our own child.
+    if (process.env.OPENDRSAI_DESKTOP_DEV === "1" && !preflight.models.body?.dev_managed) {
+      const killed = await killPortOccupant(GATEWAY_PORT);
+      if (!killed) {
+        appendGatewayLog(Buffer.from(
+          `\nDevelopment launch found a non-dev Gateway on port ${GATEWAY_PORT} and could not replace it.`,
+        ));
+        return false;
+      }
+      invalidateGatewayObservation(true);
+    } else {
+      adoptedPersistentRuntime = true;
+      if (desktopUserId) await syncAuthIdentityToGateway(desktopUserId);
+      return true;
+    }
   }
   if (preflight.portOpen && !isManagedGatewayRunning()) {
     const message = isGatewayOwnershipKnown() && preflight.diagnosticCode === "gateway_probe_timeout"
@@ -564,6 +581,36 @@ async function startGatewayOnce(): Promise<boolean> {
     ? { DRSAI_DESKTOP_USER: desktopUserId, DRSAI_USER_ID: desktopUserId }
     : {};
 
+  // The gateway's remote-worker catalog and remote-run backend need the
+  // HepAI/DDF credential in their process env. Inherit the Desktop session
+  // value, and fall back to the saved key so a freshly spawned gateway works
+  // even when the Electron process itself was started without it. (Lazy
+  // require: settings.ts imports this module.)
+  const savedApiKeyEnv = process.env.HEPAI_API_KEY?.trim()
+    ? {}
+    : (() => {
+      try {
+        const saved = require("./settings").readSavedApiKey() as string;
+        return saved ? { HEPAI_API_KEY: saved } : {};
+      } catch {
+        return {};
+      }
+    })();
+
+  // Windows has no usable system ripgrep, so the Agent grep tool depends on
+  // the copy vendored with the Desktop payload. Publish it through the child
+  // environment (null when absent, or when the operator already set an
+  // explicit override that must be inherited unchanged).
+  const bundledRipgrep = resolveBundledRipgrep();
+
+  // The built-in Skill catalogue ships inside the managed Runtime
+  // (`<drsai-agent>/skills/skills`), which sits outside `site-packages`, so the
+  // Python auto-discovery cannot reach it. Publish it as a **seed source** for
+  // the gateway's one-time first-run seeding. This is intentionally NOT
+  // `SYSTEM_SKILLS_DIR`: that name would make the Agent re-sync the shipped
+  // Skills over the user's directory on every cold start.
+  const bundledSkills = resolveBundledSkillsDir(DRSAI_REPO);
+
   gatewaySpawnError = null;
   prepareGatewayLog();
   gatewayProcess = spawn(GATEWAY_PYTHON, args, {
@@ -580,6 +627,9 @@ async function startGatewayOnce(): Promise<boolean> {
       ...(NODE_PTY_MODULE ? { OPENDRSAI_NODE_PTY_MODULE: NODE_PTY_MODULE } : {}),
       ...localCodexEnv,
       ...identityEnv,
+      ...savedApiKeyEnv,
+      ...(bundledRipgrep ? { [RIPGREP_ENV_VAR]: bundledRipgrep } : {}),
+      ...(bundledSkills ? { [BUNDLED_SKILLS_ENV_VAR]: bundledSkills } : {}),
       PATH: getEnhancedPath(),
     },
     windowsHide: true,

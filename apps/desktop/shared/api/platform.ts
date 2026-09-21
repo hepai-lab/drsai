@@ -32,11 +32,16 @@ export interface DesktopFeatureCapabilities {
   serialVoice: boolean;
   streamingVoice: boolean;
   duplexVoice: boolean;
+  remoteSpeechSynthesis: boolean;
   approvals: boolean;
   browser: boolean;
   debugger: boolean;
   mcp: boolean;
   remoteWorkspace: boolean;
+  /** Android / mobile device pairing and remote-access management. Needs the
+   * Runtime's ``/v1/mobile-pairing`` management routes, which the V2
+   * desktop_gateway does not register yet. */
+  mobilePairing: boolean;
   portForwarding: boolean;
   checkpoints: boolean;
   worktrees: boolean;
@@ -49,8 +54,9 @@ export interface DesktopFeatureCapabilities {
 
 export const DESKTOP_FEATURE_CAPABILITY_KEYS = [
   "auth", "runtime", "chat", "agents", "threads", "workspaceFiles", "git", "terminal",
-  "serialVoice", "streamingVoice", "duplexVoice", "approvals", "browser", "debugger", "mcp",
-  "remoteWorkspace", "portForwarding", "checkpoints", "worktrees", "automation",
+  "serialVoice", "streamingVoice", "duplexVoice", "remoteSpeechSynthesis",
+  "approvals", "browser", "debugger", "mcp",
+  "remoteWorkspace", "mobilePairing", "portForwarding", "checkpoints", "worktrees", "automation",
   "collaboration", "channels", "diagnostics", "codexBackend",
 ] as const satisfies readonly (keyof DesktopFeatureCapabilities)[];
 

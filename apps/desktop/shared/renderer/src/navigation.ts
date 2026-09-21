@@ -21,7 +21,7 @@ export const MENU_IDS = {
 
 export type NavId = (typeof MENU_IDS)[keyof typeof MENU_IDS];
 
-export type RightTab = "files";
+export type RightTab = "files" | "diagnostics";
 export type AppLanguage = "en" | "zh";
 
 export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
@@ -153,16 +153,21 @@ export function getNavItems(language: AppLanguage): NavItem[] {
 const rightTabLabels: Record<AppLanguage, Record<RightTab, string>> = {
   zh: {
     files: "文件",
+    diagnostics: "诊断",
   },
   en: {
     files: "Files",
+    diagnostics: "Diagnostics",
   },
 };
 
 export function getRightTabs(
-  _language: AppLanguage,
+  language: AppLanguage,
 ): Array<{ id: RightTab; label: string }> {
-  return [{ id: "files", label: rightTabLabels[_language ?? "en"].files }];
+  return (["files", "diagnostics"] as RightTab[]).map((id) => ({
+    id,
+    label: rightTabLabels[language ?? "en"][id],
+  }));
 }
 
 export const navSections: NavSection[] = getNavSections("zh");

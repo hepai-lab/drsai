@@ -208,7 +208,6 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
         vision=False,           # DeepSeek V4 text models do not support image input
     ),
-    
     "hepai/deepseek-v4-flash": ModelEntry(
         model="hepai/deepseek-v4-flash",
         token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
@@ -217,6 +216,22 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
         vision=False,           # DeepSeek V4 text models do not support image input
     ),
+    "hepai/deepseek-flash": ModelEntry(
+            model="hepai/deepseek-flash",
+            token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
+            max_tokens=64000,       # max output per request
+            client_type="openai",
+            reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
+            vision=True,           # DeepSeek V4 text models do not support image input
+    ),
+    "deepseek-v4.1-flash": ModelEntry(
+            model="deepseek-ai/deepseek-v4.1-flash",
+            token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
+            max_tokens=64000,       # max output per request
+            client_type="openai",
+            reasoning=ReasoningConfig(supported=True, effort_levels=["none", "high", "max"], param_type="deepseek_reasoning_effort"),
+            vision=True,           # DeepSeek V4 text models do not support image input
+        ),
     "deepseek-v4-pro": ModelEntry(
         model="deepseek-ai/deepseek-v4-pro",
         token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
@@ -234,127 +249,203 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         vision=False,
     ),
     # ── OpenAI GPT ───────────────────────────────────────────────────
-    "gpt-5.5": ModelEntry(
-        model="openai/gpt-5.5",
+    "gpt-5.6-luna": ModelEntry(
+        model="openai/gpt-5.6-luna",
+        token_limit=1050000,     # max input tokens (output comes from this pool)
+        max_tokens=64000,      # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+        vision=True,            # GPT-5.x supports image input
+        ),
+    "gpt-5.6-terra": ModelEntry(
+        model="openai/gpt-5.6-terra",
+        token_limit=1050000,     # max input tokens (output comes from this pool)
+        max_tokens=64000,      # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+        vision=True,            # GPT-5.x supports image input
+            ),
+    "gpt-5.6-sol": ModelEntry(
+        model="openai/gpt-5.6-sol",
         token_limit=1050000,     # max input tokens (output comes from this pool)
         max_tokens=64000,      # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
         vision=True,            # GPT-5.x supports image input
     ),
-    "gpt-5.6-luna": ModelEntry(
-            model="openai/gpt-5.6-luna",
-            token_limit=1050000,     # max input tokens (output comes from this pool)
-            max_tokens=64000,      # max output per request
-            client_type="openai",
-            reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
-            vision=True,            # GPT-5.x supports image input
-        ),
-    "gpt-5.6-terra": ModelEntry(
-                model="openai/gpt-5.6-terra",
-                token_limit=1050000,     # max input tokens (output comes from this pool)
-                max_tokens=64000,      # max output per request
-                client_type="openai",
-                reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
-                vision=True,            # GPT-5.x supports image input
-            ),
-    # ── GIMINI ────────────────────────────────────────────────────────────
-    "gemini-3.1-pro-preview": ModelEntry(
-        model="google/gemini-3.1-pro-preview",
-        token_limit=1000000,     # context window: 1M (input+output shared)
-        max_tokens=64000,       # max output per request
+    "gpt-6-astra": ModelEntry(
+        model="openai/gpt-6-astra",
+        token_limit=1050000,     # max input tokens (output comes from this pool)
+        max_tokens=64000,      # max output per request
         client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
-        vision=True,            # Gemini supports image input
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+        vision=True,            # GPT-5.x supports image input
     ),
-    "gemini-3-flash-preview": ModelEntry(
-        model="google/gemini-3-flash-preview",
+    # ── GIMINI ────────────────────────────────────────────────────────────
+    "kimi-k3": ModelEntry(
+        model="moonshot/kimi-k3",
         token_limit=1000000,     # context window: 1M (input+output shared)
         max_tokens=64000,       # max output per request
         client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
+        reasoning=ReasoningConfig(supported=True, effort_levels=["max", "low", "high"], param_type="reasoning_effort"),
         vision=True,            # Gemini supports image input
     ),
     # ── Zhipu GLM ────────────────────────────────────────────────────
     # Sources: litellm (zai/glm-5), OpenRouter
-    "glm-5.1": ModelEntry(
-        model="zhipu/glm-5.1",
-        token_limit=200000,      # context window: 200K
+    "glm-5.3-flash": ModelEntry(
+        model="zhipu/glm-5.3-flash",
+        token_limit=1000000,      # context window: 200K
         max_tokens=64000,      # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
         vision=True,            # GLM-5.1 supports image input
     ),
-    "glm-5.2": ModelEntry(
-        model="zhipu/glm-5.2",
-        token_limit=200000,
+    "glm-5.3": ModelEntry(
+        model="zhipu/glm-5.3",
+        token_limit=1000000,
         max_tokens=64000,
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
         vision=True,
     ),
-    # ── MiniMax ──────────────────────────────────────────────────────
-    "minimax-m2.7-highspeed": ModelEntry(
-        model="minimax/minimax-m2.7-highspeed",
-        token_limit=196608,
-        max_tokens=64000,
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
-        vision=False,           # MiniMax M2.7 does not support image input
-        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
-    ),
     # ── Anthropic Claude ──────────────────────────────────────────────
     # token_limit = total context window (input + output share the same window)
     # max_tokens  = maximum output tokens per request (Anthropic API requires this)
     # Sources: litellm model_prices_and_context_window.json, Anthropic docs
-    "claude-sonnet-4-6": ModelEntry(
-        model="anthropic/claude-sonnet-4-6",
-        token_limit=200000,      # context window: 200K (input+output shared)
-        max_tokens=64000,       # max output per request
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
-        vision=True,            # Claude Sonnet 4.6 supports image input
-        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
-    ),
-    "claude-sonnet-5": ModelEntry(
-        model="anthropic/claude-sonnet-5",
-        token_limit=1000000,     # context window: 1M (input+output shared)
-        max_tokens=64000,       # max output per request
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
-        vision=True,            # Claude Sonnet 5 supports image input
-        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
-    ),
-    "claude-opus-4-7": ModelEntry(
-        model="anthropic/claude-opus-4-7",
-        token_limit=1000000,     # context window: 1M (input+output shared)
-        max_tokens=64000,      # max output per request
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
-        vision=True,            # Claude Opus 4.7 supports image input
-        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
-    ),
-    "claude-opus-4-8": ModelEntry(
-        model="anthropic/claude-opus-4-8",
-        token_limit=1000000,     # context window: 1M (input+output shared)
-        max_tokens=64000,      # max output per request
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
-        vision=True,            # Claude Opus 4.8 supports image input
-        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
-    ),
-    "claude-haiku-4-5": ModelEntry(
-        model="anthropic/claude-haiku-4-5",
-        token_limit=200000,      # context window: 200K (input+output shared)
-        max_tokens=64000,       # max output per request
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
-        vision=True,            # Claude Haiku 4.5 supports image input
-        base_url=_DEFAULT_ANTHROPIC_BASE_URL,
-    ),
+    # "claude-sonnet-5": ModelEntry(
+    #     model="anthropic/claude-sonnet-5",
+    #     token_limit=1000000,     # context window: 1M (input+output shared)
+    #     max_tokens=64000,       # max output per request
+    #     client_type="anthropic",
+    #     reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
+    #     vision=True,            # Claude Sonnet 5 supports image input
+    #     base_url=_DEFAULT_ANTHROPIC_BASE_URL,
+    # ),
+    # "claude-opus-5": ModelEntry(
+    #         model="anthropic/claude-opus-5",
+    #         token_limit=1000000,     # context window: 1M (input+output shared)
+    #         max_tokens=64000,      # max output per request
+    #         client_type="anthropic",
+    #         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
+    #         vision=True,            # Claude Opus 4.8 supports image input
+    #         base_url=_DEFAULT_ANTHROPIC_BASE_URL,
+    # ),
+    # "claude-fable-5-1": ModelEntry(
+    #             model="anthropic/claude-fable-5-1",
+    #             token_limit=1000000,     # context window: 1M (input+output shared)
+    #             max_tokens=64000,      # max output per request
+    #             client_type="anthropic",
+    #             reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="adaptive"),
+    #             vision=True,            # Claude Opus 4.8 supports image input
+    #             base_url=_DEFAULT_ANTHROPIC_BASE_URL,
+    # ),
 }
 
 DEFAULT_CONFIG_NAME = "hepai/deepseek-v4-flash"
+PRIVATE_MODEL_NAME = "hepai/deepseek-flash"
+
+# Optional product default for Agent ``image_generation_model``.
+# ``None`` = do not auto-bind; user must pick from IMAGE_GENERATION_MODEL_ALIASES.
+DEFAULT_IMAGE_GENERATION_MODEL: str | None = "gpt-image-2.5-sunburst"
+
+# Catalog aliases the Desktop image-generation picker and Agent policy may bind.
+# Keep in sync with DEFAULT_SPECIALIZED_PRODUCT_MODELS entries that declare
+# ``image_generation`` capability. First entry is the product primary/default.
+IMAGE_GENERATION_MODEL_ALIASES: tuple[str, ...] = (
+    "gpt-image-2.5-sunburst",
+    "gpt-image-2",
+    "gpt-image-2.5-flare",
+    "gemini-3.1-flash-image-preview",
+    "gemini-3-pro-image-preview",
+)
+
+
+# ── Specialised product models (non-chat / role-bound) ───────────────────────
+# Single source of truth for Desktop Provider catalog extras that are not
+# ordinary chat entries in DEFAULT_LLM_MODE_CONFIG (or that override a chat
+# entry with role-specific modalities/capabilities).
+#
+# Shape matches desktop_bootstrap / Provider ``models`` entries:
+# alias?, input_modalities, output_modalities, api_protocol, enabled,
+# capabilities, upstream_id?
+DEFAULT_SPECIALIZED_PRODUCT_MODELS: dict[str, dict[str, object]] = {
+    # Image understanding override for the chat alias already in DEFAULT_LLM_MODE_CONFIG.
+    "gpt-5.6-luna": {
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["chat", "tool_calling"],
+        "upstream_id": "openai/gpt-5.6-luna",
+    },
+    # ── Image generation candidates (AIAPI / HepAI model square) ──
+    # Access notes (RuntimeImageOperationAdapter):
+    # - Product HepAI Provider keeps api_protocol=openai → POST /v1/images/*
+    #   with ``upstream_id`` as the square model id. Request body/size rules
+    #   still differ by family (gpt-image-* vs gemini-*).
+    # - Native Gemini Providers (wire_api=gemini) use generateContent instead.
+    # - Product default / primary: gpt-image-2.5-sunburst.
+    "gpt-image-2.5-sunburst": {
+        "alias": "GPT Image 2.5 Sunburst",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text", "image"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["image_generation", "image_edit"],
+        "upstream_id": "openai/gpt-image-2.5-sunburst",
+    },
+    "gpt-image-2": {
+        "alias": "GPT Image 2",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text", "image"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["image_generation", "image_edit"],
+        "upstream_id": "openai/gpt-image-2",
+    },
+    "gpt-image-2.5-flare": {
+        "alias": "GPT Image 2.5 Flare",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text", "image"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["image_generation", "image_edit"],
+        "upstream_id": "openai/gpt-image-2.5-flare",
+    },
+    "gemini-3.1-flash-image-preview": {
+        "alias": "Gemini 3.1 Flash Image Preview",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text", "image"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["image_generation", "image_edit"],
+        "upstream_id": "google/gemini-3.1-flash-image-preview",
+    },
+    "gemini-3-pro-image-preview": {
+        "alias": "Gemini 3 Pro Image Preview",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text", "image"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["image_generation", "image_edit"],
+        "upstream_id": "google/gemini-3-pro-image-preview",
+    },
+    # ── Audio ──
+    "tts-1": {
+        "input_modalities": ["text"],
+        "output_modalities": ["audio"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["text_to_speech"],
+    },
+    "whisper-1": {
+        "input_modalities": ["audio"],
+        "output_modalities": ["text"],
+        "api_protocol": "openai",
+        "enabled": True,
+        "capabilities": ["speech_to_text"],
+    },
+}
 
 
 DISPLAY_NAME_OVERRIDES: dict[str, str] = {
@@ -372,6 +463,11 @@ DISPLAY_NAME_OVERRIDES: dict[str, str] = {
     "claude-opus-4-7": "Claude Opus 4.7",
     "claude-opus-4-8": "Claude Opus 4.8",
     "claude-haiku-4-5": "Claude Haiku 4.5",
+    "gpt-image-2": "GPT Image 2",
+    "gpt-image-2.5-flare": "GPT Image 2.5 Flare",
+    "gpt-image-2.5-sunburst": "GPT Image 2.5 Sunburst",
+    "gemini-3.1-flash-image-preview": "Gemini 3.1 Flash Image Preview",
+    "gemini-3-pro-image-preview": "Gemini 3 Pro Image Preview",
 }
 
 
@@ -389,3 +485,43 @@ def _display_name_from_alias(alias: str) -> str:
         else:
             words.append(word.capitalize())
     return " ".join(words)
+
+
+# ── Product-owned model ownership ─────────────────────────────────────────
+#
+# Ownership is decided by *which file* a catalog entry was read from
+# (``configs/models/provider_<id>.toml`` = product, ``.local.toml`` = user),
+# never by guessing from the model id.  See
+# ``artifacts/DEFAULT_LLM_MODE_CONFIG-前端同步方案.md`` §8.3 candidate 2.
+#
+# Because bootstrap now regenerates the product file *as a whole* instead of
+# merging, a model deleted from the dicts above disappears from every install
+# on the next start — delete propagation needs no name list at all.
+
+
+def product_model_ids() -> frozenset[str]:
+    """Every model id the product catalog owns, derived from one source of truth."""
+
+    return frozenset(DEFAULT_LLM_MODE_CONFIG) | frozenset(DEFAULT_SPECIALIZED_PRODUCT_MODELS)
+
+
+# Ids that used to be product-owned and were later dropped from the dicts
+# above.
+#
+# ONLY the one-time ``provider_<id>.toml`` -> ``.local.toml`` split migration
+# consults this list, to decide which legacy residue must not survive as a
+# user model.  It is append-only and must never be used to purge a user file
+# during normal startup: candidate 2 keeps "product removed + user has the same
+# id" as a live user model, and a routine purge would silently delete user data.
+RETIRED_PRODUCT_MODELS: frozenset[str] = frozenset({
+    # Image models retired before the file split existed.
+    "gemini-3.1-flash-lite-image",
+    "qwen-image-2.0",
+    # Chat residue that lingered in shipped catalogs after leaving the dicts.
+    "claude-sonnet-4-6",
+    "claude-sonnet-5",
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+})

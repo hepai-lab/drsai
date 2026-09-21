@@ -22,8 +22,8 @@ Cut, with reasons:
   - **regression control / experiment scopes**: acceptance-harness machinery.
   - **image generation context**: no image-generation feature in the list.
 
-The event translator is imported, not copied -- it already lives outside the
-gateway in ``tui_gateway/adapter/``, shared with the TUI.
+The event translator is imported, not copied -- it lives in the shared event
+layer ``drsai.backend.events.agent_event_translator``, shared with the TUI.
 """
 
 from __future__ import annotations
@@ -45,15 +45,15 @@ from drsai.backend.runtime.agent import (
     RuntimeExecutionError,
     RuntimeRunContext,
 )
-from drsai.backend.tui_gateway.adapter.event_translator import (
+from drsai.backend.events.agent_event_translator import (
     TurnState as ConversationTranslationState,
 )
-from drsai.backend.tui_gateway.adapter.event_translator import (
+from drsai.backend.events.agent_event_translator import (
     translate as translate_conversation_event,
 )
 from drsai.platform_auth import classify_model_error, get_platform_auth
 
-from . import _artifacts, _state
+from . import _artifacts, _remote_files, _state
 from ._auth import effective_user_id
 
 # The Desktop Kernel ends a Run with a bare RuntimeError code for local policy
@@ -172,6 +172,15 @@ class DesktopAgentBackend:
                         content_parts.extend(text_chunks)
                     elif kind == "citation.added":
                         citations.append(dict(data))
+                    elif kind == "artifact.created":
+                        # A local DrSaiAssistant (or one of its skills) can emit
+                        # the same url/base64 FilesEvent shape a remote worker
+                        # does.  Materialise it into the Workspace so the
+                        # Desktop card can preview and download it; fall through
+                        # unchanged when the payload is not remote materialisable.
+                        materialized = _remote_files.try_materialize(context, data)
+                        services.emit(context, kind, materialized if materialized is not None else data)
+                        continue
                     services.emit(context, kind, data)
             diag_log(f"[DIAG] DesktopAgentBackend.execute: run_id={context.run_id} stream exhausted, event_count={_event_count}")
 
@@ -228,7 +237,10 @@ class DesktopAgentBackend:
     @staticmethod
     def _input_task(context: RuntimeRunContext, prompt: str) -> Any:
         """Encode prompt plus any attached resources the way the Agent expects."""
-        from drsai.backend.runtime.input_resources import autogen_input_task
+        from drsai.backend.runtime.input_resources import (
+            autogen_input_task,
+            input_resource_error_message,
+        )
 
         try:
             return autogen_input_task(
@@ -240,7 +252,7 @@ class DesktopAgentBackend:
         except (OSError, ValueError) as exc:
             raise RuntimeExecutionError(
                 "input_resources_invalid",
-                "An input resource is unavailable, changed, or cannot be decoded.",
+                input_resource_error_message(exc),
             ) from exc
 
     def _stream(
@@ -256,6 +268,8 @@ class DesktopAgentBackend:
             session_id=context.session_id,
             user_id=user_id,
             model_alias=definition.model,
+            model_provider=definition.model_provider,
+            model_id=definition.model_id,
             work_dir=str(context.workspace_path),
             workspace_id=context.workspace_id,
             cancellation_token=cancellation,

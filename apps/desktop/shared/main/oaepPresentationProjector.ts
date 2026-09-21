@@ -121,9 +121,10 @@ export function projectOaepEventForPresentation(
     if (deltaKind.startsWith("reasoning.") && event.data.delta?.visibility
         && event.data.delta.visibility !== "user") return output;
   }
-  ensureStarted();
-  const projected = projectOaepAssistantItem(item, projection.turnId, true);
-
+  // Validate the delta before establishing structured authority. An OAEP
+  // event can be structurally valid while carrying a delta kind this Desktop
+  // projector cannot render. Emitting turn.started first would permanently
+  // suppress the legacy renderer and leave an empty answer on screen.
   if (event.type === "event.item.delta") {
     const deltaKind = typeof event.data.delta?.kind === "string" ? event.data.delta.kind : "missing";
     if (!SUPPORTED_DELTA_KINDS.has(deltaKind)) {
@@ -131,6 +132,11 @@ export function projectOaepEventForPresentation(
       projection.unknownDeltaKinds.set(deltaKind, (projection.unknownDeltaKinds.get(deltaKind) ?? 0) + 1);
       return output;
     }
+  }
+  ensureStarted();
+  const projected = projectOaepAssistantItem(item, projection.turnId, true);
+
+  if (event.type === "event.item.delta") {
     const rawText = typeof event.data.delta?.text === "string" ? event.data.delta.text : "";
     for (const part of projected.parts) {
       ensurePartStarted(output, projection, event, source, part, base);
@@ -282,7 +288,8 @@ function runDurationMs(value: unknown, fallbackStart: number | undefined, fallba
   return completedAt - startedAt;
 }
 
-const DELTA_TEXT_SOFT_LIMIT = 65_536;  // 64KB — single delta text soft limit
+// @ts-expect-error: kept for future delta text optimization
+const _DELTA_TEXT_SOFT_LIMIT = 65_536;  // 64KB — single delta text soft limit
 const DELTA_TEXT_HARD_LIMIT = 262_144; // 256KB — hard limit, truncate beyond this
 const PART_SPILL_THRESHOLD = 131_072;  // 128KB — per-part accumulated, spill to artifact
 

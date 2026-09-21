@@ -15,7 +15,7 @@ class Pipeline:
             description="大模型的服务商的apikey, 默认HepAI平台的api_key",
         )
         HEPAI_BASE_URL: str = Field(
-            default="https://aiapi.ihep.ac.cn/apiv2",
+            default="https://ddf.ihep.ac.cn/apiv2",
             description="大模型的服务商的base_url, 默认HepAI平台的base_url",
         )
         DRSAI_NAME: str = Field(

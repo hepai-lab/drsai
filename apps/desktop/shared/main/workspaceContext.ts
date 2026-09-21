@@ -60,7 +60,8 @@ const DEFAULT_FOLDER_SUMMARY_FILES = 16;
 const DEFAULT_FOLDER_SUMMARY_CHARS = 12_000;
 const MAX_FOLDER_SUMMARY_FILE_BYTES = 24_000;
 const MAX_INSTRUCTION_CHARS = 12_000;
-const MAX_IMAGE_DATA_URL_BYTES = 1_500_000;
+// AI-generated 1024² PNGs commonly land around 1–3 MB; keep headroom for 1536².
+const MAX_IMAGE_DATA_URL_BYTES = 8_000_000;
 const NOISY_DIRS = new Set([
   ".git",
   ".hg",
@@ -84,18 +85,22 @@ const TEXT_EXTENSIONS = new Set([
   ".ini",
   ".js",
   ".jsx",
+  ".less",
   ".log",
   ".md",
   ".mjs",
   ".ps1",
   ".py",
   ".rs",
+  ".sass",
+  ".scss",
   ".sh",
   ".sql",
   ".toml",
   ".ts",
   ".tsx",
   ".txt",
+  ".vue",
   ".xml",
   ".yaml",
   ".yml",
@@ -116,19 +121,27 @@ const CODE_EXTENSIONS = new Set([
   ".c",
   ".cpp",
   ".cs",
+  ".css",
   ".go",
   ".java",
   ".js",
   ".jsx",
   ".kt",
+  ".less",
   ".mjs",
   ".php",
   ".py",
   ".rb",
   ".rs",
+  ".sass",
+  ".scss",
+  ".sh",
+  ".sql",
+  ".svelte",
   ".swift",
   ".ts",
   ".tsx",
+  ".vue",
 ]);
 
 const IMAGE_MIME: Record<string, string> = {
@@ -157,7 +170,24 @@ const OFFICE_EXTENSIONS = new Set([".docx", ".pptx", ".xlsx", ".doc", ".ppt", ".
 export function prefersLocalRichPreview(filePath: string | undefined): boolean {
   if (!filePath) return false;
   const extension = extname(filePath).toLowerCase();
-  return OFFICE_EXTENSIONS.has(extension) || extension === ".pdf";
+  // Images must not go through gateway /file with a small max_bytes cap — a
+  // truncated JPEG/PNG data URL only decodes the top of the picture.
+  if (OFFICE_EXTENSIONS.has(extension) || extension === ".pdf" || extension in IMAGE_MIME) {
+    return true;
+  }
+  // Text / code / json / yaml: always read a UTF-8 source body locally so the
+  // preview pane shows the file itself instead of metadata-only fallbacks.
+  return CODE_EXTENSIONS.has(extension)
+    || TEXT_EXTENSIONS.has(extension)
+    || CONFIG_EXTENSIONS.has(extension)
+    || extension === ".json"
+    || extension === ".ipynb"
+    || extension === ".csv"
+    || extension === ".tsv"
+    || extension === ".md"
+    || extension === ".mdx"
+    || extension === ".html"
+    || extension === ".htm";
 }
 
 export async function getWorkspaceContextOverview(
@@ -1047,6 +1077,28 @@ export async function previewWorkspaceFile(
   }
 
   if (kind === "pdf") {
+    // Prefer original PDF bytes for iframe preview. Extracted text is only a
+    // fallback when the file is too large to ship raw.
+    const MAX_PDF_RAW_BYTES = 15_000_000;
+    let dataUrl: string | undefined;
+    let sizeMessage: string | undefined;
+    if (fileStat.size <= MAX_PDF_RAW_BYTES) {
+      try {
+        const rawBuffer = await readFile(target);
+        dataUrl = `data:application/pdf;base64,${rawBuffer.toString("base64")}`;
+      } catch {
+        // Continue with text-only preview if raw read fails.
+      }
+    } else {
+      sizeMessage = `PDF is larger than ${Math.round(MAX_PDF_RAW_BYTES / (1024 * 1024))} MB; inline preview is disabled. Use system open for the full document.`;
+    }
+    if (dataUrl) {
+      return {
+        ...base,
+        dataUrl,
+        message: undefined,
+      };
+    }
     const presentation = await extractPresentationPdf(target);
     const pdfText = presentation
       ? formatPresentationPdfSummary(presentation, Math.max(maxBytes, 120_000))
@@ -1057,18 +1109,18 @@ export async function previewWorkspaceFile(
       ...(presentation?.type === "presentation_pdf" && presentation.analysis
         ? { presentationStory: buildPresentationStory(presentation) }
         : {}),
-      message: pdfText
-        ? "Extracted structured PDF text with page roles for analysis."
-        : getMetadataOnlyMessage(kind),
+      message: sizeMessage
+        ?? (pdfText
+          ? "Extracted PDF text preview; open externally for the full document."
+          : getMetadataOnlyMessage(kind)),
     };
   }
 
   if (
     kind === "office"
   ) {
-    const officeText = await extractOfficeText(target, extension, Math.min(fileStat.size, maxBytes));
-    // Include raw bytes for in-browser rich rendering (docx-preview / JSZip).
-    // Cap at 10 MB to avoid IPC serialization issues.
+    // Prefer original bytes for in-browser rich rendering (docx-preview / JSZip).
+    // Extracted text is only a fallback when the file is too large to ship raw.
     const MAX_OFFICE_RAW_BYTES = 10_000_000;
     let dataUrl: string | undefined;
     if (fileStat.size <= MAX_OFFICE_RAW_BYTES) {
@@ -1076,15 +1128,24 @@ export async function previewWorkspaceFile(
         const rawBuffer = await readFile(target);
         dataUrl = `data:${base.mime};base64,${rawBuffer.toString("base64")}`;
       } catch {
-        // If raw read fails, continue with text-only preview.
+        // Fall through to text extraction.
       }
     }
+    if (dataUrl) {
+      return {
+        ...base,
+        dataUrl,
+        // Keep a short notice out of the primary preview chrome — the renderer
+        // shows the original document when bytes are present.
+        message: undefined,
+      };
+    }
+    const officeText = await extractOfficeText(target, extension, Math.min(fileStat.size, maxBytes));
     return {
       ...base,
       content: officeText || undefined,
-      dataUrl,
       message: officeText
-        ? "Extracted a basic text preview from the Office document."
+        ? "Document is too large for inline layout preview; showing extracted text."
         : getMetadataOnlyMessage(kind),
     };
   }
@@ -1147,6 +1208,86 @@ export async function previewWorkspaceFile(
     ...base,
     content,
   };
+}
+
+/** errno codes meaning "this path is gone", not "the preview failed". */
+const MISSING_PATH_ERROR_CODES = new Set(["ENOENT", "ENOTDIR"]);
+
+/**
+ * True when a preview failure is really "the path is not there anymore"
+ * (file deleted, folder deleted, or a parent component replaced by a file).
+ * The IPC layer turns these into a resolved `{ missing: true }` payload instead
+ * of a rejected handler, so Electron does not log a spurious handler error.
+ */
+export function isWorkspaceFileMissingError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && MISSING_PATH_ERROR_CODES.has(code);
+}
+
+/**
+ * Placeholder preview for a path that vanished between the agent writing the
+ * message and the user clicking the artifact. Deliberately kept out of
+ * `previewWorkspaceFile` itself: that primitive is also used by the write paths
+ * (`saveWorkspaceFileAs` / `writeWorkspaceFile`) and must keep failing loudly
+ * when its target disappears.
+ *
+ * Purely string based — it never touches the filesystem, so it also works for a
+ * remote workspace (where the local path does not exist) and for a workspace
+ * root that has itself been removed. It only echoes back metadata derived from
+ * the caller's own request, so there is nothing to leak.
+ *
+ * Returns null when the request cannot be trusted, so callers rethrow.
+ */
+export function buildMissingWorkspacePreview(rawRequest: unknown): WorkspaceFilePreview | null {
+  let request: WorkspaceFilePreviewRequest;
+  try {
+    request = validatePreviewRequest(rawRequest);
+  } catch {
+    return null;
+  }
+  const rawPath = request.path;
+  if (!rawPath || /[\r\n]/.test(rawPath)) return null;
+  const workspacePath = typeof request.workspacePath === "string" ? request.workspacePath.trim() : "";
+  if (/[\r\n]/.test(workspacePath)) return null;
+  const target = isAbsolute(rawPath) || !workspacePath
+    ? rawPath
+    : isPosixRoot(workspacePath)
+      ? posixJoin(workspacePath, rawPath)
+      : join(workspacePath, rawPath);
+  const extension = extname(target).toLowerCase();
+  const kind = classifyPreviewKind(target, 0);
+  return {
+    workspacePath,
+    path: target,
+    relativePath: missingRelativePath(workspacePath, target),
+    name: basename(target) || target,
+    kind,
+    mime: getMime(extension, kind),
+    size: 0,
+    modifiedAt: "",
+    truncated: false,
+    missing: true,
+    message: "This file no longer exists in the workspace; it may have been deleted, moved or renamed.",
+  };
+}
+
+/** A remote (or otherwise posix) workspace root, e.g. `/home/me/project`. */
+function isPosixRoot(workspacePath: string): boolean {
+  return workspacePath.startsWith("/") && !/^[a-zA-Z]:/.test(workspacePath);
+}
+
+function posixJoin(root: string, child: string): string {
+  return `${root.replace(/\/+$/, "")}/${child.replace(/^\/+/, "")}`;
+}
+
+/** Best-effort workspace-relative path for a target that is already gone. */
+function missingRelativePath(workspacePath: string, target: string): string {
+  const toSlashes = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "");
+  const root = toSlashes(workspacePath);
+  const full = toSlashes(target);
+  if (root && full.startsWith(`${root}/`)) return normalizeRel(full.slice(root.length + 1));
+  return normalizeRel(basename(target) || target);
 }
 
 async function hasValidImportSignature(filePath: string, extension: string): Promise<boolean> {
@@ -1673,14 +1814,20 @@ function getMime(extension: string, kind: WorkspacePreviewKind): string {
   if (kind === "markdown") return "text/markdown";
   if (kind === "html") return "text/html";
   if (kind === "pdf") return "application/pdf";
+  if (extension === ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (extension === ".doc") return "application/msword";
+  if (extension === ".pptx") return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  if (extension === ".ppt") return "application/vnd.ms-powerpoint";
+  if (extension === ".xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (extension === ".xls") return "application/vnd.ms-excel";
   if (kind === "office") return "application/vnd.openxmlformats-officedocument";
   if (kind === "binary") return "application/octet-stream";
   return "text/plain";
 }
 
 function getMetadataOnlyMessage(kind: WorkspacePreviewKind): string {
-  if (kind === "pdf") return "PDF preview is metadata-only in this version; add a text summary in V2.";
-  if (kind === "office") return "Office preview is metadata-only in this version; extraction arrives in V2.";
+  if (kind === "pdf") return "PDF preview is unavailable for this file; try opening it with the system viewer.";
+  if (kind === "office") return "Office preview could not extract content; try opening it with the system viewer.";
   if (kind === "large") return "Large file preview is limited to metadata unless explicitly opened.";
   return "Preview shows metadata only for this file type.";
 }
@@ -2332,6 +2479,13 @@ export function convertGatewayFilePreview(
   const absolutePath = join(workspacePath, response.path);
   const name = basename(response.path);
   const kind = classifyPreviewKind(response.path, response.size);
+  const modifiedRaw = response.modified_at as string | number | undefined;
+  const modifiedAt = typeof modifiedRaw === "number"
+    ? new Date(modifiedRaw * (modifiedRaw < 1e12 ? 1000 : 1)).toISOString()
+    : String(modifiedRaw ?? new Date().toISOString());
+  // Prefer UTF-8 text body for text-like kinds even when the gateway also
+  // attached a data URL (e.g. mis-detected binary).
+  const textContent = typeof response.content === "string" ? response.content : undefined;
   return {
     workspacePath,
     path: absolutePath,
@@ -2340,11 +2494,11 @@ export function convertGatewayFilePreview(
     kind,
     mime: response.mime,
     size: response.size,
-    modifiedAt: response.modified_at,
+    modifiedAt,
     truncated: response.truncated,
     fileHash: response.sha256,
-    content: response.content,
-    dataUrl: response.data_url,
+    content: textContent,
+    dataUrl: textContent != null && !response.binary ? undefined : response.data_url,
   };
 }
 
@@ -2393,9 +2547,20 @@ export async function previewWorkspaceFileViaGateway(
   const workspaceId = request.workspaceId;
   if (!workspaceId) throw new Error("workspaceId is required for gateway file preview");
 
+  const extension = extname(request.path).toLowerCase();
+  const imagePreview = extension in IMAGE_MIME;
+  // Match local previewWorkspaceFile: images need the full file, not a
+  // text-oriented max_bytes sample that corrupts the bitmap.
+  const maxBytes = imagePreview
+    ? MAX_IMAGE_DATA_URL_BYTES
+    : clampInt(request.maxBytes, 8_000, 500_000, DEFAULT_PREVIEW_BYTES);
+
+  // Gateway expects a workspace-relative path; tree selection often passes absolute.
+  const relativePath = relativeWorkspacePath(request.workspacePath, request.path) || request.path;
+
   const params = new URLSearchParams();
-  params.set("path", request.path);
-  params.set("max_bytes", String(clampInt(request.maxBytes, 8_000, 500_000, DEFAULT_PREVIEW_BYTES)));
+  params.set("path", relativePath);
+  params.set("max_bytes", String(maxBytes));
 
   const response = await client.requestFiles<GatewayFileReadResponse>(
     workspaceId,

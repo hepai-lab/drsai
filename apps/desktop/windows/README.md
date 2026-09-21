@@ -134,7 +134,7 @@ The desktop UI exposes two install actions:
 
 - `Install / Repair` runs the DrSai installer and reports missing Python/Git.
 - `Auto-install Dependencies` passes `-InstallPrerequisites`, allowing
-  `install.ps1` to use `winget` for Python 3.11 and Git when they are missing.
+  `install.ps1` to use `winget` for Python 3.12 and Git when they are missing.
 
 On first launch after the full desktop package is installed, the renderer
 automatically starts `Install / Repair` when Python and Git are already present

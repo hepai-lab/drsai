@@ -1,20 +1,35 @@
-import { copyFileSync, cpSync, existsSync, mkdirSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import { createDesktopPathService } from "./desktopPaths";
 
 const PACKAGED_INSTALL_ROOT = process.resourcesPath
-  ? dirname(process.resourcesPath)
+  ? dirname(dirname(process.resourcesPath))
   : "";
 const PACKAGED_DRSAI_REPO = PACKAGED_INSTALL_ROOT
   ? join(PACKAGED_INSTALL_ROOT, "drsai-agent")
   : "";
+
+function readManagedAgentPath(stateDirectory: string): string | null {
+  try {
+    const statePath = join(stateDirectory, "install-state.json");
+    if (!existsSync(statePath)) return null;
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as { agentPath?: unknown };
+    const value = typeof state.agentPath === "string" ? state.agentPath.trim() : "";
+    return value || null;
+  } catch {
+    // A malformed or unreadable state file must not break startup; fall back to
+    // the derived sibling path so repair can still run.
+    return null;
+  }
+}
 export const DESKTOP_PATH_SERVICE = createDesktopPathService({
   platform: process.platform === "darwin" ? "macos" : "windows",
   userHome: homedir(),
   resourcesPath: process.resourcesPath,
   defaultApp: process.defaultApp,
   environment: process.env,
+  readManagedAgentPath,
 });
 export const WINDOWS_PATH_SERVICE = DESKTOP_PATH_SERVICE;
 export const DRSAI_HOME = DESKTOP_PATH_SERVICE.layout.home;
@@ -30,18 +45,16 @@ if (PACKAGED_INSTALL_ROOT && DRSAI_REPO === PACKAGED_DRSAI_REPO) {
   const defaultsDir = join(PACKAGED_INSTALL_ROOT, "defaults");
   try {
     mkdirSync(DRSAI_HOME, { recursive: true });
-    for (const name of ["config.toml", ".env", "config.yaml"]) {
+    // The installer ships exactly one default home file: `config.toml`.
+    // `configs/**` (Agent, Provider, model catalog) is owned by the Runtime's
+    // own bootstrap (`drsai.config.ensure_desktop_runtime_config`, run from the
+    // desktop gateway lifespan), which keeps it in step with
+    // CURRENT_CONFIG_VERSION. Seeding a `configs/` tree here would shadow that
+    // bootstrap, because an existing Agent file is authoritative user config.
+    for (const name of ["config.toml"]) {
       const source = join(defaultsDir, name);
       const target = join(DRSAI_HOME, name);
       if (existsSync(source) && !existsSync(target)) copyFileSync(source, target);
-    }
-    const sourceConfigs = join(defaultsDir, "configs");
-    if (existsSync(sourceConfigs)) {
-      cpSync(sourceConfigs, join(DRSAI_HOME, "configs"), {
-        recursive: true,
-        force: false,
-        errorOnExist: false,
-      });
     }
   } catch {
     // First-run setup can still create missing user configuration interactively.

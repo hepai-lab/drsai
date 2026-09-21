@@ -80,6 +80,7 @@ import type {
   DiagnosticExportResult,
   DiagnosticQuery,
   DiagnosticSnapshot,
+  RedactedDiagnosticTrace,
   DiagnosticIssueUpdateRequest,
   DiagnosticIssueUpdateResult,
   InteractiveDebugBreakpointRequest,
@@ -117,6 +118,8 @@ export type {
   DiagnosticErrorCluster,
   DiagnosticQuery,
   DiagnosticSnapshot,
+  RedactedDiagnosticEvent,
+  RedactedDiagnosticTrace,
   DiagnosticSourceLocation,
   DiagnosticSourceContext,
   DiagnosticSourceContextRequest,
@@ -915,6 +918,10 @@ export interface ChatAttachment {
   kind: "file" | "folder" | "browser" | "terminal" | "selection";
   path: string;
   name: string;
+  /** Bounded in-memory payload used only for remote-agent delivery. */
+  remoteDataUrl?: string;
+  sizeBytes?: number;
+  mimeType?: string;
   url?: string;
   title?: string;
   visibleText?: string;
@@ -1042,6 +1049,11 @@ export interface ChatRequest {
   model?: string;
   reasoningEffort?: ThinkingEffort;
   planMode?: boolean;
+  /**
+   * Per-turn Private Mode. The Gateway — not the client — pins the Run to its
+   * private model and forces reasoning off, so the selected model is ignored.
+   */
+  privateMode?: boolean;
   workspacePath?: string;
   workspaceId?: string;
   workspaceName?: string;
@@ -1123,7 +1135,7 @@ export interface ChatEvent {
     attempt: number;
     delayMs?: number;
     timestamp: string;
-    source: "gateway" | "remote-gateway" | "opendrsai-runtime" | "codex-runtime";
+    source: "gateway" | "remote-gateway" | "opendrsai-runtime" | "codex-runtime" | "remote-worker-runtime";
   };
 }
 
@@ -3618,6 +3630,10 @@ export interface DesktopAgent {
   url?: string;
   model?: string;
   models?: string[];
+  /** DDF get_info model configuration; never merged with local providers. */
+  remoteDefaultModel?: string;
+  remoteModelConfigs?: Array<{ name: string; label?: string }>;
+  remoteSkills?: Array<{ id: string; source: string; name?: string }>;
   logo?: string;
   examples?: DesktopAgentExample[] | string;
   error?: string;
@@ -3664,6 +3680,8 @@ export interface RuntimeErrorEnvelope {
 export interface DesktopAgentListOptions {
   refresh?: boolean;
   preferCache?: boolean;
+  /** Bypass the gateway's 24h remote-worker catalog cache (explicit Refresh button only). */
+  force?: boolean;
 }
 
 export interface DesktopAgentPreferenceResult {
@@ -3714,7 +3732,10 @@ export type RuntimeModelOperation = "chat" | "tool_calling" | "reasoning" | "ima
 export type RuntimeModelAvailability = "available" | "configured_unverified" | "unavailable" | "stale" | "offline" | "unauthorized" | "error";
 export type RuntimeModelCapabilitySource = "user_override" | "provider" | "builtin" | "unknown";
 export type RuntimeModelCapabilityConfidence = "verified" | "declared" | "inferred" | "unknown";
-export type RuntimeModelCatalogState = "fresh" | "stale" | "offline" | "unauthorized" | "error";
+/** "degraded" = a user-owned catalog file is unreadable; the Product models still load. */
+export type RuntimeModelCatalogState = "fresh" | "degraded" | "stale" | "offline" | "unauthorized" | "error";
+/** Which file a catalog entry came from. Derived and read-only: never written back to TOML. */
+export type ModelOwnership = "product" | "user";
 
 export interface RuntimeModelRef {
   provider_id: string;
@@ -3734,6 +3755,7 @@ export interface RuntimeModelDescriptor {
   availability: RuntimeModelAvailability;
   capability_source: RuntimeModelCapabilitySource;
   capability_confidence: RuntimeModelCapabilityConfidence;
+  origin?: ModelOwnership | null;
   updated_at?: string | null;
 }
 
@@ -3968,6 +3990,8 @@ export interface MyDrSaiModelConfig {
   reasoning_efforts?: Array<"none" | "low" | "medium" | "high" | "xhigh" | "max">;
   availability?: RuntimeModelAvailability;
   capability_source?: RuntimeModelCapabilitySource;
+  /** Which file the catalog entry came from; absent for discovery-only models. */
+  origin?: ModelOwnership;
   reasoning?: MyDrSaiReasoningConfig;
 }
 
@@ -4027,7 +4051,18 @@ export interface MyDrSaiModelProvider {
   requires_api_key: boolean;
   has_api_key: boolean;
   api_key_source?: string;
+  /** "product" for the Providers OpenDrSai ships and regenerates; "user" otherwise. */
+  origin?: ModelOwnership;
+  /** Product-owned catalog file (regenerated on every launch for Product Providers). */
   models_file?: string;
+  /** User-owned overlay, never rewritten by OpenDrSai. Missing is normal. */
+  user_models_file?: string;
+  /** Product models switched off in the user overlay. */
+  disabled_models?: string[];
+  /** User entries whose id collides with a Product model; the Product one wins. */
+  shadowed_models?: string[];
+  /** Set when the user overlay exists but cannot be parsed: models fall back to Product only. */
+  user_models_error?: string | null;
   models?: string[];
   model_aliases?: Record<string, string>;
   model_upstream_ids?: Record<string, string>;
@@ -4047,6 +4082,14 @@ export interface MyDrSaiProviderModelConfig {
   enabled: boolean;
   capabilities: MyDrSaiModelCapability[];
   upstream_id?: string;
+  /** Context window declared in the catalog file (beats the built-in registry). */
+  token_limit?: number;
+  /** Max output tokens declared in the catalog file. */
+  max_tokens?: number;
+  /** Reasoning levels this Provider actually accepts. */
+  reasoning_efforts?: Array<"none" | "low" | "medium" | "high" | "xhigh" | "max">;
+  /** Which file this definition came from. Derived and read-only. */
+  origin?: ModelOwnership;
 }
 
 export interface MyDrSaiModelConnection {
@@ -4191,6 +4234,9 @@ export interface DesktopThread {
   kind: "chat" | "agent_run";
   title: string;
   workspacePath?: string;
+  sessionScope?: "workspace" | "remote_agent";
+  remoteWorkerId?: string;
+  remoteWorkerName?: string;
   boundAgentId?: string;
   boundAgentName?: string;
   model?: string;
@@ -4223,6 +4269,8 @@ export interface DesktopThreadListRequest {
   requiredThreadIds?: string[];
   /** Runtime Workspace whose live catalog should be followed by this window. */
   runtimeWorkspaceId?: string;
+  /** Restrict the listing to a session scope: remote_agent threads have no workspacePath. */
+  sessionScope?: "workspace" | "remote_agent";
 }
 
 export interface DesktopThreadMessageSnapshot extends ChatMessage {
@@ -4674,6 +4722,13 @@ export interface WorkspaceFilePreview {
   modifiedAt: string;
   truncated: boolean;
   stale?: boolean;
+  /**
+   * The requested path no longer exists inside the workspace (deleted, moved or
+   * renamed). The preview is a placeholder: `size` is 0 and there is no content,
+   * but `path` / `relativePath` / `name` / `kind` are still filled in so callers
+   * can render a "resource is gone" state instead of an empty pane.
+   */
+  missing?: boolean;
   fileHash?: string;
   content?: string;
   dataUrl?: string;
@@ -5398,6 +5453,9 @@ export interface CreateThreadRequest {
   kind: DesktopThread["kind"];
   title?: string;
   workspacePath?: string;
+  sessionScope?: "workspace" | "remote_agent";
+  remoteWorkerId?: string;
+  remoteWorkerName?: string;
   boundAgentId?: string;
   boundAgentName?: string;
   model?: string;
@@ -5411,6 +5469,9 @@ export interface UpdateThreadRequest {
   kind?: DesktopThread["kind"];
   title?: string;
   workspacePath?: string;
+  sessionScope?: "workspace" | "remote_agent";
+  remoteWorkerId?: string;
+  remoteWorkerName?: string;
   boundAgentId?: string;
   boundAgentName?: string;
   model?: string;
@@ -5498,6 +5559,14 @@ export interface PickDialogResult {
   canceled: boolean;
   paths: string[];
   files?: PickedFileDescriptor[];
+}
+
+export interface ReadAttachmentDataUrlResult {
+  path: string;
+  name: string;
+  sizeBytes: number;
+  mimeType: string;
+  dataUrl: string;
 }
 
 export type PickedFileCategory =
@@ -5823,6 +5892,7 @@ export interface DesktopApi {
   openSystemPermissionSettings(kind: DesktopSystemPermissionKind): Promise<boolean>;
   recordDiagnostic(event: DiagnosticEventInput): Promise<DiagnosticEvent>;
   getDiagnosticSnapshot(query?: DiagnosticQuery): Promise<DiagnosticSnapshot>;
+  getRedactedDiagnosticTrace(traceId: string): Promise<RedactedDiagnosticTrace | null>;
   clearDiagnostics(): Promise<DiagnosticClearResult>;
   exportDiagnostics(): Promise<DiagnosticExportResult>;
   onDiagnosticEvent(callback: (event: DiagnosticEvent) => void): () => void;
@@ -6184,6 +6254,7 @@ export interface DesktopApi {
   saveApiKey(apiKey: string): Promise<SaveApiKeyResult>;
   pickFiles(): Promise<PickDialogResult>;
   pickFolder(): Promise<PickDialogResult>;
+  readAttachmentDataUrl(path: string): Promise<ReadAttachmentDataUrlResult>;
   getPathForFile(file: File): string;
   checkBrowserUrl(url: string): Promise<BrowserUrlCheck>;
   requestBrowserAction(
@@ -6545,6 +6616,20 @@ export interface DesktopApi {
     path: string;
   }): Promise<{ canceled: boolean; localPath?: string; size?: number }>;
   gfsDelete(request: { path: string }): Promise<{ path: string }>;
+  gfsMkdir(request: {
+    parentPath?: string;
+    name: string;
+  }): Promise<{ path: string; name: string }>;
+  gfsRename(request: {
+    path: string;
+    newName: string;
+    isDir?: boolean;
+  }): Promise<{ path: string; name: string }>;
+  gfsMove(request: {
+    sourcePath: string;
+    targetDir?: string;
+    isDir?: boolean;
+  }): Promise<{ path: string; name: string }>;
   gfsShareUrl(request: {
     path: string;
     ttlMinutes?: number;

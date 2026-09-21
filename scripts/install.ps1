@@ -181,7 +181,7 @@ function Resolve-PyLauncherPython {
 
     if (-not $py) { return $null }
 
-    $resolved = & $py -3.11 -c "import sys; print(sys.executable)" 2>$null
+    $resolved = & $py -3.12 -c "import sys; print(sys.executable)" 2>$null
 
     if ($LASTEXITCODE -eq 0 -and $resolved -and (Test-Path $resolved.Trim())) {
 
@@ -357,7 +357,7 @@ function Find-Python {
 
     if ($InstallPrerequisites) {
 
-        Install-WithWinget -Id "Python.Python.3.11" -Name "Python 3.11"
+        Install-WithWinget -Id "Python.Python.3.12" -Name "Python 3.12"
 
         Update-ProcessPath
 
@@ -381,7 +381,7 @@ function Find-Python {
 
     }
 
-    throw "Python >= 3.11 not found.`n`n  Install Python via one of:`n    conda:  conda create -n drsai python=3.11`n    scoop:  scoop install python`n    winget: winget install --exact --id Python.Python.3.11`n    https://www.python.org/downloads/`n`n  Or if Python is installed, activate your environment first:`n    conda activate drsai_dev"
+    throw "Python >= 3.11 not found.`n`n  Install Python via one of:`n    conda:  conda create -n drsai python=3.12`n    scoop:  scoop install python`n    winget: winget install --exact --id Python.Python.3.12`n    https://www.python.org/downloads/`n`n  Or if Python is installed, activate your environment first:`n    conda activate drsai_dev"
 
 }
 

@@ -1,6 +1,28 @@
 import { createHash, randomUUID } from "crypto";
 import { getDiagnosticPropagationHeaders } from "./diagnosticContext";
+import { desktopDiagnostics } from "./diagnostics";
 import { getGatewayRequestHeaders, getGatewayStatus, startGateway } from "./gateway";
+import { readSavedApiKey } from "./settings";
+import { getSessionAccessToken } from "./auth";
+
+/**
+ * Forward the Desktop-held HepAI/DDF credential to the gateway on remote-worker
+ * requests. The gateway process may not have the key in its environment (an
+ * adopted dev-managed gateway, or a gateway restarted without the Desktop
+ * env); the header lets it reach the platform catalog anyway. The credential
+ * is only used server-side and is never logged or returned to the renderer.
+ *
+ * Credential chain: HEPAI_API_KEY env → saved API key → current OIDC/SSO
+ * session access token (decrypted from auth.json by the Electron main
+ * process; the Python gateway cannot decrypt Electron-stored credentials
+ * itself, so the token must be forwarded per-request).
+ */
+async function remoteWorkerCredentialHeaders(): Promise<Record<string, string>> {
+  const apiKey = process.env.HEPAI_API_KEY?.trim() || readSavedApiKey();
+  if (apiKey) return { "X-Remote-Worker-Credential": apiKey };
+  const accessToken = await getSessionAccessToken();
+  return accessToken ? { "X-Remote-Worker-Credential": accessToken } : {};
+}
 import { parseRemoteProtocolError, RemoteProtocolError, REMOTE_SSH_PROTOCOL_VERSION, type RemoteProtocolErrorBody } from "../api/remoteSshProtocol";
 import type { OWOPOperation, OWOPParamsByOperation } from "../api/owop.generated";
 import type {
@@ -254,6 +276,8 @@ export interface RuntimeWorkspaceSessionCatalogStream {
 export interface RuntimeSession {
   session_id: string;
   workspace_id: string;
+  remote_worker_id?: string;
+  agent_definition: string;
   title: string;
   archived?: boolean;
   lifecycle?: string;
@@ -304,6 +328,35 @@ export interface RuntimeAgentRun {
   runtime_id?: string;
   instance_id?: string;
   input_message?: string;
+}
+export interface RuntimeRemoteWorker {
+  name: string;
+  worker?: string;
+  description?: string | null;
+  description_zh?: string;
+  description_en?: string;
+  author?: string;
+  owner?: string;
+  logo?: string;
+  capabilities?: string[];
+  examples?: { zh?: string[]; en?: string[] };
+  version?: string;
+  updated_at?: string;
+  available?: boolean;
+  defult_config_name?: string;
+  model_configs?: Array<{ name: string; label?: string; [key: string]: unknown }>;
+  skills?: Array<{ id: string; source: string; name?: string }>;
+}
+export interface RuntimeRemoteWorkerCatalog {
+  state: "ready" | "requires_login" | "unavailable" | string;
+  root?: string;
+  workers: RuntimeRemoteWorker[];
+  message?: string;
+}
+export interface RuntimeRemoteWorkerSelection {
+  agent_definition: string;
+  backend: "remote-worker";
+  worker: string;
 }
 export interface LegacyDesktopAgentRunMigrationRequest {
   workspace_id: string;
@@ -464,9 +517,12 @@ export interface RuntimeClient {
   archiveWorktree(workspaceId: string, worktreeId: string, idempotencyKey: string): Promise<RuntimeWorktree>;
   removeWorktree(workspaceId: string, worktreeId: string, expectedStatus: "merged" | "archived", idempotencyKey: string): Promise<RuntimeWorktree>;
   listSessions(workspaceId: string, offset?: number, limit?: number): Promise<RuntimeSessionList>;
+  listRemoteWorkerSessions(worker: string, offset?: number, limit?: number): Promise<RuntimeSessionList>;
   getSession(sessionId: string): Promise<RuntimeSession>;
   openWorkspaceSessionCatalogStream(workspaceId: string, signal: AbortSignal): Promise<RuntimeWorkspaceSessionCatalogStream>;
   createSession(workspaceId: string, title?: string, config?: { model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession>;
+  createRemoteWorkerSession(worker: string, title?: string, config?: { model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession>;
+
   updateSession(sessionId: string, updates: { archived?: boolean; title?: string; lifecycle?: "active" | "archived" | "removed"; model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession>;
   importLegacyDesktopAgentRun(request: LegacyDesktopAgentRunMigrationRequest): Promise<LegacyDesktopAgentRunMigrationResult>;
   getConversationSnapshot(sessionId: string): Promise<RuntimeConversationSnapshot>;
@@ -476,6 +532,8 @@ export interface RuntimeClient {
   listOaepEvents(sessionId: string, afterSequence?: number, limit?: number): Promise<OaepEventPage>;
   openOaepEventStream(sessionId: string, afterSequence: number, signal: AbortSignal): Promise<OaepEventStream>;
   getAgentRun(runId: string): Promise<RuntimeAgentRun>;
+  listRemoteWorkers(refresh?: boolean, force?: boolean): Promise<RuntimeRemoteWorkerCatalog>;
+  selectRemoteWorker(worker: string, options?: { url?: string; model?: string }): Promise<RuntimeRemoteWorkerSelection>;
   createAgentRun(sessionId: string, agentDefinition: string, idempotencyKey: string): Promise<RuntimeAgentRun>;
   getAgentRunByIdempotency(sessionId: string, idempotencyKey: string): Promise<RuntimeAgentRun | null>;
   getRunGoal(runId: string): Promise<RuntimeGoal>;
@@ -583,6 +641,8 @@ export interface RuntimeExecutionAuth {
   accessToken?: string;
   refreshToken?: string;
   userId: string;
+  /** OIDC login email (auth.json user.email) — the identity remote DDF workers key their users on. */
+  userEmail?: string;
 }
 
 export class RuntimeProtocolCompatibilityError extends Error {
@@ -600,6 +660,18 @@ export class RuntimeClientGenerationInvalidatedError extends Error {
     super("Runtime connection generation changed; reconnect using the current Runtime endpoint.");
     this.name = "RuntimeClientGenerationInvalidatedError";
   }
+}
+
+/**
+ * True when a failure means the caller's transport generation is gone and the
+ * request has to be re-issued against a freshly resolved client. The failing
+ * object may also arrive after a module reload, so the stable code is checked
+ * in addition to the class identity.
+ */
+export function isRuntimeClientGenerationInvalidated(error: unknown): boolean {
+  return error instanceof RuntimeClientGenerationInvalidatedError
+    || Boolean(error && typeof error === "object"
+      && (error as { code?: unknown }).code === "runtime_client_generation_invalidated");
 }
 
 abstract class HttpRuntimeClient implements RuntimeClient {
@@ -622,6 +694,17 @@ abstract class HttpRuntimeClient implements RuntimeClient {
 
   close(): void {
     if (this.lifecycleStateValue === "disposed") return;
+    // A registered Runtime client is shared: OAEP Run subscriptions, catalog
+    // reads and Workspace operations can all hold the same transport at once.
+    // Aborting it while any of them still holds a reference cancels live
+    // streams and makes every subsequent request fail pre-flight with
+    // generation-invalidated. Defer the abort to the last reference release.
+    const entry = runtimeClientRegistry.get(this.streamIdentity);
+    if (entry && entry.client === this && entry.references > 0) {
+      entry.retireRequested = true;
+      recordRuntimeClientLifecycle("close_deferred", entry, "close() requested while referenced");
+      return;
+    }
     if (this.lifecycleStateValue === "active" && !this.lifecycle.signal.aborted) {
       this.lifecycle.abort(new RuntimeClientGenerationInvalidatedError());
     }
@@ -772,6 +855,14 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     );
   }
 
+  listRemoteWorkerSessions(worker: string, offset = 0, limit = 100): Promise<RuntimeSessionList> {
+    const safeOffset = Math.max(0, Math.floor(offset));
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+    return this.requestJson(
+      `/v1/sessions?remote_worker_id=${encodeURIComponent(worker)}&offset=${safeOffset}&limit=${safeLimit}`,
+    );
+  }
+
   getSession(sessionId: string): Promise<RuntimeSession> {
     this.assertResourceId("Session", sessionId);
     return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}`);
@@ -792,6 +883,10 @@ abstract class HttpRuntimeClient implements RuntimeClient {
 
   createSession(workspaceId: string, title = "New session", config?: { model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession> {
     return this.requestJson("/v1/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspace_id: workspaceId, title, ...(config ?? {}) }) });
+  }
+
+  createRemoteWorkerSession(worker: string, title = "New session", config?: { model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession> {
+    return this.requestJson("/v1/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ remote_worker_id: worker, title, ...(config ?? {}) }) });
   }
 
   updateSession(sessionId: string, updates: { archived?: boolean; title?: string; lifecycle?: "active" | "archived" | "removed" }): Promise<RuntimeSession> {
@@ -922,6 +1017,22 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return this.requestJson(`/v1/runs/${encodeURIComponent(runId)}`);
   }
 
+  async listRemoteWorkers(refresh = false, force = false): Promise<RuntimeRemoteWorkerCatalog> {
+    const query = new URLSearchParams({ refresh: refresh ? "true" : "false" });
+    if (force) query.set("force", "true");
+    return this.requestJson(`/v1/remote-workers?${query}`, {
+      headers: await remoteWorkerCredentialHeaders(),
+    });
+  }
+
+  async selectRemoteWorker(worker: string, options: { url?: string; model?: string } = {}): Promise<RuntimeRemoteWorkerSelection> {
+    return this.requestJson("/v1/remote-workers/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await remoteWorkerCredentialHeaders()) },
+      body: JSON.stringify({ worker, ...options }),
+    });
+  }
+
   createAgentRun(sessionId: string, agentDefinition: string, idempotencyKey: string): Promise<RuntimeAgentRun> {
     if (process.env.OPENDRSAI_PACKAGED_CHAT_RECOVERY_FIXTURE === "1" && idempotencyKey === "desktop-runtime-packaged_chat_recovery_001") packagedOaepRecoverySessions.add(sessionId);
     return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}/runs`, { method: "POST",
@@ -985,6 +1096,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
           "X-OpenDrSai-Auth-Mode": auth.authMode,
           "X-OpenDrSai-Principal": auth.userId,
           ...(auth.refreshToken ? { "X-OpenDrSai-Refresh-Token": auth.refreshToken } : {}),
+          ...(auth.userEmail ? { "X-OpenDrSai-User-Email": auth.userEmail } : {}),
         } : {}),
       }, body: JSON.stringify({
         prompt,
@@ -1000,6 +1112,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
         ...(typeof provenance?.metadata?.plan_mode === "boolean"
           ? { plan_mode: provenance.metadata.plan_mode }
           : {}),
+        ...(provenance?.metadata?.private_mode === true ? { private_mode: true } : {}),
         metadata: provenance ? {
           ...(provenance.metadata ?? {}),
           source_client: provenance.sourceClient,
@@ -1601,6 +1714,90 @@ interface RuntimeClientRegistryEntry {
   lastUsedAt: number;
   invalidated: boolean;
   disposed: boolean;
+  /**
+   * A superseding generation (or an explicit close() on a shared client) asked
+   * for this transport to end while subscribers still referenced it. The entry
+   * stops serving new work immediately and is invalidated + disposed as soon as
+   * its last reference is released.
+   */
+  retireRequested: boolean;
+}
+
+export type RuntimeClientLifecycleAction =
+  | "registered"
+  | "reused"
+  | "superseded"
+  | "retired"
+  | "invalidated"
+  | "close_deferred"
+  | "released"
+  | "disposed";
+
+export interface RuntimeClientLifecycleRecord {
+  at: string;
+  action: RuntimeClientLifecycleAction;
+  endpointKey: string;
+  references: number;
+  detail?: string;
+}
+
+const RUNTIME_CLIENT_LIFECYCLE_LIMIT = 64;
+const runtimeClientLifecycleLog: RuntimeClientLifecycleRecord[] = [];
+
+/**
+ * Registry lifecycle journal.
+ *
+ * A shared Runtime client is terminated from several places: the generation
+ * sweep, an explicit invalidation, and the final lease release. When one of
+ * them kills a transport that a live OAEP session is still using, the user only
+ * sees a silent "Connection retry" storm and a conversation that never
+ * finishes - the cause is invisible in the event log. Recording who asked for
+ * what, together with the reference count at that moment, makes the next
+ * occurrence directly attributable.
+ */
+function recordRuntimeClientLifecycle(
+  action: RuntimeClientLifecycleAction,
+  entry: RuntimeClientRegistryEntry,
+  detail?: string,
+): void {
+  const record: RuntimeClientLifecycleRecord = {
+    at: new Date().toISOString(),
+    action,
+    endpointKey: entry.client.streamIdentity,
+    references: entry.references,
+    ...(detail ? { detail } : {}),
+  };
+  runtimeClientLifecycleLog.push(record);
+  if (runtimeClientLifecycleLog.length > RUNTIME_CLIENT_LIFECYCLE_LIMIT) {
+    runtimeClientLifecycleLog.splice(0, runtimeClientLifecycleLog.length - RUNTIME_CLIENT_LIFECYCLE_LIMIT);
+  }
+  const destructive = action === "invalidated" || action === "close_deferred";
+  void desktopDiagnostics
+    .record({
+      module: "runtime",
+      component: "runtime-client-registry",
+      operation: `runtime-client.${action}`,
+      message: `Runtime client ${action} for ${record.endpointKey}`,
+      status: destructive ? (action === "close_deferred" ? "waiting" : "failed") : "completed",
+      level: destructive ? "warn" : "info",
+      domain: "app",
+      visibility: "detail",
+      attributes: {
+        endpointKey: record.endpointKey,
+        references: record.references,
+        ...(detail ? { detail } : {}),
+      },
+    })
+    .catch(() => undefined);
+}
+
+/** Lifecycle journal of the shared Runtime client registry (newest last). */
+export function getRuntimeClientLifecycleLog(): RuntimeClientLifecycleRecord[] {
+  return runtimeClientLifecycleLog.map((record) => ({ ...record }));
+}
+
+export function clearRuntimeClientLifecycleLog(): void {
+  runtimeClientLifecycleLog.length = 0;
 }
 
 const runtimeClientRegistry = new Map<string, RuntimeClientRegistryEntry>();
@@ -1631,15 +1828,31 @@ const runtimeAccessIdentity = createRuntimeEndpointKey;
 function disposeRegistryEntry(entry: RuntimeClientRegistryEntry): void {
   if (entry.disposed) return;
   entry.disposed = true;
+  recordRuntimeClientLifecycle("disposed", entry);
   const close = (entry.client as RuntimeClient & { close?: () => void }).close;
   if (typeof close === "function") close.call(entry.client);
 }
 
-function invalidateRegistryEntry(entry: RuntimeClientRegistryEntry): void {
+function invalidateRegistryEntry(
+  entry: RuntimeClientRegistryEntry,
+  reason = "invalidated",
+  options: { force?: boolean } = {},
+): void {
   if (entry.invalidated) return;
+  // Invalidating aborts the transport's AbortController, which cancels every
+  // in-flight request and OAEP stream sharing this client. Unless the caller
+  // owns the invalidation (gateway restart / credential generation change),
+  // defer it to the last reference release so a live conversation is not
+  // silently cut in half.
+  if (!options.force && entry.references > 0) {
+    entry.retireRequested = true;
+    recordRuntimeClientLifecycle("retired", entry, `${reason}; deferred until released`);
+    return;
+  }
   entry.invalidated = true;
   const invalidate = (entry.client as RuntimeClient & { invalidate?: () => void }).invalidate;
   if (typeof invalidate === "function") invalidate.call(entry.client);
+  recordRuntimeClientLifecycle("invalidated", entry, reason);
   if (entry.references === 0) disposeRegistryEntry(entry);
 }
 
@@ -1659,10 +1872,34 @@ function trimRuntimeClientRegistry(): void {
   }
 }
 
+/**
+ * Supersede an older transport generation without cutting a live caller.
+ *
+ * The registry drops the entry immediately so no new work is handed to the old
+ * generation, but the transport itself is only invalidated once the last holder
+ * releases it (`invalidateRegistryEntry` defers while references remain). This
+ * is what keeps a Runtime restart from aborting the OAEP stream that is
+ * currently rendering the user's answer.
+ */
+function retireRegistryEntry(entry: RuntimeClientRegistryEntry, reason: string): void {
+  if (entry.references > 0) {
+    entry.retireRequested = true;
+    recordRuntimeClientLifecycle("superseded", entry, `${reason}; deferred until released`);
+    return;
+  }
+  invalidateRegistryEntry(entry, reason);
+}
+
 function registeredRuntimeClient<T extends RuntimeClient>(access: RuntimeAccess, create: () => T): T {
   const identity = runtimeAccessIdentity(access);
   const existing = runtimeClientRegistry.get(identity);
-  if (existing && !existing.invalidated && !existing.disposed && runtimeClientLifecycle(existing.client) !== "disposed") {
+  if (
+    existing
+    && !existing.invalidated
+    && !existing.disposed
+    && !existing.retireRequested
+    && runtimeClientLifecycle(existing.client) !== "disposed"
+  ) {
     existing.lastUsedAt = Date.now();
     return existing.client as T;
   }
@@ -1670,11 +1907,20 @@ function registeredRuntimeClient<T extends RuntimeClient>(access: RuntimeAccess,
   for (const [oldIdentity, entry] of runtimeClientRegistry) {
     if (oldIdentity !== identity && oldIdentity.startsWith(endpointPrefix)) {
       runtimeClientRegistry.delete(oldIdentity);
-      invalidateRegistryEntry(entry);
+      retireRegistryEntry(entry, "superseded by a newer Runtime generation");
     }
   }
   const client = create();
-  runtimeClientRegistry.set(identity, { client, references: 0, lastUsedAt: Date.now(), invalidated: false, disposed: false });
+  const registered: RuntimeClientRegistryEntry = {
+    client,
+    references: 0,
+    lastUsedAt: Date.now(),
+    invalidated: false,
+    disposed: false,
+    retireRequested: false,
+  };
+  runtimeClientRegistry.set(identity, registered);
+  recordRuntimeClientLifecycle("registered", registered);
   trimRuntimeClientRegistry();
   return client;
 }
@@ -1731,7 +1977,14 @@ export function retainRuntimeClient(client: RuntimeClient): () => void {
   if (entry?.invalidated || entry?.disposed) throw new RuntimeClientGenerationInvalidatedError();
   if (!entry || entry.client !== client) {
     if (entry && entry.client !== client) throw new RuntimeClientGenerationInvalidatedError();
-    entry = { client, references: 0, lastUsedAt: Date.now(), invalidated: false, disposed: false };
+    entry = {
+      client,
+      references: 0,
+      lastUsedAt: Date.now(),
+      invalidated: false,
+      disposed: false,
+      retireRequested: false,
+    };
     runtimeClientRegistry.set(identity, entry);
   }
   entry.references += 1;
@@ -1744,6 +1997,14 @@ export function retainRuntimeClient(client: RuntimeClient): () => void {
     entry!.lastUsedAt = Date.now();
     if (entry!.references === 0) {
       if (runtimeClientRegistry.get(identity) === entry) runtimeClientRegistry.delete(identity);
+      recordRuntimeClientLifecycle(
+        "released",
+        entry!,
+        entry!.retireRequested ? "final reference released; retiring transport" : undefined,
+      );
+      if (entry!.retireRequested && !entry!.invalidated) {
+        invalidateRegistryEntry(entry!, "retired generation released its last reference");
+      }
       disposeRegistryEntry(entry!);
     }
     trimRuntimeClientRegistry();
@@ -1755,6 +2016,7 @@ export function getRuntimeClientRegistryDiagnostics(): Array<{
   location: RuntimeLocation;
   references: number;
   invalidated: boolean;
+  retireRequested: boolean;
   lifecycle: "active" | "invalidated" | "disposed";
 }> {
   return [...runtimeClientRegistry.entries()].map(([endpointKey, entry]) => ({
@@ -1762,6 +2024,7 @@ export function getRuntimeClientRegistryDiagnostics(): Array<{
     location: entry.client.location,
     references: entry.references,
     invalidated: entry.invalidated,
+    retireRequested: entry.retireRequested,
     lifecycle: runtimeClientLifecycle(entry.client) ?? (entry.disposed ? "disposed" : entry.invalidated ? "invalidated" : "active"),
   }));
 }
@@ -1781,7 +2044,11 @@ export function invalidateRuntimeClientRegistry(streamIdentity?: string): void {
     : [...runtimeClientRegistry.entries()];
   for (const [identity, entry] of entries) {
     runtimeClientRegistry.delete(identity);
-    invalidateRegistryEntry(entry);
+    // Forced: this hook is driven by an authoritative lifecycle change (gateway
+    // restart, logout, credential generation change). The old transport cannot
+    // serve anyone any more, so waiting for its holders to release it would only
+    // leave them pointed at a dead port.
+    invalidateRegistryEntry(entry, "authoritative invalidation requested", { force: true });
   }
 }
 
@@ -1863,6 +2130,41 @@ export async function acquireRuntimeClientLease<T extends RuntimeClient>(
     }
   }
   throw new RuntimeClientGenerationInvalidatedError();
+}
+
+/**
+ * Lease the shared local Runtime client for a finite catalog/config read.
+ *
+ * Agent catalog browsing, remote-worker catalog refresh and usage reporting all
+ * need a Runtime connection but do not own its lifetime: the same client is
+ * shared with live OAEP Run streams and other Workspace work. Holding an
+ * explicit reference keeps the transport alive for the duration of the read and
+ * releases it afterwards. These call sites used to call `close()` in a
+ * `finally`, which aborted whichever stream happened to share the client - the
+ * cause of the "Connection retry" storm during Agent Square refreshes.
+ */
+export async function acquireLocalRuntimeClientLease(): Promise<RuntimeClientLease<LocalRuntimeClient>> {
+  return acquireRuntimeClientLease(async () => ({
+    client: await LocalRuntimeClient.connect(),
+    workspaceId: "",
+  }));
+}
+
+/** Same as {@link acquireLocalRuntimeClientLease}, but only when a Runtime is
+ * already healthy. Returns null instead of spawning one. */
+export async function acquireLocalRuntimeClientLeaseIfAvailable(): Promise<RuntimeClientLease<LocalRuntimeClient> | null> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const client = await LocalRuntimeClient.connectIfAvailable();
+      if (!client) return null;
+      return { client, workspaceId: "", release: retainRuntimeClient(client) };
+    } catch (error) {
+      if (attempt < 2 && error instanceof RuntimeClientGenerationInvalidatedError) continue;
+      if (error instanceof RuntimeClientGenerationInvalidatedError) return null;
+      throw error;
+    }
+  }
+  return null;
 }
 
 /**

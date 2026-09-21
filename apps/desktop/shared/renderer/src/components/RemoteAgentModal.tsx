@@ -21,7 +21,7 @@ interface RemoteAgentForm {
 
 const DEFAULT_FORM: RemoteAgentForm = {
   name: "DrSai_BESIII_v3.0",
-  url: "https://aiapi.ihep.ac.cn/apiv2",
+  url: "https://ddf.ihep.ac.cn/apiv2",
   apiKey: "",
 };
 
@@ -149,7 +149,7 @@ export function RemoteAgentModal({
             <input
               value={form.url}
               onChange={(event) => updateField("url", event.target.value)}
-              placeholder="https://aiapi.ihep.ac.cn/apiv2"
+              placeholder="https://ddf.ihep.ac.cn/apiv2"
             />
           </label>
           <label>

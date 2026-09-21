@@ -18,7 +18,13 @@ from dataclasses import dataclass, field as dataclass_field
 from typing import FrozenSet, Iterator, Protocol
 from pydantic import SecretStr
 
-from drsai.platform_upstream import resolve_hepai_model_base_url
+from drsai.platform_upstream import (
+    API_PATH_PREFIX,
+    DEVELOPMENT_MODEL_BASE_URL,
+    PRODUCTION_MODEL_BASE_URL,
+    resolve_platform_base_url,
+    resolve_hepai_model_base_url,
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +40,11 @@ class PlatformAuthContext:
     # OIDC refresh token for server-side access token renewal. Only present
     # when the gateway received it via the x-opendrsai-refresh-token header.
     refresh_token: str | None = None
+    # OIDC login email (``email`` claim of the verified access token when the
+    # issuer includes it; otherwise filled by the gateway auth middleware from
+    # the authenticated caller's X-OpenDrSai-User-Email header). Remote DDF
+    # workers key their users on this email, not on the UUID subject.
+    user_email: str | None = None
 
     @property
     def anthropic_base_url(self) -> str:
@@ -51,7 +62,7 @@ class DelegatedCredentialContext:
     worker_id: str = ""
     allowed_models: FrozenSet[str] = frozenset()
     allowed_operations: FrozenSet[str] = frozenset()
-    model_base_url: str = "https://ai-dev.ihep.ac.cn/apiv2/v1"
+    model_base_url: str = DEVELOPMENT_MODEL_BASE_URL
 
     def __post_init__(self) -> None:
         if isinstance(self.access_token, str):
@@ -60,7 +71,15 @@ class DelegatedCredentialContext:
             raise ValueError("invalid_delegated_credential")
         if self.expires_at <= int(time.time()):
             raise ValueError("delegation_expired")
-        if not self.model_base_url.startswith("https://ai-dev.ihep.ac.cn/"):
+        # Build the allowed set from the unified platform base + explicit overrides.
+        allowed = {DEVELOPMENT_MODEL_BASE_URL, PRODUCTION_MODEL_BASE_URL}
+        base = resolve_platform_base_url(os.environ)
+        allowed.add(f"{base}{API_PATH_PREFIX}")
+        allowed.add(f"{base}{API_PATH_PREFIX}/v1")
+        configured = os.environ.get("OPENDRSAI_MODEL_BASE_URL", "").strip().rstrip("/")
+        if configured:
+            allowed.add(configured)
+        if self.model_base_url.rstrip("/") not in allowed:
             raise ValueError("delegation_host_not_allowed")
 
     def __reduce__(self):
@@ -230,6 +249,11 @@ def get_delegated_credential() -> DelegatedCredentialContext | None:
         worker_id=delegated.worker_id,
         allowed_models=frozenset(delegated.allowed_models),
         allowed_operations=frozenset(delegated.allowed_operations),
+        model_base_url=getattr(
+            delegated,
+            "model_base_url",
+            resolve_hepai_model_base_url(os.environ),
+        ),
     )
 
 
@@ -292,6 +316,7 @@ def context_from_bearer(
         raise ValueError("missing_hai_api_scope")
     organization_id = claims.get("organization_id") or claims.get("org_id") or claims.get("org")
     session_id = claims.get("sid") or claims.get("session_id")
+    email = claims.get("email")
     return PlatformAuthContext(
         access_token=access_token,
         subject=subject,
@@ -302,6 +327,7 @@ def context_from_bearer(
         session_id=str(session_id) if session_id else None,
         audience=expected_audience or None,
         refresh_token=refresh_token or None,
+        user_email=str(email).strip() if isinstance(email, str) and email.strip() else None,
     )
 
 
@@ -708,6 +734,7 @@ async def try_refresh_platform_auth() -> PlatformAuthContext | None:
             session_id=current.session_id,
             audience=current.audience,
             refresh_token=current.refresh_token,
+            user_email=current.user_email,
         )
         _platform_auth.set(new_context)
         _logger.info("platform_auth: token refreshed successfully, new exp=%d", new_expires_at)

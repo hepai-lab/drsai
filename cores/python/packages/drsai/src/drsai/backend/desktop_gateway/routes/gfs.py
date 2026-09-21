@@ -475,6 +475,32 @@ class GfsUploadContentRequest(BaseModel):
     user_id: str | None = Field(default=None, alias="userId")
 
 
+class GfsMkdirRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    parent_path: str = Field(default="", alias="parentPath")
+    name: str
+    user_id: str | None = Field(default=None, alias="userId")
+
+
+class GfsRenameRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    path: str
+    new_name: str = Field(alias="newName")
+    is_dir: bool = Field(default=False, alias="isDir")
+    user_id: str | None = Field(default=None, alias="userId")
+
+
+class GfsMoveRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    source_path: str = Field(alias="sourcePath")
+    target_dir: str = Field(default="", alias="targetDir")
+    is_dir: bool = Field(default=False, alias="isDir")
+    user_id: str | None = Field(default=None, alias="userId")
+
+
 api = APIRouter(tags=["gfs"])
 
 
@@ -877,12 +903,72 @@ async def gfs_delete(
 ):
     client = _require_client(_pick_user_id(req.user_id, x_opendrsai_user))
     try:
-        client.delete(req.path)
+        path = req.path or ""
+        if path.endswith("/"):
+            client.delete_prefix(path)
+        else:
+            client.delete(path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"GFS delete failed: {exc}") from exc
     return {"path": req.path}
+
+
+@api.post("/v1/gfs/mkdir")
+async def gfs_mkdir(
+    req: GfsMkdirRequest,
+    x_opendrsai_user: str | None = Header(default=None, alias="X-OpenDrSai-User"),
+):
+    client = _require_client(_pick_user_id(req.user_id, x_opendrsai_user))
+    name = (req.name or "").strip()
+    if not name or "/" in name or name in (".", ".."):
+        raise HTTPException(status_code=400, detail="invalid folder name")
+    parent = (req.parent_path or "").strip().strip("/")
+    folder_path = f"{parent}/{name}" if parent else name
+    try:
+        created = client.mkdir(folder_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"GFS mkdir failed: {exc}") from exc
+    return {"path": created, "name": name}
+
+
+@api.post("/v1/gfs/rename")
+async def gfs_rename(
+    req: GfsRenameRequest,
+    x_opendrsai_user: str | None = Header(default=None, alias="X-OpenDrSai-User"),
+):
+    client = _require_client(_pick_user_id(req.user_id, x_opendrsai_user))
+    try:
+        to_path = client.rename(req.path, req.new_name, is_dir=bool(req.is_dir))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"GFS rename failed: {exc}") from exc
+    return {"path": to_path, "name": req.new_name.strip()}
+
+
+@api.post("/v1/gfs/move")
+async def gfs_move(
+    req: GfsMoveRequest,
+    x_opendrsai_user: str | None = Header(default=None, alias="X-OpenDrSai-User"),
+):
+    client = _require_client(_pick_user_id(req.user_id, x_opendrsai_user))
+    source = (req.source_path or "").strip()
+    if not source:
+        raise HTTPException(status_code=400, detail="sourcePath is required")
+    target = (req.target_dir or "").strip().strip("/")
+    name = source.rstrip("/").rsplit("/", 1)[-1]
+    dest = f"{target}/{name}" if target else name
+    try:
+        to_path = client.move(source, dest, is_dir=bool(req.is_dir))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"GFS move failed: {exc}") from exc
+    return {"path": to_path, "name": name}
 
 
 @api.post("/v1/gfs/share-url")

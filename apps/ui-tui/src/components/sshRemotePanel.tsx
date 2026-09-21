@@ -63,6 +63,23 @@ const EDIT_FIELDS: { key: keyof EditForm; label: string; hint?: string }[] = [
   { key: 'remote_workdir', label: 'Remote Workdir', hint: 'working directory on remote, press Enter to browse' },
 ]
 
+// ``remote.connect`` is not a quick RPC: on a machine without DrSai it pushes
+// the installer over SSH and runs a ~1-2GB download, then the remote gateway
+// pays a cold-import cost (seconds to minutes on shared/cluster filesystems).
+// The default 120s RPC budget is far too tight for that, so give this call its
+// own, much larger one. Override with DRSAI_TUI_REMOTE_CONNECT_TIMEOUT_MS.
+const REMOTE_CONNECT_TIMEOUT_MS = Math.max(
+  60_000,
+  parseInt(process.env.DRSAI_TUI_REMOTE_CONNECT_TIMEOUT_MS ?? '1800000', 10) || 1800000,
+)
+
+// ``remote.test`` runs ``opendrsai --version`` remotely, which pays the same
+// cold-import cost. Override with DRSAI_TUI_REMOTE_TEST_TIMEOUT_MS.
+const REMOTE_TEST_TIMEOUT_MS = Math.max(
+  30_000,
+  parseInt(process.env.DRSAI_TUI_REMOTE_TEST_TIMEOUT_MS ?? '300000', 10) || 300000,
+)
+
 export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconnect }: Props) {
   const [configs, setConfigs] = useState<SSHConfigEntry[]>([])
   const [cursor, setCursor] = useState(0)
@@ -86,7 +103,7 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
   // ── Refresh configs ────────────────────────────────────────────────
   const refresh = useCallback(async () => {
     try {
-      const res = await gw.request<{ configs: SSHConfigEntry[] }>('remote.config.list', {})
+      const res = await gw.requestLocal<{ configs: SSHConfigEntry[] }>('remote.config.list', {})
       setConfigs(res.configs || [])
     } catch (e) {
       setMessage(`Error: ${(e as Error).message}`)
@@ -96,7 +113,7 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
 
   const refreshStatus = useCallback(async () => {
     try {
-      const res = await gw.request<RemoteStatusResult>('remote.status', {})
+      const res = await gw.requestLocal<RemoteStatusResult>('remote.status', {})
       setStatus(res)
     } catch {
       setStatus(null)
@@ -119,9 +136,9 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
   const testConnection = async (cfg: SSHConfigEntry) => {
     showMsg('⏳ Testing connection...', theme.muted)
     try {
-      const res = await gw.request<{ ok: boolean; info: string }>('remote.test', {
+      const res = await gw.requestLocal<{ ok: boolean; info: string }>('remote.test', {
         name: cfg.name,
-      })
+      }, REMOTE_TEST_TIMEOUT_MS)
       if (res.ok) {
         showMsg(`✅ ${res.info}`, theme.good)
       } else {
@@ -136,9 +153,9 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
     setView('connecting')
     showMsg(`⏳ Connecting to ${cfg.host}...`, theme.muted)
     try {
-      const res = await gw.request<RemoteConnectionResult>('remote.connect', {
+      const res = await gw.requestLocal<RemoteConnectionResult>('remote.connect', {
         name: cfg.name,
-      })
+      }, REMOTE_CONNECT_TIMEOUT_MS)
       if (res.connected) {
         showMsg(
           `✅ Connected to ${res.remote_hostname} (port ${res.remote_port}→${res.local_port})`,
@@ -191,7 +208,7 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
 
   const deleteConfig = async (cfg: SSHConfigEntry) => {
     try {
-      await gw.request('remote.config.delete', { name: cfg.name })
+      await gw.requestLocal('remote.config.delete', { name: cfg.name })
       showMsg(`✓ Deleted '${cfg.name}'`, theme.good)
       refresh()
     } catch (e) {
@@ -231,7 +248,7 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
       if (form.password) params.password = form.password
       if (form.private_key_path) params.private_key_path = form.private_key_path
 
-      await gw.request('remote.config.save', params)
+      await gw.requestLocal('remote.config.save', params)
       showMsg(`✓ Saved '${form.name}'`, theme.good)
       setView('list')
       refresh()
@@ -264,9 +281,9 @@ export function SshRemotePanel({ gw, onDismiss, onRemoteConnect, onRemoteDisconn
         }
         if (form.password) params.password = form.password
         if (form.private_key_path) params.private_key_path = form.private_key_path
-        res = await gw.request<{ entries: RemoteDirEntry[] }>('remote.browse_dirs', params)
+        res = await gw.requestLocal<{ entries: RemoteDirEntry[] }>('remote.browse_dirs', params)
       } else {
-        res = await gw.request<{ entries: RemoteDirEntry[] }>('remote.list_files', { path })
+        res = await gw.requestLocal<{ entries: RemoteDirEntry[] }>('remote.list_files', { path })
       }
       setDirEntries(res.entries || [])
       setDirPath(path)

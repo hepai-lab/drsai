@@ -24,6 +24,7 @@ export class BoundedEventDispatcher<T> {
   readonly #shouldClose?: () => boolean;
   #queue: T[] = [];
   #scheduled = false;
+  #scheduleHandle: unknown;
   #closed = false;
 
   constructor(options: BoundedEventDispatcherOptions<T>) {
@@ -49,13 +50,14 @@ export class BoundedEventDispatcher<T> {
     }
     if (!this.#scheduled) {
       this.#scheduled = true;
-      this.#schedule(() => this.flush());
+      this.#scheduleHandle = this.#schedule(() => this.flush());
     }
   }
 
   flush(): void {
     if (this.#closed) return;
     this.#scheduled = false;
+    this.#scheduleHandle = undefined;
     const batch = this.#queue;
     this.#queue = [];
     try {
@@ -68,7 +70,7 @@ export class BoundedEventDispatcher<T> {
       }
     } catch (err) {
       // Render frame disposal or WebContents destruction should not propagate
-      // to the setImmediate callback and crash the main process.
+      // to the setImmediate/setTimeout callback and crash the main process.
       if (!/destroy|disposed/i.test(String(err))) {
         // eslint-disable-next-line no-console
         console.error("[BoundedEventDispatcher] flush error:", err);
@@ -81,6 +83,18 @@ export class BoundedEventDispatcher<T> {
     if (options.flush) this.flush();
     this.#closed = true;
     this.#queue = [];
+    this.#clearScheduled();
+  }
+
+  #clearScheduled(): void {
+    this.#scheduled = false;
+    const handle = this.#scheduleHandle;
+    this.#scheduleHandle = undefined;
+    if (handle == null) return;
+    // Adaptive schedulers use setTimeout; the default uses setImmediate.
+    // Node accepts either handle type for both clear APIs.
+    clearTimeout(handle as NodeJS.Timeout);
+    clearImmediate(handle as NodeJS.Immediate);
   }
 
   get pendingCount(): number { return this.#queue.length; }

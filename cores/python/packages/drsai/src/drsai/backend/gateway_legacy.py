@@ -86,6 +86,10 @@ import subprocess
 
 import sys
 
+# git.exe is a console app: without CREATE_NO_WINDOW every git call from a
+# console-less (packaged/Electron) process flashes a terminal window.
+_GIT_CREATIONFLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 import time
 
 import traceback
@@ -158,7 +162,7 @@ from drsai.backend.runtime.agent import (
 )
 from drsai.backend.runtime.conversation import StructuredConversationProjector
 from drsai.backend.runtime.desktop_oaep_bridge import DesktopOaepJournalBridge
-from drsai.backend.tui_gateway.adapter.event_translator import (
+from drsai.backend.events.agent_event_translator import (
     TurnState as ConversationTranslationState,
     finalize as finalize_conversation_translation,
     translate as translate_conversation_event,
@@ -2768,7 +2772,10 @@ class GatewayOpenDrSaiAgentBackend:
         undelivered_baseline = _workspace_undelivered_snapshot(context.workspace_path)
         try:
             run_stream = self._runner or manager.run_stream
-            from drsai.backend.runtime.input_resources import autogen_input_task
+            from drsai.backend.runtime.input_resources import (
+                autogen_input_task,
+                input_resource_error_message,
+            )
             try:
                 input_task = autogen_input_task(
                     prompt, context.input_resources, workspace_path=context.workspace_path,
@@ -2779,7 +2786,7 @@ class GatewayOpenDrSaiAgentBackend:
             except (OSError, ValueError) as exc:
                 raise RuntimeExecutionError(
                     "input_resources_invalid",
-                    "An input resource is unavailable, changed, or cannot be decoded.",
+                    input_resource_error_message(exc),
                 ) from exc
             run_kwargs = dict(
                 task=input_task,
@@ -7550,7 +7557,7 @@ async def remote_workspace_context(workspace_id: str):
         path = root/name
         if path.is_file():
             raw = path.read_text("utf-8", errors="replace"); instructions.append({"name": name, "path": str(path), "content": raw[:8000], "truncated": len(raw) > 8000})
-    completed = subprocess.run(["git", "-C", str(root), "status", "--porcelain=v1", "--branch"], capture_output=True, text=True, timeout=10, check=False)
+    completed = subprocess.run(["git", "-C", str(root), "status", "--porcelain=v1", "--branch"], creationflags=_GIT_CREATIONFLAGS, capture_output=True, text=True, timeout=10, check=False)
     changed = []
     if completed.returncode == 0:
         for line in completed.stdout.splitlines()[1:]:
@@ -8005,7 +8012,7 @@ async def remote_workspace_files(workspace_id: str, raw_request: Request, path: 
 
     matched: list[dict[str, Any]] = []
     git_statuses: dict[str, str] = {}
-    completed = subprocess.run(["git", "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all"], capture_output=True, text=True, timeout=10, check=False)
+    completed = subprocess.run(["git", "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all"], creationflags=_GIT_CREATIONFLAGS, capture_output=True, text=True, timeout=10, check=False)
     if completed.returncode == 0:
         for line in completed.stdout.splitlines():
             if len(line) < 4: continue
@@ -8257,7 +8264,7 @@ async def remote_workspace_git_file_at_ref(workspace_id: str, raw_request: Reque
     try: relative = str(target.relative_to(root)).replace("\\", "/")
     except ValueError as exc: raise HTTPException(status_code=403, detail="Path escapes the workspace") from exc
     if not re.fullmatch(r"[A-Za-z0-9_./@{}^~:+-]{1,200}", ref): raise HTTPException(status_code=400, detail="Invalid Git ref")
-    completed = subprocess.run(["git", "-C", str(root), "show", f"{ref}:{relative}"], capture_output=True, timeout=15, check=False)
+    completed = subprocess.run(["git", "-C", str(root), "show", f"{ref}:{relative}"], creationflags=_GIT_CREATIONFLAGS, capture_output=True, timeout=15, check=False)
     if completed.returncode != 0: return {"workspacePath": str(root), "ref": ref, "path": str(target), "content": "", "truncated": False, "missing": True, "message": "File does not exist at ref."}
     raw = completed.stdout; content = raw[:max_bytes].decode("utf-8", errors="replace")
     return {"workspacePath": str(root), "ref": ref, "path": str(target), "content": content, "contentHash": hashlib.sha256(raw).hexdigest(), "truncated": len(raw) > max_bytes, "missing": False, "message": "Remote Git file loaded."}
@@ -8376,7 +8383,7 @@ def _verified_git_diff(workspace_id: str, request: RemoteGitFileRequest) -> tupl
 async def remote_workspace_git_stage(workspace_id: str, request: RemoteGitFileRequest, raw_request: Request):
     _authorize_request(raw_request, workspace_id, "git.write", {"operation": "stage", "path": request.path})
     root, relative = _verified_git_diff(workspace_id, request)
-    completed = subprocess.run(["git", "-C", str(root), "add", "--", relative], capture_output=True, text=True, timeout=15, check=False)
+    completed = subprocess.run(["git", "-C", str(root), "add", "--", relative], creationflags=_GIT_CREATIONFLAGS, capture_output=True, text=True, timeout=15, check=False)
     if completed.returncode != 0:
         raise HTTPException(status_code=400, detail=completed.stderr.strip() or "Git stage failed")
     return {"workspace_id": workspace_id, "path": relative, "staged": True}
@@ -8387,7 +8394,7 @@ async def remote_workspace_git_unstage(workspace_id: str, request: RemoteGitFile
     _authorize_request(raw_request, workspace_id, "git.write", {"operation": "unstage", "path": request.path})
     request.staged = True
     root, relative = _verified_git_diff(workspace_id, request)
-    completed = subprocess.run(["git", "-C", str(root), "restore", "--staged", "--", relative], capture_output=True, text=True, timeout=15, check=False)
+    completed = subprocess.run(["git", "-C", str(root), "restore", "--staged", "--", relative], creationflags=_GIT_CREATIONFLAGS, capture_output=True, text=True, timeout=15, check=False)
     if completed.returncode != 0:
         raise HTTPException(status_code=400, detail={"code": "git_unstage_failed", "message": "Git unstage failed.", "retryable": False})
     return {"workspace_id": workspace_id, "path": relative, "staged": False}
@@ -8399,7 +8406,7 @@ async def remote_workspace_git_commit(workspace_id: str, request: RemoteGitCommi
     root = _workspace_root(workspace_id)
     marker = f"OpenDrSai-Approval: {request.idempotency_key}" if request.idempotency_key else None
     if marker:
-        history = subprocess.run(["git", "-C", str(root), "log", "--all", "-n", "200", "--format=%H%x00%B%x00"], capture_output=True, text=True, timeout=15, check=False)
+        history = subprocess.run(["git", "-C", str(root), "log", "--all", "-n", "200", "--format=%H%x00%B%x00"], creationflags=_GIT_CREATIONFLAGS, capture_output=True, text=True, timeout=15, check=False)
         if history.returncode == 0:
             parts = history.stdout.split("\x00")
             for index in range(0, len(parts) - 1, 2):
@@ -8412,7 +8419,7 @@ async def remote_workspace_git_commit(workspace_id: str, request: RemoteGitCommi
     if completed.returncode != 0:
         combined = (completed.stderr.strip() or completed.stdout.strip() or "Git commit failed")[-4000:]
         raise HTTPException(status_code=409, detail={"code": "git_commit_failed", "message": combined, "retryable": False, "detail": {"exit_code": completed.returncode}})
-    revision = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10, check=False).stdout.strip()
+    revision = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], creationflags=_GIT_CREATIONFLAGS, capture_output=True, text=True, timeout=10, check=False).stdout.strip()
     return {"workspace_id": workspace_id, "committed": True, "replayed": False, "revision": revision, "exit_code": completed.returncode, "stdout": completed.stdout[-4000:], "stderr": completed.stderr[-4000:]}
 
 
@@ -8420,7 +8427,7 @@ async def remote_workspace_git_commit(workspace_id: str, request: RemoteGitCommi
 async def remote_workspace_git_push(workspace_id: str, request: RemoteGitPushRequest, raw_request: Request):
     _authorize_request(raw_request, workspace_id, "git.push", {"remote": request.remote, "refspec": request.refspec})
     root = _workspace_root(workspace_id)
-    completed = subprocess.run(["git", "-C", str(root), "push", "--porcelain", request.remote, request.refspec], capture_output=True, text=True, timeout=120, check=False)
+    completed = subprocess.run(["git", "-C", str(root), "push", "--porcelain", request.remote, request.refspec], creationflags=_GIT_CREATIONFLAGS, capture_output=True, text=True, timeout=120, check=False)
     if completed.returncode != 0:
         raise HTTPException(status_code=409, detail={"code": "git_push_failed", "message": (completed.stderr.strip() or completed.stdout.strip() or "Git push failed")[-4000:], "retryable": False, "detail": {"exit_code": completed.returncode}})
     return {"workspace_id": workspace_id, "pushed": True, "remote": request.remote, "refspec": request.refspec, "stdout": completed.stdout[-4000:], "stderr": completed.stderr[-4000:]}
@@ -8430,9 +8437,9 @@ async def remote_workspace_git_push(workspace_id: str, request: RemoteGitPushReq
 async def remote_workspace_git_revert(workspace_id: str, request: RemoteGitFileRequest, raw_request: Request):
     _authorize_request(raw_request, workspace_id, "git.write", {"operation": "revert", "path": request.path})
     root, relative = _verified_git_diff(workspace_id, request)
-    tracked = subprocess.run(["git", "-C", str(root), "ls-files", "--error-unmatch", "--", relative], capture_output=True, timeout=10, check=False).returncode == 0
+    tracked = subprocess.run(["git", "-C", str(root), "ls-files", "--error-unmatch", "--", relative], creationflags=_GIT_CREATIONFLAGS, capture_output=True, timeout=10, check=False).returncode == 0
     if tracked:
-        completed = subprocess.run(["git", "-C", str(root), "restore", "--worktree", "--", relative], capture_output=True, text=True, timeout=15, check=False)
+        completed = subprocess.run(["git", "-C", str(root), "restore", "--worktree", "--", relative], creationflags=_GIT_CREATIONFLAGS, capture_output=True, text=True, timeout=15, check=False)
     else:
         target = _workspace_child(workspace_id, relative)
         target.unlink()
@@ -10550,10 +10557,7 @@ def _knowledge_agent_references(knowledge_id: str) -> list[dict[str, str]]:
     references: list[dict[str, str]] = []
     for agent_name in list_agent_names():
         policy = load_agent_runtime_policy(agent_name)
-        if knowledge_id in policy.knowledge.sources or (
-            policy.knowledge.mode in {"inherit", "all_enabled"}
-            and policy.knowledge.retrieval_policy != "never"
-        ):
+        if knowledge_id in policy.knowledge.sources:
             references.append({"kind": "agent_knowledge_reference", "agent_name": agent_name, "knowledge_id": knowledge_id})
     return references
 
@@ -10645,8 +10649,8 @@ async def update_knowledge_base(knowledge_id: str, req: KnowledgeResourceRequest
 async def delete_knowledge_base(knowledge_id: str, user_id: str | None = Query(default=None)):
     resolved = canonical_knowledge_id(knowledge_id)
     references = _knowledge_agent_references(resolved)
-    if references:
-        raise HTTPException(status_code=409, detail={"code": "knowledge_base_in_use", "message": "Knowledge Base is referenced by one or more Agents", "references": references})
+    for ref in references:
+        _remove_knowledge_from_agent(ref["agent_name"], resolved)
     try:
         resource = delete_knowledge_resource(_get_config_dir(user_id), resolved)
     except ModelProviderConfigError as exc:

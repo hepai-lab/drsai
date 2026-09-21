@@ -28,10 +28,13 @@ dependencies = [
     # , docker
     
     # ── HepAI platform (pulls in: openai, damei, fastapi, uvicorn, etc.) ─
+    # distro: hepai's hclient openai bridge imports it directly; openai>=1.x
+    # no longer guarantees it, so it must be declared explicitly.
     "fastapi[standard]",
     "easydict",
     "numpy",
     "hepai>=1.4.8",
+    "distro>=1.8",
 
     # ── data model & validation ──────────────────────────────────────────
     "pydantic",

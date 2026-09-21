@@ -1,4 +1,21 @@
-"""Desktop Gateway routes for the Runtime-owned WeChat channel."""
+"""Desktop Gateway routes for the Runtime-owned WeChat channel.
+
+.. deprecated::
+    This module is the legacy (v1) home of the WeChat channel surface.  It is
+    superseded by :mod:`drsai.backend.desktop_gateway.routes.channels_wechat`
+    and :mod:`drsai.backend.desktop_gateway._vision`, which no longer reach back
+    into the ``drsai.backend.gateway`` module namespace and which keep the
+    Desktop-initiated outbound switch **off** unless
+    ``OPENDRSAI_WECHAT_DESKTOP_OUTBOUND_ENABLED=1`` is set explicitly (this
+    module defaults that switch to *on*).
+
+    Retained only because :mod:`drsai.backend.gateway_legacy` still mounts it
+    (``include_router`` / ``restore`` / ``shutdown`` /
+    ``capture_platform_auth``).  Do not add features here: port them to
+    ``desktop_gateway/routes/channels_wechat.py`` and cover them in
+    ``tests/test_channels_wechat_routes.py``.  Delete this module together with
+    ``gateway_legacy.py``.
+"""
 
 from __future__ import annotations
 

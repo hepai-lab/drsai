@@ -6,7 +6,7 @@ The bulky REPL implementation has moved to the new dual-process TUI
 typer-based launcher that:
 
 - ``drsai`` / ``drsai chat`` → spawns the new Ink-based TUI
-- ``drsai gateway``          → starts the legacy SSE gateway (for desktop app)
+- ``drsai gateway``          → starts the v2 Desktop Runtime gateway (127.0.0.1:28643)
 - ``drsai config``           → view/edit config file
 - ``drsai sessions``         → list/manage saved sessions
 - ``drsai version``          → print version
@@ -459,21 +459,41 @@ def _launch_tui(*, attach_url: Optional[str] = None) -> None:
 
 @app.command("gateway")
 def gateway(
-    port: int = typer.Option(18642, help="API server port"),
-    host: str = typer.Option("127.0.0.1", help="API server host"),
+    port: Optional[int] = typer.Option(
+        None,
+        "--port",
+        "-p",
+        help="Desktop Runtime port (default: $DRSAI_DESKTOP_GATEWAY_PORT or 28643)",
+    ),
+    host: Optional[str] = typer.Option(
+        None,
+        "--host",
+        help="Desktop Runtime host (default: $DRSAI_DESKTOP_GATEWAY_HOST or 127.0.0.1)",
+    ),
 ) -> None:
-    """Start the legacy OpenDrSai SSE gateway (for the Electron desktop app)."""
+    """Start the v2 Desktop Runtime gateway (FastAPI) that the Electron shell drives."""
+    # The Runtime module resolves its bind address from the environment at import
+    # time, so an explicit CLI override has to be applied before importing it.
+    if port is not None:
+        os.environ["DRSAI_DESKTOP_GATEWAY_PORT"] = str(port)
+    if host is not None:
+        os.environ["DRSAI_DESKTOP_GATEWAY_HOST"] = host
+
+    from drsai.backend.desktop_gateway.app import (  # noqa: PLC0415 - lazy, heavy import
+        DEFAULT_HOST,
+        DEFAULT_PORT,
+        main as desktop_gateway_main,
+    )
+
     typer.echo(
         typer.style(
-            "ℹ Note: the legacy SSE gateway (gateway.py) is preserved for desktop compatibility.\n"
-            "  For the new JSON-RPC TUI, use `drsai chat` (which auto-spawns its gateway).",
+            f"✓ OpenDrSai Desktop Runtime on http://{DEFAULT_HOST}:{DEFAULT_PORT}\n"
+            "  This is the gateway the OpenDrSai desktop app consumes.\n"
+            "  For the interactive TUI, use `drsai chat` (which spawns its own gateway).",
             fg=typer.colors.CYAN,
         )
     )
-    os.environ.setdefault("DRSAI_API_PORT", str(port))
-    os.environ.setdefault("DRSAI_API_HOST", host)
-    from drsai.backend.gateway import main as legacy_gateway_main
-    legacy_gateway_main()
+    desktop_gateway_main()
 
 
 @app.command("tui-gateway")

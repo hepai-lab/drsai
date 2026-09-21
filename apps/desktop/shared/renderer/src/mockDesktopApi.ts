@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   AuthSession,
   AgentRunEvent,
   ChatEvent,
@@ -148,7 +148,7 @@ const initialHealth: DesktopHealth = {
     managed: true,
     externalReady: true,
     externalConflict: false,
-    baseUrl: "http://127.0.0.1:18642",
+    baseUrl: "http://127.0.0.1:28643",
     pid: 4242,
     lastLog: "",
   },
@@ -188,7 +188,7 @@ let mockWeChatStatus: DesktopWeChatChannelStatus = {
   modelPolicy: {
     primary: { providerId: "hepai", modelId: "deepseek-v4-flash" },
     imageUnderstanding: { providerId: "hepai", modelId: "gpt-5.6-luna" },
-    imageGeneration: { providerId: "hepai", modelId: "gemini-3.1-flash-lite-image" },
+    imageGeneration: { providerId: "hepai", modelId: "gpt-image-2.5-sunburst" },
   },
   mediaCapabilities: { imageUnderstanding: true, imageGeneration: true },
 };
@@ -1017,7 +1017,7 @@ export function installMockDesktopApi(): void {
     model_provider: "hepai",
     provider: {
       name: "hepai",
-      base_url: "https://aiapi.ihep.ac.cn/apiv2",
+      base_url: "https://ddf.ihep.ac.cn/apiv2",
       wire_api: "openai",
       requires_api_key: false,
       has_api_key: true,
@@ -1520,6 +1520,47 @@ export function installMockDesktopApi(): void {
       droppedEvents: 0,
       storage: { eventCount: diagnosticEvents.length, maxEvents: 500, persisted: false },
     }),
+    getRedactedDiagnosticTrace: async (traceId) => {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(traceId)) throw new TypeError("Invalid diagnostic traceId.");
+      const events = diagnosticEvents.filter((event) => event.traceId === traceId).slice(-300).map((event) => ({
+        id: event.id,
+        traceId: event.traceId,
+        spanId: event.spanId,
+        ...(event.parentSpanId ? { parentSpanId: event.parentSpanId } : {}),
+        timestamp: event.timestamp,
+        ...(event.endedAt ? { endedAt: event.endedAt } : {}),
+        ...(event.durationMs !== undefined ? { durationMs: event.durationMs } : {}),
+        kind: event.kind,
+        level: event.level,
+        status: event.status,
+        module: event.module,
+        component: event.component,
+        operation: event.operation,
+        message: event.message
+          .replace(/\b(Bearer\s+)[A-Za-z0-9._~+\/-]+/gi, "$1[REDACTED]")
+          .replace(/\b(api[_-]?key|access[_-]?token|password|secret|authorization)\s*[:=]\s*([^\s,;]+)/gi, "$1=[REDACTED]")
+          .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[REDACTED EMAIL]")
+          .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED API KEY]")
+          .slice(0, 2_000),
+        domain: event.domain,
+        visibility: event.visibility,
+        ...(event.agentPhase ? { agentPhase: event.agentPhase } : {}),
+        ...(event.errorCode ? { errorCode: event.errorCode } : {}),
+        ...(event.sequence !== undefined ? { sequence: event.sequence } : {}),
+      }));
+      if (!events.length) return null;
+      const first = events[0];
+      const last = events.at(-1)!;
+      return {
+        traceId,
+        startedAt: first.timestamp,
+        ...(last.endedAt ? { endedAt: last.endedAt } : {}),
+        status: last.status,
+        ...(last.durationMs !== undefined ? { durationMs: last.durationMs } : {}),
+        rootOperation: first.operation,
+        events,
+      };
+    },
     clearDiagnostics: async () => {
       const removedEvents = diagnosticEvents.length;
       diagnosticEvents = [];
@@ -2281,7 +2322,7 @@ export function installMockDesktopApi(): void {
         owner: "HepAI",
         source: "remote",
         status: "running",
-        url: "https://aiapi.ihep.ac.cn/apiv2",
+        url: "https://ddf.ihep.ac.cn/apiv2",
         examples: [
           {
             zh: "帮我整理今天的科研任务。",
@@ -2405,26 +2446,146 @@ export function installMockDesktopApi(): void {
           ],
           vision: true,
         },
+        {
+          alias: "gpt-image-2.5-sunburst",
+          provider_id: "hepai",
+          display_name: "GPT Image 2.5 Sunburst",
+          model: "openai/gpt-image-2.5-sunburst",
+          input_modalities: ["text", "image"],
+          output_modalities: ["text", "image"],
+          operations: ["image_generation", "image_edit"],
+          availability: "configured_unverified",
+        },
+        {
+          alias: "gpt-image-2",
+          provider_id: "hepai",
+          display_name: "GPT Image 2",
+          model: "openai/gpt-image-2",
+          input_modalities: ["text", "image"],
+          output_modalities: ["text", "image"],
+          operations: ["image_generation", "image_edit"],
+          availability: "configured_unverified",
+        },
+        {
+          alias: "gpt-image-2.5-flare",
+          provider_id: "hepai",
+          display_name: "GPT Image 2.5 Flare",
+          model: "openai/gpt-image-2.5-flare",
+          input_modalities: ["text", "image"],
+          output_modalities: ["text", "image"],
+          operations: ["image_generation", "image_edit"],
+          availability: "configured_unverified",
+        },
+        {
+          alias: "gemini-3.1-flash-image-preview",
+          provider_id: "hepai",
+          display_name: "Gemini 3.1 Flash Image Preview",
+          model: "google/gemini-3.1-flash-image-preview",
+          input_modalities: ["text", "image"],
+          output_modalities: ["text", "image"],
+          operations: ["image_generation", "image_edit"],
+          availability: "configured_unverified",
+        },
+        {
+          alias: "gemini-3-pro-image-preview",
+          provider_id: "hepai",
+          display_name: "Gemini 3 Pro Image Preview",
+          model: "google/gemini-3-pro-image-preview",
+          input_modalities: ["text", "image"],
+          output_modalities: ["text", "image"],
+          operations: ["image_generation", "image_edit"],
+          availability: "configured_unverified",
+        },
       ],
     }),
     getMyDrSaiRuntimeModelCatalog: async () => ({
       revision: `sha256:${"a".repeat(64)}`,
       state: "fresh",
-      models: [{
-        ref: { provider_id: "hepai", model_id: "deepseek-v4-pro" },
-        display_name: "DeepSeek V4 Pro",
-        input_modalities: ["text"],
-        output_modalities: ["text"],
-        operations: ["chat", "tool_calling", "reasoning"],
-        reasoning_efforts: ["none", "high", "max"],
-        token_limit: 1_048_576,
-        max_output_tokens: 64_000,
-        availability: "configured_unverified",
-        capability_source: "builtin",
-        capability_confidence: "inferred",
-      }],
+      models: [
+        {
+          ref: { provider_id: "hepai", model_id: "deepseek-v4-pro" },
+          display_name: "DeepSeek V4 Pro",
+          input_modalities: ["text"],
+          output_modalities: ["text"],
+          operations: ["chat", "tool_calling", "reasoning"],
+          reasoning_efforts: ["none", "high", "max"],
+          token_limit: 1_048_576,
+          max_output_tokens: 64_000,
+          availability: "configured_unverified",
+          capability_source: "builtin",
+          capability_confidence: "inferred",
+        },
+        {
+          ref: { provider_id: "hepai", model_id: "gpt-image-2.5-sunburst" },
+          display_name: "GPT Image 2.5 Sunburst",
+          input_modalities: ["text", "image"],
+          output_modalities: ["text", "image"],
+          operations: ["image_generation", "image_edit"],
+          reasoning_efforts: [],
+          availability: "configured_unverified",
+          capability_source: "user_override",
+          capability_confidence: "declared",
+        },
+        {
+          ref: { provider_id: "hepai", model_id: "gpt-image-2" },
+          display_name: "GPT Image 2",
+          input_modalities: ["text", "image"],
+          output_modalities: ["text", "image"],
+          operations: ["image_generation", "image_edit"],
+          reasoning_efforts: [],
+          availability: "configured_unverified",
+          capability_source: "user_override",
+          capability_confidence: "declared",
+        },
+        {
+          ref: { provider_id: "hepai", model_id: "gpt-image-2.5-flare" },
+          display_name: "GPT Image 2.5 Flare",
+          input_modalities: ["text", "image"],
+          output_modalities: ["text", "image"],
+          operations: ["image_generation", "image_edit"],
+          reasoning_efforts: [],
+          availability: "configured_unverified",
+          capability_source: "user_override",
+          capability_confidence: "declared",
+        },
+        {
+          ref: { provider_id: "hepai", model_id: "gemini-3.1-flash-image-preview" },
+          display_name: "Gemini 3.1 Flash Image Preview",
+          input_modalities: ["text", "image"],
+          output_modalities: ["text", "image"],
+          operations: ["image_generation", "image_edit"],
+          reasoning_efforts: [],
+          availability: "configured_unverified",
+          capability_source: "user_override",
+          capability_confidence: "declared",
+        },
+        {
+          ref: { provider_id: "hepai", model_id: "gemini-3-pro-image-preview" },
+          display_name: "Gemini 3 Pro Image Preview",
+          input_modalities: ["text", "image"],
+          output_modalities: ["text", "image"],
+          operations: ["image_generation", "image_edit"],
+          reasoning_efforts: [],
+          availability: "configured_unverified",
+          capability_source: "user_override",
+          capability_confidence: "declared",
+        },
+      ],
     }),
-    getMyDrSaiAgentModelPolicy: async (agentId = "opendrsai") => ({ agent_id: agentId, primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model } }, image_understanding_model: null, image_generation_model: null, text_to_speech_model: null, realtime_voice_model: null, speech_to_text_model: null, reasoning_effort: null, effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model }, revision: `sha256:${"a".repeat(64)}`, valid: true }),
+    getMyDrSaiAgentModelPolicy: async (agentId = "opendrsai") => ({
+      agent_id: agentId,
+      primary_model: { mode: "explicit", ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model } },
+      image_understanding_model: { mode: "explicit", ref: { provider_id: "hepai", model_id: "gpt-5.6-luna" } },
+      image_generation_model: null,
+      text_to_speech_model: null,
+      realtime_voice_model: null,
+      speech_to_text_model: null,
+      reasoning_effort: null,
+      effective_ref: { provider_id: myDrSaiModelConnection.model_provider, model_id: myDrSaiModelConnection.model },
+      effective_image_generation_ref: null,
+      revision: `sha256:${"a".repeat(64)}`,
+      valid: true,
+    }),
     getMyDrSaiAgentToolPolicy: async (agentId) => ({ agent_id: agentId, mode: "inherit", enabled: [], disabled: [], require_approval: [], revision: `sha256:${"d".repeat(64)}` }),
     updateMyDrSaiAgentToolPolicy: async (agentId, policy) => ({ ...policy, agent_id: agentId, revision: `sha256:${"e".repeat(64)}` }),
     previewMyDrSaiAgentTools: async (agentId) => ({ agent_id: agentId, mode: "inherit", tools: [{ tool_id: "builtin.image_generation", status: "available", capabilities: ["tool.call", "builtin"], selected: true }, { tool_id: "builtin.web-search", status: "available", capabilities: ["tool.call", "builtin", "network.public_https"], selected: true }], missing_ids: [], disabled_ids: [], agent_revision: `sha256:${"d".repeat(64)}`, registry_revision: `sha256:${"f".repeat(64)}` }),
@@ -2525,7 +2686,7 @@ export function installMockDesktopApi(): void {
       assertions: [{ id: "mock-provider-model", passed: true }],
     }),
     testMyDrSaiModelDraft: async (request, mode) => ({ ok: Boolean(request.model && request.model_provider && request.base_url), provider: request.model_provider, wire_api: request.wire_api ?? "openai", persisted: false, ...(mode === "model" ? { output: "pong" } : {}) }),
-    listMyDrSaiModelProviderPresets: async () => [{ id: "hepai", label: "HepAI", base_url: "https://aiapi.ihep.ac.cn/apiv2", wire_api: "openai", requires_api_key: false, base_url_editable: false, supports_model_discovery: true, auth_mode: "oidc" }],
+    listMyDrSaiModelProviderPresets: async () => [{ id: "hepai", label: "HepAI", base_url: "https://ddf.ihep.ac.cn/apiv2", wire_api: "openai", requires_api_key: false, base_url_editable: false, supports_model_discovery: true, auth_mode: "oidc" }],
     discoverMyDrSaiProviderModels: async (provider) => ({ ok: true, provider, models: [myDrSaiModelConnection.model], cached: false }),
     preflightMyDrSaiModelProviderDeletion: async (provider) => ({
       provider,
@@ -2536,7 +2697,7 @@ export function installMockDesktopApi(): void {
     }),
     deleteMyDrSaiModelProvider: async (provider, _deleteCredential = true) => {
       if (provider === myDrSaiModelConnection.model_provider) {
-        myDrSaiModelConnection = { ...myDrSaiModelConnection, model_provider: "hepai", provider: { ...myDrSaiModelConnection.provider, name: "hepai", base_url: "https://aiapi.ihep.ac.cn/apiv2" } };
+        myDrSaiModelConnection = { ...myDrSaiModelConnection, model_provider: "hepai", provider: { ...myDrSaiModelConnection.provider, name: "hepai", base_url: "https://ddf.ihep.ac.cn/apiv2" } };
       }
       return { ok: true, active: myDrSaiModelConnection.model_provider };
     },
@@ -2909,6 +3070,15 @@ export function installMockDesktopApi(): void {
       size: 0,
     }),
     gfsDelete: async (request) => ({ path: request.path }),
+    gfsMkdir: async (request) => ({
+      path: `${request.parentPath ? `${request.parentPath.replace(/\/$/, "")}/` : ""}${request.name}`,
+      name: request.name,
+    }),
+    gfsRename: async (request) => ({ path: request.path, name: request.newName }),
+    gfsMove: async (request) => ({
+      path: `${request.targetDir ? `${request.targetDir.replace(/\/$/, "")}/` : ""}${request.sourcePath.split("/").pop() ?? ""}`,
+      name: request.sourcePath.split("/").pop() ?? "",
+    }),
     gfsShareUrl: async () => ({
       url: "https://example.invalid/mock-gfs-share",
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),
@@ -3527,6 +3697,13 @@ export function installMockDesktopApi(): void {
     pickFolder: async () => ({
       canceled: false,
       paths: ["C:\\Users\\Demo\\Documents\\research-folder"],
+    }),
+    readAttachmentDataUrl: async (path: string) => ({
+      path,
+      name: path.split(/[\\/]/).pop() ?? path,
+      sizeBytes: 1024,
+      mimeType: "application/octet-stream",
+      dataUrl: "data:application/octet-stream;base64,ZGVtbw==",
     }),
     getPathForFile: (file: File): string => {
       return `C:\\Users\\Demo\\Downloads\\${file.name}`;

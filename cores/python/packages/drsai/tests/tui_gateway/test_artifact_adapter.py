@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import base64
-from types import SimpleNamespace
 
 from drsai.backend.tui_gateway.adapter.agent_runner import _artifact_snapshot, _new_artifact_descriptors
 from drsai.backend.tui_gateway.handlers import artifact as artifact_handler
-from drsai.backend.tui_gateway.handlers.slash import SlashContext, cmd_artifact
 
 
 def test_legacy_tui_adapter_emits_only_new_workspace_artifacts(tmp_path: Path) -> None:
@@ -75,22 +73,3 @@ def test_legacy_tui_artifact_download_rejects_other_session_id(tmp_path: Path, m
     })
 
     assert denied["error"]["message"] == "artifact_unavailable"
-
-
-def test_tui_artifact_slash_command_reads_text_without_absolute_path(tmp_path: Path, monkeypatch) -> None:
-    workspace = tmp_path / "workspace"
-    artifacts = workspace / "artifacts"
-    artifacts.mkdir(parents=True)
-    path = artifacts / "result.txt"
-    path.write_text("visible result", encoding="utf-8")
-    descriptor = _new_artifact_descriptors(str(workspace), {}, "session-a")[0]
-    monkeypatch.setattr(artifact_handler, "_find", lambda _session, _artifact: (path, descriptor))
-    # cmd_artifact imports _find when invoked, so replacing the module binding
-    # exercises the same route used by the RPC handler.
-    context = SlashContext(SimpleNamespace(session_id="session-a", user_id="user-a"), f"{descriptor['artifact_id']} read")
-
-    result = cmd_artifact(context)
-
-    assert "visible result" in result["output"]
-    assert descriptor["artifact_id"] in result["output"]
-    assert str(workspace) not in result["output"]

@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Table2 } from "lucide-react";
 import type { PreviewerProps } from "./types";
 
 export function TablePreviewer({
@@ -14,28 +13,22 @@ export function TablePreviewer({
   const schema = inferDatasetSchema(preview.columns ?? [], rows);
   return (
     <div className="files-preview-table">
-      <div className="files-preview-subtoolbar">
-        <span>
-          <Table2 size={13} />
-          {rows.length} rows
-        </span>
-        <div>
-          <button
-            type="button"
-            disabled={currentPage === 0}
-            onClick={() => setPage((next) => Math.max(0, next - 1))}
-          >
-            Prev
-          </button>
-          <small>{currentPage + 1} / {pageCount}</small>
-          <button
-            type="button"
-            disabled={currentPage >= pageCount - 1}
-            onClick={() => setPage((next) => Math.min(pageCount - 1, next + 1))}
-          >
-            Next
-          </button>
-        </div>
+      <div className="files-preview-table-pager" role="group" aria-label="Table pages">
+        <button
+          type="button"
+          disabled={currentPage === 0}
+          onClick={() => setPage((next) => Math.max(0, next - 1))}
+        >
+          Prev
+        </button>
+        <small>{currentPage + 1} / {pageCount}</small>
+        <button
+          type="button"
+          disabled={currentPage >= pageCount - 1}
+          onClick={() => setPage((next) => Math.min(pageCount - 1, next + 1))}
+        >
+          Next
+        </button>
       </div>
       <table>
         <thead>

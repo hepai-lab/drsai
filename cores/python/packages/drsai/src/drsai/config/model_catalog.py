@@ -14,8 +14,12 @@ ModelOperation = Literal["chat", "tool_calling", "reasoning", "image_generation"
 ModelAvailability = Literal["available", "configured_unverified", "unavailable", "stale", "offline", "unauthorized", "error"]
 CapabilitySource = Literal["user_override", "provider", "builtin", "unknown"]
 CapabilityConfidence = Literal["verified", "declared", "inferred", "unknown"]
-CatalogState = Literal["fresh", "stale", "offline", "unauthorized", "error"]
+CatalogState = Literal["fresh", "degraded", "stale", "offline", "unauthorized", "error"]
 ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
+# Ownership answers "whose catalog entry is this"; CapabilitySource answers
+# "where did this entry's numbers come from". They are different questions and
+# must never be expressed by one variable.
+ModelOwnership = Literal["product", "user"]
 
 _IDENTITY_PATTERN = re.compile(r"^[^\s\x00-\x1f]{1,240}$")
 _SOURCE_PRIORITY: dict[CapabilitySource, int] = {
@@ -65,6 +69,10 @@ class ModelDescriptor:
     capability_source: CapabilitySource = "unknown"
     capability_confidence: CapabilityConfidence = "unknown"
     updated_at: str | None = None
+    # Read-only ownership, derived from the Provider catalog file the entry was
+    # read from. Only populated for models that *have* a catalog entry;
+    # discovery-only models stay ``None``. Never rendered back into TOML.
+    origin: ModelOwnership | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.display_name, str) or not self.display_name.strip() or len(self.display_name) > 240:
@@ -112,6 +120,8 @@ class ModelDescriptor:
             "capability_source": self.capability_source,
             "capability_confidence": self.capability_confidence,
         }
+        if self.origin is not None:
+            value["origin"] = self.origin
         if not for_revision:
             value["updated_at"] = self.updated_at
         return value

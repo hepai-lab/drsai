@@ -113,12 +113,29 @@ def normalize_input_resources(values: object) -> tuple[Mapping[str, Any], ...]:
         if content is not None and not isinstance(content, str):
             raise ValueError(f"input_resources[{index}].content must be text")
         if isinstance(content, str):
+            # Every over-limit payload fails loudly, including the dead
+            # `content` of a `file` resource: neither silently accepting nor
+            # silently discarding it is acceptable, because the client would
+            # then believe the bytes were transported.  The messages name the
+            # bound so the rejection is actionable.
             if len(content) > MAX_RESOURCE_CONTENT_CHARS:
-                raise ValueError(f"input_resources[{index}].content exceeds its limit")
+                raise ValueError(
+                    f"input_resources[{index}].content exceeds its limit of "
+                    f"{MAX_RESOURCE_CONTENT_CHARS} characters"
+                )
             total_content += len(content)
             if total_content > MAX_TOTAL_RESOURCE_CONTENT_CHARS:
-                raise ValueError("input_resources content exceeds the request limit")
+                raise ValueError(
+                    "input_resources content exceeds the request limit of "
+                    f"{MAX_TOTAL_RESOURCE_CONTENT_CHARS} characters"
+                )
         if kind in {"file", "folder"}:
+            # `content` is never consumed for file and folder resources: the
+            # Runtime reads text and decodes images through `reference`
+            # (see `_append_autogen_resource` / `_append_codex_resource`).
+            # A within-limit value is therefore dropped instead of persisted a
+            # second time; an over-limit value was already rejected above.
+            content = None
             _validate_workspace_reference(reference, index)
         elif not content:
             raise ValueError(f"input_resources[{index}] requires explicit content")
@@ -202,27 +219,33 @@ def codex_input_items(
     items: list[dict[str, Any]] = []
     root = workspace_path.resolve(strict=True)
     consumed: set[str] = set()
+    budget = _native_image_budget()
     for ordered in ordered_parts:
         if ordered["type"] == "text":
             items.append({"type": "text", "text": str(ordered["text"])})
             continue
         resource = by_id[str(ordered["resource_id"])]
         consumed.add(str(resource["resource_id"]))
-        _append_codex_resource(items, resource, root)
+        _append_codex_resource(items, resource, root, budget)
     # Host-generated companion context (for example a browser screenshot's
     # visible text) is not a Composer Part, but must still reach the Backend.
     for resource in normalized_resources:
         if str(resource["resource_id"]) not in consumed:
-            _append_codex_resource(items, resource, root)
+            _append_codex_resource(items, resource, root, budget)
     return items
 
 
-def _append_codex_resource(items: list[dict[str, Any]], resource: Mapping[str, Any], root: Path) -> None:
+def _append_codex_resource(
+    items: list[dict[str, Any]],
+    resource: Mapping[str, Any],
+    root: Path,
+    budget: dict[str, int],
+) -> None:
         kind = str(resource["kind"])
         if kind in {"file", "folder"}:
             reference = str(resource["reference"])
             target = _resolve_workspace_resource(root, reference, kind=kind, resource=resource)
-            image = _inspect_native_image(target, resource) if kind == "file" else None
+            image = _admit_native_image(target, resource, budget) if kind == "file" else None
             if image is not None:
                 items.append({"type": "localImage", "path": str(target)})
             else:
@@ -262,20 +285,26 @@ def autogen_input_task(
     content: list[Any] = []
     by_id = {str(resource["resource_id"]): resource for resource in normalized}
     consumed: set[str] = set()
+    budget = _native_image_budget()
     for ordered in ordered_parts:
         if ordered["type"] == "text":
             content.append(str(ordered["text"]))
             continue
         resource = by_id[str(ordered["resource_id"])]
         consumed.add(str(resource["resource_id"]))
-        _append_autogen_resource(content, resource, root)
+        _append_autogen_resource(content, resource, root, budget)
     for resource in normalized:
         if str(resource["resource_id"]) not in consumed:
-            _append_autogen_resource(content, resource, root)
+            _append_autogen_resource(content, resource, root, budget)
     return MultiModalMessage(content=content, source="user")
 
 
-def _append_autogen_resource(content: list[Any], resource: Mapping[str, Any], root: Path) -> None:
+def _append_autogen_resource(
+    content: list[Any],
+    resource: Mapping[str, Any],
+    root: Path,
+    budget: dict[str, int],
+) -> None:
     kind = str(resource["kind"])
     # Regression controls are trusted Runtime policy, never model input.
     # Exposing fault schedules or successful fixtures would leak expected
@@ -287,7 +316,7 @@ def _append_autogen_resource(content: list[Any], resource: Mapping[str, Any], ro
     if kind in {"file", "folder"}:
         reference = str(resource["reference"])
         target = _resolve_workspace_resource(root, reference, kind=kind, resource=resource)
-        image = _inspect_native_image(target, resource) if kind == "file" else None
+        image = _admit_native_image(target, resource, budget) if kind == "file" else None
         if image is not None:
             from autogen_core import Image
             content.append(
@@ -326,13 +355,14 @@ def inspect_native_image_resources(
     """Decode native image resources and return privacy-safe admission evidence."""
     root = workspace_path.resolve(strict=True)
     images: list[dict[str, Any]] = []
+    budget = _native_image_budget()
     for resource in normalize_input_resources(list(resources)):
         if resource["kind"] != "file":
             continue
         target = _resolve_workspace_resource(
             root, str(resource["reference"]), kind="file", resource=resource,
         )
-        metadata = _inspect_native_image(target, resource)
+        metadata = _admit_native_image(target, resource, budget)
         if metadata is None:
             continue
         images.append({
@@ -343,15 +373,49 @@ def inspect_native_image_resources(
             "width": metadata["width"],
             "height": metadata["height"],
         })
-    total_bytes = sum(int(item["size_bytes"]) for item in images)
-    if total_bytes > MAX_TOTAL_NATIVE_IMAGE_BYTES:
-        raise ValueError(f"native images exceed the {MAX_TOTAL_NATIVE_IMAGE_BYTES}-byte total limit")
     return {
         "image_count": len(images),
-        "total_bytes": total_bytes,
+        "total_bytes": int(budget["native_image_bytes"]),
         "mime_types": sorted({str(item["mime"]) for item in images}),
         "resources": images,
     }
+
+
+def _native_image_budget() -> dict[str, int]:
+    """Per-request native image byte budget shared by one input encoding."""
+    return {"native_image_bytes": 0}
+
+
+def _admit_native_image(
+    path: Path, resource: Mapping[str, Any], budget: dict[str, int],
+) -> dict[str, Any] | None:
+    """Inspect one image and charge it against the request's total budget.
+
+    ``MAX_NATIVE_IMAGE_BYTES`` bounds one image inside ``_inspect_native_image``;
+    the total bound must be enforced here as well, otherwise several images that
+    are each individually legal would be delivered without limit on this path.
+    """
+    image = _inspect_native_image(path, resource)
+    if image is None:
+        return None
+    budget["native_image_bytes"] = int(budget.get("native_image_bytes", 0)) + int(image["size_bytes"])
+    if budget["native_image_bytes"] > MAX_TOTAL_NATIVE_IMAGE_BYTES:
+        raise ValueError(
+            f"native images exceed the {MAX_TOTAL_NATIVE_IMAGE_BYTES}-byte total limit"
+        )
+    return image
+
+
+def input_resource_error_message(exc: BaseException) -> str:
+    """Return an actionable message for a rejected input resource.
+
+    ``ValueError`` texts are authored here and stay privacy-safe, so they are
+    surfaced verbatim; ``OSError`` texts can embed an absolute path, so they
+    keep the stable generic wording.
+    """
+    if isinstance(exc, ValueError) and str(exc):
+        return f"An input resource is invalid: {exc}."
+    return "An input resource is unavailable, changed, or cannot be decoded."
 
 
 def _inspect_native_image(path: Path, resource: Mapping[str, Any]) -> dict[str, Any] | None:

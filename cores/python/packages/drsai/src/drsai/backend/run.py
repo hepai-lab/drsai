@@ -432,7 +432,7 @@ class DrSaiWorkerConfig(HWorkerConfig):
     daemon: bool = field(default=False, metadata={"help": "Run as daemon"})
     type: str = field(default="agent", metadata={"help": "Worker's type"})
     debug: bool = field(default=False, metadata={"help": "Debug mode"})
-    _metadata: dict = field(default_factory=dict, metadata={"help": "Additional metadata for worker/model"})
+    _metadata: dict = field(default_factory=dict, metadata={"help": "Additional metadata for worker/model", "public": True})
 
 
 _PRIVATE_METADATA_KEYS = {
@@ -515,7 +515,7 @@ def configure_worker_registration_metadata(
 class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from HRModel.
     # _info 默认值，缺省时自动填充
     _DEFAULT_INFO: dict = {
-        "logo": "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+        "logo": "https://ddf.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
         "examples": [],
         "agent_config": {},
         "defult_config_name": None,
@@ -800,7 +800,7 @@ async def run_worker(
     host: str | None = None,
     port: int | None = None,
     no_register: bool | None = None,
-    controller_address: str = "https://aiapi.ihep.ac.cn",
+    controller_address: str = "https://ddf.ihep.ac.cn",
     # ── DB 配置 ──
     drsai_dir: str | None = None,
     engine_uri: str | None = None,

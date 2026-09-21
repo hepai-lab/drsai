@@ -239,10 +239,10 @@ def translate_kernel_event(
         # the subagent working in real time, but tag metadata so the front end
         # can route it to the subagent panel rather than the main stream.
         # IMPORTANT: source MUST start with "sub:" so that
-        # tui_gateway/adapter/event_translator._is_subagent_source() routes
-        # this to "subagent.thinking" instead of treating it as a main-agent
-        # "message.delta".  Without the prefix, subagent streaming text would
-        # be silently merged into the parent's message bubble.
+        # drsai/backend/events/agent_event_translator._is_subagent_source()
+        # routes this to "subagent.thinking" instead of treating it as a
+        # main-agent "message.delta".  Without the prefix, subagent streaming
+        # text would be silently merged into the parent's message bubble.
         _agent_name = str(payload.get("agent_name") or state.assistant_name)
         return (ModelClientStreamingChunkEvent(
             content=str(payload.get("text") or ""),

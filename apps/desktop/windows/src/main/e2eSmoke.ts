@@ -15,6 +15,11 @@ import { createThread } from "./threads";
 import { migrateLegacyAgentRunsToRuntime } from "../../../shared/main/legacyAgentRunMigration";
 import { LocalRuntimeClient, RuntimeOWOPError } from "../../../shared/main/runtimeClient";
 import { getGatewayRequestHeaders, stopGateway } from "./gateway";
+import {
+  DEVELOPMENT_GATEWAY_PORT,
+  PRODUCTION_GATEWAY_PORT,
+  resolveGatewayPort,
+} from "../../../shared/main/gatewayEnvironment";
 import { requireAuthContext } from "../../../shared/main/auth";
 import { bootstrapDesktop } from "./bootstrap";
 import { getDuplexVoiceOccupancy, isDuplexVoiceSessionReady } from "../../../shared/main/voice/duplex/controller";
@@ -573,10 +578,10 @@ async function runDuplexReadinessSmoke(window: BrowserWindow): Promise<SmokeResu
       } catch {}
       checks.gatewayReady = gateway?.ready === true;
       checks.developmentPort = ${JSON.stringify(process.env.DRSAI_HOME?.replace(/[\\/]+$/, "").toLowerCase().endsWith(".drsai-dev") ?? false)}
-        ? gatewayPort === 28642
+        ? gatewayPort === ${DEVELOPMENT_GATEWAY_PORT}
         : true;
       checks.productionPort = ${JSON.stringify([".drsai", ".drsai-prod"].some((leaf) => process.env.DRSAI_HOME?.replace(/[\\/]+$/, "").toLowerCase().endsWith(leaf)) ?? false)}
-        ? gatewayPort === 18642
+        ? gatewayPort === ${PRODUCTION_GATEWAY_PORT}
         : true;
       checks.modelBound = ref?.provider_id === 'zhizengzeng' && ref?.model_id === 'gpt-realtime-2';
       checks.catalogContainsRealtime = realtimeModels.some((model) => model.provider_id === ref?.provider_id && model.alias === ref?.model_id);
@@ -7699,41 +7704,20 @@ async function runTraceabilityPhase3Smoke(window: BrowserWindow): Promise<SmokeR
       const waitFor = async (find, timeout = 30000) => { const end = Date.now() + timeout; while (Date.now() < end) { const value = find(); if (value) return value; await sleep(50); } return null; };
       const call = async (label, promise, timeout = 60000) => { details.stage = label; let timer; try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(label + " timed out")), timeout); })]); } finally { clearTimeout(timer); } };
       const click = (element) => { element?.dispatchEvent(new MouseEvent("click", { bubbles: true })); };
-      const closeExperiment = async () => { const button = document.querySelector('.run-experiment-panel > header button'); if (button) { click(button); await sleep(100); } };
-      const openExperiment = async (runId) => {
-        window.dispatchEvent(new CustomEvent("opendrsai:open-run-inspection", { detail: { ...base, runId, createExperiment: true } }));
-        return await waitFor(() => document.querySelector('.run-experiment-panel'));
-      };
-      const executeReviewedPlan = async (panel, plan, timeout = 90000) => {
-        const clickedApprovals = new WeakSet();
-        click(plan?.querySelector('button.primary'));
-        const end = Date.now() + timeout;
-        while (Date.now() < end) {
-          const comparison = panel?.querySelector('.run-comparison-view');
-          if (comparison) return comparison;
-          const approval = panel?.querySelector('.run-experiment-error + .experiment-actions button.primary');
-          if (approval && !approval.disabled && !clickedApprovals.has(approval)) {
-            clickedApprovals.add(approval); click(approval); await sleep(250);
-          }
-          await sleep(100);
-        }
-        return null;
-      };
+      // The Run Inspector / Experiment panels were removed from the renderer;
+      // secret-corpus scenarios now verify the public API surface only.
       const checkSecretCorpus = async () => {
-        window.dispatchEvent(new CustomEvent("opendrsai:open-run-inspection", { detail: { ...base, runId: fixture.phase3_secret_run_id } }));
-        const secretPanel = await waitFor(() => document.querySelector('.run-inspector-panel[data-run-id="' + CSS.escape(fixture.phase3_secret_run_id) + '"]'));
         const secretInspection = await call("secret:inspection", api.getRunInspection({ ...base, runId: fixture.phase3_secret_run_id, limit: 100 }));
         const secretManifest = await call("secret:manifest", api.getRunReproductionManifest({ ...base, runId: fixture.phase3_secret_run_id }));
-        const publicSecretEvidence = JSON.stringify({ inspection: secretInspection, manifest: secretManifest, renderer: secretPanel?.textContent || "" });
-        checks.secretCorpus = Boolean(secretPanel)
-          && fixture.phase3_secret_canaries.every((canary) => !publicSecretEvidence.includes(canary))
+        const publicSecretEvidence = JSON.stringify({ inspection: secretInspection, manifest: secretManifest });
+        checks.secretCorpus = fixture.phase3_secret_canaries.every((canary) => !publicSecretEvidence.includes(canary))
           && /REDACTED|sha256/i.test(publicSecretEvidence);
         checks.rawChainOfThoughtHidden = !publicSecretEvidence.includes(fixture.phase3_secret_canaries[4]);
         checks.privatePathsHidden = !publicSecretEvidence.includes(fixture.phase3_secret_canaries[5])
           && !publicSecretEvidence.includes(fixture.phase3_secret_canaries[6]);
         details.secretCorpus = {
           runId: fixture.phase3_secret_run_id,
-          layers: ["api", "oaep", "manifest", "renderer"],
+          layers: ["api", "oaep", "manifest"],
           canaryCount: fixture.phase3_secret_canaries.length,
           rawChainOfThoughtMatches: 0,
           secretMatches: 0,
@@ -7751,46 +7735,41 @@ async function runTraceabilityPhase3Smoke(window: BrowserWindow): Promise<SmokeR
       }
 
       // O: the failed Run has no Assistant message, but remains discoverable
-      // through Session history and opens in the Inspector.
-      window.dispatchEvent(new CustomEvent("opendrsai:open-run-inspection", { detail: { ...base, runId: fixture.phase3_failed_run_id } }));
-      const failedPanel = await waitFor(() => document.querySelector('.run-inspector-panel[data-run-id="' + CSS.escape(fixture.phase3_failed_run_id) + '"]'));
+      // through Session history and the run inspection API.
       const failedHistory = await call("O:history", api.listSessionRuns({ ...base, sessionId: fixture.phase3_failed_session_id, limit: 100 }));
-      checks.O = Boolean(failedPanel?.querySelector('.status-failed'))
-        && Boolean(failedPanel?.querySelector('.run-history'))
-        && failedHistory.data.some((run) => run.run_id === fixture.phase3_failed_run_id && run.status === "failed");
+      const failedInspection = await call("O:inspection", api.getRunInspection({ ...base, runId: fixture.phase3_failed_run_id, limit: 10 }));
+      checks.O = failedHistory.data.some((run) => run.run_id === fixture.phase3_failed_run_id && run.status === "failed")
+        && failedInspection.run.status === "failed";
       details.scenarios.push({ id: "O", runId: fixture.phase3_failed_run_id, sessionId: fixture.phase3_failed_session_id });
 
-      // Q: unsupported mutable entities stay absent from the GUI and direct
-      // API bypasses fail closed.
+      // Q: unsupported mutable entities stay absent and direct API bypasses
+      // fail closed (verified through the API contract).
       const qDraft = await call("Q:create", api.createRunExperiment({ ...base, runId: fixture.base_run_id, idempotencyKey: "p3-q-create", title: "Scenario Q" }));
       let qBlocked = false; let qError = "";
       try { await api.updateRunExperiment({ ...base, experimentId: qDraft.experiment_id, expectedVersion: qDraft.draft_version, idempotencyKey: "p3-q-bypass", patch: { overrides: { skills: [{ id: "invented" }] } } }); }
       catch (error) { qError = String(error?.message || error); qBlocked = /unsupported_override|skills/i.test(qError); }
-      const qPanel = await openExperiment(fixture.base_run_id);
-      const qText = qPanel?.textContent || "";
-      checks.Q = qBlocked && !/Skill override|Prompt override/i.test(qText)
-        && Boolean(await waitFor(() => /Restored the last saved experiment draft|已恢复上次保存的实验草稿/.test(qPanel?.textContent || "")));
+      checks.Q = qBlocked;
       details.scenarios.push({ id: "Q", error: qError });
-      await closeExperiment();
 
-      // P: choose a catalog model in the real form, generate a reviewed Plan,
-      // execute, and show the readable comparison.
-      const pPanel = await openExperiment(fixture.phase3_model_base_run_id);
-      const modelSelect = await waitFor(() => pPanel?.querySelector('select'));
-      const candidateOption = modelSelect ? [...modelSelect.options].find((option) => option.value.endsWith('/controlled-candidate')) : null;
-      if (modelSelect && candidateOption) { modelSelect.value = candidateOption.value; modelSelect.dispatchEvent(new Event('change', { bubbles: true })); }
-      click(pPanel?.querySelector('button[type="submit"]'));
-      const pPlan = await waitFor(() => pPanel?.querySelector('.replay-plan-review'), 30000);
+      // P: generate a reviewed replay plan for the model base run, execute it
+      // through the API, and verify a child Run plus a comparison with files.
+      const pDraft = await call("P:create", api.createRunExperiment({ ...base, runId: fixture.phase3_model_base_run_id, idempotencyKey: "p3-p-create", title: "Scenario P" }));
+      const pPlan = await call("P:plan", api.createReplayPlan({ ...base, experimentId: pDraft.experiment_id, expectedDraftVersion: pDraft.draft_version }));
       details.stage = "P:execute";
-      const pComparison = await executeReviewedPlan(pPanel, pPlan);
-      if (!pComparison) { checks.P = false; return { checks, details, error: "Scenario P did not produce a comparison." }; }
+      let pExecuted = null;
+      try {
+        const pApproval = await call("P:execute", api.executeReplayPlan({ ...base, replayPlanId: pPlan.replay_plan_id, draftVersion: pPlan.draft_version, planDigest: pPlan.plan_digest, baseManifestDigest: pPlan.base_manifest_digest, idempotencyKey: "p3-p-execute" }));
+        if (pApproval.approval_required === true) {
+          await call("P:approve", api.decideRuntimeSecurityApproval({ ...base, approvalId: pApproval.approval_id, decision: "approved" }));
+          pExecuted = await call("P:execute-approved", api.executeReplayPlan({ ...base, replayPlanId: pPlan.replay_plan_id, draftVersion: pPlan.draft_version, planDigest: pPlan.plan_digest, baseManifestDigest: pPlan.base_manifest_digest, idempotencyKey: "p3-p-execute", approvalId: pApproval.approval_id }));
+        } else { pExecuted = pApproval; }
+      } catch { pExecuted = null; }
+      if (!pExecuted) { checks.P = false; return { checks, details, error: "Scenario P did not execute." }; }
       const pRelations = await call("P:relations", api.getRunRelations({ ...base, runId: fixture.phase3_model_base_run_id }));
       const pChild = pRelations.children[pRelations.children.length - 1];
-      checks.P = Boolean(candidateOption && pPlan && pComparison)
-        && /controlled candidate/i.test(pPanel?.textContent || "")
-        && Boolean(pComparison?.querySelector('.comparison-results'));
-      details.scenarios.push({ id: "P", model: candidateOption?.value || null, runId: pChild?.run_id || null });
-      await closeExperiment();
+      const pComparison = pChild?.run_id ? await call("P:comparison", api.createRunComparison({ ...base, baselineRunId: fixture.phase3_model_base_run_id, candidateRunId: pChild.run_id })) : null;
+      checks.P = Boolean(pChild && pComparison) && (pComparison?.files?.length || 0) > 0;
+      details.scenarios.push({ id: "P", runId: pChild?.run_id || null, comparisonFiles: pComparison?.files || [] });
 
       // R: a reviewed result-reuse plan remains bound to the recorded call;
       // mutation of the Tool entity itself is rejected by the same contract.
@@ -7802,43 +7781,17 @@ async function runTraceabilityPhase3Smoke(window: BrowserWindow): Promise<SmokeR
       checks.R = rMutationBlocked && rPlan.steps.some((step) => step.kind === "tool_call" && step.decision === "reuse");
       details.scenarios.push({ id: "R", planId: rPlan.replay_plan_id });
 
-      // S: the actual controlled Agent changes its isolated Worktree. The UI
-      // finalizes a candidate commit, compares files, and selectively adopts.
-      const sPanel = await openExperiment(fixture.phase3_base_run_id);
-      click(sPanel?.querySelector('button[type="submit"]'));
-      const sPlan = await waitFor(() => sPanel?.querySelector('.replay-plan-review'), 30000);
-      details.stage = "S:execute";
-      const sComparison = await executeReviewedPlan(sPanel, sPlan);
-      if (!sComparison) { checks.S = false; return { checks, details, error: "Scenario S did not produce a comparison." }; }
-      const snapshot = sComparison?.querySelector('.comparison-snapshot');
-      const fileRows = sComparison ? [...sComparison.querySelectorAll('h4 + ul li')] : [];
-      const previewButton = sComparison ? [...sComparison.querySelectorAll('button')].find((button) => /Preview adoption|预览/.test(button.textContent || "")) : null;
-      click(previewButton);
-      const dialog = await waitFor(() => document.querySelector('.run-adoption-dialog[open]'), 30000);
-      const boxes = dialog ? [...dialog.querySelectorAll('input[type="checkbox"]')] : [];
-      for (const box of boxes.slice(1)) click(box);
-      const confirm = dialog ? [...dialog.querySelectorAll('button')].find((button) => /Confirm adoption|确认/.test(button.textContent || "")) : null;
-      click(confirm);
-      const approve = await waitFor(() => dialog ? [...dialog.querySelectorAll('button')].find((button) => /Approve and continue|批准/.test(button.textContent || "")) : null, 30000);
-      click(approve);
-      const adopted = await waitFor(() => /Adopted|已采纳/.test(sPanel?.textContent || ""), 30000);
-      const sRelations = await call("S:relations", api.getRunRelations({ ...base, runId: fixture.phase3_base_run_id }));
-      const sChild = sRelations.children[sRelations.children.length - 1];
-      const sComparisonData = sChild?.run_id ? await call("S:comparison-data", api.createRunComparison({
-        ...base, baselineRunId: fixture.phase3_base_run_id, candidateRunId: sChild.run_id,
-      })) : null;
-      checks.S = Boolean(sPlan && sComparison && snapshot && fileRows.length >= 3 && dialog && boxes.length >= 3 && adopted);
-      details.scenarios.push({ id: "S", runId: sChild?.run_id || null, selectedPathCount: 1,
-        fileDifferenceCount: fileRows.length, comparisonFiles: sComparisonData?.files || [],
-        visibleFileRows: fileRows.map((row) => row.textContent || "") });
-      await closeExperiment();
+      // S: the UI-driven adoption flow was removed together with the Experiment
+      // panels; the worktree adoption contract (preview / approval / apply /
+      // discard / crash recovery) is covered by the editable-phase2 scenarios
+      // L and N through the API.
 
       // U: restart reconciliation from the formal Replay fixture remains
-      // visible and actionable in the same Desktop Inspector.
-      window.dispatchEvent(new CustomEvent("opendrsai:open-run-inspection", { detail: { ...base, runId: fixture.recovery_run_id } }));
-      const recovery = await waitFor(() => document.querySelector('.run-inspector-panel[data-run-id="' + CSS.escape(fixture.recovery_run_id) + '"]'));
-      checks.U = Boolean(recovery?.querySelector('.status-failed')) && /interrupted|restart|failed/i.test(recovery?.textContent || "");
-      details.scenarios.push({ id: "U", runId: fixture.recovery_run_id, text: (recovery?.textContent || "").slice(0, 4000), htmlClass: recovery?.className || "" });
+      // visible through the run inspection API.
+      const recoveryInspection = await call("U:inspection", api.getRunInspection({ ...base, runId: fixture.recovery_run_id, limit: 100 }));
+      const recoveryEvidence = JSON.stringify(recoveryInspection);
+      checks.U = recoveryInspection.run.status === "failed" && /interrupted|restart|failed/i.test(recoveryEvidence);
+      details.scenarios.push({ id: "U", runId: fixture.recovery_run_id, runStatus: recoveryInspection.run.status });
 
       // Cross-layer secret corpus: public API evidence, safe Manifest and the
       // rendered Inspector must never expose any injected canary.
@@ -7991,20 +7944,12 @@ async function runEditablePhase2Smoke(window: BrowserWindow): Promise<SmokeResul
       await call("N:crash-adoption-approve", api.decideRuntimeSecurityApproval({ ...base, approvalId: crashApproval.approval_id, decision: "approved" }));
       const crashRecovered = await call("N:crash-adoption-recover", api.applyRunAdoption({ ...base, adoptionId: fixture.crash_adoption_id, selectedPaths: fixture.crash_adoption_paths, approvalId: crashApproval.approval_id }));
       const recovered = await call("N:recovered-run", api.getRunInspection({ ...base, runId: fixture.recovery_run_id, limit: 200 }));
-      window.dispatchEvent(new CustomEvent("opendrsai:open-run-inspection", { detail: { ...base, runId: fixture.recovery_run_id } }));
-      const recoveryPanel = await waitFor(() => document.querySelector('.run-inspector-panel[data-run-id="' + CSS.escape(fixture.recovery_run_id) + '"]'));
       checks.N = discarded.status === "discarded" && discarded.receipt?.cleanup_requested === true
         && crashApproval.approval_required === true && crashRecovered.status === "applied"
         && crashRecovered.operation?.status === "completed"
-        && recovered.run.status === "failed" && Boolean(recoveryPanel)
-        && Boolean(recoveryPanel?.querySelector('.status-failed'));
+        && recovered.run.status === "failed";
       details.scenarios.push({ id: "N", recoveryRunId: fixture.recovery_run_id, recoveryPlanId: fixture.recovery_plan_id, recoveredStatus: recovered.run.status, recoveredAdoptionId: crashRecovered.adoption_id });
 
-      window.dispatchEvent(new CustomEvent("opendrsai:open-run-inspection", { detail: { ...base, runId: fixture.base_run_id, createExperiment: true } }));
-      const inspector = await waitFor(() => document.querySelector('.run-inspector-panel[data-run-id="' + CSS.escape(fixture.base_run_id) + '"]'));
-      const experimentPanel = await waitFor(() => document.querySelector('.run-experiment-panel'));
-      checks.ui = Boolean(inspector && experimentPanel);
-      details.ui = { inspector: Boolean(inspector), experimentPanel: Boolean(experimentPanel) };
       details.stage = "complete";
       return { checks, details };
     })()
@@ -8070,7 +8015,7 @@ async function runTraceabilityPhase1Smoke(window: BrowserWindow): Promise<SmokeR
       }
       checks.gateway = gateway.ready === true;
       let allApi = true;
-      let allUi = true;
+      let allRedaction = true;
       let allIdentity = true;
       let allExport = true;
       for (const scenario of fixture.scenarios) {
@@ -8125,30 +8070,16 @@ async function runTraceabilityPhase1Smoke(window: BrowserWindow): Promise<SmokeR
         allIdentity &&= identityOk;
         allExport &&= exportOk;
 
-        window.dispatchEvent(new CustomEvent("opendrsai:open-run-inspection", { detail: {
-          workspacePath: fixture.workspace_path,
-          workspaceId: fixture.workspace_id,
-          runId: scenario.run_id,
-          focusedItemId: scenario.focus_item_id,
-        }}));
-        const panel = await waitFor(() => document.querySelector('.run-inspector-panel[data-run-id="' + CSS.escape(scenario.run_id) + '"]'));
-        const focused = scenario.focus_item_id
-          ? await waitFor(() => document.querySelector('[data-item-id="' + CSS.escape(scenario.focus_item_id) + '"].selected'))
-          : true;
-        const panelText = String(panel?.textContent || "");
-        const uiOk = Boolean(panel)
-          && panel?.querySelector('.status-' + CSS.escape(scenario.run_status))
-          && Boolean(focused)
-          && !panelText.includes("traceability-secret-canary")
-          && (panelText.includes("复现清单") || panelText.includes("Reproduction manifest"));
-        allUi &&= Boolean(uiOk);
-        details.scenarios.push({ id: scenario.id, apiOk, identityOk, exportOk, uiOk: Boolean(uiOk), timelineCount: timeline.length });
+        const publicEvidence = JSON.stringify({ inspection, manifest, exported });
+        const redactionOk = !publicEvidence.includes("traceability-secret-canary");
+        allRedaction &&= redactionOk;
+        details.scenarios.push({ id: scenario.id, apiOk, identityOk, exportOk, redactionOk, timelineCount: timeline.length });
       }
       details.stage = "complete";
       checks.api = allApi;
       checks.identity = allIdentity;
       checks.export = allExport;
-      checks.ui = allUi;
+      checks.redaction = allRedaction;
       return { checks, details };
     })()
   `) as SmokeResult;
@@ -8493,7 +8424,7 @@ async function p3CollectSnapshot(path: string): Promise<Record<string, unknown>>
 }
 
 function p3GatewayGet(path: string): Promise<Record<string, unknown>> {
-  const port = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "28642";
+  const port = resolveGatewayPort();
   return new Promise((resolve, reject) => {
     const request = httpRequest({ hostname: "127.0.0.1", port: Number(port), path, method: "GET", headers: { ...getGatewayRequestHeaders(), Accept: "application/json" } }, (response) => {
       let data = "";
@@ -11366,12 +11297,6 @@ async function runResultsCenterSmoke(window: BrowserWindow): Promise<SmokeResult
       checks.idsStableAfterRefresh = JSON.stringify(refreshedIds) === JSON.stringify(specs.map((spec) => spec.id).sort());
       details.refreshedIds = refreshedIds;
       document.querySelector('[data-testid="task-delivery-summary"] header button')?.click();
-      const firstProvenance = document.querySelector('li[data-artifact-id="result:g1:paper-summary"] [data-testid="results-provenance"]');
-      if (firstProvenance) firstProvenance.open = true;
-      firstProvenance?.querySelector('[data-testid="results-open-source-run"]')?.click();
-      const inspectorDeadline = Date.now() + 3000;
-      while (Date.now() < inspectorDeadline && !document.querySelector('.run-inspector-panel')) await new Promise((resolve) => setTimeout(resolve, 30));
-      checks.sourceRunActionOpensInspector = Boolean(document.querySelector('.run-inspector-panel'));
       document.querySelector('li[data-artifact-id="result:g1:paper-summary"] [data-testid="results-open-source-task"]')?.click();
       const sourceTaskDeadline = Date.now() + 3000;
       while (Date.now() < sourceTaskDeadline && document.querySelector('[data-testid="task-delivery-summary"]')?.getAttribute("data-target-id") !== "g1-paper-summary") await new Promise((resolve) => setTimeout(resolve, 30));

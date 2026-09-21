@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Mapping
 
+from .defaults import PRODUCT_PROVIDER_IDS
 from .loader import ConfigError, default_config_path, load_user_config
 from .credentials import credential_available, delete_credential, store_credential
 from .locking import config_write_lock
@@ -127,10 +128,16 @@ def commit_update(
             candidate_text, _candidate, candidate_resolved, candidate_model_files = _build_candidate(
                 target, prepared, os.environ if environ is None else environ
             )
-            for provider_name, models_file, text in candidate_model_files:
+            for provider_name, field, models_file, text in candidate_model_files:
                 model_path = _models_file_path(target, models_file)
                 model_file_backups.append((model_path, model_path.read_bytes() if model_path.is_file() else None))
-                replace_models_file_text(models_file, text, path=target, provider_name=provider_name)
+                replace_models_file_text(
+                    models_file,
+                    text,
+                    path=target,
+                    provider_name=provider_name,
+                    field=field,
+                )
             replace_config_text(candidate_text, path=target)
         except Exception:
             for model_path, previous in reversed(model_file_backups):
@@ -282,7 +289,7 @@ def _build_candidate(
     target: Path,
     request: ConfigUpdateRequest,
     environ: Mapping[str, str],
-) -> tuple[str, DrSaiConfig, ResolvedModelConfig, tuple[tuple[str, str, str], ...]]:
+) -> tuple[str, DrSaiConfig, ResolvedModelConfig, tuple[tuple[str, str, str, str], ...]]:
     if request.model is not None or request.model_provider is not None:
         raise ConfigError(
             "Global model selection has been removed; update the selected Agent model policy instead"
@@ -297,7 +304,11 @@ def _build_candidate(
         if request.provider_name is not None:
             if request.provider_values is None:
                 raise ConfigError("provider_values are required with provider_name")
-            upsert_provider(request.provider_name, request.provider_values, path=candidate_path)
+            upsert_provider(
+                request.provider_name,
+                _route_provider_catalog_writes(target, request.provider_name, request.provider_values),
+                path=candidate_path,
+            )
             # Compatibility-only normalization for configurations that still
             # contain the retired top-level selection. New configurations and
             # Runtime admission never consult these fields.
@@ -309,7 +320,12 @@ def _build_candidate(
                     enabled_models = _enabled_provider_models(active_provider)
                     has_explicit_catalog = bool(
                         active_provider is not None
-                        and (active_provider.models_file or active_provider.models or active_provider.model_configs)
+                        and (
+                            active_provider.models_file
+                            or active_provider.user_models_file
+                            or active_provider.models
+                            or active_provider.model_configs
+                        )
                     )
                     if has_explicit_catalog and active_model not in enabled_models:
                         fallback_provider = request.provider_name
@@ -379,12 +395,27 @@ def _build_candidate(
                 require_credentials=False,
             )
         changed_provider = config.providers.get(request.provider_name) if request.provider_name else None
-        candidate_model_files = (
-            ((request.provider_name, changed_provider.models_file, (candidate_path.parent / changed_provider.models_file).read_text(encoding="utf-8")),)
-            if request.provider_name is not None and changed_provider is not None and changed_provider.models_file is not None
-            else ()
-        )
-        return candidate_path.read_text(encoding="utf-8"), config, resolved, candidate_model_files
+        candidate_model_files: list[tuple[str, str, str, str]] = []
+        if request.provider_name is not None and changed_provider is not None:
+            # A Provider owns up to two catalog files: the product-owned file
+            # that the bootstrap regenerates and the user-owned overlay that
+            # OpenDrSai never rewrites on its own. Both have to be committed so
+            # a save never leaves the pointers and the files out of sync.
+            for field in ("models_file", "user_models_file"):
+                relative = getattr(changed_provider, field, None)
+                if not isinstance(relative, str) or not relative.strip():
+                    continue
+                candidate_file = _models_file_path(candidate_path, relative)
+                if not candidate_file.is_file():
+                    continue
+                text = candidate_file.read_text(encoding="utf-8")
+                current_file = _models_file_path(target, relative)
+                if current_file.is_file() and current_file.read_text(encoding="utf-8") == text:
+                    # Unchanged files are left alone: no pointless rewrite and
+                    # no spurious entry in the rollback set.
+                    continue
+                candidate_model_files.append((request.provider_name, field, relative.strip(), text))
+        return candidate_path.read_text(encoding="utf-8"), config, resolved, tuple(candidate_model_files)
 
 
 def _models_file_path(config_path: Path, models_file: str) -> Path:
@@ -393,7 +424,7 @@ def _models_file_path(config_path: Path, models_file: str) -> Path:
     try:
         target.relative_to(root)
     except ValueError as exc:
-        raise ConfigError("models_file must stay inside the config directory") from exc
+        raise ConfigError("Model configuration file must stay inside the config directory") from exc
     return target
 
 
@@ -406,3 +437,85 @@ def _enabled_provider_models(provider: object) -> tuple[str, ...]:
         model_id for model_id in models
         if getattr(configs.get(model_id), "enabled", True)
     )
+
+
+def _route_provider_catalog_writes(
+    config_path: Path,
+    provider_name: str,
+    values: Mapping[str, object],
+) -> Mapping[str, object]:
+    """Keep user edits of a product-owned Provider out of its product catalog.
+
+    ``models`` means "the Provider's own catalog file". For the Providers
+    OpenDrSai ships that file is product-owned and regenerated from
+    ``model_defaults`` on every launch, so anything a user stored there would
+    silently vanish. Product entries therefore only contribute a ``disabled``
+    kill switch, and everything else lands in ``user_models`` -- the
+    ``provider_<name>.local.toml`` overlay OpenDrSai never rewrites.
+
+    Configurations written before the file split keep their old behaviour
+    because their Provider is not product-owned, and the desktop bootstrap
+    writes the product file through :func:`upsert_provider` directly, never
+    through this transactional commit path.
+    """
+    if provider_name not in PRODUCT_PROVIDER_IDS:
+        return values
+    models = values.get("models")
+    if models is None:
+        return values
+    current = load_user_config(config_path).providers.get(provider_name)
+    current_configs = getattr(current, "model_configs", None) or {}
+    product_ids = {
+        model_id
+        for model_id, config in current_configs.items()
+        if getattr(config, "origin", None) == "product"
+    }
+    user_models: object
+    disabled: list[str] | None = None
+    if isinstance(models, Mapping):
+        uploaded: dict[str, object] = {}
+        disabled = []
+        for raw_model_id, definition in models.items():
+            if not isinstance(raw_model_id, str) or not raw_model_id.strip():
+                continue
+            model_id = raw_model_id.strip()
+            if model_id in product_ids:
+                # A built-in model cannot be redefined: Product stays
+                # authoritative so upgrades keep flowing. Switching it off is
+                # the one thing a user may express, and it is reversible.
+                if isinstance(definition, Mapping) and definition.get("enabled") is False:
+                    disabled.append(model_id)
+                continue
+            uploaded[model_id] = definition
+        user_models = uploaded
+    elif isinstance(models, (list, tuple)):
+        # Legacy id-only payloads carry no enable flags, so the existing kill
+        # switch is left alone (the writer preserves it when the key is absent).
+        user_models = [
+            model_id.strip()
+            for model_id in models
+            if isinstance(model_id, str)
+            and model_id.strip()
+            and model_id.strip() not in product_ids
+        ]
+    else:
+        return values
+    routed = {key: value for key, value in values.items() if key != "models"}
+    if not user_models and not disabled and not _overlay_exists(config_path, current):
+        # Nothing user-owned to store and no overlay to empty: skip the write
+        # entirely instead of materialising an empty overlay file.
+        return routed
+    routed["user_models"] = user_models
+    if disabled is not None:
+        routed["disabled_models"] = disabled
+    return routed
+
+
+def _overlay_exists(config_path: Path, provider: object) -> bool:
+    relative = getattr(provider, "user_models_file", None)
+    if not isinstance(relative, str) or not relative.strip():
+        return False
+    try:
+        return _models_file_path(config_path, relative).is_file()
+    except ConfigError:
+        return False

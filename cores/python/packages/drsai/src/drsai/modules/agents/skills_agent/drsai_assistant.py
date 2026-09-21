@@ -14,6 +14,7 @@ from typing import (
     # TYPE_CHECKING,
     )
 import json, re, uuid, shutil
+import base64, io, zipfile
 import asyncio, traceback
 from pydantic import BaseModel
 from pathlib import Path
@@ -129,6 +130,10 @@ _DESKTOP_READ_ONLY_TOOLS = {
     "regression_preflight", "regression_history", "regression_get", "regression_events",
 }
 _DESKTOP_LOCAL_WRITE_TOOLS = {"write", "edit", "TodoWrite", "UpdateUserConfig"}
+# Host-owned side effects: always injected by Desktop gateway; user already
+# authorized image generation by selecting an image_generation_model / asking
+# to draw. Must not fall through to external_write+required (no approval UI).
+_DESKTOP_HOST_SIDE_EFFECT_TOOLS = {"deliver_artifact", "image_generation", "image_edit"}
 _DESKTOP_CONDITIONAL_TOOLS = {
     "exec", "exec_background", "task_kill",
     "regression_start", "regression_cancel",
@@ -152,6 +157,12 @@ def _desktop_execution_metadata(name: str, executor_id: str, *, desktop_mode: bo
     if name in _DESKTOP_READ_ONLY_TOOLS:
         risk, approval = "read_only", "none"
     elif name in _DESKTOP_LOCAL_WRITE_TOOLS:
+        risk, approval = "local_write", "none"
+    elif name in _DESKTOP_HOST_SIDE_EFFECT_TOOLS:
+        # Kernel forbids external_write/sensitive with approval_mode=none
+        # (execution_tool_approval_policy_drift). Host-owned image tools write
+        # workspace artifacts after the user already chose image_generation_model;
+        # treat like deliver_artifact — local_write + none, no approval UI.
         risk, approval = "local_write", "none"
     elif name in _DESKTOP_CONDITIONAL_TOOLS:
         risk, approval = "sensitive", "conditional"
@@ -185,10 +196,22 @@ def _desktop_execution_metadata(name: str, executor_id: str, *, desktop_mode: bo
 
 
 def _desktop_tool_error_code(value: Any) -> str:
+    code = getattr(value, "code", None)
+    if isinstance(code, str) and code.strip():
+        return code.strip()
     status = getattr(value, "status_code", None)
     if isinstance(status, int) and 400 <= status <= 599:
         return f"http_{status}"
     text = str(getattr(value, "content", value)).lower()
+    for known in (
+        "image_model_unconfigured", "image_model_unavailable", "model_unauthorized",
+        "image_operation_unsupported", "image_operation_protocol_unsupported",
+        "image_prompt_invalid", "image_size_unsupported", "image_provider_timeout",
+        "image_provider_rejected", "image_provider_invalid_response",
+        "side_effect_outcome_unknown", "run_cancelled",
+    ):
+        if known in text:
+            return known
     for status_code in (400, 401, 403, 408, 429, 500, 502, 503, 504):
         if str(status_code) in text:
             return f"http_{status_code}"
@@ -428,7 +451,7 @@ class DrSaiAssistant(DrSaiAgent):
         sub_agent_config: Dict = {},
         max_agent_concurrent: int = 10,
         # task loop and memory
-        max_turn_count: int | None = 1_000,
+        max_turn_count: int | None = 1_000_000,
         # Tool-loop safety ceilings. Defaults preserve desktop behavior; raise
         # for non-desktop surfaces (worker/console) that need longer loops or
         # higher parallelism. Actual loop bound = min(max_turn_count, max_tool_rounds_ceiling).
@@ -682,15 +705,17 @@ class DrSaiAssistant(DrSaiAgent):
         # === todo manager ===
         self._todo_manager = TodoManager()
         self._todo_tools = [get_todo_manager_tool()]
-        self._regression_tools = get_regression_read_tools()
-        from .managers.regression_manager import RegressionManager
-        self._regression_manager = RegressionManager(
-            self._work_dir,
-            workspace_resolver=lambda: (
-                getattr(self, "_runtime_workspace_path", None) or work_dir
-            ),
-            workspace_id_resolver=lambda: getattr(self, "_runtime_workspace_id", None),
-        )
+        # NOTE: regression_* tools disabled on request. Re-enable by restoring
+        # the three blocks tagged "regression tools disabled".
+        # self._regression_tools = get_regression_read_tools()
+        # from .managers.regression_manager import RegressionManager
+        # self._regression_manager = RegressionManager(
+        #     self._work_dir,
+        #     workspace_resolver=lambda: (
+        #         getattr(self, "_runtime_workspace_path", None) or work_dir
+        #     ),
+        #     workspace_id_resolver=lambda: getattr(self, "_runtime_workspace_id", None),
+        # )
 
         # === scheduled task manager ===
         # 注意: task_manager 实例会在 run.py 中创建并注入到 app._task_manager
@@ -836,17 +861,30 @@ class DrSaiAssistant(DrSaiAgent):
             ) -> str:
                 """Persistent curated memory across sessions.
 
-                ``MEMORY.md`` is your agent notes — environment facts, conventions,
-                things learned about the project. Entries are injected into the
-                system prompt at session start. Mid-session writes update the file
-                but NOT the live prompt (preserves prefix cache — next session
-                will pick up the latest content).
+                Use this for durable facts worth carrying into future sessions:
+                user preferences and working style, non-obvious project
+                conventions, the root cause of a tricky bug, and user feedback or
+                corrections. Skip trivial reads, routine tool calls, and raw code
+                — reference a file path instead of pasting it.
+
+                Entry format:
+                ``[YYYY-MM-DD] Title: one-line. Files: path1, path2. Fix: brief.``
+                Keep each entry under 200 chars.
+
+                ``MEMORY.md`` is injected into the system prompt at session start.
+                Mid-session writes update the file but NOT the live prompt
+                (preserves prefix cache — next session will pick up the latest
+                content). Never store secrets. Prefer one entry per topic; merge
+                near-duplicates rather than appending a second one. After saving
+                a note, tell the user.
 
                 ``action`` selects the operation:
                   - ``add``: append a new entry to MEMORY.md. ``content`` required.
                   - ``replace``: find an entry containing ``old_text`` and replace it with ``content``. Both required.
                   - ``remove``: delete the entry containing ``old_text``. ``old_text`` required.
-                  - ``read``: list current entries with usage stats.
+                  - ``read``: list current entries with usage stats. Run this
+                    before ``add`` to check for an entry you should update
+                    instead, and when MEMORY.md is near its limit.
 
                 Stores are bounded (MEMORY.md ≤ 2200 chars). Failed mutations return
                 an error JSON with the current usage.
@@ -1204,8 +1242,9 @@ class DrSaiAssistant(DrSaiAgent):
             # bundled repository, even on refresh or restart.
             deleted_skills: set[str] = set()
             try:
-                from drsai.backend.skills_api import _load_deleted_skills
-                deleted_skills = _load_deleted_skills()
+                from drsai.backend.desktop_gateway._skills_store import load_deleted_skills
+
+                deleted_skills = load_deleted_skills()
             except Exception:
                 pass
 
@@ -1589,6 +1628,84 @@ class DrSaiAssistant(DrSaiAgent):
 
         return installed_names
 
+    def _install_inline_skills(
+        self,
+        inline_skills: List[Dict[str, Any]],
+    ) -> List[str]:
+        """Install Desktop inline skill packages into the user's skills_dir.
+
+        Desktop remote agents cannot reach the local gateway, so the renderer
+        transfers the complete skill package inside the request metadata
+        (``skills`` = ``[{id, source, name, zip_base64, content?}]``):
+
+        - ``zip_base64`` — the full ZIP downloaded from the Skills Square
+          (``/api/skills/{slug}/download``). It is decoded and extracted
+          completely (``SKILL.md`` + ``scripts/`` / ``references/`` /
+          ``assets/``), so resource-bearing skills work end-to-end.
+        - ``content`` — SKILL.md text only; fallback for md-only square
+          entries or when the ZIP download failed on the renderer side.
+
+        Returns the list of installed skill names (for the user notification).
+        """
+        target_skills_dir = self._user_profile_manager.skills_dir
+        target_skills_dir.mkdir(parents=True, exist_ok=True)
+
+        installed_names: List[str] = []
+        for item in inline_skills or []:
+            if not isinstance(item, dict):
+                continue
+            slug = str(item.get("id") or item.get("slug") or "").strip()
+            if not slug:
+                continue
+            name = str(item.get("name") or slug).strip() or slug
+            dst_dir = target_skills_dir / slug
+            try:
+                zip_base64 = item.get("zip_base64")
+                if isinstance(zip_base64, str) and zip_base64.strip():
+                    payload = zip_base64.strip()
+                    if payload.startswith("data:"):
+                        payload = payload.split(",", 1)[-1]
+                    raw_zip = base64.b64decode(payload, validate=True)
+                    with zipfile.ZipFile(io.BytesIO(raw_zip)) as zf:
+                        prefix = _detect_zip_prefix(zf)
+                        dst_dir.mkdir(parents=True, exist_ok=True)
+                        for member in zf.namelist():
+                            if member.endswith("/"):
+                                continue
+                            rel = member
+                            if prefix and rel.startswith(prefix):
+                                rel = rel[len(prefix):].lstrip("/")
+                            if not rel:
+                                continue
+                            out_path = dst_dir / rel
+                            out_path.parent.mkdir(parents=True, exist_ok=True)
+                            out_path.write_bytes(zf.read(member))
+                    if (dst_dir / "SKILL.md").exists():
+                        installed_names.append(name)
+                        logger.info(
+                            f"[remote-skills] installed inline skill package '{name}' "
+                            f"(slug={slug}, files={len(zf.namelist())}) -> {dst_dir}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[remote-skills] inline zip for '{slug}' contained no SKILL.md; removing dir"
+                        )
+                        shutil.rmtree(dst_dir, ignore_errors=True)
+                    continue
+
+                content = item.get("content")
+                if isinstance(content, str) and content.strip():
+                    dst_dir.mkdir(parents=True, exist_ok=True)
+                    (dst_dir / "SKILL.md").write_text(content, encoding="utf-8")
+                    installed_names.append(name)
+                    logger.info(
+                        f"[remote-skills] installed inline skill '{name}' (slug={slug}, SKILL.md only) -> {dst_dir}"
+                    )
+            except Exception as e:
+                logger.error(f"[remote-skills] failed to install inline skill '{slug}': {e}")
+                shutil.rmtree(dst_dir, ignore_errors=True)
+        return installed_names
+
     async def _install_attached_skills_from_task(
         self,
         task: str | BaseChatMessage | Sequence[BaseChatMessage] | None,
@@ -1600,6 +1717,7 @@ class DrSaiAssistant(DrSaiAgent):
         """
         skill_proxy = None
         attached_skills = None
+        inline_skills: List[Dict[str, Any]] = []
         target_msg = None
 
         if isinstance(task, BaseChatMessage):
@@ -1612,7 +1730,36 @@ class DrSaiAssistant(DrSaiAgent):
                     if sp and aks:
                         skill_proxy = sp
                         attached_skills = aks
+                    raw_inline = msg.metadata.get("skills")
+                    if raw_inline:
+                        try:
+                            decoded = (
+                                json.loads(raw_inline)
+                                if isinstance(raw_inline, str)
+                                else raw_inline
+                            )
+                            if isinstance(decoded, list):
+                                inline_skills = [
+                                    item for item in decoded if isinstance(item, dict)
+                                ]
+                        except (TypeError, ValueError):
+                            logger.warning(
+                                "[remote-skills] could not decode 'skills' metadata; skipping inline skills"
+                            )
                     target_msg = msg  # last message gets the notification
+        # Inline content protocol (Desktop square-skill): entries carrying
+        # ``content`` are written directly into skills_dir without any
+        # download — remote workers cannot reach the Desktop gateway.
+        if inline_skills:
+            try:
+                installed_inline = self._install_inline_skills(inline_skills)
+                if installed_inline and target_msg is not None:
+                    names_text = "、".join(installed_inline)
+                    target_msg.content = (target_msg.content or "") + (
+                        "\n\n已为你安装以下技能（可通过 Skill 工具调用）：" + names_text
+                    )
+            except Exception as e:
+                logger.error(f"Error installing inline skills: {e}")
         if not skill_proxy or not attached_skills:
             return
         try:
@@ -1821,7 +1968,8 @@ class DrSaiAssistant(DrSaiAgent):
             skills_loader = self._cached_skills_loader
 
             # manager ToolSchema
-            manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools+self._scheduled_task_tools+self._regression_tools
+            # regression tools disabled: self._regression_tools removed
+            manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools+self._scheduled_task_tools
 
             # count the number of tools (only for DrSaiChatCompletionContext which has _tool_schema)
             if hasattr(self._model_context, '_tool_schema'):
@@ -2903,29 +3051,30 @@ class DrSaiAssistant(DrSaiAgent):
                         is_error=True,
                     ))
 
-            elif tool_name in _REGRESSION_READ_TOOL_NAMES | _REGRESSION_EXECUTION_TOOL_NAMES:
-                try:
-                    result_content = self._regression_manager.execute(tool_name, arguments)
-                    exec_results.append(FunctionExecutionResult(
-                        content=result_content,
-                        name=tool_name,
-                        call_id=call_id,
-                        is_error=False,
-                    ))
-                    yield AgentLogEvent(
-                        title=f"Reading regression data: {tool_name}",
-                        source=agent_name,
-                        content=json.dumps(arguments, ensure_ascii=False),
-                        content_type="tools",
-                    )
-                except Exception as e:
-                    logger.exception(f"Error executing {tool_name}: {e}")
-                    exec_results.append(FunctionExecutionResult(
-                        content=json.dumps({"error": {"code": "regression_tool_failed", "message": str(e)}}, ensure_ascii=False),
-                        name=tool_name,
-                        call_id=call_id,
-                        is_error=True,
-                    ))
+            # regression tools disabled: execution branch removed
+            # elif tool_name in _REGRESSION_READ_TOOL_NAMES | _REGRESSION_EXECUTION_TOOL_NAMES:
+            #     try:
+            #         result_content = self._regression_manager.execute(tool_name, arguments)
+            #         exec_results.append(FunctionExecutionResult(
+            #             content=result_content,
+            #             name=tool_name,
+            #             call_id=call_id,
+            #             is_error=False,
+            #         ))
+            #         yield AgentLogEvent(
+            #             title=f"Reading regression data: {tool_name}",
+            #             source=agent_name,
+            #             content=json.dumps(arguments, ensure_ascii=False),
+            #             content_type="tools",
+            #         )
+            #     except Exception as e:
+            #         logger.exception(f"Error executing {tool_name}: {e}")
+            #         exec_results.append(FunctionExecutionResult(
+            #             content=json.dumps({"error": {"code": "regression_tool_failed", "message": str(e)}}, ensure_ascii=False),
+            #             name=tool_name,
+            #             call_id=call_id,
+            #             is_error=True,
+            #         ))
 
             elif tool_name == "TodoWrite":
                 # TodoWrite tool handling
@@ -3261,9 +3410,11 @@ class DrSaiAssistant(DrSaiAgent):
                     exec_results.append(result)
                 except Exception as e:
                     logger.exception(f"Error executing tool {tool_name}: {e}")
-                    error = classify_tool_error(_desktop_tool_error_code(e), registry_record["risk"])
+                    code = _desktop_tool_error_code(e)
+                    error = classify_tool_error(code, registry_record["risk"])
+                    message = getattr(e, "message", None) or str(e)
                     exec_results.append(FunctionExecutionResult(
-                        content=f"Error: {str(e)}\nAction: {error['actionable']}",
+                        content=f"Error[{code}]: {message}\nAction: {error['actionable']}",
                         name=tool_name,
                         call_id=call_id,
                         is_error=True,
@@ -3533,7 +3684,7 @@ class DrSaiAssistant(DrSaiAgent):
             name="Remote_Subagent",
             description=cfg.get("description", ""),
             model_remote_configs={
-                "url": remote_configs.get("url", "https://aiapi.ihep.ac.cn/apiv2"),
+                "url": remote_configs.get("url", "https://ddf.ihep.ac.cn/apiv2"),
                 "api_key": self._model_client._client.api_key if self._model_client else None,
                 "name": remote_configs.get("name", sub_agent_name),
             },
@@ -3927,7 +4078,7 @@ class DrSaiAssistant(DrSaiAgent):
                     output_content_type=output_content_type,)
             elif sub_agent_type == "HepAIWorkerAgent":
                 model_remote_configs = sub_agent.get("model_remote_configs")
-                url = model_remote_configs.get("url", "https://aiapi.ihep.ac.cn/apiv2")
+                url = model_remote_configs.get("url", "https://ddf.ihep.ac.cn/apiv2")
                 name = model_remote_configs.get("name")
                 # 使用原始 model_client 获取 api_key,因为这里只是读取配置,不会造成关闭问题
                 api_key = model_client._client.api_key if model_client else None

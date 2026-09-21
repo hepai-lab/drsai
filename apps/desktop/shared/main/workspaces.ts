@@ -18,7 +18,12 @@ import {
 } from "../api/workspaceDefaults";
 import { DRSAI_HOME } from "./paths";
 import { backupLegacyWorkspaceDataOnce, migrateLegacyWorkspaceRecords, migrateWorkspaceToAuthoritativeId, recordWorkspaceIdMigration } from "./workspaceMigrations";
-import { LocalRuntimeClient } from "./runtimeClient";
+import {
+  acquireLocalRuntimeClientLease,
+  acquireLocalRuntimeClientLeaseIfAvailable,
+  type LocalRuntimeClient,
+  type RuntimeClientLease,
+} from "./runtimeClient";
 import { RemoteProtocolError } from "../api/remoteSshProtocol";
 import { isRemoteAcceptanceWorkspace } from "./remoteWorkspaceRestorePolicy";
 import { replaceFileSafely } from "./atomicFileReplace";
@@ -190,10 +195,16 @@ async function performWorkspaceUpdate(request: UpdateWorkspaceRequest): Promise<
   }
   const now = new Date().toISOString();
   if (request.name !== undefined && request.name !== existing.name && existing.location !== "remote") {
+    let renameLease: RuntimeClientLease<LocalRuntimeClient> | null = null;
     try {
-      await (await LocalRuntimeClient.connect()).updateWorkspaceDisplayName(existing.id, request.name);
+      // The Runtime client is shared with live OAEP streams; lease it for the
+      // rename so a concurrent last-reference release cannot dispose it mid-call.
+      renameLease = await acquireLocalRuntimeClientLease();
+      await renameLease.client.updateWorkspaceDisplayName(existing.id, request.name);
     } catch {
       // Persist the desktop name even while Runtime is unavailable. The next list refresh synchronizes it.
+    } finally {
+      renameLease?.release();
     }
   }
   const next = await refreshWorkspaceStatus({
@@ -214,9 +225,13 @@ async function synchronizeRuntimeWorkspaceNames(workspaces: WorkspaceProject[]):
   const local = workspaces.filter((workspace) => workspace.location !== "remote");
   const remote = workspaces.filter((workspace) => workspace.location === "remote");
   if (!local.length) return workspaces;
+  let lease: RuntimeClientLease<LocalRuntimeClient> | null = null;
   try {
-    const client = await LocalRuntimeClient.connectIfAvailable();
-    if (!client) return workspaces;
+    // Leased so the shared client cannot be disposed while the reconciliation
+    // below is paging it (open/rename calls are awaited per workspace).
+    lease = await acquireLocalRuntimeClientLeaseIfAvailable();
+    if (!lease) return workspaces;
+    const client = lease.client;
     const runtimeWorkspaces = new Map((await client.listWorkspaces(true)).map((workspace) => [workspace.workspace_id, workspace]));
     let changed = false;
     const syncedLocal = await Promise.all(local.map(async (workspace) => {
@@ -247,6 +262,8 @@ async function synchronizeRuntimeWorkspaceNames(workspaces: WorkspaceProject[]):
   } catch {
     // Workspace listing remains available if the local Runtime is not running;
     // the next healthy Runtime refresh will converge ids and names.
+  } finally {
+    lease?.release();
   }
   return workspaces;
 }
@@ -255,10 +272,11 @@ async function openWorkspaceInRuntime(
   workspacePath: string,
   displayName: string,
 ): Promise<{ workspace_id: string; path: string }> {
+  let lease: RuntimeClientLease<LocalRuntimeClient> | null = null;
   try {
-    const client = await LocalRuntimeClient.connectIfAvailable();
-    if (!client) throw new Error("Local Runtime is not running.");
-    const opened = await client.openWorkspace(workspacePath, displayName);
+    lease = await acquireLocalRuntimeClientLeaseIfAvailable();
+    if (!lease) throw new Error("Local Runtime is not running.");
+    const opened = await lease.client.openWorkspace(workspacePath, displayName);
     return { workspace_id: opened.workspace_id, path: opened.path };
   } catch {
     // Persist a local registration even when Runtime health is racing at startup.
@@ -267,6 +285,8 @@ async function openWorkspaceInRuntime(
       workspace_id: `workspace-${randomUUID()}`,
       path: workspacePath,
     };
+  } finally {
+    lease?.release();
   }
 }
 
@@ -282,13 +302,17 @@ export async function deleteWorkspace(rawId: unknown): Promise<boolean> {
   const workspaces = await readWorkspaces();
   const existing = workspaces.find((workspace) => workspace.id === rawId);
   if (existing?.location !== "remote") {
+    let closeLease: RuntimeClientLease<LocalRuntimeClient> | null = null;
     try {
-      await (await LocalRuntimeClient.connect()).closeWorkspace(rawId);
+      closeLease = await acquireLocalRuntimeClientLease();
+      await closeLease.client.closeWorkspace(rawId);
     } catch (error) {
       // 404 means the workspace is not registered on the gateway side (e.g.
       // it was created locally but never opened, or the gateway was reset).
       // This is not an error — proceed to remove the local record.
       if (!(error instanceof RemoteProtocolError && error.status === 404)) throw error;
+    } finally {
+      closeLease?.release();
     }
   }
   const next = workspaces.filter((workspace) => workspace.id !== rawId);

@@ -273,8 +273,9 @@ def _setup_skills_install(rid, params: dict) -> dict:
     # the ``selected`` list from a stale setup flow.
     deleted_skills: set[str] = set()
     try:
-        from drsai.backend.skills_api import _load_deleted_skills
-        deleted_skills = _load_deleted_skills(user_id)
+        from drsai.backend.desktop_gateway._skills_store import load_deleted_skills
+
+        deleted_skills = load_deleted_skills(user_id)
     except Exception:
         pass
 

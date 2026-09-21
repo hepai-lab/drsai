@@ -354,6 +354,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:diagnostics-record", event),
   getDiagnosticSnapshot: (query: DiagnosticQuery = {}) =>
     ipcRenderer.invoke("desktop:diagnostics-snapshot", query),
+  getRedactedDiagnosticTrace: (traceId: string) =>
+    ipcRenderer.invoke("desktop:diagnostics-trace", traceId),
   clearDiagnostics: () => ipcRenderer.invoke("desktop:diagnostics-clear"),
   exportDiagnostics: () => ipcRenderer.invoke("desktop:diagnostics-export"),
   onDiagnosticEvent: (callback: (event: DiagnosticEvent) => void): (() => void) => {
@@ -902,6 +904,23 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:gfs-download-to-disk", request),
   gfsDelete: (request: { path: string }): Promise<{ path: string }> =>
     ipcRenderer.invoke("desktop:gfs-delete", request),
+  gfsMkdir: (request: {
+    parentPath?: string;
+    name: string;
+  }): Promise<{ path: string; name: string }> =>
+    ipcRenderer.invoke("desktop:gfs-mkdir", request),
+  gfsRename: (request: {
+    path: string;
+    newName: string;
+    isDir?: boolean;
+  }): Promise<{ path: string; name: string }> =>
+    ipcRenderer.invoke("desktop:gfs-rename", request),
+  gfsMove: (request: {
+    sourcePath: string;
+    targetDir?: string;
+    isDir?: boolean;
+  }): Promise<{ path: string; name: string }> =>
+    ipcRenderer.invoke("desktop:gfs-move", request),
   gfsShareUrl: (request: {
     path: string;
     ttlMinutes?: number;
@@ -941,7 +960,7 @@ const api: DesktopApi = {
   }): Promise<{
     ok: boolean;
     configured: boolean;
-    enabled?: boolean;
+    enabled: boolean;
     needsSetup: boolean;
     mode: string;
     bucket?: string;
@@ -1092,6 +1111,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:save-api-key", apiKey),
   pickFiles: () => ipcRenderer.invoke("desktop:pick-files"),
   pickFolder: () => ipcRenderer.invoke("desktop:pick-folder"),
+  readAttachmentDataUrl: (path: string): Promise<import("../api/desktopApi").ReadAttachmentDataUrlResult> =>
+    ipcRenderer.invoke("desktop:read-attachment-data-url", path),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   getWorkspaceContextOverview: (
     workspacePath: string,

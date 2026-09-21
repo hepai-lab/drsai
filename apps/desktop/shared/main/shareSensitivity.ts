@@ -1,11 +1,11 @@
 import { createHash } from "crypto";
 import type {
-  DesktopShareSensitiveAction,
+  DesktopShareSensitiveAction as _DesktopShareSensitiveAction,
   DesktopShareSensitiveFinding,
   DesktopShareSensitiveFindingKind,
   DesktopShareSensitiveResolution,
 } from "../api/desktopApi";
-import { scanSensitiveData } from "../api/sensitiveData";
+import { scanSensitiveData as _scanSensitiveData } from "../api/sensitiveData";
 
 export interface SensitiveMatch {
   findingId: string;
@@ -18,7 +18,7 @@ export interface SensitiveMatch {
   value: string;
 }
 
-export function scanSensitiveText(text: string, artifactId: string, artifactLabel: string): SensitiveMatch[] {
+export function scanSensitiveText(_text: string, _artifactId: string, _artifactLabel: string): SensitiveMatch[] {
   // [DISABLED] Sensitive text scanning disabled — returns empty array
   return [];
   /* Original logic:
@@ -56,8 +56,8 @@ export function publicSensitiveFindings(matches: SensitiveMatch[]): DesktopShare
 
 export function sanitizeSensitiveText(
   text: string,
-  matches: SensitiveMatch[],
-  resolutions: DesktopShareSensitiveResolution[],
+  _matches: SensitiveMatch[],
+  _resolutions: DesktopShareSensitiveResolution[],
 ): string {
   // [DISABLED] Sensitive text sanitization disabled — returns text unchanged
   return text;
@@ -75,8 +75,8 @@ export function sanitizeSensitiveText(
 }
 
 export function validateSensitiveResolutions(
-  findings: DesktopShareSensitiveFinding[],
-  resolutions: DesktopShareSensitiveResolution[],
+  _findings: DesktopShareSensitiveFinding[],
+  _resolutions: DesktopShareSensitiveResolution[],
 ): void {
   // [DISABLED] Sensitive resolution validation disabled — no-op (always passes)
   return;
@@ -94,7 +94,8 @@ export function validateSensitiveResolutions(
   */
 }
 
-function findingId(artifactId: string, kind: DesktopShareSensitiveFindingKind, value: string): string {
+// @ts-expect-error: kept for disabled share sensitivity feature
+function _findingId(artifactId: string, kind: DesktopShareSensitiveFindingKind, value: string): string {
   return `sensitive:${createHash("sha256").update(`${artifactId}\0${kind}\0${value}`).digest("hex").slice(0, 20)}`;
 }
 
@@ -106,7 +107,8 @@ function maskedPreview(kind: DesktopShareSensitiveFindingKind): string {
   return "[用户秘密已隐藏]";
 }
 
-function redactionLabel(kind: DesktopShareSensitiveFindingKind): string {
+// @ts-expect-error: kept for disabled share sensitivity feature
+function _redactionLabel(kind: DesktopShareSensitiveFindingKind): string {
   if (kind === "email") return "[已遮蔽邮箱]";
   if (kind === "phone") return "[已遮蔽手机号]";
   return "[已遮蔽秘密]";

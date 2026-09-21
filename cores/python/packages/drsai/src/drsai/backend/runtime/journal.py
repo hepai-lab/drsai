@@ -9,7 +9,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -96,6 +96,774 @@ def _canonical_json(value: Any) -> str:
 def _oaep_json(value: Any) -> str:
     """Encode an already-sanitized OAEP envelope without rewriting stable IDs."""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+# A ``conversation.item.delta`` Journal row is incremental by contract: it carries
+# the chunk produced by that one event and never the accumulated Item payload.
+# These keys are the accumulated projections derived from the prior Item payload;
+# storing them in every delta row copied the whole answer into each row and made
+# the Journal grow quadratically (measured: one Session reached 1.6 GiB).
+#
+# Nothing is lost by dropping them: the authoritative accumulated Item is
+# persisted once per Item in ``runtime_conversation_items``, so the read path
+# re-attaches it (``ConversationJournal._hydrate_delta_payloads``).  OAEP is
+# unaffected because OAEP delta envelopes are already delta-only and rebuild Items
+# by reducing deltas.
+DELTA_ACCUMULATED_KEYS = ("text", "content", "output", "summary", "result")
+
+# The Journal Event kind whose rows are incremental by contract: one row per
+# streamed chunk, never the accumulated Item and never a second copy of the
+# Item's Run/Session binding.
+JOURNAL_ITEM_DELTA_EVENT_KIND = "conversation.item.delta"
+
+# Upper bound for a single delta Journal row.  A delta is one chunk; a row larger
+# than this means the accumulated Item payload was passed by a caller, which would
+# reintroduce quadratic growth.  Fail closed instead of silently bloating.
+MAX_DELTA_JOURNAL_PAYLOAD_BYTES = 1 << 20
+
+# Runtime Event types whose content is owned by the canonical Conversation Item.
+# Streamed text is persisted exactly once, through ``upsert_item_in_transaction``
+# on the Item's own ``item_id``.  Mirroring the raw Runtime Event into the Journal
+# as well produced an audit row with no Item identity, which the OAEP projection
+# can only demote to a content-free ``event.session.updated``
+# (``_normalize_oaep_event_shape``).  ``RuntimeEngine.append_event`` and
+# ``append_backend_event`` therefore skip these types for ordinary writes, and
+# ``purge_legacy_event_mirrors`` deletes the rows written before that contract.
+ITEM_PROJECTED_EVENT_TYPES = frozenset(
+    {
+        "message.delta",
+        "agent.message.delta",
+        "thinking.delta",
+        "subagent.markdown",
+        "subagent.thinking",
+    }
+)
+
+
+def is_item_projected_event(event_type: str) -> bool:
+    """Return whether a Runtime Event is persisted through the Item journal only.
+
+    ``oaep.item.*`` Events are canonical Item mutations and are stored by
+    ``upsert_item_in_transaction`` with a real ``item_id``; the streaming delta
+    types carry their chunk the same way.  The mirror row these types used to get
+    could not carry Item identity, so it was pure duplication.
+    """
+    return event_type in ITEM_PROJECTED_EVENT_TYPES or event_type.startswith("oaep.item.")
+
+
+# Runtime Event types whose streamed payload is *also* persisted as a Conversation
+# Item by ``upsert_item_in_transaction`` -- the same call that stores the OAEP
+# envelope every desktop renders.  The chunk text is therefore already durable with
+# Item identity, and a Runtime Event row that repeats the Run/Session binding on top
+# of the chunk carries no information of its own.
+#
+# The row itself is *not* dropped: Run Event cursors, ``list_events`` replay, the V1
+# conversation feed and the Relay's bounded SSE buffer all read this log chunk by
+# chunk, so the payload is stored in its reduced form instead
+# (``compact_runtime_event_payload``).
+#
+# ``subagent.markdown`` / ``subagent.thinking`` are deliberately absent: they have
+# no Conversation Item projection yet, so their Runtime Event row is the only record
+# of that subagent stream and the Runtime keeps writing it.  Their payload is still
+# reduced by the same helper, which is why ``runtime_event_payload_is_item_owned``
+# covers them separately.
+ITEM_PROJECTED_RUNTIME_EVENT_TYPES = frozenset(
+    {
+        "message.delta",
+        "agent.message.delta",
+        "thinking.delta",
+        "agent.item.message.delta",
+        "agent.item.reasoning.delta",
+        "agent.item.plan.delta",
+        "agent.item.command.delta",
+        "agent.item.subtask.delta",
+        "agent.item.tool.delta",
+    }
+)
+
+
+def runtime_event_is_item_projected(event_type: str) -> bool:
+    """Return whether a Runtime Event's chunk is owned by the Conversation Item.
+
+    ``oaep.item.*`` Events are canonical Item mutations and the unified batch
+    entry point may report any of their delta flavours, so the prefix is covered
+    exactly like ``is_item_projected_event`` does for the Journal mirror.  Used by
+    ``runtime_event_payload_is_item_owned`` to decide whether a Runtime Event row
+    stores only the chunk it streams.
+    """
+    return event_type in ITEM_PROJECTED_RUNTIME_EVENT_TYPES or event_type.startswith("oaep.item.")
+
+
+# Runtime Event types whose streamed text is produced by a subagent Backend and has
+# no Conversation Item projection.  ``runtime_events`` holds the only copy of those
+# chunks, so the row stays; only its payload envelope is redundant, which is the
+# part ``compact_runtime_event_payload`` removes.
+SUBAGENT_STREAM_EVENT_TYPES = frozenset({"subagent.markdown", "subagent.thinking"})
+
+
+def runtime_event_payload_is_item_owned(event_type: str) -> bool:
+    """Return whether a Runtime Event payload is an envelope around one chunk.
+
+    These are the types that stream one chunk per Runtime Event row: the
+    Item-projected types, ``oaep.item.*`` Item mutations, and the subagent streams
+    whose chunk the Runtime Event row itself owns.  Every payload field that only
+    repeats the Run/Session binding is therefore stored again in every row, which
+    ``compact_runtime_event_payload`` removes.
+    """
+    return runtime_event_is_item_projected(event_type) or event_type in SUBAGENT_STREAM_EVENT_TYPES
+
+
+# Payload keys a streamed Runtime Event row repeats verbatim from the Run/Session it
+# belongs to.  The row already carries ``run_id``, its own sequence and its
+# ``created_at``; the Run carries the Session/Workspace/Agent identity; the Item or
+# OAEP envelope carries the backend identity.  Measured on a production Database:
+# 99% of 48 MiB of ``agent.message.delta`` payloads was these twelve keys repeated
+# once per token, while the chunk text those rows exist for was 209 KiB in total.
+RUNTIME_EVENT_BINDING_KEYS = frozenset(
+    {
+        "run_id",
+        "session_id",
+        "workspace_id",
+        "runtime_id",
+        "instance_id",
+        "workspace_runtime_id",
+        "agent_backend_runtime_id",
+        "correlation_id",
+        "agent_definition_id",
+        "agent_definition_version",
+        "input_resource_count",
+        "parent_run_id",
+    }
+)
+
+
+def compact_runtime_event_payload(event_type: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the stored form of a Runtime Event payload.
+
+    A streamed chunk is stored one row per chunk, so the chunk text plus whatever
+    describes *that chunk* (``subagent_id``/``source``/``segment_id``, Item or
+    approval identity) is the whole payload; the Run/Session binding keys are
+    dropped because every reader resolves them from the Run the row points at.  The
+    Event still carries type, sequence, ``created_at`` and its text, which is what
+    ``list_events`` replay, the Relay's bounded SSE buffer and the V1 conversation
+    feed consume.
+
+    Non-stream Events keep their payload unchanged: they are written once per Run
+    transition and their fields are not repeated per chunk.
+    """
+    compact = {str(key): value for key, value in payload.items()}
+    if not runtime_event_payload_is_item_owned(event_type):
+        return compact
+    return {key: value for key, value in compact.items() if key not in RUNTIME_EVENT_BINDING_KEYS}
+
+
+def compact_delta_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the incremental (delta-only) form of a Conversation Item payload.
+
+    The accumulated keys (``text``/``content``/``output``/``summary``/``result``)
+    are removed while the delta chunk and every structural field are preserved, so
+    the row keeps carrying the information a consumer needs to advance the Item.
+    """
+    compact = {
+        str(key): value
+        for key, value in payload.items()
+        if str(key) not in DELTA_ACCUMULATED_KEYS
+    }
+    if not isinstance(compact.get("delta"), str):
+        # ``delta`` is the incremental field consumers read.  Keep it explicit so
+        # OAEP delta projection and legacy clients never fall back to a stale
+        # accumulated key that is intentionally absent from the row.
+        compact["delta"] = ""
+    return compact
+
+
+# A ``conversation.item.delta`` row repeats the Run/Session binding that its own
+# Conversation Item already owns in ``runtime_conversation_items``.  Measured on a
+# production Database (73,307 delta rows): 44.7 MiB of 70.0 MiB of Journal delta
+# payloads were these twelve keys written again once per chunk, against 209 KiB of
+# chunk text for the whole answer.  The binding is not lost — the Item row keeps it
+# — so the delta row stores only its chunk.  Unlike ``runtime_events`` (whose rows
+# have no Item of their own and drop the binding unconditionally), the Journal has
+# the canonical Item payload at hand, so a key is dropped only when the Item
+# reproduces it verbatim.  ``created_at``/``updated_at``/``revision`` stay: they are
+# per-row, not the Item's.
+def compact_journal_item_payload(
+    event_kind: str,
+    payload: Mapping[str, Any],
+    *,
+    canonical: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the stored form of a Journal Item Event's inner payload.
+
+    ``conversation.item.delta`` rows are incremental: they carry the chunk this
+    Event produced, never a second copy of the Item's Run/Session binding.  A key is
+    dropped only when the canonical Item payload reproduces it with the same value,
+    so the reduction is lossless by construction rather than by an assumption about
+    what callers pass.
+
+    Non-delta Item Events are returned unchanged: they are written once per Item
+    revision and their fields are not repeated per chunk.  OAEP is unaffected
+    either way — ``oaep.project_event`` projects a delta envelope from the chunk's
+    own fields (``delta``/``delta_kind``/``segment_id``/``stream``/...), so removing
+    the binding cannot change the wire format.
+    """
+    compact = {str(key): value for key, value in payload.items()}
+    if str(event_kind) != JOURNAL_ITEM_DELTA_EVENT_KIND or not isinstance(
+        canonical, Mapping
+    ):
+        return compact
+    for key in RUNTIME_EVENT_BINDING_KEYS:
+        if key in compact and key in canonical and canonical[key] == compact[key]:
+            del compact[key]
+    return compact
+
+
+def hydrate_delta_binding(
+    envelope: Mapping[str, Any], canonical: Mapping[str, Any] | None
+) -> dict[str, Any]:
+    """Re-attach the Item binding ``compact_journal_item_payload`` removes.
+
+    Reader-side counterpart of the compaction: a consumer that exposes the stored
+    inner payload keeps seeing the fields the row carried before the binding was
+    removed.  Only *missing* keys are filled, so a row written before the contract,
+    or one whose binding differed from the Item's and was therefore kept, is
+    returned unchanged.  The returned mapping is a copy; the Journal row is not
+    mutated.
+    """
+    restored = dict(envelope)
+    if not isinstance(canonical, Mapping):
+        return restored
+    inner = restored.get("payload")
+    if not isinstance(inner, Mapping):
+        return restored
+    missing = {
+        key: canonical[key]
+        for key in RUNTIME_EVENT_BINDING_KEYS
+        if key in canonical and key not in inner
+    }
+    if missing:
+        restored["payload"] = {**inner, **missing}
+    return restored
+
+
+def canonical_item_payloads(
+    db: sqlite3.Connection, item_ids: Iterable[str]
+) -> dict[str, dict[str, Any]]:
+    """Return ``item_id -> accumulated payload`` for the canonical Items.
+
+    The accumulated Conversation Item is persisted exactly once per Item, so every
+    reader and maintenance pass that has to re-attach what a delta row deliberately
+    does not store resolves it here, in bounded ID batches.
+    """
+    payloads: dict[str, dict[str, Any]] = {}
+    unique = [str(item_id) for item_id in dict.fromkeys(item_ids)]
+    for offset in range(0, len(unique), 400):
+        chunk = unique[offset : offset + 400]
+        placeholders = ",".join("?" for _ in chunk)
+        for row in db.execute(
+            "SELECT item_id,payload_json FROM runtime_conversation_items "
+            f"WHERE item_id IN ({placeholders})",
+            chunk,
+        ).fetchall():
+            payloads[str(row["item_id"])] = json.loads(str(row["payload_json"]))
+    return payloads
+
+
+def ensure_journal_update_guard(db: sqlite3.Connection) -> bool:
+    """Keep the Journal append-only while allowing the maintenance escape.
+
+    ``compact`` needs to delete Journal rows and the delta repair tool needs to
+    rewrite legacy delta rows, so both run under the explicit
+    ``runtime_session_journal_maintenance`` marker.  Databases created before the
+    marker existed carry an unconditional ``no_update`` trigger; ``CREATE TRIGGER
+    IF NOT EXISTS`` cannot replace it, so upgrade it in place.  Returns whether the
+    guard had to be rewritten.
+    """
+    row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
+        ("runtime_session_journal_no_update",),
+    ).fetchone()
+    if row is not None and "runtime_session_journal_maintenance" in str(row["sql"]):
+        return False
+    db.execute("DROP TRIGGER IF EXISTS runtime_session_journal_no_update")
+    db.execute(
+        "CREATE TRIGGER IF NOT EXISTS runtime_session_journal_no_update "
+        "BEFORE UPDATE ON runtime_session_journal "
+        "WHEN NOT EXISTS ("
+        "SELECT 1 FROM runtime_session_journal_maintenance WHERE singleton=1"
+        ") "
+        "BEGIN SELECT RAISE(ABORT, 'Runtime Session Journal is append-only'); END"
+    )
+    return True
+
+
+def ensure_journal_delete_guard(db: sqlite3.Connection) -> bool:
+    """Keep the Journal append-only while allowing the maintenance escape (DELETE).
+
+    ``purge_legacy_event_mirrors`` deletes redundant Journal rows under the same
+    ``runtime_session_journal_maintenance`` marker ``compact`` and the delta repair
+    use.  Databases created before the marker existed carry an unconditional
+    ``no_delete`` trigger; ``CREATE TRIGGER IF NOT EXISTS`` cannot replace it, so
+    upgrade it in place.  Returns whether the guard had to be rewritten.
+    """
+    row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
+        ("runtime_session_journal_no_delete",),
+    ).fetchone()
+    if row is not None and "runtime_session_journal_maintenance" in str(row["sql"]):
+        return False
+    db.execute("DROP TRIGGER IF EXISTS runtime_session_journal_no_delete")
+    db.execute(
+        "CREATE TRIGGER IF NOT EXISTS runtime_session_journal_no_delete "
+        "BEFORE DELETE ON runtime_session_journal "
+        "WHEN NOT EXISTS ("
+        "SELECT 1 FROM runtime_session_journal_maintenance WHERE singleton=1"
+        ") "
+        "BEGIN SELECT RAISE(ABORT, 'Runtime Session Journal is append-only'); END"
+    )
+    return True
+
+
+def _journal_maintenance_marker(db: sqlite3.Connection, *, armed: bool) -> None:
+    """Arm or disarm the Journal maintenance escape for a repair batch.
+
+    The Journal is append-only for ordinary writers; repair rewrites existing rows,
+    which is only allowed while the same explicit marker ``compact`` uses is set.
+    """
+    if armed:
+        db.execute("INSERT OR IGNORE INTO runtime_session_journal_maintenance VALUES(1)")
+    else:
+        db.execute("DELETE FROM runtime_session_journal_maintenance WHERE singleton=1")
+
+
+def repair_legacy_delta_rows(
+    db: sqlite3.Connection,
+    *,
+    session_id: str | None = None,
+    batch_size: int = 500,
+    limit: int | None = None,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Rewrite Journal delta rows into their current incremental form.
+
+    Two generations of rows are reduced in one pass, both onto the same source: the
+    accumulated payload and the Run/Session binding are already persisted once per
+    Item in ``runtime_conversation_items``, so a delta row only has to carry its
+    chunk (``compact_delta_payload`` / ``compact_journal_item_payload``).
+
+    * Journals written before the delta-only contract stored the accumulated Item
+      payload in every ``conversation.item.delta`` row.
+    * Delta rows written before the binding contract repeated the twelve
+      ``RUNTIME_EVENT_BINDING_KEYS`` of their Item once per chunk — the largest
+      remaining Journal payload class (44.7 MiB of 70.0 MiB measured live).
+
+    Rows are scanned in ``rowid`` order and rewritten in bounded batches, so this is
+    resumable (interrupt it and run it again) and never holds the Journal in memory.
+    Run ``VACUUM`` afterwards to return the freed pages to the filesystem.  In
+    ``dry_run`` mode nothing is written and only the reclaimable volume is reported.
+
+    The Journal is append-only for ordinary writers, so ``db`` must first be
+    upgraded with ``ensure_journal_update_guard``; each batch then runs under the
+    explicit ``runtime_session_journal_maintenance`` marker and disarms it again.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be positive")
+    stats = {
+        "scanned": 0,
+        "repaired": 0,
+        "unchanged": 0,
+        "skipped_without_delta": 0,
+        "bytes_before": 0,
+        "bytes_after": 0,
+    }
+    cursor_rowid = 0
+    while True:
+        clause = "event_kind='conversation.item.delta' AND rowid>?"
+        params: list[Any] = [cursor_rowid]
+        if session_id is not None:
+            clause += " AND session_id=?"
+            params.append(session_id)
+        remaining = batch_size if limit is None else min(batch_size, limit - stats["scanned"])
+        if remaining <= 0:
+            break
+        params.append(remaining)
+        rows = db.execute(
+            "SELECT rowid,item_id,payload_json FROM runtime_session_journal "
+            f"WHERE {clause} ORDER BY rowid LIMIT ?",
+            params,
+        ).fetchall()
+        if not rows:
+            break
+        # The binding strip is gated on the canonical Item payload of this batch;
+        # the accumulated strip is not, but one lookup serves both.
+        canonical_payloads = canonical_item_payloads(
+            db, [row["item_id"] for row in rows if row["item_id"] is not None]
+        )
+        updates: list[tuple[str, int]] = []
+        for row in rows:
+            cursor_rowid = int(row["rowid"])
+            stats["scanned"] += 1
+            raw = str(row["payload_json"])
+            event_payload = json.loads(raw)
+            item_payload = (
+                event_payload.get("payload") if isinstance(event_payload, dict) else None
+            )
+            if not isinstance(item_payload, dict) or not isinstance(
+                item_payload.get("delta"), str
+            ):
+                # No field describes this chunk, so the row cannot be reduced
+                # without inventing Item content.  Leave it intact.
+                stats["skipped_without_delta"] += 1
+                continue
+            canonical = (
+                canonical_payloads.get(str(row["item_id"]))
+                if row["item_id"] is not None
+                else None
+            )
+            compact = compact_journal_item_payload(
+                JOURNAL_ITEM_DELTA_EVENT_KIND,
+                compact_delta_payload(item_payload),
+                canonical=canonical,
+            )
+            if compact == item_payload:
+                stats["unchanged"] += 1
+                continue
+            encoded = _canonical_json({**event_payload, "payload": compact})
+            stats["bytes_before"] += len(raw)
+            stats["bytes_after"] += len(encoded)
+            stats["repaired"] += 1
+            updates.append((encoded, cursor_rowid))
+        if updates and not dry_run:
+            # The Journal is append-only for ordinary writers; arm the maintenance
+            # escape for this batch and disarm it in `finally` so an interrupted run
+            # can never leave the Journal silently writable.
+            try:
+                _journal_maintenance_marker(db, armed=True)
+                db.executemany(
+                    "UPDATE runtime_session_journal SET payload_json=? WHERE rowid=?",
+                    updates,
+                )
+            finally:
+                _journal_maintenance_marker(db, armed=False)
+                db.commit()
+        if len(rows) < remaining:
+            break
+    return stats
+
+
+# A Journal row is a removable Event mirror when it has no Item identity of its
+# own, and its payload is a Runtime Event whose content the Item journal already
+# owns.  ``payload.type`` is only present on mirror rows: rows written by
+# ``upsert_item_in_transaction`` carry the Item payload directly and never set it.
+_LEGACY_EVENT_MIRROR_CLAUSE = (
+    "item_id IS NULL AND rowid>? AND ("
+    "json_extract(payload_json,'$.type') LIKE '%.delta' "
+    "OR json_extract(payload_json,'$.type') IN ('subagent.markdown','subagent.thinking')"
+    ")"
+)
+
+
+def purge_legacy_event_mirrors(
+    db: sqlite3.Connection,
+    *,
+    session_id: str | None = None,
+    batch_size: int = 500,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Delete Journal audit rows that only mirror an Item-projected Runtime Event.
+
+    Two generations of writers left the same text in the Journal twice:
+
+    * ``RuntimeEngine._reconcile_conversation_journal`` imported the whole
+      pre-Journal ``runtime_events`` table, streamed ``agent.message.delta`` and
+      ``thinking.delta`` chunks included, as ``conversation.item.delta`` rows with
+      no ``item_id``.  ``append_event`` already refuses to mirror those types,
+      precisely because the Item journal owns them.
+    * ``append_event`` mirrored ``subagent.markdown``/``subagent.thinking`` as
+      ``session.updated`` before they were recognised as Item content.
+
+    Neither row can carry Item identity, so the OAEP projection demotes both to a
+    content-free ``event.session.updated``.  The text they hold is already
+    persisted once per Item in ``runtime_conversation_items``, so the rows are
+    pure duplication.
+
+    Each removed Event id is recorded in
+    ``runtime_session_journal_compacted_runtime_events``.  That is the ledger
+    ``_reconcile_conversation_journal`` consults before importing a Runtime Event,
+    so the purge is durable even if the importer is run again.  The matching OAEP
+    envelopes and Item/Event refs are deleted in the same transaction.
+
+    A row is only removed when its payload still names a Runtime Event that
+    ``runtime_events`` holds, so the audit copy of the content survives the purge
+    and no consumer of the legacy Run/Session Event log loses anything.  Rows
+    whose source Event is already gone are reported as ``skipped_source_missing``
+    and left in place.
+
+    Rows are scanned in ``rowid`` order and deleted in bounded batches, so the pass
+    is resumable and never holds the Journal in memory.  ``dry_run`` reports the
+    reclaimable volume without writing.  The Journal is append-only for ordinary
+    writers, so ``db`` must have the maintenance escape
+    (``ensure_journal_update_guard``); each batch runs under the explicit
+    ``runtime_session_journal_maintenance`` marker and disarms it again.  Run
+    ``VACUUM`` afterwards to return the freed pages to the filesystem.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    stats = {
+        "scanned": 0,
+        "purged": 0,
+        "unmarked": 0,
+        "skipped_source_missing": 0,
+        "bytes_before": 0,
+        "oaep_events_removed": 0,
+    }
+    # ``runtime_events`` is the append-only audit log the mirrors were copied from.
+    # Its presence is asserted once; when a database legitimately has no legacy
+    # log there is nothing to compare against, so the source check is skipped.
+    retains_source_events = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_events'"
+    ).fetchone() is not None
+    cursor_rowid = 0
+    while True:
+        clause = _LEGACY_EVENT_MIRROR_CLAUSE
+        params: list[Any] = [cursor_rowid]
+        if session_id is not None:
+            clause += " AND session_id=?"
+            params.append(session_id)
+        params.append(batch_size)
+        rows = db.execute(
+            "SELECT rowid,event_id,session_id,payload_json FROM runtime_session_journal "
+            f"WHERE {clause} ORDER BY rowid LIMIT ?",
+            params,
+        ).fetchall()
+        if not rows:
+            break
+        last_rowid_in_batch = int(rows[-1]["rowid"])
+        rowids: list[int] = []
+        event_ids: list[str] = []
+        markers: list[tuple[str, str, str]] = []
+        for row in rows:
+            stats["scanned"] += 1
+            stats["bytes_before"] += len(str(row["payload_json"]))
+            payload = json.loads(str(row["payload_json"]))
+            runtime_event_id = (
+                payload.get("runtime_event_id") if isinstance(payload, dict) else None
+            )
+            if not (isinstance(runtime_event_id, str) and runtime_event_id):
+                # A mirror row always carries its source Event id.  Without it the
+                # row cannot be recorded in the compaction ledger, so leave it
+                # alone rather than risk the importer writing it back.
+                stats["unmarked"] += 1
+                continue
+            if retains_source_events and db.execute(
+                "SELECT 1 FROM runtime_events WHERE event_id=?",
+                (runtime_event_id,),
+            ).fetchone() is None:
+                # The audit copy is gone, so this Journal row may be the only
+                # surviving copy of the content.  Never trade data for space.
+                stats["skipped_source_missing"] += 1
+                continue
+            rowids.append(int(row["rowid"]))
+            event_ids.append(str(row["event_id"]))
+            markers.append((runtime_event_id, str(row["session_id"]), _now()))
+        stats["purged"] += len(rowids)
+        if rowids and not dry_run:
+            try:
+                _journal_maintenance_marker(db, armed=True)
+                db.executemany(
+                    "INSERT OR IGNORE INTO runtime_session_journal_compacted_runtime_events("
+                    "runtime_event_id,session_id,compacted_at) VALUES(?,?,?)",
+                    markers,
+                )
+                placeholders = ",".join("?" * len(rowids))
+                db.execute(
+                    f"DELETE FROM runtime_session_journal WHERE rowid IN ({placeholders})",
+                    rowids,
+                )
+                db.execute(
+                    f"DELETE FROM runtime_oaep_item_event_refs WHERE event_id IN ({placeholders})",
+                    event_ids,
+                )
+                stats["oaep_events_removed"] += db.execute(
+                    f"DELETE FROM runtime_oaep_events WHERE event_id IN ({placeholders})",
+                    event_ids,
+                ).rowcount
+            except BaseException:
+                # Never leave a half-applied batch: the ledger must not claim an
+                # Event was compacted while the row that mirrors it survives.
+                db.rollback()
+                raise
+            finally:
+                _journal_maintenance_marker(db, armed=False)
+                db.commit()
+        cursor_rowid = last_rowid_in_batch
+        if len(rows) < batch_size:
+            break
+    return stats
+
+
+# Runtime Event types whose stored payload is the reduced stream form, plus the
+# ``oaep.item.*`` Item mutations that use the same versioned prefix.
+RUNTIME_EVENT_STREAM_EVENT_TYPES = frozenset(
+    ITEM_PROJECTED_RUNTIME_EVENT_TYPES | SUBAGENT_STREAM_EVENT_TYPES
+)
+
+
+def runtime_event_stream_filter() -> tuple[str, tuple[str, ...]]:
+    """Return the SQL predicate and parameters selecting reducible stream Events."""
+    types = sorted(RUNTIME_EVENT_STREAM_EVENT_TYPES)
+    clause = (
+        f"(event_type IN ({','.join('?' for _ in types)})"
+        " OR event_type LIKE 'oaep.item.%')"
+    )
+    return clause, tuple(types)
+
+
+def ensure_runtime_event_guards(db: sqlite3.Connection) -> bool:
+    """Keep ``runtime_events`` append-only while allowing the maintenance escape.
+
+    ``compact_runtime_event_payloads`` rewrites existing rows, which the
+    append-only contract forbids for ordinary writers.  It therefore runs under the
+    explicit ``runtime_events_maintenance`` marker, exactly like the Journal's
+    repair under ``runtime_session_journal_maintenance``.  Databases created before
+    the marker existed carry unconditional ``no_update``/``no_delete`` triggers;
+    ``CREATE TRIGGER IF NOT EXISTS`` cannot replace them, so upgrade them in place.
+    Returns whether a guard had to be rewritten.
+    """
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS runtime_events_maintenance ("
+        "singleton INTEGER PRIMARY KEY CHECK(singleton=1))"
+    )
+    rewritten = False
+    for name, operation in (
+        ("runtime_events_no_update", "UPDATE"),
+        ("runtime_events_no_delete", "DELETE"),
+    ):
+        row = db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (name,)
+        ).fetchone()
+        if row is not None and "runtime_events_maintenance" in str(row[0]):
+            continue
+        db.execute(f"DROP TRIGGER IF EXISTS {name}")
+        db.execute(
+            f"CREATE TRIGGER IF NOT EXISTS {name} "
+            f"BEFORE {operation} ON runtime_events "
+            "WHEN NOT EXISTS ("
+            "SELECT 1 FROM runtime_events_maintenance WHERE singleton=1"
+            ") "
+            "BEGIN SELECT RAISE(ABORT, 'runtime events are append-only'); END"
+        )
+        rewritten = True
+    return rewritten
+
+
+def _runtime_event_maintenance_marker(db: sqlite3.Connection, *, armed: bool) -> None:
+    """Arm or disarm the Runtime Event maintenance escape for a repair batch.
+
+    ``runtime_events`` is append-only for ordinary writers; the payload compaction
+    rewrites existing rows, which is only allowed while the same explicit marker
+    ``repair_legacy_delta_rows`` uses for the Journal is set.
+    """
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS runtime_events_maintenance ("
+        "singleton INTEGER PRIMARY KEY CHECK(singleton=1))"
+    )
+    if armed:
+        db.execute("INSERT OR IGNORE INTO runtime_events_maintenance VALUES(1)")
+    else:
+        db.execute("DELETE FROM runtime_events_maintenance WHERE singleton=1")
+
+
+def compact_runtime_event_payloads(
+    db: sqlite3.Connection,
+    *,
+    batch_size: int = 500,
+    limit: int | None = None,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Reduce stored stream Event payloads to the chunk they stream.
+
+    Every ``agent.message.delta``/``thinking.delta``/``subagent.*`` row written
+    before ``compact_runtime_event_payload`` existed repeats the whole Run/Session
+    binding once per chunk.  Those fields are dropped here, in place, so historical
+    Databases shrink without touching the Event log's shape: ``run_id``,
+    ``sequence``, ``event_type``, ``created_at`` and the chunk text all stay, and
+    every reader keeps resolving identity from the Run the row points at.
+
+    Only the payload of rows whose ``event_type`` is a stream type is rewritten, and
+    a row is only written when its encoded payload is strictly smaller, so the pass
+    never trades data or space for nothing.  Rows are scanned in ``rowid`` order and
+    rewritten in bounded batches, so it is resumable and never holds the table in
+    memory.  ``dry_run`` reports the reclaimable volume without writing.  ``db`` must
+    have the maintenance escape (``ensure_runtime_event_guards``); each batch runs
+    under the explicit ``runtime_events_maintenance`` marker and disarms it again so
+    an interrupted run can never leave the log silently writable.  Run ``VACUUM``
+    afterwards to return the freed pages to the filesystem.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    stats = {
+        "scanned": 0,
+        "compacted": 0,
+        "unchanged": 0,
+        "bytes_before": 0,
+        "bytes_after": 0,
+    }
+    clause, type_params = runtime_event_stream_filter()
+    cursor_rowid = 0
+    while True:
+        remaining = batch_size if limit is None else min(batch_size, limit - stats["scanned"])
+        if remaining <= 0:
+            break
+        rows = db.execute(
+            "SELECT rowid,event_type,data_json FROM runtime_events "
+            f"WHERE {clause} AND rowid>? ORDER BY rowid LIMIT ?",
+            (*type_params, cursor_rowid, remaining),
+        ).fetchall()
+        if not rows:
+            break
+        cursor_rowid = int(rows[-1][0])
+        updates: list[tuple[str, int]] = []
+        for row in rows:
+            stats["scanned"] += 1
+            raw = str(row[2])
+            try:
+                payload = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                # A damaged payload is never rewritten; the row keeps whatever it
+                # holds so a reader can still report the corruption.
+                stats["unchanged"] += 1
+                continue
+            if not isinstance(payload, dict):
+                stats["unchanged"] += 1
+                continue
+            compact = compact_runtime_event_payload(str(row[1]), payload)
+            if compact == payload:
+                stats["unchanged"] += 1
+                continue
+            encoded = json.dumps(compact, separators=(",", ":"), sort_keys=True)
+            if len(encoded) >= len(raw):
+                stats["unchanged"] += 1
+                continue
+            stats["bytes_before"] += len(raw)
+            stats["bytes_after"] += len(encoded)
+            stats["compacted"] += 1
+            updates.append((encoded, int(row[0])))
+        if updates and not dry_run:
+            try:
+                _runtime_event_maintenance_marker(db, armed=True)
+                db.executemany("UPDATE runtime_events SET data_json=? WHERE rowid=?", updates)
+            except BaseException:
+                db.rollback()
+                raise
+            finally:
+                _runtime_event_maintenance_marker(db, armed=False)
+                db.commit()
+        if len(rows) < remaining:
+            break
+    return stats
 
 
 class SessionCursorExpired(ValueError):
@@ -362,6 +1130,9 @@ class RuntimeConversationJournal:
                 );
                 CREATE TRIGGER IF NOT EXISTS runtime_session_journal_no_update
                   BEFORE UPDATE ON runtime_session_journal
+                  WHEN NOT EXISTS (
+                    SELECT 1 FROM runtime_session_journal_maintenance WHERE singleton=1
+                  )
                   BEGIN SELECT RAISE(ABORT, 'Runtime Session Journal is append-only'); END;
                 CREATE TRIGGER IF NOT EXISTS runtime_session_journal_no_delete
                   BEFORE DELETE ON runtime_session_journal
@@ -372,6 +1143,7 @@ class RuntimeConversationJournal:
                 """
             )
             inspection_columns_added = self._ensure_oaep_inspection_columns(db)
+            ensure_journal_update_guard(db)
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runtime_oaep_items_run_summary "
                 "ON runtime_oaep_items(run_id,item_type,item_status,run_sequence,item_id)"
@@ -1134,6 +1906,37 @@ class RuntimeConversationJournal:
             "removed_events": removed_events,
         }
 
+    def repair_legacy_delta_rows(
+        self,
+        session_id: str | None = None,
+        *,
+        batch_size: int = 500,
+        limit: int | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, int]:
+        """Reclaim space from delta rows written before the delta-only contract.
+
+        Older Journals stored the accumulated Item payload in every
+        ``conversation.item.delta`` row, which grew quadratically.  This rewrites
+        those rows in place; the accumulated Item remains available through
+        ``runtime_conversation_items`` and the read path re-attaches it.  Safe to
+        interrupt and re-run.  Call it with the Runtime stopped.
+        """
+        if session_id is not None:
+            with self._connect() as db:
+                self._session(db, session_id)
+        with self._lock, self._connect() as db:
+            stats = repair_legacy_delta_rows(
+                db,
+                session_id=session_id,
+                batch_size=batch_size,
+                limit=limit,
+                dry_run=dry_run,
+            )
+        if not dry_run and stats["repaired"]:
+            self._changed.notify_all()
+        return stats
+
     def upsert_item_in_transaction(
         self,
         db: sqlite3.Connection,
@@ -1149,6 +1952,7 @@ class RuntimeConversationJournal:
         source_message_id: str | None = None,
         event_kind: str | None = None,
         event_payload_override: dict[str, Any] | None = None,
+        dedupe_key: str | None = None,
         created_at: str | None = None,
         updated_at: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], bool]:
@@ -1170,6 +1974,38 @@ class RuntimeConversationJournal:
         encoded = _canonical_json(payload)
         session = self._session(db, session_id)
         self._validate_run(db, session_id, run_id)
+        if dedupe_key is not None:
+            # The Item journal now carries the idempotency a Runtime Event row
+            # used to provide. A retry arrives with the same key but with a
+            # revision derived from the Item state, so the key -- not the
+            # revision -- decides whether this is the same event.
+            if not dedupe_key or len(dedupe_key) > 500:
+                raise ValueError("Session Event dedupe key is invalid")
+            deduped = db.execute(
+                "SELECT * FROM runtime_session_journal WHERE session_id=? AND dedupe_key=?",
+                (session_id, dedupe_key),
+            ).fetchone()
+            if deduped is not None:
+                if (
+                    str(deduped["item_id"] or "") != item_id
+                    or (deduped["run_id"] or None) != run_id
+                ):
+                    raise ValueError(
+                        "Session Event dedupe key is bound to different semantics"
+                    )
+                deduped_item = db.execute(
+                    "SELECT * FROM runtime_conversation_items WHERE item_id=?",
+                    (item_id,),
+                ).fetchone()
+                if deduped_item is None:
+                    raise ValueError(
+                        "Session Event dedupe key has no Conversation Item"
+                    )
+                return (
+                    self._item(deduped_item),
+                    self._event(deduped, canonical_payload=json.loads(encoded)),
+                    False,
+                )
         if source_message_id is not None:
             existing_source = db.execute(
                 "SELECT * FROM runtime_conversation_items "
@@ -1211,7 +2047,15 @@ class RuntimeConversationJournal:
                     "WHERE session_id=? AND item_id=? AND item_revision=?",
                     (session_id, item_id, revision),
                 ).fetchone()
-                return self._item(existing), self._event(event), False
+                # Return the event exactly as the caller describes it: a
+                # ``conversation.item.delta`` row only stores its incremental
+                # chunk, so the accumulated Item payload is re-attached here like
+                # on the read path (``_hydrate_delta_payloads``).
+                return (
+                    self._item(existing),
+                    self._event(event, canonical_payload=json.loads(encoded)),
+                    False,
+                )
         sequence = self._next_sequence(db, session_id)
         timestamp = updated_at or _now()
         created = (
@@ -1231,13 +2075,32 @@ class RuntimeConversationJournal:
         }:
             raise ValueError("Conversation Item event kind is invalid")
         event_id = f"se-{uuid.uuid4()}"
-        # For ITEM_DELTA events, use the compact delta-only payload (not the
-        # cumulative canonical payload) to avoid O(n²) journal growth.
-        journal_item_payload = (
-            event_payload_override
-            if event_payload_override is not None
-            else json.loads(encoded)
-        )
+        # ``conversation.item.delta`` rows are incremental: they carry the chunk
+        # produced by this event, never the accumulated Item payload and never a
+        # second copy of the Item's Run/Session binding.  Storing the accumulated
+        # payload in every delta row copied the whole answer into each row and made
+        # the Journal grow quadratically (a single Session reached 1.6 GiB for one
+        # long answer); repeating the binding cost another 44.7 MiB of the 70.0 MiB
+        # of live delta payloads.  The authoritative Item is persisted once per Item
+        # in ``runtime_conversation_items`` below, so everything a delta row omits is
+        # recoverable and the read path re-attaches it.
+        #
+        # Callers may pass an explicit ``event_payload_override``; otherwise the
+        # canonical payload is reduced here as well, so a caller that forwards an
+        # accumulated payload cannot reintroduce quadratic Journal growth.
+        canonical_payload = json.loads(encoded)
+        if event_payload_override is not None:
+            journal_item_payload = compact_journal_item_payload(
+                selected_event_kind, event_payload_override, canonical=canonical_payload
+            )
+        elif selected_event_kind == JOURNAL_ITEM_DELTA_EVENT_KIND:
+            journal_item_payload = compact_journal_item_payload(
+                selected_event_kind,
+                compact_delta_payload(canonical_payload),
+                canonical=canonical_payload,
+            )
+        else:
+            journal_item_payload = canonical_payload
         event_payload = {
             "item_id": item_id,
             "revision": revision,
@@ -1249,6 +2112,17 @@ class RuntimeConversationJournal:
             "updated_at": timestamp,
             "payload": journal_item_payload,
         }
+        encoded_event = _canonical_json(event_payload)
+        if (
+            selected_event_kind == "conversation.item.delta"
+            and len(encoded_event) > MAX_DELTA_JOURNAL_PAYLOAD_BYTES
+        ):
+            # A delta row must stay a chunk.  A larger payload means a caller
+            # passed the accumulated Item payload, which would re-introduce
+            # quadratic Journal growth, so fail closed instead of writing it.
+            raise ValueError(
+                "Conversation Item delta payload exceeds the Journal delta limit"
+            )
         db.execute(
             "INSERT INTO runtime_session_journal("
             "event_id,runtime_id,workspace_id,session_id,run_id,session_sequence,"
@@ -1264,8 +2138,8 @@ class RuntimeConversationJournal:
                 selected_event_kind,
                 item_id,
                 revision,
-                None,
-                _canonical_json(event_payload),
+                dedupe_key,
+                encoded_event,
                 timestamp,
             ),
         )
@@ -1381,7 +2255,18 @@ class RuntimeConversationJournal:
                 "ORDER BY session_sequence LIMIT ?",
                 (session_id, after_sequence, limit),
             ).fetchall()
-        return [self._event(row) for row in rows]
+            canonical_payloads = self._hydrate_delta_payloads(db, rows)
+        return [
+            self._event(
+                row,
+                canonical_payload=(
+                    canonical_payloads.get(str(row["item_id"]))
+                    if row["item_id"] is not None
+                    else None
+                ),
+            )
+            for row in rows
+        ]
 
     def oaep_items(
         self, session_id: str, *, through_sequence: int | None = None
@@ -1989,9 +2874,50 @@ class RuntimeConversationJournal:
         }
 
     @staticmethod
-    def _event(row: sqlite3.Row | None) -> dict[str, Any]:
+    def _hydrate_delta_payloads(
+        db: sqlite3.Connection, rows: list[sqlite3.Row]
+    ) -> dict[str, dict[str, Any]]:
+        """Return the accumulated Item payload for the delta rows in ``rows``.
+
+        ``conversation.item.delta`` rows only persist their incremental chunk (see
+        ``compact_delta_payload``).  Legacy Session Event consumers — the frozen
+        ``/v1/sessions/{id}/events`` compatibility routes and Relay conversation
+        proxying — expect every Item event to carry the full Item payload, so the
+        read path re-attaches the projection kept in ``runtime_conversation_items``.
+        The stored Journal stays bounded; only the response is materialized.
+
+        ``canonical_item_payloads`` also serves ``hydrate_delta_binding``, which
+        restores the Item's binding for the readers that expose the stored chunk
+        itself instead of the accumulated Item.
+        """
+        item_ids = list(
+            dict.fromkeys(
+                str(row["item_id"])
+                for row in rows
+                if row["item_id"] is not None
+                and str(row["event_kind"]) == JOURNAL_ITEM_DELTA_EVENT_KIND
+            )
+        )
+        return canonical_item_payloads(db, item_ids)
+
+    @staticmethod
+    def _event(
+        row: sqlite3.Row | None,
+        *,
+        canonical_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if row is None:
             raise RuntimeError("Conversation Item is missing its Journal event")
+        payload = json.loads(str(row["payload_json"]))
+        if (
+            canonical_payload is not None
+            and isinstance(payload, dict)
+            and isinstance(payload.get("payload"), dict)
+        ):
+            # ``conversation.item.delta`` rows store only the delta chunk while the
+            # accumulated Item payload lives in ``runtime_conversation_items``.
+            # Re-attach it so Item events keep their historical contract.
+            payload = {**payload, "payload": canonical_payload}
         return {
             "event_id": str(row["event_id"]),
             "runtime_id": str(row["runtime_id"]),
@@ -2003,7 +2929,7 @@ class RuntimeConversationJournal:
             "timestamp": str(row["created_at"]),
             "item_id": str(row["item_id"]) if row["item_id"] is not None else None,
             "item_revision": int(row["item_revision"]) if row["item_revision"] is not None else None,
-            "payload": json.loads(str(row["payload_json"])),
+            "payload": payload,
         }
 
     @staticmethod

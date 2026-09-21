@@ -160,6 +160,40 @@ export async function gfsDelete(path: string): Promise<{ path: string }> {
   return gatewayFetch("POST", "/v1/gfs/delete", { path });
 }
 
+export async function gfsMkdir(request: {
+  parentPath?: string;
+  name: string;
+}): Promise<{ path: string; name: string }> {
+  return gatewayFetch("POST", "/v1/gfs/mkdir", {
+    parentPath: request.parentPath ?? "",
+    name: request.name,
+  });
+}
+
+export async function gfsRename(request: {
+  path: string;
+  newName: string;
+  isDir?: boolean;
+}): Promise<{ path: string; name: string }> {
+  return gatewayFetch("POST", "/v1/gfs/rename", {
+    path: request.path,
+    newName: request.newName,
+    isDir: Boolean(request.isDir),
+  });
+}
+
+export async function gfsMove(request: {
+  sourcePath: string;
+  targetDir?: string;
+  isDir?: boolean;
+}): Promise<{ path: string; name: string }> {
+  return gatewayFetch("POST", "/v1/gfs/move", {
+    sourcePath: request.sourcePath,
+    targetDir: request.targetDir ?? "",
+    isDir: Boolean(request.isDir),
+  });
+}
+
 export async function gfsShareUrl(
   path: string,
   ttlMinutes?: number,

@@ -7,7 +7,7 @@ from typing import Any
 from dataclasses import replace
 from urllib.parse import urlparse
 
-from .defaults import DEFAULT_MODEL, DEFAULT_PROVIDER
+from .defaults import DEFAULT_MODEL, DEFAULT_PROVIDER, PRODUCT_PROVIDER_IDS
 from .credentials import resolve_credential
 from .loader import ConfigError
 from .model_registry import find_model_capabilities
@@ -149,11 +149,16 @@ def _resolve_provider(
         api_key=secret,
         api_key_source=source,
         models_file=user.models_file if user else None,
+        user_models_file=user.user_models_file if user else None,
         models=user.models if user else (),
         model_aliases=user.model_aliases if user else {},
         model_upstream_ids=user.model_upstream_ids if user else {},
         model_operations=user.model_operations if user else {},
         model_configs=user.model_configs if user else {},
+        disabled_models=user.disabled_models if user else (),
+        shadowed_models=user.shadowed_models if user else (),
+        user_models_error=user.user_models_error if user else None,
+        origin="product" if name in PRODUCT_PROVIDER_IDS else "user",
     )
 
 

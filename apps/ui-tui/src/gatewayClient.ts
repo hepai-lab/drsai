@@ -304,7 +304,11 @@ export class GatewayClient extends EventEmitter {
   }
 
   /** Send a JSON-RPC request. Returns a promise that resolves with ``result``. */
-  request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  request<T = unknown>(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
+  ): Promise<T> {
     // Check if gateway is available
     if (this.mode === 'stdio') {
       if (!this.proc?.stdin || this.proc.killed || this.proc.exitCode !== null) {
@@ -322,9 +326,9 @@ export class GatewayClient extends EventEmitter {
         const pending = this.pending.get(id)
         if (pending) {
           this.pending.delete(id)
-          reject(new Error(`RPC ${method} timed out after ${REQUEST_TIMEOUT_MS}ms`))
+          reject(new Error(`RPC ${method} timed out after ${timeoutMs}ms`))
         }
-      }, REQUEST_TIMEOUT_MS)
+      }, timeoutMs)
       timeout.unref?.()
 
       this.pending.set(id, {
@@ -364,7 +368,11 @@ export class GatewayClient extends EventEmitter {
    * the local subprocess's stdout readline is still draining and will
    * route RPC responses to the pending map.
    */
-  requestLocal<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  requestLocal<T = unknown>(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
+  ): Promise<T> {
     if (!this.proc?.stdin || this.proc.killed || this.proc.exitCode !== null) {
       return Promise.reject(new Error('local gateway not running'))
     }
@@ -375,9 +383,9 @@ export class GatewayClient extends EventEmitter {
         const pending = this.pending.get(id)
         if (pending) {
           this.pending.delete(id)
-          reject(new Error(`RPC ${method} timed out after ${REQUEST_TIMEOUT_MS}ms`))
+          reject(new Error(`RPC ${method} timed out after ${timeoutMs}ms`))
         }
-      }, REQUEST_TIMEOUT_MS)
+      }, timeoutMs)
       timeout.unref?.()
 
       this.pending.set(id, {

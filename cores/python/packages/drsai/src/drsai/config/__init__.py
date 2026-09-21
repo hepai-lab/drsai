@@ -79,10 +79,13 @@ from .tool_registry import (
     tool_resource_payload,
 )
 from .knowledge_registry import (
+    IndexBuildCancelled,
     KnowledgeEvidence,
     KnowledgeResource,
     canonical_knowledge_id,
     delete_knowledge_resource,
+    diff_local_knowledge_corpus,
+    effective_max_document_bytes,
     get_knowledge_resource,
     index_local_files,
     knowledge_corpus_state,
@@ -93,6 +96,7 @@ from .knowledge_registry import (
     put_knowledge_resource,
     search_local_knowledge,
     search_local_knowledge_scope,
+    validate_local_index_target,
 )
 from .perceptor_registry import (
     PERCEPTOR_SECRET_PLACEHOLDER,
@@ -197,6 +201,7 @@ __all__ = [
     "resolve_tool_set",
     "delete_tool_resource",
     "tool_resource_payload",
+    "IndexBuildCancelled",
     "KnowledgeEvidence",
     "KnowledgeResource",
     "canonical_knowledge_id",
@@ -208,9 +213,12 @@ __all__ = [
     "knowledge_registry_revision",
     "knowledge_status",
     "knowledge_corpus_state",
+    "diff_local_knowledge_corpus",
+    "effective_max_document_bytes",
     "index_local_files",
     "search_local_knowledge",
     "search_local_knowledge_scope",
+    "validate_local_index_target",
     "PERCEPTOR_SECRET_PLACEHOLDER",
     "PerceptorResource",
     "canonical_perceptor_id",

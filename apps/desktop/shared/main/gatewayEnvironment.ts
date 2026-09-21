@@ -1,4 +1,7 @@
-export const DEVELOPMENT_GATEWAY_PORT = "28643";
+// Keep development isolated from packaged Desktop / installer Runtime. A
+// separate port prevents a stale production Gateway from being adopted by
+// `npm run dev` after an app restart.
+export const DEVELOPMENT_GATEWAY_PORT = "28644";
 export const PRODUCTION_GATEWAY_PORT = "28643";
 
 type GatewayEnvironment = Readonly<Record<string, string | undefined>>;

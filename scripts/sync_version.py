@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,18 +46,67 @@ def replace(path: Path, pattern: str, replacement: str, expected: int = 1) -> No
 
 
 def update_json_version(path: Path, version: str) -> None:
+    if not path.exists():
+        print(f"  skip: {path.relative_to(ROOT)} does not exist")
+        return
     replace(path, r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{version}"')
 
 
 def update_workspace_lock_version(path: Path, workspace: str, version: str) -> None:
     """Update only a named workspace entry, never a dependency version."""
-    replace(
-        path,
+    if not path.exists():
+        print(f"  skip: {path.relative_to(ROOT)} does not exist")
+        return
+    pattern = (
         rf'(^\s{{4}}"{re.escape(workspace)}"\s*:\s*\{{\s*\n'
         rf'\s{{6}}"name"\s*:\s*"[^"]+",\s*\n'
-        rf'\s{{6}}"version"\s*:\s*)"[^"]+"',
-        rf'\g<1>"{version}"',
+        rf'\s{{6}}"version"\s*:\s*)"[^"]+"'
     )
+    text = path.read_text(encoding="utf-8")
+    new_text, count = re.subn(pattern, rf'\g<1>"{version}"', text, count=1, flags=re.MULTILINE)
+    if count == 0:
+        print(f"  skip: no '{workspace}' workspace entry in {path.relative_to(ROOT)}")
+        return
+    path.write_text(new_text, encoding="utf-8")
+
+
+def refresh_backend_source_archive(version: str) -> None:
+    """Regenerate apps/desktop/windows backend-source manifest after a version bump.
+
+    `npm run build:win` verifies that `resources/backend/backend-source.json`
+    matches package.json; a stale manifest fails the build. Regenerate it
+    whenever the version changes.
+    """
+    windows_dir = ROOT / "apps/desktop/windows"
+    manifest_path = windows_dir / "resources/backend/backend-source.json"
+    archive_script = windows_dir / "scripts/create-backend-source-archive.mjs"
+    if not manifest_path.exists() or not archive_script.exists():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    if manifest.get("version") == version:
+        return
+    node = shutil.which("node")
+    if node is None:
+        print("  warning: node not found; backend-source.json is stale. Run:")
+        print("    cd apps/desktop/windows && node scripts/create-backend-source-archive.mjs")
+        return
+    result = subprocess.run(
+        [node, "scripts/create-backend-source-archive.mjs"],
+        cwd=windows_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            "Failed to regenerate backend-source.json:\n"
+            f"{result.stdout}\n{result.stderr}\n"
+            "Fix the error above or run manually: "
+            "cd apps/desktop/windows && node scripts/create-backend-source-archive.mjs"
+        )
+    print(f"  regenerated apps/desktop/windows/resources/backend/backend-source.json ({version})")
 
 
 def main(argv: list[str]) -> int:
@@ -88,10 +140,15 @@ def main(argv: list[str]) -> int:
         f"export const __version__ = VERSION",
     )
     update_json_version(WINDOWS_DESKTOP_PACKAGE, version)
+    # npm lock: the package's own "version" plus packages[""].version, which
+    # are the first two matches in the file. Dependency versions must not move.
     replace(WINDOWS_DESKTOP_LOCK, r'^(\s*"version"\s*:\s*)"[^"]+"', rf'\g<1>"{version}"', expected=2)
-    update_json_version(MACOS_DESKTOP_PACKAGE, version)
+    if MACOS_DESKTOP_PACKAGE.exists():
+        update_json_version(MACOS_DESKTOP_PACKAGE, version)
     update_workspace_lock_version(DESKTOP_LOCK, "windows", version)
     update_workspace_lock_version(DESKTOP_LOCK, "macos", version)
+
+    refresh_backend_source_archive(version)
 
     print(f"Synchronized DrSai version to {version}")
     return 0

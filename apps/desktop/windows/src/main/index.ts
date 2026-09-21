@@ -55,7 +55,8 @@ import {
 } from "./gateway";
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { bootstrapDesktop } from "./bootstrap";
-import { connectRuntimeClientForWorkspace, isLocalRuntimeUnavailableError, LocalRuntimeClient, withRuntimeClientForWorkspace } from "./runtimeClient";
+import { broadcastAuthSessionRestored } from "./authSessionBroadcast";
+import { connectRuntimeClientForWorkspace, invalidateRuntimeClientRegistry, isLocalRuntimeUnavailableError, LocalRuntimeClient, withRuntimeClientForWorkspace } from "./runtimeClient";
 import type { RuntimeSession } from "../../../shared/main/runtimeClient";
 import { registerConversationResourceReadIpc } from "../../../shared/main/conversationResourceIpc";
 import { registerConversationResourceDownloadIpc } from "../../../shared/main/conversationResourceDownloadIpc";
@@ -170,6 +171,7 @@ import {
   subscribeUpdateStatus,
 } from "./updates";
 import { cancelChatTurn, disposeAllChatForTarget, handleChatRenderHealthReport, hasActiveChats, quarantineChatDispatcher, recoverChatRun, releaseChatQuarantine, respondChatInput, startChat } from "./chat";
+import { trySendToRenderer } from "../../../shared/main/rendererIpcTarget";
 import { listProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
 import {
@@ -271,6 +273,9 @@ import {
   gfsDownloadFile,
   gfsDownloadToDisk,
   gfsDelete,
+  gfsMkdir,
+  gfsRename,
+  gfsMove,
   gfsShareUrl,
   gfsHealthcheck,
   gfsGetConfig,
@@ -280,9 +285,17 @@ import {
 import {
   getRuntimeThreadSnapshot,
   getRuntimeThreadSnapshotEnvelope,
+  snapshotWaterlineFor,
   subscribeRuntimeThreadSnapshot,
 } from "../../../shared/main/threadRuntimeSubscription";
-import { coalesceHydrationEnvelope, persistedThreadSnapshotEnvelope, threadSnapshotHasConversation } from "../../../shared/api/threadSnapshotHydration";
+import type { DesktopThreadSnapshotEnvelope } from "../../../shared/api/desktopApi";
+import {
+  coalesceHydrationEnvelope,
+  persistedThreadSnapshotEnvelope,
+  rewaterlineEnvelope,
+  threadSnapshotHasConversation,
+  threadSnapshotHydrationConsultsRuntime,
+} from "../../../shared/api/threadSnapshotHydration";
 import { runtimeSessionIdForLookup } from "../../../shared/api/threadSidebarCatalog";
 import { setThreadArchived } from "./threadArchive";
 import {
@@ -462,6 +475,8 @@ import {
   listWorkspaceFilesViaGateway,
   analyzeMaterialConsistency,
   analyzeMaterialRoles,
+  buildMissingWorkspacePreview,
+  isWorkspaceFileMissingError,
   queryMaterials,
   previewWorkspaceFile,
   previewWorkspaceFileViaGateway,
@@ -626,6 +641,7 @@ import type {
   WorkspaceCheckpointCreateRequest,
   WorkspaceCheckpointAcceptRequest,
   WorkspaceCheckpointPreviewRequest,
+  WorkspaceFilePreview,
   WorkspaceFilePreviewRequest,
   WorkspaceFileSaveAsRequest,
   WorkspaceFileSaveAsResult,
@@ -1017,17 +1033,12 @@ const browserTaskService = new BrowserTaskService({
 });
 
 /**
- * Unified safe send for WebContents — checks isDestroyed() AND wraps send()
- * in a try/catch so "Render frame was disposed" errors during reload are
- * silently dropped instead of flooding the console.
+ * Unified safe send for WebContents — refuse disposed/loading frames before
+ * send() so Electron does not log "Render frame was disposed" (it often
+ * swallows the exception after logging, which would otherwise spam forever).
  */
 function safeWebContentsSend(wc: WebContents, channel: string, ...args: unknown[]): void {
-  if (wc.isDestroyed()) return;
-  try {
-    wc.send(channel, ...args);
-  } catch {
-    // Frame may be disposed during reload — silently drop
-  }
+  trySendToRenderer(wc, channel, ...args);
 }
 
 const pendingDesktopApprovals = new Map<string, DesktopPendingApproval>();
@@ -3215,6 +3226,14 @@ function createWindow(): void {
     quarantineChatDispatcher(mainWindow!.webContents);
     quarantineAgentDispatcher(mainWindow!.webContents);
   });
+  // did-start-navigation can fire slightly earlier than did-start-loading for
+  // main-frame navigations; quarantine here too to shrink the race with
+  // backpressure setTimeout flushes. Skip same-document navigations.
+  mainWindow.webContents.on("did-start-navigation", (details) => {
+    if (!details.isMainFrame || details.isSameDocument) return;
+    quarantineChatDispatcher(mainWindow!.webContents);
+    quarantineAgentDispatcher(mainWindow!.webContents);
+  });
   // When the new frame finishes loading, release the quarantine so the next
   // emit() creates a fresh dispatcher bound to the new frame.
   mainWindow.webContents.on("did-finish-load", () => {
@@ -3443,7 +3462,7 @@ function registerDevelopmentDeepLinkCommand(): void {
     "/d",
     command,
     "/f",
-  ], (error) => {
+  ], { windowsHide: true }, (error) => {
     if (error) {
       console.warn("[desktop] Failed to register development deep link command:", error.message);
     }
@@ -3464,7 +3483,7 @@ function registerDeepLinkDisplayName(): void {
     "/d",
     displayName,
     "/f",
-  ], (error) => {
+  ], { windowsHide: true }, (error) => {
     if (error) {
       console.warn("[desktop] Failed to register deep link display name:", error.message);
     }
@@ -4150,6 +4169,51 @@ function isTransientWorkspacePreviewError(error: unknown): boolean {
   );
 }
 
+/**
+ * Turns "the artifact is gone" preview failures into a placeholder preview.
+ *
+ * Electron logs every rejected `ipcMain.handle` as `Error occurred in handler for
+ * ...`, and the renderer's `.catch()` cannot suppress it. So a chat bubble that
+ * still points at a deleted file (or at a file inside a deleted folder) used to
+ * flood the console with ENOENT noise for something that is a normal, expected
+ * state. We resolve those into an explicit `{ missing: true }` preview that the
+ * renderer renders as "file was deleted or moved", and keep an info-level
+ * diagnostic so the event is still visible in an exported diagnostics bundle.
+ *
+ * Returns `null` for every other error, which the caller rethrows so the handler
+ * still rejects as before.
+ */
+function resolveWorkspacePreviewFailure(
+  error: unknown,
+  request: WorkspaceFilePreviewRequest,
+): WorkspaceFilePreview | null {
+  if (!isWorkspaceFileMissingError(error) && !isRemoteFileNotFoundError(error)) return null;
+  const missing = buildMissingWorkspacePreview(request);
+  if (!missing) return null;
+  void desktopDiagnostics.record({
+    module: "workspace",
+    component: "workspace-preview",
+    operation: "workspace.preview.missing",
+    kind: "operation",
+    level: "info",
+    status: "completed",
+    message: "Workspace preview target is missing; returned a placeholder preview.",
+    attributes: { path: missing.relativePath, kind: missing.kind },
+  });
+  return missing;
+}
+
+/**
+ * A remote gateway answered 404 for `GET /v1/workspaces/{id}/file`: the file (or
+ * the workspace) is not there any more, which is the remote equivalent of a
+ * local ENOENT and just as unactionable from the renderer's point of view.
+ */
+function isRemoteFileNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  if (!(error instanceof Error) || error.name !== "RemoteProtocolError") return false;
+  return (error as { status?: unknown }).status === 404;
+}
+
 /** Copy mangled names like `Deck.pptx（介绍）` to a temp `Deck.pptx` so the OS can associate. */
 async function resolveOpenPathForShell(rawPath: string): Promise<string> {
   const canonical = resolveCanonicalExtension(rawPath);
@@ -4400,7 +4464,7 @@ function serializeDecisionCsv(rows: string[][]): string {
 }
 
 function isDecisionAnomaly(value: string): boolean {
-  return /^(?:true|1|yes|y|anomaly|�쳣)$/i.test(value.trim());
+  return /^(?:true|1|yes|y|anomaly|\u5f02\u5e38)$/i.test(value.trim());
 }
 
 async function applyAnomalyDecision(request: DesktopAnomalyDecisionApplyRequest): Promise<DesktopAnomalyDecisionApplyResult> {
@@ -4574,7 +4638,7 @@ async function inspectPickedFileWithTimeout(path: string, category: PickedFileDe
   }
 }
 
-const PICKED_IMAGE_PREVIEW_MAX_BYTES = 1_500_000;
+const PICKED_IMAGE_PREVIEW_MAX_BYTES = 8_000_000;
 
 function pickedImageMime(extension: string): string | null {
   if (extension === ".png") return "image/png";
@@ -4665,6 +4729,9 @@ function registerIpc(): void {
   );
   secureHandle("desktop:diagnostics-snapshot", (_event, query?: DiagnosticQuery) =>
     desktopDiagnostics.snapshot(query ?? {}),
+  );
+  secureHandle("desktop:diagnostics-trace", (_event, traceId: string) =>
+    desktopDiagnostics.getRedactedTrace(traceId),
   );
   secureHandle("desktop:diagnostics-clear", async () => {
     const removedEvents = await desktopDiagnostics.clear();
@@ -4780,7 +4847,15 @@ function registerIpc(): void {
   secureHandle("desktop:e2e-a5-service-guidance-scenario", () =>
     getA5ServiceGuidanceScenario(),
   );
-  secureHandle("desktop:login", (_event, request) => login(request));
+  secureHandle("desktop:login", async (event, request) => {
+    const result = await login(request);
+    if (result.ok && result.session) {
+      const userId = result.session.user?.id || result.session.user?.email;
+      if (userId) await syncAuthIdentityToGateway(userId).catch(() => undefined);
+      broadcastAuthSessionRestored(BrowserWindow.getAllWindows(), event.sender);
+    }
+    return result;
+  });
   secureHandle("desktop:start-oidc-login", async (event, request) => {
     const result = await startOidcLogin(request, (debugEvent) => {
       if (!event.sender.isDestroyed()) {
@@ -4792,17 +4867,17 @@ function registerIpc(): void {
       if (userId) await syncAuthIdentityToGateway(userId);
       // Broadcast auth-session-restored so the renderer can clear any
       // auth_required blocker and re-trigger bootstrap automatically.
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.isDestroyed()) {
-          window.webContents.send("desktop:auth-session-restored");
-        }
-      }
+      broadcastAuthSessionRestored(BrowserWindow.getAllWindows(), event.sender);
       focusMainWindow();
     }
     return result;
   });
   secureHandle("desktop:cancel-oidc-login", () => cancelOidcLogin());
   secureHandle("desktop:logout", async (_event, options) => {
+    // Logout is a hard auth/runtime generation boundary. Invalidate clients
+    // before stopping the Gateway so in-flight renderer work cannot retain a
+    // transport authenticated as the previous user across re-login.
+    invalidateRuntimeClientRegistry();
     await stopGateway();
     return logout(options);
   });
@@ -5290,30 +5365,39 @@ function registerIpc(): void {
     return remoteRoot ? summarizeRemoteWorkspaceFolder(request as WorkspaceFolderSummaryRequest, remoteRoot) : summarizeWorkspaceFolder(request);
   });
   secureHandle("desktop:workspace-file-preview", async (_event, request: WorkspaceFilePreviewRequest) => {
-    // Office/PDF previews need local extractors (and sibling slide PNGs). Avoid
-    // gateway /file entirely so a slow Runtime cannot AbortError the IPC call.
-    if (
-      prefersLocalRichPreview(request?.path)
-      && (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) === "local_or_unknown"
-    ) {
-      return previewWorkspaceFile(request);
-    }
-    // V2: route through gateway when workspaceId is available
-    if (request?.workspaceId) {
-      try {
-        return await withRuntimeClientForWorkspace(
-          request.workspacePath,
-          request.workspaceId,
-          async ({ client }) => previewWorkspaceFileViaGateway(client, request),
-        );
-      } catch (error) {
-        if (!isLocalRuntimeUnavailableError(error) && !isTransientWorkspacePreviewError(error)) throw error;
-        // gateway unavailable / timed out — fall through to local fs
+    try {
+      // Office/PDF previews need local extractors (and sibling slide PNGs). Avoid
+      // gateway /file entirely so a slow Runtime cannot AbortError the IPC call.
+      if (
+        prefersLocalRichPreview(request?.path)
+        && (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) === "local_or_unknown"
+      ) {
+        return await previewWorkspaceFile(request);
       }
+      // V2: route through gateway when workspaceId is available
+      if (request?.workspaceId) {
+        try {
+          return await withRuntimeClientForWorkspace(
+            request.workspacePath,
+            request.workspaceId,
+            async ({ client }) => previewWorkspaceFileViaGateway(client, request),
+          );
+        } catch (error) {
+          if (!isLocalRuntimeUnavailableError(error) && !isTransientWorkspacePreviewError(error)) throw error;
+          // gateway unavailable / timed out — fall through to local fs
+        }
+      }
+      return (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown"
+        ? await previewRemoteWorkspaceFile(request)
+        : await previewWorkspaceFile(request);
+    } catch (error) {
+      // A deleted/moved target resolves into an explicit `{ missing: true }`
+      // preview: Electron logs every rejected handler call and the renderer
+      // cannot suppress that log. Anything else still rejects.
+      const missing = resolveWorkspacePreviewFailure(error, request);
+      if (missing) return missing;
+      throw error;
     }
-    return (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown"
-      ? previewRemoteWorkspaceFile(request)
-      : previewWorkspaceFile(request);
   });
   registerConversationResourceReadIpc(secureHandle as never, (path) => {
     if (process.env.OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN !== "1") shell.showItemInFolder(path);
@@ -5718,6 +5802,9 @@ function registerIpc(): void {
       ...(typeof value.runtimeWorkspaceId === "string" && /^[A-Za-z0-9_.:-]{1,160}$/.test(value.runtimeWorkspaceId)
         ? { runtimeWorkspaceId: value.runtimeWorkspaceId }
         : {}),
+      ...(value.sessionScope === "remote_agent" || value.sessionScope === "workspace"
+        ? { sessionScope: value.sessionScope }
+        : {}),
     } : undefined;
     if (request?.runtimeWorkspaceId) {
       void ensureRuntimeWorkspaceCatalogSubscription(event.sender, request.runtimeWorkspaceId).catch(() => undefined);
@@ -5729,6 +5816,7 @@ function registerIpc(): void {
       ? {
           ...((options as { refresh?: unknown }).refresh === true ? { refresh: true } : {}),
           ...((options as { preferCache?: unknown }).preferCache === true ? { preferCache: true } : {}),
+          ...((options as { force?: unknown }).force === true ? { force: true } : {}),
         }
       : {},
   ));
@@ -5736,6 +5824,7 @@ function registerIpc(): void {
     getAgentCatalogSnapshot(options && typeof options === "object" ? {
       ...((options as { refresh?: unknown }).refresh === true ? { refresh: true } : {}),
       ...((options as { preferCache?: unknown }).preferCache === true ? { preferCache: true } : {}),
+      ...((options as { force?: unknown }).force === true ? { force: true } : {}),
     } : {}));
   secureHandle("desktop:get-platform-agent-status", () => getPlatformAgentStatus());
   secureHandle("desktop:set-default-agent", (_event, agentId) =>
@@ -5789,7 +5878,7 @@ function registerIpc(): void {
   );
   secureHandle("desktop:delete-thread", async (_event, threadId) => {
     try {
-      return await deleteThreadAndRuntimeSession(threadId);
+      return await deleteThreadAndRuntimeSession(threadId as string);
     } catch (error) {
       console.error("[desktop:delete-thread] failed", threadId, error);
       throw error;
@@ -5893,13 +5982,22 @@ function registerIpc(): void {
       const thread = (await listThreads()).find((item) => item.id === threadId);
       const remote = await getRemoteThreadSnapshot(threadId);
       const persisted = (threadSnapshotHasConversation(remote) ? remote : null) ?? await getThreadSnapshot(threadId);
-      // Open from local history first. An empty/restarted Runtime session must
-      // not block or blank the persisted conversation body.
-      if (threadSnapshotHasConversation(persisted)) {
-        return persistedThreadSnapshotEnvelope(threadId, persisted, thread?.runtimeSessionId);
-      }
-      let runtimeEnvelope = null;
-      if (runtimeSessionIdForLookup(thread ?? { runtimeSessionId: undefined })) {
+      const runtimeSessionId = runtimeSessionIdForLookup(thread ?? { runtimeSessionId: undefined });
+      // Open from local history first, so an empty/restarted Runtime session
+      // cannot block or blank the persisted conversation body.  A request that
+      // carries a waterline is a different contract: the renderer already
+      // displays a later boundary for this Thread and only the Runtime can
+      // answer at or above it.  Returning the persisted projection (generation
+      // 0) there made the coordinator discard the snapshot and then refuse
+      // every following Patch -- the turn never finished and the next message
+      // looked blocked.
+      const consultRuntime = threadSnapshotHydrationConsultsRuntime({
+        hasPersistedConversation: threadSnapshotHasConversation(persisted),
+        hasRuntimeBinding: Boolean(runtimeSessionId),
+        request: options ?? {},
+      });
+      let runtimeEnvelope: DesktopThreadSnapshotEnvelope | null = null;
+      if (consultRuntime) {
         try {
           runtimeEnvelope = await getRuntimeThreadSnapshotEnvelope(thread!, controller.signal, options);
         } catch (error) {
@@ -5909,7 +6007,21 @@ function registerIpc(): void {
         }
       }
       controller.signal.throwIfAborted();
-      return coalesceHydrationEnvelope(threadId, thread, runtimeEnvelope, persisted);
+      if (runtimeEnvelope) {
+        // ``coalesceHydrationEnvelope`` may still prefer the fuller persisted
+        // body, but the generation/sequence always come from the Runtime: a
+        // waterline that does not match the live Patch stream is worse than a
+        // thinner conversation.
+        const hydrated = coalesceHydrationEnvelope(threadId, thread, runtimeEnvelope, persisted);
+        return hydrated ? rewaterlineEnvelope(hydrated, runtimeEnvelope) : null;
+      }
+      if (threadSnapshotHasConversation(persisted)) {
+        return rewaterlineEnvelope(
+          persistedThreadSnapshotEnvelope(threadId, persisted, thread?.runtimeSessionId),
+          snapshotWaterlineFor(threadId, runtimeSessionId),
+        );
+      }
+      return null;
     } catch (error) {
       // Cancellation is part of the hydration protocol: the renderer cancels
       // stale work when a newer generation starts or the active Thread
@@ -6098,6 +6210,15 @@ function registerIpc(): void {
   );
   secureHandle("desktop:gfs-delete", (_event, request) =>
     gfsDelete((request as { path: string }).path),
+  );
+  secureHandle("desktop:gfs-mkdir", (_event, request) =>
+    gfsMkdir(request as Parameters<typeof gfsMkdir>[0]),
+  );
+  secureHandle("desktop:gfs-rename", (_event, request) =>
+    gfsRename(request as Parameters<typeof gfsRename>[0]),
+  );
+  secureHandle("desktop:gfs-move", (_event, request) =>
+    gfsMove(request as Parameters<typeof gfsMove>[0]),
   );
   secureHandle("desktop:gfs-share-url", (_event, request) => {
     const r = request as {
@@ -6749,6 +6870,32 @@ function registerIpc(): void {
       properties: ["openDirectory"],
     });
     return { canceled: result.canceled, paths: result.filePaths };
+  });
+  secureHandle("desktop:read-attachment-data-url", async (_event, rawPath: string) => {
+    const REMOTE_ATTACHMENT_LIMIT_BYTES = 10 * 1024 * 1024;
+    const path = typeof rawPath === "string" ? rawPath.trim() : "";
+    if (!path) throw new Error("A file path is required.");
+    const stat = await statFile(path);
+    if (!stat.isFile()) throw new Error(`Not a readable file: ${path}`);
+    if (stat.size > REMOTE_ATTACHMENT_LIMIT_BYTES) {
+      throw new Error(`File exceeds the 10 MB remote attachment limit.`);
+    }
+    const bytes = await readFile(path);
+    const extension = (path.split(".").pop() || "").toLowerCase();
+    const mimeType = extension === "png" ? "image/png"
+      : extension === "jpg" || extension === "jpeg" ? "image/jpeg"
+        : extension === "gif" ? "image/gif"
+          : extension === "webp" ? "image/webp"
+            : extension === "pdf" ? "application/pdf"
+              : extension === "txt" || extension === "md" ? "text/plain"
+                : "application/octet-stream";
+    return {
+      path,
+      name: path.split(/[\\/]/).pop() ?? path,
+      sizeBytes: stat.size,
+      mimeType,
+      dataUrl: `data:${mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
+    };
   });
   secureHandle("desktop:browser-check-url", (_event, rawUrl: string) => browserTaskService.checkUrl(rawUrl));
   secureHandle("desktop:browser-action-request", (_event, request) => browserTaskService.requestAction(request));

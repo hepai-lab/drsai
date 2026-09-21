@@ -1,13 +1,6 @@
 """Adapter package — bridges drsai/autogen agent backend to JSON-RPC events.
 
-Three submodules:
-
-- ``event_translator`` — converts autogen events
-  (:class:`ModelClientStreamingChunkEvent`, :class:`ToolCallRequestEvent`,
-  :class:`ToolCallExecutionEvent`, :class:`TextMessage`, :class:`Response`,
-  :class:`TaskResult`, :class:`ThoughtEvent`, …) into Hermes-style events
-  (``message.delta`` / ``tool.start`` / ``tool.complete`` / ``message.complete`` /
-  ``thinking.delta`` / ``status.update``).
+Two submodules:
 
 - ``agent_runner`` — wraps :func:`drsai.backend.run_drsai_agent_factory.create_agent`
   with asyncio loop management, lazy_init, save_state/load_state, and stream
@@ -16,4 +9,9 @@ Three submodules:
 - ``callbacks`` — bridges interactive prompts (approval / clarify / secret /
   sudo) to the gateway's ``_block`` mechanism so the agent can pause execution
   while the UI collects user input.
+
+Note: the event translator moved out of this package to the shared event layer
+:mod:`drsai.backend.events.agent_event_translator`.  It is consumed by every
+gateway surface (TUI, desktop, remote worker), so keeping it here forced a
+spurious ``desktop_gateway -> tui_gateway`` dependency.
 """

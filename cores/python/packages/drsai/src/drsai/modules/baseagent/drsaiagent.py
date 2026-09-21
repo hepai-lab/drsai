@@ -87,28 +87,20 @@ from drsai.modules.managers.messages.agent_messages import(
     ToolLongTaskEvent,
 )
 from drsai.modules.components.task_manager.base_task_system import TaskStatus
+from drsai.modules.model_errors import (
+    ModelEmptyStreamError,
+    ModelMalformedToolCallError,
+    assert_well_formed_model_result,
+)
 from drsai.utils.utils import download_file_from_url_or_base64
 from drsai.configs.constant import FILE_DIR, DEFAULT_USERNAME
 from pathlib import Path
 
 
-class ModelEmptyStreamError(RuntimeError):
-    """Raised when a model client produces zero usable output events.
-
-    Covers two failure shapes that previously terminated the agent loop
-    without retry:
-      1. Streaming mode: ``create_stream()`` completes without ever yielding
-         a final ``CreateResult`` (e.g. upstream gateway silently closes the
-         SSE connection, or the stream ends mid-way after yielding only
-         text chunks).
-      2. Non-streaming mode: ``create()`` returns ``None`` instead of a
-         ``CreateResult``.
-
-    This is almost always transient (gateway hiccup, network blip, upstream
-    5xx masquerading as an empty 200), so ``is_retryable_llm_error`` treats
-    it as retriable and the agent-level retry loop applies exponential
-    backoff instead of crashing the whole ``on_messages_stream``.
-    """
+# NOTE: ``ModelEmptyStreamError`` / ``ModelMalformedToolCallError`` are imported
+# above from ``drsai.modules.model_errors`` and re-exported from this module, so
+# ``drsai.modules.baseagent.drsaiagent.ModelEmptyStreamError`` (and the
+# ``drsai.modules.baseagent`` package re-export) keep working unchanged.
 
 
 class DrSaiAgentConfig(BaseModel):
@@ -1247,12 +1239,9 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
            injected immediately after the offending AssistantMessage.
 
         3. **Consecutive user-role messages** – Anthropic (Claude) requires
-           strict user/assistant alternation.  ``FunctionExecutionResultMessage``
-           is serialised as ``role=user`` by ``to_anthropic_type``, so a plain
-           ``UserMessage`` that immediately follows a tool-result block creates
-           two consecutive ``role=user`` turns.  The plain UserMessage's text is
-           merged into a new synthetic AssistantMessage + UserMessage pair so
-           that the turn order becomes: … tool_result | assistant(ack) | user.
+           strict user/assistant alternation.  The provider-only compatibility
+           layer inserts ephemeral acknowledgements into the request copy; this
+           sanitizer deliberately does not persist them in model context.
 
         4. **Empty AssistantMessage stubs** – AssistantMessages with
            ``content=""`` that were stored by the "Your reply is empty" retry
@@ -1335,14 +1324,10 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         #   a) Empty strings (content="") from the "Your reply is empty" retry
         #      loop.  Claude sees its own empty turn and continues to produce
         #      empty responses.
-        #   b) Synthetic "[Continuing]" acknowledgements inserted by Pass 5 to
-        #      fix consecutive user-role messages.  These are *ephemeral* and
-        #      should not persist: they are only needed for the Anthropic
-        #      message alternation constraint during a single LLM call.  On the
-        #      next call the whole context is re-serialised, and the original
-        #      consecutive-user-role problem is still present, so Pass 5 would
-        #      insert yet another "[Continuing]" on top of the old one →
-        #      unbounded accumulation.
+        #   b) Legacy synthetic "[Continuing]" acknowledgements from older
+        #      sanitizer behavior. These are removed from the canonical history;
+        #      current Anthropic compatibility acknowledgements are ephemeral
+        #      request-copy messages and are never persisted.
         # We strip both here, together with the paired "Your reply is empty"
         # UserMessage that follows them (if present), so that each sanitize
         # cycle starts from a clean slate.
@@ -1384,29 +1369,13 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         # Claude requires strict user/assistant alternation.
         # FunctionExecutionResultMessage serialises to role=user, so a plain
         # UserMessage immediately following a tool-result creates two consecutive
-        # role=user turns → Claude returns empty content or 400.
-        # Fix: insert a minimal assistant acknowledgement between them.
-        i = 0
-        while i < len(messages) - 1:
-            cur = messages[i]
-            nxt = messages[i + 1]
-            cur_is_user_role = isinstance(cur, (UserMessage, FunctionExecutionResultMessage))
-            nxt_is_user_role = isinstance(nxt, (UserMessage, FunctionExecutionResultMessage))
-            if cur_is_user_role and nxt_is_user_role:
-                # Insert a minimal assistant turn to restore alternation
-                ack = AssistantMessage(
-                    content="[Continuing]",
-                    source="assistant",
-                )
-                messages.insert(i + 1, ack)
-                dirty = True
-                logger.debug(
-                    f"Inserted assistant ack between consecutive user-role messages "
-                    f"at index {i} ({type(cur).__name__}) and {i+2} ({type(nxt).__name__})"
-                )
-                i += 2  # skip over the newly inserted message
-                continue
-            i += 1
+        # role=user turns → Claude returns empty content or 400. The repair is
+        # applied later to the provider request copy, not to canonical history.
+        # Role alternation is a provider-wire concern, not a canonical-history
+        # concern. Do not insert [Continuing] into `model_context` here: doing so
+        # makes every later sanitize pass delete the old ack and insert a new one
+        # again, producing repeated logs and transient work. Anthropic gets an
+        # ephemeral copy with the ack in _get_compatible_context below.
 
         # ── Always persist if anything changed ────────────────────────────────
         # Use replace_messages() when available (DrSaiSQLiteChatCompletionContext)
@@ -1470,14 +1439,26 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
 
     @staticmethod
     def _get_compatible_context(model_client: ChatCompletionClient, messages: List[LLMMessage]) -> Sequence[LLMMessage]:
-        """Reject unsupported image input instead of silently deleting user content."""
-        if model_client.model_info["vision"]:
-            return messages
-        for message in messages:
-            content = getattr(message, "content", None)
-            if isinstance(content, list) and any(isinstance(item, Image) for item in content):
-                raise ValueError("Model does not support vision and image was provided")
-        return messages
+        """Prepare a provider-only message copy without mutating model history."""
+        if not model_client.model_info["vision"]:
+            for message in messages:
+                content = getattr(message, "content", None)
+                if isinstance(content, list) and any(isinstance(item, Image) for item in content):
+                    raise ValueError("Model does not support vision and image was provided")
+
+        # Anthropic serializes FunctionExecutionResultMessage as role=user and
+        # requires strict user/assistant alternation. Insert the acknowledgement
+        # only into this request copy; canonical model_context must never retain
+        # the ephemeral [Continuing] marker.
+        prepared = list(messages)
+        if ModelFamily.is_claude(model_client.model_info["family"]):
+            alternated: List[LLMMessage] = []
+            for message in prepared:
+                if alternated and isinstance(alternated[-1], (UserMessage, FunctionExecutionResultMessage)) and isinstance(message, UserMessage):
+                    alternated.append(AssistantMessage(content="[Continuing]", source="assistant"))
+                alternated.append(message)
+            prepared = alternated
+        return prepared
         
     def _to_config(self) -> AssistantAgentConfig:
         """Convert the assistant agent to a declarative config."""
@@ -1791,14 +1772,28 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             if effort in {"off", "none"}:
                 # Normalize the TUI's user-facing off/none values across
                 # provider-specific request protocols.
-                if _is_anthropic and param_type in {"deepseek_reasoning_effort", "adaptive"}:
+                if param_type == "deepseek_reasoning_effort":
+                    # DeepSeek supports reasoning_effort through the
+                    # OpenAI-compatible API; passing `thinking` (Anthropic-only)
+                    # raises ``ValueError: Extra create args are invalid`` in
+                    # the client, which is why this param_type exists.
+                    # "none" is part of the client's reasoning_effort enum and
+                    # is honoured by the HEPAI DeepSeek deployments (verified
+                    # against ai-dev.ihep.ac.cn: HTTP 200, no reasoning_content,
+                    # reasoning_tokens == 0).  Omitting the field instead would
+                    # silently fall back to the provider default, which *thinks*
+                    # -- so the user's "off/none" choice would be ignored while
+                    # the UI keeps showing "no reasoning".
+                    extra_create_args["reasoning_effort"] = "none"
+                elif param_type == "adaptive":
                     extra_create_args["thinking"] = {"type": "disabled"}
                 else:
                     # OpenAI clients (and Anthropic clients with other
                     # param_types) use reasoning_effort="none".
                     extra_create_args["reasoning_effort"] = "none"
-            elif _is_anthropic and param_type == "deepseek_reasoning_effort":
-                extra_create_args["thinking"] = {"type": "enabled"}
+            elif param_type == "deepseek_reasoning_effort":
+                # DeepSeek uses reasoning_effort only, NOT Anthropic's
+                # "thinking" field.  Setting both would fail client validation.
                 extra_create_args["reasoning_effort"] = effort
             elif _is_anthropic and param_type == "adaptive":
                 extra_create_args["thinking"] = {"type": "adaptive"}
@@ -1836,6 +1831,12 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                     "Model client stream completed without a final CreateResult "
                     "(zero usable events yielded by create_stream)."
                 )
+            # A tool call missing its name/id cannot be resolved to any Tool at
+            # all. Treat it as a retriable malformed response so the retry loop
+            # re-samples the turn, instead of letting
+            # agent_kernel.verify_model_tool_calls fail the turn closed with the
+            # unactionable `model_tool_not_in_snapshot:unknown`.
+            assert_well_formed_model_result(model_result)
             yield model_result
         else:
             model_result = await model_client.create(

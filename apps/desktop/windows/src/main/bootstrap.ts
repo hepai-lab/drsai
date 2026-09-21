@@ -61,15 +61,13 @@ export async function bootstrapDesktop(): Promise<DesktopBootstrapResult> {
   }
   // The Gateway may have been started eagerly (before sign-in completed), in
   // which case startGatewayOnce could not sync an identity it did not know
-  // yet. Sync now that the signed-in user is known. syncAuthIdentityToGateway
-  // is idempotent: it only writes to the Gateway when the identity changed.
-  // Run identity sync in parallel with model discovery — both are independent
-  // HTTP calls to the already-running Gateway, and the model endpoint
-  // resolves the user from the OIDC bearer token, not the synced user_id.
-  const discovery = await Promise.all([
-    syncAuthIdentityToGateway(auth.userId).catch(() => undefined),
-    discoverModelsWithRecovery(auth.accessToken),
-  ]).then(([, d]) => d);
+  // yet. Identity propagation is a lifecycle barrier: model discovery and
+  // subsequent Runtime requests must not race an old user's Gateway identity
+  // after logout/re-login or after restoring a persistent Gateway on restart.
+  // Keep the best-effort error semantics (the Gateway can still be starting),
+  // but always await the sync before sending the bearer-token request.
+  await syncAuthIdentityToGateway(auth.userId).catch(() => undefined);
+  const discovery = await discoverModelsWithRecovery(auth.accessToken);
   await writeModelCatalogStatus(discovery).catch(() => undefined);
   if (discovery.state !== "ready") {
     if (discovery.state === "forbidden") {

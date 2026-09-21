@@ -166,11 +166,12 @@ def _normalize_agent_reasoning_effort(effort: str, supported: tuple[str, ...]) -
 def _descriptor_supports_agent_role(descriptor: Mapping[str, object], role: str) -> bool:
     inputs = set(descriptor.get("input_modalities") or [])
     outputs = set(descriptor.get("output_modalities") or [])
+    operations = set(descriptor.get("operations") or [])
     model_ref = descriptor.get("ref")
     model_id = str(model_ref.get("model_id") or "").lower() if isinstance(model_ref, Mapping) else ""
     return {
         "image_understanding_model": "image" in inputs and "text" in outputs,
-        "image_generation_model": "image" in outputs,
+        "image_generation_model": "image" in outputs and "image_generation" in operations,
         "text_to_speech_model": "text" in inputs and "audio" in outputs,
         "realtime_voice_model": ("audio" in inputs and "audio" in outputs) or model_id.startswith("gpt-realtime"),
         "speech_to_text_model": "audio" in inputs and "text" in outputs,
@@ -183,12 +184,19 @@ def _runtime_model_catalog_payload(config: DrSaiConfig) -> dict[str, Any]:
     provider_names.add(config.model_provider or "hepai")
     descriptors: list[RuntimeModelDescriptor] = []
     catalog_state = "fresh"
-    state_priority = {"fresh": 0, "stale": 1, "offline": 2, "unauthorized": 3, "error": 4}
+    # A broken *user-owned* overlay is a configuration warning, not a runtime
+    # failure: the product models still load, so it ranks above "fresh" but
+    # below the runtime discovery states.
+    state_priority = {"fresh": 0, "degraded": 1, "stale": 2, "offline": 3, "unauthorized": 4, "error": 5}
     for provider_id in sorted(provider_names):
         resolved = resolve_model_config(
             config, environ=os.environ, provider=provider_id, require_credentials=False,
         )
         provider = resolved.provider
+        if getattr(provider, "user_models_error", None) and state_priority["degraded"] > state_priority.get(catalog_state, 0):
+            # The user overlay is unreadable: report degraded instead of letting
+            # the affected models silently disappear from the catalog.
+            catalog_state = "degraded"
         model_ids = list(provider.models)
         configured_model_ids = set(model_ids)
         discovered = cached_provider_model_catalog(provider_id, provider.base_url)
@@ -217,10 +225,17 @@ def _runtime_model_catalog_payload(config: DrSaiConfig) -> dict[str, Any]:
                     operations += ("reasoning",)
                     reasoning_efforts = tuple(capabilities.reasoning.effort_levels)
             if configured_model is not None:
+                # The Provider catalog entry is authoritative for what this
+                # Provider accepts; the built-in registry only fills the gaps.
                 operations = tuple(configured_model.capabilities)
                 if capabilities.reasoning.supported and "reasoning" not in operations:
                     operations += ("reasoning",)
-                reasoning_efforts = tuple(capabilities.reasoning.effort_levels) if "reasoning" in operations else ()
+                if configured_model.reasoning_efforts:
+                    reasoning_efforts = tuple(configured_model.reasoning_efforts)
+                elif "reasoning" in operations:
+                    reasoning_efforts = tuple(capabilities.reasoning.effort_levels)
+                else:
+                    reasoning_efforts = ()
             if declared_image_operations:
                 if "image_edit" in declared_image_operations and "image" not in input_modalities:
                     input_modalities += ("image",)
@@ -238,6 +253,31 @@ def _runtime_model_catalog_payload(config: DrSaiConfig) -> dict[str, Any]:
                     availability = "unavailable"
                 else:
                     availability = str(discovered["catalog_state"])
+            # The declared window wins over the built-in registry number, and an
+            # inherited output cap is dropped when it would exceed it.
+            token_limit = (
+                configured_model.token_limit
+                if configured_model is not None and configured_model.token_limit
+                else capabilities.token_limit if known else None
+            )
+            max_output_tokens = (
+                configured_model.max_tokens
+                if configured_model is not None and configured_model.max_tokens
+                else capabilities.max_tokens if known else None
+            )
+            if token_limit is not None and max_output_tokens is not None and max_output_tokens > token_limit:
+                max_output_tokens = None
+            if declared_image_operations or (configured_model is not None and configured_model.origin == "user"):
+                # Declared by the user: config.toml image operations, the inline
+                # model list, or a catalog file the user owns.
+                capability_source = "user_override"
+            elif configured_model is not None:
+                # Declared by the Provider's shipped catalog.
+                capability_source = "provider"
+            elif known:
+                capability_source = "builtin"
+            else:
+                capability_source = "unknown"
             descriptors.append(RuntimeModelDescriptor(
                 ref=RuntimeModelRef(provider_id, model_id),
                 display_name=configured_model.alias if configured_model and configured_model.alias else provider.model_aliases.get(model_id, model_id),
@@ -245,11 +285,12 @@ def _runtime_model_catalog_payload(config: DrSaiConfig) -> dict[str, Any]:
                 output_modalities=output_modalities,  # type: ignore[arg-type]
                 operations=operations,  # type: ignore[arg-type]
                 reasoning_efforts=reasoning_efforts,  # type: ignore[arg-type]
-                token_limit=capabilities.token_limit if known else None,
-                max_output_tokens=capabilities.max_tokens if known else None,
+                token_limit=token_limit,
+                max_output_tokens=max_output_tokens,
                 availability=availability,  # type: ignore[arg-type]
-                capability_source="user_override" if configured_model is not None or declared_image_operations else "builtin" if known else "unknown",
+                capability_source=capability_source,  # type: ignore[arg-type]
                 capability_confidence="declared" if configured_model is not None or declared_image_operations else "inferred" if known else "unknown",
+                origin=configured_model.origin if configured_model is not None else None,
                 updated_at=(
                     discovered["updated_at"]
                     if discovered is not None and model_id in discovered_models

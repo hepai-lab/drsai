@@ -23,6 +23,7 @@ import { LegacyConversationAdapter } from "./legacyConversationAdapter";
 import { legacyProtocolTelemetry } from "./legacyProtocolTelemetry";
 import { ThreadSnapshotEnvelopeCache } from "./threadSnapshotEnvelopeCache";
 import { runtimeSessionIdForLookup } from "../api/threadSidebarCatalog";
+import type { ThreadSnapshotWaterline } from "../api/threadSnapshotHydration";
 
 interface ThreadSnapshotEvent {
   version: 1;
@@ -346,6 +347,27 @@ export function assertSnapshotWaterline(
     });
   }
   return envelope;
+}
+
+/**
+ * The last waterline this process published for a Thread, restricted to the
+ * Runtime session it belongs to.
+ *
+ * Hydration uses it to stamp a persisted projection, which carries no waterline
+ * of its own.  Handing the renderer a generation ``0`` envelope while it already
+ * displays generation ``1`` makes the coordinator keep the newer boundary and
+ * discard the snapshot; every Patch then fails its ``baseSequence`` check and
+ * the turn never appears to finish.
+ */
+export function snapshotWaterlineFor(threadId: string, runtimeSessionId?: string): ThreadSnapshotWaterline | null {
+  const cached = latestSnapshotEnvelopeByThread.get(threadId);
+  if (!cached) return null;
+  if (runtimeSessionId && cached.runtimeSessionId !== runtimeSessionId) return null;
+  return {
+    generation: cached.generation,
+    sessionSequence: cached.sessionSequence,
+    runtimeSessionId: cached.runtimeSessionId,
+  };
 }
 
 export async function subscribeRuntimeThreadSnapshot(

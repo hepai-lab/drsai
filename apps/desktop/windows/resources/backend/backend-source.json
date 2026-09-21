@@ -1,12 +1,16 @@
 {
   "archive": "drsai-backend-source.zip",
-  "sha256": "93d49ab03bb438aa47e1508d0f5882c66e38fe76e0144fad4d4821fcf704d60c",
-  "version": "1.5.3",
+  "sha256": "5d5cef7bd019918591f7a7db8a009c536de18852c7701ecf3fb7c459f3692914",
+  "version": "2.0.3",
   "source": "local-backend-source",
   "contents": [
     "cores/python/packages/drsai/pyproject.toml",
-    "cores/python/packages/drsai/src/drsai",
+    "cores/python/packages/drsai/build_hook.py",
+    "cores/python/packages/drsai/README.md",
+    "cores/python/packages/drsai/src",
     "cores/protocol/owop",
-    "cores/protocol/relay"
+    "cores/protocol/relay",
+    "skills/skills",
+    "eval/regression"
   ]
 }

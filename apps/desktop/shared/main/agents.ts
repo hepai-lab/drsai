@@ -1,43 +1,30 @@
-import { createHash } from "crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { readFileSync } from "fs";
 import { join } from "path";
 import {
   LOCAL_OPENDRSAI_AGENT_NAME,
   type ConfiguredAgentDescriptor,
   type DesktopAgent,
+  type DesktopAgentExample,
   type DesktopAgentCatalogSnapshot,
   type DesktopAgentListOptions,
   type DesktopAgentPreferenceResult,
   type PlatformAgentStatus,
 } from "../api/desktopApi";
 import { getMyDrSaiAgentModelPolicy, listConfiguredAgents } from "./myDrSaiConfig";
-import {
-  invalidateAuthSession,
-  getAuthSession,
-  refreshAuthContextAfterUnauthorized,
-  requireAuthContext,
-} from "./auth";
 import { getGatewaySnapshot, getGatewayStatus } from "./gateway";
 import { DRSAI_CONFIG_FILE, DRSAI_HOME } from "./paths";
-import { getActivePlatformConfig } from "./platformConfig";
 import {
-  fetchPlatformAgents,
-  respondPlatformAgentInput,
-  respondDdfAgentInput,
-  stopPlatformAgentThread,
-  type PlatformAgentClientOptions,
-} from "./platformAgentClient";
-import {
-  createPublicAgentCachePayload,
-  createPlatformCatalogSubjectKey,
-  getOrCreateCatalogFlight,
-  markCachedPlatformAgents,
   mergeAndSortAgents,
-  parsePublicAgentCachePayload,
   type PlatformAgentExecutionDescriptor,
 } from "./agentCatalog";
 import { recordAgentTelemetry } from "./agentTelemetry";
-import { LocalRuntimeClient } from "./runtimeClient";
+import {
+  acquireLocalRuntimeClientLease,
+  acquireLocalRuntimeClientLeaseIfAvailable,
+  type LocalRuntimeClient,
+  type RuntimeClientLease,
+  type RuntimeRemoteWorkerCatalog,
+} from "./runtimeClient";
 import {
   getExternalAgentRuntimeDescriptor,
   listExternalAgentRuntimeAgents,
@@ -45,10 +32,6 @@ import {
 import {
   getAgentPreferences,
 } from "./agentPreferences";
-import {
-  fetchHostedAgentCatalog,
-  hostedCatalogSubjectSuffix,
-} from "./hostedAgentCatalog";
 import {
   configureRemoteAgentCredentials,
   isDeviceRemoteAgentId,
@@ -58,31 +41,12 @@ import {
   type RemoteAgentSaveRequest,
   type RemoteAgentTestRequest,
 } from "./remoteAgents";
-import { readSavedApiKey } from "./settings";
-
 export { configureRemoteAgentCredentials, isDeviceRemoteAgentId };
 
-const ACTIVE_PLATFORM = getActivePlatformConfig();
-const PLATFORM_BASE_URL = ACTIVE_PLATFORM.portalUrl;
 const PLATFORM_AGENTS_ENABLED = !["0", "false", "off", "no"].includes((process.env.OPENDRSAI_PLATFORM_AGENTS_ENABLED || "true").toLowerCase());
 const PLATFORM_CHAT_ENABLED = !["0", "false", "off", "no"].includes((process.env.OPENDRSAI_PLATFORM_AGENT_CHAT_ENABLED || "true").toLowerCase());
-const PLATFORM_CACHE_ID = createHash("sha256").update(PLATFORM_BASE_URL).digest("hex").slice(0, 12);
-const PLATFORM_CACHE_TTL_MS = positiveIntegerEnv("OPENDRSAI_AGENT_CACHE_TTL_MS", 2 * 60 * 60 * 1000);
-const PLATFORM_MEMORY_TTL_MS = positiveIntegerEnv("OPENDRSAI_AGENT_MEMORY_TTL_MS", 5 * 60 * 1000);
 
 let platformExecutionDescriptors = new Map<string, PlatformAgentExecutionDescriptor>();
-let activePlatformSubjectKey: string | null = null;
-const platformCatalogMemory = new Map<string, {
-  at: number;
-  agents: DesktopAgent[];
-  executionDescriptors: PlatformAgentExecutionDescriptor[];
-  status: PlatformAgentStatus;
-}>();
-const platformCatalogFlights = new Map<string, Promise<{
-  agents: DesktopAgent[];
-  executionDescriptors: PlatformAgentExecutionDescriptor[];
-  status: PlatformAgentStatus;
-}>>();
 let localAgentFlight: Promise<DesktopAgent[]> | undefined;
 
 let platformStatus: PlatformAgentStatus = {
@@ -140,13 +104,6 @@ export function getPlatformAgentExecutionDescriptor(
 
 export { getExternalAgentRuntimeDescriptor };
 
-export function getPlatformAgentChatUrl(_platformId: string): string {
-  // Agents discovered through HepAI's base_url are DDF runtime/model IDs.
-  // Execute them through the matching OpenAI-compatible endpoint; the portal
-  // Native API may expose a different catalog and cannot resolve these IDs.
-  return `${ACTIVE_PLATFORM.baseUrl}/chat/completions`;
-}
-
 export function isPlatformAgentExecutionAvailable(agentId: string): boolean {
   const descriptor = platformExecutionDescriptors.get(agentId);
   if (!PLATFORM_AGENTS_ENABLED || !PLATFORM_CHAT_ENABLED || !descriptor?.available) return false;
@@ -170,7 +127,23 @@ export async function recordAgentUsage(agentId: string): Promise<DesktopAgentPre
   }
   const descriptor = getPlatformAgentExecutionDescriptor(agentId);
   if (!descriptor) return { agentId, saved: false, message: "Agent not found in the platform catalog." };
-  return { agentId, saved: false, message: "Platform usage mutation is not supported; Desktop records privacy-safe execution telemetry locally." };
+  // Hold a reference for the duration of the call. This validates a worker
+  // against the shared Runtime client; closing it here would abort any OAEP
+  // stream that shares the same transport (and make every other in-flight
+  // request fail as generation-invalidated).
+  const lease = await acquireLocalRuntimeClientLease();
+  try {
+    const selection = await lease.client.selectRemoteWorker(descriptor.platformId, {
+      model: descriptor.model || descriptor.platformId,
+    });
+    if (!selection.agent_definition) {
+      return { agentId, saved: false, message: "The Runtime did not return a worker-scoped Agent Definition." };
+    }
+    recordAgentTelemetry({ event: "agent_selected", agentId, source: "platform", status: selection.agent_definition });
+    return { agentId, saved: true, message: "Remote worker compatibility validated by Runtime." };
+  } finally {
+    lease.release();
+  }
 }
 
 export async function readAgentPreferences(): Promise<{
@@ -202,40 +175,6 @@ export async function removeRemoteAgentConnection(agentId: string): Promise<{ re
   }
   const removed = await removeDeviceRemoteAgent(agentId);
   return { removed };
-}
-
-export async function stopPlatformChat(agentId: string, threadId: string): Promise<boolean> {
-  const descriptor = getPlatformAgentExecutionDescriptor(agentId);
-  if (!descriptor) return false;
-  return (await stopPlatformAgentThread(platformClientOptions(), descriptor.platformId, threadId)).ok;
-}
-
-export async function respondToPlatformChatInput(
-  agentId: string,
-  threadId: string,
-  response: string | Record<string, unknown>,
-): Promise<boolean> {
-  const descriptor = getPlatformAgentExecutionDescriptor(agentId);
-  if (!descriptor) return false;
-  return (await respondPlatformAgentInput(platformClientOptions(), descriptor.platformId, threadId, response)).ok;
-}
-
-export async function respondToDdfChatInput(
-  agentId: string,
-  chatId: string,
-  runId: string,
-  requestId: string,
-  response: string | Record<string, unknown>,
-): Promise<boolean> {
-  const descriptor = getPlatformAgentExecutionDescriptor(agentId);
-  if (!descriptor) return false;
-  return (await respondDdfAgentInput(platformClientOptions(), {
-    model: descriptor.model || descriptor.platformId,
-    chatId,
-    runId,
-    requestId,
-    response,
-  })).ok;
 }
 
 async function listLocalAgents(options: DesktopAgentListOptions = {}): Promise<DesktopAgent[]> {
@@ -283,8 +222,13 @@ async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
   } catch {
     // Keep local Agent discovery available while policy diagnostics recover.
   }
+  let codexLease: RuntimeClientLease<LocalRuntimeClient> | undefined;
   try {
-    const client = await LocalRuntimeClient.connect();
+    // Agent catalog enrichment shares the Runtime client with live OAEP streams.
+    // Hold a lease for the reads and release it afterwards: this must never
+    // close the transport that a running conversation is streaming through.
+    codexLease = await acquireLocalRuntimeClientLease();
+    const client = codexLease.client;
     // Capabilities are authoritative. Do not probe optional Codex routes when
     // this Runtime does not register the backend; probing creates a noisy 404
     // on every Agent catalog refresh.
@@ -316,6 +260,8 @@ async function loadLocalAgents(options: DesktopAgentListOptions = {}): Promise<D
     // Codex is a backend choice, not a required Agent Square entry. If an
     // already-running Runtime cannot describe it, omit it instead of turning
     // catalog browsing into a Runtime recovery workflow.
+  } finally {
+    codexLease?.release();
   }
   return agents;
 }
@@ -378,333 +324,167 @@ function readTomlBoolean(source: string, key: string): boolean | null {
 }
 
 async function listPlatformAgents(options: DesktopAgentListOptions): Promise<DesktopAgent[]> {
-  const subjectKey = await platformSubjectKey();
-  if (!subjectKey) {
-    activePlatformSubjectKey = null;
-    platformExecutionDescriptors.clear();
-    const hosted = await fetchHostedAgentCatalog({
-      refresh: options.refresh === true,
-      catalogBaseUrl: ACTIVE_PLATFORM.baseUrl,
-    });
-    if (hosted.agents.length > 0) {
-      platformStatus = {
-        ...hosted.status,
-        capabilities: [...hosted.status.capabilities],
-      };
-      platformExecutionDescriptors = new Map(
-        hosted.executionDescriptors.map((descriptor) => [descriptor.publicId, descriptor]),
-      );
-      return structuredClone(hosted.agents);
-    }
+  const gatewayCatalog = await loadGatewayRemoteWorkerCatalog(options.refresh === true, options.force === true);
+  if (gatewayCatalog) {
+    platformExecutionDescriptors = new Map(
+      gatewayCatalog.executionDescriptors.map((descriptor) => [descriptor.publicId, descriptor]),
+    );
+    platformStatus = gatewayCatalog.status;
+    return gatewayCatalog.agents;
+  }
+
+  // Keep the last good remote-worker descriptors: dropping them turns every
+  // remote Agent card (and its get_info model configs) into a "not found"
+  // entry until the platform recovers.
+  if (platformExecutionDescriptors.size > 0 && platformStatus.state === "ready") {
     platformStatus = {
-      state: hosted.status.state === "requires_login" ? "requires_login" : "native_api_unavailable",
-      apiVersion: null,
-      capabilities: [],
-      message: hosted.status.message || "Sign in with HepAI or save an API key to load platform agents.",
-      lastCheckedAt: hosted.status.lastCheckedAt ?? new Date().toISOString(),
-      lastSuccessfulSyncAt: null,
-      cacheState: "none",
-    };
-    return [];
-  }
-  activePlatformSubjectKey = subjectKey;
-  const memory = platformCatalogMemory.get(subjectKey);
-  if (!options.refresh && memory && Date.now() - memory.at <= PLATFORM_MEMORY_TTL_MS) {
-    activatePlatformCatalog(subjectKey, memory);
-    return structuredClone(memory.agents);
-  }
-  if (options.preferCache && !options.refresh) {
-    const cached = readPlatformCache(subjectKey);
-    if (cached) {
-      const catalog = cachedPlatformCatalog(cached);
-      activatePlatformCatalog(subjectKey, catalog);
-      return structuredClone(catalog.agents);
-    }
-    platformExecutionDescriptors.clear();
-    platformStatus = {
-      state: "loading",
-      apiVersion: null,
-      capabilities: [],
-      message: "Loading platform agents from HepAI.",
-      lastCheckedAt: null,
-      lastSuccessfulSyncAt: null,
-      cacheState: "none",
-    };
-    return [];
-  }
-
-  const flight = getOrCreateCatalogFlight(
-    platformCatalogFlights,
-    subjectKey,
-    () => loadLivePlatformCatalog(subjectKey, options.refresh === true),
-  );
-  const catalog = await flight;
-  activatePlatformCatalog(subjectKey, catalog);
-  return structuredClone(catalog.agents);
-}
-
-async function loadLivePlatformCatalog(subjectKey: string, refresh: boolean): Promise<{
-  at: number;
-  agents: DesktopAgent[];
-  executionDescriptors: PlatformAgentExecutionDescriptor[];
-  status: PlatformAgentStatus;
-}> {
-  try {
-    const result = await fetchPlatformAgents(platformClientOptions(refresh));
-    if (result.status.state === "ready" && result.agents.length > 0) {
-      const syncedAt = result.status.lastCheckedAt ?? new Date().toISOString();
-      const catalog = {
-        at: Date.now(),
-        agents: result.agents.map((agent) => ({ ...agent, catalogState: "live" as const })),
-        executionDescriptors: result.executionDescriptors,
-        status: {
-          ...result.status,
-          lastSuccessfulSyncAt: syncedAt,
-          cacheState: "fresh" as const,
-        },
-      };
-      platformCatalogMemory.set(subjectKey, catalog);
-      writePlatformCache(subjectKey, catalog.agents, syncedAt);
-      return catalog;
-    }
-
-    // Portal Native empty/unavailable: fall back to WebUI-equivalent DDF list_agents + get_info.
-    const hosted = await fetchHostedAgentCatalog({
-      refresh,
-      catalogBaseUrl: ACTIVE_PLATFORM.baseUrl,
-    });
-    if (hosted.agents.length > 0) {
-      const syncedAt = hosted.status.lastCheckedAt ?? new Date().toISOString();
-      const catalog = {
-        at: Date.now(),
-        agents: hosted.agents.map((agent) => ({ ...agent, catalogState: "live" as const })),
-        executionDescriptors: hosted.executionDescriptors,
-        status: {
-          ...hosted.status,
-          message: result.status.state === "ready" && result.agents.length === 0
-            ? `${hosted.status.message} Native catalog was empty; loaded hosted HepAI workers instead.`
-            : `${hosted.status.message} ${result.status.message}`.trim(),
-          lastSuccessfulSyncAt: syncedAt,
-          cacheState: "fresh" as const,
-        },
-      };
-      platformCatalogMemory.set(subjectKey, catalog);
-      writePlatformCache(subjectKey, catalog.agents, syncedAt);
-      return catalog;
-    }
-
-    const cached = readPlatformCache(subjectKey);
-    if (cached) {
-      return cachedPlatformCatalog(cached, result.status.state === "ready" ? hosted.status : result.status);
-    }
-    return {
-      at: 0,
-      agents: [],
-      executionDescriptors: [],
-      status: {
-        ...(result.status.state === "ready" ? hosted.status : result.status),
-        lastSuccessfulSyncAt: null,
-        cacheState: "none",
-      },
-    };
-  } catch (error) {
-    try {
-      const hosted = await fetchHostedAgentCatalog({
-        refresh,
-        catalogBaseUrl: ACTIVE_PLATFORM.baseUrl,
-      });
-      if (hosted.agents.length > 0) {
-        const syncedAt = hosted.status.lastCheckedAt ?? new Date().toISOString();
-        const catalog = {
-          at: Date.now(),
-          agents: hosted.agents.map((agent) => ({ ...agent, catalogState: "live" as const })),
-          executionDescriptors: hosted.executionDescriptors,
-          status: {
-            ...hosted.status,
-            message: `${hosted.status.message} Native catalog failed; loaded hosted HepAI workers instead.`,
-            lastSuccessfulSyncAt: syncedAt,
-            cacheState: "fresh" as const,
-          },
-        };
-        platformCatalogMemory.set(subjectKey, catalog);
-        writePlatformCache(subjectKey, catalog.agents, syncedAt);
-        return catalog;
-      }
-    } catch {
-      // Fall through to cached catalog handling below.
-    }
-    const cached = readPlatformCache(subjectKey);
-    const failureStatus: PlatformAgentStatus = {
-      state: "error",
-      apiVersion: null,
-      capabilities: [],
-      message: error instanceof Error && error.name === "AbortError"
-        ? "Platform capability detection timed out."
-        : "Platform capability detection failed.",
+      ...platformStatus,
+      message: platformStatus.message || "The local Runtime remote-worker catalog is unavailable. Showing the last loaded agents.",
       lastCheckedAt: new Date().toISOString(),
-      lastSuccessfulSyncAt: cached?.savedAt ?? null,
-      cacheState: cached ? (cached.fresh ? "fresh" : "stale") : "none",
     };
-    if (cached) {
-      return cachedPlatformCatalog(cached, failureStatus);
-    }
-    failureStatus.message += " Local agents remain available.";
-    return { at: 0, agents: [], executionDescriptors: [], status: failureStatus };
+    return [];
   }
+
+  platformExecutionDescriptors.clear();
+  platformStatus = {
+    state: "native_api_unavailable",
+    apiVersion: null,
+    capabilities: [],
+    message: "The local Runtime remote-worker catalog is unavailable.",
+    lastCheckedAt: new Date().toISOString(),
+    lastSuccessfulSyncAt: null,
+    cacheState: "none",
+  };
+  return [];
 }
 
-function activatePlatformCatalog(
-  subjectKey: string,
-  catalog: { agents: DesktopAgent[]; executionDescriptors: PlatformAgentExecutionDescriptor[]; status: PlatformAgentStatus },
-): void {
-  if (activePlatformSubjectKey !== subjectKey) return;
-  platformExecutionDescriptors = new Map(
-    catalog.executionDescriptors.map((descriptor) => [descriptor.publicId, descriptor]),
-  );
-  platformStatus = { ...catalog.status, capabilities: [...catalog.status.capabilities] };
-}
-
-function cachedPlatformCatalog(
-  cached: { agents: DesktopAgent[]; savedAt: string; fresh: boolean },
-  failureStatus?: PlatformAgentStatus,
-): {
-  at: number;
+async function loadGatewayRemoteWorkerCatalog(refresh: boolean, force = false): Promise<{
   agents: DesktopAgent[];
   executionDescriptors: PlatformAgentExecutionDescriptor[];
   status: PlatformAgentStatus;
-} {
-  const agents = markCachedPlatformAgents(cached.agents);
-  return {
-    at: 0,
-    agents,
-    executionDescriptors: agents.map(cacheExecutionDescriptor),
-    status: {
-      ...(failureStatus ?? {
-        state: "loading" as const,
-        apiVersion: null,
-        capabilities: [],
-        message: "Showing the last cached platform catalog while HepAI refreshes.",
-        lastCheckedAt: null,
-      }),
-      message: failureStatus
-        ? `${failureStatus.message} Showing the last cached platform catalog.`
-        : "Showing the last cached platform catalog while HepAI refreshes.",
-      lastSuccessfulSyncAt: cached.savedAt,
-      cacheState: cached.fresh ? "fresh" : "stale",
-    },
-  };
-}
-
-async function platformSubjectKey(): Promise<string | null> {
-  const session = await getAuthSession();
-  if (session.authenticated && session.authMode === "oidc" && session.user?.id) {
-    return createPlatformCatalogSubjectKey(ACTIVE_PLATFORM.name, PLATFORM_CACHE_ID, session.user.id);
-  }
-  const apiKey = process.env.HEPAI_API_KEY?.trim()
-    || process.env.OPENAI_API_KEY?.trim()
-    || readSavedApiKey();
-  if (apiKey) {
-    return createPlatformCatalogSubjectKey(
-      ACTIVE_PLATFORM.name,
-      PLATFORM_CACHE_ID,
-      `api-key:${hostedCatalogSubjectSuffix(apiKey)}`,
-    );
-  }
-  return null;
-}
-
-export function resolvePlatformBearerToken(authContext?: { accessToken?: string }): string | null {
-  if (authContext?.accessToken) return authContext.accessToken;
-  return process.env.HEPAI_API_KEY?.trim()
-    || process.env.OPENAI_API_KEY?.trim()
-    || readSavedApiKey()
-    || null;
-}
-
-function platformClientOptions(refresh = false): PlatformAgentClientOptions {
-  return {
-    baseUrl: PLATFORM_BASE_URL,
-    catalogBaseUrl: ACTIVE_PLATFORM.baseUrl,
-    refresh,
-    auth: {
-      getAccessToken: async () => {
-        try {
-          const auth = await requireAuthContext();
-          const bearer = resolvePlatformBearerToken(auth);
-          if (bearer) return bearer;
-        } catch {
-          const bearer = resolvePlatformBearerToken();
-          if (bearer) return bearer;
+} | null> {
+  let lease: RuntimeClientLease<LocalRuntimeClient> | null = null;
+  try {
+    // Agent Square refreshes and the remote-worker catalog run concurrently with
+    // live conversations over the same shared Runtime client. Lease it for the
+    // read; closing it here used to abort the stream of an active chat.
+    lease = await acquireLocalRuntimeClientLeaseIfAvailable();
+    if (!lease) return null;
+    const client = lease.client;
+    const catalog = await client.listRemoteWorkers(refresh, force);
+    const agents = catalog.workers.map((worker): DesktopAgent => {
+      const routableName = worker.worker?.trim() || worker.name.trim();
+      const localized = (worker.description_zh || worker.description_en) ? {
+        ...(worker.description_zh ? { zh: worker.description_zh } : {}),
+        ...(worker.description_en ? { en: worker.description_en } : {}),
+      } : undefined;
+      // Mirror WebUI getLocalizedDescription: pick the localized text when
+      // present, otherwise fall back to the plain description.
+      const description = localized
+        ? (localized.zh ?? localized.en ?? "")
+        : worker.description?.trim() || "A hosted HepAI worker agent.";
+      const rawExamples = worker.examples ?? {};
+      // Some DDF workers emit per-example bilingual dicts as raw strings,
+      // e.g. "{'en': '...', 'zh': '...'}". Split those into zh/en fields.
+      const extractLocalizedExampleText = (value: string | undefined): { zh?: string; en?: string } | undefined => {
+        const text = (value ?? "").trim();
+        if (!text.startsWith("{") || !text.endsWith("}")) return undefined;
+        const zh = text.match(/['"]zh['"]\s*:\s*['"]([^'"]+)['"]/)?.[1];
+        const en = text.match(/['"]en['"]\s*:\s*['"]([^'"]+)['"]/)?.[1];
+        return zh || en ? { ...(zh ? { zh } : {}), ...(en ? { en } : {}) } : undefined;
+      };
+      const sanitizeExampleValue = (value: string | undefined): string | undefined => {
+        const text = (value ?? "").trim();
+        if (!text) return undefined;
+        if (text.startsWith("{")) return undefined; // dict residue, handled via extractLocalizedExampleText
+        return text;
+      };
+      const exampleList: DesktopAgentExample[] = [];
+      const zhExamples = Array.isArray(rawExamples.zh) ? rawExamples.zh : [];
+      const enExamples = Array.isArray(rawExamples.en) ? rawExamples.en : [];
+      for (let index = 0; index < Math.max(zhExamples.length, enExamples.length); index += 1) {
+        const zhValue = sanitizeExampleValue(zhExamples[index]);
+        const enValue = sanitizeExampleValue(enExamples[index]);
+        const extracted = extractLocalizedExampleText(zhExamples[index])
+          ?? extractLocalizedExampleText(enExamples[index]);
+        const zh = zhValue ?? extracted?.zh;
+        const en = enValue ?? extracted?.en;
+        if (zh || en) {
+          exampleList.push({
+            ...(zh ? { zh } : {}),
+            ...(en ? { en } : {}),
+          });
         }
-        throw new Error("HepAI OIDC sign-in or API key is required.");
-      },
-      refreshAfterUnauthorized: async () => {
-        const auth = await refreshAuthContextAfterUnauthorized();
-        if (!auth.accessToken) throw new Error("The refreshed session has no access token.");
-        return auth.accessToken;
-      },
-      invalidate: invalidateAuthSession,
-    },
-  };
-}
-
-function platformCachePath(subjectKey: string): string {
-  return join(
-    DRSAI_HOME,
-    "cache",
-    `platform-agents.${ACTIVE_PLATFORM.name}.${PLATFORM_CACHE_ID}.${subjectKey}.v2.json`,
-  );
-}
-
-function writePlatformCache(subjectKey: string, agents: DesktopAgent[], savedAt: string): void {
-  const directory = join(DRSAI_HOME, "cache");
-  const cachePath = platformCachePath(subjectKey);
-  const temporaryPath = `${cachePath}.tmp`;
-  try {
-    mkdirSync(directory, { recursive: true });
-    writeFileSync(
-      temporaryPath,
-      `${JSON.stringify(createPublicAgentCachePayload(agents, savedAt), null, 2)}\n`,
-      { encoding: "utf8", mode: 0o600 },
-    );
-    renameSync(temporaryPath, cachePath);
-  } catch {
-    // Catalog caching is best-effort; a read-only profile must not hide live agents.
-  }
-}
-
-function readPlatformCache(subjectKey: string): { agents: DesktopAgent[]; savedAt: string; fresh: boolean } | null {
-  const cachePath = platformCachePath(subjectKey);
-  if (!existsSync(cachePath)) return null;
-  try {
-    const payload = parsePublicAgentCachePayload(
-      JSON.parse(readFileSync(cachePath, "utf8")),
-    );
-    if (!payload) return null;
-    const age = Date.now() - Date.parse(payload.savedAt);
+      }
+      const capabilities = Array.isArray(worker.capabilities) && worker.capabilities.length
+        ? worker.capabilities
+        : ["chat", "streaming"];
+      return {
+        id: `platform:${routableName}`,
+        name: worker.name.trim() || routableName,
+        description,
+        localizedDescription: localized,
+        owner: worker.owner?.trim() || worker.author?.trim() || "HepAI",
+        author: worker.author?.trim() || undefined,
+        source: "remote",
+        status: "running",
+        mode: "ddf",
+        available: worker.available !== false,
+        capabilities,
+        catalogGroup: "official",
+        catalogState: "live",
+        model: routableName,
+        models: worker.model_configs?.map((config) => config.name).filter(Boolean),
+        remoteDefaultModel: worker.defult_config_name?.trim() || undefined,
+        remoteModelConfigs: worker.model_configs?.map((config) => ({
+          name: config.name,
+          ...(typeof config.label === "string" && config.label.trim() ? { label: config.label.trim() } : {}),
+        })),
+        remoteSkills: worker.skills,
+        logo: worker.logo?.trim() || undefined,
+        examples: exampleList.length ? exampleList : undefined,
+      };
+    });
+    const executionDescriptors = catalog.workers.map((worker): PlatformAgentExecutionDescriptor => {
+      const routableName = worker.worker?.trim() || worker.name.trim();
+      const capabilities = Array.isArray(worker.capabilities) && worker.capabilities.length
+        ? worker.capabilities
+        : ["chat", "streaming"];
+      return {
+        publicId: `platform:${routableName}`,
+        platformId: routableName,
+        mode: "ddf",
+        name: worker.name.trim() || routableName,
+        model: routableName,
+        available: worker.available !== false,
+        capabilities,
+      };
+    });
     return {
-      agents: payload.agents,
-      savedAt: payload.savedAt,
-      fresh: Number.isFinite(age) && age >= 0 && age <= PLATFORM_CACHE_TTL_MS,
+      agents,
+      executionDescriptors,
+      status: remoteWorkerCatalogStatus(catalog),
     };
   } catch {
     return null;
+  } finally {
+    lease?.release();
   }
 }
 
-function cacheExecutionDescriptor(agent: DesktopAgent): PlatformAgentExecutionDescriptor {
+function remoteWorkerCatalogStatus(catalog: RuntimeRemoteWorkerCatalog): PlatformAgentStatus {
+  const checkedAt = new Date().toISOString();
   return {
-    publicId: agent.id,
-    platformId: agent.id.replace(/^platform:/, ""),
-    mode: agent.mode || "remote",
-    name: agent.name,
-    model: agent.model,
-    available: false,
-    capabilities: agent.capabilities ? [...agent.capabilities] : [],
+    state: catalog.state === "ready"
+      ? "ready"
+      : catalog.state === "requires_login" ? "requires_login" : "native_api_unavailable",
+    apiVersion: null,
+    capabilities: catalog.state === "ready" ? ["chat", "streaming", "remote-worker"] : [],
+    message: catalog.message || (catalog.state === "ready"
+      ? `Loaded ${catalog.workers.length} remote worker(s) through the local Runtime.`
+      : "Remote worker catalog is unavailable."),
+    lastCheckedAt: checkedAt,
+    lastSuccessfulSyncAt: catalog.state === "ready" ? checkedAt : null,
+    cacheState: "none",
   };
-}
-
-function positiveIntegerEnv(name: string, fallback: number): number {
-  const parsed = Number(process.env[name]);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }

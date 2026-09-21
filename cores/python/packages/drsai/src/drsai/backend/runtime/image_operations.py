@@ -30,7 +30,143 @@ from drsai.platform_auth import get_model_credential_provider
 
 
 MAX_IMAGE_RESULT_BYTES = 20 * 1024 * 1024
-ALLOWED_SIZES = frozenset({"256x256", "512x512", "1024x1024", "1024x1536", "1536x1024", "auto"})
+
+# Tool-level size whitelist (union across families). Per-model validation happens in
+# ``_normalize_size_for_family`` — do not assume every model accepts every entry.
+ALLOWED_SIZES = frozenset({
+    "256x256",
+    "512x512",
+    "1024x1024",
+    "1024x1536",
+    "1536x1024",
+    "1536x1536",
+    "1024x1792",
+    "1792x1024",
+    "auto",
+})
+
+# OpenAI GPT Image 1.x (square / landscape / portrait / auto only).
+_GPT_IMAGE_LEGACY_SIZES = frozenset({"1024x1024", "1024x1536", "1536x1024", "auto"})
+# GPT Image 2 / 2.5 family via HepAI OpenAI Images (flexible but still constrained).
+_GPT_IMAGE_2_SIZES = frozenset({"256x256", "512x512", "1024x1024", "1024x1536", "1536x1024", "auto"})
+# Gemini image models when accessed through HepAI's OpenAI-compatible Images API.
+_GEMINI_OPENAI_IMAGE_SIZES = frozenset({"1024x1024", "1536x1536", "1024x1792", "1792x1024"})
+# Qwen / other OpenAI-images-compatible gateways.
+_COMPAT_OPENAI_IMAGE_SIZES = frozenset({
+    "1024x1024", "1024x1536", "1536x1024", "1536x1536", "1024x1792", "1792x1024", "auto",
+})
+
+
+def _upstream_bare_id(upstream_model_id: str) -> str:
+    value = (upstream_model_id or "").strip().casefold()
+    return value.split("/", 1)[-1] if value else ""
+
+
+def _image_access_family(upstream_model_id: str) -> str:
+    """Classify how to call a square/catalog image model.
+
+    HepAI product catalog uses ``api_protocol=openai`` for all entries and hits
+    ``/v1/images/generations``. Request body and size rules still differ by family.
+    Native Gemini Providers (``wire_api=gemini``) are handled separately via
+    ``GeminiGenerateContentAdapter``.
+    """
+    mid = (upstream_model_id or "").strip().casefold()
+    bare = _upstream_bare_id(mid)
+    if bare.startswith("gpt-image-2") or mid.startswith("openai/gpt-image-2"):
+        return "gpt_image_2"
+    if bare.startswith("gpt-image-") or mid.startswith("openai/gpt-image"):
+        return "gpt_image_legacy"
+    if bare.startswith("gemini-") or "gemini" in bare or mid.startswith("google/"):
+        return "gemini_openai_images"
+    if bare.startswith("qwen-image") or mid.startswith("aliyun/"):
+        return "compat_openai_images"
+    return "compat_openai_images"
+
+
+def _allowed_sizes_for_family(family: str) -> frozenset[str]:
+    if family == "gpt_image_2":
+        return _GPT_IMAGE_2_SIZES
+    if family == "gpt_image_legacy":
+        return _GPT_IMAGE_LEGACY_SIZES
+    if family == "gemini_openai_images":
+        return _GEMINI_OPENAI_IMAGE_SIZES
+    return _COMPAT_OPENAI_IMAGE_SIZES
+
+
+def _normalize_size_for_family(family: str, size: str) -> str:
+    allowed = _allowed_sizes_for_family(family)
+    if size in allowed:
+        return size
+    raise RuntimeExecutionError(
+        "image_size_unsupported",
+        f"Size '{size}' is unsupported for this image model. Use one of: {', '.join(sorted(allowed))}.",
+    )
+
+
+def _openai_images_generation_payload(upstream_model_id: str, prompt: str, size: str) -> dict[str, Any]:
+    """Build `/images/generations` JSON — fields differ by model family."""
+    family = _image_access_family(upstream_model_id)
+    size = _normalize_size_for_family(family, size)
+    payload: dict[str, Any] = {
+        "model": upstream_model_id,
+        "prompt": prompt,
+        "n": 1,
+        "size": size,
+    }
+    if family in {"gpt_image_2", "gpt_image_legacy"}:
+        # Official GPT Image APIs always return base64; ``response_format`` is
+        # rejected or ignored by some gateways. Prefer ``quality`` instead.
+        payload["quality"] = "auto"
+    else:
+        # DALL·E / Qwen / Gemini-via-HepAI Images: request explicit b64 for Runtime.
+        payload["response_format"] = "b64_json"
+    return payload
+
+
+def _openai_images_edit_form(
+    upstream_model_id: str, prompt: str, size: str,
+) -> dict[str, str]:
+    family = _image_access_family(upstream_model_id)
+    size = _normalize_size_for_family(family, size)
+    data: dict[str, str] = {
+        "model": upstream_model_id,
+        "prompt": prompt,
+        "size": size,
+        "n": "1",
+    }
+    if family not in {"gpt_image_2", "gpt_image_legacy"}:
+        data["response_format"] = "b64_json"
+    else:
+        data["quality"] = "auto"
+    return data
+
+
+def _safe_provider_error_detail(response: httpx.Response) -> str:
+    """Extract a short, non-secret upstream error hint for tool/UI feedback."""
+    try:
+        payload = response.json()
+    except Exception:
+        text = (response.text or "").strip().replace("\n", " ")
+        return text[:160] if text else ""
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    if isinstance(detail, dict):
+        parts: list[str] = []
+        for key in ("error_code", "message"):
+            value = detail.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip()[:120])
+        return " ".join(parts)
+    if isinstance(detail, str) and detail.strip():
+        return detail.strip()[:160]
+    for key in ("error", "message", "error_code"):
+        value = payload.get(key) if isinstance(payload, dict) else None
+        if isinstance(value, dict):
+            nested = value.get("message") or value.get("code")
+            if isinstance(nested, str) and nested.strip():
+                return nested.strip()[:160]
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:160]
+    return ""
 
 
 class RuntimeImageOperationAdapter:
@@ -183,12 +319,21 @@ class RuntimeImageOperationAdapter:
             target.unlink(missing_ok=True)
             raise
         self.emit_artifact(context.run_id, "artifact.created", artifact, context)
+        access_protocol = (
+            "gemini_generate_content" if resolved.provider.wire_api == "gemini"
+            else "openai_images_generation" if operation == "image_generation"
+            else "openai_images_edits"
+        )
         return {
             **artifact,
             "operation": operation,
             "model_ref": {"provider_id": provider_id, "model_id": model_id},
             "upstream_model_id": resolved.model,
-            "protocol": "gemini_generate_content" if resolved.provider.wire_api == "gemini" else "openai_images_generation" if operation == "image_generation" else "openai_images_edits",
+            "protocol": access_protocol,
+            "access_family": (
+                "gemini_native" if resolved.provider.wire_api == "gemini"
+                else _image_access_family(resolved.model)
+            ),
             **({
                 "applied_constraint_count": len(applied_constraints),
                 "applied_constraints_sha256": hashlib.sha256("\n".join(applied_constraints).encode("utf-8")).hexdigest(),
@@ -204,19 +349,23 @@ class RuntimeImageOperationAdapter:
             with httpx.Client(timeout=httpx.Timeout(120.0, connect=15.0), follow_redirects=False) as client:
                 if operation == "image_generation":
                     response = client.post(
-                        f"{base_url}/images/generations", headers=headers,
-                        json={"model": upstream_model_id, "prompt": prompt, "size": size, "n": 1, "response_format": "b64_json"},
+                        f"{base_url}/images/generations",
+                        headers=headers,
+                        json=_openai_images_generation_payload(upstream_model_id, prompt, size),
                     )
                 else:
                     resource, image_path, mime = self._edit_resource(context, arguments)
                     with image_path.open("rb") as image_stream:
                         response = client.post(
-                            f"{base_url}/images/edits", headers=headers,
-                            data={"model": upstream_model_id, "prompt": prompt, "size": size, "n": "1", "response_format": "b64_json"},
+                            f"{base_url}/images/edits",
+                            headers=headers,
+                            data=_openai_images_edit_form(upstream_model_id, prompt, size),
                             files={"image": (Path(str(resource["reference"])).name, image_stream, mime)},
                         )
                 response.raise_for_status()
                 payload = response.json()
+        except RuntimeExecutionError:
+            raise
         except (httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
             raise RuntimeExecutionError("image_provider_timeout", "Image Provider request timed out.", retryable=True) from exc
         except httpx.TimeoutException as exc:
@@ -227,7 +376,11 @@ class RuntimeImageOperationAdapter:
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             code = "model_unauthorized" if status in {401, 403} else "image_provider_rejected"
-            raise RuntimeExecutionError(code, "Image Provider rejected the operation.", retryable=status >= 500) from exc
+            detail = _safe_provider_error_detail(exc.response)
+            message = f"Image Provider rejected the operation (HTTP {status})."
+            if detail:
+                message = f"{message} {detail}"
+            raise RuntimeExecutionError(code, message, retryable=status >= 500) from exc
         except httpx.HTTPError as exc:
             raise RuntimeExecutionError(
                 "side_effect_outcome_unknown",
@@ -293,13 +446,33 @@ class RuntimeImageOperationAdapter:
         if not isinstance(payload, dict) or not isinstance(payload.get("data"), list) or not payload["data"]:
             raise RuntimeExecutionError("image_provider_invalid_response", "Image Provider returned no image data.")
         first = payload["data"][0]
-        encoded = first.get("b64_json") if isinstance(first, dict) else None
-        if not isinstance(encoded, str) or not encoded or len(encoded) > MAX_IMAGE_RESULT_BYTES * 2:
-            raise RuntimeExecutionError("image_provider_invalid_response", "Image Provider did not return bounded base64 image data.")
-        try:
-            content = base64.b64decode(encoded, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise RuntimeExecutionError("image_provider_invalid_response", "Image Provider image data is invalid.") from exc
+        if not isinstance(first, dict):
+            raise RuntimeExecutionError("image_provider_invalid_response", "Image Provider returned no image data.")
+        encoded = first.get("b64_json")
+        if isinstance(encoded, str) and encoded:
+            if len(encoded) > MAX_IMAGE_RESULT_BYTES * 2:
+                raise RuntimeExecutionError("image_provider_invalid_response", "Image Provider did not return bounded base64 image data.")
+            try:
+                content = base64.b64decode(encoded, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise RuntimeExecutionError("image_provider_invalid_response", "Image Provider image data is invalid.") from exc
+        else:
+            image_url = first.get("url")
+            if not isinstance(image_url, str) or not image_url.startswith(("https://", "http://")):
+                raise RuntimeExecutionError(
+                    "image_provider_invalid_response",
+                    "Image Provider did not return base64 or URL image data.",
+                )
+            try:
+                with httpx.Client(timeout=httpx.Timeout(60.0, connect=15.0), follow_redirects=True) as client:
+                    downloaded = client.get(image_url)
+                    downloaded.raise_for_status()
+                    content = downloaded.content
+            except httpx.HTTPError as exc:
+                raise RuntimeExecutionError(
+                    "image_provider_invalid_response",
+                    "Image Provider URL could not be downloaded.",
+                ) from exc
         if not content or len(content) > MAX_IMAGE_RESULT_BYTES:
             raise RuntimeExecutionError("image_result_too_large", "Generated image exceeds the Runtime artifact limit.")
         return RuntimeImageOperationAdapter._validate_image_content(content, "")

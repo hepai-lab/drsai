@@ -24,6 +24,13 @@ function isPendingStatus(status: unknown): boolean {
   return status === "pending" || status === "running";
 }
 
+type SnapshotStructuredParts =
+  NonNullable<DesktopThreadSnapshot["messages"][number]["structuredTurn"]>["parts"];
+
+// `?? []` would allocate a fresh array for every message on every frame, and
+// the sidebar re-derives activity on every frame while an answer streams.
+const NO_STRUCTURED_PARTS: SnapshotStructuredParts = [];
+
 function pendingInteraction(
   snapshot?: DesktopThreadSnapshot,
 ): "approval" | "interaction" | null {
@@ -36,8 +43,8 @@ function pendingInteraction(
     // and the catalog update cross process boundaries; that stale child must
     // not keep the sidebar in an attention state after the Run completed.
     const structuredParts = isPendingStatus(structuredTurn?.status)
-      ? structuredTurn?.parts ?? []
-      : [];
+      ? structuredTurn?.parts ?? NO_STRUCTURED_PARTS
+      : NO_STRUCTURED_PARTS;
     for (let partIndex = structuredParts.length - 1; partIndex >= 0; partIndex -= 1) {
       const part = structuredParts[partIndex];
       if (part.kind !== "interaction" || !isPendingStatus(part.status) || part.response) continue;
@@ -50,12 +57,24 @@ function pendingInteraction(
   return null;
 }
 
+function messageIsPending(message: DesktopThreadSnapshot["messages"][number]): boolean {
+  return message.structuredTurn
+    ? isPendingStatus(message.structuredTurn.status)
+    : Boolean(message.streaming);
+}
+
 function snapshotIsRunning(snapshot?: DesktopThreadSnapshot): boolean {
-  return Boolean(snapshot?.messages.some((message) =>
-    message.structuredTurn
-      ? isPendingStatus(message.structuredTurn.status)
-      : message.streaming,
-  ));
+  if (!snapshot) return false;
+  // A run is always at the tail of the conversation, and the sidebar derives
+  // activity once per animation frame while an answer streams. Scanning from
+  // the end keeps that derivation O(1) on the streaming path instead of
+  // walking the whole transcript before reaching the one message that can be
+  // running.
+  for (let index = snapshot.messages.length - 1; index >= 0; index -= 1) {
+    const message = snapshot.messages[index];
+    if (message && messageIsPending(message)) return true;
+  }
+  return false;
 }
 
 function assistantMessageFailed(message: DesktopThreadSnapshot["messages"][number]): boolean {

@@ -7,6 +7,14 @@ calls ``client.getCapabilities()`` first, then ``getBackendModels()`` and
 when a backend is not registered (e.g. ``codex`` on a V2-only desktop), the
 route must exist and return a structured 404/409 rather than a bare 404.
 
+Two session-scoped endpoints from the same V1 block are implemented here as
+well (``gateway_legacy.py`` 5059-5082), because the Desktop calls them on the
+thread-hydration path: ``shared/main/threadRuntimeSubscription.ts`` syncs the
+bound backend's history before every Runtime thread snapshot, and
+``shared/main/chat.ts`` reads the binding status before continuing an existing
+task.  A Runtime that does not serve them fails hydration with a bare 404 --
+exactly what the V2-only gateway did before these routes existed.
+
 Error mapping follows the V1 ``_backend_account_http_error`` helper:
 
 - ``agent_backend_not_found``            → 404
@@ -16,14 +24,17 @@ Error mapping follows the V1 ``_backend_account_http_error`` helper:
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from drsai.backend.runtime.agent import RuntimeExecutionError
 
 from .. import _state
+
+logger = logging.getLogger(__name__)
 
 api = APIRouter(tags=["agent-backends"])
 
@@ -121,6 +132,57 @@ async def restart_backend(backend_id: str):
     """Restart the agent backend identified by *backend_id*."""
     try:
         return await _state.agent_service().restart_backend(backend_id)
+    except RuntimeExecutionError as exc:
+        raise _backend_account_http_error(exc) from exc
+
+
+@api.post(
+    "/v1/sessions/{session_id}/agent-backend/history/sync",
+    operation_id="syncBackendSessionHistory",
+)
+async def sync_backend_session_history(
+    session_id: str,
+    repair: bool = False,
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+):
+    """Import the bound Agent Backend's own history for *session_id*.
+
+    The Desktop calls this before every thread snapshot, so the route must
+    exist on every Runtime.  A backend that does not own its history -- the V2
+    ``opendrsai`` and ``remote-worker`` backends -- answers with an idempotent
+    empty page, which is what the Desktop expects from a non-import backend.
+    A Session imported from a backend that does own its history (``codex``) is
+    served by that backend's adapter when the Runtime registers it.
+    """
+    try:
+        return await _state.agent_service().sync_backend_session_history(
+            session_id, force_reproject=repair, cursor=cursor, limit=limit,
+        )
+    except RuntimeExecutionError as exc:
+        raise _backend_account_http_error(exc) from exc
+    except KeyError as exc:
+        # Mirrors V1 (``gateway_legacy.py`` 5070): an unknown Session is a
+        # client error, not an empty history page.
+        raise HTTPException(status_code=404, detail="Session not found") from exc
+    except Exception:
+        logger.exception("Backend session history sync failed for %s", session_id)
+        raise
+
+
+@api.get(
+    "/v1/sessions/{session_id}/agent-backend/binding",
+    operation_id="getBackendSessionBinding",
+)
+async def get_backend_session_binding(session_id: str):
+    """Report whether *session_id* is still bound to its Agent Backend.
+
+    The Desktop reads ``state`` to decide whether a task may continue, must
+    recover its binding, or needs a new task.  An unknown Session reports
+    ``backend-missing`` instead of 404 so the UI can explain the state.
+    """
+    try:
+        return await _state.agent_service().backend_session_binding_status(session_id)
     except RuntimeExecutionError as exc:
         raise _backend_account_http_error(exc) from exc
 

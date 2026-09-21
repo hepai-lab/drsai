@@ -366,6 +366,97 @@ def _detect_node_executable() -> Optional[str]:
     return None
 
 
+def _first_executable_file(candidates: list[Path]) -> Optional[str]:
+    """Return the first candidate that is an executable file, or None."""
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = str(candidate.resolve()) if candidate.exists() else ""
+        except OSError:
+            continue
+        if not resolved or resolved in seen:
+            continue
+        seen.add(resolved)
+        # os.access reports X_OK for any existing file on Windows, where the
+        # extension (rg.exe) carries the meaning instead.
+        if Path(resolved).is_file() and os.access(resolved, os.X_OK):
+            return resolved
+    return None
+
+
+# Set by the Desktop main process to the ripgrep it ships inside its payload
+# (see apps/desktop/shared/main/bundledTools.ts). It is authoritative because
+# Windows has no usable system rg: findstr is ASCII-only and PowerShell
+# Select-String costs 100-150 ms of startup per call.
+_RIPGREP_ENV_VAR = "DRSAI_RG_PATH"
+
+# Payload layouts that can carry a shipped ripgrep, relative to a payload root:
+# the unpacked source checkout, the packaged Desktop app, and a Runtime install
+# (which stages tools under `app/resources/tools`, next to OpenSSH).
+_RIPGREP_PAYLOAD_DIRS = (
+    ("resources", "tools", "ripgrep"),
+    ("app", "resources", "tools", "ripgrep"),
+    ("apps", "desktop", "windows", "resources", "tools", "ripgrep"),
+)
+
+
+def _bundled_ripgrep_candidates(names: list[str]) -> list[Path]:
+    """Payload locations of the ripgrep shipped with OpenDrSai.
+
+    Walks up from this file so the frozen agent, the source checkout and a
+    Runtime install all find the binary next to their own payload root.
+    ``DRSAI_REPO`` short-circuits that walk when the Desktop launched the
+    gateway from a known checkout.
+    """
+    roots: list[Path] = []
+    declared = os.environ.get("DRSAI_REPO", "").strip()
+    if declared:
+        roots.append(Path(declared))
+    try:
+        here = Path(__file__).resolve()
+    except OSError:
+        here = Path(__file__)
+    roots.extend(list(here.parents)[:12])
+
+    candidates: list[Path] = []
+    for root in roots:
+        for relative in _RIPGREP_PAYLOAD_DIRS:
+            for name in names:
+                candidates.append(Path(root, *relative, name))
+    return candidates
+
+
+def _detect_ripgrep_executable() -> Optional[str]:
+    """Locate a ripgrep binary, preferring the copy OpenDrSai ships.
+
+    Probe order: explicit ``DRSAI_RG_PATH`` -> the Desktop payload (source
+    checkout or packaged install) -> PATH -> ``DRSAI_HOME/bin``. Returns an
+    absolute path, or None when ripgrep is unavailable; callers then fall back
+    to GNU grep or the in-process Python search.
+    """
+    if platform.system() == "Windows":
+        names = ["rg.exe", "rg"]
+    else:
+        names = ["rg", "rg.exe"]
+
+    candidates: list[Path] = []
+    override = os.environ.get(_RIPGREP_ENV_VAR, "").strip()
+    if override:
+        candidates.append(Path(override))
+    candidates.extend(_bundled_ripgrep_candidates(names))
+    found = _first_executable_file(candidates)
+    if found:
+        return found
+
+    for name in names:
+        located = shutil.which(name)
+        if located:
+            return located
+
+    drsai_home = os.environ.get("DRSAI_HOME", "").strip() or str(Path.home() / ".drsai")
+    return _first_executable_file([Path(drsai_home) / "bin" / name for name in names])
+
+
 def _is_powershell_executable(exe: str) -> bool:
     low = str(exe or "").lower()
     return low.endswith("powershell.exe") or low.endswith("pwsh.exe") or low in {
@@ -1157,7 +1248,7 @@ def get_operator_funcs(
             # ── Tool availability checks (each guarded so a missing binary
             #    sets the flag to False instead of raising FileNotFoundError) ──
 
-            rg_bin = shutil.which("rg")          # None if not installed
+            rg_bin = _detect_ripgrep_executable()   # None if unavailable
             rg_available = False
             if rg_bin:
                 try:
