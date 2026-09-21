@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Archive, AudioLines, Bot, ChevronDown, ChevronUp, Copy, FileText, Globe2, History, Image as ImageIcon,
+  Archive, AudioLines, ChevronDown, ChevronUp, Copy, FileText, Globe2, History, Image as ImageIcon,
   MessageSquare, PackageOpen, Pencil, Plug, RefreshCw, Settings, ShieldCheck,
   Smartphone, Terminal as TerminalIcon, Trash2, Type, Video, Volume2,
 } from "lucide-react";
@@ -33,6 +33,7 @@ import {
 import { requestAppDecision, showAppNotice } from "./AppDecisionDialog";
 import type { ModelSettingsDraftController } from "../containers/ModelSettingsContainer";
 import type { ThinkingEffort } from "./ChatWorkspace";
+import { COLOR_PALETTES, FEATURED_COLOR_PALETTE_IDS, type ColorPaletteId } from "../colorPalettes";
 import { describeUserFacingError } from "../userFacingErrors";
 import { userFacingFailureMessage } from "../userFacingLanguage";
 import { normalizeRuntimeErrorEnvelope } from "../../../api/errorEnvelope";
@@ -47,6 +48,10 @@ import { getAgentModelOptions } from "../agentModelOptions";
 import { formatUpdateStatus } from "../statusFormatting";
 import type { WorkspaceSortMode } from "../workspaceOrdering";
 import { resolveAvailableVoiceName, useVoicePreferences } from "../voice/useVoicePreferences";
+import {
+  describeSerialSttBlock,
+  getSerialSttStatusMessage,
+} from "../voice/voiceFailureCopy";
 import {
   getDuplexVoiceReadinessActions,
   type DuplexVoiceReadinessActionId,
@@ -87,7 +92,7 @@ const DEFAULT_AGENT_TEXT_MODEL = "deepseek-v4-pro";
 const LAST_THREAD_STORAGE_KEY = "opendrsai.lastThread";
 const AWAY_STARTED_AT_STORAGE_KEY = "opendrsai.awayStartedAt";
 
-export type SettingsPane = "general" | "voice" | "agent-defaults" | "model-providers" | "perceptors" | "executors" | "memories" | "agent-task" | "approvals" | "analytics" | "integrations" | "codex" | "remote-workspace" | "channels" | "archived-sessions" | "other";
+export type SettingsPane = "general" | "voice" | "agent-defaults" | "model-providers" | "perceptors" | "executors" | "memories" | "approvals" | "analytics" | "integrations" | "codex" | "remote-workspace" | "channels" | "archived-sessions" | "other";
 
 /** Settings panes that are still rendered in the navigation but have no working
  * implementation behind them. They stay visible so the surface stays honest
@@ -641,6 +646,7 @@ export function SettingsPanel({
   modelSettings,
   agents,
   appearance,
+  colorPalette,
   codexStatus,
   approvalCenterPanel,
   channelsPanel,
@@ -666,13 +672,13 @@ export function SettingsPanel({
   onCodexLogout,
   onUseCodex,
   onAppearanceChange,
+  onColorPaletteChange,
   onCompletionNotificationsChange,
   onCopyDiagnostics,
   onDeveloperModeChange,
   onExportLocalData,
   onLanguageChange,
   onLogout,
-  onNewAgentTask,
   onOpenMobilePairing,
   onOpenBrowserPanel,
   onOpenPath,
@@ -712,6 +718,7 @@ export function SettingsPanel({
   modelSettings: ModelSettingsDraftController;
   agents: DesktopAgent[];
   appearance: AppearanceMode;
+  colorPalette: ColorPaletteId;
   codexStatus: CodexBackendStatus | null;
   approvalCenterPanel: React.ReactNode;
   channelsPanel: React.ReactNode;
@@ -737,13 +744,13 @@ export function SettingsPanel({
   onCodexLogout: () => void | Promise<void>;
   onUseCodex: () => void | Promise<void>;
   onAppearanceChange: (appearance: AppearanceMode) => void;
+  onColorPaletteChange: (palette: ColorPaletteId) => void;
   onCompletionNotificationsChange: (enabled: boolean) => void;
   onCopyDiagnostics: () => void;
   onDeveloperModeChange: (enabled: boolean) => void;
   onExportLocalData: () => void;
   onLanguageChange: (language: AppLanguage) => void;
   onLogout: () => Promise<void>;
-  onNewAgentTask: () => void;
   onOpenMobilePairing: () => void;
   onOpenBrowserPanel: () => void;
   onOpenPath: (path: string) => void;
@@ -819,6 +826,19 @@ export function SettingsPanel({
   const [agentModelPolicyDirty, setAgentModelPolicyDirty] = useState(false);
   const [agentModelPolicySaving, setAgentModelPolicySaving] = useState(false);
   const [agentModelPolicyMessage, setAgentModelPolicyMessage] = useState<string | null>(null);
+  const [colorPalettesExpanded, setColorPalettesExpanded] = useState(
+    () => !FEATURED_COLOR_PALETTE_IDS.includes(colorPalette),
+  );
+  const visibleColorPalettes = useMemo(() => {
+    if (colorPalettesExpanded) return COLOR_PALETTES;
+    const featured = FEATURED_COLOR_PALETTE_IDS
+      .map((id) => COLOR_PALETTES.find((palette) => palette.id === id))
+      .filter((palette): palette is (typeof COLOR_PALETTES)[number] => Boolean(palette));
+    if (FEATURED_COLOR_PALETTE_IDS.includes(colorPalette)) return featured;
+    const current = COLOR_PALETTES.find((palette) => palette.id === colorPalette);
+    return current ? [...featured, current] : featured;
+  }, [colorPalette, colorPalettesExpanded]);
+  const hiddenColorPaletteCount = Math.max(0, COLOR_PALETTES.length - visibleColorPalettes.length);
   const openDrSaiConfigurationAgent = agents.find((agent) => agent.source === "local" && agent.id !== "my-codex");
   const codexConfigurationAgent = agents.find((agent) => agent.id === "my-codex");
   const deepSeekHarnessAgent = agents.find((agent) => /deepseek[ -]?harness/i.test(`${agent.id} ${agent.name}`));
@@ -1900,7 +1920,7 @@ export function SettingsPanel({
   // (online) reading cannot run here; see
   // WINDOWS_PLATFORM_DESCRIPTOR.features.remoteSpeechSynthesis.  Windows system
   // speech stays available, so only the online paths are disabled.
-  const remoteSynthesisAvailable = featureCapabilities?.remoteSpeechSynthesis !== false;
+  const remoteSynthesisAvailable = featureCapabilities?.remoteSpeechSynthesis === true;
   const onlineSynthesisUnavailableReason = zh
     ? "此桌面运行时未提供在线朗读接口（POST /v1/audio/speech 返回 404），当前只能使用 Windows 本地朗读。"
     : "This desktop runtime does not expose online speech synthesis (POST /v1/audio/speech returns 404); only Windows system speech is available.";
@@ -1941,6 +1961,9 @@ export function SettingsPanel({
       setDuplexVoiceReadinessBusy(false);
     }
   }, [zh]);
+
+  const serialSttBlock = describeSerialSttBlock(voiceRuntimeStatus, zh);
+  const serialSttStatusMessage = getSerialSttStatusMessage(voiceRuntimeStatus, zh);
   useEffect(() => {
     if (activePane === "voice") void refreshDuplexVoiceReadiness();
   }, [activePane, refreshDuplexVoiceReadiness]);
@@ -2000,7 +2023,6 @@ export function SettingsPanel({
         { id: "perceptors", label: zh ? "感知器配置" : "Perceptors", icon: Globe2 },
         { id: "executors", label: zh ? "执行器配置" : "Executors", icon: TerminalIcon },
         { id: "memories", label: zh ? "记忆器配置" : "Memories", icon: History },
-        { id: "agent-task", label: zh ? "智能体任务" : "Agent tasks", icon: Bot },
         { id: "approvals", label: zh ? "审批中心" : "Approval Center", icon: ShieldCheck },
         { id: "analytics", label: zh ? "使用分析" : "Usage analytics", icon: History },
       ],
@@ -2025,8 +2047,8 @@ export function SettingsPanel({
   const visibleGroups = groups.map((group) => ({
     ...group,
     items: group.items.filter((item) => {
-      if (item.id === "voice") return featureCapabilities?.serialVoice !== false || featureCapabilities?.streamingVoice !== false;
-      if (item.id === "agent-defaults" || item.id === "model-providers" || item.id === "perceptors" || item.id === "executors" || item.id === "memories" || item.id === "agent-task") return featureCapabilities?.agents !== false;
+      if (item.id === "voice") return featureCapabilities?.serialVoice === true || featureCapabilities?.streamingVoice === true;
+      if (item.id === "agent-defaults" || item.id === "model-providers" || item.id === "perceptors" || item.id === "executors" || item.id === "memories") return featureCapabilities?.agents !== false;
       if (item.id === "approvals") return featureCapabilities?.approvals !== false;
       if (item.id === "analytics") return featureCapabilities?.diagnostics !== false;
       if (item.id === "codex") return true;
@@ -2426,6 +2448,59 @@ export function SettingsPanel({
                   ))}
                 </div>
               </div>
+              <div className="settings-row color-palette-row">
+                <span>
+                  <strong>{zh ? "系统配色" : "Color palette"}</strong>
+                  <small>{zh ? "整站主色与氛围；可随时切换，立即生效。" : "System-wide accent and atmosphere. Switches apply instantly."}</small>
+                </span>
+                <div className="color-palette-grid" role="listbox" aria-label={zh ? "系统配色" : "Color palette"}>
+                  {visibleColorPalettes.map((palette) => {
+                    const active = colorPalette === palette.id;
+                    return (
+                      <button
+                        key={palette.id}
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        className={`color-palette-card${active ? " active" : ""}`}
+                        onClick={() => onColorPaletteChange(palette.id)}
+                      >
+                        <div className="color-palette-swatches" aria-hidden>
+                          <span style={{ background: palette.swatches.surface }} />
+                          <span style={{ background: palette.swatches.sidebar }} />
+                          <span style={{ background: palette.swatches.accent }} />
+                          <span style={{ background: palette.swatches.highlight }} />
+                          <span style={{ background: palette.swatches.text }} />
+                        </div>
+                        <strong>{zh ? palette.nameZh : palette.nameEn}</strong>
+                        <small>{zh ? palette.descZh : palette.descEn}</small>
+                      </button>
+                    );
+                  })}
+                </div>
+                {COLOR_PALETTES.length > FEATURED_COLOR_PALETTE_IDS.length ? (
+                  <button
+                    type="button"
+                    className="color-palette-more"
+                    aria-expanded={colorPalettesExpanded}
+                    onClick={() => setColorPalettesExpanded((open) => !open)}
+                  >
+                    {colorPalettesExpanded ? (
+                      <>
+                        <ChevronUp size={14} aria-hidden />
+                        {zh ? "收起" : "Show less"}
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown size={14} aria-hidden />
+                        {zh
+                          ? `更多配色（${hiddenColorPaletteCount}）`
+                          : `More palettes (${hiddenColorPaletteCount})`}
+                      </>
+                    )}
+                  </button>
+                ) : null}
+              </div>
               <div className="settings-component-list">
                 <strong>{zh ? "左侧栏组件" : "Sidebar components"}</strong>
                 <label className="settings-toggle"><span><strong>{zh ? "广场" : "Square"}</strong><small>{zh ? "显示或隐藏整个广场分组。" : "Show or hide the entire Square group."}</small></span><input type="checkbox" checked={sidebarComponents.square} onChange={(event) => onSidebarComponentsChange((current) => ({ ...current, square: event.target.checked }))} /></label>
@@ -2609,8 +2684,25 @@ export function SettingsPanel({
                 <h2>{zh ? "语音输入" : "Voice input"}</h2>
                 <p>{zh ? "只在点击麦克风后采集；停止后才提交整段音频进行识别。" : "Audio is captured only after clicking the microphone and submitted after recording stops."}</p>
               </div>
+              <div className="settings-privacy-note" role="status" data-testid="voice-serial-stt-status" data-reason-code={serialSttBlock?.reasonCode ?? voiceRuntimeStatus?.reasonCode ?? "ready"}>
+                <strong>{zh ? "语音识别" : "Speech recognition"}</strong>
+                <p>{serialSttStatusMessage}</p>
+                {serialSttBlock ? (
+                  <div className="settings-actions">
+                    <button
+                      type="button"
+                      data-testid="voice-serial-stt-open-agent-settings"
+                      disabled={Boolean(agentDefaultsUnavailableReason)}
+                      title={agentDefaultsUnavailableReason ?? undefined}
+                      onClick={() => setActivePane("agent-defaults")}
+                    >
+                      {zh ? "打开智能体配置" : "Open Agent configuration"}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <label className="settings-toggle">
-                <span><strong>{zh ? "允许在线语音识别" : "Allow online transcription"}</strong><small>{zh ? "允许在停止录音后，将本次音频发送给当前配置的 Voice STT 服务。" : "Allow the recorded audio to be sent to the configured Voice STT provider after recording stops."}</small></span>
+                <span><strong>{zh ? "允许在线语音识别" : "Allow online transcription"}</strong><small>{zh ? "允许在停止录音后，将本次音频发送给当前配置的 Voice STT 服务。首次使用时，也可在停止录音后点击「允许并识别」。" : "Allow the recorded audio to be sent to the configured Voice STT provider after recording stops. The first time, you can also allow it from the composer after recording."}</small></span>
                 <input
                   type="checkbox"
                   data-testid="voice-remote-stt-consent"
@@ -2828,23 +2920,6 @@ export function SettingsPanel({
           <>
             <header className="settings-content-header"><h2>{zh ? "记忆器配置" : "Memory configuration"}</h2><p>{zh ? "管理交互形成的用户、任务与情境状态。知识库继续保存外部事实与文档，两者生命周期相互独立。" : "Manage user, task, and situational state formed through interaction. Knowledge bases continue to hold external facts and documents with a separate lifecycle."}</p></header>
             <section className="settings-section settings-empty-state"><History size={25} /><strong>{zh ? "记忆器注册表将在下一阶段开放" : "Memory registry is coming next"}</strong><span>{zh ? "后续将提供存储范围、保留周期、自动召回、显式写入和加密状态；默认不会把大装置数据自动写入长期记忆。" : "The next stage adds storage scope, retention, automatic recall, explicit writes, and encryption status; facility data is never written to long-term memory by default."}</span></section>
-          </>
-        )}
-
-        {activePane === "agent-task" && (
-          <>
-            <header className="settings-content-header">
-              <h2>{zh ? "智能体任务" : "Agent tasks"}</h2>
-              <p>{zh ? "创建独立的智能体任务，并在会话中继续管理执行过程。" : "Create an isolated Agent task and manage its run from the conversation."}</p>
-            </header>
-            <section className="settings-section settings-action-section">
-              <Bot size={22} />
-              <div>
-                <h2>{zh ? "新建智能体任务" : "New Agent task"}</h2>
-                <p>{zh ? "基于当前工作区创建新的智能体任务会话。" : "Start a new Agent task for the current workspace."}</p>
-              </div>
-              <button type="button" onClick={onNewAgentTask}>{zh ? "创建任务" : "Create task"}</button>
-            </section>
           </>
         )}
 

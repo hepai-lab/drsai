@@ -85,6 +85,7 @@ import type {
   WorkspaceProject,
   GatewaySkill,
 } from "@shared/desktopApi";
+import type { DesktopPlatformDescriptor } from "@shared/platform";
 import type { ChatAttachment, InteractionOption } from "@shared/desktopApi";
 import type { RunReproducibilityLevel } from "@shared/runInspection";
 import type { ArtifactPart, CitationPart, InteractionPart, StructuredAssistantPart, StructuredTurnState } from "@shared/structuredConversation";
@@ -125,6 +126,13 @@ import { insertVoiceTranscript } from "../voice/voiceComposer";
 import {
   getVoiceStatusLabel,
 } from "../voice/voiceAudio";
+import {
+  describeSerialSttBlock,
+  getSelectedMicrophoneUnavailableMessage,
+  getSerialVoiceConsentMessage,
+  getVoiceRuntimeUnavailableMessage,
+  type SerialVoiceSetupAction,
+} from "../voice/voiceFailureCopy";
 import { useVoiceCapture } from "../voice/useVoiceCapture";
 import { useDuplexVoiceInput } from "../voice/duplex/useDuplexVoiceInput";
 import type { DuplexCaptureQualityIssue } from "../voice/duplex/captureQuality";
@@ -405,6 +413,8 @@ interface ChatWorkspaceProps {
     attachments?: ChatAttachment[],
     options?: ChatSubmitOptions,
   ) => Promise<boolean>;
+  /** Platform feature flags; serial voice UI shows when serialVoice is true. */
+  featureCapabilities?: DesktopPlatformDescriptor["capabilities"]["features"];
 }
 
 function ChatWorkspaceImpl({
@@ -477,6 +487,7 @@ function ChatWorkspaceImpl({
   onRecoveryAction,
   onLoadEarlierHistory,
   onSubmit,
+  featureCapabilities,
 }: ChatWorkspaceProps): React.JSX.Element {
   useEffect(() => {
     appendRendererStage("chat_workspace.mounted", {
@@ -742,6 +753,7 @@ function ChatWorkspaceImpl({
   const [duplexPrivacyConfirmed, setDuplexPrivacyConfirmed] = useState(false);
   const [duplexTextStrategy, setDuplexTextStrategy] = useState<"after_response" | "interrupt_now">("after_response");
   const [voiceConsentRequired, setVoiceConsentRequired] = useState(false);
+  const [voiceSetupAction, setVoiceSetupAction] = useState<SerialVoiceSetupAction | null>(null);
   const [voiceMenuOpen, setVoiceMenuOpen] = useState(false);
   const voiceMenuRef = useRef<HTMLDivElement | null>(null);
   const voiceButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -809,7 +821,7 @@ function ChatWorkspaceImpl({
   };
   const [voiceProgressMessage, setVoiceProgressMessage] = useState("");
   const [voiceRuntimeLabel, setVoiceRuntimeLabel] = useState("Voice STT");
-  const voicePlayback = useSystemVoicePlayback();
+  const voicePlayback = useSystemVoicePlayback(); // Chromium-first playback; remounts with PLAYBACK_ENGINE_REV
   const {
     devices: voiceDevices,
     elapsedSeconds: voiceElapsedSeconds,
@@ -825,14 +837,17 @@ function ChatWorkspaceImpl({
     beforeStart: async () => {
       voicePlayback.stop();
       setVoiceConsentRequired(false);
+      setVoiceSetupAction(null);
     },
     deviceId: voiceDeviceId,
+    locale: language === "en" ? "en" : "zh",
     onCaptureError: (error, message) => {
+      setVoiceSetupAction("retry_capture");
       reportVoiceCaptureFailure(error, message, "capture_initialization");
     },
     onDeviceUnavailable: () => {
       updateVoicePreferences({ inputDeviceId: "" });
-      setVoiceError("The selected microphone is no longer available. The default microphone will be used.");
+      setVoiceError(getSelectedMicrophoneUnavailableMessage(language === "zh"));
     },
     onRecorded: ({ blob, durationSeconds }) => {
       if (voiceRecordingProcessTimerRef.current !== null) window.clearTimeout(voiceRecordingProcessTimerRef.current);
@@ -1483,6 +1498,7 @@ function ChatWorkspaceImpl({
     Boolean(navigator.mediaDevices?.getUserMedia) &&
     typeof window !== "undefined" &&
     "MediaRecorder" in window;
+  const serialVoiceEnabled = featureCapabilities == null || featureCapabilities.serialVoice === true;
   const showVoiceCaptureBar =
     voiceState === "requesting_permission" ||
     voiceState === "recording";
@@ -1621,7 +1637,7 @@ function ChatWorkspaceImpl({
       latestCompletedAssistantMessage.id,
       latestCompletedAssistantSpeechText,
       zh ? "zh" : "en",
-      { mode: resolveVoiceSynthesisMode(voicePreferences.synthesisMode, voicePreferences.remoteTtsConsent), rate: voicePreferences.playbackRate, voiceName: voicePreferences.voiceName },
+      { mode: resolveVoiceSynthesisMode(voicePreferences.synthesisMode, voicePreferences.remoteTtsConsent, featureCapabilities?.remoteSpeechSynthesis === true), rate: voicePreferences.playbackRate, voiceName: voicePreferences.voiceName },
     );
   }, [
     latestCompletedAssistantMessage?.id,
@@ -1634,6 +1650,7 @@ function ChatWorkspaceImpl({
     voicePreferences.remoteTtsConsent,
     voicePreferences.synthesisMode,
     voicePreferences.voiceName,
+    featureCapabilities?.remoteSpeechSynthesis,
     zh,
   ]);
 
@@ -2720,12 +2737,38 @@ function ChatWorkspaceImpl({
       },
     });
     if (!voiceApiAvailable) {
-      const error = new Error("Voice recording is unavailable in this desktop runtime.");
+      const message = getVoiceRuntimeUnavailableMessage(language === "zh");
+      const error = new Error(message);
       setVoiceState("failed");
-      setVoiceError(error.message);
-      reportVoiceCaptureFailure(error, error.message, "runtime_api_check");
+      setVoiceError(message);
+      setVoiceSetupAction("retry_capture");
+      reportVoiceCaptureFailure(error, message, "runtime_api_check");
       return;
     }
+    let runtime = voiceRuntimeStatus;
+    if (describeSerialSttBlock(runtime, language === "zh") && hasDesktopApi() && typeof desktopApi.getVoiceRuntimeStatus === "function") {
+      try {
+        runtime = await desktopApi.getVoiceRuntimeStatus();
+        setVoiceRuntimeStatus(runtime);
+        setVoiceRuntimeDisclosure(runtime.providerDisclosure);
+        setVoiceRuntimeLabel(runtime.runtimeId === "gateway-provider" ? "Online STT" : "Fixture STT");
+      } catch {
+        runtime = voiceRuntimeStatus;
+      }
+    }
+    const sttBlock = describeSerialSttBlock(runtime, language === "zh");
+    if (sttBlock) {
+      const error = new Error(sttBlock.message);
+      setVoiceState("failed");
+      setVoiceError(sttBlock.message);
+      setVoiceConsentRequired(false);
+      setVoiceSetupAction("open_agent_settings");
+      reportVoiceCaptureFailure(error, sttBlock.message, "stt_runtime_check");
+      return;
+    }
+    setVoiceConsentRequired(false);
+    setVoiceSetupAction(null);
+    setVoiceError(null);
     dispatchVoiceTurn({ type: "begin_capture", turnId: createVoiceTurnId() });
     voiceSelectionRef.current = textareaRef.current
       ? { start: textareaRef.current.selectionStart, end: textareaRef.current.selectionEnd }
@@ -2736,9 +2779,10 @@ function ChatWorkspaceImpl({
     } else {
       const active = voiceCaptureDiagnosticRef.current;
       if (active && !active.failureRecorded) {
-        const message = voiceError || "Microphone capture could not be started.";
+        const message = voiceError || (language === "zh" ? "无法启动麦克风录音。" : "Microphone capture could not be started.");
         setVoiceState("failed");
         setVoiceError(message);
+        setVoiceSetupAction("retry_capture");
         reportVoiceCaptureFailure(
           new Error(message),
           message,
@@ -2926,20 +2970,28 @@ function ChatWorkspaceImpl({
       setVoiceRuntimeStatus(runtime);
       setVoiceRuntimeDisclosure(runtime.providerDisclosure);
       setVoiceRuntimeLabel(runtime.runtimeId === "gateway-provider" ? "Online STT" : "Fixture STT");
+      const sttBlock = describeSerialSttBlock(runtime, zh);
+      if (sttBlock) {
+        setVoiceConsentRequired(false);
+        setVoiceSetupAction("open_agent_settings");
+        failVoiceTranscriptionPreparation("runtime_unavailable", sttBlock.message, true);
+        return false;
+      }
       if (runtime.runtimeId === "gateway-provider" && !skipRemoteConsent && !voicePreferences.remoteSttConsent) {
         setVoiceConsentRequired(true);
+        setVoiceSetupAction("consent");
         failVoiceTranscriptionPreparation(
           "permission_denied",
-          zh
-            ? "录音已保留。允许在线语音识别后将继续识别，不需要重新录音。"
-            : "The recording is preserved. Allow online transcription to continue without recording again.",
+          getSerialVoiceConsentMessage(zh),
           true,
         );
         return false;
       }
       setVoiceConsentRequired(false);
+      setVoiceSetupAction(null);
       return true;
     } catch (error) {
+      setVoiceSetupAction("open_agent_settings");
       failVoiceTranscriptionPreparation(
         "runtime_unavailable",
         error instanceof Error
@@ -4125,12 +4177,14 @@ function ChatWorkspaceImpl({
                   <StreamingStatus message={message} now={now} zh={zh} />
                 )
               ) : message.content ? (
-                <ChatMessageContent
-                  content={assistantContent}
-                  streaming={message.streaming}
-                  language={language}
-                  onOpenLink={handleMarkdownLink}
-                />
+                <div>
+                  <ChatMessageContent
+                    content={assistantContent}
+                    streaming={message.streaming}
+                    language={language}
+                    onOpenLink={handleMarkdownLink}
+                  />
+                </div>
               ) : message.role === "user" && message.attachments?.length ? null : (
                 <StreamingStatus message={message} now={now} zh={zh} />
               )}
@@ -4178,7 +4232,7 @@ function ChatWorkspaceImpl({
                   playback={voicePlayback}
                   playbackDisabled={showAnyVoiceCaptureBar || isVoiceCaptureActive(voiceTurnState.phase)}
                   playbackRate={voicePreferences.playbackRate}
-                  synthesisMode={resolveVoiceSynthesisMode(voicePreferences.synthesisMode, voicePreferences.remoteTtsConsent)}
+                  synthesisMode={resolveVoiceSynthesisMode(voicePreferences.synthesisMode, voicePreferences.remoteTtsConsent, featureCapabilities?.remoteSpeechSynthesis === true)}
                   voiceName={voicePreferences.voiceName}
                   zh={zh}
                   turnActionsDisabled={Boolean(activeRequestId) || !canChat}
@@ -4888,18 +4942,22 @@ function ChatWorkspaceImpl({
               <div
                 className={`composer-voice-status ${voiceState === "failed" || duplexVoiceInput.phase === "failed" ? "error" : ""}`}
                 aria-live="polite"
+                data-testid="composer-voice-status"
+                data-voice-setup-action={voiceSetupAction ?? undefined}
               >
                 <span>
-                  {getVoiceStatusLabel(voiceState, voiceElapsedSeconds)}
+                  {getVoiceStatusLabel(voiceState, voiceElapsedSeconds, zh)}
                 </span>
                 {voiceError || duplexVoiceInput.error ? <small>{voiceError ?? duplexVoiceInput.error}</small> : null}
                 {voiceConsentRequired ? (
                   <span className="composer-voice-error-actions">
                     <button
                       type="button"
+                      data-testid="voice-failure-consent-allow"
                       onClick={() => {
                         updateVoicePreferences({ remoteSttConsent: true });
                         setVoiceConsentRequired(false);
+                        setVoiceSetupAction(null);
                         setVoiceError(null);
                         void retryVoiceTranscription(true);
                       }}
@@ -4908,8 +4966,10 @@ function ChatWorkspaceImpl({
                     </button>
                     <button
                       type="button"
+                      data-testid="voice-failure-consent-dismiss"
                       onClick={() => {
                         setVoiceConsentRequired(false);
+                        setVoiceSetupAction(null);
                         setVoiceError(null);
                         setVoiceState("idle");
                         voiceRetryBlobRef.current = null;
@@ -4918,6 +4978,37 @@ function ChatWorkspaceImpl({
                       }}
                     >
                       {zh ? "暂不使用" : "Not now"}
+                    </button>
+                  </span>
+                ) : null}
+                {voiceSetupAction === "open_agent_settings" ? (
+                  <span className="composer-voice-error-actions">
+                    <button
+                      type="button"
+                      data-testid="voice-failure-open-agent-settings"
+                      onClick={() => onOpenAgentSettings?.()}
+                    >
+                      {zh ? "打开智能体配置" : "Open Agent configuration"}
+                    </button>
+                    {voiceRetryBlobRef.current ? (
+                      <button type="button" data-testid="voice-failure-retry-transcribe" onClick={() => void retryVoiceTranscription()}>
+                        {zh ? "重试识别" : "Retry transcription"}
+                      </button>
+                    ) : (
+                      <button type="button" data-testid="voice-failure-retry-capture" onClick={() => void startVoiceRecording()}>
+                        {zh ? "重试" : "Retry"}
+                      </button>
+                    )}
+                  </span>
+                ) : null}
+                {voiceSetupAction === "retry_capture" ? (
+                  <span className="composer-voice-error-actions">
+                    <button
+                      type="button"
+                      data-testid="voice-failure-retry-capture"
+                      onClick={() => void startVoiceRecording()}
+                    >
+                      {zh ? "重试" : "Retry"}
                     </button>
                   </span>
                 ) : null}
@@ -4943,10 +5034,10 @@ function ChatWorkspaceImpl({
                     {duplexFailureRecovery.fallback ? <button type="button" onClick={() => updateVoicePreferences({ interactionMode: "serial" })}>{zh ? "使用单次输入" : "Use single input"}</button> : null}
                   </span>
                 </section> : null}
-                {voiceError && voiceRetryBlobRef.current && !voiceConsentRequired ? (
+                {voiceError && voiceRetryBlobRef.current && !voiceConsentRequired && voiceSetupAction !== "open_agent_settings" ? (
                   <span className="composer-voice-error-actions">
-                    <button type="button" onClick={() => void retryVoiceTranscription()}>Retry</button>
-                    <button type="button" onClick={discardVoiceReview}>Discard</button>
+                    <button type="button" onClick={() => void retryVoiceTranscription()}>{zh ? "重试" : "Retry"}</button>
+                    <button type="button" onClick={discardVoiceReview}>{zh ? "丢弃" : "Discard"}</button>
                   </span>
                 ) : null}
                 {voiceTurnState.phase === "failed" && voiceTurnState.error?.stage === "submitting" ? (
@@ -5401,28 +5492,53 @@ function ChatWorkspaceImpl({
                   <button type="button" onClick={() => runDuplexReadinessAction(duplexReadinessActions.primary)}>{duplexReadinessActions.primary === "open_agent_settings" ? (zh ? "打开智能体配置" : "Open Agent configuration") : duplexReadinessActions.primary === "switch_to_serial" ? (zh ? "使用单次输入" : "Use single input") : (zh ? "重新检查" : "Check again")}</button>
                   {duplexReadinessActions.fallback ? <button type="button" onClick={() => runDuplexReadinessAction(duplexReadinessActions.fallback!)}>{zh ? "使用单次输入" : "Use single input"}</button> : null}
                 </div> : null}
-                                <div style={VOICE_BUTTON_WRAPPER_STYLE}>
+                {serialVoiceEnabled ? (
+                <div style={VOICE_BUTTON_WRAPPER_STYLE}>
                 <button
                   type="button"
-                  ref={voiceButtonRef} className={`composer-icon-button composer-voice-button ${voiceState === "recording" || duplexVoiceInput.phase === "active" ? "recording" : ""}`}
+                  ref={voiceButtonRef}
+                  className={`composer-icon-button composer-voice-button ${voiceState === "recording" || duplexVoiceInput.phase === "active" ? "recording" : ""}`}
+                  data-testid="composer-voice-button"
                   disabled={voiceState === "requesting_permission" || voiceState === "processing" || duplexVoiceInput.phase === "starting" || duplexVoiceInput.phase === "stopping"}
                   aria-pressed={voiceState === "recording" || duplexVoiceInput.phase === "active"}
-                  aria-keyshortcuts={voicePreferences.interactionMode === "duplex" ? "Alt+Shift+V" : undefined}
+                  aria-keyshortcuts="Alt+Shift+V"
                   aria-label={
                     voiceState === "processing"
-                      ? "Transcribing voice input"
+                      ? (zh ? "正在识别语音" : "Transcribing voice input")
                       : voiceState === "recording" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering"
-                      ? "Stop voice recording"
-                      : "Start voice recording"
+                      ? (zh ? "停止录音并识别" : "Stop voice recording")
+                      : (zh ? "语音输入" : "Start voice recording")
                   }
                   title={
-                    voiceState === "processing"
-                      ? "Transcribing voice input"
-                      : voiceState === "recording" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering"
-                      ? "Stop voice recording"
-                      : "Start voice recording"
+                    !voiceApiAvailable
+                      ? (zh ? "当前环境无法使用麦克风" : "Microphone unavailable in this runtime")
+                      : voiceState === "processing"
+                      ? (zh ? "正在识别语音…" : "Transcribing…")
+                      : voiceState === "recording"
+                      ? (zh ? "点击停止并填入输入框" : "Click to stop and fill the composer")
+                      : (zh ? "点击开始语音输入" : "Click to start voice input")
                   }
-                  onClick={() => { setVoiceMenuOpen(!voiceMenuOpen); }}
+                  onClick={() => {
+                    if (voiceState === "recording") {
+                      stopVoiceRecording("transcribe");
+                      return;
+                    }
+                    if (duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering") {
+                      void duplexVoiceInput.stop();
+                      return;
+                    }
+                    if (voiceState === "processing" || voiceState === "requesting_permission") return;
+                    // Phase 6: one-click serial record → STT → fill composer
+                    if (voicePreferences.interactionMode !== "serial") {
+                      updateVoicePreferences({ interactionMode: "serial" });
+                    }
+                    setVoiceMenuOpen(false);
+                    void startVoiceRecording();
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setVoiceMenuOpen((open) => !open);
+                  }}
                 >
                   {voiceState === "processing" ? (
                     <ThreadActivityBubble state={{ kind: "running" }} language={zh ? "zh" : "en"} />
@@ -5439,48 +5555,40 @@ function ChatWorkspaceImpl({
                         {zh ? "开始录音" : "Start recording"}
                       </button>
                       <div style={VOICE_MENU_DIVIDER_STYLE} />
-<select
-                  className="composer-voice-mode"
-                  data-testid="composer-voice-mode"
-                  value={voicePreferences.interactionMode}
-                  onChange={(event) => updateVoicePreferences({ interactionMode: event.target.value as DesktopVoiceInteractionMode })}
-                  disabled={!canSwitchVoiceMode(voiceTurnState.phase) || showDuplexVoiceCaptureBar}
-                  aria-label={zh ? "语音交互模式" : "Voice interaction mode"}
-                  title={voiceRuntimeDisclosure ?? voiceRuntimeLabel}
-                >
-                  <option value="serial">{zh ? "串行" : "Serial"}</option>
-                  <option value="duplex" disabled={!duplexVoiceAvailability.available}>{zh ? "实时" : "Realtime"}</option>
-                </select>
-<select
-                    className="composer-voice-device"
-                    value={voiceDeviceId}
-                    onChange={(event) => updateVoicePreferences({ inputDeviceId: event.target.value })}
-                    disabled={showAnyVoiceCaptureBar}
-                    aria-label="Microphone device"
-                    title="Microphone device"
-                  >
-                    <option value="">Default mic</option>
-                    {(voicePreferences.interactionMode === "duplex" ? duplexVoiceInput.devices : voiceDevices).map((device, index) => (
-                      <option key={device.deviceId} value={device.deviceId}>
-                        {device.label || `Microphone ${index + 1}`}
-                      </option>
-                    ))}
-                  </select>
-<select
-                  className="composer-voice-language"
-                  value={voiceLanguage}
-                  onChange={(event) => updateVoicePreferences({ inputLanguage: event.target.value as "auto" | "zh-CN" | "en-US" })}
-                  disabled={showAnyVoiceCaptureBar}
-                  aria-label="Voice transcription language"
-                  title="Voice transcription language"
-                >
-                  <option value="auto">Auto</option>
-                  <option value="zh-CN">中文</option>
-                  <option value="en-US">EN</option>
-                </select>
+                      <select
+                        className="composer-voice-device"
+                        value={voiceDeviceId}
+                        onChange={(event) => updateVoicePreferences({ inputDeviceId: event.target.value })}
+                        disabled={showAnyVoiceCaptureBar}
+                        aria-label={zh ? "麦克风设备" : "Microphone device"}
+                        title={zh ? "麦克风设备" : "Microphone device"}
+                      >
+                        <option value="">{zh ? "默认麦克风" : "Default mic"}</option>
+                        {voiceDevices.map((device, index) => (
+                          <option key={device.deviceId} value={device.deviceId}>
+                            {device.label || (zh ? `麦克风 ${index + 1}` : `Microphone ${index + 1}`)}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        className="composer-voice-language"
+                        value={voiceLanguage}
+                        onChange={(event) => updateVoicePreferences({ inputLanguage: event.target.value as "auto" | "zh-CN" | "en-US" })}
+                        disabled={showAnyVoiceCaptureBar}
+                        aria-label={zh ? "识别语言" : "Voice transcription language"}
+                        title={zh ? "识别语言" : "Voice transcription language"}
+                      >
+                        <option value="auto">{zh ? "自动" : "Auto"}</option>
+                        <option value="zh-CN">中文</option>
+                        <option value="en-US">EN</option>
+                      </select>
+                      <small style={{ display: "block", padding: "6px 8px", color: "var(--app-text-muted)", fontSize: 11 }}>
+                        {zh ? "更多选项见 设置 → 语音" : "More options in Settings → Voice"}
+                      </small>
                     </div>
                   )}
                 </div>
+                ) : null}
 
                 {showStop ? (
                   composerText.trim() ? (
@@ -6074,23 +6182,37 @@ function MessageActions({
   onDelete?: (messageId: string) => void;
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
-  const [localPending, setLocalPending] = useState(false);
-  const isActive = playback.activeMessageId === messageId;
-  const isPlaying = isActive && playback.phase === "playing";
-  const isPaused = isActive && playback.phase === "paused";
-  const isSynthesizing = localPending || (isActive && playback.phase === "synthesizing");
-  const playbackError = isActive && playback.phase === "failed" ? playback.error : null;
+  const [heldMode, setHeldMode] = useState<"idle" | "playing" | "paused">("idle");
+  const isActive = playback.activeMessageId === messageId || heldMode !== "idle";
+  const isPlaying = heldMode === "playing" || (playback.activeMessageId === messageId && playback.phase === "playing");
+  const isPaused = heldMode === "paused" || (playback.activeMessageId === messageId && playback.phase === "paused");
+  const isSynthesizing = playback.activeMessageId === messageId && playback.phase === "synthesizing" && heldMode === "idle";
+  const playbackError = playback.activeMessageId === messageId && playback.phase === "failed" ? playback.error : null;
 
   useEffect(() => {
-    if (!localPending) return;
-    if (playback.activeMessageId === messageId && playback.phase !== "idle") {
-      setLocalPending(false);
+    if (playback.activeMessageId === messageId && playback.phase === "playing") {
+      setHeldMode("playing");
       return;
     }
-    if (playback.error && playback.phase === "failed") {
-      setLocalPending(false);
+    if (playback.activeMessageId === messageId && playback.phase === "paused") {
+      setHeldMode("paused");
+      return;
     }
-  }, [localPending, messageId, playback.activeMessageId, playback.error, playback.phase]);
+    if (playback.activeMessageId && playback.activeMessageId !== messageId) {
+      setHeldMode("idle");
+    }
+  }, [messageId, playback.activeMessageId, playback.phase]);
+
+  useEffect(() => {
+    if (heldMode !== "playing") return;
+    const timer = window.setInterval(() => {
+      const speaking = Boolean(window.speechSynthesis?.speaking || window.speechSynthesis?.pending);
+      if (!speaking && playback.phase !== "playing" && playback.phase !== "paused") {
+        setHeldMode("idle");
+      }
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [heldMode, playback.phase]);
 
   async function handleCopy(): Promise<void> {
     try {
@@ -6103,7 +6225,7 @@ function MessageActions({
   }
 
   function handleReadAloud(): void {
-    setLocalPending(true);
+    setHeldMode("playing");
     try {
       playback.play(messageId, content, zh ? "zh" : "en", {
         mode: synthesisMode,
@@ -6111,7 +6233,7 @@ function MessageActions({
         voiceName,
       });
     } catch (error) {
-      setLocalPending(false);
+      setHeldMode("idle");
       console.error("voice playback failed to start", error);
     }
   }
@@ -6157,20 +6279,20 @@ function MessageActions({
           <span>{zh ? "删除本条" : "Delete"}</span>
         </button>
       ) : null}
-      {isSynthesizing ? (
-        <button type="button" disabled title={zh ? "正在合成语音" : "Synthesizing speech"}>
-          <RefreshCw size={13} className="spinning" />
-          <span>{zh ? "合成中" : "Synthesizing"}</span>
-        </button>
-      ) : isPlaying ? (
-        <button type="button" onClick={playback.pause} title={zh ? "暂停朗读" : "Pause reading"}>
+      {isPlaying ? (
+        <button type="button" onClick={() => { setHeldMode("paused"); playback.pause(); }} title={zh ? "暂停朗读" : "Pause reading"}>
           <Pause size={13} />
           <span>{zh ? "暂停" : "Pause"}</span>
         </button>
       ) : isPaused ? (
-        <button type="button" onClick={playback.resume} title={zh ? "继续朗读" : "Resume reading"}>
+        <button type="button" onClick={() => { setHeldMode("playing"); playback.resume(); }} title={zh ? "继续朗读" : "Resume reading"}>
           <Play size={13} />
           <span>{zh ? "继续" : "Resume"}</span>
+        </button>
+      ) : isSynthesizing ? (
+        <button type="button" disabled title={zh ? "正在合成语音" : "Synthesizing speech"}>
+          <RefreshCw size={13} className="spinning" />
+          <span>{zh ? "合成中" : "Synthesizing"}</span>
         </button>
       ) : (
         <button
@@ -6193,7 +6315,7 @@ function MessageActions({
         <button
           type="button"
           onClick={() => {
-            setLocalPending(false);
+            setHeldMode("idle");
             playback.stop();
           }}
           title={zh ? "停止朗读" : "Stop reading"}

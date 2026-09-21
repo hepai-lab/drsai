@@ -49,6 +49,8 @@ function statusLabel(status: string | undefined, isZh: boolean): string {
   return pair ? pair[isZh ? 0 : 1] : status;
 }
 
+const RAGFLOW_BASE_URL = "https://ragflow.ihep.ac.cn";
+
 export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProps): React.JSX.Element {
   const refreshTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
@@ -71,7 +73,6 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
     type: "local-files" as "local-files" | "ragflow",
     location: "",
   });
-  const RAGFLOW_BASE_URL = "https://ragflow.ihep.ac.cn";
   const [ragflowApiKey, setRagflowApiKey] = useState("");
   const [discoveredDatasets, setDiscoveredDatasets] = useState<Array<{ id: string; name: string; chunk_count: number; document_count: number; status: string; selected: boolean }>>([]);
   const [discovering, setDiscovering] = useState(false);
@@ -668,19 +669,19 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
         </header>
 
         <div className="skills-online-stats" aria-label={isZh ? "统计" : "Stats"}>
-          <div className="skills-online-stat-card">
+          <div className="skills-online-stat-card kb-stat-total">
             <div className="skills-online-stat-title">{isZh ? "全部" : "Total"}</div>
             <div className="skills-online-stat-value">{knowledgeBases.length}</div>
           </div>
-          <div className="skills-online-stat-card">
+          <div className="skills-online-stat-card kb-stat-local">
             <div className="skills-online-stat-title">{isZh ? "本地" : "Local"}</div>
             <div className="skills-online-stat-value">{localKBs.length}</div>
           </div>
-          <div className="skills-online-stat-card">
+          <div className="skills-online-stat-card kb-stat-remote">
             <div className="skills-online-stat-title">{isZh ? "远端" : "Remote"}</div>
             <div className="skills-online-stat-value">{remoteKBs.length}</div>
           </div>
-          <div className="skills-online-stat-card">
+          <div className="skills-online-stat-card kb-stat-enabled">
             <div className="skills-online-stat-title">{isZh ? "已启用" : "Enabled"}</div>
             <div className="skills-online-stat-value">{selectedIds.size}</div>
           </div>
@@ -803,29 +804,52 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
               </>
             ) : (
               <>
-                <div className="kb-panel-ragflow-info">
-                  <small>
-                    {isZh ? "RAGFlow 服务器：" : "RAGFlow server: "}
-                    <strong>{RAGFLOW_BASE_URL}</strong>
+                <div className="kb-panel-ragflow-connect">
+                  <div className="kb-panel-ragflow-info">
+                    <span className="kb-panel-ragflow-info-label">
+                      {isZh ? "RAGFlow 服务器" : "RAGFlow server"}
+                    </span>
+                    <button
+                      type="button"
+                      className="kb-panel-ragflow-server-link"
+                      onClick={() => {
+                        void desktopApi.openExternal(RAGFLOW_BASE_URL).catch((cause) => {
+                          setError(cause instanceof Error ? cause.message : String(cause));
+                        });
+                      }}
+                      title={isZh ? "在浏览器中打开 RAGFlow" : "Open RAGFlow in the browser"}
+                    >
+                      {RAGFLOW_BASE_URL}
+                    </button>
+                  </div>
+                  <div className="kb-panel-path-row">
+                    <input
+                      className="kb-panel-input"
+                      type="password"
+                      autoComplete="off"
+                      placeholder={isZh ? "输入 API Key 发现远端数据集" : "Enter API Key to discover datasets"}
+                      value={ragflowApiKey}
+                      onChange={(event) => setRagflowApiKey(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && ragflowApiKey.trim() && !discovering) {
+                          void handleRagflowDiscover();
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="skills-btn primary"
+                      disabled={discovering || !ragflowApiKey.trim()}
+                      onClick={() => void handleRagflowDiscover()}
+                    >
+                      {discovering ? (isZh ? "发现中…" : "Discovering…") : (isZh ? "发现数据集" : "Discover datasets")}
+                    </button>
+                  </div>
+                  <small className="kb-panel-hint">
+                    {isZh
+                      ? "连接成功后会在此列出可添加的数据集。若提示暂无数据集，请先到 RAGFlow 网页创建知识库。"
+                      : "Discovered datasets will appear here. If none are found, create a knowledge base in the RAGFlow web UI first."}
                   </small>
-                </div>
-                <input
-                  className="kb-panel-input"
-                  type="password"
-                  autoComplete="off"
-                  placeholder={isZh ? "输入 API Key 发现远端数据集" : "Enter API Key to discover datasets"}
-                  value={ragflowApiKey}
-                  onChange={(event) => setRagflowApiKey(event.target.value)}
-                />
-                <div className="kb-panel-inline-actions">
-                  <button
-                    type="button"
-                    className="skills-btn primary"
-                    disabled={discovering || !ragflowApiKey.trim()}
-                    onClick={() => void handleRagflowDiscover()}
-                  >
-                    {discovering ? (isZh ? "发现中…" : "Discovering…") : (isZh ? "发现数据集" : "Discover datasets")}
-                  </button>
                 </div>
                 {discoveredDatasets.length > 0 ? (
                   <div className="kb-panel-ragflow-datasets">
@@ -856,13 +880,7 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
                       </button>
                     </div>
                   </div>
-                ) : discovering ? null : (
-                  <p className="kb-panel-hint" role="status">
-                    {isZh
-                      ? "连接成功后会在此列出可添加的数据集。若提示暂无数据集，请先到 RAGFlow 网页创建知识库。"
-                      : "Discovered datasets will appear here. If none are found, create a knowledge base in the RAGFlow web UI first."}
-                  </p>
-                )}
+                ) : null}
               </>
             )}
           </div>
@@ -942,7 +960,7 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
                   <button
                     type="button"
                     key={kb.knowledge_id}
-                    className={`kb-panel-list-item${active ? " active" : ""}${enabled ? " enabled" : ""}`}
+                    className={`kb-panel-list-item${kb.type === "local-files" ? " is-local" : " is-remote"}${active ? " active" : ""}${enabled ? " enabled" : ""}`}
                     data-testid={`kb-panel-row-${kb.knowledge_id}`}
                     onClick={() => {
                       setActiveKnowledgeId(kb.knowledge_id);
@@ -950,13 +968,13 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
                       clearFilePreview();
                     }}
                   >
-                    <span className="kb-panel-list-icon" aria-hidden>
+                    <span className={`kb-panel-list-icon${kb.type === "local-files" ? " is-local" : " is-remote"}`} aria-hidden>
                       {kb.type === "local-files" ? <Database size={15} /> : <Globe2 size={15} />}
                     </span>
                     <span className="kb-panel-list-copy">
                       <strong>{kb.display_name}</strong>
                       <span className="kb-panel-list-meta">
-                        <span className="skills-online-tag-pill">
+                        <span className={`skills-online-tag-pill${kb.type === "local-files" ? " kb-tag-local" : " kb-tag-remote"}`}>
                           {kb.type === "local-files" ? (isZh ? "本地" : "Local") : "RAGFlow"}
                         </span>
                         {kb.document_count !== undefined ? (
@@ -1013,7 +1031,7 @@ export function KnowledgeBasePanel({ agentId, language }: KnowledgeBasePanelProp
               <>
                 <div className="kb-panel-detail-header">
                   <div className="kb-panel-detail-title">
-                    <span className="kb-panel-list-icon" aria-hidden>
+                    <span className={`kb-panel-list-icon${activeKb.type === "local-files" ? " is-local" : " is-remote"}`} aria-hidden>
                       {activeKb.type === "local-files" ? <Database size={16} /> : <Globe2 size={16} />}
                     </span>
                     <div>

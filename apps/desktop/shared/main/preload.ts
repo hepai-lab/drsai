@@ -1704,6 +1704,30 @@ const api: DesktopApi = {
   sendRenderHealthReport: (report: { fps: number; tier: "healthy" | "degraded" | "critical" }): void => {
     ipcRenderer.send("desktop:render-health", report);
   },
+  setWindowChromeAppearance: (chrome: {
+    color: string;
+    symbolColor: string;
+    backgroundColor: string;
+  }): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:window-chrome-appearance", chrome),
+  windowMinimize: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:window-minimize"),
+  windowToggleMaximize: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:window-toggle-maximize"),
+  windowClose: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:window-close"),
+  getWindowMaximized: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:window-is-maximized"),
+  onWindowMaximizedChanged: (callback: (maximized: boolean) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, maximized: boolean) => {
+      callback(Boolean(maximized));
+    };
+    ipcRenderer.on("desktop:window-maximized-changed", listener);
+    void ipcRenderer.invoke("desktop:window-is-maximized").then((maximized: boolean) => {
+      callback(Boolean(maximized));
+    }).catch(() => undefined);
+    return () => ipcRenderer.removeListener("desktop:window-maximized-changed", listener);
+  },
 };
 
 contextBridge.exposeInMainWorld("openDrSai", api);

@@ -3132,12 +3132,9 @@ function createWindow(): void {
     minHeight: effectiveMinHeight,
     title: "OpenDrSai",
     titleBarStyle: "hidden",
-    titleBarOverlay: {
-      color: "#fafafe",
-      symbolColor: "#5f5870",
-      height: 40,
-    },
-    backgroundColor: "#fafafe",
+    // Caption buttons are custom HTML so hover wash is clearly visible.
+    // Icons mimic native Windows glyphs (line / square / x), not Lucide.
+    backgroundColor: "#f2f3f4",
     show: false,
     ...(windowIcon ? { icon: windowIcon } : {}),
     webPreferences: {
@@ -3173,10 +3170,20 @@ function createWindow(): void {
     if (windowStateSaveTimer) clearTimeout(windowStateSaveTimer);
     windowStateSaveTimer = setTimeout(persistWindowState, 250);
   };
+  const notifyWindowMaximizedChanged = () => {
+    if (createdWindow.isDestroyed()) return;
+    safeWebContentsSend(createdWindow.webContents, "desktop:window-maximized-changed", createdWindow.isMaximized());
+  };
   createdWindow.on("move", scheduleWindowStateSave);
   createdWindow.on("resize", scheduleWindowStateSave);
-  createdWindow.on("maximize", scheduleWindowStateSave);
-  createdWindow.on("unmaximize", scheduleWindowStateSave);
+  createdWindow.on("maximize", () => {
+    scheduleWindowStateSave();
+    notifyWindowMaximizedChanged();
+  });
+  createdWindow.on("unmaximize", () => {
+    scheduleWindowStateSave();
+    notifyWindowMaximizedChanged();
+  });
   createdWindow.on("enter-full-screen", scheduleWindowStateSave);
   createdWindow.on("leave-full-screen", scheduleWindowStateSave);
   createdWindow.on("closed", () => {
@@ -4906,6 +4913,47 @@ function registerIpc(): void {
       retryCount: 0,
     });
     return health;
+  });
+  secureHandle("desktop:window-chrome-appearance", (event, chrome: {
+    color?: string;
+    symbolColor?: string;
+    backgroundColor?: string;
+  }) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    const backgroundColor = typeof chrome?.backgroundColor === "string" && chrome.backgroundColor.trim()
+      ? chrome.backgroundColor.trim()
+      : (typeof chrome?.color === "string" && chrome.color.trim() ? chrome.color.trim() : "#eef3f7");
+    try {
+      win.setBackgroundColor(backgroundColor);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  secureHandle("desktop:window-minimize", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    win.minimize();
+    return true;
+  });
+  secureHandle("desktop:window-toggle-maximize", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+    return win.isMaximized();
+  });
+  secureHandle("desktop:window-close", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    win.close();
+    return true;
+  });
+  secureHandle("desktop:window-is-maximized", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    return win.isMaximized();
   });
   secureHandle("desktop:get-install-status", () => getInstallStatus());
   secureHandle("desktop:get-gateway-status", async () => {
