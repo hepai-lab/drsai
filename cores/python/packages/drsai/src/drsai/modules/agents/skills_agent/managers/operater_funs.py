@@ -534,99 +534,12 @@ def get_operator_funcs(
                     # fall through to the next provider instead of crashing.
                     output = None
 
-            # ── 2. PowerShell Select-String (Windows / is_powershell) ────
-            #   Self-contained: uses _detect_powershell() + EncodedCommand
-            #   for reliable CJK handling on legacy Windows PowerShell 5.x.
-            #   CJK patterns are passed via base64-encoded UTF-16LE, which
-            #   avoids all ANSI code-page garbling that plagues -Command.
-            if output is None and is_powershell:
-                try:
-                    ps_path = _detect_powershell()
-                    if ps_path:
-                        # Escape single quotes for PS single-quoted strings
-                        esc_pattern = pattern.replace("'", "''")
-                        esc_path = search_path.replace("'", "''")
-
-                        # Build file filter for Get-ChildItem
-                        file_filter = "*"
-                        if glob:
-                            file_filter = glob.split(",")[0].strip()
-                        esc_filter = file_filter.replace("'", "''")
-
-                        # Select-String is case-insensitive by default
-                        case_flag = "" if case_insensitive else "-CaseSensitive"
-
-                        # Context (Select-String -Context takes "before,after")
-                        context_flag = ""
-                        if output_mode == "content" and (context_before > 0 or context_after > 0):
-                            context_flag = f"-Context {context_before},{context_after}"
-
-                        # Output formatting
-                        if output_mode == "files_with_matches":
-                            fmt = "$results | Select-Object -ExpandProperty Path | Sort-Object -Unique"
-                        elif output_mode == "count":
-                            fmt = ("$results | Group-Object Path | "
-                                   "ForEach-Object { Write-Output ($_.Name + ':' + $_.Count) }")
-                        else:  # content
-                            if show_line_numbers:
-                                fmt = ("$results | ForEach-Object { "
-                                       "Write-Output ($_.Path + ':' + $_.LineNumber + ':' + $_.Line) }")
-                            else:
-                                fmt = ("$results | ForEach-Object { "
-                                       "Write-Output ($_.Path + ':' + $_.Line) }")
-
-                        script = (
-                            "$ErrorActionPreference = 'Continue'\n"
-                            "try { [Console]::OutputEncoding = "
-                            "[System.Text.UTF8Encoding]::new() } catch {}\n"
-                            "try { $OutputEncoding = "
-                            "[System.Text.UTF8Encoding]::new() } catch {}\n"
-                            "$env:PYTHONIOENCODING = 'utf-8'\n"
-                            "$env:PYTHONUTF8 = '1'\n"
-                            f"$results = Get-ChildItem -Path '{esc_path}' "
-                            f"-Recurse -File -Filter '{esc_filter}' | "
-                            f"Select-String -Pattern '{esc_pattern}' "
-                            f"{case_flag} {context_flag} -Encoding UTF8\n"
-                            f"{fmt}\n"
-                        )
-
-                        # Build PS args (EncodedCommand for legacy PS 5.x)
-                        base = ["-NoLogo", "-NoProfile", "-NonInteractive"]
-                        low = ps_path.lower()
-                        is_legacy_ps = (
-                            platform.system() == "Windows"
-                            and (low.endswith("\\powershell.exe")
-                                 or low.endswith("/powershell.exe")
-                                 or low == "powershell.exe"
-                                 or low == "powershell")
-                        )
-                        if is_legacy_ps:
-                            encoded = base64.b64encode(
-                                script.encode("utf-16-le")
-                            ).decode("ascii")
-                            ps_cmd_args = base + [
-                                "-ExecutionPolicy", "Bypass",
-                                "-EncodedCommand", encoded,
-                            ]
-                        else:
-                            ps_cmd_args = base + ["-Command", script]
-
-                        proc = await asyncio.create_subprocess_exec(
-                            ps_path, *ps_cmd_args,
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE,
-                            stdin=asyncio.subprocess.DEVNULL,
-                            **_hide_kwargs,
-                        )
-
-                        async with asyncio.timeout(30):
-                            stdout, stderr = await proc.communicate()
-                            output = stdout.decode('utf-8', errors='replace')
-
-                except Exception:
-                    output = None
-
-            # ── 3. GNU grep (Unix only) ─────────────────────────────────
+            # ── 2. GNU grep (Unix only, fast) ────────────────────────────
+            #   PowerShell Select-String was removed: it is ~10× slower than
+            #   the Python re fallback due to PS process startup + pipeline
+            #   object serialization overhead.  On Windows without ripgrep,
+            #   the optimized Python fallback (section 3) is dramatically
+            #   faster than spawning a PowerShell child process.
             if output is None and grep_available:
                 try:
                     cmd = [shutil.which("grep"), "-r"]
@@ -662,13 +575,36 @@ def get_operator_funcs(
                 except Exception:
                     output = None
 
-            # ── 4. Python re fallback (always available) ────────────────
+            # ── 3. Optimized Python re fallback (always available) ──────
+            #   Uses os.scandir (faster than pathlib.rglob), skips binary
+            #   files by extension + null-byte detection, skips common
+            #   ignore directories, uses mmap for large files, and
+            #   terminates early at max_results.
             if output is None:
 
                 def _pygrep_sync():
                     import re as re_lib
-                    import fnmatch
-                    base = Path(search_path)
+                    import fnmatch as fnmatch_lib
+                    import os as os_lib
+                    import mmap as mmap_lib
+
+                    _BINARY_EXTS = frozenset({
+                        '.pyc', '.pyo', '.exe', '.dll', '.so', '.dylib', '.bin',
+                        '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp',
+                        '.pdf', '.zip', '.gz', '.tar', '.7z', '.rar', '.bz2',
+                        '.mp3', '.mp4', '.avi', '.mov', '.wav', '.flv',
+                        '.o', '.a', '.lib', '.obj', '.class', '.jar', '.war',
+                        '.wasm', '.dat', '.db', '.sqlite', '.pdb', '.node',
+                    })
+                    _SKIP_DIRS = frozenset({
+                        '__pycache__', 'node_modules', '.git', '.svn', '.hg',
+                        'venv', '.venv', 'env', '.env', '.tox', '.mypy_cache',
+                        '.pytest_cache', '.ruff_cache', 'dist', 'build',
+                    })
+                    _MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+                    _MMAP_THRESHOLD = 64 * 1024  # Use mmap for files > 64KB
+                    _BINARY_CHECK_SIZE = 8192  # Check first 8KB for null bytes
+
                     flags = re_lib.IGNORECASE if case_insensitive else 0
                     try:
                         compiled = re_lib.compile(pattern, flags)
@@ -676,48 +612,99 @@ def get_operator_funcs(
                         return f"Error: Invalid regex pattern: {e}"
 
                     results = []
+                    glob_patterns = [g.strip() for g in glob.split(",")] if glob else None
+                    base_str = search_path
 
-                    for fpath in base.rglob("*"):
-                        if not fpath.is_file():
-                            continue
-                        if glob:
-                            matched = False
-                            for pattern_item in glob.split(","):
-                                if fnmatch.fnmatch(fpath.name, pattern_item.strip()):
-                                    matched = True
-                                    break
-                            if not matched:
-                                continue
+                    def _matches_glob(name):
+                        if not glob_patterns:
+                            return True
+                        return any(fnmatch_lib.fnmatch(name, gp) for gp in glob_patterns)
 
+                    def _is_binary(ext, fpath):
+                        if ext in _BINARY_EXTS:
+                            return True
                         try:
-                            with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
-                                lines = f.readlines()
-                        except Exception:
-                            continue
+                            with open(fpath, 'rb') as fb:
+                                return b'\x00' in fb.read(_BINARY_CHECK_SIZE)
+                        except (OSError, PermissionError):
+                            return True  # skip on error
+
+                    def _scan_file(fpath, name, size):
+                        """Scan a single file for pattern matches."""
+                        if not _matches_glob(name):
+                            return
+                        ext = os_lib.path.splitext(name)[1].lower()
+                        if _is_binary(ext, fpath):
+                            return
 
                         file_matches = []
-                        for i, line in enumerate(lines, 1):
-                            if compiled.search(line):
-                                file_matches.append((i, line.rstrip()))
+                        try:
+                            if size > _MMAP_THRESHOLD:
+                                # mmap for large files: line-by-line without
+                                # loading entire file into memory
+                                with open(fpath, 'rb') as f:
+                                    with mmap_lib.mmap(f.fileno(), 0, access=mmap_lib.ACCESS_READ) as mm:
+                                        for i, raw_line in enumerate(iter(mm.readline, b''), 1):
+                                            line = raw_line.decode('utf-8', errors='ignore').rstrip()
+                                            if compiled.search(line):
+                                                file_matches.append((i, line))
+                                                if len(file_matches) >= max_results:
+                                                    break
+                            else:
+                                with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                                    for i, line in enumerate(f, 1):
+                                        if compiled.search(line):
+                                            file_matches.append((i, line.rstrip()))
+                                            if len(file_matches) >= max_results:
+                                                break
+                        except (OSError, PermissionError, ValueError):
+                            return
 
                         if not file_matches:
-                            continue
+                            return
 
-                        rel = str(fpath.relative_to(base)) if fpath.is_relative_to(base) else str(fpath)
+                        rel = os_lib.path.relpath(fpath, base_str)
 
                         if output_mode == "files_with_matches":
                             results.append(rel)
                         elif output_mode == "count":
                             results.append(f"{rel}:{len(file_matches)}")
                         else:  # content mode
-                            for line_no, line_text in file_matches[:max_results]:
-                                if show_line_numbers:
-                                    results.append(f"{rel}:{line_no}:{line_text}")
-                                else:
-                                    results.append(f"{rel}:{line_text}")
+                            for ln, lt in file_matches[:max_results]:
+                                results.append(f"{rel}:{ln}:{lt}" if show_line_numbers else f"{rel}:{lt}")
 
-                        if len(results) >= max_results:
-                            break
+                    def _scan_dir(dir_path):
+                        """Recursively scan directory using os.scandir."""
+                        try:
+                            with os_lib.scandir(dir_path) as entries:
+                                for entry in entries:
+                                    if len(results) >= max_results:
+                                        return
+                                    try:
+                                        if entry.is_dir(follow_symlinks=False):
+                                            if entry.name.startswith('.') or entry.name in _SKIP_DIRS:
+                                                continue
+                                            _scan_dir(entry.path)
+                                        elif entry.is_file(follow_symlinks=False):
+                                            stat = entry.stat()
+                                            if stat.st_size == 0 or stat.st_size > _MAX_FILE_SIZE:
+                                                continue
+                                            _scan_file(entry.path, entry.name, stat.st_size)
+                                    except (OSError, PermissionError):
+                                        continue
+                        except (OSError, PermissionError):
+                            return
+
+                    # Entry point: single file or directory scan
+                    bp = Path(base_str)
+                    if bp.is_file():
+                        try:
+                            stat = os_lib.stat(base_str)
+                            _scan_file(base_str, os_lib.path.basename(base_str), stat.st_size)
+                        except OSError:
+                            pass
+                    else:
+                        _scan_dir(base_str)
 
                     return "\n".join(results) if results else ""
 
