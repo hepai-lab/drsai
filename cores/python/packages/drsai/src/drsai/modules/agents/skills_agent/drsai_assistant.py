@@ -327,11 +327,11 @@ class DrSaiAssistantConfig(DrSaiAgentConfig):
     extra_work_dirs: List[str]
     executor: ComponentModel
     sub_agent_config: Dict
-    max_turn_count: int
+    max_turn_count: int | None
     max_agent_concurrent: int
-    max_tool_rounds_ceiling: int
-    max_parallel_tool_calls_ceiling: int
-    max_inline_tool_output_chars: int
+    max_tool_rounds_ceiling: int | None
+    max_parallel_tool_calls_ceiling: int | None
+    max_inline_tool_output_chars: int | None
     token_limit: int
     rag_flow_url: str
     rag_flow_token: str

@@ -1263,14 +1263,23 @@ def create_agent(
         tools=final_tools,                # Extra tools (MCP, knowledge, GFS, etc.)
         sub_agent_config=final_sub_agent_config,
         max_agent_concurrent=cli_cfg.get("max_agent_concurrent", 5),
-        # Tool-loop ceilings: optional, from cli_cfg. Omit when absent so the
-        # assistant defaults (desktop-oriented constants) apply.
+        # When enabled, TUI also removes the outer assistant turn bound;
+        # finite deployments can restore it through this switch/config.
         **({
-            "max_tool_rounds_ceiling": cli_cfg["max_tool_rounds_ceiling"],
-        } if "max_tool_rounds_ceiling" in cli_cfg else {}),
+            "max_turn_count": None if cli_cfg.get("tui_unlimited_tool_loop", True) else 1_000,
+        } if kernel_surface == "tui" else {}),
+        # TUI legacy mode deliberately has no artificial tool-loop ceiling by
+        # default. The switch keeps finite limits available for deployments
+        # that need them; Delegate concurrency remains independent.
         **({
-            "max_parallel_tool_calls_ceiling": cli_cfg["max_parallel_tool_calls_ceiling"],
-        } if "max_parallel_tool_calls_ceiling" in cli_cfg else {}),
+            "max_tool_rounds_ceiling": None if cli_cfg.get("tui_unlimited_tool_loop", True)
+            else cli_cfg.get("max_tool_rounds_ceiling", 500),
+            "max_parallel_tool_calls_ceiling": None if cli_cfg.get("tui_unlimited_tool_loop", True)
+            else cli_cfg.get("max_parallel_tool_calls_ceiling", 50),
+        } if kernel_surface == "tui" else {
+            "max_tool_rounds_ceiling": cli_cfg.get("max_tool_rounds_ceiling", 500),
+            "max_parallel_tool_calls_ceiling": cli_cfg.get("max_parallel_tool_calls_ceiling", 50),
+        }),
         **({
             "max_inline_tool_output_chars": cli_cfg["max_inline_tool_output_chars"],
         } if "max_inline_tool_output_chars" in cli_cfg else {}),

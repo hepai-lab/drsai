@@ -33,6 +33,12 @@ DEFAULT_CONFIG: dict = {
     "dangerous_allowed": False,
     # Subagent concurrency: 子智能体并行执行的最大并发数
     "max_agent_concurrent": 5,
+    # TUI tool-loop policy. TUI defaults to unlimited rounds/batch size;
+    # set tui_unlimited_tool_loop=False and finite ceilings to restore bounds.
+    "tui_unlimited_tool_loop": True,
+    "max_tool_rounds_ceiling": 500,
+    "max_parallel_tool_calls_ceiling": 50,
+    "max_inline_tool_output_chars": 64000,
     # ── API Keys (persisted for packaged app convenience) ─────────────────
     # In development mode, users typically set env vars:
     #   HEPAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY
