@@ -1774,32 +1774,41 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         supported = bool(getattr(reasoning, "supported", False))
         levels = tuple(getattr(reasoning, "effort_levels", ()) or ())
         param_type = str(getattr(reasoning, "param_type", "none") or "none")
+
+        # Detect whether the model_client is Anthropic-based or OpenAI-based.
+        # Anthropic clients accept `thinking` and `output_config` in
+        # extra_create_args; OpenAI clients (HepAIChatCompletionClient) only
+        # accept `reasoning_effort`.  Passing `thinking` to an OpenAI client
+        # raises ``ValueError: Extra create args are invalid: {'thinking'}``.
+        _is_anthropic = any(
+            getattr(cls, "__name__", "") == "AnthropicChatCompletionClient"
+            for cls in type(model_client).__mro__
+        )
+
         if effort and supported and (
             effort in {"off", "none"} or not levels or effort in levels
         ):
             if effort in {"off", "none"}:
                 # Normalize the TUI's user-facing off/none values across
                 # provider-specific request protocols.
-                if param_type == "deepseek_reasoning_effort":
-                    # DeepSeek supports reasoning_effort via OpenAI-compatible
-                    # API; passing "thinking" (Anthropic-only) would cause
-                    # ValueError in the client.  Omit entirely to use model
-                    # default (no explicit reasoning).
-                    pass
-                elif param_type == "adaptive":
+                if _is_anthropic and param_type in {"deepseek_reasoning_effort", "adaptive"}:
                     extra_create_args["thinking"] = {"type": "disabled"}
-                elif param_type in {"reasoning_effort", "is_r1_model", "zhipu_format", "minimax_format"}:
+                else:
+                    # OpenAI clients (and Anthropic clients with other
+                    # param_types) use reasoning_effort="none".
                     extra_create_args["reasoning_effort"] = "none"
-            elif param_type == "deepseek_reasoning_effort":
-                # DeepSeek uses reasoning_effort only, NOT Anthropic's
-                # "thinking" field.  Setting both would fail client validation.
+            elif _is_anthropic and param_type == "deepseek_reasoning_effort":
+                extra_create_args["thinking"] = {"type": "enabled"}
                 extra_create_args["reasoning_effort"] = effort
-            elif param_type == "adaptive":
+            elif _is_anthropic and param_type == "adaptive":
                 extra_create_args["thinking"] = {"type": "adaptive"}
                 extra_create_args["output_config"] = {
                     "effort": "max" if effort == "xhigh" else effort,
                 }
-            elif param_type in {"reasoning_effort", "is_r1_model", "zhipu_format", "minimax_format"}:
+            else:
+                # All OpenAI clients, and Anthropic clients with
+                # reasoning_effort/is_r1_model/zhipu_format/minimax_format
+                # param_types, use reasoning_effort.
                 extra_create_args["reasoning_effort"] = effort
 
         if model_client_stream:

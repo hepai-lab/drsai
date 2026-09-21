@@ -1,19 +1,27 @@
 package ai.drsai.remote.remote.ui
 
+import android.accessibilityservice.AccessibilityService
+import android.os.SystemClock
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
 import ai.drsai.remote.remote.model.*
 import ai.drsai.remote.remote.data.RemoteAgentDefinition
 import ai.drsai.remote.remote.data.RemoteAuditEntry
 import ai.drsai.remote.remote.data.RemoteFileNode
 import ai.drsai.remote.remote.data.RemoteLifecycleState
 import ai.drsai.remote.remote.data.RemoteSessionUiAuthorityState
+import ai.drsai.remote.remote.data.AndroidResourceCapabilities
+import ai.drsai.remote.remote.data.AndroidResourceDescriptor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import androidx.test.platform.app.InstrumentationRegistry
 
 class RemoteSessionUiTest {
     @get:Rule val rule = createComposeRule()
@@ -114,6 +122,185 @@ class RemoteSessionUiTest {
         rule.runOnIdle { assertEquals("artifact-1", opened) }
     }
 
+    @Test fun oaepResourceChipOpensCapabilityBottomSheetAndCitedPreview() {
+        val resource = RemoteTranscriptResource("assoc-1", "报告.md", "file", "text/markdown", 5, "sha256:x",
+            "authority", "ws", "file", "resource", 1, "observed")
+        val descriptor = AndroidResourceDescriptor("assoc-1", "报告.md", "changed", "text/markdown", 5,
+            "current", "observed", AndroidResourceCapabilities(
+                readCurrent = true, preview = true, download = true, readSnapshot = true,
+                reveal = false, openExternal = false, copyLogicalPath = false,
+            ))
+        var resolved = 0; var observed = false
+        rule.setContent { MaterialTheme { RemoteChatScreen(
+            RemoteChatUiState("PC", "WS", "Session", messages = listOf(RemoteMessageUi("m", "assistant", "完成", resources = listOf(resource))), scopeKey = "rt/ws/s"),
+            {}, {}, {}, { _, _ -> }, {},
+            onResolveResource = { resolved++; descriptor },
+            onPreviewResource = { _, value, cited -> observed = cited; value.copy(previewText = "引用时内容") },
+        ) } }
+        rule.onNodeWithTag("conversation-resource-chip-assoc-1")
+            .assertHasClickAction()
+            .assert(SemanticsMatcher("resource chip has a localized readable name and button role") { node ->
+                node.config.contains(SemanticsProperties.Role) &&
+                    node.config[SemanticsProperties.Role] == Role.Button &&
+                    node.config.contains(SemanticsProperties.ContentDescription) &&
+                    node.config[SemanticsProperties.ContentDescription].joinToString(" ").contains("报告.md")
+            })
+            .performClick()
+        rule.onNodeWithTag("conversation-resource-sheet").assertIsDisplayed()
+        rule.waitUntil(5_000) { resolved == 1 }
+        rule.onNodeWithTag("conversation-resource-state").assertIsDisplayed()
+        rule.onNodeWithTag("conversation-resource-preview-observed").performClick()
+        rule.waitUntil(5_000) { observed }
+        rule.onNodeWithText("引用时内容").assertIsDisplayed()
+        rule.onNodeWithTag("conversation-resource-save").assertIsEnabled()
+    }
+
+    @Test fun offlineResourceKeepsCachedMetadataAndOffersRetryWithoutDeletedState() {
+        val resource = RemoteTranscriptResource("assoc-offline", "离线报告.pdf", "file", "application/pdf", 12, null)
+        rule.setContent { MaterialTheme { RemoteChatScreen(
+            RemoteChatUiState("PC", "WS", "Session", messages = listOf(RemoteMessageUi("m", "assistant", "", resources = listOf(resource))),
+                authority = RemoteSessionUiAuthorityState(connectionState = RemoteConnectionState.OFFLINE, lifecycleState = RemoteLifecycleState.OFFLINE), scopeKey = "rt/ws/s"),
+            {}, {}, {}, { _, _ -> }, {},
+        ) } }
+        rule.onNodeWithTag("conversation-resource-chip-assoc-offline").performClick()
+        rule.onNodeWithTag("conversation-resource-sheet").assertIsDisplayed()
+        rule.onNodeWithTag("conversation-resource-offline").assertIsDisplayed()
+        rule.onNodeWithTag("conversation-resource-retry").assertHasClickAction()
+        // No authoritative descriptor was resolved while offline, so the sheet
+        // must not misclassify the cached association as any lifecycle state.
+        rule.onAllNodesWithTag("conversation-resource-state").assertCountEquals(0)
+    }
+
+    @Test fun associationSurvivesOfflineRecoveryAndRuntimeReconnect() {
+        val resource = RemoteTranscriptResource("assoc-reconnect", "恢复记录.md", "file", "text/markdown", 7, "sha256:x",
+            "authority", "ws", "file", "resource", 1, "observed")
+        val descriptor = AndroidResourceDescriptor("assoc-reconnect", "恢复记录.md", "available", "text/markdown", 7,
+            "current", "observed", AndroidResourceCapabilities(
+                readCurrent = true, preview = true, download = true, readSnapshot = true,
+                reveal = false, openExternal = false, copyLogicalPath = false,
+            ))
+        val message = RemoteMessageUi("m", "assistant", "", resources = listOf(resource))
+        val ui = mutableStateOf(RemoteChatUiState(
+            "PC", "WS", "Session", messages = listOf(message),
+            authority = RemoteSessionUiAuthorityState(
+                generation = 1,
+                connectionState = RemoteConnectionState.OFFLINE,
+                lifecycleState = RemoteLifecycleState.OFFLINE,
+            ),
+            scopeKey = "rt/ws/s",
+        ))
+        var resolvedAssociation: String? = null
+        rule.setContent { MaterialTheme { RemoteChatScreen(
+            ui.value, {}, {}, {}, { _, _ -> }, {},
+            onResolveResource = { resolvedAssociation = it.id; descriptor },
+        ) } }
+
+        rule.onNodeWithTag("conversation-resource-chip-assoc-reconnect").assertIsDisplayed()
+        rule.runOnIdle {
+            ui.value = ui.value.copy(authority = RemoteSessionUiAuthorityState(
+                generation = 2,
+                connectionState = RemoteConnectionState.ONLINE,
+                lifecycleState = RemoteLifecycleState.ONLINE,
+            ))
+        }
+        rule.onNodeWithTag("conversation-resource-chip-assoc-reconnect").assertIsDisplayed().performClick()
+        rule.waitUntil(5_000) { resolvedAssociation == "assoc-reconnect" }
+        rule.onNodeWithTag("conversation-resource-state").assertIsDisplayed()
+        rule.runOnIdle {
+            assertEquals("assoc-reconnect", ui.value.messages.single().resources.single().id)
+        }
+    }
+
+    @Test fun storagePickerCancellationDoesNotWriteOrLeaveDownloadProgress() {
+        val resource = RemoteTranscriptResource("assoc-cancel", "取消保存.txt", "file", "text/plain", 9, "sha256:x")
+        val descriptor = AndroidResourceDescriptor("assoc-cancel", "取消保存.txt", "available", "text/plain", 9,
+            "current", "observed", AndroidResourceCapabilities(
+                readCurrent = true, preview = true, download = true, readSnapshot = true,
+                reveal = false, openExternal = false, copyLogicalPath = false,
+            ))
+        var downloads = 0
+        rule.setContent { MaterialTheme { RemoteChatScreen(
+            RemoteChatUiState("PC", "WS", "Session", messages = listOf(RemoteMessageUi("m", "assistant", "", resources = listOf(resource))), scopeKey = "rt/ws/s"),
+            {}, {}, {}, { _, _ -> }, {},
+            onResolveResource = { descriptor },
+            onDownloadResource = { _, _, _, _ -> downloads++ },
+        ) } }
+
+        rule.onNodeWithTag("conversation-resource-chip-assoc-cancel").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodesWithTag("conversation-resource-save").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithTag("conversation-resource-save").performClick()
+        SystemClock.sleep(750)
+        assertTrue(InstrumentationRegistry.getInstrumentation().uiAutomation
+            .performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK))
+        rule.waitForIdle()
+
+        rule.runOnIdle { assertEquals(0, downloads) }
+        rule.onAllNodesWithTag("conversation-resource-progress").assertCountEquals(0)
+        rule.onAllNodesWithTag("conversation-resource-error").assertCountEquals(0)
+    }
+
+    @Test fun storagePickerSelectionWritesVerifiedContentAndReportsProgress() {
+        val payload = "saved-through-saf".toByteArray()
+        val fileName = "P2验收保存-${System.currentTimeMillis()}.txt"
+        val resource = RemoteTranscriptResource("assoc-save", fileName, "file", "text/plain", payload.size.toLong(), "sha256:x")
+        val descriptor = AndroidResourceDescriptor("assoc-save", fileName, "available", "text/plain", payload.size.toLong(),
+            "current", "observed", AndroidResourceCapabilities(
+                readCurrent = true, preview = true, download = true, readSnapshot = true,
+                reveal = false, openExternal = false, copyLogicalPath = false,
+            ))
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var savedUri: android.net.Uri? = null
+        rule.setContent { MaterialTheme { RemoteChatScreen(
+            RemoteChatUiState("PC", "WS", "Session", messages = listOf(RemoteMessageUi("m", "assistant", "", resources = listOf(resource))), scopeKey = "rt/ws/s"),
+            {}, {}, {}, { _, _ -> }, {},
+            onResolveResource = { descriptor },
+            onDownloadResource = { _, _, uri, onProgress ->
+                onProgress(0, payload.size.toLong())
+                instrumentation.targetContext.contentResolver.openOutputStream(uri, "w")!!.use { it.write(payload) }
+                onProgress(payload.size.toLong(), payload.size.toLong())
+                savedUri = uri
+            },
+        ) } }
+
+        rule.onNodeWithTag("conversation-resource-chip-assoc-save").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodesWithTag("conversation-resource-save").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithTag("conversation-resource-save").performClick()
+
+        var pickerAccepted = false
+        for (attempt in 0 until 20) {
+            SystemClock.sleep(250)
+            val root = instrumentation.uiAutomation.rootInActiveWindow ?: continue
+            val labels = listOf("保存", "Save", "SAVE")
+            val byId = listOf(
+                "com.android.documentsui:id/save",
+                "com.google.android.documentsui:id/save",
+                "android:id/button1",
+            ).flatMap { id -> runCatching { root.findAccessibilityNodeInfosByViewId(id) }.getOrDefault(emptyList()) }
+            val byExactText = labels.flatMap { root.findAccessibilityNodeInfosByText(it) }
+                .filter { node -> labels.any { it.equals(node.text?.toString(), ignoreCase = true) } }
+            val candidates = byId + byExactText
+            val action = candidates.firstNotNullOfOrNull { node ->
+                generateSequence(node) { it.parent }.firstOrNull { it.isClickable }
+            }
+            if (action?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) {
+                pickerAccepted = true
+                break
+            }
+        }
+        assertTrue("system document picker did not expose a Save action", pickerAccepted)
+        rule.waitUntil(5_000) { savedUri != null }
+        rule.waitForIdle()
+
+        val uri = requireNotNull(savedUri)
+        assertEquals(payload.toList(), instrumentation.targetContext.contentResolver.openInputStream(uri)!!.use { it.readBytes() }.toList())
+        rule.onNodeWithTag("conversation-resource-progress").assertIsDisplayed()
+        rule.onNodeWithText("${payload.size} / ${payload.size} B").assertIsDisplayed()
+        rule.onAllNodesWithTag("conversation-resource-error").assertCountEquals(0)
+        // Some DocumentsProvider implementations intentionally do not grant
+        // delete through the returned CreateDocument URI.
+        runCatching { instrumentation.targetContext.contentResolver.delete(uri, null, null) }
+    }
+
     @Test fun auditScreenShowsSafeSummaryWithoutInternalCorrelationOrWriteControls() {
         val entry = RemoteAuditEntry("audit", RuntimeId("rt"), WorkspaceId("ws"), SessionId("s"), RunId("r"),
             "approval.approved", "alice", "2026-01-01T00:00:00Z", "corr-123", ApprovalId("a"))
@@ -121,7 +308,7 @@ class RemoteSessionUiTest {
             runtimeName = "开发机", workspaceName = "项目", entries = listOf(entry), loading = false,
             error = null, onBack = {}, onRefresh = {},
         ) } }
-        rule.onNodeWithText(remoteAuditActionLabel(entry.action)).assertIsDisplayed()
+        rule.onNodeWithText("批准操作").assertIsDisplayed()
         rule.onNodeWithText("操作方：alice").assertIsDisplayed()
         rule.onNodeWithText("工作区：项目").assertIsDisplayed()
         rule.onAllNodesWithText("corr-123", substring = true).assertCountEquals(0)

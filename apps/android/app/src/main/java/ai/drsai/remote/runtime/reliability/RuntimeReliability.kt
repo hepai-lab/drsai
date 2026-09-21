@@ -10,34 +10,35 @@ enum class FailureCategory {
     PYTHON, BINDER, MODEL, TOOL, APPROVAL, ROOM, POLICY, RESOURCE, UNKNOWN,
 }
 
-data class ClassifiedFailure(val category: FailureCategory, val code: String, val retryable: Boolean, val userAction: String)
+enum class FailureUserAction { RESEND, RECONCILE_RESULT, RETRY_OR_SWITCH_RUNTIME, RECONNECT_RUNTIME, RETRY_MODEL, CHECK_TOOL_RESULT, CONFIRM_APPROVAL, EXPORT_DIAGNOSTICS, USE_SAFE_RUNTIME, RELEASE_RESOURCES, CHECK_NETWORK, SIGN_IN_AGAIN, RETRY_LATER, MODIFY_REQUEST, VIEW_DIAGNOSTICS }
+data class ClassifiedFailure(val category: FailureCategory, val code: String, val retryable: Boolean, val userAction: FailureUserAction)
 
 object RuntimeFailureCatalog {
     fun classify(httpStatus: Int?, code: String? = null, sideEffectStarted: Boolean = false): ClassifiedFailure {
         val normalized = code?.lowercase().orEmpty()
         return when {
-            normalized == "cancelled" -> failure(FailureCategory.CANCELLED, "cancelled", false, "重新发送")
-            sideEffectStarted -> failure(FailureCategory.TOOL_SIDE_EFFECT, "side_effect_unknown", false, "核对结果后手动处理")
-            normalized.startsWith("python_") -> failure(FailureCategory.PYTHON, normalized, true, "重试或切换运行时")
-            normalized.startsWith("binder_") -> failure(FailureCategory.BINDER, normalized, true, "重新连接运行时")
-            normalized.startsWith("model_") -> failure(FailureCategory.MODEL, normalized, true, "重试模型请求")
-            normalized.startsWith("tool_") -> failure(FailureCategory.TOOL, normalized, false, "检查工具结果")
-            normalized.startsWith("approval_") -> failure(FailureCategory.APPROVAL, normalized, false, "重新确认审批")
+            normalized == "cancelled" -> failure(FailureCategory.CANCELLED, "cancelled", false, FailureUserAction.RESEND)
+            sideEffectStarted -> failure(FailureCategory.TOOL_SIDE_EFFECT, "side_effect_unknown", false, FailureUserAction.RECONCILE_RESULT)
+            normalized.startsWith("python_") -> failure(FailureCategory.PYTHON, normalized, true, FailureUserAction.RETRY_OR_SWITCH_RUNTIME)
+            normalized.startsWith("binder_") -> failure(FailureCategory.BINDER, normalized, true, FailureUserAction.RECONNECT_RUNTIME)
+            normalized.startsWith("model_") -> failure(FailureCategory.MODEL, normalized, true, FailureUserAction.RETRY_MODEL)
+            normalized.startsWith("tool_") -> failure(FailureCategory.TOOL, normalized, false, FailureUserAction.CHECK_TOOL_RESULT)
+            normalized.startsWith("approval_") -> failure(FailureCategory.APPROVAL, normalized, false, FailureUserAction.CONFIRM_APPROVAL)
             normalized.startsWith("room_") || normalized.startsWith("journal_") ->
-                failure(FailureCategory.ROOM, normalized, false, "保留数据并导出诊断")
+                failure(FailureCategory.ROOM, normalized, false, FailureUserAction.EXPORT_DIAGNOSTICS)
             normalized.startsWith("policy_") || normalized.startsWith("runtime_policy_") ->
-                failure(FailureCategory.POLICY, normalized, false, "使用安全默认运行时")
-            normalized.startsWith("resource_") -> failure(FailureCategory.RESOURCE, normalized, true, "释放资源后重试")
-            httpStatus == 0 || httpStatus == 408 -> failure(FailureCategory.NETWORK, "network_unavailable", true, "检查网络")
-            httpStatus == 401 || httpStatus == 403 -> failure(FailureCategory.AUTH, "authentication_required", false, "重新登录")
-            httpStatus == 429 -> failure(FailureCategory.RATE_LIMIT, "rate_limited", true, "稍后重试")
-            httpStatus != null && httpStatus in 500..599 -> failure(FailureCategory.SERVER, "server_unavailable", true, "稍后重试")
-            httpStatus != null && httpStatus in 400..499 -> failure(FailureCategory.VALIDATION, normalized.ifBlank { "invalid_request" }, false, "修改请求")
-            else -> failure(FailureCategory.UNKNOWN, normalized.ifBlank { "unknown_error" }, false, "查看诊断信息")
+                failure(FailureCategory.POLICY, normalized, false, FailureUserAction.USE_SAFE_RUNTIME)
+            normalized.startsWith("resource_") -> failure(FailureCategory.RESOURCE, normalized, true, FailureUserAction.RELEASE_RESOURCES)
+            httpStatus == 0 || httpStatus == 408 -> failure(FailureCategory.NETWORK, "network_unavailable", true, FailureUserAction.CHECK_NETWORK)
+            httpStatus == 401 || httpStatus == 403 -> failure(FailureCategory.AUTH, "authentication_required", false, FailureUserAction.SIGN_IN_AGAIN)
+            httpStatus == 429 -> failure(FailureCategory.RATE_LIMIT, "rate_limited", true, FailureUserAction.RETRY_LATER)
+            httpStatus != null && httpStatus in 500..599 -> failure(FailureCategory.SERVER, "server_unavailable", true, FailureUserAction.RETRY_LATER)
+            httpStatus != null && httpStatus in 400..499 -> failure(FailureCategory.VALIDATION, normalized.ifBlank { "invalid_request" }, false, FailureUserAction.MODIFY_REQUEST)
+            else -> failure(FailureCategory.UNKNOWN, normalized.ifBlank { "unknown_error" }, false, FailureUserAction.VIEW_DIAGNOSTICS)
         }
     }
 
-    private fun failure(category: FailureCategory, code: String, retryable: Boolean, action: String) =
+    private fun failure(category: FailureCategory, code: String, retryable: Boolean, action: FailureUserAction) =
         ClassifiedFailure(category, code, retryable, action)
 }
 

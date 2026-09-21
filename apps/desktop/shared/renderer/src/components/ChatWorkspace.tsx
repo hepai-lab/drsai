@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Bot,
   Brain,
@@ -28,6 +29,7 @@ import {
   Mic,
   MicOff,
   Paperclip,
+  Pencil,
   Pause,
   Play,
   Plus,
@@ -39,24 +41,30 @@ import {
   TextCursorInput,
   Terminal,
   Telescope,
+  Trash2,
   Volume2,
   X,
   // Temporarily unused while composer Skills picker is hidden — keep for later reuse.
   // Zap,
 } from "lucide-react";
 import drsaiLogo from "../assets/drsai.png";
+import { OpenAiBrandIcon } from "./OpenAiBrandIcon";
 import { canHandleMemoryRequestLocally } from "../userPreferenceIntent";
 import { isTextCompositionEvent, shouldSubmitTextInput } from "../imeKeyboardPolicy";
 import type {
   ChatMessage,
+  ChatDraftPart,
+  ConversationResourceDownloadProgressEvent,
+  ConversationResourceResolveRequest,
+  ConversationResourceResolveResult,
   DesktopAgent,
   DesktopHealth,
   DesktopIdeContextSnapshot,
   DiagnosticEventInput,
   DesktopVoiceInteractionMode,
   DesktopVoiceRuntimeStatus,
-  DesktopStreamingVoiceCapabilities,
   DesktopDuplexVoiceCapabilities,
+  DesktopDuplexVoiceReadiness,
   DesktopThreadHistoryState,
   DesktopVoiceTranscriptionResult,
   ChatToolTimelineEvent,
@@ -72,6 +80,7 @@ import type {
   WorkspaceFolderSummaryRequest,
   WorkspaceFolderSummaryResult,
   WorkspaceInstructionSummary,
+  WorkspaceFilePreview,
   WorkspaceProject,
   GatewaySkill,
 } from "@shared/desktopApi";
@@ -79,8 +88,11 @@ import type { ChatAttachment, InteractionOption } from "@shared/desktopApi";
 import type { RunReproducibilityLevel } from "@shared/runInspection";
 import type { ArtifactPart, CitationPart, InteractionPart, StructuredAssistantPart, StructuredTurnState } from "@shared/structuredConversation";
 import type { AppLanguage } from "../navigation";
+import { supportsFullAgentPrimaryRuntime } from "../modelCatalogRecovery";
 import { getAgentEmptyChatPrompts, parseCatalogAgentExamples } from "../agentExamplePrompts";
 import { desktopApi, hasDesktopApi } from "../desktopApi";
+import { appendRendererStage } from "../debugLogStore";
+import { decideWeChatComposerSubmit } from "../wechatComposerPolicy";
 import { copyTextSafely } from "../clipboard";
 import {
   resolveTurnRailNavigationIndex,
@@ -95,13 +107,11 @@ import {
 import { ChatMessageContent } from "./ChatMessageContent";
 import { ThreadActivityBubble } from "./ThreadActivityBubble";
 import { StructuredMessageParts, type InteractionResponse } from "./StructuredMessageParts";
-import { getReasoningChatText, getVisibleChatText } from "../chatOutputModel";
+import { getReasoningChatText, getVisibleChatText, stripAgentToolDebugText } from "../chatOutputModel";
 import { createSmoothFollowOutputController } from "../smoothFollowOutput";
+import { KnowledgeBaseSelector } from "./KnowledgeBaseSelector";
 import { VoiceCaptureBar } from "./voice/VoiceCaptureBar";
 import { VoiceReviewBar } from "./voice/VoiceReviewBar";
-import { StreamingComposerProjectionEditor } from "./voice/StreamingComposerProjectionEditor";
-import { TranscriptRepairDiff } from "./voice/TranscriptRepairDiff";
-import { StreamingVoiceOutputBar } from "./voice/StreamingVoiceOutputBar";
 import {
   useSystemVoicePlayback,
   type SystemVoicePlayback,
@@ -113,28 +123,11 @@ import {
   getVoiceStatusLabel,
 } from "../voice/voiceAudio";
 import { useVoiceCapture } from "../voice/useVoiceCapture";
-import { useStreamingVoiceInput } from "../voice/streaming/useStreamingVoiceInput";
 import { useDuplexVoiceInput } from "../voice/duplex/useDuplexVoiceInput";
-import { canSubmitStreamingVoiceTurn } from "../voice/streaming/streamingVoiceTurnReducer";
-import { useAssistantSpeechSegments } from "../voice/streaming/assistantSpeechStream";
-import { useStreamingVoiceOutput } from "../voice/streaming/useStreamingVoiceOutput";
-import { createStreamingVoiceDiagnostic } from "../voice/streaming/streamingVoiceDiagnostics";
-import {
-  createStreamingComposerProjection,
-  rebaseStreamingComposerUserText,
-  setStreamingComposerComposition,
-  updateStreamingComposerTranscript,
-  type StreamingComposerProjectionState,
-} from "../voice/streaming/streamingComposerProjection";
-import {
-  acceptTranscriptRepair,
-  buildContextualTranscriptRepair,
-  createTranscriptRepairState,
-  proposeTranscriptRepair,
-  rejectTranscriptRepair,
-  undoTranscriptRepair,
-  type TranscriptRepairState,
-} from "../voice/streaming/contextualTranscriptRepair";
+import type { DuplexCaptureQualityIssue } from "../voice/duplex/captureQuality";
+import { getDuplexVoiceReadinessActions, type DuplexVoiceReadinessActionId } from "../voice/duplex/readinessActions";
+import { interruptedVoiceStatus } from "../voice/duplex/sessionContext";
+import { deriveDuplexHudState, duplexHudLabel, getDuplexErrorRecovery, getDuplexShortcutAction, realtimeDisclosureFingerprint } from "../voice/duplex/duplexUiModel";
 import { useVoiceTranscription } from "../voice/useVoiceTranscription";
 import { getAssistantSpeechText } from "../voice/voiceMessageText";
 import {
@@ -201,6 +194,20 @@ function voiceCaptureErrorCode(error: unknown): string {
   return "capture_error";
 }
 
+function duplexCaptureQualityMessage(issue: DuplexCaptureQualityIssue, zh: boolean): string {
+  const messages: Record<DuplexCaptureQualityIssue, [string, string]> = {
+    input_too_quiet: ["麦克风声音太小，请靠近麦克风或检查输入音量。", "Microphone input is too quiet. Move closer or check its input level."],
+    clipping: ["麦克风声音过大并出现削波，请降低输入音量。", "Microphone input is clipping. Reduce its input level."],
+    dc_offset: ["麦克风信号存在异常偏移，建议重新连接设备。", "The microphone signal has an unusual offset. Try reconnecting it."],
+    sample_rate_degraded: ["麦克风采样率低于实时语音要求。", "The microphone sample rate is below the Realtime voice requirement."],
+    aec_unavailable: ["回声消除未生效，建议佩戴耳机。", "Echo cancellation is unavailable. Headphones are recommended."],
+    noise_suppression_unavailable: ["降噪未生效，环境噪声可能影响识别。", "Noise suppression is unavailable; background noise may affect recognition."],
+    agc_unavailable: ["自动增益未生效，请手动调整麦克风音量。", "Automatic gain control is unavailable. Adjust the microphone level manually."],
+    channel_count_degraded: ["麦克风未提供单声道输入，已自动混音。", "The microphone did not provide mono input; channels are being mixed."],
+  };
+  return messages[issue][zh ? 0 : 1];
+}
+
 type ComposerAttachment = ChatAttachment & {
   id: string;
   importFile?: PickedFileDescriptor;
@@ -224,9 +231,17 @@ interface MaterialTaskSuggestion {
 
 export type ThinkingEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 const THINKING_EFFORTS: ThinkingEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
-const MAX_CLIPBOARD_IMAGE_BYTES = 1_250_000;
+const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGE_COUNT = 4;
 const MAX_CLIPBOARD_PATH_MENTIONS = 6;
+const AT_BOTTOM_TOLERANCE = 4;
+
+// Module-level style constants to avoid creating new object references on every render.
+const VOICE_BUTTON_WRAPPER_STYLE: React.CSSProperties = { position: "relative", display: "inline-flex" };
+const VOICE_MENU_STYLE: React.CSSProperties = { position: "absolute", bottom: "calc(100% + 8px)", right: "0", zIndex: 45, display: "grid", gap: "4px", padding: "8px", border: "1px solid var(--app-panel-border)", borderRadius: "12px", background: "var(--app-card-bg)", boxShadow: "var(--app-shadow-menu)", minWidth: "180px" };
+const VOICE_MENU_ITEM_STYLE: React.CSSProperties = { display: "flex", alignItems: "center", gap: "8px", padding: "8px 12px", border: "none", borderRadius: "8px", background: "var(--app-accent)", color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 500, textAlign: "left", width: "100%" };
+const VOICE_MENU_DIVIDER_STYLE: React.CSSProperties = { height: "1px", background: "var(--app-panel-border)", margin: "4px 0" };
+
 function useEventCallback<Args extends unknown[], Result>(callback: (...args: Args) => Result): (...args: Args) => Result {
   const callbackRef = useRef(callback);
   callbackRef.current = callback;
@@ -242,11 +257,14 @@ export interface ChatForkQueueAgentAssignment {
 export interface ChatSubmitOptions {
   agentId?: string;
   agentName?: string;
+  draftParts?: ChatDraftPart[];
   forkQueueAgentAssignments?: ChatForkQueueAgentAssignment[];
-  goalConfirmationRequired?: boolean;
+  planMode?: boolean;
   model?: string;
+  replaceFromMessageId?: string;
   runtimeMode?: ChatRuntimeMode | null;
   skillName?: string | null;
+  text?: string;
   thinkingEffort?: ThinkingEffort;
   onStarted?: (submission: {
     assistantMessageId: string;
@@ -281,6 +299,15 @@ function splitGoalConfirmationList(value: string): string[] {
   return value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
 }
 
+function findPrecedingUserMessage(messages: UiMessage[], assistantMessageId: string): UiMessage | undefined {
+  const assistantIndex = messages.findIndex((message) => message.id === assistantMessageId);
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "user" && message.content.trim()) return message;
+  }
+  return undefined;
+}
+
 interface ChatWorkspaceProps {
   activeRequestId: string | null;
   cancellingRequestId?: string | null;
@@ -290,6 +317,8 @@ interface ChatWorkspaceProps {
   conversationId: string;
   conversationTitle?: string;
   conversationSource?: "opendrsai" | "codex";
+  channelSource?: "wechat";
+  runtimeSessionId?: string;
   conversationHistoryPending?: boolean;
   conversationHistory?: DesktopThreadHistoryState;
   operationalStateControl?: React.ReactNode;
@@ -300,7 +329,9 @@ interface ChatWorkspaceProps {
   messages: UiMessage[];
   currentRuntimeMode?: ChatRuntimeMode | null;
   defaultThinkingEffort?: ThinkingEffort;
+  defaultPlanMode?: "normal" | "plan";
   searchRequestNonce?: number;
+  messageFocus?: { messageId: string; nonce: number } | null;
   structuredTurnFocus?: { turnId: string; nonce: number } | null;
   selectedAgentId?: string;
   selectedAgentName?: string;
@@ -326,10 +357,14 @@ interface ChatWorkspaceProps {
   onSelectModel?: (model: string, providerId?: string) => void;
   onOpenExternal: (url: string) => void;
   onOpenDebug?: (runId?: string, view?: "activity" | "app-errors") => void;
+  onOpenAgentSettings?: () => void;
   onOpenRun?: (runId: string, itemId?: string) => void;
   onCreateRunExperiment?: (runId: string, itemId?: string) => void;
   onOpenPreviewBrowser?: (url?: string) => void;
   onOpenWorkspaceArtifact?: (path: string) => void;
+  onOpenConversationResourcePreview?: (preview: WorkspaceFilePreview, logicalPath?: string) => void;
+  /** Open a Knowledge Base citation at the position it was taken from. */
+  onOpenCitationSource?: (part: CitationPart) => void;
   onPickFiles?: () => Promise<PickDialogResult>;
   onPickFolder?: () => Promise<PickDialogResult>;
   onSummarizeWorkspaceFolder?: (
@@ -340,6 +375,8 @@ interface ChatWorkspaceProps {
   onAttachIdeCurrentSelection?: () => void;
   onRefreshIdeContext?: () => void;
   onRetryMessage?: (assistantMessageId: string, mode: "same_session" | "new_session") => void | Promise<void>;
+  onDeleteMessage?: (messageId: string) => void;
+  onReportFeedback?: (context: { source: "error" | "message" | "tool"; errorCode?: string; errorType?: string; runId?: string }) => void;
   onRecoveryAction?: (assistantMessageId: string, action: UserFacingRecoveryAction["id"]) => void | Promise<void>;
   onLoadEarlierHistory?: () => void | Promise<void>;
   onSubmit: (
@@ -357,6 +394,8 @@ function ChatWorkspaceImpl({
   conversationId,
   conversationTitle,
   conversationSource = "opendrsai",
+  channelSource,
+  runtimeSessionId,
   conversationHistoryPending = false,
   conversationHistory,
   operationalStateControl,
@@ -365,8 +404,10 @@ function ChatWorkspaceImpl({
   language,
   messages,
   currentRuntimeMode,
-  defaultThinkingEffort = "medium",
+  defaultThinkingEffort = "none",
+  defaultPlanMode = "normal",
   searchRequestNonce = 0,
+  messageFocus = null,
   structuredTurnFocus = null,
   selectedAgentId,
   selectedAgentName,
@@ -392,10 +433,13 @@ function ChatWorkspaceImpl({
   onSelectModel,
   onOpenExternal,
   onOpenDebug,
+  onOpenAgentSettings,
   onOpenRun,
   onCreateRunExperiment,
   onOpenPreviewBrowser,
   onOpenWorkspaceArtifact,
+  onOpenConversationResourcePreview,
+  onOpenCitationSource,
   onPickFiles,
   onPickFolder,
   onSummarizeWorkspaceFolder,
@@ -404,23 +448,161 @@ function ChatWorkspaceImpl({
   onAttachIdeCurrentSelection,
   onRefreshIdeContext,
   onRetryMessage,
+  onDeleteMessage,
+  onReportFeedback,
   onRecoveryAction,
   onLoadEarlierHistory,
   onSubmit,
 }: ChatWorkspaceProps): React.JSX.Element {
+  useEffect(() => {
+    appendRendererStage("chat_workspace.mounted", {
+      conversationId,
+      selectedAgentId,
+      workspacePath,
+      canChat,
+      messageCount: messages.length,
+    });
+    return () => appendRendererStage("chat_workspace.unmounted", { conversationId });
+  }, [conversationId]);
+
+  // The composer textarea is mirrored in local state so that keystrokes only
+  // re-render this component instead of the whole AuthenticatedApp tree. The
+  // adapter `input` prop is the external source of truth (thread switch,
+  // slash commands, retry/edit) and is updated with a short trailing debounce
+  // while typing; submit and programmatic edits flush immediately.
+  const [composerText, setComposerText] = useState(input);
+  const composerTextRef = useRef(input);
+  const composerSyncTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Track IME composition (Chinese/Japanese/Korean input method). During
+  // composition we must still call setComposerText so the controlled textarea
+  // value stays in sync (otherwise any re-render would erase the composition).
+  // We skip only the upstream onInputChange push, because parent re-renders
+  // during composition can interrupt the browser's IME process and commit raw
+  // pinyin letters instead of the composed characters.
+  const isComposingRef = useRef(false);
+
+  const clearComposerSyncTimer = (): void => {
+    if (composerSyncTimerRef.current !== undefined) {
+      clearTimeout(composerSyncTimerRef.current);
+      composerSyncTimerRef.current = undefined;
+    }
+  };
+
+  // Programmatic edits (insert text, undo/redo, slash/mention pick, drafts,
+  // clear after send) must reach both the textarea and the adapter now.
+  const applyComposerText = useCallback((next: string): void => {
+    isComposingRef.current = false;
+    clearComposerSyncTimer();
+    composerTextRef.current = next;
+    setComposerText(next);
+    onInputChange(next);
+  }, [onInputChange]);
+
+  // User typing: keep the textarea instant; push upstream on a trailing pause
+  // so App-level derived work happens at most once per burst.
+  // During IME composition, setComposerText still runs (so the controlled
+  // textarea value stays in sync and re-renders don't erase composition text),
+  // but the upstream onInputChange is deferred until compositionend fires.
+  const handleComposerTyping = useCallback((next: string): void => {
+    composerTextRef.current = next;
+    setComposerText(next);
+    if (isComposingRef.current) return;
+    clearComposerSyncTimer();
+    composerSyncTimerRef.current = setTimeout(() => {
+      composerSyncTimerRef.current = undefined;
+      onInputChange(composerTextRef.current);
+    }, 80);
+  }, [onInputChange]);
+
+  // Adopt external value changes (thread switch, setInput from commands).
+  useEffect(() => {
+    if (composerTextRef.current === input) return;
+    clearComposerSyncTimer();
+    composerTextRef.current = input;
+    setComposerText(input);
+  }, [input]);
+
+  useEffect(() => clearComposerSyncTimer, []);
+
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [conversationResourceStates, setConversationResourceStates] = useState<Record<string, ConversationResourceResolveResult["state"]>>({});
+  const [conversationResourceNotice, setConversationResourceNotice] = useState<string | null>(null);
+  const [conversationResourceMenu, setConversationResourceMenu] = useState<{
+    part: ArtifactPart | CitationPart;
+    resolved: ConversationResourceResolveResult;
+    x: number;
+    y: number;
+    trigger?: HTMLElement;
+  } | null>(null);
+  const [conversationResourceDownload, setConversationResourceDownload] = useState<ConversationResourceDownloadProgressEvent | null>(null);
+  useEffect(() => desktopApi.onConversationResourceDownloadProgress((progress) => {
+    setConversationResourceDownload((current) => current?.operationId === progress.operationId ? progress : current);
+  }), []);
+  useEffect(() => {
+    if (!conversationResourceMenu) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('[data-testid="conversation-resource-menu"] [role="menuitem"]')?.focus();
+    });
+    const close = (): void => {
+      const trigger = conversationResourceMenu.trigger;
+      const partId = conversationResourceMenu.part.id;
+      setConversationResourceMenu(null);
+      window.requestAnimationFrame(() => {
+        if (trigger?.isConnected) trigger.focus();
+        else document.querySelector<HTMLElement>(`[data-artifact-inline-id="${CSS.escape(partId)}"]`)?.focus();
+      });
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") { event.preventDefault(); close(); return; }
+      const items = [...document.querySelectorAll<HTMLElement>('[data-testid="conversation-resource-menu"] [role="menuitem"]:not(:disabled)')];
+      if (!items.length) return;
+      const current = Math.max(0, items.indexOf(document.activeElement as HTMLElement));
+      const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+        : event.key === "ArrowDown" ? (current + 1) % items.length
+        : event.key === "ArrowUp" ? (current - 1 + items.length) % items.length : -1;
+      if (next >= 0) { event.preventDefault(); items[next]?.focus(); }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => { window.cancelAnimationFrame(frame); window.removeEventListener("keydown", onKeyDown); };
+  }, [conversationResourceMenu]);
+  const [wechatCapability, setWechatCapability] = useState<{ available: boolean; reason?: string } | null>(null);
+  const [wechatConfirmationPending, setWechatConfirmationPending] = useState(false);
+  const [wechatSending, setWechatSending] = useState(false);
+  const [wechatSendStatus, setWechatSendStatus] = useState<string | null>(null);
   const [runReproducibility, setRunReproducibility] = useState<Record<string, RunReproducibilityLevel>>({});
+  const runtimeRunIdsKey = useMemo(() => {
+    const runIds = [...new Set(messages
+      .map((message) => message.runtimeRunId)
+      .filter((runId): runId is string => Boolean(runId?.startsWith("run-"))))]
+      .slice(-20);
+    return runIds.join("\n");
+  }, [messages]);
+  const chatStreaming = useMemo(() => messages.some((message) => message.streaming), [messages]);
+
+  useEffect(() => {
+    setWechatConfirmationPending(false);
+    setWechatSendStatus(null);
+    if (channelSource !== "wechat" || !runtimeSessionId) {
+      setWechatCapability(null);
+      return;
+    }
+    let cancelled = false;
+    void desktopApi.getWeChatReplyCapability({ sessionId: runtimeSessionId })
+      .then((value) => { if (!cancelled) setWechatCapability(value); })
+      .catch(() => { if (!cancelled) setWechatCapability({ available: false, reason: "channel_not_running" }); });
+    return () => { cancelled = true; };
+  }, [channelSource, runtimeSessionId]);
+
+  useEffect(() => {
+    setWechatConfirmationPending(false);
+  }, [input]);
 
   useEffect(() => {
     if (!workspacePath || typeof desktopApi.getRunReproductionManifest !== "function") return;
-    const runIds = [...new Set(messages
-      .map((message) => message.runtimeRunId)
-      // RuntimeEngine owns the `run-` namespace. Request IDs and platform-run
-      // IDs may also travel through ChatEvent.runId, but they have no Runtime
-      // manifest and must never be sent to a run-scoped Runtime endpoint.
-      .filter((runId): runId is string => Boolean(runId?.startsWith("run-"))))]
-      .slice(-50);
-    if (!runIds.length) return;
+    // Streaming updates `messages` on every token. Never refetch manifests in
+    // that loop — it previously issued hundreds of IPC calls and OOMed Desktop.
+    if (chatStreaming || !runtimeRunIdsKey) return;
+    const runIds = runtimeRunIdsKey.split("\n").filter(Boolean);
     let active = true;
     void Promise.all(runIds.map(async (runId) => {
       try {
@@ -440,9 +622,13 @@ function ChatWorkspaceImpl({
       ));
     });
     return () => { active = false; };
-  }, [messages, selectedWorkspaceId, workspacePath]);
+  }, [chatStreaming, runtimeRunIdsKey, selectedWorkspaceId, workspacePath]);
   const [highlightedTurnId, setHighlightedTurnId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const attachmentsRef = useRef<ComposerAttachment[]>([]);
+  const composerAttachmentsByThreadRef = useRef<Map<string, ComposerAttachment[]>>(new Map());
+  const composerConversationIdRef = useRef(conversationId);
+  attachmentsRef.current = attachments;
   const [interactionDraft, setInteractionDraft] = useState("");
   const [materialRoleAnalysis, setMaterialRoleAnalysis] = useState<MaterialRoleAnalysisResult | null>(null);
   const [materialRolePhase, setMaterialRolePhase] = useState<"idle" | "analyzing" | "ready" | "failed">("idle");
@@ -453,10 +639,10 @@ function ChatWorkspaceImpl({
   const materialRoleRequestRef = useRef(0);
   const materialConsistencyRequestRef = useRef(0);
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>(defaultThinkingEffort);
-  const [taskInteractionMode, setTaskInteractionMode] = useState<"normal" | "confirm_goal">("normal");
+  const [taskInteractionMode, setTaskInteractionMode] = useState<"normal" | "plan">("normal");
   const [searchOpen, setSearchOpen] = useState(false);
   const [metaMenuOpen, setMetaMenuOpen] = useState<"configuration" | "skill" | null>(null);
-  const [configurationSection, setConfigurationSection] = useState<"agent" | "model" | "thinking" | "task" | null>(null);
+  const [configurationSection, setConfigurationSection] = useState<"model" | "thinking" | "task" | null>(null);
   const [configurationSubmenuPosition, setConfigurationSubmenuPosition] = useState({ top: 0, left: 0, maxHeight: 220 });
   const [installedSkills, setInstalledSkills] = useState<GatewaySkill[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
@@ -465,27 +651,39 @@ function ChatWorkspaceImpl({
   const [introMenuOpen, setIntroMenuOpen] = useState<"workspace" | "agent" | null>(null);
   const [introSearchQuery, setIntroSearchQuery] = useState("");
   const [forkQueueAgentSelections, setForkQueueAgentSelections] = useState<Record<number, string>>({});
+  const [pendingReplaceFromMessageId, setPendingReplaceFromMessageId] = useState<string | null>(null);
+  const editResendBackupRef = useRef<{ input: string; attachments: ComposerAttachment[] } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchDate, setSearchDate] = useState("");
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const [voiceReviewText, setVoiceReviewText] = useState<string | null>(null);
-  const [voiceReviewSource, setVoiceReviewSource] = useState<"serial" | "streaming" | null>(null);
-  const [streamingVoiceReadyToSend, setStreamingVoiceReadyToSend] = useState(false);
-  const [streamingVoiceResponseArmed, setStreamingVoiceResponseArmed] = useState(false);
-  const [streamingComposerProjection, setStreamingComposerProjection] = useState<StreamingComposerProjectionState | null>(null);
-  const [streamingTranscriptRepair, setStreamingTranscriptRepair] = useState<TranscriptRepairState | null>(null);
+  const [voiceReviewSource, setVoiceReviewSource] = useState<"serial" | null>(null);
   const [voiceRuntimeDisclosure, setVoiceRuntimeDisclosure] = useState<string | null>(null);
   const [voiceRuntimeStatus, setVoiceRuntimeStatus] = useState<DesktopVoiceRuntimeStatus | null>(null);
-  const [streamingVoiceCapabilities, setStreamingVoiceCapabilities] = useState<DesktopStreamingVoiceCapabilities | null>(null);
   const [duplexVoiceCapabilities, setDuplexVoiceCapabilities] = useState<DesktopDuplexVoiceCapabilities | null>(null);
+  const [duplexVoiceReadiness, setDuplexVoiceReadiness] = useState<DesktopDuplexVoiceReadiness | null>(null);
   const [duplexPrivacyDisclosure, setDuplexPrivacyDisclosure] = useState("Realtime voice sends microphone audio to the configured remote Provider.");
   const [duplexPrivacyConfirmed, setDuplexPrivacyConfirmed] = useState(false);
+  const [duplexTextStrategy, setDuplexTextStrategy] = useState<"after_response" | "interrupt_now">("after_response");
   const [voiceConsentRequired, setVoiceConsentRequired] = useState(false);
+  const [voiceMenuOpen, setVoiceMenuOpen] = useState(false);
+  const voiceMenuRef = useRef<HTMLDivElement | null>(null);
+  const voiceButtonRef = useRef<HTMLButtonElement | null>(null);
   const [voicePreferences, updateVoicePreferences] = useVoicePreferences();
   const [voiceTurnState, dispatchVoiceTurnBase] = useReducer(reduceVoiceTurn, initialVoiceTurnState);
   const voiceRecordingProcessTimerRef = useRef<number | null>(null);
   const voiceTurnStateRef = useRef(voiceTurnState);
   voiceTurnStateRef.current = voiceTurnState;
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (voiceMenuOpen && voiceMenuRef.current && !voiceMenuRef.current.contains(event.target as Node) && voiceButtonRef.current && !voiceButtonRef.current.contains(event.target as Node)) {
+        setVoiceMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [voiceMenuOpen]);
   const dispatchVoiceTurn = useCallback((event: VoiceTurnEvent): void => {
     const current = voiceTurnStateRef.current;
     const next = reduceVoiceTurn(current, event);
@@ -510,18 +708,29 @@ function ChatWorkspaceImpl({
     }
     dispatchVoiceTurnBase(event);
   }, []);
-  const voiceLanguage = voicePreferences.inputLanguage;
-  const voiceDeviceId = voicePreferences.inputDeviceId;
+  const voiceLanguage = voicePreferences.interactionMode === "duplex" ? voicePreferences.realtimeLanguage : voicePreferences.inputLanguage;
+  const voiceDeviceId = voicePreferences.interactionMode === "duplex" ? voicePreferences.realtimeInputDeviceId : voicePreferences.inputDeviceId;
   const voiceModeCapabilities = deriveVoiceModeCapabilities(voiceRuntimeStatus, {
     audioWorklet: typeof AudioWorkletNode !== "undefined",
     serialTts: "speechSynthesis" in window,
-    streamingTts: false,
-    streamingCapabilities: streamingVoiceCapabilities,
     duplexCapabilities: duplexVoiceCapabilities,
     duplexEnabled: Boolean(duplexVoiceCapabilities),
   });
-  const streamingVoiceAvailability = getVoiceModeAvailability("streaming", voiceModeCapabilities);
-  const duplexVoiceAvailability = getVoiceModeAvailability("duplex", voiceModeCapabilities);
+  const negotiatedDuplexVoiceAvailability = getVoiceModeAvailability("duplex", voiceModeCapabilities);
+  const duplexVoiceAvailability = !negotiatedDuplexVoiceAvailability.available
+    ? negotiatedDuplexVoiceAvailability
+    : duplexVoiceReadiness?.available
+      ? { available: true, reason: null }
+      : { available: false, reason: duplexVoiceReadiness?.message ?? "Checking Realtime voice readiness…" };
+  const duplexReadinessReasonCode = duplexVoiceReadiness?.reasonCode
+    ?? (typeof AudioWorkletNode === "undefined" ? "audio_worklet_unavailable"
+      : !navigator.mediaDevices?.getUserMedia ? "media_devices_unavailable" : "internal");
+  const duplexReadinessActions = getDuplexVoiceReadinessActions(duplexReadinessReasonCode);
+  const runDuplexReadinessAction = (action: DuplexVoiceReadinessActionId): void => {
+    if (action === "open_agent_settings") onOpenAgentSettings?.();
+    else if (action === "switch_to_serial") { updateVoicePreferences({ interactionMode: "serial" }); setVoiceError(null); }
+    else void desktopApi.getDuplexVoiceReadiness().then((readiness) => { setDuplexVoiceReadiness(readiness); if (readiness.available) setVoiceError(null); else setVoiceError(readiness.message); }).catch(() => setVoiceError(zh ? "无法重新检查实时对话状态。" : "Realtime conversation readiness could not be checked."));
+  };
   const [voiceProgressMessage, setVoiceProgressMessage] = useState("");
   const [voiceRuntimeLabel, setVoiceRuntimeLabel] = useState("Voice STT");
   const voicePlayback = useSystemVoicePlayback();
@@ -557,32 +766,15 @@ function ChatWorkspaceImpl({
       }, 0);
     },
   });
-  const streamingVoiceInput = useStreamingVoiceInput({
-    deviceId: voiceDeviceId,
-    languageHint: voiceLanguage === "auto" ? undefined : voiceLanguage,
-    onReview: (transcript) => {
-      setStreamingComposerProjection(null);
-      const repairBase = createTranscriptRepairState(transcript);
-      const candidate = buildContextualTranscriptRepair({
-        transcript,
-        revision: 1,
-        glossary: [
-          { canonical: "OpenDrSai", aliases: ["open dr sai", "open doctor sai"], source: { type: "user_dictionary", label: "Product name" } },
-          { canonical: "流式语音", aliases: ["留是语音", "流逝语音"], source: { type: "workspace_term", label: "Voice architecture" } },
-        ],
-      });
-      const repair = candidate ? proposeTranscriptRepair(repairBase, candidate) : repairBase;
-      setStreamingTranscriptRepair(candidate ? repair : null);
-      setVoiceReviewSource("streaming");
-      setVoiceReviewText(repair.acceptedText);
-      setVoiceRuntimeDisclosure(voiceRuntimeStatus?.providerDisclosure ?? "Live transcription completed.");
-    },
-  });
   const duplexVoiceInput = useDuplexVoiceInput({
-    threadId: conversationId,
+    threadId: voicePreferences.realtimeTranscriptPolicy === "stable" ? conversationId : undefined,
     deviceId: voiceDeviceId,
+    outputDeviceId: voicePreferences.realtimeOutputDeviceId,
+    volume: voicePreferences.realtimeVolume,
+    autoRecovery: voicePreferences.realtimeAutoRecovery,
+    onOutputDeviceFallback: () => updateVoicePreferences({ realtimeOutputDeviceId: "" }),
     languageHint: voiceLanguage === "auto" ? undefined : voiceLanguage,
-    voice: voicePreferences.voiceName,
+    voice: voicePreferences.realtimeVoiceName || undefined,
     instructions: "Respond naturally and concisely in a realtime voice conversation.",
     enableToolCalling: true,
     toolExecutor: {
@@ -597,95 +789,10 @@ function ChatWorkspaceImpl({
       },
     },
   });
-  useEffect(() => {
-    if (!streamingTranscriptRepair?.candidate || streamingVoiceInput.turnState.phase !== "review") return;
-    streamingVoiceInput.beginRepair();
-    streamingVoiceInput.completeRepair(!streamingTranscriptRepair.candidate.policy.autoAccept);
-  }, [streamingTranscriptRepair?.candidate?.id, streamingVoiceInput.turnState.phase]);
-  useEffect(() => {
-    setStreamingComposerProjection((current) => current
-      ? updateStreamingComposerTranscript(current, {
-          stableVoiceText: streamingVoiceInput.transcript.committedText,
-          provisionalVoiceText: streamingVoiceInput.transcript.unstableText,
-          revision: streamingVoiceInput.transcript.revision,
-        })
-      : current);
-  }, [
-    streamingVoiceInput.transcript.committedText,
-    streamingVoiceInput.transcript.revision,
-    streamingVoiceInput.transcript.unstableText,
-  ]);
-  const streamingDiagnosticKeysRef = useRef(new Set<string>());
-  const assistantSpeechSegments = useAssistantSpeechSegments(voicePreferences.interactionMode === "streaming");
-  const streamingVoiceOutput = useStreamingVoiceOutput({
-    enabled: streamingVoiceResponseArmed,
-    segments: assistantSpeechSegments.segments,
-    textCompleted: assistantSpeechSegments.completed,
-    voice: voicePreferences.voiceName || undefined,
-    speed: voicePreferences.playbackRate,
-    onTerminal: (terminal) => {
-      if (terminal === "completed") {
-        streamingVoiceInput.markTtsCompleted();
-        streamingVoiceInput.markPlaybackCompleted();
-      } else if (terminal === "cancelled") streamingVoiceInput.cancelOutput();
-      else streamingVoiceInput.failOutput("Streaming reply audio could not be played.");
-      setStreamingVoiceResponseArmed(false);
-    },
-  });
-
-  useEffect(() => {
-    const turnId = streamingVoiceInput.turnState.turnId;
-    if (!turnId) return;
-    const phase = streamingVoiceInput.turnState.phase;
-    const key = `${turnId}:turn:${phase}:${streamingVoiceInput.turnState.terminal ?? "active"}`;
-    if (streamingDiagnosticKeysRef.current.has(key)) return;
-    streamingDiagnosticKeysRef.current.add(key);
-    const status = streamingVoiceInput.turnState.terminal ?? (phase === "user" ? "started" : "running");
-    const event = createStreamingVoiceDiagnostic({
-      traceId: turnId,
-      turnId,
-      stage: phase === "user" || phase === "review" ? "asr" : phase === "assistant" ? "llm" : "transport",
-      status,
-      metrics: {
-        sequence: streamingVoiceInput.transcript.lastEventSequence,
-        bufferedAudioMs: streamingVoiceInput.flowControl.bufferedAudioMs,
-        partialCount: streamingVoiceInput.transcript.revision,
-        finalCount: streamingVoiceInput.transcript.committedText ? 1 : 0,
-        segmentCount: assistantSpeechSegments.segments.length,
-        playedSegmentCount: streamingVoiceOutput.playedSegments,
-        paused: streamingVoiceInput.flowControl.paused,
-      },
-      errorCode: streamingVoiceInput.turnState.terminal === "failed" ? "streaming_turn_failed" : undefined,
-    });
-    const { module: _module, ...voiceEvent } = event;
-    void recordVoiceDiagnostic(voiceEvent);
-  }, [
-    assistantSpeechSegments.segments.length,
-    streamingVoiceInput.flowControl.bufferedAudioMs,
-    streamingVoiceInput.flowControl.paused,
-    streamingVoiceInput.transcript.committedText,
-    streamingVoiceInput.transcript.lastEventSequence,
-    streamingVoiceInput.transcript.revision,
-    streamingVoiceInput.turnState.phase,
-    streamingVoiceInput.turnState.terminal,
-    streamingVoiceInput.turnState.turnId,
-    streamingVoiceOutput.playedSegments,
-  ]);
-
-  useEffect(() => {
-    if (!streamingVoiceResponseArmed) return;
-    if (assistantSpeechSegments.completed) streamingVoiceInput.markAssistantTextCompleted();
-  }, [assistantSpeechSegments.completed, streamingVoiceResponseArmed]);
-
-  useEffect(() => {
-    if (!streamingVoiceResponseArmed) return;
-    if (["synthesizing", "playing", "paused", "draining", "completed"].includes(streamingVoiceOutput.phase)) {
-      streamingVoiceInput.markTtsStarted();
-    }
-    if (["playing", "paused", "draining", "completed"].includes(streamingVoiceOutput.phase)) {
-      streamingVoiceInput.markPlaybackStarted();
-    }
-  }, [streamingVoiceOutput.phase, streamingVoiceResponseArmed]);
+  const duplexDisclosureFingerprint = realtimeDisclosureFingerprint(duplexVoiceReadiness?.providerId, duplexVoiceReadiness?.modelId);
+  const duplexDisclosureAcknowledged = Boolean(duplexDisclosureFingerprint && voicePreferences.realtimeDisclosureFingerprint === duplexDisclosureFingerprint) || duplexPrivacyConfirmed;
+  const duplexHudState = deriveDuplexHudState({ phase: duplexVoiceInput.phase, turnPhase: duplexVoiceInput.turn.phase, microphonePaused: duplexVoiceInput.microphonePaused, speechCandidate: Boolean(duplexVoiceInput.vad?.speechCandidate), playbackStarted: duplexVoiceInput.playback.started });
+  const duplexFailureRecovery = duplexVoiceInput.failure ? getDuplexErrorRecovery(duplexVoiceInput.failure.code) : null;
   const {
     cancel: cancelVoiceTranscriptionTask,
     transcribe: transcribeVoiceBlob,
@@ -699,6 +806,43 @@ function ChatWorkspaceImpl({
   const turnRailNavigationTargetRef = useRef<string | null>(null);
   const turnRailNavigationTimerRef = useRef<number | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
+  // Undo/redo history for the controlled textarea.  The browser's native
+  // undo stack is reset every time React writes `value` back into the
+  // element, so we maintain our own past/present/future triple.
+  const inputHistoryRef = useRef<{ past: string[]; present: string; future: string[]; lastExternal: string }>({
+    past: [],
+    present: "",
+    future: [],
+    lastExternal: "",
+  });
+  // Push the current value onto the undo stack, clearing redo.  Called before
+  // every programmatic mutation (insertTextAtCursor, slash commands, etc.).
+  const pushInputHistory = useCallback((snapshot: string): void => {
+    const history = inputHistoryRef.current;
+    // Collapse consecutive duplicates (e.g. multiple cursor moves).
+    if (history.past.at(-1) !== snapshot) {
+      history.past.push(snapshot);
+      if (history.past.length > 200) history.past.shift();
+    }
+    history.future = [];
+  }, []);
+
+  // Track input prop changes from outside the textarea (e.g. voice transcript
+  // insertion, edit-and-resend restore, slash command auto-complete) so that
+  // the undo history stays in sync with external mutations.
+  useEffect(() => {
+    const history = inputHistoryRef.current;
+    if (input !== history.present) {
+      // Only record external-driven changes (not our own undo/redo calls).
+      if (input !== history.lastExternal) {
+        history.past.push(history.present);
+        if (history.past.length > 200) history.past.shift();
+        history.future = [];
+      }
+      history.present = input;
+      history.lastExternal = input;
+    }
+  }, [input]);
 
   useEffect(() => {
     if (composerFocusRequest <= 0 || conversationHistoryPending) return undefined;
@@ -717,19 +861,47 @@ function ChatWorkspaceImpl({
     const onDrop = (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      if (!e.dataTransfer?.files.length) return;
+      const dataTransfer = e.dataTransfer;
+      if (!dataTransfer?.files.length) return;
       const getPath = hasDesktopApi()
         ? (f: File): string => desktopApi.getPathForFile(f)
         : (f: File): string => `C:\\Users\\Demo\\Downloads\\${f.name}`;
-      const added: ComposerAttachment[] = [];
-      for (const f of Array.from(e.dataTransfer.files)) {
-        const p = getPath(f);
-        if (!p) continue;
-        added.push({ id: crypto.randomUUID(), kind: "file", path: p, name: f.name || p.split(/[\\/]/).pop() || "unknown", importFile: { path: p, name: f.name || p.split(/[\\/]/).pop() || "unknown", extension: (f.name || "").includes(".") ? ((f.name || "").split(".").pop() || "") : "", category: "other", status: "ready" } });
-      }
-      if (!added.length) return;
-      setAttachments((c) => { const ex = new Set(c.map((i) => i.path)); return [...c, ...added.filter((a) => !ex.has(a.path))]; });
-      setToolsOpen(false);
+      void (async () => {
+        const added: ComposerAttachment[] = [];
+        for (const f of Array.from(dataTransfer.files)) {
+          const p = getPath(f);
+          if (!p) continue;
+          const name = f.name || p.split(/[\\/]/).pop() || "unknown";
+          const extension = name.includes(".") ? (name.split(".").pop() || "").toLowerCase() : "";
+          const category = f.type.startsWith("image/") || isImageFileName(name)
+            ? "image" as const
+            : "other" as const;
+          const screenshotDataUrl = category === "image" && f.size <= MAX_CLIPBOARD_IMAGE_BYTES
+            ? await blobToDataUrl(f).catch(() => undefined)
+            : undefined;
+          added.push({
+            id: crypto.randomUUID(),
+            kind: "file",
+            path: p,
+            name,
+            ...(screenshotDataUrl ? { screenshotDataUrl } : {}),
+            importFile: {
+              path: p,
+              name,
+              extension,
+              category,
+              status: "ready",
+              ...(screenshotDataUrl ? { previewDataUrl: screenshotDataUrl } : {}),
+            },
+          });
+        }
+        if (!added.length) return;
+        setAttachments((c) => {
+          const ex = new Set(c.map((i) => i.path));
+          return [...c, ...added.filter((a) => !ex.has(a.path))];
+        });
+        setToolsOpen(false);
+      })();
     };
     form.addEventListener("dragover", onDrag, true);
     form.addEventListener("drop", onDrop, true);
@@ -737,6 +909,8 @@ function ChatWorkspaceImpl({
     return () => { (form as any).__drsaiDropOff?.(); };
   }, []);
   const attachmentButtonRef = useRef<HTMLButtonElement | null>(null);
+  const duplexStartButtonRef = useRef<HTMLButtonElement | null>(null);
+  const duplexWasRunningRef = useRef(false);
   const toolsMenuRef = useRef<HTMLDivElement | null>(null);
   const introPickerRef = useRef<HTMLDivElement | null>(null);
 
@@ -804,8 +978,17 @@ function ChatWorkspaceImpl({
   }, [defaultThinkingEffort]);
 
   useEffect(() => {
-    setTaskInteractionMode("normal");
-  }, [conversationId]);
+    setTaskInteractionMode(defaultPlanMode);
+  }, [defaultPlanMode]);
+
+  useEffect(() => {
+    setTaskInteractionMode(defaultPlanMode);
+    setRespondedInputRequests(new Set());
+    setInteractionDraft("");
+    setForkQueueAgentSelections({});
+    setPendingReplaceFromMessageId(null);
+    editResendBackupRef.current = null;
+  }, [conversationId, defaultPlanMode]);
 
   useEffect(() => {
     if (!agentOptions.some((agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex")) setTaskInteractionMode("normal");
@@ -816,20 +999,84 @@ function ChatWorkspaceImpl({
     response: string | Record<string, unknown>,
     transportRequestId = request.requestId,
   ): Promise<void> {
-    const accepted = await desktopApi.respondChatInput(transportRequestId, response);
-    if (!accepted) return;
-    if (typeof response === "object" && response.decision === "revise") return;
-    setRespondedInputRequests((current) => new Set(current).add(request.requestId));
+    const turnId = activeInputMessage?.structuredTurn?.turnId;
+    const runId = turnId?.startsWith("run-") ? turnId.split(":")[0] : undefined;
+    const payload = typeof response === "string"
+      ? response
+      : {
+          ...response,
+          session_id: conversationId,
+          ...(workspacePath ? { workspace_path: workspacePath } : {}),
+          ...(runId ? { run_id: runId } : {}),
+          ...(request.inputType === "approval" && !("approval_id" in response)
+            ? { approval_id: request.requestId.startsWith("approval:")
+              ? request.requestId.slice("approval:".length)
+              : request.requestId }
+            : {}),
+          ...(request.inputType === "approval"
+            && !("decision" in response)
+            && typeof (response as { approved?: unknown }).approved === "boolean"
+            ? { decision: (response as { approved: boolean }).approved ? "accept" : "decline" }
+            : {}),
+        };
+    const dismissStaleRequest = () => {
+      setRespondedInputRequests((current) => new Set(current).add(request.requestId));
+    };
+    try {
+      const accepted = await desktopApi.respondChatInput(transportRequestId, payload);
+      if (!accepted) {
+        window.alert(language === "zh"
+          ? "该批准已失效或运行已结束。已关闭批准框，你可以重新输入发送。"
+          : "That approval is no longer active. The prompt was closed so you can type again.");
+        dismissStaleRequest();
+        return;
+      }
+      if (typeof payload === "object" && payload.decision === "revise") return;
+      dismissStaleRequest();
+    } catch (error) {
+      window.alert(language === "zh"
+        ? `提交批准失败：${error instanceof Error ? error.message : String(error)}\n已关闭批准框，你可以重新输入发送。`
+        : `Approval submit failed: ${error instanceof Error ? error.message : String(error)}\nThe prompt was closed so you can type again.`);
+      dismissStaleRequest();
+    }
   }
 
   const respondToStructuredInteraction = useEventCallback((turnId: string, part: InteractionPart, response: InteractionResponse): void => {
-    void desktopApi.respondChatInput(turnId, response).then((accepted) => {
-      if (!accepted) return;
-      if (typeof response === "object" && response.decision === "revise") return;
+    const runId = turnId.startsWith("run-") ? turnId.split(":")[0] : undefined;
+    const payload = {
+      ...response,
+      session_id: conversationId,
+      ...(workspacePath ? { workspace_path: workspacePath } : {}),
+      ...(runId ? { run_id: runId } : {}),
+      ...(part.interactionType === "approval" && !("approval_id" in response)
+        ? {
+            approval_id: part.requestId.startsWith("approval:")
+              ? part.requestId.slice("approval:".length)
+              : part.requestId,
+          }
+        : {}),
+    };
+    const dismissStaleRequest = () => {
       setRespondedInputRequests((current) => new Set(current).add(part.requestId));
       if (response.capabilityAction === "configured") {
         setConfiguredCapabilityRequests((current) => new Set(current).add(part.requestId));
       }
+    };
+    void desktopApi.respondChatInput(activeRequestId ?? turnId, payload).then((accepted) => {
+      if (!accepted) {
+        window.alert(language === "zh"
+          ? "该批准已失效或运行已结束。已关闭批准框，你可以重新输入发送。"
+          : "That approval is no longer active. The prompt was closed so you can type again.");
+        dismissStaleRequest();
+        return;
+      }
+      if (typeof payload === "object" && "decision" in payload && payload.decision === "revise") return;
+      dismissStaleRequest();
+    }).catch((error) => {
+      window.alert(language === "zh"
+        ? `提交批准失败：${error instanceof Error ? error.message : String(error)}\n已关闭批准框，你可以重新输入发送。`
+        : `Approval submit failed: ${error instanceof Error ? error.message : String(error)}\nThe prompt was closed so you can type again.`);
+      dismissStaleRequest();
     });
   });
 
@@ -838,9 +1085,16 @@ function ChatWorkspaceImpl({
     if (response?.trim()) respondToStructuredInteraction(turnId, part, { response: response.trim() });
   });
 
+  function dismissActiveInputRequest(): void {
+    if (!activeInputRequest) return;
+    setRespondedInputRequests((current) => new Set(current).add(activeInputRequest.requestId));
+  }
+
   function respondToActiveInput(response: string | Record<string, unknown>): void {
     if (!activeInputRequest || !activeInputMessage) return;
-    const transportRequestId = activeInputMessage.structuredTurn?.turnId ?? activeInputRequest.requestId;
+    const transportRequestId = activeRequestId
+      ?? activeInputMessage.structuredTurn?.turnId
+      ?? activeInputRequest.requestId;
     void respondToAgentInput(activeInputRequest, response, transportRequestId);
   }
 
@@ -851,6 +1105,8 @@ function ChatWorkspaceImpl({
     setInteractionDraft("");
   }
   const shouldFollowOutputRef = useRef(true);
+  const programmaticScrollRef = useRef(false);
+  const programmaticScrollTimerRef = useRef<number | null>(null);
   const finalScrollSettleTimerRef = useRef<number | null>(null);
   const [smoothFollowOutput] = useState(() => createSmoothFollowOutputController({
     scrollToBottom: (behavior) => {
@@ -896,9 +1152,27 @@ function ChatWorkspaceImpl({
     setGoalConfirmationEditing(false);
     setGoalConfirmationDraft(parseGoalConfirmationPrompt(activeGoalConfirmation?.prompt ?? ""));
   }, [activeGoalConfirmation?.requestId, activeGoalConfirmation?.prompt]);
-  const hasStreamingMessage = messages.some((message) => message.streaming);
+  const hasStreamingMessage = useMemo(() => messages.some((message) => message.streaming), [messages]);
   const showStop = Boolean(activeRequestId || hasStreamingMessage);
-  const emptyChat = messages.every((message) => message.id === "welcome");
+
+  // Leftover approval cards from timed-out/failed runs block the composer.
+  // When nothing is actively streaming, close them so the user can type again.
+  useEffect(() => {
+    if (showStop || !activeInputRequest || activeGoalConfirmation) return;
+    if (activeInputRequest.inputType !== "approval") return;
+    const requestId = activeInputRequest.requestId;
+    setRespondedInputRequests((current) => {
+      if (current.has(requestId)) return current;
+      return new Set(current).add(requestId);
+    });
+  }, [
+    activeGoalConfirmation,
+    activeInputRequest?.inputType,
+    activeInputRequest?.requestId,
+    showStop,
+  ]);
+
+  const emptyChat = useMemo(() => messages.every((message) => message.id === "welcome"), [messages]);
   const conversationMessages = useMemo(
     () => messages.filter((message) => message.id !== "welcome"),
     [messages],
@@ -910,11 +1184,16 @@ function ChatWorkspaceImpl({
     statusContent: message.interrupted
       ? (zh ? `已听到：${message.heardContent || "（未完整播放）"}` : `Heard: ${message.heardContent || "(not fully played)"}`)
       : undefined,
+    ...(message.interrupted ? { statusContent: zh ? (message.heardContent ? `播放已中断，已听到：${message.heardContent}` : `播放在约 ${Math.round(message.voice.playedAudioMs ?? 0)} 毫秒处中断；无法确定精确听到的文字。`) : interruptedVoiceStatus(message.voice) } : {}),
   })), [duplexVoiceInput.history, zh]);
   const visibleMessages = useMemo(() => {
     const existing = new Set(conversationMessages.map((message) => message.id));
     return [...conversationMessages, ...duplexHistoryMessages.filter((message) => !existing.has(message.id))];
   }, [conversationMessages, duplexHistoryMessages]);
+  const renderedMessages = useMemo(
+    () => visibleMessages.filter((message) => !isEmptyAssistantShell(message)),
+    [visibleMessages],
+  );
   const turnRailMarkers = useMemo(
     () => visibleMessages
       .filter((message) => message.role === "user")
@@ -927,10 +1206,11 @@ function ChatWorkspaceImpl({
   const emptyChatPreferenceNotice = emptyChat
     ? messages.find((message) => message.id === "welcome")?.content.split("\n\n").slice(1).join("\n\n").trim() || ""
     : "";
-  const activeAgentName = selectedAgentName?.trim() || "OpenDrSai";
-  const isLocalOpenDrSaiAgent = agentOptions.some(
+  const activeAgent = useMemo(() => agentOptions.find((agent) => agent.id === selectedAgentId), [agentOptions, selectedAgentId]);
+  const activeAgentName = selectedAgentName?.trim() || activeAgent?.name || "OpenDrSai";
+  const isLocalOpenDrSaiAgent = useMemo(() => agentOptions.some(
     (agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex",
-  );
+  ), [agentOptions, selectedAgentId]);
   const workspaceLocationLabel =
     workspaceLocation === "remote"
       ? zh
@@ -958,8 +1238,9 @@ function ChatWorkspaceImpl({
     return THINKING_EFFORTS.filter((effort) => configured.includes(effort));
   }, [activeModelConfig, isLocalOpenDrSaiAgent]);
   useEffect(() => {
-    if (supportedThinkingEfforts.length > 0 && !supportedThinkingEfforts.includes(thinkingEffort)) {
-      setThinkingEffort(supportedThinkingEfforts.includes("high") ? "high" : supportedThinkingEfforts[0]);
+    if (supportedThinkingEfforts.length === 0) return;
+    if (!supportedThinkingEfforts.includes(thinkingEffort)) {
+      setThinkingEffort(supportedThinkingEfforts[0]);
     }
   }, [supportedThinkingEfforts, thinkingEffort]);
   const showThinkingEffort = supportedThinkingEfforts.length > 0;
@@ -970,14 +1251,14 @@ function ChatWorkspaceImpl({
   }, [configurationSection, showThinkingEffort]);
   const thinkingEffortSupported = supportedThinkingEfforts.includes(thinkingEffort);
   const thinkingEffortLabel = getThinkingEffortLabel(
-    thinkingEffortSupported ? thinkingEffort : supportedThinkingEfforts.includes("high") ? "high" : supportedThinkingEfforts[0] ?? thinkingEffort,
+    thinkingEffortSupported ? thinkingEffort : supportedThinkingEfforts[0] ?? thinkingEffort,
     zh,
   );
   const thinkingEffortMenuLabel = showThinkingEffort
     ? thinkingEffortLabel
     : (zh ? "当前模型不支持" : "Not supported by this model");
-  const taskInteractionModeLabel = taskInteractionMode === "confirm_goal"
-    ? (zh ? "目标" : "Goal")
+  const taskInteractionModeLabel = taskInteractionMode === "plan"
+    ? (zh ? "计划" : "Plan")
     : (zh ? "常规" : "Normal");
   const composerConfigurationSummary = [
     activeAgentName,
@@ -997,16 +1278,16 @@ function ChatWorkspaceImpl({
   );
   const activeWorkspaceName = workspaceName?.trim() || getWorkspaceDisplayName(workspacePath, zh);
   const normalizedIntroSearch = introSearchQuery.trim().toLocaleLowerCase();
-  const filteredIntroWorkspaces = workspaceOptions.filter((workspace) =>
+  const filteredIntroWorkspaces = useMemo(() => workspaceOptions.filter((workspace) =>
     !normalizedIntroSearch
       || workspace.name.toLocaleLowerCase().includes(normalizedIntroSearch)
       || workspace.path.toLocaleLowerCase().includes(normalizedIntroSearch),
-  );
-  const filteredIntroAgents = agentOptions.filter((agent) =>
+  ), [workspaceOptions, normalizedIntroSearch]);
+  const filteredIntroAgents = useMemo(() => agentOptions.filter((agent) =>
     !normalizedIntroSearch
       || agent.name.toLocaleLowerCase().includes(normalizedIntroSearch)
       || getAgentOptionMeta(agent, zh).toLocaleLowerCase().includes(normalizedIntroSearch),
-  );
+  ), [agentOptions, normalizedIntroSearch, zh]);
   const slashCommandQuery = input.trimStart().startsWith("/")
     ? input.trimStart().slice(1).toLowerCase()
     : "";
@@ -1067,15 +1348,20 @@ function ChatWorkspaceImpl({
   const showVoiceCaptureBar =
     voiceState === "requesting_permission" ||
     voiceState === "recording";
-  const showStreamingVoiceCaptureBar = ["starting", "streaming", "stopping", "cancelling"].includes(streamingVoiceInput.phase);
   const showDuplexVoiceCaptureBar = ["starting", "active", "stopping", "recovering"].includes(duplexVoiceInput.phase);
-  const showAnyVoiceCaptureBar = showVoiceCaptureBar || voiceState === "processing" || showStreamingVoiceCaptureBar || showDuplexVoiceCaptureBar;
+  const showAnyVoiceCaptureBar = showVoiceCaptureBar || voiceState === "processing" || showDuplexVoiceCaptureBar;
   const displayedVoicePhase = voicePreferences.interactionMode === "duplex"
     ? duplexVoiceInput.phase
-    : voicePreferences.interactionMode === "streaming" ? streamingVoiceInput.phase : voiceTurnState.phase;
-  const latestCompletedAssistantMessage = [...messages]
-    .reverse()
-    .find((message) => message.role === "assistant" && !message.streaming && !message.error && getAssistantDisplayContent(message));
+    : voiceTurnState.phase;
+  const latestCompletedAssistantMessage = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.role === "assistant" && !message.streaming && !message.error && getAssistantDisplayContent(message)) {
+        return message;
+      }
+    }
+    return undefined;
+  }, [messages]);
   const latestCompletedAssistantSpeechText = latestCompletedAssistantMessage
     ? getAssistantDisplayContent(latestCompletedAssistantMessage)
     : "";
@@ -1083,9 +1369,7 @@ function ChatWorkspaceImpl({
   useEffect(() => {
     voicePlayback.stop();
     stopVoiceCapture("discard");
-    void streamingVoiceInput.cancel();
     void duplexVoiceInput.cancel();
-    streamingVoiceInput.reset();
     cancelVoiceTranscriptionTask();
     setVoiceReviewText(null);
     setVoiceRuntimeDisclosure(null);
@@ -1109,10 +1393,7 @@ function ChatWorkspaceImpl({
       if (event?.type === "visibilitychange" && document.visibilityState !== "hidden") return;
       voicePlayback.stop();
       stopVoiceCapture("discard");
-      void streamingVoiceInput.cancel();
       void duplexVoiceInput.cancel();
-      streamingVoiceOutput.stop();
-      if (streamingVoiceResponseArmed && (activeRequestId || hasStreamingMessage)) onAbort();
       cancelVoiceTranscriptionTask();
       dispatchVoiceTurn({ type: "cancel" });
       dispatchVoiceTurn({ type: "cancelled" });
@@ -1125,7 +1406,7 @@ function ChatWorkspaceImpl({
       window.removeEventListener("pagehide", stopVoiceActivityForLifecycle);
       window.removeEventListener("offline", stopVoiceActivityForLifecycle);
     };
-  }, [activeRequestId, cancelVoiceTranscriptionTask, hasStreamingMessage, onAbort, stopVoiceCapture, streamingVoiceOutput.stop, streamingVoiceResponseArmed, voicePlayback.stop]);
+  }, [cancelVoiceTranscriptionTask, stopVoiceCapture, voicePlayback.stop]);
 
   useEffect(() => {
     if (voiceState === "recording" && !voiceCaptureDiagnosticRef.current) {
@@ -1303,7 +1584,10 @@ function ChatWorkspaceImpl({
   ]);
 
   const searchableMessages = useMemo(
-    () => messages.filter((message) => getVisibleChatText(message.content)),
+    () => messages.filter((message) => {
+      if (getVisibleChatText(message.content)) return true;
+      return Boolean(message.structuredTurn && getStructuredTurnEstimateText(message.structuredTurn));
+    }),
     [messages],
   );
 
@@ -1311,7 +1595,11 @@ function ChatWorkspaceImpl({
     const query = searchQuery.trim().toLowerCase();
     if (!query) return [];
     return searchableMessages
-      .filter((message) => getVisibleChatText(message.content).toLowerCase().includes(query))
+      .filter((message) => {
+        if (getVisibleChatText(message.content).toLowerCase().includes(query)) return true;
+        if (!message.structuredTurn) return false;
+        return getStructuredTurnEstimateText(message.structuredTurn).toLowerCase().includes(query);
+      })
       .map((message) => message.id);
   }, [searchQuery, searchableMessages]);
 
@@ -1475,6 +1763,19 @@ function ChatWorkspaceImpl({
   }, [openSearch, searchRequestNonce]);
 
   useEffect(() => {
+    if (!messageFocus?.messageId) return;
+    const reveal = () => {
+      const selector = `[data-message-id="${CSS.escape(messageFocus.messageId)}"]`;
+      messageListRef.current?.querySelector<HTMLElement>(selector)?.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      });
+    };
+    window.requestAnimationFrame(reveal);
+    window.setTimeout(reveal, 120);
+  }, [messageFocus]);
+
+  useEffect(() => {
     if (!structuredTurnFocus) return;
     setHighlightedTurnId(structuredTurnFocus.turnId);
     shouldFollowOutputRef.current = false;
@@ -1495,7 +1796,7 @@ function ChatWorkspaceImpl({
       if (!detail || typeof detail !== "object") return;
       const command = (detail as { command?: unknown }).command;
       if (typeof command !== "string" || !command.trim()) return;
-      onInputChange(command.trim());
+      applyComposerText(command.trim());
       window.setTimeout(() => textareaRef.current?.focus(), 0);
     }
 
@@ -1522,7 +1823,21 @@ function ChatWorkspaceImpl({
     const list = messageListRef.current;
     if (!list) return;
     const target = getMessageListMaxScrollTop(list);
+    programmaticScrollRef.current = true;
     list.scrollTo({ top: target, behavior });
+    // Schedule a safety-net clear. For instant (auto) scrolls, the flag is
+    // normally cleared by handleMessageListScroll when the scroll event
+    // fires and we're at the bottom. The timeout handles edge cases where
+    // the scroll event doesn't fire or we're already at the target.
+    // For smooth scrolls, use a longer timeout to cover the animation.
+    const timeout = behavior === "auto" ? 200 : 1200;
+    if (programmaticScrollTimerRef.current !== null) {
+      window.clearTimeout(programmaticScrollTimerRef.current);
+    }
+    programmaticScrollTimerRef.current = window.setTimeout(() => {
+      programmaticScrollTimerRef.current = null;
+      programmaticScrollRef.current = false;
+    }, timeout);
   }
 
   useEffect(() => {
@@ -1532,11 +1847,20 @@ function ChatWorkspaceImpl({
       if (finalScrollSettleTimerRef.current !== null) window.clearTimeout(finalScrollSettleTimerRef.current);
       finalScrollSettleTimerRef.current = window.setTimeout(() => {
         finalScrollSettleTimerRef.current = null;
-        if (shouldFollowOutputRef.current && smoothFollowOutput.isFollowing()) scrollMessageListToLatest("auto");
+        if (shouldFollowOutputRef.current) scrollMessageListToLatest("auto");
       }, 360);
       return;
     }
+    // During streaming, directly scroll to the latest content on every
+    // messages update. Use auto (not smooth) for immediate tracking and
+    // defer to the next animation frame so the DOM has been laid out.
+    const frame = window.requestAnimationFrame(() => {
+      if (shouldFollowOutputRef.current && messageListRef.current) {
+        scrollMessageListToLatest("auto");
+      }
+    });
     smoothFollowOutput.handleHeightChange(messageListRef.current.scrollHeight);
+    return () => window.cancelAnimationFrame(frame);
   }, [hasStreamingMessage, messages, smoothFollowOutput]);
 
   useEffect(() => () => smoothFollowOutput.dispose(), [smoothFollowOutput]);
@@ -1546,7 +1870,15 @@ function ChatWorkspaceImpl({
     const lastMessage = list?.lastElementChild;
     if (!list || !lastMessage) return undefined;
     const observer = new ResizeObserver(() => {
-      if (shouldFollowOutputRef.current) smoothFollowOutput.handleHeightChange(list.scrollHeight);
+      if (!shouldFollowOutputRef.current) return;
+      // Direct scroll on height change — more reliable than handleHeightChange
+      // which may be gated by controller state (pendingFrame, following, etc.)
+      const frame = window.requestAnimationFrame(() => {
+        if (shouldFollowOutputRef.current && messageListRef.current) {
+          scrollMessageListToLatest("auto");
+        }
+      });
+      smoothFollowOutput.handleHeightChange(list.scrollHeight);
     });
     observer.observe(lastMessage);
     smoothFollowOutput.handleHeightChange(list.scrollHeight);
@@ -1555,6 +1887,7 @@ function ChatWorkspaceImpl({
 
   useEffect(() => () => {
     if (finalScrollSettleTimerRef.current !== null) window.clearTimeout(finalScrollSettleTimerRef.current);
+    if (programmaticScrollTimerRef.current !== null) window.clearTimeout(programmaticScrollTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -1634,13 +1967,48 @@ function ChatWorkspaceImpl({
   function handleMessageListScroll(): void {
     const list = messageListRef.current;
     if (!list) return;
-    smoothFollowOutput.handleScroll(list.scrollTop, getMessageListMaxScrollTop(list));
-    shouldFollowOutputRef.current = smoothFollowOutput.isFollowing();
+    const maxScrollTop = getMessageListMaxScrollTop(list);
+    // If this scroll was triggered by our own programmatic scrollTo, don't
+    // treat it as user intent. Just sync state.
+    if (programmaticScrollRef.current) {
+      // Check if we've reached the bottom — re-enable follow if so.
+      if (maxScrollTop - list.scrollTop <= AT_BOTTOM_TOLERANCE) {
+        programmaticScrollRef.current = false;
+        if (programmaticScrollTimerRef.current !== null) {
+          window.clearTimeout(programmaticScrollTimerRef.current);
+          programmaticScrollTimerRef.current = null;
+        }
+        shouldFollowOutputRef.current = true;
+        setAwayFromLatest(false);
+      }
+      return;
+    }
+    // User-initiated scroll: let smoothFollowOutput handle the state machine
+    // (it distinguishes up/down, layout shrink, etc.), then sync our flag.
+    const userPaused = smoothFollowOutput.handleScroll(list.scrollTop, maxScrollTop);
+    if (userPaused) {
+      // handleScroll detected upward movement and paused following
+      shouldFollowOutputRef.current = false;
+    } else if (maxScrollTop - list.scrollTop <= AT_BOTTOM_TOLERANCE) {
+      // Scrolled to the bottom — re-enable follow
+      shouldFollowOutputRef.current = true;
+    }
+    // Otherwise: keep current follow state (e.g., user scrolling down but
+    // not yet at the bottom shouldn't pause following)
     setAwayFromLatest((current) => current === !shouldFollowOutputRef.current ? current : !shouldFollowOutputRef.current);
   }
 
   function handleMessageListWheel(event: React.WheelEvent<HTMLDivElement>): void {
     if (event.deltaY >= 0) return;
+    // Wheel events are always user-initiated — clear any programmatic scroll
+    // flag so subsequent scroll events are treated as user intent.
+    if (programmaticScrollRef.current) {
+      programmaticScrollRef.current = false;
+      if (programmaticScrollTimerRef.current !== null) {
+        window.clearTimeout(programmaticScrollTimerRef.current);
+        programmaticScrollTimerRef.current = null;
+      }
+    }
     const list = messageListRef.current;
     if (!list) return;
     smoothFollowOutput.handleUserScrollIntent(list.scrollTop);
@@ -1649,6 +2017,14 @@ function ChatWorkspaceImpl({
   }
 
   function pauseMessageListFollowForUserIntent(): void {
+    // Pointer/key events are always user-initiated — clear programmatic flag.
+    if (programmaticScrollRef.current) {
+      programmaticScrollRef.current = false;
+      if (programmaticScrollTimerRef.current !== null) {
+        window.clearTimeout(programmaticScrollTimerRef.current);
+        programmaticScrollTimerRef.current = null;
+      }
+    }
     const list = messageListRef.current;
     if (!list) return;
     smoothFollowOutput.handleUserScrollIntent(list.scrollTop);
@@ -1669,6 +2045,7 @@ function ChatWorkspaceImpl({
 
   function scrollToLatest(): void {
     shouldFollowOutputRef.current = true;
+    programmaticScrollRef.current = false;
     smoothFollowOutput.resume();
     setAwayFromLatest(false);
     scrollMessageListToLatest("smooth");
@@ -1688,18 +2065,37 @@ function ChatWorkspaceImpl({
   }, [openSearch]);
 
   useEffect(() => {
+    function handleDuplexShortcut(event: KeyboardEvent): void {
+      const action = getDuplexShortcutAction({ key: event.key, altKey: event.altKey, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey, enabled: voicePreferences.interactionMode === "duplex", phase: duplexVoiceInput.phase }); if (!action) return;
+      event.preventDefault();
+      if (action === "toggle_start") void toggleVoiceRecording();
+      else if (action === "toggle_pause") void (duplexVoiceInput.microphonePaused ? duplexVoiceInput.resumeMicrophone() : duplexVoiceInput.pauseMicrophone());
+      else if (action === "stop") void duplexVoiceInput.stop();
+      else void duplexVoiceInput.interrupt("manual");
+    }
+    window.addEventListener("keydown", handleDuplexShortcut);
+    return () => window.removeEventListener("keydown", handleDuplexShortcut);
+  }, [duplexVoiceInput.phase, duplexVoiceInput.microphonePaused, voicePreferences.interactionMode]);
+
+  useEffect(() => {
+    const running = ["starting", "active", "recovering", "stopping"].includes(duplexVoiceInput.phase);
+    if (duplexWasRunningRef.current && !running) voiceButtonRef.current?.focus();
+    duplexWasRunningRef.current = running;
+  }, [duplexVoiceInput.phase]);
+
+  useEffect(() => {
     if (!hasDesktopApi() || typeof desktopApi.getVoiceRuntimeStatus !== "function") return;
     void desktopApi.getVoiceRuntimeStatus().then((runtime) => {
       setVoiceRuntimeStatus(runtime);
       setVoiceRuntimeDisclosure(runtime.providerDisclosure);
       setVoiceRuntimeLabel(runtime.runtimeId === "gateway-provider" ? "Online STT" : "Fixture STT");
     }).catch(() => setVoiceRuntimeLabel("STT unavailable"));
-    void desktopApi.getStreamingVoiceCapabilities()
-      .then(setStreamingVoiceCapabilities)
-      .catch(() => setStreamingVoiceCapabilities(null));
     void desktopApi.getDuplexVoiceCapabilities()
       .then(setDuplexVoiceCapabilities)
       .catch(() => setDuplexVoiceCapabilities(null));
+    void desktopApi.getDuplexVoiceReadiness()
+      .then(setDuplexVoiceReadiness)
+      .catch(() => setDuplexVoiceReadiness(null));
     void desktopApi.getMyDrSaiAgentModelPolicy().then((policy) => {
       const ref = policy.effective_realtime_voice_ref ?? policy.realtime_voice_model?.ref;
       setDuplexPrivacyDisclosure(ref
@@ -1708,48 +2104,220 @@ function ChatWorkspaceImpl({
     }).catch(() => undefined);
   }, []);
 
-  useEffect(() => { setDuplexPrivacyConfirmed(false); }, [duplexPrivacyDisclosure, conversationId]);
+  useEffect(() => { setDuplexPrivacyConfirmed(false); }, [duplexDisclosureFingerprint]);
 
   function handleSubmit(event: FormEvent): void {
     event.preventDefault();
-    if (["starting", "active", "recovering", "stopping"].includes(duplexVoiceInput.phase)) {
-      setVoiceError(zh ? "实时语音会话期间暂不发送文字；草稿已保留，请先结束会话。" : "Text sending is paused during a Realtime voice session. Your draft is preserved; end the session first.");
+    appendRendererStage("chat_workspace.submit.start", {
+      conversationId,
+      selectedAgentId,
+      canChat,
+      channelSource,
+      hasText: Boolean(composerTextRef.current.trim()),
+      attachmentCount: attachments.length + externalAttachments.length + inlineMentionAttachments.length,
+      messageCount: messages.length,
+    });
+    if (channelSource === "wechat") {
+      const decision = decideWeChatComposerSubmit({
+        channelSource, trigger: "button", available: wechatCapability?.available === true,
+        confirmed: wechatConfirmationPending, sending: wechatSending, hasText: Boolean(composerText.trim()),
+      });
+      if (decision === "blocked" || !runtimeSessionId) return;
+      if (decision === "request_confirmation") {
+        setWechatConfirmationPending(true);
+        setWechatSendStatus(null);
+        return;
+      }
+      setWechatSending(true);
+      const idempotencyKey = `wechat-desktop:${crypto.randomUUID()}`;
+      void desktopApi.sendToWeChat({
+        sessionId: runtimeSessionId,
+        text: composerText.trim(),
+        idempotencyKey,
+        confirmExternalSend: true,
+      }).then((result) => {
+        setWechatSendStatus(result.status === "sent" ? (zh ? "已发送到微信" : "Sent to WeChat") : (zh ? "发送结果未知，请勿立即重复发送" : "Delivery outcome is unknown; do not resend immediately"));
+        if (result.status === "sent") applyComposerText("");
+      }).catch((error) => {
+        setWechatSendStatus(error instanceof Error ? error.message : String(error));
+      }).finally(() => {
+        setWechatSending(false);
+        setWechatConfirmationPending(false);
+      });
+      return;
+    }
+    if (duplexVoiceInput.phase === "active") { void submitDuplexText(); return; }
+    if (["starting", "recovering", "stopping"].includes(duplexVoiceInput.phase)) {
+      setVoiceError(zh ? "实时语音正在连接、恢复或结束；文字草稿已保留，请稍后重试。" : "Realtime voice is connecting, recovering, or ending. Your text draft is preserved; retry shortly.");
       return;
     }
     void submitWithAttachments();
   }
 
+  async function submitDuplexText(): Promise<void> { if (attachments.length || externalAttachments.length || inlineMentionAttachments.length) { setVoiceError(zh ? "实时语音中的文字消息暂不支持附件；请先移除附件。" : "Text messages inside Realtime voice do not support attachments yet. Remove attachments first."); return; } const value = composerText.trim(); if (!value) return; const submitted = await duplexVoiceInput.sendText(value, duplexTextStrategy); if (submitted) { applyComposerText(""); setVoiceError(null); } else setVoiceError(zh ? "文字未发送。可能已有一条待发送消息，或实时连接不可用。" : "Text was not sent. Another message may already be pending, or Realtime is unavailable."); }
+
   function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
+    // Undo: Ctrl+Z (Windows/Linux) or Cmd+Z (Mac).  Must be checked before
+    // the IME / submit logic below, and must not fire during IME composition.
+    const isUndo = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
+      && (event.key === "z" || event.key === "Z");
+    const isRedo = (event.ctrlKey || event.metaKey) && !event.altKey
+      && (event.key === "y" || event.key === "Y"
+        || ((event.key === "z" || event.key === "Z") && event.shiftKey));
+
+    if (isUndo && !isTextCompositionEvent(event.nativeEvent)) {
+      const history = inputHistoryRef.current;
+      if (history.past.length > 0) {
+        event.preventDefault();
+        const previous = history.past.pop()!;
+        history.future.unshift(history.present);
+        history.present = previous;
+        // Mark as our own change so the sync effect does not double-record.
+        history.lastExternal = previous;
+        applyComposerText(previous);
+        // Restore cursor to end after undo so the user can continue typing.
+        window.requestAnimationFrame(() => {
+          const textarea = textareaRef.current;
+          if (textarea) {
+            const pos = Math.min(previous.length, textarea.selectionStart);
+            textarea.setSelectionRange(pos, pos);
+          }
+        });
+      }
+      return;
+    }
+    if (isRedo && !isTextCompositionEvent(event.nativeEvent)) {
+      const history = inputHistoryRef.current;
+      if (history.future.length > 0) {
+        event.preventDefault();
+        const next = history.future.shift()!;
+        history.past.push(history.present);
+        history.present = next;
+        history.lastExternal = next;
+        applyComposerText(next);
+        window.requestAnimationFrame(() => {
+          const textarea = textareaRef.current;
+          if (textarea) {
+            const pos = Math.min(next.length, textarea.selectionStart);
+            textarea.setSelectionRange(pos, pos);
+          }
+        });
+      }
+      return;
+    }
+
+    // ESC closes the tools menu when open.
+    if (event.key === "Escape" && toolsOpen) {
+      event.preventDefault();
+      setToolsOpen(false);
+      attachmentButtonRef.current?.focus();
+      return;
+    }
+
     if (!shouldSubmitTextInput(event.nativeEvent)) return;
     event.preventDefault();
+    if (decideWeChatComposerSubmit({
+      channelSource, trigger: "keyboard", available: wechatCapability?.available === true,
+      confirmed: wechatConfirmationPending, sending: wechatSending, hasText: Boolean(composerText.trim()),
+    }) === "blocked") return;
     void submitWithAttachments();
   }
 
   function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>): void {
     const clipboard = event.clipboardData;
     const imageFiles = Array.from(clipboard.files)
-      .filter((file) => file.type.startsWith("image/"))
+      .filter((file) => file.type.startsWith("image/") || isImageFileName(file.name || ""))
       .slice(0, MAX_CLIPBOARD_IMAGE_COUNT);
     const text = clipboard.getData("text/plain");
     const pathMentionText = normalizePastedLocalPathMentions(text);
     if (!imageFiles.length && !pathMentionText) return;
 
     event.preventDefault();
-    insertTextAtCursor(pathMentionText || text);
-    if (imageFiles.length) void addClipboardImageAttachments(imageFiles);
+    // When pasting clipboard images, do not insert clipboard text into the
+    // input box — the image is sent as a multimodal message, not as text.
+    if (imageFiles.length) {
+      void addClipboardImageAttachments(imageFiles);
+    } else {
+      insertTextAtCursor(pathMentionText || text);
+    }
+  }
+
+  function startEditAndResend(assistantMessageId: string): void {
+    const user = findPrecedingUserMessage(messages, assistantMessageId);
+    if (!user) return;
+    if (!pendingReplaceFromMessageId) {
+      editResendBackupRef.current = { input, attachments };
+    }
+    applyComposerText(user.content);
+    setPendingReplaceFromMessageId(user.id);
+    setAttachments(user.attachments?.length
+      ? user.attachments.map((attachment) => ({
+          ...attachment,
+          id: `${attachment.path || attachment.name || "attachment"}-${crypto.randomUUID()}`,
+        }))
+      : []);
+    textareaRef.current?.focus({ preventScroll: true });
+  }
+
+  function startEditUserMessage(userMessageId: string): void {
+    const user = messages.find((message) => message.id === userMessageId && message.role === "user");
+    if (!user) return;
+    if (!pendingReplaceFromMessageId) {
+      editResendBackupRef.current = { input, attachments };
+    }
+    applyComposerText(user.content);
+    setPendingReplaceFromMessageId(user.id);
+    setAttachments(user.attachments?.length
+      ? user.attachments.map((attachment) => ({
+          ...attachment,
+          id: `${attachment.path || attachment.name || "attachment"}-${crypto.randomUUID()}`,
+        }))
+      : []);
+    textareaRef.current?.focus({ preventScroll: true });
+  }
+
+  function cancelEditAndResend(): void {
+    const backup = editResendBackupRef.current;
+    setPendingReplaceFromMessageId(null);
+    if (backup) {
+      applyComposerText(backup.input);
+      setAttachments(backup.attachments);
+    }
+    editResendBackupRef.current = null;
+  }
+
+  async function regenerateAssistant(assistantMessageId: string): Promise<void> {
+    const user = findPrecedingUserMessage(messages, assistantMessageId);
+    if (!user || activeRequestId) return;
+    await onSubmit(
+      (user.attachments ?? []).filter((attachment) => !attachment.blockedReason),
+      {
+        agentId: selectedAgentId,
+        agentName: activeAgentName,
+        planMode: isLocalOpenDrSaiAgent && taskInteractionMode === "plan",
+        model: selectedModelName,
+        replaceFromMessageId: user.id,
+        runtimeMode: currentRuntimeMode,
+        skillName: selectedSkillName,
+        text: user.content,
+        thinkingEffort: !isLocalOpenDrSaiAgent || thinkingEffortSupported ? thinkingEffort : undefined,
+      },
+    );
   }
 
   async function submitWithAttachments(): Promise<void> {
-    if (["starting", "active", "recovering", "stopping"].includes(duplexVoiceInput.phase)) {
-      setVoiceError(zh ? "实时语音会话期间暂不发送文字；草稿已保留，请先结束会话。" : "Text sending is paused during a Realtime voice session. Your draft is preserved; end the session first.");
-      return;
-    }
-    if (showStreamingVoiceCaptureBar || streamingVoiceInput.turnState.phase === "repairing") {
-      setVoiceError("Finish live transcription and review the stable text before sending.");
+    // Reset scroll-follow state so the view tracks the latest streaming output.
+    shouldFollowOutputRef.current = true;
+    programmaticScrollRef.current = false;
+    smoothFollowOutput.resume();
+    setAwayFromLatest(false);
+    if (duplexVoiceInput.phase === "active") { await submitDuplexText(); return; }
+    if (["starting", "recovering", "stopping"].includes(duplexVoiceInput.phase)) {
+      setVoiceError(zh ? "实时语音正在连接、恢复或结束；文字草稿已保留，请稍后重试。" : "Realtime voice is connecting, recovering, or ending. Your text draft is preserved; retry shortly.");
       return;
     }
     const isVoiceSubmission = voiceTurnState.phase === "ready_to_send";
-    const isStreamingVoiceSubmission = streamingVoiceReadyToSend;
+    const textDraft = isVoiceSubmission ? "" : composerTextRef.current;
     if (isVoiceSubmission) {
       voiceResponseBaselineRef.current = new Set(messages
         .filter((message) => message.role === "assistant")
@@ -1767,6 +2335,12 @@ function ChatWorkspaceImpl({
       ...externalAttachments,
       ...inlineMentionAttachments,
     ], folderSummaryProvider);
+    appendRendererStage("chat_workspace.submit.before_adapter", {
+      conversationId,
+      selectedAgentId,
+      textLength: textDraft.length,
+      attachmentCount: submittedAttachments.length,
+    });
     const submitted = await onSubmit(
       submittedAttachments.filter((attachment) => !attachment.blockedReason),
       {
@@ -1777,11 +2351,13 @@ function ChatWorkspaceImpl({
           forkQueueAgentSelections,
           agentOptions,
         ),
-        goalConfirmationRequired: isLocalOpenDrSaiAgent && taskInteractionMode === "confirm_goal",
+        planMode: isLocalOpenDrSaiAgent && taskInteractionMode === "plan",
         model: selectedModelName,
         runtimeMode: currentRuntimeMode,
         skillName: selectedSkillName,
         thinkingEffort: !isLocalOpenDrSaiAgent || thinkingEffortSupported ? thinkingEffort : undefined,
+        ...(!isVoiceSubmission ? { text: textDraft } : {}),
+        ...(pendingReplaceFromMessageId ? { replaceFromMessageId: pendingReplaceFromMessageId } : {}),
         onStarted: isVoiceSubmission
           ? ({ assistantMessageId, requestId, userMessageId }) => dispatchVoiceTurn({
               type: "submission_linked",
@@ -1793,17 +2369,17 @@ function ChatWorkspaceImpl({
       },
     );
     if (submitted) {
+      appendRendererStage("chat_workspace.submit.adapter_ok", { conversationId, selectedAgentId, isVoiceSubmission });
+      if (!isVoiceSubmission) applyComposerText("");
       setAttachments([]);
       onClearExternalAttachments?.();
       setSelectedSkillName(null);
+      setPendingReplaceFromMessageId(null);
+      editResendBackupRef.current = null;
       if (isVoiceSubmission) dispatchVoiceTurn({ type: "response_started" });
-      if (isStreamingVoiceSubmission) {
-        streamingVoiceInput.acceptReview();
-        streamingVoiceInput.markAssistantTextStarted();
-        setStreamingVoiceReadyToSend(false);
-        setStreamingVoiceResponseArmed(true);
-      }
-    } else if (isVoiceSubmission) {
+    } else {
+      appendRendererStage("chat_workspace.submit.failed", { conversationId, selectedAgentId, isVoiceSubmission }, "error");
+      if (!isVoiceSubmission) return;
       const message = zh ? "语音消息发送失败，转写文本和附件已保留。" : "The voice message could not be sent. The transcript and attachments were preserved.";
       dispatchVoiceTurn({
         type: "fail",
@@ -1829,7 +2405,7 @@ function ChatWorkspaceImpl({
   }
 
   function clearInput(): void {
-    onInputChange("");
+    applyComposerText("");
     textareaRef.current?.focus();
   }
 
@@ -1847,7 +2423,6 @@ function ChatWorkspaceImpl({
       attributes: {
         interactionMode: voicePreferences.interactionMode,
         serialCaptureState: voiceState,
-        streamingCapturePhase: streamingVoiceInput.phase,
         duplexCapturePhase: duplexVoiceInput.phase,
         voiceApiAvailable,
       },
@@ -1860,14 +2435,6 @@ function ChatWorkspaceImpl({
       await startDuplexVoiceRecording(false);
       return;
     }
-    if (voicePreferences.interactionMode === "streaming") {
-      if (streamingVoiceInput.phase === "streaming") {
-        await streamingVoiceInput.stop();
-        return;
-      }
-      await startStreamingVoiceRecording();
-      return;
-    }
     if (voiceState === "recording") {
       stopVoiceRecording("transcribe");
       return;
@@ -1876,27 +2443,15 @@ function ChatWorkspaceImpl({
   }
 
   async function startDuplexVoiceRecording(privacyAlreadyConfirmed: boolean): Promise<void> {
-    if (!duplexVoiceAvailability.available) { setVoiceError(duplexVoiceAvailability.reason ?? "Realtime voice is unavailable."); return; }
-    if (!privacyAlreadyConfirmed && !duplexPrivacyConfirmed) { setVoiceError(duplexPrivacyDisclosure); return; }
-    voicePlayback.stop(); streamingVoiceOutput.stop(); setVoiceError(null); await duplexVoiceInput.start();
-  }
-
-  async function startStreamingVoiceRecording(): Promise<void> {
-    if (!streamingVoiceAvailability.available) {
-      setVoiceError(streamingVoiceAvailability.reason ?? "Live transcription is unavailable.");
-      return;
-    }
-    voicePlayback.stop();
-    streamingVoiceOutput.stop();
-    setVoiceReviewText(null);
-    setVoiceReviewSource(null);
-    setVoiceError(null);
-    voiceSelectionRef.current = textareaRef.current
-      ? { start: textareaRef.current.selectionStart, end: textareaRef.current.selectionEnd }
-      : { start: input.length, end: input.length };
-    setStreamingComposerProjection(createStreamingComposerProjection(input, voiceSelectionRef.current));
-    const started = await streamingVoiceInput.start();
-    if (!started) setStreamingComposerProjection(null);
+    const readiness = await desktopApi.getDuplexVoiceReadiness().catch(() => null);
+    setDuplexVoiceReadiness(readiness);
+    const browserReady = typeof AudioWorkletNode !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
+    if (!browserReady) { setVoiceError(zh ? "实时语音需要 AudioWorklet 和麦克风设备支持。" : "Realtime voice requires AudioWorklet and microphone device support."); return; }
+    if (!readiness?.available) { setVoiceError(readiness?.message ?? duplexVoiceAvailability.reason ?? "Realtime voice is unavailable."); return; }
+    if (!privacyAlreadyConfirmed && !duplexDisclosureAcknowledged) { setVoiceError(duplexPrivacyDisclosure); return; }
+    voicePlayback.stop(); setVoiceError(null);
+    try { await duplexVoiceInput.start(); }
+    catch (error) { setVoiceError(error instanceof Error ? error.message : "Realtime voice failed to start."); }
   }
 
   async function startVoiceRecording(): Promise<void> {
@@ -2038,14 +2593,16 @@ function ChatWorkspaceImpl({
 
   function insertTextAtCursor(text: string): void {
     const textarea = textareaRef.current;
+    const liveText = composerTextRef.current;
     if (!textarea) {
-      onInputChange(input ? `${input}${text}` : text);
+      applyComposerText(liveText ? `${liveText}${text}` : text);
       return;
     }
-    const start = textarea.selectionStart ?? input.length;
+    const start = textarea.selectionStart ?? liveText.length;
     const end = textarea.selectionEnd ?? start;
-    const next = `${input.slice(0, start)}${text}${input.slice(end)}`;
-    onInputChange(next);
+    const next = `${liveText.slice(0, start)}${text}${liveText.slice(end)}`;
+    pushInputHistory(liveText);
+    applyComposerText(next);
     window.setTimeout(() => {
       textarea.focus();
       const cursor = start + text.length;
@@ -2200,7 +2757,7 @@ function ChatWorkspaceImpl({
     if (voicePreferences.confirmBeforeSend) {
       const selection = voiceSelectionRef.current ?? { start: input.length, end: input.length };
       const insertion = insertVoiceTranscript(input, transcript, selection);
-      onInputChange(insertion.value);
+      applyComposerText(insertion.value);
       setVoiceReviewSource(null);
       setVoiceReviewText(null);
       voiceRetryBlobRef.current = null;
@@ -2213,7 +2770,7 @@ function ChatWorkspaceImpl({
 
     const selection = voiceSelectionRef.current ?? { start: input.length, end: input.length };
     const insertion = insertVoiceTranscript(input, transcript, selection);
-    onInputChange(insertion.value);
+    applyComposerText(insertion.value);
     setVoiceReviewSource(null);
     setVoiceReviewText(null);
     voiceAutoSubmitRequestRef.current = requestId;
@@ -2224,55 +2781,33 @@ function ChatWorkspaceImpl({
 
   function acceptVoiceReview(): void {
     const text = voiceReviewText?.trim();
-    const streamingReview = voiceReviewSource === "streaming";
-    if (streamingReview && !canSubmitStreamingVoiceTurn(streamingVoiceInput.turnState)) {
-      setVoiceError("Live transcript repair is still running. Review the result before inserting it.");
-      return;
-    }
     let cursor: number | null = null;
     if (text) {
       const selection = voiceSelectionRef.current ?? { start: input.length, end: input.length };
       const insertion = insertVoiceTranscript(input, text, selection);
-      onInputChange(insertion.value);
+      applyComposerText(insertion.value);
       cursor = insertion.cursor;
     }
     if (voiceReviewSource === "serial") dispatchVoiceTurn({ type: "review_accepted" });
-    else {
-      assistantSpeechSegments.clear();
-    }
     clearVoiceReview();
-    if (streamingReview) setStreamingVoiceReadyToSend(true);
     restoreComposerFocus(cursor);
   }
 
   async function retryVoiceReview(): Promise<void> {
-    if (voiceReviewSource !== "streaming") {
-      await retryVoiceTranscription();
-      return;
-    }
-    clearVoiceReview();
-    streamingVoiceInput.reset();
-    await startStreamingVoiceRecording();
+    await retryVoiceTranscription();
   }
 
   function discardVoiceReview(): void {
     voiceAutoSubmitRequestRef.current = null;
-    if (voiceReviewSource === "serial") {
-      dispatchVoiceTurn({ type: "cancel" });
-      dispatchVoiceTurn({ type: "cancelled" });
-    } else {
-      streamingVoiceInput.reset();
-    }
+    dispatchVoiceTurn({ type: "cancel" });
+    dispatchVoiceTurn({ type: "cancelled" });
     clearVoiceReview();
-    setStreamingComposerProjection(null);
     restoreComposerFocus(null);
   }
 
   function clearVoiceReview(): void {
     setVoiceReviewText(null);
     setVoiceReviewSource(null);
-    setStreamingTranscriptRepair(null);
-    setStreamingVoiceReadyToSend(false);
     setVoiceRuntimeDisclosure(null);
     setVoiceError(null);
     voiceRetryBlobRef.current = null;
@@ -2290,12 +2825,12 @@ function ChatWorkspaceImpl({
   }
 
   function selectSamplePrompt(prompt: string): void {
-    onInputChange(prompt);
+    applyComposerText(prompt);
     textareaRef.current?.focus();
   }
 
   function selectSlashCommand(command: ChatCommandName): void {
-    onInputChange(`/${command} `);
+    applyComposerText(`/${command} `);
     textareaRef.current?.focus();
   }
 
@@ -2365,7 +2900,7 @@ function ChatWorkspaceImpl({
 
   function applySkillToComposer(skillName: string): void {
     const cleaned = stripSkillPrefixFromInput(input, selectedSkillName).replace(/^\s+/, "");
-    if (cleaned !== input) onInputChange(cleaned);
+    if (cleaned !== input) applyComposerText(cleaned);
     setSelectedSkillName(skillName);
     setMetaMenuOpen(null);
     textareaRef.current?.focus();
@@ -2373,7 +2908,7 @@ function ChatWorkspaceImpl({
 
   function clearSelectedSkill(): void {
     const cleaned = stripSkillPrefixFromInput(input, selectedSkillName);
-    if (cleaned !== input) onInputChange(cleaned);
+    if (cleaned !== input) applyComposerText(cleaned);
     setSelectedSkillName(null);
     textareaRef.current?.focus();
   }
@@ -2408,7 +2943,7 @@ function ChatWorkspaceImpl({
     textareaRef.current?.focus();
   }
 
-  function selectTaskInteractionMode(mode: "normal" | "confirm_goal"): void {
+  function selectTaskInteractionMode(mode: "normal" | "plan"): void {
     setTaskInteractionMode(mode);
     setMetaMenuOpen(null);
     setConfigurationSection(null);
@@ -2457,6 +2992,9 @@ function ChatWorkspaceImpl({
           path: file.path,
           name: file.name,
           importFile: file,
+          ...(file.previewDataUrl?.startsWith("data:image/")
+            ? { screenshotDataUrl: file.previewDataUrl }
+            : {}),
           ...(file.status === "ready" ? {} : { blockedReason: file.message || file.status }),
         })),
       ];
@@ -2521,7 +3059,7 @@ function ChatWorkspaceImpl({
   }
 
   function applyMaterialTaskSuggestion(suggestion: MaterialTaskSuggestion): void {
-    onInputChange(suggestion.prompt);
+    applyComposerText(suggestion.prompt);
     if (hasDesktopApi()) {
       void desktopApi.getGatewayStatus().then((status) => {
         setMaterialSuggestionRuntimeReady(status.ready && !status.externalConflict);
@@ -2542,7 +3080,7 @@ function ChatWorkspaceImpl({
     const prompt = zh
       ? `请根据材料比较结果继续核对${issueTitles ? ` ${issueTitles}` : "所有发现"}，逐项说明冲突双方或新旧数值、具体文件位置、修正建议和仍不确定的地方。不要覆盖原文件。`
       : `Continue from the material comparison and verify ${issueTitles || "every finding"}. For each item, cite both sides or the old and new values, exact file locations, a correction, and remaining uncertainty. Do not overwrite source files.`;
-    onInputChange(prompt);
+    applyComposerText(prompt);
     window.setTimeout(() => {
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(prompt.length, prompt.length);
@@ -2586,12 +3124,178 @@ function ChatWorkspaceImpl({
     onOpenExternal(href);
   });
 
+  function conversationResourceRequest(
+    part: ArtifactPart | CitationPart,
+  ): ConversationResourceResolveRequest | null {
+    if (!workspacePath) return null;
+    if (part.sessionId && part.associationId) {
+      return { workspacePath, sessionId: part.sessionId, associationId: part.associationId };
+    }
+    if (part.resourceRef) return { workspacePath, resourceRef: part.resourceRef };
+    return null;
+  }
+
+  function conversationResourceKey(part: ArtifactPart | CitationPart): string | null {
+    if (part.sessionId && part.associationId) return `${part.sessionId}:${part.associationId}`;
+    const reference = part.resourceRef;
+    return reference ? `${reference.workspace_id}:${reference.resource_type}:${reference.resource_id}` : null;
+  }
+
+  function rememberConversationResourceState(
+    part: ArtifactPart | CitationPart,
+    state: ConversationResourceResolveResult["state"],
+  ): void {
+    const key = conversationResourceKey(part);
+    if (key) setConversationResourceStates((current) => current[key] === state ? current : { ...current, [key]: state });
+  }
+
+  function describeConversationResourceState(
+    resolved: ConversationResourceResolveResult,
+  ): string | null {
+    if (resolved.state === "deleted") return zh ? `“${resolved.name}”已删除，无法打开当前版本。` : `“${resolved.name}” was deleted and its current version cannot be opened.`;
+    if (resolved.state === "offline") return zh ? `“${resolved.name}”当前离线，请检查或切换 Runtime 后重试。` : `“${resolved.name}” is offline. Check or switch Runtime, then retry.`;
+    if (resolved.state === "moved") return zh ? `资源已移动到 ${resolved.logicalPath ?? resolved.name}。` : `The resource moved to ${resolved.logicalPath ?? resolved.name}.`;
+    if (resolved.state === "changed") return zh ? `“${resolved.name}”在引用后已更改，现已打开当前版本。` : `“${resolved.name}” changed after it was cited; the current version is open.`;
+    if (resolved.state === "unsupported") return zh ? `当前 Host 不支持打开“${resolved.name}”。` : `The current Host cannot open “${resolved.name}”.`;
+    return null;
+  }
+
+  async function resolveConversationResourcePart(
+    part: ArtifactPart | CitationPart,
+    suppressErrorNotice = false,
+  ): Promise<{ request: ConversationResourceResolveRequest; resolved: ConversationResourceResolveResult } | null> {
+    const request = conversationResourceRequest(part);
+    if (!request) return null;
+    try {
+      const resolved = await desktopApi.resolveConversationResource(request);
+      rememberConversationResourceState(part, resolved.state);
+      setConversationResourceNotice(describeConversationResourceState(resolved));
+      return { request, resolved };
+    } catch (error) {
+      if (!suppressErrorNotice) {
+        setConversationResourceNotice(userFacingFailureMessage(error, language, "operation"));
+      }
+      return null;
+    }
+  }
+
+  async function previewConversationResourcePart(
+    part: ArtifactPart | CitationPart,
+    version: "current" | "observed" = "current",
+  ): Promise<void> {
+    // For office files, try the local preview first — it includes raw bytes
+    // (dataUrl) which enables rich rendering (docx-preview, JSZip).  The P2
+    // path only returns extracted text.
+    const OFFICE_EXTS = new Set([".docx", ".pptx", ".xlsx", ".doc", ".ppt", ".xls"]);
+    const partExt = (part.path ?? "").match(/(\.[^.]+)$/)?.[1]?.toLowerCase() ?? "";
+    if (OFFICE_EXTS.has(partExt) && part.path && workspacePath) {
+      try {
+        const localPreview = await desktopApi.previewWorkspaceFile({
+          workspacePath,
+          path: part.path,
+          maxBytes: 220_000,
+        });
+        onOpenConversationResourcePreview?.(localPreview, part.path);
+        setToolsOpen(false);
+        return;
+      } catch {
+        // Local preview failed — fall through to P2.
+      }
+    }
+
+    // Suppress resolve-error notice here because we fall back to the local
+    // path below; showing the generic banner would be misleading.
+    const outcome = await resolveConversationResourcePart(part, true);
+    if (!outcome) {
+      // The Runtime/Gateway may be unavailable or the association may not be
+      // found.  Try a direct local preview before falling back to the file
+      // tree, which may not have indexed the file yet.
+      if (part.path && workspacePath) {
+        try {
+          const localPreview = await desktopApi.previewWorkspaceFile({
+            workspacePath,
+            path: part.path,
+            maxBytes: 220_000,
+          });
+          onOpenConversationResourcePreview?.(localPreview, part.path);
+          setToolsOpen(false);
+          return;
+        } catch {
+          // Local preview also failed — let the file tree try.
+        }
+      }
+      if (part.path) onOpenWorkspaceArtifact?.(part.path);
+      return;
+    }
+    const { request, resolved } = outcome;
+    if (["deleted", "offline", "unsupported"].includes(resolved.state)) return;
+    try {
+      const preview = await desktopApi.previewConversationResource({ ...request, version });
+      onOpenConversationResourcePreview?.(preview, resolved.logicalPath ?? resolved.path);
+      setToolsOpen(false);
+    } catch {
+      // P2 preview failed.  Try a direct local preview first — this works
+      // for office files, text, and markdown because the local preview
+      // function has its own content extraction (extractOfficeText etc.).
+      const fallbackPath = resolved.logicalPath ?? resolved.path ?? part.path;
+      if (fallbackPath && workspacePath) {
+        try {
+          const localPreview = await desktopApi.previewWorkspaceFile({
+            workspacePath,
+            path: fallbackPath,
+            maxBytes: 220_000,
+          });
+          onOpenConversationResourcePreview?.(localPreview, fallbackPath);
+          setToolsOpen(false);
+          return;
+        } catch {
+          // Local preview also failed — fall back to file tree.
+        }
+      }
+      if (fallbackPath) onOpenWorkspaceArtifact?.(fallbackPath);
+    }
+  }
+
   const openStructuredArtifact = useEventCallback((part: ArtifactPart): void => {
     if (part.url && isSafeWebUrl(part.url)) {
       openPreviewBrowser(part.url);
       return;
     }
+    if (conversationResourceRequest(part)) {
+      void previewConversationResourcePart(part);
+      return;
+    }
+    // No P2 association — try a direct local preview.
+    if (part.path && workspacePath) {
+      void desktopApi.previewWorkspaceFile({
+        workspacePath,
+        path: part.path,
+        maxBytes: 220_000,
+      }).then((preview) => {
+        onOpenConversationResourcePreview?.(preview, part.path);
+        setToolsOpen(false);
+      }).catch(() => {
+        if (part.path) onOpenWorkspaceArtifact?.(part.path);
+      });
+      return;
+    }
     if (part.path) onOpenWorkspaceArtifact?.(part.path);
+  });
+
+  const downloadStructuredArtifact = useEventCallback((part: ArtifactPart): void => {
+    const request = conversationResourceRequest(part);
+    if (request && part.downloadable !== false) {
+      const operationId = crypto.randomUUID();
+      setConversationResourceDownload({ operationId, phase: "preparing", name: part.name, transferredBytes: 0 });
+      void desktopApi.downloadConversationResource({ ...request, operationId, suggestedName: part.name })
+        .then((result) => setConversationResourceDownload((current) => current?.operationId === operationId
+          ? { ...current, phase: result.canceled ? "cancelled" : "completed", transferredBytes: result.size ?? current.transferredBytes, percent: result.canceled ? current.percent : 100 }
+          : current))
+        .catch(() => setConversationResourceDownload((current) => current?.operationId === operationId ? { ...current, phase: "failed" } : current));
+      return;
+    }
+    if (!part.path || !workspacePath || part.downloadable !== true) return;
+    void desktopApi.saveWorkspaceFileAs({ workspacePath, path: part.path, suggestedName: part.name });
   });
 
   const openStructuredCitation = useEventCallback((part: CitationPart): void => {
@@ -2599,8 +3303,55 @@ function ChatWorkspaceImpl({
       openPreviewBrowser(part.url);
       return;
     }
+    // A Knowledge Base document is not in the workspace, so the file panel
+    // cannot find it. Its path is relative to a corpus root that only the
+    // source pane knows how to resolve.
+    if (part.knowledgeBaseId && (part.documentPath || part.path)) {
+      onOpenCitationSource?.(part);
+      return;
+    }
+    if (conversationResourceRequest(part)) {
+      void previewConversationResourcePart(part);
+      return;
+    }
+    // No P2 association — try a direct local preview.
+    if (part.path && workspacePath) {
+      void desktopApi.previewWorkspaceFile({
+        workspacePath,
+        path: part.path,
+        maxBytes: 220_000,
+      }).then((preview) => {
+        onOpenConversationResourcePreview?.(preview, part.path);
+        setToolsOpen(false);
+      }).catch(() => {
+        if (part.path) onOpenWorkspaceArtifact?.(part.path);
+      });
+      return;
+    }
     if (part.path) onOpenWorkspaceArtifact?.(part.path);
   });
+
+  const openConversationResourceMenu = useEventCallback((
+    part: ArtifactPart | CitationPart,
+    anchor: { x: number; y: number; trigger?: HTMLElement },
+  ): void => {
+    void resolveConversationResourcePart(part).then((outcome) => {
+      if (!outcome) return;
+      setConversationResourceMenu({ part, resolved: outcome.resolved, ...anchor });
+    });
+  });
+
+  if (composerConversationIdRef.current !== conversationId) {
+    const previousAttachments = attachmentsRef.current;
+    if (previousAttachments.length) {
+      composerAttachmentsByThreadRef.current.set(composerConversationIdRef.current, [...previousAttachments]);
+    } else {
+      composerAttachmentsByThreadRef.current.delete(composerConversationIdRef.current);
+    }
+    composerConversationIdRef.current = conversationId;
+    const restoredAttachments = composerAttachmentsByThreadRef.current.get(conversationId);
+    setAttachments(restoredAttachments ? [...restoredAttachments] : []);
+  }
 
   return (
     <div className="chat-workspace">
@@ -2610,7 +3361,7 @@ function ChatWorkspaceImpl({
           <button
             type="button"
             className="chat-search-backdrop"
-            aria-label={zh ? "鍏抽棴鎼滅储" : "Close search"}
+            aria-label={zh ? "关闭搜索" : "Close search"}
             onClick={closeSearch}
           />
           <section className="chat-search-modal" onMouseDown={(event) => event.stopPropagation()}>
@@ -2620,8 +3371,8 @@ function ChatWorkspaceImpl({
                 type="button"
                 className="chat-search-close"
                 onClick={closeSearch}
-                title={zh ? "鍏抽棴鎼滅储" : "Close search"}
-                aria-label={zh ? "鍏抽棴鎼滅储" : "Close search"}
+                title={zh ? "关闭搜索" : "Close search"}
+                aria-label={zh ? "关闭搜索" : "Close search"}
               >
                 <X size={17} />
               </button>
@@ -2688,8 +3439,8 @@ function ChatWorkspaceImpl({
             type="button"
             className="chat-search-close"
             onClick={closeSearch}
-            title={zh ? "鍏抽棴鎼滅储" : "Close search"}
-            aria-label={zh ? "鍏抽棴鎼滅储" : "Close search"}
+            title={zh ? "关闭搜索" : "Close search"}
+            aria-label={zh ? "关闭搜索" : "Close search"}
           >
             <X size={15} />
           </button>
@@ -2757,7 +3508,7 @@ function ChatWorkspaceImpl({
         onPointerDown={handleMessageListPointerDown}
         onKeyDown={handleMessageListKeyDown}
       >
-        {visibleMessages.filter((message) => !isEmptyAssistantShell(message)).map((message, messageIndex) => {
+        {renderedMessages.map((message, messageIndex) => {
           const assistantContent = message.role === "assistant"
             ? getAssistantDisplayContent(message)
             : message.content;
@@ -2768,20 +3519,19 @@ function ChatWorkspaceImpl({
             className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatches.includes(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""} ${message.structuredTurn?.turnId === highlightedTurnId ? "structured-turn-focus" : ""}`}
             pinned={message.streaming === true || visibleMessages.length - messageIndex <= 12}
             scrollRootRef={messageListRef}
+            now={message.streaming ? now : undefined}
           >
             {message.role === "user" || !message.structuredTurn ? <strong className="message-author">{message.role === "user" ? "You" : "OpenDrSai"}</strong> : null}
             <div className="message-body">
               {message.role === "user" && message.attachments?.length ? (
                 <div className="message-attachment-badges" aria-label={zh ? "附件" : "Attachments"}>
                   {message.attachments.map((attachment, index) => (
-                    <span
-                      className="message-attachment-badge"
+                    <MessageAttachmentBadge
                       key={`${message.id}-attachment-${index}-${attachment.path || attachment.name}`}
-                      title={attachment.path || attachment.name}
-                    >
-                      {renderMessageAttachmentIcon(attachment.kind)}
-                      <span>{attachment.name}</span>
-                    </span>
+                      attachment={attachment}
+                      workspacePath={workspacePath}
+                      zh={zh}
+                    />
                   ))}
                 </div>
               ) : null}
@@ -2792,6 +3542,7 @@ function ChatWorkspaceImpl({
                     <button type="button" onClick={() => void onRetryMessage(message.id, "same_session")}>{zh ? "在当前会话重试" : "Retry in this session"}</button>
                     <button type="button" onClick={() => void onRetryMessage(message.id, "new_session")}>{zh ? "分支到新会话" : "Branch to a new session"}</button>
                   </span> : null}
+                  {onReportFeedback ? <button type="button" data-testid={`message-feedback-${message.id}`} onClick={() => onReportFeedback({ source: "error", errorCode: message.replyFailed ? "reply_incomplete" : "chat_error", errorType: "assistant_message_failure", runId: message.runtimeRunId })}>{zh ? "反馈这个问题" : "Report this problem"}</button> : null}
                 </div>
               ) : message.content && message.role === "user" ? (
                 <p>{highlightPlainText(message.content, searchQuery)}</p>
@@ -2801,11 +3552,16 @@ function ChatWorkspaceImpl({
                     turn={message.structuredTurn}
                     runId={message.runtimeRunId}
                     language={language}
+                    workspacePath={workspacePath}
+                    resourceStates={conversationResourceStates}
                     respondedRequestIds={respondedInputRequests}
                     configuredCapabilityRequestIds={configuredCapabilityRequests}
                     onOpenLink={handleMarkdownLink}
                     onOpenArtifact={openStructuredArtifact}
+                    onDownloadArtifact={downloadStructuredArtifact}
+                    onOpenArtifactMenu={openConversationResourceMenu}
                     onOpenCitation={openStructuredCitation}
+                    onOpenCitationMenu={openConversationResourceMenu}
                     onRespondInteraction={(part, response) => respondToStructuredInteraction(message.structuredTurn!.turnId, part, response)}
                     onRequestTextInteraction={(part) => requestStructuredTextInput(message.structuredTurn!.turnId, part)}
                       onOpenDebug={onOpenDebug ? () => onOpenDebug(message.runtimeRunId) : undefined}
@@ -2868,6 +3624,21 @@ function ChatWorkspaceImpl({
                   synthesisMode={resolveVoiceSynthesisMode(voicePreferences.synthesisMode, voicePreferences.remoteTtsConsent)}
                   voiceName={voicePreferences.voiceName}
                   zh={zh}
+                  turnActionsDisabled={Boolean(activeRequestId) || !canChat}
+                  showTurnActions={!message.replyFailed}
+                  onEditAndResend={startEditAndResend}
+                  onRegenerate={() => void regenerateAssistant(message.id)}
+                  onDelete={onDeleteMessage}
+                />
+              ) : null}
+              {message.role === "user" && message.content ? (
+                <UserMessageActions
+                  content={message.content}
+                  messageId={message.id}
+                  zh={zh}
+                  turnActionsDisabled={Boolean(activeRequestId) || !canChat}
+                  onEditAndResend={startEditUserMessage}
+                  onDelete={onDeleteMessage}
                 />
               ) : null}
             </div>
@@ -2915,92 +3686,11 @@ function ChatWorkspaceImpl({
           <img className="empty-chat-logo" src={drsaiLogo} alt="OpenDrSai" />
           <h1>
             <span>
-              {zh ? "在" : "In"}
-              <span className="empty-chat-selector" ref={introMenuOpen === "workspace" ? introPickerRef : undefined}>
-                <button
-                  type="button"
-                  className="empty-chat-selector-trigger"
-                  title={`${activeWorkspaceName} · ${workspaceLocationLabel}`}
-                  aria-expanded={introMenuOpen === "workspace"}
-                  onClick={() => toggleIntroMenu("workspace")}
-                >
-                  <strong>{activeWorkspaceName}</strong>
-                  <ChevronDown size={17} aria-hidden />
-                </button>
-                {introMenuOpen === "workspace" ? (
-                  <div className="empty-chat-selector-menu" role="dialog" aria-label={zh ? "切换工作区" : "Switch workspace"}>
-                    <label className="empty-chat-selector-search">
-                      <Search size={15} aria-hidden />
-                      <input
-                        autoFocus
-                        value={introSearchQuery}
-                        onChange={(event) => setIntroSearchQuery(event.target.value)}
-                        placeholder={zh ? "搜索工作区" : "Search workspaces"}
-                      />
-                    </label>
-                    <div className="empty-chat-selector-list">
-                      {filteredIntroWorkspaces.map((workspace) => (
-                        <button
-                          type="button"
-                          key={workspace.id}
-                          className={workspace.id === selectedWorkspaceId ? "active" : ""}
-                          onClick={() => selectWorkspace(workspace.id)}
-                        >
-                          {workspace.location === "remote" ? <Globe2 size={16} /> : <Folder size={16} />}
-                          <span><b>{workspace.name}</b><small>{workspace.location === "remote" ? (zh ? "远程" : "Remote") : (zh ? "本机" : "Local")}</small></span>
-                          {workspace.id === selectedWorkspaceId ? <Check size={16} aria-label={zh ? "当前工作区" : "Current workspace"} /> : null}
-                        </button>
-                      ))}
-                      {filteredIntroWorkspaces.length === 0 ? <p>{zh ? "没有匹配的工作区" : "No matching workspaces"}</p> : null}
-                    </div>
-                  </div>
-                ) : null}
-              </span>
-              {zh ? "工作区，" : "workspace,"}
-            </span>
-            <span>
-              {zh ? "用" : "What should we do with"}
-              <span className="empty-chat-selector" ref={introMenuOpen === "agent" ? introPickerRef : undefined}>
-                <button
-                  type="button"
-                  className="empty-chat-selector-trigger"
-                  disabled={!hasAgentOptions}
-                  aria-expanded={introMenuOpen === "agent"}
-                  onClick={() => toggleIntroMenu("agent")}
-                >
-                  <strong>{activeAgentName}</strong>
-                  <ChevronDown size={17} aria-hidden />
-                </button>
-                {introMenuOpen === "agent" ? (
-                  <div className="empty-chat-selector-menu" role="dialog" aria-label={zh ? "切换智能体" : "Switch agent"}>
-                    <label className="empty-chat-selector-search">
-                      <Search size={15} aria-hidden />
-                      <input
-                        autoFocus
-                        value={introSearchQuery}
-                        onChange={(event) => setIntroSearchQuery(event.target.value)}
-                        placeholder={zh ? "搜索智能体" : "Search agents"}
-                      />
-                    </label>
-                    <div className="empty-chat-selector-list">
-                      {filteredIntroAgents.map((agent) => (
-                        <button
-                          type="button"
-                          key={agent.id}
-                          className={agent.id === selectedAgentId ? "active" : ""}
-                          onClick={() => selectAgent(agent.id)}
-                        >
-                          <Bot size={16} />
-                          <span><b>{agent.name}</b><small>{getAgentOptionMeta(agent, zh)}</small></span>
-                          {agent.id === selectedAgentId ? <Check size={16} aria-label={zh ? "当前智能体" : "Current agent"} /> : null}
-                        </button>
-                      ))}
-                      {filteredIntroAgents.length === 0 ? <p>{zh ? "没有匹配的智能体" : "No matching agents"}</p> : null}
-                    </div>
-                  </div>
-                ) : null}
-              </span>
-              {zh ? "智能体，做什么呢？" : "?"}
+              {zh ? "在 " : "In "}
+              <strong>{activeWorkspaceName}</strong>
+              {zh ? " 工作区，用 " : " workspace, using "}
+              <strong>{activeAgentName}</strong>
+              {zh ? " 智能体，做什么呢？" : " agent, what should we do?"}
             </span>
           </h1>
           {emptyChatPreferenceNotice ? (
@@ -3033,11 +3723,24 @@ function ChatWorkspaceImpl({
         ref={composerDropRef}
         className="composer"
         data-voice-turn-phase={displayedVoicePhase}
-        data-streaming-speech-segments={assistantSpeechSegments.segments.length}
-        data-streaming-speech-completed={assistantSpeechSegments.completed ? "true" : "false"}
         onSubmit={handleSubmit}
       >
         <div className="composer-shell">
+          {pendingReplaceFromMessageId ? (
+            <div className="composer-edit-resend" data-testid="composer-edit-resend" role="status">
+              <span>{zh ? "将用这段文字替换该轮提问及之后的回复" : "This will replace that prompt and later replies"}</span>
+              <button type="button" onClick={cancelEditAndResend}>{zh ? "取消" : "Cancel"}</button>
+            </div>
+          ) : null}
+          {channelSource === "wechat" ? (
+            <div className="wechat-outbound-notice" data-testid="wechat-outbound-notice" role="status">
+              <strong>{zh ? "微信会话" : "WeChat conversation"}</strong>
+              <span>{wechatCapability?.available
+                ? (wechatConfirmationPending ? (zh ? "再次点击“确认发送到微信”才会外发。" : "Click “Confirm send to WeChat” to send externally.") : (zh ? "普通 Desktop 消息不会外发；请使用明确的发送到微信操作。" : "Ordinary Desktop messages are not sent externally; use the explicit WeChat action."))
+                : (zh ? "当前无法回复：等待对方先发消息，或启动微信频道。" : "Reply unavailable: wait for an inbound message or start the WeChat channel.")}</span>
+              {wechatSendStatus ? <small>{wechatSendStatus}</small> : null}
+            </div>
+          ) : null}
           {externalAttachments.some((attachment) => attachment.kind === "terminal") && (
             <div className="composer-terminal-cards">
               {externalAttachments.map((attachment, index) =>
@@ -3065,56 +3768,15 @@ function ChatWorkspaceImpl({
             </div>
           )}
           <div className="composer-attachments" aria-live="polite">
-            {attachments.map((attachment) => {
-              const Icon =
-                attachment.kind === "folder"
-                  ? FolderPlus
-                  : attachment.kind === "terminal"
-                    ? Terminal
-                  : attachment.kind === "selection"
-                    ? ClipboardList
-                  : attachment.kind === "browser"
-                    ? Globe2
-                    : Paperclip;
-              return (
-                <span
-                  className={`composer-attachment-chip ${(attachment.importFile?.status && attachment.importFile.status !== "ready") || attachment.folderImport?.phase === "failed" ? "import-failed" : ""} ${attachment.folderImport?.phase === "scanning" ? "import-scanning" : ""}`}
-                  key={attachment.id}
-                  title={attachment.importFile?.message || attachment.folderImport?.message || attachment.path}
-                  data-testid="composer-attachment"
-                  data-import-status={attachment.importFile?.status || "ready"}
-                  data-file-category={attachment.importFile?.category || "other"}
-                  data-size-bytes={attachment.importFile?.sizeBytes ?? ""}
-                  data-diagnostic-code={attachment.importFile?.diagnosticCode || ""}
-                  data-processing-mode={attachment.importFile?.processingMode || ""}
-                  data-sensitive-detected={attachment.importFile?.sensitiveDataDetected ? "true" : "false"}
-                  data-sensitive-kinds={attachment.importFile?.sensitiveKinds?.join(",") || ""}
-                  data-sensitive-count={attachment.importFile?.sensitiveValueCount ?? 0}
-                  data-folder-import-phase={attachment.folderImport?.phase || ""}
-                  data-imported-count={attachment.folderImport?.imported ?? ""}
-                  data-skipped-count={attachment.folderImport?.skipped ?? ""}
-                  data-failed-count={attachment.folderImport?.failed ?? ""}
-                  data-duplicate-count={attachment.folderImport?.duplicates ?? ""}
-                >
-                  <Icon size={14} />
-                  <span className="composer-attachment-copy">
-                    <strong>{attachment.name}</strong>
-                    {attachment.importFile ? <small>{formatPickedFileMeta(attachment.importFile, zh)}</small> : null}
-                    {attachment.importFile?.message ? <small data-testid="composer-file-status-message">{attachment.importFile.message}</small> : null}
-                    {attachment.importFile?.recoveryAction ? <small data-testid="composer-file-recovery-action">{attachment.importFile.recoveryAction}</small> : null}
-                    {attachment.importFile?.privacyNotice ? <small data-testid="composer-file-privacy-notice">{attachment.importFile.privacyNotice}</small> : null}
-                    {attachment.folderImport ? <small>{formatFolderImportMeta(attachment.folderImport, zh)}</small> : null}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={zh ? `绉婚櫎 ${attachment.name}` : `Remove ${attachment.name}`}
-                    onClick={() => removeAttachment(attachment.id)}
-                  >
-                    <X size={13} />
-                  </button>
-                </span>
-              );
-            })}
+            {attachments.map((attachment) => (
+              <ComposerAttachmentChip
+                key={attachment.id}
+                attachment={attachment}
+                workspacePath={workspacePath}
+                zh={zh}
+                onRemove={() => removeAttachment(attachment.id)}
+              />
+            ))}
             {externalAttachments.map((attachment, index) => {
               if (attachment.kind === "terminal") return null;
               const name =
@@ -3255,7 +3917,7 @@ function ChatWorkspaceImpl({
             </section>
           ) : null}
 
-          {materialRolePhase === "ready" && !input.trim() && materialTaskSuggestions.length > 0 ? (
+          {materialRolePhase === "ready" && !composerText.trim() && materialTaskSuggestions.length > 0 ? (
             <section className="material-task-suggestions" data-testid="material-task-suggestions">
               <div className="material-task-suggestions-header">
                 <strong>{zh ? "你可以接着做" : "Suggested next tasks"}</strong>
@@ -3371,54 +4033,73 @@ function ChatWorkspaceImpl({
                   type="button"
                   className="composer-icon-button"
                   aria-expanded={toolsOpen}
-                  aria-label={zh ? "添加附件" : "Add attachment"}
-                  title={zh ? "添加附件" : "Add attachment"}
+                  aria-label={zh ? "添加附件或工具" : "Add attachment or tool"}
+                  title={zh ? "添加附件或工具" : "Add attachment or tool"}
                   onClick={() => setToolsOpen((open) => !open)}
                 >
                   <Plus size={18} />
                 </button>
                 {toolsOpen && (
                   <div className="composer-tool-menu">
-                    <button type="button" onClick={() => openPreviewBrowser()}>
-                      <Globe2 size={15} />
-                      Open Preview
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!canAttachIdeCurrentFile}
-                      onClick={() => {
-                        onAttachIdeCurrentFile?.();
-                        setToolsOpen(false);
-                      }}
-                    >
-                      <FileCode2 size={15} />
-                      IDE current file
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!canAttachIdeCurrentSelection}
-                      onClick={() => {
-                        onAttachIdeCurrentSelection?.();
-                        setToolsOpen(false);
-                      }}
-                    >
-                      <TextCursorInput size={15} />
-                      IDE selection
-                    </button>
-                    <button type="button" onClick={() => onRefreshIdeContext?.()}>
-                      <RefreshCw size={15} />
-                      Refresh IDE context
-                    </button>
-                    <button type="button" onClick={addFiles}>
-                      <span data-testid="composer-add-file-label" hidden />
-                      <Paperclip size={15} />
-                      {zh ? "添加文件" : "Add File"}
-                    </button>
-                    <button type="button" onClick={addFolder}>
-                      <span data-testid="composer-add-folder-label" hidden />
-                      <FolderPlus size={15} />
-                      {zh ? "添加文件夹" : "Add Folder"}
-                    </button>
+                    {/* Attachments group — the core "+" functionality */}
+                    <div className="composer-tool-group" role="group" aria-label={zh ? "附件" : "Attachments"}>
+                      <button type="button" onClick={addFiles}>
+                        <span data-testid="composer-add-file-label" hidden />
+                        <Paperclip size={15} />
+                        {zh ? "添加文件" : "Add File"}
+                      </button>
+                      <button type="button" onClick={addFolder}>
+                        <span data-testid="composer-add-folder-label" hidden />
+                        <FolderPlus size={15} />
+                        {zh ? "添加文件夹" : "Add Folder"}
+                      </button>
+                    </div>
+                    {/* IDE integration group */}
+                    <div className="composer-tool-group" role="group" aria-label={zh ? "IDE 集成" : "IDE Integration"}>
+                      <button
+                        type="button"
+                        disabled={!canAttachIdeCurrentFile}
+                        title={!canAttachIdeCurrentFile ? (zh ? "需要先在 IDE 中打开文件" : "Open a file in the IDE first") : undefined}
+                        onClick={() => {
+                          onAttachIdeCurrentFile?.();
+                          setToolsOpen(false);
+                        }}
+                      >
+                        <FileCode2 size={15} />
+                        {zh ? "IDE 当前文件" : "IDE current file"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!canAttachIdeCurrentSelection}
+                        title={!canAttachIdeCurrentSelection ? (zh ? "需要先在 IDE 中选中文本" : "Select text in the IDE first") : undefined}
+                        onClick={() => {
+                          onAttachIdeCurrentSelection?.();
+                          setToolsOpen(false);
+                        }}
+                      >
+                        <TextCursorInput size={15} />
+                        {zh ? "IDE 选中文本" : "IDE selection"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled
+                        title={zh ? "当前版本暂不支持此功能" : "This feature is not currently supported"}
+                      >
+                        <RefreshCw size={15} />
+                        {zh ? "刷新 IDE 上下文" : "Refresh IDE context"}
+                      </button>
+                    </div>
+                    {/* Tools group */}
+                    <div className="composer-tool-group" role="group" aria-label={zh ? "工具" : "Tools"}>
+                      <button
+                        type="button"
+                        disabled
+                        title={zh ? "当前版本暂不支持此功能" : "This feature is not currently supported"}
+                      >
+                        <Globe2 size={15} />
+                        {zh ? "预览浏览器" : "Open Preview"}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -3475,16 +4156,25 @@ function ChatWorkspaceImpl({
                     )
                   ) : activeInputRequest.inputType === "approval" ? (
                     <div className="composer-agent-interaction-controls">
+                      <button type="button" onClick={() => dismissActiveInputRequest()}>
+                        {zh ? "关闭并继续输入" : "Close and type"}
+                      </button>
                       <button type="button" onClick={() => respondToActiveInput({ approved: false })}>{zh ? "拒绝" : "Reject"}</button>
                       <button type="button" className="primary" onClick={() => respondToActiveInput({ approved: true })}>{zh ? "批准" : "Approve"}</button>
                     </div>
                   ) : activeInputRequest.inputType === "confirmation" ? (
                     <div className="composer-agent-interaction-controls">
+                      <button type="button" onClick={() => dismissActiveInputRequest()}>
+                        {zh ? "关闭并继续输入" : "Close and type"}
+                      </button>
                       <button type="button" onClick={() => respondToActiveInput({ decision: "decline" })}>{zh ? "取消" : "Cancel"}</button>
                       <button type="button" className="primary" onClick={() => respondToActiveInput({ decision: "accept" })}>{zh ? "确认" : "Confirm"}</button>
                     </div>
                   ) : activeInputRequest.inputType === "choice" && activeInputRequest.options?.length ? (
                     <div className="composer-agent-interaction-controls">
+                      <button type="button" onClick={() => dismissActiveInputRequest()}>
+                        {zh ? "关闭并继续输入" : "Close and type"}
+                      </button>
                       {activeInputRequest.options.map((option) => (
                         <button
                           type="button"
@@ -3523,56 +4213,55 @@ function ChatWorkspaceImpl({
                     onRetry={() => void retryVoiceReview()}
                     onDiscard={discardVoiceReview}
                   />
-                  {streamingTranscriptRepair?.candidate ? (
-                    <TranscriptRepairDiff
-                      candidate={streamingTranscriptRepair.candidate}
-                      accepted={streamingTranscriptRepair.status === "accepted"}
-                      onAccept={() => setStreamingTranscriptRepair((current) => {
-                        if (!current) return current;
-                        const next = acceptTranscriptRepair(current);
-                        setVoiceReviewText(next.acceptedText);
-                        return next;
-                      })}
-                      onReject={() => setStreamingTranscriptRepair((current) => {
-                        if (!current) return current;
-                        const next = rejectTranscriptRepair(current);
-                        setVoiceReviewText(next.acceptedText);
-                        return next;
-                      })}
-                      onUndo={() => setStreamingTranscriptRepair((current) => {
-                        if (!current) return current;
-                        const next = undoTranscriptRepair(current);
-                        setVoiceReviewText(next.acceptedText);
-                        return next;
-                      })}
-                    />
-                  ) : null}
                 </div>
               ) : showDuplexVoiceCaptureBar ? (
-                <div className="composer-voice-status" data-testid="duplex-voice-status" aria-live="polite">
-                  <span>{zh ? "实时语音" : "Realtime voice"}: {duplexVoiceInput.turn.phase}</span>
+                <div className="composer-voice-status" data-testid="duplex-voice-status" data-state={duplexHudState}>
+                  <strong role="status" aria-live="polite" aria-atomic="true">{zh ? "实时语音" : "Realtime voice"}: {duplexHudLabel(duplexHudState, zh)}</strong>
+                  <label><span>{zh ? "输入音量" : "Input level"}</span><progress aria-label={zh ? "实时语音输入音量" : "Realtime voice input level"} value={Math.min(1, duplexVoiceInput.vad?.level ?? 0)} max="1" /></label>
+                  <small>{zh ? `输出：${duplexVoiceInput.playback.outputState === "running" ? "正常" : "已暂停"}` : `Output: ${duplexVoiceInput.playback.outputState}`}</small>
                   {duplexVoiceInput.inputTranscript ? <small>{duplexVoiceInput.inputTranscript}</small> : null}
                   {duplexVoiceInput.outputTranscript ? <small>{duplexVoiceInput.outputTranscript}</small> : null}
                   {duplexVoiceInput.flowControl.paused ? <small>{zh ? "音频上行暂缓" : "Audio uplink paused"}</small> : null}
+                  <label>
+                    <span>{zh ? "麦克风" : "Microphone"}</span>
+                    <select aria-label={zh ? "实时语音麦克风" : "Realtime voice microphone"} value={duplexVoiceInput.constraints?.requestedDeviceId ?? ""} disabled={duplexVoiceInput.deviceSwitching} onChange={(event) => void duplexVoiceInput.switchInputDevice(event.target.value)}>
+                      <option value="">{zh ? "系统默认" : "System default"}</option>
+                      {duplexVoiceInput.devices.filter((device) => device.deviceId).map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label || (zh ? "麦克风" : "Microphone")}</option>)}
+                    </select>
+                  </label>
+                  {duplexVoiceInput.deviceSwitching ? <small>{zh ? "正在切换麦克风…" : "Switching microphone…"}</small> : null}
+                  {duplexVoiceInput.deviceSwitchError ? <small role="alert">{zh ? `麦克风切换失败：${duplexVoiceInput.deviceSwitchError}` : `Microphone switch failed: ${duplexVoiceInput.deviceSwitchError}`}</small> : null}
+                  <label>
+                    <span>{zh ? "扬声器" : "Output"}</span>
+                    <select aria-label={zh ? "实时语音输出设备" : "Realtime voice output device"} value={voicePreferences.realtimeOutputDeviceId} disabled={duplexVoiceInput.outputDeviceSwitching} onChange={(event) => { const sinkId = event.target.value; void duplexVoiceInput.switchOutputDevice(sinkId).then((switched) => { if (switched) updateVoicePreferences({ realtimeOutputDeviceId: sinkId }); }); }}>
+                      <option value="">{zh ? "系统默认" : "System default"}</option>
+                      {duplexVoiceInput.outputDevices.filter((device) => device.deviceId).map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label || (zh ? "音频输出" : "Audio output")}</option>)}
+                    </select>
+                  </label>
+                  <label><span>{zh ? "语音音量" : "Voice volume"}</span><input aria-label={zh ? "实时语音音量" : "Realtime voice volume"} type="range" min="0" max="1" step="0.05" value={voicePreferences.realtimeVolume} onChange={(event) => { const volume = Number(event.target.value); duplexVoiceInput.setVolume(volume); updateVoicePreferences({ realtimeVolume: volume }); }} /></label>
+                  {duplexVoiceInput.outputDeviceError ? <small role="alert">{duplexVoiceInput.outputDeviceError}</small> : null}
+                  {duplexVoiceInput.playbackRecovery ? <small role="alert">{duplexVoiceInput.playbackRecovery} <button type="button" onClick={() => void duplexVoiceInput.retryPlayback()}>{zh ? "重试" : "Retry"}</button></small> : null}
+                  {duplexVoiceInput.playbackDegradation ? <small role="status">{zh ? "网络抖动导致一小段音频缺失，播放已自动继续。" : duplexVoiceInput.playbackDegradation}</small> : null}
+                  {duplexVoiceInput.connectionNotice ? <small role="status">{duplexVoiceInput.connectionNotice}</small> : null}
+                  {duplexVoiceInput.reconnectCountdownSeconds > 0 ? <small role="timer">{zh ? `${duplexVoiceInput.reconnectCountdownSeconds} 秒后重试连接` : `Retrying connection in ${duplexVoiceInput.reconnectCountdownSeconds}s`}</small> : null}
+                  {duplexVoiceInput.playbackFlowControl.paused ? <small>{zh ? "正在按播放速度接收语音…" : "Receiving voice at playback speed…"}</small> : null}
+                  {duplexVoiceInput.playback.networkQuality !== "stable" ? <small role="status">{zh ? `网络波动，语音缓冲已调整为 ${duplexVoiceInput.playback.jitterBufferTargetMs} 毫秒。` : `Network is ${duplexVoiceInput.playback.networkQuality}; voice buffer adjusted to ${duplexVoiceInput.playback.jitterBufferTargetMs} ms.`}</small> : null}
+                  {duplexVoiceInput.quality?.issues.map((issue) => <small key={issue} role="status">{duplexCaptureQualityMessage(issue, zh)}</small>)}
                   {duplexVoiceInput.usageWarning ? <small>{duplexVoiceInput.usageWarning}</small> : null}
+                  <small data-testid="duplex-voice-slo">TTFA {duplexVoiceInput.slo.ttfaMs === null ? "—" : `${Math.round(duplexVoiceInput.slo.ttfaMs)} ms`} · Stop {duplexVoiceInput.slo.stopLatencyMs === null ? "—" : `${Math.round(duplexVoiceInput.slo.stopLatencyMs)} ms`} · Interrupt {duplexVoiceInput.slo.interruptAccuracy === null ? "—" : `${Math.round(duplexVoiceInput.slo.interruptAccuracy * 100)}%`} · Underruns {duplexVoiceInput.slo.underruns} · Reconnects {duplexVoiceInput.slo.reconnects} · Audio {duplexVoiceInput.slo.inputAudioSeconds.toFixed(1)}/{duplexVoiceInput.slo.outputAudioSeconds.toFixed(1)}s · Cost {duplexVoiceInput.slo.estimatedCostUsd === null ? "unavailable" : `$${duplexVoiceInput.slo.estimatedCostUsd.toFixed(4)}`}</small>
+                  <span data-testid="duplex-temporary-diagnostics">
+                    {duplexVoiceInput.temporaryDiagnosticsExpiresAt ? <><small>Temporary numeric diagnostics active until {new Date(duplexVoiceInput.temporaryDiagnosticsExpiresAt).toLocaleTimeString()}.</small><button type="button" onClick={duplexVoiceInput.disableTemporaryDiagnostics}>Disable and erase</button></> : <button type="button" onClick={() => duplexVoiceInput.enableTemporaryDiagnostics()}>Enable temporary diagnostics (10 min)</button>}
+                  </span>
+                  <label><span>{zh ? "文字发送" : "Text timing"}</span><select aria-label={zh ? "实时语音文字发送时机" : "Realtime text send timing"} value={duplexTextStrategy} onChange={(event) => setDuplexTextStrategy(event.target.value as "after_response" | "interrupt_now")}><option value="after_response">{zh ? "当前回答后发送" : "Send after current answer"}</option><option value="interrupt_now">{zh ? "立即打断并发送" : "Interrupt and send now"}</option></select></label>
+                  {duplexVoiceInput.pendingText ? <small role="status">{zh ? "文字将在当前回答结束后发送。" : "Text will be sent after the current answer."} <button type="button" onClick={() => { const restored = duplexVoiceInput.cancelPendingText(); if (restored) applyComposerText(restored); }}>{zh ? "取消并恢复草稿" : "Cancel and restore draft"}</button></small> : null}
                   {Object.values(duplexVoiceInput.toolStatuses).slice(-1).map((tool, index) => <small key={`${tool.status}-${index}`}>{tool.detail ?? tool.status}</small>)}
-                  <button type="button" onClick={() => void duplexVoiceInput.stop()}>{zh ? "结束" : "Stop"}</button>
+                  <button type="button" onClick={() => void duplexVoiceInput.finishTurn()} disabled={duplexVoiceInput.microphonePaused}>{zh ? "结束本轮发言" : "Finish turn"}</button>
+                  <button type="button" aria-keyshortcuts="Alt+Shift+P" aria-pressed={duplexVoiceInput.microphonePaused} onClick={() => void (duplexVoiceInput.microphonePaused ? duplexVoiceInput.resumeMicrophone() : duplexVoiceInput.pauseMicrophone())}>{duplexVoiceInput.microphonePaused ? (zh ? "继续麦克风" : "Resume microphone") : (zh ? "暂停麦克风" : "Pause microphone")}</button>
+                  {duplexVoiceInput.microphonePaused ? <strong role="status">{zh ? "麦克风已暂停；实时会话和工具仍保持连接。" : "Microphone paused; the Realtime Session and tools remain connected."}</strong> : null}
+                  <button type="button" aria-keyshortcuts="Alt+Shift+I" onClick={() => void duplexVoiceInput.interrupt("manual")}>{zh ? "立即打断" : "Interrupt now"}</button>
+                  <button type="button" aria-keyshortcuts="Alt+Shift+S" onClick={() => void duplexVoiceInput.stop()}>{zh ? "结束会话" : "End session"}</button>
+                  <button type="button" onClick={() => void duplexVoiceInput.cancel()}>{zh ? "立即取消" : "Cancel now"}</button>
                 </div>
-              ) : showStreamingVoiceCaptureBar && streamingComposerProjection ? (
-                <StreamingComposerProjectionEditor
-                  elapsedSeconds={streamingVoiceInput.elapsedSeconds}
-                  levels={streamingVoiceInput.levels}
-                  phase={streamingVoiceInput.phase}
-                  projection={streamingComposerProjection}
-                  textareaRef={textareaRef}
-                  transportMessage={streamingVoiceInput.flowControl.paused ? (zh ? "连接较慢，正在控制音频发送速度…" : "Connection is slow; audio flow is being limited…") : undefined}
-                  onCompositionChange={(composing) => setStreamingComposerProjection((current) => current ? setStreamingComposerComposition(current, composing) : current)}
-                  onUserTextChange={(value) => {
-                    onInputChange(value);
-                    setStreamingComposerProjection((current) => current ? rebaseStreamingComposerUserText(current, value) : current);
-                  }}
-                  onStop={() => void streamingVoiceInput.stop()}
-                />
               ) : showVoiceCaptureBar ? (
                 <VoiceCaptureBar
                   elapsedSeconds={voiceElapsedSeconds}
@@ -3603,12 +4292,26 @@ function ChatWorkspaceImpl({
                   <textarea
                     data-testid="composer-input"
                     ref={textareaRef}
-                    value={input}
-                    onChange={(event) => onInputChange(event.target.value)}
+                    value={composerText}
+                    onChange={(event) => handleComposerTyping(event.target.value)}
+                    onCompositionStart={() => {
+                      isComposingRef.current = true;
+                    }}
+                    onCompositionEnd={(event) => {
+                      isComposingRef.current = false;
+                      // Chrome (Electron) fires compositionend BEFORE the final
+                      // input event, so onChange will pick up the composed text
+                      // normally. But in case the input event was already
+                      // processed (compositionend after input in some browsers),
+                      // force the update with the final composed value.
+                      handleComposerTyping(event.currentTarget.value);
+                    }}
                     onKeyDown={handleKeyDown}
                     onPaste={handlePaste}
                     placeholder={
-                      canChat
+                      channelSource === "wechat"
+                        ? (zh ? "输入要明确发送到微信的回复…" : "Type a reply to explicitly send to WeChat…")
+                        : canChat
                         ? zh ? "向 OpenDrSai 提问..." : "Ask OpenDrSai..."
                         : chatUnavailableReason ?? (zh ? "请稍候，当前任务正在处理..." : "Please wait while the current task is running...")
                     }
@@ -3619,15 +4322,15 @@ function ChatWorkspaceImpl({
 
             </div>
 
-            {voiceError || streamingVoiceInput.error || duplexVoiceInput.error ? (
+            {voiceError || duplexVoiceInput.error ? (
               <div
-                className={`composer-voice-status ${voiceState === "failed" || streamingVoiceInput.phase === "failed" || duplexVoiceInput.phase === "failed" ? "error" : ""}`}
+                className={`composer-voice-status ${voiceState === "failed" || duplexVoiceInput.phase === "failed" ? "error" : ""}`}
                 aria-live="polite"
               >
                 <span>
                   {getVoiceStatusLabel(voiceState, voiceElapsedSeconds)}
                 </span>
-                {voiceError || streamingVoiceInput.error || duplexVoiceInput.error ? <small>{voiceError ?? streamingVoiceInput.error ?? duplexVoiceInput.error}</small> : null}
+                {voiceError || duplexVoiceInput.error ? <small>{voiceError ?? duplexVoiceInput.error}</small> : null}
                 {voiceConsentRequired ? (
                   <span className="composer-voice-error-actions">
                     <button
@@ -3656,12 +4359,28 @@ function ChatWorkspaceImpl({
                     </button>
                   </span>
                 ) : null}
-                {voicePreferences.interactionMode === "duplex" && !duplexPrivacyConfirmed && voiceError === duplexPrivacyDisclosure ? (
+                {voicePreferences.interactionMode === "duplex" && !duplexDisclosureAcknowledged && voiceError === duplexPrivacyDisclosure ? (
                   <span className="composer-voice-error-actions" aria-label="Realtime voice privacy confirmation">
-                    <button type="button" onClick={() => { setDuplexPrivacyConfirmed(true); void startDuplexVoiceRecording(true); }}>{zh ? "了解并开始实时语音" : "I understand—start Realtime voice"}</button>
+                    <button type="button" onClick={() => { updateVoicePreferences({ realtimeDisclosureFingerprint: duplexDisclosureFingerprint }); setDuplexPrivacyConfirmed(true); void startDuplexVoiceRecording(true); }}>{zh ? "了解并开始实时语音" : "I understand—start Realtime voice"}</button>
                     <button type="button" onClick={() => setVoiceError(null)}>{zh ? "暂不使用" : "Not now"}</button>
                   </span>
                 ) : null}
+                {duplexVoiceInput.occupancy?.occupied && !duplexVoiceInput.occupancy.ownedByCaller ? (
+                  <span className="composer-voice-error-actions" aria-label={zh ? "实时对话占用处理" : "Realtime conversation occupancy actions"} data-testid="duplex-voice-occupancy">
+                    <small>{zh ? `${duplexVoiceInput.occupancy.ownerLabel ?? "另一个窗口"} 从 ${duplexVoiceInput.occupancy.startedAt ? new Date(duplexVoiceInput.occupancy.startedAt).toLocaleTimeString() : "未知时间"} 开始占用实时对话。` : `${duplexVoiceInput.occupancy.ownerLabel ?? "Another window"} has owned the Realtime conversation since ${duplexVoiceInput.occupancy.startedAt ? new Date(duplexVoiceInput.occupancy.startedAt).toLocaleTimeString() : "an unknown time"}.`}</small>
+                    <button type="button" onClick={() => void duplexVoiceInput.takeOver()}>{zh ? "结束原会话并接管" : "End it and take over"}</button>
+                    <button type="button" onClick={() => { duplexVoiceInput.declineTakeOver(); updateVoicePreferences({ interactionMode: "serial" }); setVoiceError(null); }}>{zh ? "使用单次输入" : "Use single input"}</button>
+                  </span>
+                ) : null}
+                {voicePreferences.interactionMode === "duplex" && duplexVoiceInput.failure && duplexFailureRecovery ? <section className="composer-voice-recovery" role="alert" data-testid="duplex-runtime-recovery" data-reason-code={duplexVoiceInput.failure.code}>
+                  <strong>{zh ? "实时语音需要处理" : "Realtime voice needs attention"}</strong>
+                  <small>{duplexVoiceInput.failure.message}</small>
+                  <small>{zh ? `原因代码：${duplexVoiceInput.failure.code}` : `Reason code: ${duplexVoiceInput.failure.code}`}{"requestId" in duplexVoiceInput.failure && duplexVoiceInput.failure.requestId ? ` · Trace: ${duplexVoiceInput.failure.requestId}` : ""}</small>
+                  <span className="composer-voice-error-actions">
+                    <button type="button" onClick={() => { if (duplexFailureRecovery.primary === "open_agent_settings") onOpenAgentSettings?.(); else if (duplexFailureRecovery.primary === "switch_to_serial") updateVoicePreferences({ interactionMode: "serial" }); else void startDuplexVoiceRecording(false); }}>{duplexFailureRecovery.primary === "open_agent_settings" ? (zh ? "打开智能体配置" : "Open Agent configuration") : duplexFailureRecovery.primary === "switch_to_serial" ? (zh ? "使用单次输入" : "Use single input") : (zh ? "重试" : "Retry")}</button>
+                    {duplexFailureRecovery.fallback ? <button type="button" onClick={() => updateVoicePreferences({ interactionMode: "serial" })}>{zh ? "使用单次输入" : "Use single input"}</button> : null}
+                  </span>
+                </section> : null}
                 {voiceError && voiceRetryBlobRef.current && !voiceConsentRequired ? (
                   <span className="composer-voice-error-actions">
                     <button type="button" onClick={() => void retryVoiceTranscription()}>Retry</button>
@@ -3678,32 +4397,7 @@ function ChatWorkspaceImpl({
                     }}>{zh ? "保留文本" : "Keep transcript"}</button>
                   </span>
                 ) : null}
-                {streamingVoiceInput.phase === "failed" ? (
-                  <span className="composer-voice-error-actions" aria-label="Streaming voice recovery actions">
-                    <button type="button" onClick={() => void startStreamingVoiceRecording()}>Retry streaming</button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        streamingVoiceInput.reset();
-                        setStreamingVoiceReadyToSend(false);
-                        setStreamingVoiceResponseArmed(false);
-                        updateVoicePreferences({ interactionMode: "serial" });
-                      }}
-                    >
-                      Use serial next turn
-                    </button>
-                  </span>
-                ) : null}
               </div>
-            ) : null}
-            {streamingVoiceResponseArmed && !["idle", "completed", "cancelled"].includes(streamingVoiceOutput.phase) ? (
-              <StreamingVoiceOutputBar
-                output={streamingVoiceOutput}
-                onStop={() => {
-                  streamingVoiceOutput.stop();
-                  if (activeRequestId || hasStreamingMessage) onAbort();
-                }}
-              />
             ) : null}
 
             <div className="composer-meta-bar">
@@ -3725,6 +4419,12 @@ function ChatWorkspaceImpl({
                   </span>
                 </div>
               )}
+              {isLocalOpenDrSaiAgent && (
+                <KnowledgeBaseSelector
+                  agentId={selectedAgentId!}
+                  language={language}
+                />
+              )}
               <div className="composer-meta-item composer-configuration" data-meta-menu="configuration">
                 <button
                   className="composer-meta-chip composer-meta-button composer-configuration-trigger"
@@ -3735,38 +4435,49 @@ function ChatWorkspaceImpl({
                   onClick={() => toggleMetaMenu("configuration")}
                   title={zh ? "智能体、模型、推理强度和任务模式" : "Agent, model, reasoning effort, and task mode"}
                 >
-                  <Bot size={14} />
+                  <AgentInlineIcon agent={activeAgent} size={14} />
                   <span>{composerConfigurationSummary}</span>
                   <ChevronDown size={13} />
                 </button>
                 {metaMenuOpen === "configuration" ? (
-                  <div className="composer-configuration-menu" role="dialog" aria-label={zh ? "任务设置" : "Task settings"} onMouseLeave={() => setConfigurationSection(null)}>
+                  <div
+                    className="composer-configuration-menu"
+                    role="dialog"
+                    aria-label={zh ? "任务设置" : "Task settings"}
+                    onMouseLeave={(event) => {
+                      const next = event.relatedTarget;
+                      if (next instanceof Node && event.currentTarget.contains(next)) return;
+                      setConfigurationSection(null);
+                    }}
+                  >
                     <div className="composer-configuration-rows">
-                      <button type="button" disabled={!hasAgentOptions} aria-expanded={configurationSection === "agent"} onMouseEnter={(event) => revealConfigurationSection("agent", event.currentTarget)} onFocus={(event) => revealConfigurationSection("agent", event.currentTarget)} onClick={(event) => revealConfigurationSection("agent", event.currentTarget)}><span><strong>{zh ? "智能体" : "Agent"}</strong><small>{activeAgentName}</small></span><ChevronRight size={14} /></button>
                       <button type="button" aria-expanded={configurationSection === "model"} onMouseEnter={(event) => revealConfigurationSection("model", event.currentTarget)} onFocus={(event) => revealConfigurationSection("model", event.currentTarget)} onClick={(event) => revealConfigurationSection("model", event.currentTarget)}><span><strong>{zh ? "模型" : "Model"}</strong><small>{activeModelName}</small></span><ChevronRight size={14} /></button>
                       <button type="button" disabled={!showThinkingEffort} aria-expanded={configurationSection === "thinking"} onMouseEnter={(event) => revealConfigurationSection("thinking", event.currentTarget)} onFocus={(event) => revealConfigurationSection("thinking", event.currentTarget)} onClick={(event) => revealConfigurationSection("thinking", event.currentTarget)}><span><strong>{zh ? "推理强度" : "Reasoning effort"}</strong><small>{thinkingEffortMenuLabel}</small></span><ChevronRight size={14} /></button>
-                      <button type="button" data-testid="composer-task-mode" disabled={!isLocalOpenDrSaiAgent || showStop} aria-expanded={configurationSection === "task"} onMouseEnter={(event) => revealConfigurationSection("task", event.currentTarget)} onFocus={(event) => revealConfigurationSection("task", event.currentTarget)} onClick={(event) => revealConfigurationSection("task", event.currentTarget)}><span><strong>{zh ? "任务模式" : "Task mode"}</strong><small>{taskInteractionModeLabel}</small></span><ChevronRight size={14} /></button>
+                      <button type="button" data-testid="composer-plan-mode" disabled={!isLocalOpenDrSaiAgent || showStop} aria-expanded={configurationSection === "task"} onMouseEnter={(event) => revealConfigurationSection("task", event.currentTarget)} onFocus={(event) => revealConfigurationSection("task", event.currentTarget)} onClick={(event) => revealConfigurationSection("task", event.currentTarget)}><span><strong>{zh ? "计划模式" : "Plan mode"}</strong><small>{taskInteractionModeLabel}</small></span><ChevronRight size={14} /></button>
                     </div>
-                    {configurationSection ? <div className="composer-configuration-submenu" style={configurationSubmenuPosition} role="menu" aria-label={configurationSection === "agent" ? (zh ? "选择智能体" : "Choose agent") : configurationSection === "model" ? (zh ? "选择模型" : "Choose model") : configurationSection === "thinking" ? (zh ? "选择推理强度" : "Choose reasoning effort") : (zh ? "选择任务模式" : "Choose task mode")}>
+                    {configurationSection ? <div className="composer-configuration-submenu" style={configurationSubmenuPosition} role="menu" aria-label={configurationSection === "model" ? (zh ? "选择模型" : "Choose model") : configurationSection === "thinking" ? (zh ? "选择推理强度" : "Choose reasoning effort") : (zh ? "选择计划模式" : "Choose plan mode")}>
                       <div className="composer-configuration-options">
-                        {configurationSection === "agent" ? agentOptions.map((agent) => (
-                          <button key={agent.id} type="button" role="menuitemradio" aria-checked={agent.id === selectedAgentId} className={agent.id === selectedAgentId ? "active" : ""} onClick={() => selectAgent(agent.id)}>
-                            <span><strong>{agent.name}</strong><small>{getAgentOptionMeta(agent, zh)}</small></span>
-                            {agent.id === selectedAgentId ? <Check size={14} aria-hidden /> : null}
+                        {configurationSection === "model" ? (hasModelOptions ? modelOptions.map((model) => {
+                          const selected = (model.alias || model.model) === selectedModelName
+                            && (!selectedModelProviderId || model.provider_id === selectedModelProviderId);
+                          const primaryReady = supportsFullAgentPrimaryRuntime(model);
+                          return (
+                          <button key={`${model.provider_id || "backend"}:${model.alias || model.model}`} type="button" role="menuitemradio" aria-checked={selected} aria-disabled={!primaryReady} disabled={!primaryReady} className={selected ? "active" : ""} onClick={() => {
+                            if (!primaryReady) return;
+                            selectModel(model.alias || model.model || "", model.provider_id);
+                          }}>
+                            <span><strong>{getModelOptionLabel(model)}</strong><small>{primaryReady ? getModelProviderLabel(model, zh) : (zh ? "不可作主模型 · 请在图像理解中配置" : "Not a primary model · use Image understanding")}</small></span>
+                            {selected ? <Check size={14} aria-hidden /> : null}
                           </button>
-                        )) : configurationSection === "model" ? (hasModelOptions ? modelOptions.map((model) => (
-                          <button key={`${model.provider_id || "backend"}:${model.alias || model.model}`} type="button" role="menuitemradio" aria-checked={(model.alias || model.model) === selectedModelName && (!selectedModelProviderId || model.provider_id === selectedModelProviderId)} className={(model.alias || model.model) === selectedModelName && (!selectedModelProviderId || model.provider_id === selectedModelProviderId) ? "active" : ""} onClick={() => selectModel(model.alias || model.model || "", model.provider_id)}>
-                            <span><strong>{getModelOptionLabel(model)}</strong><small>{getModelProviderLabel(model, zh)}</small></span>
-                            {(model.alias || model.model) === selectedModelName && (!selectedModelProviderId || model.provider_id === selectedModelProviderId) ? <Check size={14} aria-hidden /> : null}
-                          </button>
-                        )) : <p className="composer-meta-menu-empty">{zh ? "暂无可用模型" : "No models available"}</p>) : configurationSection === "thinking" ? supportedThinkingEfforts.map((effort) => (
+                          );
+                        }) : <p className="composer-meta-menu-empty">{zh ? "暂无可用模型" : "No models available"}</p>) : configurationSection === "thinking" ? supportedThinkingEfforts.map((effort) => (
                           <button key={effort} type="button" role="menuitemradio" aria-checked={effort === thinkingEffort} className={effort === thinkingEffort ? "active" : ""} onClick={() => selectThinkingEffort(effort)}>
                             <span><strong>{getThinkingEffortLabel(effort, zh)}</strong></span>
                             {effort === thinkingEffort ? <Check size={14} aria-hidden /> : null}
                           </button>
-                        )) : (["normal", "confirm_goal"] as const).map((mode) => (
-                          <button key={mode} type="button" role="menuitemradio" aria-checked={mode === taskInteractionMode} data-testid={`composer-task-mode-${mode}`} disabled={!isLocalOpenDrSaiAgent || showStop} className={mode === taskInteractionMode ? "active" : ""} onClick={() => selectTaskInteractionMode(mode)}>
-                            <span><strong>{mode === "normal" ? (zh ? "常规" : "Normal") : (zh ? "目标" : "Goal")}</strong><small>{mode === "normal" ? (zh ? "适合日常问答和简单任务，立即开始" : "Best for everyday questions and simple tasks; starts right away") : (zh ? "适合复杂任务，开始前与你核对需求和预期结果" : "Best for complex tasks; reviews your needs and expected result first")}</small></span>
+                        )) : (["normal", "plan"] as const).map((mode) => (
+                          <button key={mode} type="button" role="menuitemradio" aria-checked={mode === taskInteractionMode} data-testid={`composer-plan-mode-${mode}`} disabled={!isLocalOpenDrSaiAgent || showStop} className={mode === taskInteractionMode ? "active" : ""} onClick={() => selectTaskInteractionMode(mode)}>
+                            <span><strong>{mode === "normal" ? (zh ? "常规" : "Normal") : (zh ? "计划" : "Plan")}</strong><small>{mode === "normal" ? (zh ? "适合日常问答和简单任务，立即开始" : "Best for everyday questions and simple tasks; starts right away") : (zh ? "适合复杂任务，开始前与你深入讨论需求和方案" : "Best for complex tasks; interviews you relentlessly to align on the plan first")}</small></span>
                             {mode === taskInteractionMode ? <Check size={14} aria-hidden /> : null}
                           </button>
                         ))}
@@ -3819,21 +4530,84 @@ function ChatWorkspaceImpl({
               </div>
               */}
               <div className="composer-actions composer-actions-meta">
-                <select
+                {composerText.trim() && !showStop ? (
+                  <button
+                    type="button"
+                    className="composer-icon-button"
+                    onClick={clearInput}
+                    aria-label="Clear input"
+                    title="Clear"
+                  >
+                    <X size={16} />
+                  </button>
+                ) : null}
+                {voicePreferences.interactionMode === "duplex" && duplexVoiceAvailability.available && ["idle", "failed"].includes(duplexVoiceInput.phase) && !duplexDisclosureAcknowledged ? <section className="composer-voice-preflight" data-testid="duplex-voice-preflight" aria-labelledby="duplex-preflight-title">
+                  <strong id="duplex-preflight-title">{zh ? "开始实时语音前" : "Before Realtime voice starts"}</strong>
+                  <ul>
+                    <li>{zh ? `服务：${duplexVoiceReadiness?.providerId ?? "未知"} / ${duplexVoiceReadiness?.modelId ?? "未知"}` : `Provider/model: ${duplexVoiceReadiness?.providerId ?? "unknown"} / ${duplexVoiceReadiness?.modelId ?? "unknown"}`}</li>
+                    <li>{zh ? "发送：会话期间麦克风音频会流式发送给该服务。" : "Sending: microphone audio is streamed to this Provider while the Session is active."}</li>
+                    <li>{zh ? "保存：稳定的文字转录会保存到当前任务；不保存原始音频。" : "Saving: stable transcripts are saved to this task; raw audio is not saved."}</li>
+                    <li>{duplexVoiceCapabilities?.supportsToolCalling ? (zh ? "工具：读取类工具可直接运行；写入类工具必须在审批中心点击批准。" : "Tools: reads may run directly; writes require a click in Approval Center.") : (zh ? "工具：当前模型不会调用工具。" : "Tools: this model will not call tools.")}</li>
+                  </ul>
+                  <button type="button" onClick={() => { updateVoicePreferences({ realtimeDisclosureFingerprint: duplexDisclosureFingerprint }); setDuplexPrivacyConfirmed(true); setVoiceError(null); void startDuplexVoiceRecording(true); }}>{zh ? "确认并开始" : "Confirm and start"}</button>
+                  <button type="button" onClick={() => updateVoicePreferences({ interactionMode: "serial" })}>{zh ? "改用单次输入" : "Use single input"}</button>
+                </section> : null}
+                {voicePreferences.interactionMode === "duplex" && !duplexVoiceAvailability.available ? <div className="composer-voice-recovery" role="alert" data-testid="duplex-voice-recovery">
+                  <small>{duplexVoiceAvailability.reason}</small>
+                  <button type="button" onClick={() => runDuplexReadinessAction(duplexReadinessActions.primary)}>{duplexReadinessActions.primary === "open_agent_settings" ? (zh ? "打开智能体配置" : "Open Agent configuration") : duplexReadinessActions.primary === "switch_to_serial" ? (zh ? "使用单次输入" : "Use single input") : (zh ? "重新检查" : "Check again")}</button>
+                  {duplexReadinessActions.fallback ? <button type="button" onClick={() => runDuplexReadinessAction(duplexReadinessActions.fallback!)}>{zh ? "使用单次输入" : "Use single input"}</button> : null}
+                </div> : null}
+                                <div style={VOICE_BUTTON_WRAPPER_STYLE}>
+                <button
+                  type="button"
+                  ref={voiceButtonRef} className={`composer-icon-button composer-voice-button ${voiceState === "recording" || duplexVoiceInput.phase === "active" ? "recording" : ""}`}
+                  disabled={voiceState === "requesting_permission" || voiceState === "processing" || duplexVoiceInput.phase === "starting" || duplexVoiceInput.phase === "stopping"}
+                  aria-pressed={voiceState === "recording" || duplexVoiceInput.phase === "active"}
+                  aria-keyshortcuts={voicePreferences.interactionMode === "duplex" ? "Alt+Shift+V" : undefined}
+                  aria-label={
+                    voiceState === "processing"
+                      ? "Transcribing voice input"
+                      : voiceState === "recording" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering"
+                      ? "Stop voice recording"
+                      : "Start voice recording"
+                  }
+                  title={
+                    voiceState === "processing"
+                      ? "Transcribing voice input"
+                      : voiceState === "recording" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering"
+                      ? "Stop voice recording"
+                      : "Start voice recording"
+                  }
+                  onClick={() => { setVoiceMenuOpen(!voiceMenuOpen); }}
+                >
+                  {voiceState === "processing" ? (
+                    <ThreadActivityBubble state={{ kind: "running" }} language={zh ? "zh" : "en"} />
+                  ) : voiceState === "recording" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering" ? <MicOff size={16} /> : <Mic size={16} />}
+                </button>
+                  {voiceMenuOpen && (
+                    <div style={VOICE_MENU_STYLE} ref={voiceMenuRef}>
+                      <button
+                        type="button"
+                        style={VOICE_MENU_ITEM_STYLE}
+                        onClick={() => { setVoiceMenuOpen(false); void startVoiceRecording(); }}
+                      >
+                        <Mic size={16} />
+                        {zh ? "开始录音" : "Start recording"}
+                      </button>
+                      <div style={VOICE_MENU_DIVIDER_STYLE} />
+<select
                   className="composer-voice-mode"
                   data-testid="composer-voice-mode"
                   value={voicePreferences.interactionMode}
                   onChange={(event) => updateVoicePreferences({ interactionMode: event.target.value as DesktopVoiceInteractionMode })}
-                  disabled={!canSwitchVoiceMode(voiceTurnState.phase) || showStreamingVoiceCaptureBar || showDuplexVoiceCaptureBar || streamingVoiceInput.phase === "reviewing" || streamingVoiceReadyToSend || streamingVoiceResponseArmed}
+                  disabled={!canSwitchVoiceMode(voiceTurnState.phase) || showDuplexVoiceCaptureBar}
                   aria-label={zh ? "语音交互模式" : "Voice interaction mode"}
-                  title={streamingVoiceAvailability.reason ?? voiceRuntimeDisclosure ?? voiceRuntimeLabel}
+                  title={voiceRuntimeDisclosure ?? voiceRuntimeLabel}
                 >
                   <option value="serial">{zh ? "串行" : "Serial"}</option>
-                  <option value="streaming" disabled={!streamingVoiceAvailability.available}>{zh ? "流式" : "Streaming"}</option>
                   <option value="duplex" disabled={!duplexVoiceAvailability.available}>{zh ? "实时" : "Realtime"}</option>
                 </select>
-                {(voicePreferences.interactionMode === "duplex" ? duplexVoiceInput.devices : voiceDevices).length > 1 ? (
-                  <select
+<select
                     className="composer-voice-device"
                     value={voiceDeviceId}
                     onChange={(event) => updateVoicePreferences({ inputDeviceId: event.target.value })}
@@ -3848,8 +4622,7 @@ function ChatWorkspaceImpl({
                       </option>
                     ))}
                   </select>
-                ) : null}
-                <select
+<select
                   className="composer-voice-language"
                   value={voiceLanguage}
                   onChange={(event) => updateVoicePreferences({ inputLanguage: event.target.value as "auto" | "zh-CN" | "en-US" })}
@@ -3861,66 +4634,30 @@ function ChatWorkspaceImpl({
                   <option value="zh-CN">中文</option>
                   <option value="en-US">EN</option>
                 </select>
-                {input.trim() && !showStop ? (
-                  <button
-                    type="button"
-                    className="composer-icon-button"
-                    onClick={clearInput}
-                    aria-label="Clear input"
-                    title="Clear"
-                  >
-                    <X size={16} />
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className={`composer-icon-button composer-voice-button ${voiceState === "recording" || duplexVoiceInput.phase === "active" ? "recording" : ""}`}
-                  disabled={voiceState === "requesting_permission" || voiceState === "processing" || duplexVoiceInput.phase === "starting" || duplexVoiceInput.phase === "stopping"}
-                  aria-pressed={voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active"}
-                  aria-label={
-                    voiceState === "processing"
-                      ? "Transcribing voice input"
-                      : voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering"
-                      ? "Stop voice recording"
-                      : "Start voice recording"
-                  }
-                  title={
-                    voiceState === "processing"
-                      ? "Transcribing voice input"
-                      : voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering"
-                      ? "Stop voice recording"
-                      : "Start voice recording"
-                  }
-                  onClick={() => {
-                    void toggleVoiceRecording();
-                  }}
-                >
-                  {voiceState === "processing" ? (
-                    <ThreadActivityBubble state={{ kind: "running" }} language={zh ? "zh" : "en"} />
-                  ) : voiceState === "recording" || streamingVoiceInput.phase === "streaming" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering" ? <MicOff size={16} /> : <Mic size={16} />}
-                </button>
+                    </div>
+                  )}
+                </div>
+
                 {showStop ? (
-                  <>
-                    {input.trim() ? <button className="composer-submit" type="submit" title={zh ? "默认排在当前任务之后" : "Queue after the current task"}>
-                      <Send size={16} />{zh ? "排队发送" : "Queue"}
-                    </button> : null}
-                    {input.trim() ? <button className="composer-submit" type="button"
-                      onClick={() => void Promise.resolve(onAbort()).then(() => submitWithAttachments())}
-                      title={zh ? "明确停止当前任务并改为执行这条消息" : "Explicitly stop the active task and run this message"}>
-                      {zh ? "停止并替换" : "Stop & replace"}
-                    </button> : null}
-                    <button className="composer-submit stop" type="button" disabled={cancellingRequestId === activeRequestId} onClick={() => void onAbort()}>
-                      <Square size={16} />
-                      {cancellingRequestId === activeRequestId
-                        ? (zh ? "正在取消…" : "Cancelling…")
-                        : messages.some((message) => message.structuredTurn?.turnId === activeRequestId && message.structuredTurn.status === "pending")
-                        ? (zh ? "取消排队" : "Cancel queued") : (zh ? "停止" : "Stop")}
+                  composerText.trim() ? (
+                    <>
+                      <button className="composer-submit" type="submit" title={zh ? "默认排在当前任务之后" : "Queue after the current task"}>
+                        <Send size={16} />{zh ? "排队发送" : "Queue"}
+                      </button>
+                      <button type="button" className="composer-submit" title={zh ? "发送并停止当前任务输出，开始新任务" : "Send and stop current task output, start new task"}
+                        onClick={async () => { try { await onAbort(); } catch { /* best-effort */ } void submitWithAttachments(); }}>
+                        <Send size={16} />{zh ? "发送并停止" : "Send & Stop"}
+                      </button>
+                    </>
+                  ) : (
+                    <button type="button" className="composer-submit" title={zh ? "停止当前任务" : "Stop current task"}
+                      onClick={() => void onAbort()}>
+                      <Square size={16} />{zh ? "停止" : "Stop"}
                     </button>
-                  </>
+                  )
                 ) : (
-                  <button className="composer-submit" type="submit" disabled={!input.trim() || (!canChat && !materialSuggestionRuntimeReady && !canSaveLocalPreference && !canAnswerMaterialInventoryLocally && !canAnswerMaterialQuestionLocally)}>
+                  <button className="composer-submit" type="submit" title={zh ? "发送消息" : "Send message"}>
                     <Send size={16} />
-                    {zh ? "发送" : "Send"}
                   </button>
                 )}
               </div>
@@ -3929,6 +4666,49 @@ function ChatWorkspaceImpl({
         </div>
       </form>
       </div>
+      {conversationResourceNotice ? (
+        <aside className="conversation-resource-notice" data-testid="conversation-resource-notice" role="status">
+          <span>{conversationResourceNotice}</span>
+          <button type="button" onClick={() => setConversationResourceNotice(null)} aria-label={zh ? "关闭资源提示" : "Close resource notice"}><X size={14} /></button>
+        </aside>
+      ) : null}
+      {conversationResourceDownload ? (
+        <aside className="conversation-resource-download" data-testid="conversation-resource-download" data-phase={conversationResourceDownload.phase} role="status">
+          <strong>{conversationResourceDownload.name}</strong>
+          <progress max={100} value={conversationResourceDownload.percent ?? 0} />
+          <span>{conversationResourceDownload.phase === "cancelled" ? (zh ? "已取消" : "Cancelled") : `${conversationResourceDownload.percent ?? 0}%`}</span>
+          {["preparing", "downloading"].includes(conversationResourceDownload.phase) ? <button type="button" onClick={() => void desktopApi.cancelConversationResourceDownload(conversationResourceDownload.operationId)}>{zh ? "取消下载" : "Cancel download"}</button> : null}
+          <button type="button" onClick={() => setConversationResourceDownload(null)} aria-label={zh ? "关闭下载状态" : "Close download status"}><X size={14} /></button>
+        </aside>
+      ) : null}
+      {conversationResourceMenu ? createPortal((() => {
+        const { part, resolved } = conversationResourceMenu;
+        const request = conversationResourceRequest(part)!;
+        const close = (): void => setConversationResourceMenu(null);
+        const download = (): void => {
+          close();
+          const operationId = crypto.randomUUID();
+          setConversationResourceDownload({ operationId, phase: "preparing", name: resolved.name, transferredBytes: 0 });
+          void desktopApi.downloadConversationResource({ ...request, operationId, suggestedName: resolved.name })
+            .catch(() => setConversationResourceDownload((current) => current?.operationId === operationId ? { ...current, phase: "failed" } : current));
+        };
+        return <div
+          className="conversation-resource-menu"
+          data-testid="conversation-resource-menu"
+          role="menu"
+          style={{ left: Math.min(conversationResourceMenu.x, window.innerWidth - 290), top: Math.min(conversationResourceMenu.y, window.innerHeight - 360) }}
+        >
+          {resolved.capabilities.read && resolved.state !== "deleted" && resolved.state !== "offline" ? <button role="menuitem" type="button" onClick={() => { close(); void previewConversationResourcePart(part); }}>{zh ? "打开当前版本" : "Open current version"}</button> : null}
+          {resolved.capabilities.preview ? <button role="menuitem" type="button" onClick={() => { close(); void previewConversationResourcePart(part); }}>{zh ? "预览" : "Preview"}</button> : null}
+          {resolved.observedVersionAvailable ? <button role="menuitem" type="button" onClick={() => { close(); void previewConversationResourcePart(part, "observed"); }}>{zh ? "打开引用时版本" : "Open cited version"}</button> : null}
+          {(resolved.logicalPath || resolved.path) && resolved.state !== "deleted" && resolved.state !== "offline" ? <button role="menuitem" type="button" onClick={() => { close(); if (resolved.capabilities.preview) void previewConversationResourcePart(part); else onOpenWorkspaceArtifact?.(resolved.logicalPath ?? resolved.path!); }}>{zh ? "在文件栏显示" : "Show in Files"}</button> : null}
+          {resolved.capabilities.download ? <button role="menuitem" type="button" onClick={download}>{zh ? "下载 / 另存为" : "Download / Save as"}</button> : null}
+          {resolved.capabilities.reveal ? <button role="menuitem" type="button" onClick={() => { close(); void desktopApi.revealConversationResource(request).then((ok) => setConversationResourceNotice(ok ? (zh ? "已在系统文件管理器中显示。" : "Revealed in the system file manager.") : (zh ? "无法在系统文件管理器中显示。" : "Could not reveal the resource."))); }}>{zh ? "在系统文件管理器中显示" : "Reveal in system file manager"}</button> : null}
+          {resolved.capabilities.copyLogicalPath && resolved.logicalPath ? <button role="menuitem" type="button" onClick={() => { close(); void desktopApi.copyConversationResourceLogicalPath(request).then((path) => copyTextSafely(path)); }}>{zh ? "复制逻辑路径" : "Copy logical path"}</button> : null}
+          {resolved.state === "offline" ? <button role="menuitem" type="button" onClick={() => { close(); void resolveConversationResourcePart(part); }}>{zh ? "重试" : "Retry"}</button> : null}
+          <button role="menuitem" type="button" onClick={() => { close(); setConversationResourceNotice(`${resolved.name} · ${resolved.logicalPath ?? resolved.resourceId} · ${resolved.state}`); }}>{zh ? "查看资源详情" : "Resource details"}</button>
+        </div>;
+      })(), document.body) : null}
     </div>
   );
 }
@@ -4001,17 +4781,19 @@ function getStructuredPartEstimateText(part: StructuredAssistantPart): string {
   return part.message;
 }
 
-function VirtualizedMessage({
+const VirtualizedMessage = memo(function VirtualizedMessage({
   message,
   className,
   pinned,
   scrollRootRef,
+  now,
   children,
 }: {
   message: UiMessage;
   className: string;
   pinned: boolean;
   scrollRootRef: React.RefObject<HTMLDivElement | null>;
+  now?: number;
   children: React.ReactNode;
 }): React.JSX.Element {
   const elementRef = useRef<HTMLElement | null>(null);
@@ -4058,7 +4840,7 @@ function VirtualizedMessage({
       {renderContent ? children : null}
     </article>
   );
-}
+}, (prev, next) => prev.message === next.message && prev.pinned === next.pinned && prev.now === next.now);
 
 function formatPickedFileMeta(file: PickedFileDescriptor, zh: boolean): string {
   const category = {
@@ -4309,6 +5091,66 @@ function StreamingStatus({
   );
 }
 
+function UserMessageActions({
+  content,
+  messageId,
+  zh,
+  turnActionsDisabled = false,
+  onEditAndResend,
+  onDelete,
+}: {
+  content: string;
+  messageId: string;
+  zh: boolean;
+  turnActionsDisabled?: boolean;
+  onEditAndResend?: (messageId: string) => void;
+  onDelete?: (messageId: string) => void;
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy(): Promise<void> {
+    try {
+      if (!await copyTextSafely(content)) return;
+    } catch {
+      return;
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <div className="message-actions user-message-actions" aria-live="polite">
+      <button type="button" onClick={() => void handleCopy()} title={zh ? "复制输入" : "Copy input"}>
+        {copied ? <Check size={13} /> : <ClipboardList size={13} />}
+        <span>{copied ? (zh ? "已复制" : "Copied") : (zh ? "复制" : "Copy")}</span>
+      </button>
+      {onEditAndResend ? (
+        <button
+          type="button"
+          data-testid={`user-message-action-edit-resend-${messageId}`}
+          disabled={turnActionsDisabled}
+          onClick={() => onEditAndResend(messageId)}
+          title={zh ? "编辑并重发" : "Edit & resend"}
+        >
+          <Pencil size={13} />
+          <span>{zh ? "编辑并重发" : "Edit & resend"}</span>
+        </button>
+      ) : null}
+      {onDelete ? (
+        <button
+          type="button"
+          data-testid={`user-message-action-delete-${messageId}`}
+          onClick={() => onDelete(messageId)}
+          title={zh ? "删除本条" : "Delete"}
+        >
+          <Trash2 size={13} />
+          <span>{zh ? "删除" : "Delete"}</span>
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function MessageActions({
   content,
   messageId,
@@ -4318,6 +5160,11 @@ function MessageActions({
   synthesisMode,
   voiceName,
   zh,
+  turnActionsDisabled = false,
+  showTurnActions = false,
+  onEditAndResend,
+  onRegenerate,
+  onDelete,
 }: {
   content: string;
   messageId: string;
@@ -4327,6 +5174,11 @@ function MessageActions({
   synthesisMode: "system" | "provider";
   voiceName: string;
   zh: boolean;
+  turnActionsDisabled?: boolean;
+  showTurnActions?: boolean;
+  onEditAndResend?: (messageId: string) => void;
+  onRegenerate?: () => void;
+  onDelete?: (messageId: string) => void;
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
   const [localPending, setLocalPending] = useState(false);
@@ -4377,6 +5229,41 @@ function MessageActions({
         {copied ? "✓" : <ClipboardList size={13} />}
         <span>{copied ? (zh ? "已复制" : "Copied") : (zh ? "复制" : "Copy")}</span>
       </button>
+      {showTurnActions && onEditAndResend ? (
+        <button
+          type="button"
+          data-testid={`message-action-edit-resend-${messageId}`}
+          disabled={turnActionsDisabled}
+          onClick={() => onEditAndResend(messageId)}
+          title={zh ? "编辑原问题并重发这一轮" : "Edit the prompt and resend this turn"}
+        >
+          <Pencil size={13} />
+          <span>{zh ? "编辑并重发" : "Edit & resend"}</span>
+        </button>
+      ) : null}
+      {showTurnActions && onRegenerate ? (
+        <button
+          type="button"
+          data-testid={`message-action-regenerate-${messageId}`}
+          disabled={turnActionsDisabled}
+          onClick={() => onRegenerate()}
+          title={zh ? "用原问题重新生成这一轮" : "Regenerate this turn with the same prompt"}
+        >
+          <RefreshCw size={13} />
+          <span>{zh ? "重新生成" : "Regenerate"}</span>
+        </button>
+      ) : null}
+      {showTurnActions && onDelete ? (
+        <button
+          type="button"
+          data-testid={`message-action-delete-${messageId}`}
+          onClick={() => onDelete(messageId)}
+          title={zh ? "删除本条" : "Delete this message"}
+        >
+          <Trash2 size={13} />
+          <span>{zh ? "删除本条" : "Delete"}</span>
+        </button>
+      ) : null}
       {isSynthesizing ? (
         <button type="button" disabled title={zh ? "正在合成语音" : "Synthesizing speech"}>
           <RefreshCw size={13} className="spinning" />
@@ -4484,15 +5371,9 @@ async function createClipboardImageAttachment(
 ): Promise<ComposerAttachment | null> {
   const name = file.name?.trim() || `clipboard-image-${index + 1}`;
   const tooLarge = file.size > MAX_CLIPBOARD_IMAGE_BYTES;
-  const visibleText = [
-    `Clipboard image: ${name}.`,
-    `MIME type: ${file.type || "unknown"}.`,
-    `Size: ${formatBytes(file.size)}.`,
-    tooLarge
-      ? `Image data URL was not attached because it exceeds ${formatBytes(MAX_CLIPBOARD_IMAGE_BYTES)}.`
-      : "Image data URL captured from an explicit paste event.",
-    "No OCR, vision model, filesystem write, network call, or provider send was performed while preparing this clipboard context.",
-  ].join("\n");
+  // visibleText is undefined for clipboard images — the actual image content
+  // is sent as a multimodal OaepInputResource, not as text metadata.
+  const visibleText = undefined;
   const screenshotDataUrl = tooLarge ? undefined : await blobToDataUrl(file);
   return {
     id: crypto.randomUUID(),
@@ -4525,6 +5406,263 @@ function formatBytes(size: number): string {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isImageFileName(name: string): boolean {
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name.trim());
+}
+
+function isImageAttachment(
+  attachment: ChatAttachment,
+  importFile?: PickedFileDescriptor,
+): boolean {
+  if (attachment.screenshotDataUrl?.startsWith("data:image/")) return true;
+  if (importFile?.category === "image") return true;
+  if (importFile?.previewDataUrl?.startsWith("data:image/")) return true;
+  return isImageFileName(attachment.name) || isImageFileName(attachment.path);
+}
+
+function ComposerAttachmentChip({
+  attachment,
+  workspacePath,
+  zh,
+  onRemove,
+}: {
+  attachment: ComposerAttachment;
+  workspacePath?: string;
+  zh: boolean;
+  onRemove: () => void;
+}): React.JSX.Element {
+  const Icon =
+    attachment.kind === "folder"
+      ? FolderPlus
+      : attachment.kind === "terminal"
+        ? Terminal
+      : attachment.kind === "selection"
+        ? ClipboardList
+      : attachment.kind === "browser"
+        ? Globe2
+        : Paperclip;
+  const previewSrc = useAttachmentImageSrc(attachment, workspacePath, attachment.importFile);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const canPreview = Boolean(previewSrc);
+  const copy = (
+    <span className="composer-attachment-copy">
+      <strong>{attachment.name}</strong>
+      {attachment.importFile ? <small>{formatPickedFileMeta(attachment.importFile, zh)}</small> : null}
+      {attachment.importFile?.message ? <small data-testid="composer-file-status-message">{attachment.importFile.message}</small> : null}
+      {attachment.importFile?.recoveryAction ? <small data-testid="composer-file-recovery-action">{attachment.importFile.recoveryAction}</small> : null}
+      {attachment.importFile?.privacyNotice ? <small data-testid="composer-file-privacy-notice">{attachment.importFile.privacyNotice}</small> : null}
+      {attachment.folderImport ? <small>{formatFolderImportMeta(attachment.folderImport, zh)}</small> : null}
+    </span>
+  );
+
+  return (
+    <span
+      className={`composer-attachment-chip ${(attachment.importFile?.status && attachment.importFile.status !== "ready") || attachment.folderImport?.phase === "failed" ? "import-failed" : ""} ${attachment.folderImport?.phase === "scanning" ? "import-scanning" : ""} ${isImageAttachment(attachment, attachment.importFile) ? "has-image-preview" : ""}`}
+      title={attachment.importFile?.message || attachment.folderImport?.message || attachment.path}
+      data-testid="composer-attachment"
+      data-import-status={attachment.importFile?.status || "ready"}
+      data-file-category={attachment.importFile?.category || "other"}
+      data-size-bytes={attachment.importFile?.sizeBytes ?? ""}
+      data-diagnostic-code={attachment.importFile?.diagnosticCode || ""}
+      data-processing-mode={attachment.importFile?.processingMode || ""}
+      data-sensitive-detected={attachment.importFile?.sensitiveDataDetected ? "true" : "false"}
+      data-sensitive-kinds={attachment.importFile?.sensitiveKinds?.join(",") || ""}
+      data-sensitive-count={attachment.importFile?.sensitiveValueCount ?? 0}
+      data-folder-import-phase={attachment.folderImport?.phase || ""}
+      data-imported-count={attachment.folderImport?.imported ?? ""}
+      data-skipped-count={attachment.folderImport?.skipped ?? ""}
+      data-failed-count={attachment.folderImport?.failed ?? ""}
+      data-duplicate-count={attachment.folderImport?.duplicates ?? ""}
+    >
+      {canPreview && previewSrc ? (
+        <button
+          type="button"
+          className="composer-attachment-preview"
+          title={zh ? `查看大图：${attachment.name}` : `View full size: ${attachment.name}`}
+          aria-label={zh ? `查看大图：${attachment.name}` : `View full size: ${attachment.name}`}
+          data-testid="composer-attachment-preview"
+          onClick={() => setLightboxOpen(true)}
+        >
+          <img className="composer-attachment-thumb" src={previewSrc} alt="" />
+          {copy}
+        </button>
+      ) : (
+        <>
+          <Icon size={14} />
+          {copy}
+        </>
+      )}
+      <button
+        type="button"
+        aria-label={zh ? `移除 ${attachment.name}` : `Remove ${attachment.name}`}
+        onClick={onRemove}
+      >
+        <X size={13} />
+      </button>
+      {lightboxOpen && previewSrc
+        ? (
+          <AttachmentImageLightbox
+            src={previewSrc}
+            name={attachment.name}
+            path={attachment.path}
+            zh={zh}
+            onClose={() => setLightboxOpen(false)}
+          />
+        )
+        : null}
+    </span>
+  );
+}
+
+function useAttachmentImageSrc(
+  attachment: ChatAttachment,
+  workspacePath?: string,
+  importFile?: PickedFileDescriptor,
+): string | undefined {
+  const embedded = attachment.screenshotDataUrl?.startsWith("data:image/")
+    ? attachment.screenshotDataUrl
+    : importFile?.previewDataUrl?.startsWith("data:image/")
+      ? importFile.previewDataUrl
+      : undefined;
+  const [previewSrc, setPreviewSrc] = useState(embedded);
+  const showImage = isImageAttachment(attachment, importFile);
+
+  useEffect(() => {
+    if (embedded) setPreviewSrc(embedded);
+  }, [embedded]);
+
+  useEffect(() => {
+    if (!showImage || previewSrc || !workspacePath?.trim() || !attachment.path.trim()) return;
+    if (attachment.path.startsWith("clipboard:")) return;
+    let cancelled = false;
+    void desktopApi.previewWorkspaceFile({
+      workspacePath,
+      path: attachment.path,
+      maxBytes: 1_500_000,
+    }).then((preview) => {
+      if (!cancelled && preview.kind === "image" && preview.dataUrl?.startsWith("data:image/")) {
+        setPreviewSrc(preview.dataUrl);
+      }
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [attachment.path, previewSrc, showImage, workspacePath]);
+
+  return previewSrc;
+}
+
+function AttachmentImageLightbox({
+  src,
+  name,
+  path,
+  zh,
+  onClose,
+}: {
+  src: string;
+  name: string;
+  path?: string;
+  zh: boolean;
+  onClose: () => void;
+}): React.JSX.Element {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      className="message-attachment-lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label={name}
+      data-testid="message-attachment-lightbox"
+    >
+      <button
+        type="button"
+        className="message-attachment-lightbox-backdrop"
+        aria-label={zh ? "关闭大图" : "Close image"}
+        onClick={onClose}
+      />
+      <div className="message-attachment-lightbox-panel">
+        <header>
+          <strong title={path || name}>{name}</strong>
+          <button type="button" aria-label={zh ? "关闭" : "Close"} onClick={onClose}>
+            <X size={16} aria-hidden="true" />
+          </button>
+        </header>
+        <img src={src} alt={name} />
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function MessageAttachmentBadge({
+  attachment,
+  workspacePath,
+  zh,
+}: {
+  attachment: ChatAttachment;
+  workspacePath?: string;
+  zh: boolean;
+}): React.JSX.Element {
+  const previewSrc = useAttachmentImageSrc(attachment, workspacePath);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const showImage = isImageAttachment(attachment);
+
+  if (showImage && previewSrc) {
+    return (
+      <>
+        <button
+          type="button"
+          className="message-attachment-image"
+          title={zh ? `查看大图：${attachment.name}` : `View full size: ${attachment.name}`}
+          aria-label={zh ? `查看大图：${attachment.name}` : `View full size: ${attachment.name}`}
+          data-testid="message-attachment-image"
+          onClick={() => setLightboxOpen(true)}
+        >
+          <img src={previewSrc} alt={attachment.name} />
+          <span className="message-attachment-image-caption">{attachment.name}</span>
+        </button>
+        {lightboxOpen
+          ? (
+            <AttachmentImageLightbox
+              src={previewSrc}
+              name={attachment.name}
+              path={attachment.path}
+              zh={zh}
+              onClose={() => setLightboxOpen(false)}
+            />
+          )
+          : null}
+      </>
+    );
+  }
+
+  return (
+    <span
+      className="message-attachment-badge"
+      title={attachment.path || attachment.name}
+      data-testid="message-attachment-badge"
+    >
+      {renderMessageAttachmentIcon(attachment.kind)}
+      <span>{attachment.name}</span>
+    </span>
+  );
 }
 
 function renderMessageAttachmentIcon(kind: ChatAttachment["kind"]): React.JSX.Element {
@@ -4583,11 +5721,7 @@ function parseInlineContextMentions(input: string, workspacePath: string): ChatA
 function normalizePastedLocalPathMentions(text: string): string | null {
   const mentions = extractPastedLocalPathMentions(text);
   if (!mentions.length) return null;
-  const prefix = [
-    "Reviewed pasted local path context.",
-    "No clipboard polling, filesystem read, network call, or provider send was performed while preparing these mentions.",
-  ].join(" ");
-  return `${prefix}\n${mentions.join("\n")}`;
+  return mentions.join("\n");
 }
 
 function extractPastedLocalPathMentions(text: string): string[] {
@@ -5095,6 +6229,17 @@ function getAgentOptionMeta(agent: DesktopAgent, zh: boolean): string {
   return `${source} · ${status}`;
 }
 
+function AgentInlineIcon({ agent, size }: { agent?: DesktopAgent; size: number }): React.JSX.Element {
+  const isCodex = agent?.id === "my-codex";
+  const logo = agent?.source === "local" ? drsaiLogo : agent?.logo;
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [logo]);
+  if (isCodex) return <OpenAiBrandIcon size={size} className="agent-inline-icon" />;
+  return logo && !failed
+    ? <img className="agent-inline-icon" src={logo} alt="" width={size} height={size} onError={() => setFailed(true)} />
+    : <Bot size={size} aria-hidden />;
+}
+
 function getThinkingEffortLabel(effort: ThinkingEffort, zh: boolean): string {
   if (zh) {
     return {
@@ -5152,7 +6297,7 @@ function isEmptyAssistantShell(message: UiMessage): boolean {
 }
 
 function getAssistantDisplayContent(message: UiMessage): string {
-  return getAssistantSpeechText(message, getVisibleChatText);
+  return stripAgentToolDebugText(getAssistantSpeechText(message, getVisibleChatText));
 }
 
 function getWorkspaceDisplayName(workspacePath: string | undefined, zh: boolean): string {

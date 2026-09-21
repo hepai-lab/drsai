@@ -1,101 +1,68 @@
-"""Versioned capabilities for common built-in models."""
+"""Versioned capabilities for common built-in models.
+
+This module is the bridge between the old system (``DEFAULT_LLM_MODE_CONFIG``
+in ``model_defaults.py``) and the new system (``ModelCapabilities`` /
+``ReasoningCapabilities`` in ``schema.py``).
+
+``BUILTIN_MODELS`` is now **auto-generated** from ``DEFAULT_LLM_MODE_CONFIG``
+via ``_build_builtin_models()``. To add or modify a model, edit
+``DEFAULT_LLM_MODE_CONFIG`` in ``model_defaults.py`` — this file will pick up
+the change automatically.
+
+Import safety: ``model_defaults`` is a leaf module (no ``drsai.config`` or
+``drsai.backend`` imports), so importing it here does NOT create a circular
+dependency.
+"""
 
 from __future__ import annotations
 
 from typing import Final
 
+from .model_defaults import DEFAULT_LLM_MODE_CONFIG, ModelEntry
 from .schema import ModelCapabilities, ReasoningCapabilities
 
-BUILTIN_MODELS: Final[dict[str, ModelCapabilities]] = {
-    "gemini-3-flash-preview": ModelCapabilities(
-        token_limit=1_000_000,
-        max_tokens=64_000,
-        vision=True,
+
+def _model_entry_to_capabilities(entry: ModelEntry) -> ModelCapabilities:
+    """Convert an old-system ``ModelEntry`` to a new-system ``ModelCapabilities``."""
+
+    return ModelCapabilities(
+        token_limit=entry.token_limit,
+        max_tokens=entry.max_tokens if entry.max_tokens > 0 else 8_192,
+        vision=entry.vision,
         function_calling=True,
         json_output=True,
+        structured_output=False,
         token_model="gpt-4o-2024-11-20",
         reasoning=ReasoningCapabilities(
-            supported=True,
-            param_type="adaptive",
+            supported=entry.reasoning.supported,
+            effort_levels=tuple(entry.reasoning.effort_levels),
+            param_type=entry.reasoning.param_type,
         ),
-    ),
-    "gpt-5.4": ModelCapabilities(
-        token_limit=1_050_000,
-        max_tokens=64_000,
-        vision=True,
-        function_calling=True,
-        json_output=True,
-        token_model="gpt-4o-2024-11-20",
-        reasoning=ReasoningCapabilities(
-            supported=True,
-            effort_levels=("none", "low", "medium", "high", "xhigh"),
-            param_type="reasoning_effort",
-        ),
-    ),
-    "deepseek-v4-pro": ModelCapabilities(
-        token_limit=1_048_576,
-        max_tokens=64_000,
-        vision=False,
-        function_calling=True,
-        json_output=True,
-        reasoning=ReasoningCapabilities(
-            supported=True,
-            effort_levels=("none", "high", "max"),
-            param_type="deepseek_reasoning_effort",
-        ),
-    ),
-    "hepai/deepseek-v4-pro": ModelCapabilities(
-        token_limit=1_048_576,
-        max_tokens=64_000,
-        vision=False,
-        function_calling=True,
-        json_output=True,
-        reasoning=ReasoningCapabilities(
-            supported=True,
-            effort_levels=("none", "high", "max"),
-            param_type="deepseek_reasoning_effort",
-        ),
-    ),
-    "deepseek-v4-flash": ModelCapabilities(
-        token_limit=1_048_576,
-        max_tokens=64_000,
-        vision=False,
-        function_calling=True,
-        json_output=True,
-        reasoning=ReasoningCapabilities(
-            supported=True,
-            effort_levels=("none", "high", "max"),
-            param_type="deepseek_reasoning_effort",
-        ),
-    ),
-    # HepAI exposes the production deployment with this Provider-local ID.
-    # It has the same reasoning contract as the canonical V4 Flash model.
-    "deepseek-v4-flash-正式版": ModelCapabilities(
-        token_limit=1_048_576,
-        max_tokens=64_000,
-        vision=False,
-        function_calling=True,
-        json_output=True,
-        reasoning=ReasoningCapabilities(
-            supported=True,
-            effort_levels=("none", "high", "max"),
-            param_type="deepseek_reasoning_effort",
-        ),
-    ),
-    "claude-sonnet-4-6": ModelCapabilities(
-        token_limit=200_000,
-        max_tokens=64_000,
-        vision=True,
-        function_calling=True,
-        json_output=True,
-        token_model="claude-3-5-sonnet-20240620",
-        reasoning=ReasoningCapabilities(
-            supported=True,
-            effort_levels=("low", "medium", "high"),
-            param_type="adaptive",
-        ),
-    ),
-}
+    )
+
+
+def _build_builtin_models() -> dict[str, ModelCapabilities]:
+    """Build the BUILTIN_MODELS registry from ``DEFAULT_LLM_MODE_CONFIG``.
+
+    Each alias in the config is registered under both its alias key and its
+    model-name suffix (the part after the ``/``), so ``find_model_capabilities``
+    can resolve models referenced either way.
+    """
+
+    result: dict[str, ModelCapabilities] = {}
+    for alias, entry in DEFAULT_LLM_MODE_CONFIG.items():
+        caps = _model_entry_to_capabilities(entry)
+        result[alias] = caps
+        # Also register under the model-name suffix (e.g. "claude-sonnet-4-6"
+        # from "anthropic/claude-sonnet-4-6") if it differs from the alias.
+        if "/" in entry.model:
+            suffix = entry.model.split("/", 1)[1]
+            if suffix not in result:
+                result[suffix] = caps
+    return result
+
+
+BUILTIN_MODELS: Final[dict[str, ModelCapabilities]] = _build_builtin_models()
 
 
 def find_model_capabilities(model: str) -> tuple[ModelCapabilities, bool]:

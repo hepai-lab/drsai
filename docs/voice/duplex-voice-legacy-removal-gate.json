@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "legacyRoute": "streaming_voice",
+  "uiExposed": false,
+  "newConfigAllowed": false,
+  "codeRemovalRequested": true,
+  "supersededBy": "docs/voice/duplex-voice-p3-spec.md#11-明确移除的内容",
+  "p3RemovalDecision": true,
+  "stableReleaseCyclesCompleted": 0,
+  "migrationTelemetry": {
+    "windowStartedAt": null,
+    "windowEndedAt": null,
+    "sampleSize": 0,
+    "legacySelectionRate": null,
+    "complete": false
+  },
+  "removedRuntimeAssets": [
+    "apps/desktop/shared/renderer/src/voice/streaming/useStreamingVoiceInput.ts",
+    "apps/desktop/windows/scripts/test-streaming-voice-main.mjs"
+  ],
+  "removalEligibility": {
+    "minimumStableReleaseCycles": 1,
+    "minimumTelemetrySampleSize": 100,
+    "maximumLegacySelectionRate": 0.001
+  }
+}

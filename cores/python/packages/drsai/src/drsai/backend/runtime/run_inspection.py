@@ -210,42 +210,40 @@ _PRIVATE_REASONING_KEY = re.compile(r"(?i)(?:chain[_-]?of[_-]?thought|raw[_-]?(?
 
 
 def _scrub_public(value: Any, key: str = "") -> Any:
-    if _PRIVATE_REASONING_KEY.search(key):
-        return "[REDACTED]"
-    if isinstance(value, Mapping):
-        return {str(child): _scrub_public(item, str(child)) for child, item in value.items()}
-    if isinstance(value, list):
-        return [_scrub_public(item, key) for item in value]
-    if isinstance(value, str):
-        stripped = value.strip()
-        if stripped.startswith(("{", "[")):
-            try:
-                structured = json.loads(value)
-            except (json.JSONDecodeError, TypeError):
-                structured = None
-            if isinstance(structured, (dict, list)):
-                # Scrubbing a serialized JSON envelope as opaque text can
-                # consume the backslash that escapes a quote after a Windows
-                # path, corrupting otherwise valid OAEP evidence. Preserve
-                # the envelope by scrubbing its values structurally.
-                return json.dumps(
-                    _scrub_public(structured, key),
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                )
-        if key.lower() in {"path", "root", "cwd", "workspace_path"} and (
-            value.startswith("/")
-            or _WINDOWS_ABSOLUTE.match(value)
-            or _URI_SCHEME.match(value)
-            or ".." in value.replace("\\", "/").split("/")
-        ):
-            return "[REDACTED ABSOLUTE PATH]"
-        scrubbed = _URL_CREDENTIAL.sub(r"\1[REDACTED]@", value)
-        scrubbed = _WINDOWS_PRIVATE_PATH.sub("[REDACTED PRIVATE PATH]", scrubbed)
-        scrubbed = _POSIX_PRIVATE_PATH.sub("[REDACTED PRIVATE PATH]", scrubbed)
-        return scrubbed
+    # [DISABLED] Public scrubbing disabled — returns value unchanged (no path/credential redaction)
     return value
+    # if _PRIVATE_REASONING_KEY.search(key):
+    #     return "[REDACTED]"
+    # if isinstance(value, Mapping):
+    #     return {str(child): _scrub_public(item, str(child)) for child, item in value.items()}
+    # if isinstance(value, list):
+    #     return [_scrub_public(item, key) for item in value]
+    # if isinstance(value, str):
+    #     stripped = value.strip()
+    #     if stripped.startswith(("{", "[")):
+    #         try:
+    #             structured = json.loads(value)
+    #         except (json.JSONDecodeError, TypeError):
+    #             structured = None
+    #         if isinstance(structured, (dict, list)):
+    #             return json.dumps(
+    #                 _scrub_public(structured, key),
+    #                 ensure_ascii=False,
+    #                 separators=(",", ":"),
+    #                 sort_keys=True,
+    #             )
+    #     if key.lower() in {"path", "root", "cwd", "workspace_path"} and (
+    #         value.startswith("/")
+    #         or _WINDOWS_ABSOLUTE.match(value)
+    #         or _URI_SCHEME.match(value)
+    #         or ".." in value.replace("\\", "/").split("/")
+    #     ):
+    #         return "[REDACTED ABSOLUTE PATH]"
+    #     scrubbed = _URL_CREDENTIAL.sub(r"\1[REDACTED]@", value)
+    #     scrubbed = _WINDOWS_PRIVATE_PATH.sub("[REDACTED PRIVATE PATH]", scrubbed)
+    #     scrubbed = _POSIX_PRIVATE_PATH.sub("[REDACTED PRIVATE PATH]", scrubbed)
+    #     return scrubbed
+    # return value
 
 
 def encode_cursor(sequence: int) -> str:

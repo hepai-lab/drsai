@@ -5,12 +5,12 @@
 The Windows desktop distribution has exactly two release artifacts:
 
 ```text
-OpenDrSaiSetup-win-x64.msi
-OpenDrSaiRuntime-win-x64.zip
+OpenDrSai-Windows-v{version}-Installer-x64.msi
+OpenDrSai-Windows-v{version}-x64.zip
 ```
 
-`OpenDrSaiSetup-win-x64.msi` is the small user-facing installer. The
-`OpenDrSaiSetup-{platform}-{arch}.msi` pattern is the required naming convention
+`OpenDrSai-Windows-v{version}-Installer-x64.msi` is the small user-facing installer. The
+`OpenDrSai-Windows-v{version}-Installer-x64.msi` pattern is the required naming convention
 for future installer builds. It does not contain the
 full desktop app or Python environment. It embeds the expected runtime URL,
 SHA256, and size, then waits while the bootstrapper downloads, verifies, and
@@ -42,7 +42,7 @@ completed successfully.
 PowerShell stages run through hidden, non-impersonated MSI custom actions, so
 neither installation nor removal opens a Command Prompt or PowerShell window.
 
-`OpenDrSaiRuntime-win-x64.zip` is the large OpenDrSai Runtime. It contains the
+`OpenDrSai-Windows-v{version}-x64.zip` is the large OpenDrSai Runtime. It contains the
 packaged Electron desktop app and a prepared `drsai-agent` Python environment.
 The user machine does not need Git, Node.js, Visual Studio Build Tools, or a
 network `pip install`.
@@ -50,7 +50,7 @@ network `pip install`.
 ## Runtime Layout
 
 ```text
-OpenDrSaiRuntime-win-x64.zip
+OpenDrSai-Windows-v{version}-x64.zip
   opendrsai-runtime.json
   app/
     OpenDrSai.exe
@@ -81,7 +81,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 Output:
 
 ```text
-apps\desktop\windows\release\bootstrapper\OpenDrSaiRuntime-win-x64.zip
+apps\desktop\windows\release\bootstrapper\OpenDrSai-Windows-v{version}-x64.zip
 ```
 
 ## Build MSI
@@ -98,7 +98,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 Output:
 
 ```text
-apps\desktop\windows\release\bootstrapper\OpenDrSai-Windows-Installer-x64.msi
+apps\desktop\windows\release\bootstrapper\OpenDrSai-Windows-v1.5.2-Installer-x64.msi
 ```
 
 For public releases, pass the public runtime URL while keeping `-RuntimePath` so

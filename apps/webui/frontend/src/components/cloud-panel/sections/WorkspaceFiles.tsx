@@ -905,34 +905,36 @@ const WorkspaceFiles: React.FC = () => {
     <DndProvider backend={HTML5Backend}>
       <div className="flex flex-col h-full space-y-2">
         {/* 工具栏 */}
-        {/* <div className="flex items-center justify-between gap-1.5 px-0.5 pt-0.5">
-          <span className="text-[10px] text-secondary"></span>
-          <div className="flex items-center gap-1">
+        <div className="flex items-center justify-between gap-1.5 px-0.5 pt-0.5">
+          <span className="min-w-0 truncate text-[11px] leading-relaxed text-secondary">
+            {t("cloud.toolbarHint")}
+          </span>
+          <div className="flex shrink-0 items-center gap-1">
             <button
               type="button" onClick={handleManualRefresh} disabled={filesLoading || syncing}
-              title="刷新文件列表"
-              className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-tertiary/20 text-secondary hover:bg-tertiary/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title={t("cloud.refresh")}
+              className="flex items-center gap-1 rounded-lg bg-tertiary/20 px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-tertiary/30 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <RotateCw className={`w-2.5 h-2.5 ${(filesLoading || syncing) ? 'animate-spin' : ''}`} />
-              {syncing ? '同步中…' : '刷新'}
+              <RotateCw className={`h-3 w-3 ${(filesLoading || syncing) ? "animate-spin" : ""}`} aria-hidden />
+              {syncing ? t("cloud.refreshing") : t("cloud.refresh")}
             </button>
             <button
               type="button" onClick={handleNewFolder}
-              title="新建文件夹"
-              className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-tertiary/20 text-secondary hover:bg-tertiary/30 transition-colors"
+              title={t("cloud.newFolder")}
+              className="flex items-center gap-1 rounded-lg bg-tertiary/20 px-2 py-1 text-[11px] font-medium text-secondary transition-colors hover:bg-tertiary/30"
             >
-              <FolderPlus className="w-2.5 h-2.5" /> 新建
+              <FolderPlus className="h-3 w-3" aria-hidden /> {t("cloud.newFolder")}
             </button>
             <button
               type="button" onClick={handleUploadClick} disabled={uploading}
-              title="上传文件到 GFS"
-              className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-accent/10 text-accent hover:bg-accent/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title={t("cloud.upload")}
+              className="flex items-center gap-1 rounded-lg bg-accent/10 px-2 py-1 text-[11px] font-medium text-accent transition-colors hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Upload className="w-2.5 h-2.5" />
-              {uploading ? '上传中…' : '上传'}
+              <Upload className="h-3 w-3" aria-hidden />
+              {uploading ? t("cloud.uploading") : t("cloud.upload")}
             </button>
           </div>
-        </div> */}
+        </div>
 
         {/* 面包屑 */}
         <div className="flex items-center gap-0.5 flex-wrap px-0.5 text-[11px] select-text">
@@ -967,7 +969,34 @@ const WorkspaceFiles: React.FC = () => {
           {filesLoading ? (
             <div className="text-center py-4 text-[11px] text-secondary">加载中…</div>
           ) : treeData.length === 0 ? (
-            <div className="text-center py-4 text-[11px] text-secondary">暂无文件</div>
+            <div className="flex h-full min-h-[220px] flex-col items-center justify-center px-4 text-center">
+              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10 text-accent">
+                <FolderOpen className="h-6 w-6" strokeWidth={1.5} aria-hidden />
+              </div>
+              <p className="text-sm font-medium text-primary">{t("cloud.emptyTitle")}</p>
+              <p className="mt-1.5 max-w-[280px] text-xs leading-relaxed text-secondary">
+                {t("cloud.emptyDesc")}
+              </p>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleUploadClick}
+                  disabled={uploading}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Upload className="h-3.5 w-3.5" aria-hidden />
+                  {uploading ? t("cloud.uploading") : t("cloud.upload")}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNewFolder}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-border-primary/25 bg-background/50 px-3 py-1.5 text-xs font-medium text-secondary transition-colors hover:border-accent/30 hover:text-primary"
+                >
+                  <FolderPlus className="h-3.5 w-3.5" aria-hidden />
+                  {t("cloud.newFolder")}
+                </button>
+              </div>
+            </div>
           ) : (
             <TreeRoot onDropToRoot={handleDropToRoot}>
               {treeData.map((node) => (

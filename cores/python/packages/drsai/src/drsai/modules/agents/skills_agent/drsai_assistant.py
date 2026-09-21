@@ -116,6 +116,15 @@ from drsai.backend.runtime.agent_kernel import DEFAULT_MAX_PARALLEL_TOOL_CALLS, 
 _DESKTOP_READ_ONLY_TOOLS = {
     "read", "grep", "glob", "task_get", "task_list", "Skill",
     "retrieve_from_memory", "read_session_memory_by_index", "web_search", "web_fetch",
+    # Reads a local index and returns evidence. Omitting it sent the tool to the
+    # unknown-tool fallback below, which classifies for external side effects and
+    # demands approval — so a second parallel lookup failed the whole Run.
+    "knowledge_search",
+    # GFS personal bucket tools. Without these they fall through to
+    # external_write+required; Desktop has no approval handler so the kernel
+    # auto-rejects, force-completes the tool_call with result=null, and the
+    # next turn fails with conversation_tool_result_missing.
+    "gfs_ls", "gfs_stat", "gfs_read", "gfs_share_url",
     "regression_list_suites", "regression_list_cases", "regression_get_case",
     "regression_preflight", "regression_history", "regression_get", "regression_events",
 }
@@ -224,6 +233,13 @@ def is_retryable_llm_error(error: BaseException) -> bool:
             "ReadTimeout",
         }:
             return True
+        # RuntimeError / AssertionError from "No final model result" indicate
+        # the streaming connection was silently dropped (e.g. GC-triggered
+        # connection-pool closure).  These are transient and should be retried.
+        if isinstance(current, (RuntimeError, AssertionError)):
+            msg = str(current).lower()
+            if "no final model result" in msg or "no model result" in msg:
+                return True
         current = current.__cause__ or current.__context__
     return False
 
@@ -629,11 +645,20 @@ class DrSaiAssistant(DrSaiAgent):
             dst_root = self._user_profile_manager.skills_dir
             for src_dir in self._skills_dir:
                 src_path = Path(src_dir)
+                if not src_path.exists():
+                    continue
                 for skill_folder in src_path.iterdir():
                     if skill_folder.is_dir():
                         dst = dst_root / skill_folder.name
                         if not dst.exists():
-                            shutil.copytree(skill_folder, dst)
+                            # Use symlink-safe copy: symlinks=False follows
+                            # links and copies target content.
+                            shutil.copytree(
+                                skill_folder,
+                                dst,
+                                symlinks=False,
+                                copy_function=shutil.copy2,
+                            )
         self._agent_skills_tools = []
 
         # === executor ===
@@ -707,6 +732,9 @@ class DrSaiAssistant(DrSaiAgent):
         # === LLM retry configuration ===
         self._llm_max_retries = llm_max_retries
         self._llm_retry_base_delay = llm_retry_base_delay
+        # Bounded so a model that keeps re-issuing the same batch ends the turn
+        # instead of looping. Reset at the start of every task.
+        self._approval_batch_retry = 0
 
     def _create_context(
         self,
@@ -1171,6 +1199,16 @@ class DrSaiAssistant(DrSaiAgent):
         try:
             user_skills_dir = self._user_profile_manager.skills_dir
 
+            # Load the persistent deletion tombstone (skills the user explicitly
+            # removed from the desktop UI). These must never be re-synced from the
+            # bundled repository, even on refresh or restart.
+            deleted_skills: set[str] = set()
+            try:
+                from drsai.backend.skills_api import _load_deleted_skills
+                deleted_skills = _load_deleted_skills()
+            except Exception:
+                pass
+
             # Load enabled_skills from cli_config (selective sync)
             enabled_skills: Optional[list[str]] = None
             try:
@@ -1200,6 +1238,10 @@ class DrSaiAssistant(DrSaiAgent):
                             if skill_folder.name not in enabled_skills:
                                 continue
 
+                        # Never re-sync skills the user explicitly deleted.
+                        if skill_folder.name in deleted_skills:
+                            continue
+
                         user_skill_folder = user_skills_dir / skill_folder.name
                         user_skill_file = user_skill_folder / "SKILL.md"
                         should_update = False
@@ -1213,8 +1255,25 @@ class DrSaiAssistant(DrSaiAgent):
 
                         if should_update:
                             if user_skill_folder.exists():
-                                shutil.rmtree(user_skill_folder)
-                            shutil.copytree(skill_folder, user_skill_folder)
+                                # If the existing user folder is a symlink/junction,
+                                # remove the link itself, not what it points to.
+                                import os as _os
+                                try:
+                                    if _os.path.islink(str(user_skill_folder)):
+                                        _os.unlink(str(user_skill_folder))
+                                    else:
+                                        shutil.rmtree(user_skill_folder)
+                                except OSError:
+                                    shutil.rmtree(user_skill_folder, ignore_errors=True)
+                            # Use symlink-safe copy: shutil.copytree with
+                            # symlinks=False follows links, but to be extra safe
+                            # we explicitly reject junction sources.
+                            shutil.copytree(
+                                skill_folder,
+                                user_skill_folder,
+                                symlinks=False,
+                                copy_function=shutil.copy2,
+                            )
                             logger.info(f"Updated skill '{skill_folder.name}' from system to user directory")
 
             # 1b. If enabled_skills is set, remove skills not in the list
@@ -1589,6 +1648,11 @@ class DrSaiAssistant(DrSaiAgent):
             if isinstance(last_task, BaseChatMessage) and isinstance(last_task.content, str):
                 command_text = last_task.content
         await self._install_attached_skills_from_task(task)
+        # ARCHIVED(2026-09-02): Desktop now follows the TUI legacy path, so
+        # `_shared_agent_kernel` is always None for Desktop/TUI agents and this
+        # kernel-stream branch never runs. The backend/runtime desktop-kernel
+        # middle layer is archived; Delegate/subagents are handled directly by
+        # _process_model_result / _execute_subagent below.
         use_kernel_stream = (
             getattr(self, "_shared_agent_kernel", None) is not None
             and not (command_text is not None and self.is_commands_mode(command_text))
@@ -1723,6 +1787,10 @@ class DrSaiAssistant(DrSaiAgent):
         """
         # ── Entry security check: clear residual elevated tools from previous turn ──
         self._clear_elevated_tools()
+        selected_skill = getattr(self, "_selected_skill_for_turn", None)
+        selected_required = getattr(self, "_selected_skill_required_tools", None) or []
+        if selected_skill and selected_required:
+            self._elevate_tools_for_skill(list(selected_required), str(selected_skill))
 
         # monitor the pause event
         if self.is_paused:
@@ -1730,7 +1798,7 @@ class DrSaiAssistant(DrSaiAgent):
                 chat_message=TextMessage(
                     content=f"The {self.name} is paused.",
                     source=self.name,
-                    metadata={"internal": "yes"},
+                    metadata={"internal": "no", "paused": "true"},
                 )
             )
             return
@@ -1975,7 +2043,7 @@ class DrSaiAssistant(DrSaiAgent):
                                     "The model returned empty output after multiple retries. "
                                     "Please try again later or start a new session.",
                             source=agent_name,
-                            metadata={"internal": "no"},
+                            metadata={"internal": "no", "error": "true"},
                         ),
                         inner_messages=inner_messages,
                     )
@@ -2055,7 +2123,7 @@ class DrSaiAssistant(DrSaiAgent):
                         chat_message=TextMessage(
                             content="\n\n(●'◡'●)抱歉，已达最大的任务循环次数，触发了保护措施，请重新调整您的询问方式或者更具体的告诉您的助手应该怎么做。",
                             source=agent_name,
-                            metadata={"internal": "no"},
+                            metadata={"internal": "no", "warning": "true"},
                         ),
                         inner_messages=inner_messages,
                     )
@@ -2067,7 +2135,7 @@ class DrSaiAssistant(DrSaiAgent):
                 chat_message=TextMessage(
                     content="The task was cancelled by the user.",
                     source=self._user_profile_manager.agent_name,
-                    metadata={"internal": "yes"},
+                    metadata={"internal": "no", "cancelled": "true"},
                 ),
                 inner_messages=inner_messages,
             )
@@ -2091,16 +2159,30 @@ class DrSaiAssistant(DrSaiAgent):
                     f"Tool batch validation failed: {e}"
                 )
             else:
-                error_content = (
-                    f"❌ 执行任务时发生错误: {type(e).__name__}: {e}\n\n"
-                    f"模型调用已重试 {self._llm_max_retries} 次仍然失败。请检查网络连接或模型配置后重试。\n"
-                    f"An error occurred after {self._llm_max_retries} retries: {e}"
-                )
+                # Use the actual retry count from the loop instead of always
+                # reporting self._llm_max_retries.  llm_retry_count is defined
+                # inside the try block; if the error occurred before the loop
+                # started, it may be unbound — fall back to 0.
+                _actual_retries = locals().get("llm_retry_count", 0)
+                if _actual_retries > 0:
+                    error_content = (
+                        f"❌ 执行任务时发生错误: {type(e).__name__}: {e}\n\n"
+                        f"模型调用已重试 {_actual_retries} 次后仍然失败。请检查网络连接或模型配置后重试。\n"
+                        f"An error occurred after {_actual_retries} retries: {e}"
+                    )
+                else:
+                    # Non-retryable error (is_retryable_llm_error returned False)
+                    # or error occurred before the LLM call loop started.
+                    error_content = (
+                        f"❌ 执行任务时发生错误: {type(e).__name__}: {e}\n\n"
+                        f"该错误不可自动重试，请检查输入或模型配置后重试。\n"
+                        f"An unretryable error occurred: {e}"
+                    )
             yield Response(
                 chat_message=TextMessage(
                     content=error_content,
                     source=self._user_profile_manager.agent_name,
-                    metadata={"internal": "no"},
+                    metadata={"internal": "no", "error": "true"},
                 ),
                 inner_messages=inner_messages,
             )
@@ -2555,13 +2637,36 @@ class DrSaiAssistant(DrSaiAgent):
         """
         verify_model_tool_calls(self._active_model_tool_snapshot or {}, model_result.content)
         tool_loop_policy = getattr(self, "_tool_loop_policy", normalize_tool_loop_policy())
-        execution_records = list(validate_tool_call_batch(
-            self._active_execution_tool_registry or {},
-            model_result.content,
-            max_parallel_tool_calls=tool_loop_policy["max_parallel_tool_calls"],
-            allow_homogeneous_approval_batch=True,
-            enforce_approval_batch=self._tool_approval_handler is not None,
-        ))
+        original_tool_calls = list(model_result.content)
+        deferred_approval_calls: List[Any] = []
+        try:
+            execution_records = list(validate_tool_call_batch(
+                self._active_execution_tool_registry or {},
+                original_tool_calls,
+                max_parallel_tool_calls=tool_loop_policy["max_parallel_tool_calls"],
+                allow_homogeneous_approval_batch=True,
+                enforce_approval_batch=self._tool_approval_handler is not None,
+            ))
+            active_tool_calls = original_tool_calls
+        except ValueError as exc:
+            if str(exc) != "approval_tool_must_be_single" or not original_tool_calls:
+                raise
+            # Models sometimes batch an approval-gated tool with other tools.
+            # Hard-failing the whole turn made Desktop chat unusable; keep the
+            # first call and return actionable errors for the remainder.
+            active_tool_calls = original_tool_calls[:1]
+            deferred_approval_calls = original_tool_calls[1:]
+            execution_records = list(validate_tool_call_batch(
+                self._active_execution_tool_registry or {},
+                active_tool_calls,
+                max_parallel_tool_calls=tool_loop_policy["max_parallel_tool_calls"],
+                allow_homogeneous_approval_batch=True,
+                enforce_approval_batch=self._tool_approval_handler is not None,
+            ))
+            try:
+                object.__setattr__(model_result, "content", active_tool_calls)
+            except Exception:
+                model_result.content = active_tool_calls  # type: ignore[misc]
         registry_metadata = {
             "execution_registry_sha256": str((self._active_execution_tool_registry or {}).get("sha256", "")),
             "tool_loop_policy_sha256": tool_loop_policy["sha256"],
@@ -2577,7 +2682,7 @@ class DrSaiAssistant(DrSaiAgent):
         }
 
         tool_call_msg = ToolCallRequestEvent(
-            content=model_result.content,
+            content=original_tool_calls,
             source=agent_name,
             models_usage=model_result.usage,
             metadata=registry_metadata,
@@ -2585,7 +2690,7 @@ class DrSaiAssistant(DrSaiAgent):
         inner_messages.append(tool_call_msg)
         logger.debug(tool_call_msg)
         yield tool_call_msg
-        tools_name = [tool.name for tool in model_result.content]
+        tools_name = [tool.name for tool in original_tool_calls]
         yield AgentLogEvent(
             title="I am using tools: " + " ".join(tools_name),
             source=agent_name,
@@ -2596,6 +2701,16 @@ class DrSaiAssistant(DrSaiAgent):
 
         # STEP 4B: Execute tool calls with special tool handling
         exec_results: List[FunctionExecutionResult] = []
+        for tool_call in deferred_approval_calls:
+            exec_results.append(FunctionExecutionResult(
+                content=(
+                    "Tools that require approval cannot be combined with other tools "
+                    "in the same turn. Re-issue this tool call alone in the next turn."
+                ),
+                name=tool_call.name,
+                call_id=tool_call.id,
+                is_error=True,
+            ))
 
         # ── Pre-scan: collect Delegate calls for potential parallel execution ──
         delegate_indices: Dict[int, Dict[str, Any]] = {}
@@ -2885,17 +3000,11 @@ class DrSaiAssistant(DrSaiAgent):
                         call_id=call_id,
                         is_error=True,
                     ))
-                    yield TextMessage(
-                        content=str(e) + "\n\n",
-                        source=agent_name,
-                        metadata={"interal": "no"},
-                    )
-                    yield StopMessage(
-                        content=str(e),
-                        source=agent_name,
-                    )
-                    return
-                    return
+                    # Do NOT return early — fall through to the end of
+                    # _process_model_result so exec_results are paired into
+                    # model_context.  An early return leaves unpaired
+                    # FunctionCall messages that cause API errors on the
+                    # next LLM round.
 
             elif tool_name == "UpdateUserConfig":
                 # UpdateUserConfig tool handling
@@ -3518,12 +3627,22 @@ class DrSaiAssistant(DrSaiAgent):
         next parent-agent LLM call.
         """
         safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub_agent_name).strip('_') or 'subagent'
-        if hasattr(message, 'source'):
-            src = message.source or ""
+        # Response is a wrapper: its visible chat message owns the source
+        # consumed by the gateway translator. Tag both the wrapper (when
+        # possible) and the nested chat message so a subagent final answer
+        # cannot leak into the parent assistant markdown stream.
+        targets = [message]
+        chat_message = getattr(message, "chat_message", None)
+        if chat_message is not None:
+            targets.append(chat_message)
+        for target in targets:
+            if not hasattr(target, "source"):
+                continue
+            src = getattr(target, "source", "") or ""
             if not src:
-                message.source = f"sub:{safe_name}"
+                target.source = f"sub:{safe_name}"
             elif not src.startswith("sub:"):
-                message.source = f"sub:{safe_name}/{src}"
+                target.source = f"sub:{safe_name}/{src}"
         return message
 
     async def _safe_close_subagent(self, subagent, sub_agent_name: str) -> None:
@@ -3575,34 +3694,37 @@ class DrSaiAssistant(DrSaiAgent):
             context: Optional background information.
             cancellation_token: Cancellation token for early termination.
         """
-        # 1. Depth check
-        self._check_delegate_depth()
-
-        # 2. Create subagent (remote / daemon if config type indicates it)
-        cfg = self._user_sub_agents.get(sub_agent_name, {})
-        agent_type = cfg.get("type", "DrSaiAgent")
-        if agent_type in ("HepAIWorkerAgent", "RemoteAgent"):
-            subagent = await self._create_remote_subagent(sub_agent_name)
-        elif agent_type == "DaemonAgent":
-            subagent = await self._create_daemon_subagent(sub_agent_name)
-        else:
-            subagent = await self._create_local_subagent(sub_agent_name)
-
-        # 3. Build task messages (Hermes-style: no parent history)
-        task_messages = self._build_subagent_messages(
-            prompt=prompt,
-            work_dir=str(self._work_dir),
-            context=context,
-        )
-
-        # 4. Execute with timeout — IMPORTANT: give each subagent its OWN
-        #    CancellationToken to prevent close() from cancelling the parent's
-        #    shared token (which would kill sibling parallel subagents).
-        timeout = cfg.get("timeout", self._subagent_timeout)
-        parent_ct = cancellation_token or CancellationToken()
-        ct = CancellationToken()  # subagent-own token
-
+        subagent = None
         try:
+            # 1. Depth check (inside try so DelegateDepthExceededError is
+            #    caught and yielded as a TextMessage instead of propagating
+            #    to the caller and killing the parent run).
+            self._check_delegate_depth()
+
+            # 2. Create subagent (remote / daemon if config type indicates it)
+            cfg = self._user_sub_agents.get(sub_agent_name, {})
+            agent_type = cfg.get("type", "DrSaiAgent")
+            if agent_type in ("HepAIWorkerAgent", "RemoteAgent"):
+                subagent = await self._create_remote_subagent(sub_agent_name)
+            elif agent_type == "DaemonAgent":
+                subagent = await self._create_daemon_subagent(sub_agent_name)
+            else:
+                subagent = await self._create_local_subagent(sub_agent_name)
+
+            # 3. Build task messages (Hermes-style: no parent history)
+            task_messages = self._build_subagent_messages(
+                prompt=prompt,
+                work_dir=str(self._work_dir),
+                context=context,
+            )
+
+            # 4. Execute with timeout — IMPORTANT: give each subagent its OWN
+            #    CancellationToken to prevent close() from cancelling the parent's
+            #    shared token (which would kill sibling parallel subagents).
+            timeout = cfg.get("timeout", self._subagent_timeout)
+            parent_ct = cancellation_token or CancellationToken()
+            ct = CancellationToken()  # subagent-own token
+
             # Propagate cancellation from parent to subagent via a watcher.
             async def _watch_parent_cancel(parent: CancellationToken, child: CancellationToken):
                 try:
@@ -3646,8 +3768,20 @@ class DrSaiAssistant(DrSaiAgent):
             )
         except DelegateDepthExceededError as e:
             yield TextMessage(content=str(e), source="system")
+        except Exception as e:
+            # Catch-all: any exception from subagent creation, lazy_init, or
+            # on_messages_stream that isn't TimeoutError or
+            # DelegateDepthExceededError.  Yield a TextMessage so the caller
+            # (delegate() or _process_model_result) receives *something*
+            # instead of the exception propagating and killing the run.
+            logger.exception(f"Unexpected error executing subagent '{sub_agent_name}': {e}")
+            yield TextMessage(
+                content=f"⚠️ Subagent '{sub_agent_name}' failed: {type(e).__name__}: {e}",
+                source="system",
+            )
         finally:
-            await self._safe_close_subagent(subagent, sub_agent_name)
+            if subagent is not None:
+                await self._safe_close_subagent(subagent, sub_agent_name)
 
     async def _execute_subagents_parallel(
         self,
@@ -3762,10 +3896,19 @@ class DrSaiAssistant(DrSaiAgent):
             sub_agent_type = sub_agent.get("type")
             if sub_agent_type == "CodeExecutorAgent":
                 venv_path = sub_agent.get("venv_path")
-                if venv_path:
-                    executor = create_local_venv(work_dir=venv_path)
-                else:
-                    executor = self._local_executor or create_local_venv(work_dir=self._user_profile_manager.tmp_dir)
+                # Keep dependencies and caches outside the user Workspace,
+                # including when a custom venv root is configured. Execute
+                # every relative output path against the Workspace bound to
+                # the current Run.
+                runtime_workspace = getattr(self, "_runtime_workspace_path", None)
+                if runtime_workspace is None:
+                    raise RuntimeError("workspace_execution_context_unavailable")
+                artifact_dir = Path(runtime_workspace) / "artifacts"
+                artifact_dir.mkdir(parents=True, exist_ok=True)
+                executor = self._local_executor or create_local_venv(
+                    work_dir=runtime_workspace,
+                    environment_dir=venv_path or self._user_profile_manager.tmp_dir,
+                )
                 subagent = CodeExecutorAgent(
                     name=sub_agent_name,
                     code_executor=executor,

@@ -2,15 +2,15 @@
 from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from ...datamodel.db import AgentModeSettings, AgentModeConfig, UserAgents
+from ...datamodel.db import AgentModeSettings, AgentModeConfig
 from drsai_ui.ui_backend.backend.database import DatabaseManager
 from ..deps import get_db
 from ..auth_source import get_user_source
 from .....drsai_adapter.sso.jwt import get_current_user_id
 from .....agent_factory.agent_mode_cofigs import (
-    get_default_agent_mode_config,
-    get_agents_mode
-    )
+    find_catalog_agent,
+    get_agents_mode,
+)
 
 import uuid
 
@@ -43,17 +43,7 @@ async def update_agents_mode(
     if current_user != user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     try:
-        response = db.get(UserAgents, filters={"user_id": user_id})
-        if response.status and response.data:
-            user_agents: UserAgents = response.data[0]
-        else:
-            raise HTTPException(status_code=500, detail="Failed to find user's agents")
-        agents_list = user_agents.agents
-        upsert_agent = None
-        for agent in agents_list:
-            if agent.get("id") == id:
-                upsert_agent = agent
-                break
+        upsert_agent = find_catalog_agent(user_id, id, db)
         if not upsert_agent:
             raise HTTPException(status_code=500, detail="Failed to find agent")
 
@@ -61,6 +51,7 @@ async def update_agents_mode(
         if not response.status or not response.data:
             raise HTTPException(status_code=404, detail="User's AgentModeSettings not found")
         AgentsMode: AgentModeSettings = response.data[0]
+        AgentsMode.agents_mode = list(AgentsMode.agents_mode or [])
         AgentsMode.agents_mode.append(upsert_agent)
         response = db.upsert(AgentsMode)
         if not response.status:

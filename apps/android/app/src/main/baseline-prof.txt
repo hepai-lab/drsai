@@ -1,0 +1,19 @@
+# P10 startup profile. Keep the launcher, first Compose frame and application bootstrap
+# compiled even though the APK also carries the large Python Full Runtime payload.
+Lai/drsai/remote/ExternalEntryActivity;
+Lai/drsai/remote/MainActivity;
+Lai/drsai/remote/AppViewModel;
+Lai/drsai/remote/ui/OpenDrSaiAppKt;
+Lai/drsai/remote/data/AndroidUpdateLifecycle;
+Lai/drsai/remote/remote/data/AndroidDevicePresence;
+Lai/drsai/remote/remote/device/AndroidRemoteBackgroundSync;
+Lai/drsai/remote/**;
+Landroidx/activity/**;
+Landroidx/compose/**;
+Landroidx/lifecycle/**;
+Landroidx/work/**;
+HSPLai/drsai/remote/**;->**(**)**
+HSPLandroidx/activity/**;->**(**)**
+HSPLandroidx/compose/**;->**(**)**
+HSPLandroidx/lifecycle/**;->**(**)**
+HSPLandroidx/work/**;->**(**)**

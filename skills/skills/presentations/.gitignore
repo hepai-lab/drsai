@@ -1,0 +1,22 @@
+# Local .gitignore for the presentations skill.
+#
+# The repository-root .gitignore ignores "node_modules" globally.
+# This skill uses a vendored @oai/artifact-tool (not on public npm),
+# installed via the "file:vendor/@oai/artifact-tool" protocol in
+# package.json. npm symlinks the vendored package into node_modules/,
+# so we must un-ignore those specific paths here.
+#
+# Note: git cannot re-include a file whose parent directory is already
+# excluded *within the same .gitignore file*, but a nested .gitignore
+# can override a parent .gitignore's pattern for its own subtree.
+
+# Track the vendored package (symlinked by npm) and its dependencies.
+!node_modules/
+!node_modules/@oai/
+!node_modules/@oai/artifact-tool/
+!node_modules/@oai/artifact-tool/**
+
+# Ignore everything else under node_modules (sharp, skia-canvas, etc.
+# are installed from public npm and don't need to be committed).
+node_modules/*
+!node_modules/@oai/

@@ -34,6 +34,10 @@ import ai.drsai.remote.data.MIGRATION_9_10
 import ai.drsai.remote.data.MIGRATION_10_11
 import ai.drsai.remote.data.MIGRATION_11_12
 import ai.drsai.remote.data.MIGRATION_12_13
+import ai.drsai.remote.data.MIGRATION_13_14
+import ai.drsai.remote.data.MIGRATION_14_15
+import ai.drsai.remote.data.MIGRATION_15_16
+import ai.drsai.remote.data.MIGRATION_12_13
 import ai.drsai.remote.runtime.python.PythonRunRecovery
 import ai.drsai.remote.runtime.python.RoomPythonCheckpointStore
 import ai.drsai.remote.runtime.python.OaepBoundPythonCheckpointStore
@@ -82,6 +86,7 @@ class RunRecoveryWorker(context: Context, parameters: WorkerParameters) : Corout
             .addMigrations(
                 MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
                 MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
+                MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
             ).build()
         return try {
             val run = database.workbenchDao().runById(runId)
@@ -126,7 +131,7 @@ class RunRecoveryWorker(context: Context, parameters: WorkerParameters) : Corout
         val open = PendingIntent.getActivity(
             applicationContext, runId.hashCode(),
             oaepRunOpenIntent(
-                applicationContext, runId, sessionId, interactionId, ACTION_OPEN_RECOVERABLE_RUN,
+                applicationContext, runId, sessionId, inputData.getString(KEY_SUBJECT).orEmpty(), interactionId, ACTION_OPEN_RECOVERABLE_RUN,
             ),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
@@ -139,13 +144,13 @@ class RunRecoveryWorker(context: Context, parameters: WorkerParameters) : Corout
             .addAction(0, applicationContext.getString(R.string.run_recovery_continue), PendingIntent.getActivity(
                 applicationContext,
                 LocalRunNotificationController.stableNotificationId(runId) xor 0x02000000,
-                localRunActionIntent(applicationContext, ACTION_CONTINUE_LOCAL_RUN, runId, sessionId),
+                localRunActionIntent(applicationContext, ACTION_CONTINUE_LOCAL_RUN, inputData.getString(KEY_SUBJECT).orEmpty(), runId, sessionId),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             ))
             .addAction(0, applicationContext.getString(R.string.run_recovery_cancel), PendingIntent.getActivity(
                 applicationContext,
                 LocalRunNotificationController.stableNotificationId(runId),
-                localRunActionIntent(applicationContext, ACTION_STOP_LOCAL_RUN, runId, sessionId),
+                localRunActionIntent(applicationContext, ACTION_STOP_LOCAL_RUN, inputData.getString(KEY_SUBJECT).orEmpty(), runId, sessionId),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             ))
             .build()

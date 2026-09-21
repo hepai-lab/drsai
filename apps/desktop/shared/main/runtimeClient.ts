@@ -31,6 +31,7 @@ import type {
   DesktopMobileRemoteDiagnostics,
   GatewayStatus,
   WorkspaceProject,
+  OaepInputPart,
   OaepInputResource,
   RuntimeModelRef,
 } from "../api/desktopApi";
@@ -119,13 +120,23 @@ export interface AgentBackendCapability {
   adapter_version?: string;
   readiness?: {
     refreshed_at: string;
+    runtime?: BackendReadinessFacet;
     transport: BackendReadinessFacet;
+    process?: BackendReadinessFacet;
     installed: BackendReadinessFacet;
     contract: BackendReadinessFacet;
     account: BackendReadinessFacet;
     models: BackendReadinessFacet;
     executable: BackendReadinessFacet & { blockers?: string[] };
   };
+  binary_identity?: {
+    path?: string | null;
+    source?: string | null;
+    version?: string | null;
+    binary_digest?: string | null;
+    schema_digest?: string | null;
+    release_safe?: boolean | null;
+  } | null;
   model_catalog?: {
     generation?: number | null;
     stale?: boolean;
@@ -223,8 +234,9 @@ export interface RuntimeWorkspaceEvent {
 
 export interface RuntimeSessionList {
   object: "list";
-  data: unknown[];
+  data: RuntimeSession[];
   total: number;
+  offset?: number;
 }
 
 export interface RuntimeWorkspaceSessionCatalogEvent {
@@ -239,7 +251,21 @@ export interface RuntimeWorkspaceSessionCatalogStream {
   events: ReadableStream<Uint8Array>;
 }
 
-export interface RuntimeSession { session_id: string; workspace_id: string; title: string; archived?: boolean; lifecycle?: string; created_at?: string; updated_at?: string; message_count?: number; }
+export interface RuntimeSession {
+  session_id: string;
+  workspace_id: string;
+  title: string;
+  archived?: boolean;
+  lifecycle?: string;
+  origin?: {
+    kind: "channel";
+    provider: "wechat" | string;
+    binding_id: string;
+  };
+  created_at?: string;
+  updated_at?: string;
+  message_count?: number;
+}
 export interface RuntimeBackendSessionSyncResult {
   backend_id: string; workspace_id: string; discovered: number; active: number; archived: number;
   created: number; updated: number; skipped: number; conflicts?: number; sessions: RuntimeSession[];
@@ -248,6 +274,11 @@ export interface RuntimeBackendSessionSyncResult {
 export interface BackendReadinessFacet {
   state: "ready" | "stopped" | "fault" | "missing" | "blocked" | "stale" | "empty" | "signed_in" | "signed_out" | "unavailable" | "unknown";
   reason?: string | null;
+  observed_at?: string | null;
+  last_success_at?: string | null;
+  retryable?: boolean;
+  actions?: string[];
+  stale?: boolean;
 }
 export interface RuntimeBackendSessionBindingStatus {
   session_id: string;
@@ -340,7 +371,7 @@ export interface RuntimeConversationItem {
   role: "user" | "assistant" | "system" | "tool" | null;
   revision: number;
   session_sequence: number;
-  source_client: "windows" | "android" | "runtime";
+  source_client: "windows" | "android" | "runtime" | "wechat";
   source_message_id: string | null;
   created_at: string;
   updated_at: string;
@@ -414,7 +445,7 @@ export interface RuntimeClient {
   getBackendAccount(backendId: string, refresh?: boolean): Promise<BackendAccountStatus>;
   getBackendModels(backendId: string, refresh?: boolean): Promise<BackendModelCatalog>;
   restartBackend(backendId: string): Promise<Record<string, unknown>>;
-  syncBackendSessions(workspaceId: string, backendId: string, signal?: AbortSignal): Promise<RuntimeBackendSessionSyncResult>;
+  syncBackendSessions(workspaceId: string, backendId: string, signal?: AbortSignal, includeArchived?: boolean): Promise<RuntimeBackendSessionSyncResult>;
   syncBackendSessionHistory(sessionId: string, signal?: AbortSignal, repair?: boolean, cursor?: string, limit?: number): Promise<{ session_id: string; backend_id: string; imported: number; total: number; runs?: number; warnings?: number; mapping_version?: string; next_cursor?: string | null; estimated_total?: number; truncated?: boolean; loaded_runs?: number }>;
   getBackendSessionBinding(sessionId: string): Promise<RuntimeBackendSessionBindingStatus>;
   startBackendLogin(backendId: string, type?: "chatgpt" | "chatgptDeviceCode"): Promise<BackendLoginStart>;
@@ -432,11 +463,11 @@ export interface RuntimeClient {
   mergeWorktree(workspaceId: string, worktreeId: string, idempotencyKey: string, expectedHead?: string): Promise<RuntimeWorktree>;
   archiveWorktree(workspaceId: string, worktreeId: string, idempotencyKey: string): Promise<RuntimeWorktree>;
   removeWorktree(workspaceId: string, worktreeId: string, expectedStatus: "merged" | "archived", idempotencyKey: string): Promise<RuntimeWorktree>;
-  listSessions(workspaceId: string): Promise<RuntimeSessionList>;
+  listSessions(workspaceId: string, offset?: number, limit?: number): Promise<RuntimeSessionList>;
   getSession(sessionId: string): Promise<RuntimeSession>;
   openWorkspaceSessionCatalogStream(workspaceId: string, signal: AbortSignal): Promise<RuntimeWorkspaceSessionCatalogStream>;
-  createSession(workspaceId: string, title?: string): Promise<RuntimeSession>;
-  updateSession(sessionId: string, updates: { archived?: boolean; title?: string }): Promise<RuntimeSession>;
+  createSession(workspaceId: string, title?: string, config?: { model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession>;
+  updateSession(sessionId: string, updates: { archived?: boolean; title?: string; lifecycle?: "active" | "archived" | "removed"; model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession>;
   importLegacyDesktopAgentRun(request: LegacyDesktopAgentRunMigrationRequest): Promise<LegacyDesktopAgentRunMigrationResult>;
   getConversationSnapshot(sessionId: string): Promise<RuntimeConversationSnapshot>;
   listSessionEvents(sessionId: string, afterSequence?: number, limit?: number): Promise<RuntimeSessionEventPage>;
@@ -455,7 +486,7 @@ export interface RuntimeClient {
     runId: string,
     prompt: string,
     signal?: AbortSignal,
-    provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[]; inputResources?: OaepInputResource[]; model?: string; modelSelection?: RuntimeModelRef; metadata?: Record<string, unknown> },
+    provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[]; inputResources?: OaepInputResource[]; inputParts?: OaepInputPart[]; model?: string; modelSelection?: RuntimeModelRef; metadata?: Record<string, unknown> },
     auth?: RuntimeExecutionAuth,
   ): Promise<{ run: RuntimeAgentRun; result: unknown }>;
   cancelAgentRun(runId: string): Promise<RuntimeAgentRun>;
@@ -493,7 +524,12 @@ export interface RuntimeClient {
   decideRunApproval(approvalId: string, decision: "approved" | "denied", auth?: RuntimeExecutionAuth): Promise<Record<string, unknown> & { approval_id: string; status: string }>;
   respondAgentApproval(runId: string, approvalId: string, decision: "accept" | "acceptForSession" | "decline" | "cancel"): Promise<void>;
   createRun(request: RuntimeRunRequest, signal?: AbortSignal): Promise<RuntimeRunStream>;
-  executeOWOP<K extends OWOPOperation>(workspaceId: string, operation: K, params: OWOPParamsByOperation[K]): Promise<Record<string, unknown>>;
+  executeOWOP<K extends OWOPOperation>(
+    workspaceId: string,
+    operation: K,
+    params: OWOPParamsByOperation[K],
+    context?: { sessionId?: string; runId?: string },
+  ): Promise<Record<string, unknown>>;
   requestFiles<T>(workspaceId: string, endpoint: string, init?: RequestInit): Promise<T>;
   requestGit<T>(workspaceId: string, endpoint: string, init?: RequestInit): Promise<T>;
   ptyEndpoint(): string;
@@ -545,6 +581,7 @@ export function promoteRuntimeAccess(access: RuntimeAccess, runtime: RuntimeIden
 export interface RuntimeExecutionAuth {
   authMode: "password" | "api_key" | "sso" | "oidc" | "offline";
   accessToken?: string;
+  refreshToken?: string;
   userId: string;
 }
 
@@ -557,7 +594,8 @@ export class RuntimeProtocolCompatibilityError extends Error {
 
 export class RuntimeClientGenerationInvalidatedError extends Error {
   readonly code = "runtime_client_generation_invalidated";
-  readonly retryable = false;
+  /** Callers should reconnect with a fresh Runtime client; the previous generation is gone. */
+  readonly retryable = true;
   constructor() {
     super("Runtime connection generation changed; reconnect using the current Runtime endpoint.");
     this.name = "RuntimeClientGenerationInvalidatedError";
@@ -726,8 +764,12 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return result.worktree;
   }
 
-  listSessions(workspaceId: string): Promise<RuntimeSessionList> {
-    return this.requestJson(`/v1/sessions?workspace_id=${encodeURIComponent(workspaceId)}&limit=100`);
+  listSessions(workspaceId: string, offset = 0, limit = 100): Promise<RuntimeSessionList> {
+    const safeOffset = Math.max(0, Math.floor(offset));
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+    return this.requestJson(
+      `/v1/sessions?workspace_id=${encodeURIComponent(workspaceId)}&offset=${safeOffset}&limit=${safeLimit}`,
+    );
   }
 
   getSession(sessionId: string): Promise<RuntimeSession> {
@@ -748,11 +790,11 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return { response, events: response.body };
   }
 
-  createSession(workspaceId: string, title = "New session"): Promise<RuntimeSession> {
-    return this.requestJson("/v1/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspace_id: workspaceId, title }) });
+  createSession(workspaceId: string, title = "New session", config?: { model?: string; reasoning_effort?: string; plan_mode?: boolean }): Promise<RuntimeSession> {
+    return this.requestJson("/v1/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspace_id: workspaceId, title, ...(config ?? {}) }) });
   }
 
-  updateSession(sessionId: string, updates: { archived?: boolean; title?: string }): Promise<RuntimeSession> {
+  updateSession(sessionId: string, updates: { archived?: boolean; title?: string; lifecycle?: "active" | "archived" | "removed" }): Promise<RuntimeSession> {
     return this.requestJson(`/v1/sessions/${encodeURIComponent(sessionId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
   }
 
@@ -801,9 +843,9 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     return this.requestJson(`/v1/agent-backends/${this.backendId(backendId)}/restart`, { method: "POST" });
   }
 
-  syncBackendSessions(workspaceId: string, backendId: string, signal?: AbortSignal): Promise<RuntimeBackendSessionSyncResult> {
+  syncBackendSessions(workspaceId: string, backendId: string, signal?: AbortSignal, includeArchived = false): Promise<RuntimeBackendSessionSyncResult> {
     this.assertResourceId("Workspace", workspaceId);
-    return this.requestJson(`/v1/workspaces/${encodeURIComponent(workspaceId)}/agent-backends/${this.backendId(backendId)}/sessions/sync`, { method: "POST", signal });
+    return this.requestJson(`/v1/workspaces/${encodeURIComponent(workspaceId)}/agent-backends/${this.backendId(backendId)}/sessions/sync?include_archived=${includeArchived ? "true" : "false"}`, { method: "POST", signal });
   }
 
   syncBackendSessionHistory(sessionId: string, signal?: AbortSignal, repair = false, cursor?: string, limit = 100): Promise<{ session_id: string; backend_id: string; imported: number; total: number; runs?: number; warnings?: number; mapping_version?: string; next_cursor?: string | null; estimated_total?: number; truncated?: boolean; loaded_runs?: number }> {
@@ -932,7 +974,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     runId: string,
     prompt: string,
     signal?: AbortSignal,
-    provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[]; inputResources?: OaepInputResource[]; model?: string; modelSelection?: RuntimeModelRef; metadata?: Record<string, unknown> },
+    provenance?: { sourceClient: "windows" | "android"; sourceMessageId: string; attachmentRefs?: string[]; inputResources?: OaepInputResource[]; inputParts?: OaepInputPart[]; model?: string; modelSelection?: RuntimeModelRef; metadata?: Record<string, unknown> },
     auth?: RuntimeExecutionAuth,
   ): Promise<{ run: RuntimeAgentRun; result: unknown }> {
     return this.requestJson(`/v1/runs/${encodeURIComponent(runId)}/execute`, { method: "POST", signal,
@@ -942,6 +984,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
           ...(auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {}),
           "X-OpenDrSai-Auth-Mode": auth.authMode,
           "X-OpenDrSai-Principal": auth.userId,
+          ...(auth.refreshToken ? { "X-OpenDrSai-Refresh-Token": auth.refreshToken } : {}),
         } : {}),
       }, body: JSON.stringify({
         prompt,
@@ -954,12 +997,16 @@ abstract class HttpRuntimeClient implements RuntimeClient {
         ...(typeof provenance?.metadata?.reasoning_effort === "string"
           ? { reasoning_effort: provenance.metadata.reasoning_effort }
           : {}),
+        ...(typeof provenance?.metadata?.plan_mode === "boolean"
+          ? { plan_mode: provenance.metadata.plan_mode }
+          : {}),
         metadata: provenance ? {
           ...(provenance.metadata ?? {}),
           source_client: provenance.sourceClient,
           source_message_id: provenance.sourceMessageId,
           attachment_refs: provenance.attachmentRefs ?? [],
           input_resources: provenance.inputResources ?? [],
+          input_parts: provenance.inputParts,
         } : {},
       }) });
   }
@@ -1189,6 +1236,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
       ...(auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {}),
       "X-OpenDrSai-Auth-Mode": auth.authMode,
       "X-OpenDrSai-Principal": auth.userId,
+      ...(auth.refreshToken ? { "X-OpenDrSai-Refresh-Token": auth.refreshToken } : {}),
       ...(context?.sessionId ? { "X-OpenDrSai-Session-Id": context.sessionId } : {}),
       ...(context?.runId ? { "X-OpenDrSai-Run-Id": context.runId } : {}),
     };
@@ -1206,6 +1254,15 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     }
   }
 
+  /**
+   * @deprecated V1 legacy chat-completions path. The V2 desktop gateway
+   * (port 28643) does not serve `/v1/chat/completions`. The authoritative
+   * chat flow is the OAEP path: `createSession` → `subscribeOaepSession`
+   * → `createAgentRun` → `executeAgentRun`. This method is retained only
+   * for RemoteRuntimeClient SSH connections to legacy gateways and is
+   * never called for local desktop runtime. See `desktopGateway/service.ts`
+   * for the V2 implementation.
+   */
   async createRun(request: RuntimeRunRequest, signal?: AbortSignal): Promise<RuntimeRunStream> {
     const requestId = randomUUID();
     const response = await this.request("/v1/chat/completions", {
@@ -1222,6 +1279,7 @@ abstract class HttpRuntimeClient implements RuntimeClient {
     workspaceId: string,
     operation: K,
     params: OWOPParamsByOperation[K],
+    context?: { sessionId?: string; runId?: string },
   ): Promise<Record<string, unknown>> {
     this.assertResourceId("Workspace", workspaceId);
     const requestId = randomUUID();
@@ -1231,7 +1289,12 @@ abstract class HttpRuntimeClient implements RuntimeClient {
       | { ok: false; error: { code: string; message: string; correlation_id: string; retryable: boolean; details: Record<string, unknown> } }
     >("/v1/owop", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Correlation-ID": correlationId },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Correlation-ID": correlationId,
+        ...(context?.sessionId ? { "X-OpenDrSai-Session-ID": context.sessionId } : {}),
+        ...(context?.runId ? { "X-OpenDrSai-Run-ID": context.runId } : {}),
+      },
       body: JSON.stringify({
         version: "1.0", request_id: requestId, correlation_id: correlationId,
         workspace_id: workspaceId, operation, params,
@@ -1723,6 +1786,27 @@ export function invalidateRuntimeClientRegistry(streamIdentity?: string): void {
 }
 
 export async function connectRuntimeClientForWorkspace(
+  workspacePath: string,
+  workspaceId?: string,
+  workspaceName?: string,
+): Promise<{ client: RuntimeClient; workspaceId: string }> {
+  let lastError: unknown;
+  // Thread switches and concurrent hydration often race a Runtime generation
+  // change. One bounded reconnect avoids surfacing a transient connection
+  // invalidation as a conversation-history failure banner.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await connectRuntimeClientForWorkspaceOnce(workspacePath, workspaceId, workspaceName);
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof RuntimeClientGenerationInvalidatedError) || attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
+async function connectRuntimeClientForWorkspaceOnce(
   workspacePath: string,
   workspaceId?: string,
   workspaceName?: string,

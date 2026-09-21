@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "feature_id": "M08-F01",
+  "acceptance_run_id": "p10-round-039-long-task-state",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "five_fifteen_thirty_minute_fixtures_passed": true,
+    "page_and_notification_share_one_step_snapshot": true,
+    "notification_returns_to_exact_run_and_session": true,
+    "state_and_sequence_are_monotonic": true,
+    "heartbeat_updates_are_rate_limited": true,
+    "no_blocking_loop_or_main_thread_wait": true
+  },
+  "tests": {
+    "LongTaskStateProjectorTest": "4 tests, 0 failures",
+    "testDebugUnitTest": "712 tests, 0 failures, 2 skipped"
+  }
+}

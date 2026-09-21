@@ -40,6 +40,7 @@ import { $transcript, $transcriptGeneration } from '../app/turnStore.js'
 import { $toolDetail } from '../app/uiStore.js'
 import { $terminalSize } from '../hooks/terminalSizeStore.js'
 import { theme } from '../theme.js'
+import { resourceCommand } from '../resourcePresentation.js'
 
 import { MarkdownRenderer, stripThinkBlocks } from './markdownRenderer.js'
 import { StreamingAssistant } from './streamingAssistant.js'
@@ -306,6 +307,9 @@ function AssistantBlock({ turn }: { turn: AssistantTurn }) {
             if (!tool) return null
             return <ToolCallLine key={part.id} tool={tool} />
           }
+          if (part.kind === 'artifact') {
+            return <Text key={part.id} color={theme.primary}>{formatArtifactLine(part)}</Text>
+          }
           // Text part
           let cleanText = stripTodoWriteArtifacts(getPartText(part))
           if (!cleanText) return null
@@ -379,6 +383,15 @@ function AssistantBlock({ turn }: { turn: AssistantTurn }) {
       )}
     </Box>
   )
+}
+
+function formatArtifactLine(part: import('../app/types.js').ArtifactContentPart): string {
+  const location = part.path || part.name
+  const size = typeof part.size === 'number' ? ` · ${part.size} bytes` : ''
+  const command = part.resourceRef
+    ? resourceCommand(part.resourceRef, part.artifactId)
+    : `/artifact ${part.artifactId}`
+  return `  📄 ${part.name} · ${location}${size} · ${command}`
 }
 
 /**

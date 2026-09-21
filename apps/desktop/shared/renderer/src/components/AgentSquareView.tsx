@@ -44,7 +44,10 @@ export function AgentSquareView({
   const [platformStatus, setPlatformStatus] = useState<PlatformAgentStatus | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [group, setGroup] = useState<"all" | "local" | "official" | "mine">("all");
-  const [availability, setAvailability] = useState<"all" | "available" | "unavailable">("all");
+  // Unavailable cached/platform entries are diagnostic data, not selectable
+  // agents. Keep them accessible through the explicit filter, but do not show
+  // them in the normal Agent Square view.
+  const [availability, setAvailability] = useState<"all" | "available" | "unavailable">("available");
   const [sort, setSort] = useState<"default" | "name">("default");
   const [detailAgent, setDetailAgent] = useState<DesktopAgent | null>(null);
 
@@ -84,10 +87,10 @@ export function AgentSquareView({
       if (!normalizedSearch) return true;
       return [
         agent.name,
-        agent.description,
+        agent.description ?? "",
         agent.localizedDescription?.zh,
         agent.localizedDescription?.en,
-        agent.owner,
+        agent.owner ?? "",
         agent.url,
         agent.mode,
         ...(agent.capabilities ?? []),
@@ -780,7 +783,7 @@ function AgentStatusPill({
   );
 }
 
-function AgentLogo({
+export function AgentLogo({
   agent,
   large = false,
 }: {
@@ -937,18 +940,25 @@ function getCapabilityLabel(capability: string, zh: boolean): string {
 function getAgentDescription(agent: DesktopAgent, zh: boolean): string {
   const localized = agent.localizedDescription;
   const selected = zh ? localized?.zh ?? localized?.en : localized?.en ?? localized?.zh;
-  if (selected) return selected;
-  const text = agent.description.trim();
-  if (!text.startsWith("{") || !text.endsWith("}")) return text;
+  const resolved = resolveLocalizedText(selected, zh);
+  if (resolved) return resolved;
+  return resolveLocalizedText((agent.description ?? "").trim(), zh);
+}
+
+/** Match WebUI `getLocalizedDescription` for plain text or `{"zh","en"}` JSON. */
+function resolveLocalizedText(text: string | undefined, zh: boolean): string {
+  const value = (text ?? "").trim();
+  if (!value) return "";
+  if (!value.startsWith("{") || !value.endsWith("}")) return value;
   try {
-    const legacy = JSON.parse(text) as unknown;
-    if (!legacy || typeof legacy !== "object" || Array.isArray(legacy)) return text;
+    const legacy = JSON.parse(value) as unknown;
+    if (!legacy || typeof legacy !== "object" || Array.isArray(legacy)) return value;
     const record = legacy as Record<string, unknown>;
     const en = typeof record.en === "string" ? record.en.trim() : "";
     const zhText = typeof record.zh === "string" ? record.zh.trim() : "";
-    return (zh ? zhText || en : en || zhText) || text;
+    return (zh ? zhText || en : en || zhText) || value;
   } catch {
-    return text;
+    return value;
   }
 }
 

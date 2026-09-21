@@ -30,14 +30,15 @@ class DesktopHandoffOaepTest {
             "run-1", "handoff-1",
             DesktopHandoffDecision(
                 DesktopHandoffState.OFFER, setOf(RuntimeCapability.MCP_STDIO), target,
-                "Confirm Desktop execution", DesktopHandoffKind.MCP_STDIO, "filesystem",
+                "Confirm Desktop execution", DesktopHandoffKind.MCP_STDIO, "filesystem", targets = listOf(target),
             ),
         )
         assertTrue(events.first() is NormalizedAgentEvent.RunStarted)
         val created = events[1] as NormalizedAgentEvent.ItemCreated
         val content = created.content as OaepInteractionContent
         assertEquals("handoff", content.interactionType)
-        assertEquals("desktop-1", content.requestSummary["target_runtime_id"])
+        assertEquals(listOf("desktop-1"), content.requestSummary["candidate_runtime_ids"])
+        assertFalse(content.requestSummary.containsKey("target_runtime_id"))
         assertEquals("stdio", content.requestSummary["transport"])
         assertFalse(content.requestSummary.containsKey("prompt"))
         assertTrue(events.last() is NormalizedAgentEvent.RunWaiting)

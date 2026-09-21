@@ -1,4 +1,4 @@
-import "./developmentLaunchEnvironment";
+﻿import "./developmentLaunchEnvironment";
 import { execFile, spawn, type ChildProcess } from "child_process";
 import {
   createReadStream,
@@ -8,7 +8,7 @@ import {
   realpathSync,
   writeFileSync,
 } from "fs";
-import { copyFile, mkdir, open as openFile, rename, stat as statFile, unlink, writeFile } from "fs/promises";
+import { copyFile, mkdir, open as openFile, readFile, rename, stat as statFile, unlink, writeFile } from "fs/promises";
 import { createHash } from "crypto";
 import {
   app,
@@ -16,6 +16,7 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  nativeImage,
   protocol,
   powerMonitor,
   screen,
@@ -29,10 +30,14 @@ import {
   type WebContents,
 } from "electron";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
-import { hostname } from "os";
+import { hostname, tmpdir } from "os";
 import { isIP } from "net";
 import { pathToFileURL } from "url";
 import { is } from "@electron-toolkit/utils";
+import {
+  basenameWithCanonicalExtension,
+  resolveCanonicalExtension,
+} from "../../../shared/main/fileExtension";
 import {
   MAIN_WINDOW_STATE_VERSION,
   loadMainWindowState,
@@ -51,6 +56,11 @@ import {
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { bootstrapDesktop } from "./bootstrap";
 import { connectRuntimeClientForWorkspace, isLocalRuntimeUnavailableError, LocalRuntimeClient, withRuntimeClientForWorkspace } from "./runtimeClient";
+import type { RuntimeSession } from "../../../shared/main/runtimeClient";
+import { registerConversationResourceReadIpc } from "../../../shared/main/conversationResourceIpc";
+import { registerConversationResourceDownloadIpc } from "../../../shared/main/conversationResourceDownloadIpc";
+import { registerConversationResourceSubscriptionIpc } from "../../../shared/main/conversationResourceSubscriptionIpc";
+import { bootstrapRuntimeSessionCatalog } from "../../../shared/main/runtimeSessionCatalogBootstrap";
 import { migrateLegacyAgentRunsToRuntime } from "../../../shared/main/legacyAgentRunMigration";
 import type {
   RunInspectionOpenRequest,
@@ -97,16 +107,20 @@ import {
   WorkspaceSessionCatalogGate,
 } from "../../../shared/main/workspaceSessionCatalog";
 import { RemoteProtocolError } from "../../../shared/api/remoteSshProtocol";
+import { shouldMaterializeCatalogThread } from "../../../shared/api/threadSidebarCatalog";
 import { desktopDiagnostics } from "./diagnostics";
 import { productionDiagnostics } from "../../../shared/main/productionDiagnostics";
+import { desktopFeedback } from "../../../shared/main/feedback";
+import { clearPendingCrashFeedback, getPendingCrashFeedback, initializeLocalCrashReporter, recordCrashIncident } from "../../../shared/main/crashFeedback";
 import { DiagnosticSourceNavigator } from "../../../shared/main/sourceNavigation";
 import { extractDiagnosticContext, runWithDiagnosticContext } from "../../../shared/main/diagnosticContext";
-import { isTrustedDesktopIpcSender } from "../../../shared/main/secureIpc";
 import { InteractiveDebuggerService } from "./interactiveDebugger";
 import { InteractiveDebugPolicyStore } from "../../../shared/main/interactiveDebugPolicy";
 import type { DiagnosticEventInput, DiagnosticIssueUpdateRequest, DiagnosticQuery, DiagnosticSourceOpenRequest, DiagnosticSourceContextRequest, ProductionDiagnosticSettings } from "../../../shared/api/diagnostics";
+import type { FeedbackDraft, FeedbackStatus } from "../../../shared/api/feedback";
 
 process.setSourceMapsEnabled?.(true);
+initializeLocalCrashReporter();
 let experimentReleaseGatePromise: ReturnType<typeof readExperimentReleaseGate> | null = null;
 function getExperimentReleaseGate() {
   experimentReleaseGatePromise ??= readExperimentReleaseGate([
@@ -155,13 +169,17 @@ import {
   startUpdateScheduler,
   subscribeUpdateStatus,
 } from "./updates";
-import { cancelChatTurn, hasActiveChats, recoverChatRun, respondChatInput, startChat } from "./chat";
+import { cancelChatTurn, disposeAllChatForTarget, handleChatRenderHealthReport, hasActiveChats, quarantineChatDispatcher, recoverChatRun, releaseChatQuarantine, respondChatInput, startChat } from "./chat";
 import { listProviderErrorAnalytics } from "./providerErrorAnalytics";
 import { listProviderUsageAnalytics } from "./providerUsageAnalytics";
 import {
   abortAgentRun,
+  disposeAllAgentRunsForTarget,
+  handleRenderHealthReport,
   hasActiveAgentRuns,
+  quarantineAgentDispatcher,
   recoverAgentRun,
+  releaseAgentQuarantine,
   startAgentRun,
   subscribeAgentRunLifecycle,
 } from "./agentRuns";
@@ -179,7 +197,12 @@ import {
   getWorktreeMigrationDiagnostics,
   prepareForkWorktree,
 } from "./forkWorktrees";
-import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, diagnoseMyDrSaiModelConnection, discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, saveMyDrSaiModelProvider, savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, testMyDrSaiModelProvider, testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../shared/main/myDrSaiConfig";
+import { createKnowledgeBase, deleteKnowledgeBase, deleteMyDrSaiModelProvider, deletePerceptor, // V2: trimmed �� diagnoseMyDrSaiModelConnection, saveMyDrSaiModelProvider, testMyDrSaiModelProvider
+  discoverMyDrSaiProviderModels, getMyDrSaiAgentKnowledgePolicy, getMyDrSaiAgentModelCapabilityStatus, getMyDrSaiAgentModelPolicy, getMyDrSaiAgentSkillPolicy, getMyDrSaiAgentToolPolicy, getMyDrSaiConfig, getMyDrSaiRuntimeModelCatalog, indexKnowledgeBase, listKnowledgeBases, listMyDrSaiModelProviderPresets, listPerceptors, migrateMyDrSaiAgentModelPolicy, preflightMyDrSaiModelProviderDeletion, previewMyDrSaiAgentKnowledge, previewMyDrSaiAgentSkills, previewMyDrSaiAgentTools, previewMyDrSaiModelConnection, probeMyDrSaiProviderModel, restoreMyDrSaiModelConnection, // V2: trimmed �� saveMyDrSaiModelProvider,
+  savePerceptor, searchKnowledgeBase, testAgentTool, testKnowledgeBase, testMyDrSaiModelDraft, // V2: trimmed �� testMyDrSaiModelProvider,
+  testPerceptor, updateMyDrSaiAgentKnowledgePolicy, updateMyDrSaiAgentModelPolicy, updateMyDrSaiAgentSkillPolicy, updateMyDrSaiAgentToolPolicy, updateMyDrSaiConfig, updateMyDrSaiModelConnection, updatePerceptor } from "../../../shared/main/myDrSaiConfig";
+import { getWebSearchProviderPolicy, updateWebSearchProviderPolicy } from "../../../shared/main/myDrSaiConfig";
+import { checkKnowledgeBaseStale, discoverRagflowDatasets, listKnowledgeBaseFiles, rediscoverRagflowDatasets, refreshKnowledgeBaseIfStale } from "../../../shared/main/myDrSaiConfig";
 import {
   assertExecutionAllowed,
   getDesktopExecutionPolicy,
@@ -187,14 +210,17 @@ import {
 import {
   createThread,
   appendDuplexVoiceHistory,
-  deleteThread,
   getThreadSnapshot,
   listThreads,
   searchThreadMessages,
   updateThread,
   updateThreadSnapshot,
   upsertThreadFromRun,
+  upsertThreadFromRuntimeCatalog,
+  upsertThreadsFromRuntimeCatalog,
+  findDesktopOwnerThreadId,
 } from "./threads";
+import { deleteThreadAndRuntimeSession } from "../../../shared/main/threadDelete";
 import {
   createThreadShare,
   openThreadShare,
@@ -210,21 +236,54 @@ import {
   reloadSkills,
 } from "./skills";
 import {
+  importSkillFromFolderPath,
+  installSkillFromZipPath,
+} from "../../../shared/main/skillArchive";
+import {
+  getSkillsSquareStatus,
+  listSkillsSquare,
+  getSkillsSquareDetail,
+  getSkillsSquareSkillMd,
+  getSkillsSquareStats,
+  listSkillsSquareTags,
+  createSkillsSquareTag,
+  updateSkillsSquareTag,
+  deleteSkillsSquareTag,
+  installSkillsSquare,
+  downloadSkillsSquare,
+  uploadSkillsSquare,
+  updateSkillsSquare,
+  deleteSkillsSquare,
+  toggleSkillsSquareVisibility,
+  collectSkillsSquare,
+  createSkillsSquareShare,
+  listSkillsSquareShares,
+  revokeSkillsSquareShare,
+} from "../../../shared/main/skillsSquare";
+// skillsSquare: HepAI OIDC only (Bearer + Principal email); no API key
+import {
   gfsList,
   gfsStat,
   gfsRead,
   gfsWrite,
   gfsUploadFile,
+  gfsUploadContent,
   gfsDownloadFile,
+  gfsDownloadToDisk,
   gfsDelete,
   gfsShareUrl,
   gfsHealthcheck,
+  gfsGetConfig,
+  gfsSaveConfig,
+  gfsClearConfig,
 } from "./gfs";
 import {
   getRuntimeThreadSnapshot,
   getRuntimeThreadSnapshotEnvelope,
   subscribeRuntimeThreadSnapshot,
 } from "../../../shared/main/threadRuntimeSubscription";
+import { coalesceHydrationEnvelope, persistedThreadSnapshotEnvelope, threadSnapshotHasConversation } from "../../../shared/api/threadSnapshotHydration";
+import { runtimeSessionIdForLookup } from "../../../shared/api/threadSidebarCatalog";
 import { setThreadArchived } from "./threadArchive";
 import {
   addProjectMemory,
@@ -300,6 +359,18 @@ import {
   syncChannelSnapshots,
   syncLiveChannelContext,
 } from "./channelAdapters";
+import {
+  cancelWeChatLogin,
+  getWeChatChannelStatus,
+  getWeChatSessionSummary,
+  getWeChatReplyCapability,
+  logoutWeChatChannel,
+  pollWeChatLogin,
+  startWeChatChannel,
+  startWeChatLogin,
+  stopWeChatChannel,
+  sendToWeChat,
+} from "../../../shared/main/wechatChannel";
 import { WINDOWS_CREDENTIAL_SERVICE } from "./platformCredentials";
 import { importMcpContext } from "./mcpContext";
 import { decideMcpAtMostOnce, recoverAmbiguousMcpApproval } from "./mcpApprovalRecovery";
@@ -336,7 +407,7 @@ import {
   getRemoteGatewayAccess,
   resolveRemoteWorkspaceTarget,
   prepareRemoteForkWorktree,
-  getRemoteWorkspaceGitDiff,
+  // V2: trimmed �� getRemoteWorkspaceGitDiff,
   executeRemoteWorkspaceMutation,
   listRemoteWorkspaceCheckpoints,
   createRemoteWorkspaceCheckpoint,
@@ -344,10 +415,10 @@ import {
   restoreRemoteWorkspaceCheckpoint,
   acceptRemoteWorkspaceCheckpoint,
   summarizeRemoteWorkspaceFolder,
-  getRemoteWorkspaceGitFileAtRef,
+  // V2: trimmed �� getRemoteWorkspaceGitFileAtRef,
   getRemoteWorkspaceRootForPath,
   getRemoteThreadSnapshot,
-  searchRemoteThreadMessages,
+  searchThreadMessagesWithRemoteFallback,
   commitRemoteWorkspace,
   getRemoteWorkspaceContextOverview,
   getRemoteSshDiagnosticReport,
@@ -359,6 +430,7 @@ import {
   listRemoteHepaiWorkers,
   setRemoteHepaiWorkerEnabled,
   listSshHosts,
+  saveSshHost,
   preflightRemoteGateway,
   installRemoteGateway,
   cancelRemoteGatewayOperation,
@@ -384,13 +456,16 @@ import {
 import { getIdeContext } from "../../../shared/main/ideContext";
 import {
   getWorkspaceContextOverview,
-  getWorkspaceGitFileAtRef,
+  // V2: trimmed �� getWorkspaceGitFileAtRef,
   getWorkspaceGitDiff,
   listWorkspaceFiles,
+  listWorkspaceFilesViaGateway,
   analyzeMaterialConsistency,
   analyzeMaterialRoles,
   queryMaterials,
   previewWorkspaceFile,
+  previewWorkspaceFileViaGateway,
+  prefersLocalRichPreview,
   revertWorkspaceHunk,
   revertWorkspaceFile,
   stageWorkspaceFile,
@@ -413,23 +488,20 @@ import {
   cleanupExpiredVoiceTempFiles,
 } from "./voice/serial";
 import {
-  attachStreamingVoiceAudioPort,
-  cancelStreamingVoiceSessionsForSender,
-  cancelStreamingVoiceTranscription,
-  getStreamingVoiceCapabilities,
-  startStreamingVoiceTranscription,
-  stopStreamingVoiceTranscription,
-} from "./voice/streaming";
-import {
   attachDuplexVoiceAudioPort,
   cancelDuplexVoiceSession,
   disposeDuplexVoiceSession,
   disposeAllDuplexVoiceSessions,
   getDuplexVoiceCapabilities,
+  getDuplexVoiceOccupancy,
+  getDuplexVoiceReadiness,
+  finishDuplexVoiceTurn,
   interruptDuplexVoiceSession,
   startDuplexVoiceSession,
   stopDuplexVoiceSession,
   submitDuplexVoiceToolResult,
+  submitDuplexVoiceTextInput,
+  takeOverDuplexVoiceSession,
   updateDuplexVoiceSession,
 } from "./voice/duplex";
 import {
@@ -439,6 +511,7 @@ import {
   startVoiceSynthesis,
 } from "./voice/serial";
 import { saveApiKeyAndSync } from "./settings";
+import { getVoicePreferences, updateVoicePreferences } from "./voicePreferences";
 import {
   cancelOidcLogin,
   getAuthSession,
@@ -447,7 +520,9 @@ import {
   refreshAuthSession,
   refreshAuthContextAfterUnauthorized,
   requireAuthContext,
+  setAuthSessionInvalidatedNotifier,
   startOidcLogin,
+  AuthSessionError,
 } from "./auth";
 import { maybeRunE2eSmoke } from "./e2eSmoke";
 import {
@@ -489,6 +564,9 @@ import type {
   DesktopChannelOutboundDraftRequest,
   DesktopChannelOutboundDraftResult,
   DesktopChannelSnapshotSyncRequest,
+  DesktopWeChatLoginPollRequest,
+  DesktopWeChatReplyCapabilityRequest,
+  DesktopWeChatOutboundRequest,
   DesktopForkLifecycleAction,
   DesktopForkLifecycleApprovalRequest,
   DesktopForkLifecycleApprovalResult,
@@ -528,15 +606,19 @@ import type {
   DesktopThread,
   DesktopThreadContentSearchRequest,
   DesktopThreadForkMetadata,
+  DesktopThreadListRequest,
   DesktopWorktreeListRequest,
   DesktopWorktreeEventRequest,
   DesktopVoiceTranscriptHandoffRequest,
   DesktopVoiceTranscriptionRequest,
-  DesktopStreamingVoiceStartRequest,
   DesktopDuplexVoiceSessionStartRequest,
   DesktopDuplexVoiceInterruptRequest,
+  DesktopDuplexVoiceTakeoverRequest,
   DesktopDuplexVoiceHistoryAppendRequest,
   DesktopDuplexVoiceToolResultRequest,
+  DesktopDuplexVoiceToolApprovalRequest,
+  DesktopDuplexVoiceToolApprovalDecision,
+  DesktopDuplexVoiceTextInputRequest,
   DesktopVoiceSynthesisRequest,
   DesktopBootstrapBlockerKind,
   WorkspaceCheckpointRestoreRequest,
@@ -550,9 +632,9 @@ import type {
   WorkspaceFileWriteRequest,
   WorkspaceFileWriteResult,
   WorkspaceFileTreeRequest,
-  WorkspaceGitDiffRequest,
+  // V2: trimmed �� WorkspaceGitDiffRequest,
   WorkspaceFolderSummaryRequest,
-  WorkspaceGitFileAtRefRequest,
+  // V2: trimmed �� WorkspaceGitFileAtRefRequest,
   DesktopWorkflowRunPrepareRequest,
   InteractiveDebugBreakpointRequest,
   InteractiveDebugControlRequest,
@@ -560,7 +642,7 @@ import type {
   InteractiveDebugStartRequest,
   UpdateMyDrSaiConfigRequest,
   UpdateMyDrSaiModelConnectionRequest,
-  SaveMyDrSaiModelProviderRequest,
+  // V2: trimmed �� SaveMyDrSaiModelProviderRequest,
 } from "../shared/desktopApi";
 import {
   evaluateExecutionPermission,
@@ -603,33 +685,43 @@ function runtimeWorkspaceCatalogKey(webContents: WebContents, workspaceId: strin
 async function applyRuntimeWorkspaceCatalogEvent(
   webContents: WebContents,
   workspaceId: string,
+  workspacePath: string,
   sessionId: string,
+  knownSession?: RuntimeSession,
 ): Promise<void> {
   if (webContents.isDestroyed()) return;
   const client = await LocalRuntimeClient.connect();
-  const [session, workspaces] = await Promise.all([
-    client.getSession(sessionId),
-    listWorkspaces(),
+  const [session, existingThreads] = await Promise.all([
+    knownSession ?? client.getSession(sessionId),
+    listThreads(),
   ]);
   if (session.workspace_id !== workspaceId) throw new Error("session_catalog_workspace_mismatch");
-  const workspace = workspaces.find((item) => item.id === workspaceId);
-  if (!workspace) return;
-  const thread = await upsertThreadFromRun({
-    id: session.session_id,
-    kind: "chat",
-    title: session.title,
-    workspacePath: workspace.path,
+  if (session.lifecycle === "removed") return;
+  const sourceChannel = session.origin?.provider === "wechat" ? "wechat" as const : undefined;
+  const ownerThreadId = findDesktopOwnerThreadId(existingThreads, {
+    sessionId: session.session_id,
+    workspacePath,
+    title: session.title || "New chat",
+    createdAt: session.created_at,
+    updatedAt: session.updated_at,
+  });
+  // Live catalog events for Desktop-created chats must update the existing
+  // thread-* row. They must never insert a second sidebar entry keyed by
+  // session_id �� that row is owned by the chat send pipeline.
+  if (!shouldMaterializeCatalogThread({ mode: "live", sourceChannel, ownerThreadId })) return;
+  const result = await upsertThreadFromRuntimeCatalog({
+    id: ownerThreadId ?? session.session_id,
+    title: session.title || "New chat",
+    workspacePath,
     runtimeSessionId: session.session_id,
-    status: "idle",
+    createdAt: session.created_at,
+    updatedAt: session.updated_at,
+    archived: session.archived === true || session.lifecycle === "archived" || session.lifecycle === "removed",
+    sourceChannel,
     messageCount: typeof session.message_count === "number" ? session.message_count : 0,
   });
-  const updated = await updateThread({
-    id: thread.id,
-    archived: session.archived === true || session.lifecycle === "archived" || session.lifecycle === "removed",
-    archiveSource: session.archived === true || session.lifecycle === "archived" ? "opendrsai" : undefined,
-  });
-  if (!webContents.isDestroyed()) webContents.send("desktop:thread-catalog", {
-    thread: updated,
+  if (result.changed && !webContents.isDestroyed()) safeWebContentsSend(webContents, "desktop:thread-catalog", {
+    thread: result.thread,
     source: "runtime-session",
   });
 }
@@ -637,6 +729,7 @@ async function applyRuntimeWorkspaceCatalogEvent(
 function startRuntimeWorkspaceCatalogSubscription(
   webContents: WebContents,
   workspaceId: string,
+  workspacePath: string,
 ): void {
   const key = runtimeWorkspaceCatalogKey(webContents, workspaceId);
   if (runtimeWorkspaceCatalogSubscriptions.has(key)) return;
@@ -647,12 +740,35 @@ function startRuntimeWorkspaceCatalogSubscription(
     let retryMillis = 500;
     while (!controller.signal.aborted && !webContents.isDestroyed()) {
       try {
-        const stream = await (await LocalRuntimeClient.connect())
-          .openWorkspaceSessionCatalogStream(workspaceId, controller.signal);
+        const client = await LocalRuntimeClient.connect();
+        const stream = await client.openWorkspaceSessionCatalogStream(workspaceId, controller.signal);
         retryMillis = 500;
+        const bootstrapSessions: RuntimeSession[] = [];
+        await bootstrapRuntimeSessionCatalog(client, workspaceId, async (session) => {
+          bootstrapSessions.push(session);
+        });
+        const bootstrapResults = await upsertThreadsFromRuntimeCatalog(bootstrapSessions.filter((session) =>
+          session.lifecycle !== "removed"
+        ).map((session) => ({
+          id: session.session_id,
+          title: session.title,
+          workspacePath,
+          runtimeSessionId: session.session_id,
+          createdAt: session.created_at,
+          updatedAt: session.updated_at,
+          archived: session.archived === true || session.lifecycle === "archived" || session.lifecycle === "removed",
+          sourceChannel: session.origin?.provider === "wechat" ? "wechat" as const : undefined,
+          messageCount: typeof session.message_count === "number" ? session.message_count : 0,
+        })));
+        for (const result of bootstrapResults) {
+          if (result.changed && !webContents.isDestroyed()) safeWebContentsSend(webContents, "desktop:thread-catalog", {
+            thread: result.thread,
+            source: "runtime-session",
+          });
+        }
         await consumeWorkspaceSessionCatalogStream(stream.events, async (event) => {
           if (gate.accept(event) !== "apply") return;
-          await applyRuntimeWorkspaceCatalogEvent(webContents, workspaceId, event.session_id);
+          await applyRuntimeWorkspaceCatalogEvent(webContents, workspaceId, workspacePath, event.session_id);
         });
       } catch {
         if (controller.signal.aborted) break;
@@ -667,10 +783,26 @@ function startRuntimeWorkspaceCatalogSubscription(
   });
 }
 
-async function ensureRuntimeWorkspaceCatalogSubscriptions(webContents: WebContents): Promise<void> {
+async function ensureRuntimeWorkspaceCatalogSubscription(
+  webContents: WebContents,
+  workspaceId: string,
+): Promise<void> {
   if (webContents.isDestroyed()) return;
-  const workspaces = await (await LocalRuntimeClient.connect()).listWorkspaces(false);
-  for (const workspace of workspaces) startRuntimeWorkspaceCatalogSubscription(webContents, workspace.workspace_id);
+  const [runtimeWorkspaces, desktopWorkspaces] = await Promise.all([
+    (await LocalRuntimeClient.connect()).listWorkspaces(false),
+    listWorkspaces(),
+  ]);
+  if (!runtimeWorkspaces.some((workspace) => workspace.workspace_id === workspaceId)) return;
+  const workspace = desktopWorkspaces.find((item) => item.id === workspaceId);
+  if (!workspace) return;
+  const keepKey = runtimeWorkspaceCatalogKey(webContents, workspaceId);
+  for (const [key, controller] of runtimeWorkspaceCatalogSubscriptions) {
+    if (key.startsWith(`${webContents.id}:`) && key !== keepKey) {
+      controller.abort(new DOMException("Active Workspace changed.", "AbortError"));
+      runtimeWorkspaceCatalogSubscriptions.delete(key);
+    }
+  }
+  startRuntimeWorkspaceCatalogSubscription(webContents, workspaceId, workspace.path);
   ensureRuntimeThreadCleanup(webContents);
 }
 
@@ -742,7 +874,7 @@ async function syncRuntimeThreadCatalog(
         unread: thread.id !== activeThreadId,
       });
       if (!webContents.isDestroyed()) {
-        webContents.send("desktop:thread-catalog", {
+        safeWebContentsSend(webContents, "desktop:thread-catalog", {
           thread: updated,
           source: "runtime-session",
         });
@@ -808,7 +940,7 @@ function hasActiveForegroundIndependentWork(): boolean {
 function sendManagerPresentationProgress(progress: ManagerPresentationProgressEvent): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-      window.webContents.send("desktop:manager-presentation-progress", progress);
+      safeWebContentsSend(window.webContents, "desktop:manager-presentation-progress", progress);
     }
   }
 }
@@ -878,11 +1010,26 @@ const browserTaskService = new BrowserTaskService({
     void recordBrowserTaskDiagnostic(event);
     for (const subscriber of [...browserTaskSubscribers]) {
       if (subscriber.isDestroyed()) browserTaskSubscribers.delete(subscriber);
-      else subscriber.send("desktop:browser-task-event", event);
+      else safeWebContentsSend(subscriber, "desktop:browser-task-event", event);
     }
   },
   recordError: (line) => console.warn("[browser-use worker]", line),
 });
+
+/**
+ * Unified safe send for WebContents — checks isDestroyed() AND wraps send()
+ * in a try/catch so "Render frame was disposed" errors during reload are
+ * silently dropped instead of flooding the console.
+ */
+function safeWebContentsSend(wc: WebContents, channel: string, ...args: unknown[]): void {
+  if (wc.isDestroyed()) return;
+  try {
+    wc.send(channel, ...args);
+  } catch {
+    // Frame may be disposed during reload — silently drop
+  }
+}
+
 const pendingDesktopApprovals = new Map<string, DesktopPendingApproval>();
 const executedDesktopApprovalIds = new Set<string>();
 const pendingDesktopApprovalPayloads = new Map<string, DesktopApprovalPayload>();
@@ -980,8 +1127,14 @@ const isE2eSmokeProcess =
   process.env.OPENDRSAI_E2E_M8_RECOVERY === "1" ||
   process.env.OPENDRSAI_E2E_M10_DATA_CLEANUP === "1" ||
   process.env.OPENDRSAI_E2E_APP_DIALOG === "1" ||
-  process.env.OPENDRSAI_E2E_OPERATIONAL_STATE === "1" ||
-  process.env.OPENDRSAI_E2E_VOICE === "1" ||
+    process.env.OPENDRSAI_E2E_OPERATIONAL_STATE === "1" ||
+    process.env.OPENDRSAI_E2E_DUPLEX_PERMISSION_RECOVERY === "1" ||
+    process.env.OPENDRSAI_E2E_DUPLEX_PROCESS_RECOVERY === "1" ||
+    process.env.OPENDRSAI_E2E_DUPLEX_PACKAGED_RUN === "1" ||
+    process.env.OPENDRSAI_E2E_VOICE_PREFERENCES_MULTI_WINDOW === "1" ||
+    process.env.OPENDRSAI_E2E_DUPLEX_MEDIA === "1" ||
+    Boolean(process.env.OPENDRSAI_E2E_DUPLEX_APP_RESTART_PHASE) ||
+    process.env.OPENDRSAI_E2E_VOICE === "1" ||
   process.env.OPENDRSAI_E2E_PRESENTATION_PDF_ACTION === "1" ||
   process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1";
 if (isE2eSmokeProcess) {
@@ -990,6 +1143,11 @@ if (isE2eSmokeProcess) {
   app.commandLine.appendSwitch("disable-gpu");
   app.commandLine.appendSwitch("disable-gpu-compositing");
   app.commandLine.appendSwitch("disable-gpu-sandbox");
+  app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+  if (process.env.OPENDRSAI_E2E_DUPLEX_MEDIA === "1") {
+    app.commandLine.appendSwitch("use-fake-device-for-media-stream");
+    app.commandLine.appendSwitch("use-fake-ui-for-media-stream");
+  }
 }
 async function phaseAcceptanceExportTarget(
   suggestedName: string, options: SaveDialogOptions,
@@ -1099,6 +1257,7 @@ const pendingMcpToolExecutions = new Map<
   string,
   DesktopMcpToolExecutionApprovalRequest
 >();
+const pendingDuplexToolApprovals = new Map<string, { sender: WebContents; sessionId: string; callId: string }>();
 function restoreDesktopApprovalPayloadOwner(payload: DesktopApprovalPayload): void {
   const { approvalId } = payload;
   let value = payload.value;
@@ -1709,6 +1868,17 @@ async function proposeDesktopApproval(
     blocked: false,
     reason: decision.reason,
   };
+}
+
+async function requestDuplexToolApproval(event: IpcMainInvokeEvent, raw: unknown): Promise<DesktopApprovalProposalResult> {
+  if (!raw || typeof raw !== "object") return blockedApprovalProposal("Realtime tool approval request is invalid.");
+  const request = raw as Partial<DesktopDuplexVoiceToolApprovalRequest>;
+  const sessionId = typeof request.sessionId === "string" ? request.sessionId.trim() : ""; const callId = typeof request.callId === "string" ? request.callId.trim() : ""; const name = typeof request.name === "string" ? request.name.trim() : "";
+  if (!/^voice-duplex-[a-zA-Z0-9-]{8,160}$/.test(sessionId) || !/^[a-zA-Z0-9_.:-]{1,200}$/.test(callId) || !/^[a-zA-Z0-9_.:-]{1,160}$/.test(name)) return blockedApprovalProposal("Realtime tool approval identifiers are invalid.");
+  const argumentSummary = typeof request.argumentsSummary === "string" ? request.argumentsSummary.replace(/\0/g, "").slice(0, 1_200) : "{}";
+  const proposal = await proposeDesktopApproval({ source: "connector", actionKind: "external.service", title: `Realtime tool: ${name}`, detail: `Approve this tool requested by the active Realtime voice Session.\nTool: ${name}\nArguments: ${argumentSummary}`, businessAction: name, businessObject: "Realtime voice tool call", target: sessionId, scope: typeof request.scope === "string" ? request.scope.slice(0, 240) : "Current Realtime voice Session", impact: "The tool executes once and its redacted result is returned to the active Realtime Session.", risk: request.risk ?? "high", idempotencyKey: `duplex-tool:${sessionId}:${callId}` });
+  if (proposal.queued && proposal.approval) pendingDuplexToolApprovals.set(proposal.approval.id, { sender: event.sender, sessionId, callId });
+  return proposal;
 }
 
 function blockedApprovalProposal(reason: string): DesktopApprovalProposalResult {
@@ -2423,36 +2593,37 @@ async function execGit(
   });
 }
 
-async function requestWorkspaceMutationApproval(
-  action: WorkspaceMutationAction,
-  request: unknown,
-): Promise<unknown> {
-  const actionKind = getWorkspaceMutationActionKind(action);
-  const proposal = await proposeDesktopApproval({
-    source: "workspace",
-    actionKind,
-    title: getWorkspaceMutationTitle(action),
-    detail: getWorkspaceMutationDetail(action, request),
-    target: getStringProperty(request, "path") || getStringProperty(request, "workspacePath"),
-    risk: actionKind === "workspace.revert" ? "medium" : "low",
-    idempotencyKey: getWorkspaceMutationIdempotencyKey(action, request),
-  });
-
-  if (proposal.blocked || !proposal.allowed) {
-    throw new Error(proposal.reason);
-  }
-  if (proposal.queued && proposal.approval) {
-    pendingWorkspaceMutationApprovals.set(proposal.approval.id, {
-      action,
-      request,
-    });
-    await registerDesktopApprovalPayload(proposal.approval.id, "workspace_mutation", { action, request });
-    return createQueuedWorkspaceMutationResult(action, request, proposal.approval.id);
-  }
-
-  await assertExecutionAllowed(actionKind, { approved: true });
-  return executeWorkspaceMutation(action, request);
-}
+// V2: trimmed �� requestWorkspaceMutationApproval was only called by trimmed git handlers
+// async function requestWorkspaceMutationApproval(
+//   action: WorkspaceMutationAction,
+//   request: unknown,
+// ): Promise<unknown> {
+//   const actionKind = getWorkspaceMutationActionKind(action);
+//   const proposal = await proposeDesktopApproval({
+//     source: "workspace",
+//     actionKind,
+//     title: getWorkspaceMutationTitle(action),
+//     detail: getWorkspaceMutationDetail(action, request),
+//     target: getStringProperty(request, "path") || getStringProperty(request, "workspacePath"),
+//     risk: actionKind === "workspace.revert" ? "medium" : "low",
+//     idempotencyKey: getWorkspaceMutationIdempotencyKey(action, request),
+//   });
+//
+//   if (proposal.blocked || !proposal.allowed) {
+//     throw new Error(proposal.reason);
+//   }
+//   if (proposal.queued && proposal.approval) {
+//     pendingWorkspaceMutationApprovals.set(proposal.approval.id, {
+//       action,
+//       request,
+//     });
+//     await registerDesktopApprovalPayload(proposal.approval.id, "workspace_mutation", { action, request });
+//     return createQueuedWorkspaceMutationResult(action, request, proposal.approval.id);
+//   }
+//
+//   await assertExecutionAllowed(actionKind, { approved: true });
+//   return executeWorkspaceMutation(action, request);
+// }
 
 async function requestWorkspaceCheckpointRestore(
   request: unknown,
@@ -2739,44 +2910,47 @@ function getWorkspaceMutationActionKind(
     : "workspace.revert";
 }
 
-function getWorkspaceMutationTitle(action: WorkspaceMutationAction): string {
-  return {
-    "stage-file": "Stage workspace file",
-    "revert-file": "Revert workspace file",
-    "stage-hunk": "Stage workspace hunk",
-    "revert-hunk": "Revert workspace hunk",
-  }[action];
-}
+// V2: trimmed �� only called by commented-out getWorkspaceMutationDetail
+// function getWorkspaceMutationTitle(action: WorkspaceMutationAction): string {
+//   return {
+//     "stage-file": "Stage workspace file",
+//     "revert-file": "Revert workspace file",
+//     "stage-hunk": "Stage workspace hunk",
+//     "revert-hunk": "Revert workspace hunk",
+//   }[action];
+// }
 
-function getWorkspaceMutationDetail(
-  action: WorkspaceMutationAction,
-  request: unknown,
-): string {
-  const path = getStringProperty(request, "path") || "workspace change";
-  const workspacePath = getStringProperty(request, "workspacePath");
-  const suffix = workspacePath ? ` in ${workspacePath}` : "";
-  return `${getWorkspaceMutationTitle(action)}: ${path}${suffix}`;
-}
+// V2: trimmed �� only called by commented-out requestWorkspaceMutationApproval
+// function getWorkspaceMutationDetail(
+//   action: WorkspaceMutationAction,
+//   request: unknown,
+// ): string {
+//   const path = getStringProperty(request, "path") || "workspace change";
+//   const workspacePath = getStringProperty(request, "workspacePath");
+//   const suffix = workspacePath ? ` in ${workspacePath}` : "";
+//   return `${getWorkspaceMutationTitle(action)}: ${path}${suffix}`;
+// }
 
-function getWorkspaceMutationIdempotencyKey(
-  action: WorkspaceMutationAction,
-  request: unknown,
-): string {
-  const workspacePath = getStringProperty(request, "workspacePath");
-  const path = getStringProperty(request, "path");
-  const expectedDiffHash = getStringProperty(request, "expectedDiffHash");
-  const patch = getStringProperty(request, "patch");
-  return [
-    "workspace",
-    action,
-    workspacePath,
-    path,
-    expectedDiffHash,
-    patch ? stableApprovalHash(patch) : "",
-  ]
-    .filter(Boolean)
-    .join(":");
-}
+// V2: trimmed �� only called by commented-out requestWorkspaceMutationApproval
+// function getWorkspaceMutationIdempotencyKey(
+//   action: WorkspaceMutationAction,
+//   request: unknown,
+// ): string {
+//   const workspacePath = getStringProperty(request, "workspacePath");
+//   const path = getStringProperty(request, "path");
+//   const expectedDiffHash = getStringProperty(request, "expectedDiffHash");
+//   const patch = getStringProperty(request, "patch");
+//   return [
+//     "workspace",
+//     action,
+//     workspacePath,
+//     path,
+//     expectedDiffHash,
+//     patch ? stableApprovalHash(patch) : "",
+//   ]
+//     .filter(Boolean)
+//     .join(":");
+// }
 
 function stableApprovalHash(value: string): string {
   let hash = 2166136261;
@@ -2793,24 +2967,25 @@ function getStringProperty(request: unknown, key: string): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function createQueuedWorkspaceMutationResult(
-  action: WorkspaceMutationAction,
-  request: unknown,
-  approvalId: string,
-): unknown {
-  const workspacePath = getStringProperty(request, "workspacePath");
-  const path = getStringProperty(request, "path");
-  const queued = {
-    workspacePath,
-    path,
-    approvalId,
-    approvalQueued: true,
-    message: "Workspace change is waiting in Approval Center.",
-  };
-  if (action === "stage-file") return { ...queued, staged: false };
-  if (action === "revert-file") return { ...queued, reverted: false };
-  return { ...queued, applied: false };
-}
+// V2: trimmed �� only called by commented-out requestWorkspaceMutationApproval
+// function createQueuedWorkspaceMutationResult(
+//   action: WorkspaceMutationAction,
+//   request: unknown,
+//   approvalId: string,
+// ): unknown {
+//   const workspacePath = getStringProperty(request, "workspacePath");
+//   const path = getStringProperty(request, "path");
+//   const queued = {
+//     workspacePath,
+//     path,
+//     approvalId,
+//     approvalQueued: true,
+//     message: "Workspace change is waiting in Approval Center.",
+//   };
+//   if (action === "stage-file") return { ...queued, staged: false };
+//   if (action === "revert-file") return { ...queued, reverted: false };
+//   return { ...queued, applied: false };
+// }
 
 async function executeWorkspaceMutation(
   action: WorkspaceMutationAction,
@@ -2891,6 +3066,7 @@ process.on("unhandledRejection", (reason) => {
 });
 
 app.on("child-process-gone", (_event, details) => {
+  if (details.reason !== "clean-exit") void recordCrashIncident({ process_type: details.type === "GPU" ? "gpu" : "utility", reason: details.reason, exit_code: details.exitCode });
   void desktopDiagnostics.record({
     module: "desktop",
     component: details.type || "child-process",
@@ -2940,7 +3116,7 @@ function createWindow(): void {
     height: restoredWindowState.bounds?.height ?? 820,
     ...(restoredWindowState.bounds
       ? { x: restoredWindowState.bounds.x, y: restoredWindowState.bounds.y }
-      : {}),
+      : { center: true }),
     minWidth: effectiveMinWidth,
     minHeight: effectiveMinHeight,
     title: "OpenDrSai",
@@ -3028,7 +3204,32 @@ function createWindow(): void {
     });
     void startDeferredStartupTasks();
   });
+  // A renderer reload (Ctrl+R, HMR, crash recovery) disposes the current
+  // render frame while keeping the WebContents wrapper alive.  The frame-
+  // disposal signal is the earliest reliable point where sends to the old
+  // frame start throwing "Render frame was disposed"; quarantine the
+  // dispatchers so no new ones are created during the reload gap.
+  // Active Runs/Chats keep running in the main process and recover through
+  // the OAEP subscription on the new frame.
+  mainWindow.webContents.on("did-start-loading", () => {
+    quarantineChatDispatcher(mainWindow!.webContents);
+    quarantineAgentDispatcher(mainWindow!.webContents);
+  });
+  // When the new frame finishes loading, release the quarantine so the next
+  // emit() creates a fresh dispatcher bound to the new frame.
+  mainWindow.webContents.on("did-finish-load", () => {
+    releaseChatQuarantine(mainWindow!.webContents);
+    releaseAgentQuarantine(mainWindow!.webContents);
+  });
+  // When the WebContents itself is permanently destroyed (window close, app
+  // quit), release turn records and stop subscriptions.  Backend Runs are
+  // NOT cancelled — they remain recoverable through the outbox on restart.
+  mainWindow.webContents.once("destroyed", () => {
+    disposeAllChatForTarget(mainWindow!.webContents);
+    disposeAllAgentRunsForTarget(mainWindow!.webContents);
+  });
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    void recordCrashIncident({ process_type: "renderer", reason: details.reason, exit_code: details.exitCode });
     recordE2eStartupTrace("createWindow:render-process-gone", { ...details });
     void desktopDiagnostics.record({
       module: "desktop",
@@ -3375,17 +3576,27 @@ function configureBrowserSessionPolicy(session: Session): void {
 
 function configureMainWindowPermissionPolicy(window: BrowserWindow): void {
   const allowedWebContentsId = window.webContents.id;
+  let deniedDuplexPermissionRequests = 0;
   window.webContents.session.setPermissionRequestHandler((contents, permission, callback, details) => {
     const mediaTypes =
       "mediaTypes" in details && Array.isArray(details.mediaTypes)
         ? details.mediaTypes
         : [];
-    callback(
+    const allowedAudioRequest =
       permission === "media" &&
-        contents.id === allowedWebContentsId &&
-        mediaTypes.includes("audio") &&
-        !mediaTypes.includes("video"),
-    );
+      contents.id === allowedWebContentsId &&
+      mediaTypes.includes("audio") &&
+      !mediaTypes.includes("video");
+    if (
+      allowedAudioRequest &&
+      process.env.OPENDRSAI_E2E_DUPLEX_PERMISSION_RECOVERY === "1" &&
+      deniedDuplexPermissionRequests === 0
+    ) {
+      deniedDuplexPermissionRequests += 1;
+      callback(false);
+      return;
+    }
+    callback(allowedAudioRequest);
   });
 }
 
@@ -3431,11 +3642,15 @@ function isAllowedRendererNavigationUrl(rawUrl: string): boolean {
 }
 
 function isTrustedSender(event: IpcMainInvokeEvent): boolean {
-  return isTrustedDesktopIpcSender(
-    event,
-    mainWindow?.webContents,
-    is.dev ? isAllowedDevRendererUrl : undefined,
-  );
+  try {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    const frameUrl = event.senderFrame?.url;
+    if (!senderWindow || senderWindow.isDestroyed() || event.sender.isDestroyed() || !frameUrl) return false;
+    if (senderWindow.webContents !== event.sender || frameUrl !== event.sender.getURL()) return false;
+    return isAllowedRendererNavigationUrl(frameUrl);
+  } catch {
+    return false;
+  }
 }
 
 function getStringArrayProperty(request: unknown, key: string): string[] | undefined {
@@ -3456,13 +3671,32 @@ function assertTrustedSender(event: IpcMainInvokeEvent): void {
 
 const codexWorkspaceSyncControllers = new Map<string, AbortController>();
 
+const QUIET_DIAGNOSTIC_IPC = new Set([
+  "desktop:run-manifest",
+  "desktop:run-manifest-export",
+  "desktop:update-thread",
+  "desktop:update-thread-snapshot",
+  "desktop:delete-thread",
+  "desktop:create-thread",
+  "desktop:get-health",
+  "desktop:get-gateway-status",
+  "desktop:get-install-status",
+  "desktop:background-tasks-list",
+  "desktop:list-threads",
+  "desktop:get-thread",
+  "desktop:get-diagnostic-snapshot",
+  "desktop:get-production-diagnostic-status",
+]);
+
 function secureHandle<T extends unknown[]>(
   channel: string,
   handler: (event: IpcMainInvokeEvent, ...args: T) => unknown,
 ): void {
   ipcMain.handle(channel, async (event, ...args: T) => {
     assertTrustedSender(event);
-    if (channel.startsWith("desktop:diagnostics-")) return handler(event, ...args);
+    if (channel.startsWith("desktop:diagnostics-") || QUIET_DIAGNOSTIC_IPC.has(channel)) {
+      return handler(event, ...args);
+    }
     const target = classifyDiagnosticChannel(channel);
     const propagated = extractDiagnosticContext(args[0]);
     const operation = await desktopDiagnostics.start({
@@ -3489,7 +3723,14 @@ function secureHandle<T extends unknown[]>(
       void operation.complete(`${channel} completed`).catch(() => undefined);
       return result;
     } catch (error) {
-      void operation.fail(error).catch(() => undefined);
+      // AuthSessionError is already notified via the notifier registered in
+      // app.whenReady(), but we log it here for diagnostics. The error is
+      // re-thrown so the IPC caller (renderer) receives it.
+      if (error instanceof AuthSessionError) {
+        void operation.fail(`${channel} auth session error: ${error.code}`).catch(() => undefined);
+      } else {
+        void operation.fail(error).catch(() => undefined);
+      }
       throw error;
     } finally {
       clearTimeout(waitTimer);
@@ -3898,10 +4139,35 @@ async function isAllowedOpenPath(rawPath: unknown): Promise<boolean> {
   });
 }
 
+function isTransientWorkspacePreviewError(error: unknown): boolean {
+  if (!error) return false;
+  const name = error instanceof Error ? error.name : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    name === "TimeoutError" ||
+    name === "AbortError" ||
+    /timeout|aborted|ECONNRESET|ECONNREFUSED|ETIMEDOUT|fetch failed/i.test(message)
+  );
+}
+
+/** Copy mangled names like `Deck.pptx（介绍）` to a temp `Deck.pptx` so the OS can associate. */
+async function resolveOpenPathForShell(rawPath: string): Promise<string> {
+  const canonical = resolveCanonicalExtension(rawPath);
+  const direct = extname(rawPath).toLowerCase();
+  if (!canonical || canonical === direct || !existsSync(rawPath)) return rawPath;
+  const safeName = basenameWithCanonicalExtension(rawPath);
+  const digest = createHash("sha1").update(rawPath).digest("hex").slice(0, 10);
+  const stagingDir = join(tmpdir(), "opendrsai-open", digest);
+  await mkdir(stagingDir, { recursive: true });
+  const staged = join(stagingDir, safeName);
+  await copyFile(rawPath, staged);
+  return staged;
+}
+
 async function resolveLegacyLocalWorkspaceLabel(rawPath: unknown): Promise<string | null> {
   if (typeof rawPath !== "string" || /[\r\n\0]/.test(rawPath)) return null;
   const requestedPath = rawPath.trim();
-  if (requestedPath !== "Local workspace" && requestedPath !== "本地工作区") {
+  if (requestedPath !== "Local workspace" && requestedPath !== "���ع�����") {
     return requestedPath || null;
   }
   const workspaces = await listWorkspaces();
@@ -3974,7 +4240,7 @@ async function saveWorkspaceFileAs(request: WorkspaceFileSaveAsRequest): Promise
   const suggestedName = ensureOriginalExtension(requestedName, sourceExtension);
   let destinationPath: string | undefined;
 
-  const automatedSaveDirectory = isE2eSmokeProcess && process.env.OPENDRSAI_E2E_AGENT_RUN_SCENARIO === "g4-preview-download"
+  const automatedSaveDirectory = isE2eSmokeProcess && ["g4-preview-download", "workspace-artifact-p1", "conversation-resource-p2"].includes(process.env.OPENDRSAI_E2E_AGENT_RUN_SCENARIO || "")
     ? process.env.OPENDRSAI_E2E_G4_SAVE_DIR
     : undefined;
   if (automatedSaveDirectory) {
@@ -4134,7 +4400,7 @@ function serializeDecisionCsv(rows: string[][]): string {
 }
 
 function isDecisionAnomaly(value: string): boolean {
-  return /^(?:true|1|yes|y|anomaly|异常)$/i.test(value.trim());
+  return /^(?:true|1|yes|y|anomaly|�쳣)$/i.test(value.trim());
 }
 
 async function applyAnomalyDecision(request: DesktopAnomalyDecisionApplyRequest): Promise<DesktopAnomalyDecisionApplyResult> {
@@ -4152,7 +4418,7 @@ async function applyAnomalyDecision(request: DesktopAnomalyDecisionApplyRequest)
   if (rows.length < 2) throw new Error("The source CSV does not contain any data rows.");
   const headers = rows[0].map((value) => value.trim());
   const anomalyIndex = headers.findIndex((value) => value.toLowerCase() === request.anomalyColumn.trim().toLowerCase());
-  if (anomalyIndex < 0) throw new Error(`The anomaly column “${request.anomalyColumn}” was not found.`);
+  if (anomalyIndex < 0) throw new Error(`The anomaly column ��${request.anomalyColumn}�� was not found.`);
   const dataRows = rows.slice(1);
   const anomalyRows = dataRows.filter((row) => isDecisionAnomaly(row[anomalyIndex] || ""));
   const normalRows = dataRows.filter((row) => !isDecisionAnomaly(row[anomalyIndex] || ""));
@@ -4160,12 +4426,12 @@ async function applyAnomalyDecision(request: DesktopAnomalyDecisionApplyRequest)
   const base = basename(preview.path, extname(preview.path));
   const outputDirectory = dirname(preview.path);
   const outputSpecs = request.decision === "keep"
-    ? [{ role: "kept_all" as const, path: join(outputDirectory, `${base}-保留全部.csv`), rows: dataRows }]
+    ? [{ role: "kept_all" as const, path: join(outputDirectory, `${base}-����ȫ��.csv`), rows: dataRows }]
     : request.decision === "exclude"
-      ? [{ role: "excluded_anomalies" as const, path: join(outputDirectory, `${base}-排除异常.csv`), rows: normalRows }]
+      ? [{ role: "excluded_anomalies" as const, path: join(outputDirectory, `${base}-�ų��쳣.csv`), rows: normalRows }]
       : [
-          { role: "kept_all" as const, path: join(outputDirectory, `${base}-保留全部.csv`), rows: dataRows },
-          { role: "excluded_anomalies" as const, path: join(outputDirectory, `${base}-排除异常.csv`), rows: normalRows },
+          { role: "kept_all" as const, path: join(outputDirectory, `${base}-����ȫ��.csv`), rows: dataRows },
+          { role: "excluded_anomalies" as const, path: join(outputDirectory, `${base}-�ų��쳣.csv`), rows: normalRows },
         ];
   const outputs: DesktopAnomalyDecisionApplyResult["outputs"] = [];
   for (const output of outputSpecs) {
@@ -4181,11 +4447,11 @@ async function applyAnomalyDecision(request: DesktopAnomalyDecisionApplyRequest)
   }
   const decidedAt = new Date().toISOString();
   const resultSummary = request.decision === "keep"
-    ? `已采用“保留异常”：输出 ${dataRows.length} 行，其中异常 ${anomalyRows.length} 行。`
+    ? `�Ѳ��á������쳣������� ${dataRows.length} �У������쳣 ${anomalyRows.length} �С�`
     : request.decision === "exclude"
-      ? `已采用“排除异常”：输出 ${normalRows.length} 行，异常 0 行；原始数据未改动。`
-      : `已采用“两种都做”：分别输出保留版 ${dataRows.length} 行和排除版 ${normalRows.length} 行；原始数据未改动。`;
-  const receiptPath = join(outputDirectory, `${base}-异常处理决定.json`);
+      ? `�Ѳ��á��ų��쳣������� ${normalRows.length} �У��쳣 0 �У�ԭʼ����δ�Ķ���`
+      : `�Ѳ��á����ֶ��������ֱ���������� ${dataRows.length} �к��ų��� ${normalRows.length} �У�ԭʼ����δ�Ķ���`;
+  const receiptPath = join(outputDirectory, `${base}-�쳣��������.json`);
   const result: DesktopAnomalyDecisionApplyResult = {
     sourcePath: preview.path,
     anomalyColumn: request.anomalyColumn.trim(),
@@ -4222,10 +4488,12 @@ const PICKED_FILE_INSPECTION_TIMEOUT_MS = 15_000;
 type PickedFileInspection = Pick<PickedFileDescriptor, "status" | "message" | "diagnosticCode" | "processingMode" | "recoveryAction" | "sensitiveDataDetected" | "sensitiveKinds" | "sensitiveValueCount" | "privacyNotice">;
 
 async function inspectPickedFile(path: string, category: PickedFileDescriptor["category"], extension: string): Promise<PickedFileInspection> {
+  // Non-categorized files (ZIP, archives, code, etc.) are allowed �� the agent
+  // reads file contents through its own file-reading tools, so we only pass
+  // the file path/metadata and do not need to parse the content here.
   if (category === "other") return {
-    status: "unsupported", diagnosticCode: "unsupported_format", processingMode: "blocked",
-    message: "暂不支持这种文件格式；其他已选文件仍可使用。",
-    recoveryAction: "请转换为 PDF、Word、Excel、CSV、图片或文本后重新导入。",
+    status: "ready", processingMode: "full",
+    message: "�ļ��Ѽ������������彫ͨ���Լ��Ĺ��߶�ȡ�ļ����ݡ�",
   };
   const handle = await openFile(path, "r");
   try {
@@ -4243,13 +4511,13 @@ async function inspectPickedFile(path: string, category: PickedFileDescriptor["c
             : true;
     if ([".docx", ".xlsx", ".pptx"].includes(extension) && head.subarray(0, 4).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0]))) return {
       status: "unreadable", diagnosticCode: "password_protected", processingMode: "blocked",
-      message: "这个 Office 文件可能受密码保护，当前无法读取内容。",
-      recoveryAction: "请在 Office 中解除密码保护并另存一份副本，再重新导入。",
+      message: "��� Office �ļ����������뱣������ǰ�޷���ȡ���ݡ�",
+      recoveryAction: "���� Office �н�����뱣��������һ�ݸ����������µ��롣",
     };
     if (!signatureValid) return {
       status: "unreadable", diagnosticCode: "corrupt_file", processingMode: "blocked",
-      message: "文件内容与扩展名不一致，可能已损坏或下载不完整。",
-      recoveryAction: "请重新下载或用原应用打开并另存一份副本，然后重新导入。",
+      message: "�ļ���������չ����һ�£��������𻵻����ز�������",
+      recoveryAction: "���������ػ���ԭӦ�ô򿪲�����һ�ݸ�����Ȼ�����µ��롣",
     };
     if (extension === ".pdf" && info.size > 0) {
       const tailBytes = Math.min(info.size, 128 * 1024);
@@ -4257,8 +4525,8 @@ async function inspectPickedFile(path: string, category: PickedFileDescriptor["c
       await handle.read(tail, 0, tailBytes, Math.max(0, info.size - tailBytes));
       if (/\/Encrypt\b/.test(tail.toString("latin1"))) return {
         status: "unreadable", diagnosticCode: "password_protected", processingMode: "blocked",
-        message: "这个 PDF 受密码保护，当前无法安全读取内容。",
-        recoveryAction: "请在 PDF 阅读器中输入密码后另存为不加密副本，再重新导入。",
+        message: "��� PDF �����뱣������ǰ�޷���ȫ��ȡ���ݡ�",
+        recoveryAction: "���� PDF �Ķ������������������Ϊ�����ܸ����������µ��롣",
       };
     }
     let privacy: Partial<PickedFileInspection> = {};
@@ -4272,17 +4540,17 @@ async function inspectPickedFile(path: string, category: PickedFileDescriptor["c
           sensitiveDataDetected: true,
           sensitiveKinds: [...new Set(matches.map((match) => match.kind))],
           sensitiveValueCount: matches.length,
-          privacyNotice: `已在本地检测到 ${matches.length} 处敏感信息；原值不会显示在附件摘要中，分享前会要求确认并遮蔽。`,
+          privacyNotice: `���ڱ��ؼ�⵽ ${matches.length} ��������Ϣ��ԭֵ������ʾ�ڸ���ժҪ�У�����ǰ��Ҫ��ȷ�ϲ��ڱΡ�`,
         };
       }
     }
     if (info.size >= LARGE_PICKED_FILE_BYTES) return {
       status: "ready", diagnosticCode: "large_file", processingMode: "bounded",
-      message: "大文件已就绪；为保持应用流畅，将先读取有代表性的内容，而不是一次加载全部数据。",
-      recoveryAction: "可直接继续；如需逐页或全量分析，建议拆分文件后重新导入。",
+      message: "���ļ��Ѿ�����Ϊ����Ӧ�����������ȶ�ȡ�д����Ե����ݣ�������һ�μ���ȫ�����ݡ�",
+      recoveryAction: "��ֱ�Ӽ�����������ҳ��ȫ���������������ļ������µ��롣",
       ...privacy,
     };
-    return { status: "ready", processingMode: "full", message: "文件已读取并可加入任务。", ...privacy };
+    return { status: "ready", processingMode: "full", message: "�ļ��Ѷ�ȡ���ɼ�������", ...privacy };
   } finally {
     await handle.close();
   }
@@ -4296,14 +4564,26 @@ async function inspectPickedFileWithTimeout(path: string, category: PickedFileDe
       new Promise<PickedFileInspection>((resolveTimeout) => {
         timer = setTimeout(() => resolveTimeout({
           status: "unreadable", diagnosticCode: "inspection_timeout", processingMode: "blocked",
-          message: "文件检查超过 15 秒，已停止等待，应用可以继续使用。",
-          recoveryAction: "请确认磁盘或网络位置可访问，将文件复制到本地后重试。",
+          message: "�ļ���鳬�� 15 �룬��ֹͣ�ȴ���Ӧ�ÿ��Լ���ʹ�á�",
+          recoveryAction: "��ȷ�ϴ��̻�����λ�ÿɷ��ʣ����ļ����Ƶ����غ����ԡ�",
         }), PICKED_FILE_INSPECTION_TIMEOUT_MS);
       }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+const PICKED_IMAGE_PREVIEW_MAX_BYTES = 1_500_000;
+
+function pickedImageMime(extension: string): string | null {
+  if (extension === ".png") return "image/png";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".webp") return "image/webp";
+  if (extension === ".gif") return "image/gif";
+  if (extension === ".bmp") return "image/bmp";
+  if (extension === ".svg") return "image/svg+xml";
+  return null;
 }
 
 async function describePickedFiles(paths: string[], canceled: boolean): Promise<{ canceled: boolean; paths: string[]; files: PickedFileDescriptor[] }> {
@@ -4313,13 +4593,45 @@ async function describePickedFiles(paths: string[], canceled: boolean): Promise<
     const base = { path, name: basename(path), extension, category };
     try {
       const info = await statFile(path);
-      if (!info.isFile()) return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "所选项目不是文件。", recoveryAction: "请选择一个可读取的本地文件。" };
-      return { ...base, sizeBytes: info.size, ...(await inspectPickedFileWithTimeout(path, category, extension)) };
+      if (!info.isFile()) return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "��ѡ��Ŀ�����ļ���", recoveryAction: "��ѡ��һ���ɶ�ȡ�ı����ļ���" };
+      const inspected = { ...base, sizeBytes: info.size, ...(await inspectPickedFileWithTimeout(path, category, extension)) };
+      if (inspected.status !== "ready" || category !== "image") {
+        return inspected;
+      }
+      const mime = pickedImageMime(extension);
+      if (!mime) return inspected;
+      try {
+        const previewDataUrl = info.size <= PICKED_IMAGE_PREVIEW_MAX_BYTES
+          ? `data:${mime};base64,${(await readFile(path)).toString("base64")}`
+          : createPickedImageThumbnail(path);
+        if (!previewDataUrl) return inspected;
+        return {
+          ...inspected,
+          previewDataUrl,
+        };
+      } catch {
+        return inspected;
+      }
     } catch {
-      return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "文件无法读取或已经被移动；其他已选文件仍可使用。", recoveryAction: "请检查文件权限和位置，或复制到本地后重新导入。" };
+      return { ...base, status: "unreadable", diagnosticCode: "unreadable", processingMode: "blocked", message: "�ļ��޷���ȡ���Ѿ����ƶ���������ѡ�ļ��Կ�ʹ�á�", recoveryAction: "�����ļ�Ȩ�޺�λ�ã����Ƶ����غ����µ��롣" };
     }
   }));
   return { canceled, paths, files };
+}
+
+function createPickedImageThumbnail(path: string): string | undefined {
+  const source = nativeImage.createFromPath(path);
+  if (source.isEmpty()) return undefined;
+  const size = source.getSize();
+  const scale = Math.min(1, 256 / Math.max(size.width, size.height));
+  const thumbnail = scale < 1
+    ? source.resize({
+        width: Math.max(1, Math.round(size.width * scale)),
+        height: Math.max(1, Math.round(size.height * scale)),
+        quality: "good",
+      })
+    : source;
+  return thumbnail.toDataURL();
 }
 
 function registerIpc(): void {
@@ -4447,6 +4759,23 @@ function registerIpc(): void {
     if (selected.canceled || !selected.filePaths[0]) return null;
     return productionDiagnostics.importPackage(selected.filePaths[0]);
   });
+  secureHandle("desktop:feedback-preview", (_event, draft: FeedbackDraft) => desktopFeedback.preview(draft));
+  secureHandle("desktop:feedback-submit", (_event, draft: FeedbackDraft) => desktopFeedback.submit(draft));
+  secureHandle("desktop:feedback-pending-list", () => desktopFeedback.listPending());
+  secureHandle("desktop:feedback-pending-retry", () => desktopFeedback.flush());
+  secureHandle("desktop:feedback-pending-delete", (_event, clientFeedbackId: string) => desktopFeedback.deletePending(clientFeedbackId));
+  secureHandle("desktop:feedback-crash-pending", () => getPendingCrashFeedback());
+  secureHandle("desktop:feedback-crash-clear", (_event, incidentId: string) => clearPendingCrashFeedback(incidentId));
+  secureHandle("desktop:feedback-screenshot-capture", async (event) => {
+    const image = await event.sender.capturePage();
+    const size = image.getSize();
+    const dataUrl = image.toDataURL();
+    if (Buffer.byteLength(dataUrl) > 7_000_000) throw new Error("Screenshot exceeds the feedback size limit.");
+    return { data_url: dataUrl, width: size.width, height: size.height, byte_length: Buffer.byteLength(dataUrl) };
+  });
+  secureHandle("desktop:feedback-admin-list", (_event, status: FeedbackStatus | undefined) => desktopFeedback.listAdmin(status));
+  secureHandle("desktop:feedback-admin-update", (_event, feedbackId: string, update: { status: FeedbackStatus; fixed_in_version?: string; recommended_owner?: string; note?: string }) => desktopFeedback.updateAdmin(feedbackId, update));
+  secureHandle("desktop:feedback-admin-delete", (_event, feedbackId: string) => desktopFeedback.deleteAdmin(feedbackId));
   secureHandle("desktop:get-auth-session", () => getAuthSession());
   secureHandle("desktop:e2e-a5-service-guidance-scenario", () =>
     getA5ServiceGuidanceScenario(),
@@ -4461,13 +4790,20 @@ function registerIpc(): void {
     if (result.ok) {
       const userId = result.session?.user?.id || result.session?.user?.email;
       if (userId) await syncAuthIdentityToGateway(userId);
+      // Broadcast auth-session-restored so the renderer can clear any
+      // auth_required blocker and re-trigger bootstrap automatically.
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) {
+          window.webContents.send("desktop:auth-session-restored");
+        }
+      }
       focusMainWindow();
     }
     return result;
   });
   secureHandle("desktop:cancel-oidc-login", () => cancelOidcLogin());
-  secureHandle("desktop:logout", (_event, options) => {
-    stopGateway();
+  secureHandle("desktop:logout", async (_event, options) => {
+    await stopGateway();
     return logout(options);
   });
   secureHandle("desktop:restart-application", () => {
@@ -4517,13 +4853,27 @@ function registerIpc(): void {
     try {
       const client = await LocalRuntimeClient.connect();
       let capability = (await client.getCapabilities()).agent_backends?.codex;
+      let account;
       if (capability?.available) {
-        await client.getBackendModels("codex", refresh);
-        capability = (await client.getCapabilities()).agent_backends?.codex;
+        try {
+          await client.getBackendModels("codex", refresh);
+          account = await client.getBackendAccount("codex", refresh);
+          capability = (await client.getCapabilities()).agent_backends?.codex;
+        } catch (error) {
+          // V2 desktop_gateway may advertise a stale capability snapshot while
+          // the codex adapter routes are not registered. Treat the endpoint 404
+          // as "not installed" and stop retrying it on every health tick.
+          if (!(error instanceof RemoteProtocolError) || error.status !== 404) throw error;
+          capability = {
+            backend_id: "codex",
+            available: false,
+            reason: "codex_backend_not_registered",
+          };
+        }
       }
       status = !capability?.available
         ? presentCodexBackendStatus(capability)
-        : presentCodexBackendStatus(capability, await client.getBackendAccount("codex", refresh));
+        : presentCodexBackendStatus(capability, account);
     } catch (error) {
       if (!isLocalRuntimeUnavailableError(error)) throw error;
       status = presentCodexBackendStatus({
@@ -4554,10 +4904,24 @@ function registerIpc(): void {
     return { type: result.type, loginId: result.loginId, verificationUrl: result.verificationUrl, userCode: result.userCode };
   });
   secureHandle("desktop:restart-codex-backend", async () => {
-    const client = await LocalRuntimeClient.connect();
-    await client.restartBackend("codex");
-    const capability = (await client.getCapabilities()).agent_backends?.codex;
-    return presentCodexBackendStatus(capability, await client.getBackendAccount("codex", true));
+    try {
+      const client = await LocalRuntimeClient.connect();
+      await client.restartBackend("codex");
+      const capability = (await client.getCapabilities()).agent_backends?.codex;
+      return presentCodexBackendStatus(capability, await client.getBackendAccount("codex", true));
+    } catch (error) {
+      // V2 desktop_gateway only registers "opendrsai" backend.  If the codex
+      // backend is not registered the gateway returns 404 agent_backend_not_found.
+      // Return a not_installed status instead of propagating the error so the
+      // renderer can gracefully hide the codex UI without an unhandled rejection.
+      return {
+        backendId: "codex", state: "not_installed" as const, available: false, version: null,
+        installed: false, authenticated: false, contractCompatible: false, executable: false,
+        loggedIn: false, authMode: null, accountLabel: null,
+        reason: "codex_backend_not_registered", retryable: false, action: "none" as const,
+        readiness: undefined, binaryIdentity: null,
+      };
+    }
   });
   secureHandle("desktop:sync-codex-workspace-sessions", async (event, workspaceId: string, workspacePath: string, requestId: string) => {
     if (!/^[A-Za-z0-9_.:-]{1,160}$/.test(workspaceId) || !/^[A-Za-z0-9_.:-]{1,200}$/.test(requestId)
@@ -4605,6 +4969,15 @@ function registerIpc(): void {
       if (controller.signal.aborted) {
         emit("cancelled", 0, 0);
         return { workspaceId, cancelled: true, discovered: 0, active: 0, archived: 0,
+          created: 0, updated: 0, skipped: 0, conflicts: 0, threads: [] };
+      }
+      // V2 desktop_gateway only registers "opendrsai" backend. If the codex
+      // backend is not registered the gateway returns 404 and the workspace
+      // sync must degrade to zero results instead of surfacing an error.
+      if (error instanceof RemoteProtocolError && error.status === 404) {
+        emit("projected", 0, 0);
+        emit("persisted", 0, 0);
+        return { workspaceId, discovered: 0, active: 0, archived: 0,
           created: 0, updated: 0, skipped: 0, conflicts: 0, threads: [] };
       }
       throw error;
@@ -4664,7 +5037,8 @@ function registerIpc(): void {
       return "Path is not registered as an OpenDrSai or workspace path.";
     }
     if (process.env.OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN === "1") return "";
-    return shell.openPath(rawPath);
+    const openTarget = await resolveOpenPathForShell(rawPath);
+    return shell.openPath(openTarget);
   });
   secureHandle("desktop:edit-command", (event, rawCommand: string) => {
     const command = rawCommand === "undo" || rawCommand === "redo" || rawCommand === "cut" ||
@@ -4692,7 +5066,7 @@ function registerIpc(): void {
   );
   secureHandle("desktop:local-data-cleanup", async (_event, request) => {
     if (hasActiveChats() || hasActiveAgentRuns()) throw new Error("Stop active tasks before clearing local data.");
-    stopGateway();
+    await stopGateway();
     const result = await clearLocalData(request);
     if (result.scope === "all_local_data") {
       await desktopDiagnostics.clear();
@@ -4818,6 +5192,7 @@ function registerIpc(): void {
   );
   secureHandle("desktop:list-workspaces", () => listWorkspaces(app.getPath("documents")));
   secureHandle("desktop:ssh-hosts", () => listSshHosts());
+  secureHandle("desktop:ssh-host-save", (_event, host) => saveSshHost(host));
   secureHandle("desktop:ssh-diagnose", (_event, hostAlias: string) => diagnoseSshHost(hostAlias));
   secureHandle("desktop:ssh-host-keys", (_event, hostAlias: string) => inspectSshHostKeys(hostAlias));
   secureHandle("desktop:ssh-test", (_event, hostAlias: string) => testSshHost(hostAlias));
@@ -4890,17 +5265,77 @@ function registerIpc(): void {
   secureHandle("desktop:workspace-context-overview", async (_event, workspacePath: string, workspaceId?: string) =>
     (await resolveRemoteWorkspaceTarget(workspacePath, workspaceId)) !== "local_or_unknown" ? getRemoteWorkspaceContextOverview(workspacePath, workspaceId) : getWorkspaceContextOverview(workspacePath),
   );
-  secureHandle("desktop:workspace-files", async (_event, request: WorkspaceFileTreeRequest) =>
-    (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? listRemoteWorkspaceFiles(request) : listWorkspaceFiles(request),
-  );
+  secureHandle("desktop:workspace-files", async (_event, request: WorkspaceFileTreeRequest) => {
+    // V2: route through gateway when workspaceId is available
+    if (request?.workspaceId) {
+      try {
+        return await withRuntimeClientForWorkspace(
+          request.workspacePath,
+          request.workspaceId,
+          async ({ client }) => listWorkspaceFilesViaGateway(client, request),
+        );
+      } catch (error) {
+        if (!isLocalRuntimeUnavailableError(error)) throw error;
+        // gateway unavailable �� fall through to local fs
+      }
+    }
+    return (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown"
+      ? listRemoteWorkspaceFiles(request)
+      : listWorkspaceFiles(request);
+  });
   secureHandle("desktop:workspace-folder-summary", async (_event, request) => {
     if (process.env.OPENDRSAI_E2E_C2_FOLDER_IMPORT === "1") await new Promise((resolveDelay) => setTimeout(resolveDelay, 350));
     const requestPath = getStringProperty(request, "path");
     const remoteRoot = getRemoteWorkspaceRootForPath(requestPath) || ((await resolveRemoteWorkspaceTarget(requestPath)) !== "local_or_unknown" ? requestPath : null);
     return remoteRoot ? summarizeRemoteWorkspaceFolder(request as WorkspaceFolderSummaryRequest, remoteRoot) : summarizeWorkspaceFolder(request);
   });
-  secureHandle("desktop:workspace-file-preview", async (_event, request: WorkspaceFilePreviewRequest) =>
-    (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? previewRemoteWorkspaceFile(request) : previewWorkspaceFile(request),
+  secureHandle("desktop:workspace-file-preview", async (_event, request: WorkspaceFilePreviewRequest) => {
+    // Office/PDF previews need local extractors (and sibling slide PNGs). Avoid
+    // gateway /file entirely so a slow Runtime cannot AbortError the IPC call.
+    if (
+      prefersLocalRichPreview(request?.path)
+      && (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) === "local_or_unknown"
+    ) {
+      return previewWorkspaceFile(request);
+    }
+    // V2: route through gateway when workspaceId is available
+    if (request?.workspaceId) {
+      try {
+        return await withRuntimeClientForWorkspace(
+          request.workspacePath,
+          request.workspaceId,
+          async ({ client }) => previewWorkspaceFileViaGateway(client, request),
+        );
+      } catch (error) {
+        if (!isLocalRuntimeUnavailableError(error) && !isTransientWorkspacePreviewError(error)) throw error;
+        // gateway unavailable / timed out — fall through to local fs
+      }
+    }
+    return (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown"
+      ? previewRemoteWorkspaceFile(request)
+      : previewWorkspaceFile(request);
+  });
+  registerConversationResourceReadIpc(secureHandle as never, (path) => {
+    if (process.env.OPENDRSAI_E2E_SUPPRESS_EXTERNAL_OPEN !== "1") shell.showItemInFolder(path);
+  });
+  registerConversationResourceSubscriptionIpc(
+    secureHandle as never,
+    (event, value) => (event as { sender: { send(channel: string, payload: unknown): void } }).sender.send("desktop:conversation-resource-state-event", value),
+  );
+  registerConversationResourceDownloadIpc(
+    secureHandle as never,
+    async (suggestedName) => {
+      if (isE2eSmokeProcess && process.env.OPENDRSAI_E2E_AGENT_RUN_SCENARIO === "conversation-resource-p2") {
+        const directory = process.env.OPENDRSAI_E2E_G4_SAVE_DIR;
+        if (!directory) throw new Error("Packaged P2 resource save directory is required.");
+        return join(directory, basename(suggestedName));
+      }
+      const selected = mainWindow
+        ? await dialog.showSaveDialog(mainWindow, { title: "Save Runtime artifact", defaultPath: join(app.getPath("downloads"), suggestedName) })
+        : await dialog.showSaveDialog({ title: "Save Runtime artifact", defaultPath: join(app.getPath("downloads"), suggestedName) });
+      return selected.canceled || !selected.filePath ? null : selected.filePath;
+    },
+    (event, progress) => (event as { sender: { send(channel: string, value: unknown): void } }).sender.send("desktop:conversation-resource-download-progress", progress),
   );
   secureHandle("desktop:workspace-file-save-as", (_event, request: WorkspaceFileSaveAsRequest) =>
     saveWorkspaceFileAs(request),
@@ -4947,7 +5382,7 @@ function registerIpc(): void {
       phase: "analyzing",
       activeStage: "analyzing",
       progress: 1,
-      message: "正在启动管理者版 PPT 生成任务。",
+      message: "�������������߰� PPT ��������",
     };
     run.lastProgress = startedProgress;
     run.backgroundSync = upsertBackgroundTaskForManagerPresentation(request, startedProgress);
@@ -4982,8 +5417,8 @@ function registerIpc(): void {
     try {
       const versionGroupId = `presentation-${requestId}`;
       const changeReason = request.audience === "technical_experts"
-        ? "根据演示型 PDF 生成技术专家版 PPT"
-        : "根据演示型 PDF 生成管理者版 PPT";
+        ? "������ʾ�� PDF ���ɼ���ר�Ұ� PPT"
+        : "������ʾ�� PDF ���ɹ����߰� PPT";
       const presentationResult = await generateManagerPresentation(request, (progress) => {
         run.lastProgress = progress;
         recordManagerPresentationProgress(request, progress);
@@ -5023,7 +5458,7 @@ function registerIpc(): void {
         onOutputPlanned: async (outputPath, manifestPath) => {
           await createWorkspaceCheckpoint({
             workspacePath: request.workspacePath,
-            label: `生成前 · ${basename(outputPath)}`,
+            label: `����ǰ �� ${basename(outputPath)}`,
             kind: "artifact_version",
             runId: requestId,
             automatic: true,
@@ -5044,7 +5479,7 @@ function registerIpc(): void {
       });
       await createWorkspaceCheckpoint({
         workspacePath: request.workspacePath,
-        label: `生成后 · ${basename(presentationResult.outputPath)}`,
+        label: `���ɺ� �� ${basename(presentationResult.outputPath)}`,
         kind: "artifact_version",
         runId: requestId,
         automatic: true,
@@ -5118,7 +5553,7 @@ function registerIpc(): void {
       phase: "pausing",
       activeStage: progress?.activeStage,
       progress: progress?.progress ?? 0,
-      message: "正在到达安全暂停点…",
+      message: "���ڵ��ﰲȫ��ͣ�㡭",
       outputPath: progress?.outputPath,
     } satisfies ManagerPresentationProgressEvent);
     run.activeOperationController?.abort();
@@ -5145,7 +5580,7 @@ function registerIpc(): void {
         activeStage,
         scope: "regenerate_required",
         requirements: run ? [...run.requirements] : [],
-        message: "任务已经结束；要应用这项要求，需要重新生成 PPT。",
+        message: "�����Ѿ�������ҪӦ������Ҫ����Ҫ�������� PPT��",
       };
     }
     const text = typeof update?.text === "string"
@@ -5163,8 +5598,8 @@ function registerIpc(): void {
         scope: "regenerate_required",
         requirements: [...run.requirements],
         message: text
-          ? "当前成果已进入验收或已经结束；要应用这项要求，需要重新执行规划和生成阶段。"
-          : "请输入要补充的要求。",
+          ? "��ǰ�ɹ��ѽ������ջ��Ѿ�������ҪӦ������Ҫ����Ҫ����ִ�й滮�����ɽ׶Ρ�"
+          : "������Ҫ�����Ҫ��",
       };
     }
     if (!run.requirements.includes(text)) run.requirements = [...run.requirements, text].slice(-5);
@@ -5176,7 +5611,7 @@ function registerIpc(): void {
       activeStage,
       scope: "current_unfinished_stages",
       requirements: [...run.requirements],
-      message: "已应用到当前任务尚未完成的规划、生成和验收阶段。",
+      message: "��Ӧ�õ���ǰ������δ��ɵĹ滮�����ɺ����ս׶Ρ�",
     };
   });
   secureHandle("desktop:manager-presentation-recovery", async (_event, request: ManagerPresentationRecoveryRequest) => {
@@ -5207,24 +5642,25 @@ function registerIpc(): void {
     }
     return resolveManagerPresentationRecovery(request);
   });
-  secureHandle("desktop:workspace-git-diff", async (_event, request: WorkspaceGitDiffRequest) =>
-    (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? getRemoteWorkspaceGitDiff(request) : getWorkspaceGitDiff(request),
-  );
-  secureHandle("desktop:workspace-git-file-at-ref", async (_event, request) =>
-    (await resolveRemoteWorkspaceTarget(getStringProperty(request, "workspacePath"), getStringProperty(request, "workspaceId"))) !== "local_or_unknown" ? getRemoteWorkspaceGitFileAtRef(request as WorkspaceGitFileAtRefRequest) : getWorkspaceGitFileAtRef(request),
-  );
-  secureHandle("desktop:workspace-revert-file", async (_event, request) =>
-    requestWorkspaceMutationApproval("revert-file", request),
-  );
-  secureHandle("desktop:workspace-stage-file", async (_event, request) =>
-    requestWorkspaceMutationApproval("stage-file", request),
-  );
-  secureHandle("desktop:workspace-stage-hunk", async (_event, request) =>
-    requestWorkspaceMutationApproval("stage-hunk", request),
-  );
-  secureHandle("desktop:workspace-revert-hunk", async (_event, request) =>
-    requestWorkspaceMutationApproval("revert-hunk", request),
-  );
+  // V2: trimmed �� gateway has no git diff/stage/revert routes (only list/open/files/file)
+  // secureHandle("desktop:workspace-git-diff", async (_event, request: WorkspaceGitDiffRequest) =>
+  //   (await resolveRemoteWorkspaceTarget(request?.workspacePath, request?.workspaceId)) !== "local_or_unknown" ? getRemoteWorkspaceGitDiff(request) : getWorkspaceGitDiff(request),
+  // );
+  // secureHandle("desktop:workspace-git-file-at-ref", async (_event, request) =>
+  //   (await resolveRemoteWorkspaceTarget(getStringProperty(request, "workspacePath"), getStringProperty(request, "workspaceId"))) !== "local_or_unknown" ? getRemoteWorkspaceGitFileAtRef(request as WorkspaceGitFileAtRefRequest) : getWorkspaceGitFileAtRef(request),
+  // );
+  // secureHandle("desktop:workspace-revert-file", async (_event, request) =>
+  //   requestWorkspaceMutationApproval("revert-file", request),
+  // );
+  // secureHandle("desktop:workspace-stage-file", async (_event, request) =>
+  //   requestWorkspaceMutationApproval("stage-file", request),
+  // );
+  // secureHandle("desktop:workspace-stage-hunk", async (_event, request) =>
+  //   requestWorkspaceMutationApproval("stage-hunk", request),
+  // );
+  // secureHandle("desktop:workspace-revert-hunk", async (_event, request) =>
+  //   requestWorkspaceMutationApproval("revert-hunk", request),
+  // );
   secureHandle("desktop:workspace-checkpoints-list", async (_event, workspacePath: string, workspaceId?: string) => {
     if ((await resolveRemoteWorkspaceTarget(workspacePath, workspaceId)) !== "local_or_unknown") return listRemoteWorkspaceCheckpoints(workspacePath, workspaceId);
     const resolvedWorkspacePath = await resolveLegacyLocalWorkspaceLabel(workspacePath);
@@ -5267,9 +5703,26 @@ function registerIpc(): void {
   secureHandle("desktop:fork-conflict-draft-write", async (_event, request) =>
     requestForkConflictDraftWrite(request),
   );
-  secureHandle("desktop:list-threads", async (event) => {
-    void ensureRuntimeWorkspaceCatalogSubscriptions(event.sender).catch(() => undefined);
-    return listThreads();
+  secureHandle("desktop:list-threads", async (event, rawRequest?: DesktopThreadListRequest) => {
+    const value = rawRequest && typeof rawRequest === "object" ? rawRequest : undefined;
+    const request = value ? {
+      ...(typeof value.workspacePath === "string" && value.workspacePath.length <= 2048 && !/[\r\n\0]/.test(value.workspacePath)
+        ? { workspacePath: value.workspacePath }
+        : {}),
+      limit: Number.isFinite(value.limit) ? Math.max(1, Math.min(200, Math.trunc(value.limit!))) : 50,
+      offset: Number.isFinite(value.offset) ? Math.max(0, Math.trunc(value.offset!)) : 0,
+      includeArchived: value.includeArchived === true,
+      requiredThreadIds: Array.isArray(value.requiredThreadIds)
+        ? value.requiredThreadIds.filter((id) => typeof id === "string" && /^[A-Za-z0-9_.:-]{1,160}$/.test(id)).slice(0, 20)
+        : [],
+      ...(typeof value.runtimeWorkspaceId === "string" && /^[A-Za-z0-9_.:-]{1,160}$/.test(value.runtimeWorkspaceId)
+        ? { runtimeWorkspaceId: value.runtimeWorkspaceId }
+        : {}),
+    } : undefined;
+    if (request?.runtimeWorkspaceId) {
+      void ensureRuntimeWorkspaceCatalogSubscription(event.sender, request.runtimeWorkspaceId).catch(() => undefined);
+    }
+    return listThreads(request);
   });
   secureHandle("desktop:list-agents", (_event, options) => listAgents(
     options && typeof options === "object"
@@ -5305,18 +5758,19 @@ function registerIpc(): void {
   secureHandle("desktop:preview-my-drsai-model-connection", (_event, request: UpdateMyDrSaiModelConnectionRequest) =>
     previewMyDrSaiModelConnection(request),
   );
-  secureHandle("desktop:diagnose-my-drsai-model-connection", (_event, online?: boolean) =>
-    diagnoseMyDrSaiModelConnection(online),
-  );
+  // V2: trimmed �� gateway has no model provider config routes (catalog only)
+  // secureHandle("desktop:diagnose-my-drsai-model-connection", (_event, online?: boolean) =>
+  //   diagnoseMyDrSaiModelConnection(online),
+  // );
   secureHandle("desktop:restore-my-drsai-model-connection", (_event, expectedRevision?: string) =>
     restoreMyDrSaiModelConnection(expectedRevision),
   );
-  secureHandle("desktop:save-my-drsai-model-provider", (_event, provider: string, request: SaveMyDrSaiModelProviderRequest) =>
-    saveMyDrSaiModelProvider(provider, request),
-  );
-  secureHandle("desktop:test-my-drsai-model-provider", (_event, provider: string, model?: string) =>
-    testMyDrSaiModelProvider(provider, model),
-  );
+  // secureHandle("desktop:save-my-drsai-model-provider", (_event, provider: string, request: SaveMyDrSaiModelProviderRequest) =>
+  //   saveMyDrSaiModelProvider(provider, request),
+  // );
+  // secureHandle("desktop:test-my-drsai-model-provider", (_event, provider: string, model?: string) =>
+  //   testMyDrSaiModelProvider(provider, model),
+  // );
   secureHandle("desktop:probe-my-drsai-provider-model", (_event, provider: string, request) =>
     probeMyDrSaiProviderModel(provider, request as { model: string; operation: import("../../../shared/api/desktopApi").ModelCapabilityProbeOperation; protocol?: string }),
   );
@@ -5333,7 +5787,14 @@ function registerIpc(): void {
   secureHandle("desktop:update-thread", (_event, request) =>
     updateThread(request),
   );
-  secureHandle("desktop:delete-thread", (_event, threadId) => deleteThread(threadId));
+  secureHandle("desktop:delete-thread", async (_event, threadId) => {
+    try {
+      return await deleteThreadAndRuntimeSession(threadId);
+    } catch (error) {
+      console.error("[desktop:delete-thread] failed", threadId, error);
+      throw error;
+    }
+  });
   secureHandle("desktop:set-thread-archived", (_event, request) => {
     const value = request as { threadId?: unknown; archived?: unknown };
     if (typeof value?.threadId !== "string" || typeof value.archived !== "boolean") throw new Error("Archive request is invalid.");
@@ -5341,16 +5802,47 @@ function registerIpc(): void {
   });
   secureHandle("desktop:get-thread-snapshot", async (_event, threadId: string) => {
     const remote = await getRemoteThreadSnapshot(threadId);
-    if (remote) return remote;
+    if (threadSnapshotHasConversation(remote)) return remote;
+    const persisted = await getThreadSnapshot(threadId);
+    if (threadSnapshotHasConversation(persisted)) return persisted;
     const thread = (await listThreads()).find((item) => item.id === threadId);
-    if (thread?.runtimeSessionId) {
-      const runtime = await getRuntimeThreadSnapshot(thread);
-      if (runtime) return runtime;
+    if (runtimeSessionIdForLookup(thread ?? { runtimeSessionId: undefined })) {
+      const runtime = await getRuntimeThreadSnapshot(thread!).catch(() => null);
+      if (threadSnapshotHasConversation(runtime)) return runtime;
     }
-    return getThreadSnapshot(threadId);
+    return persisted ?? remote;
   });
   secureHandle("desktop:get-my-drsai-runtime-model-catalog", () => getMyDrSaiRuntimeModelCatalog());
-  secureHandle("desktop:get-my-drsai-agent-model-policy", (_event, agentId?: string) => getMyDrSaiAgentModelPolicy(agentId));
+  secureHandle("desktop:get-my-drsai-agent-model-policy", async (_event, agentId?: string) => {
+    try {
+      return await getMyDrSaiAgentModelPolicy(agentId);
+    } catch (error) {
+      // If the gateway is not running (e.g. during bootstrap or runtime repair),
+      // return a safe default policy instead of throwing an unhandled IPC error.
+      if (error instanceof Error && error.message.includes("is not running")) {
+        return {
+          agent_id: agentId ?? "default",
+          primary_model: { mode: "explicit" as const, ref: null },
+          image_understanding_model: null,
+          image_generation_model: null,
+          text_to_speech_model: null,
+          realtime_voice_model: null,
+          speech_to_text_model: null,
+          reasoning_effort: null,
+          expected_revision: null,
+          effective_ref: null,
+          effective_image_ref: null,
+          effective_image_understanding_ref: null,
+          effective_image_generation_ref: null,
+          effective_text_to_speech_ref: null,
+          effective_realtime_voice_ref: null,
+          effective_speech_to_text_ref: null,
+          revision: "0",
+        };
+      }
+      throw error;
+    }
+  });
   secureHandle("desktop:get-my-drsai-agent-tool-policy", (_event, agentId: string) => getMyDrSaiAgentToolPolicy(agentId));
   secureHandle("desktop:update-my-drsai-agent-tool-policy", (_event, agentId: string, policy: Parameters<typeof updateMyDrSaiAgentToolPolicy>[1]) => updateMyDrSaiAgentToolPolicy(agentId, policy));
   secureHandle("desktop:preview-my-drsai-agent-tools", (_event, agentId: string) => previewMyDrSaiAgentTools(agentId));
@@ -5366,12 +5858,19 @@ function registerIpc(): void {
   secureHandle("desktop:search-knowledge-base", (_event, knowledgeId: string, query: string) => searchKnowledgeBase(knowledgeId, query));
   secureHandle("desktop:list-knowledge-bases", () => listKnowledgeBases());
   secureHandle("desktop:list-perceptors", () => listPerceptors());
+  secureHandle("desktop:get-web-search-provider-policy", () => getWebSearchProviderPolicy());
+  secureHandle("desktop:update-web-search-provider-policy", (_event, mode: import("../../../shared/api/desktopApi").WebSearchProviderMode) => updateWebSearchProviderPolicy(mode));
   secureHandle("desktop:save-perceptor", (_event, request) => savePerceptor(request));
   secureHandle("desktop:update-perceptor", (_event, perceptorId, request) => updatePerceptor(perceptorId, request));
   secureHandle("desktop:test-perceptor", (_event, perceptorId, capability) => testPerceptor(perceptorId, capability));
   secureHandle("desktop:delete-perceptor", (_event, perceptorId) => deletePerceptor(perceptorId));
   secureHandle("desktop:create-knowledge-base", (_event, request: Parameters<typeof createKnowledgeBase>[0]) => createKnowledgeBase(request));
   secureHandle("desktop:delete-knowledge-base", (_event, knowledgeId: string) => deleteKnowledgeBase(knowledgeId));
+  secureHandle("desktop:list-knowledge-base-files", (_event, knowledgeId: string) => listKnowledgeBaseFiles(knowledgeId));
+  secureHandle("desktop:check-knowledge-base-stale", (_event, knowledgeId: string) => checkKnowledgeBaseStale(knowledgeId));
+  secureHandle("desktop:refresh-knowledge-base-if-stale", (_event, knowledgeId: string) => refreshKnowledgeBaseIfStale(knowledgeId));
+  secureHandle("desktop:discover-ragflow-datasets", (_event, credential: string) => discoverRagflowDatasets(credential));
+  secureHandle("desktop:rediscover-ragflow-datasets", () => rediscoverRagflowDatasets());
   secureHandle("desktop:get-my-drsai-agent-model-capability-status", (_event, agentId?: string) => getMyDrSaiAgentModelCapabilityStatus(agentId));
   secureHandle("desktop:update-my-drsai-agent-model-policy", (_event, agentId: string, policy: unknown) => updateMyDrSaiAgentModelPolicy(agentId, policy));
   secureHandle("desktop:migrate-my-drsai-agent-model-policy", (_event, agentId: string, legacyModel: string, expectedRevision?: string) => migrateMyDrSaiAgentModelPolicy(agentId, legacyModel, expectedRevision));
@@ -5392,17 +5891,25 @@ function registerIpc(): void {
     }
     try {
       const thread = (await listThreads()).find((item) => item.id === threadId);
-      if (thread?.runtimeSessionId) {
-        const envelope = await getRuntimeThreadSnapshotEnvelope(thread, controller.signal, options);
-        if (envelope) return envelope;
+      const remote = await getRemoteThreadSnapshot(threadId);
+      const persisted = (threadSnapshotHasConversation(remote) ? remote : null) ?? await getThreadSnapshot(threadId);
+      // Open from local history first. An empty/restarted Runtime session must
+      // not block or blank the persisted conversation body.
+      if (threadSnapshotHasConversation(persisted)) {
+        return persistedThreadSnapshotEnvelope(threadId, persisted, thread?.runtimeSessionId);
+      }
+      let runtimeEnvelope = null;
+      if (runtimeSessionIdForLookup(thread ?? { runtimeSessionId: undefined })) {
+        try {
+          runtimeEnvelope = await getRuntimeThreadSnapshotEnvelope(thread!, controller.signal, options);
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          // Missing sessions and generation races fall through to persisted.
+          runtimeEnvelope = null;
+        }
       }
       controller.signal.throwIfAborted();
-      const remote = await getRemoteThreadSnapshot(threadId);
-      const snapshot = remote ?? await getThreadSnapshot(threadId);
-      if (!snapshot) return null;
-      return { version: 1, projection: "conversation/1", threadId,
-        runtimeSessionId: thread?.runtimeSessionId ?? `persisted:${threadId}`,
-        sessionSequence: 0, generation: 0, source: "persisted", snapshot };
+      return coalesceHydrationEnvelope(threadId, thread, runtimeEnvelope, persisted);
     } catch (error) {
       // Cancellation is part of the hydration protocol: the renderer cancels
       // stale work when a newer generation starts or the active Thread
@@ -5449,7 +5956,7 @@ function registerIpc(): void {
     return runtimeThreadSubscriptions.delete(key);
   });
   secureHandle("desktop:search-thread-messages", async (_event, request: DesktopThreadContentSearchRequest) =>
-    (await searchRemoteThreadMessages(request)) || searchThreadMessages(request),
+    searchThreadMessagesWithRemoteFallback(request, searchThreadMessages),
   );
   secureHandle("desktop:update-thread-snapshot", (_event, snapshot) =>
     updateThreadSnapshot(snapshot),
@@ -5470,7 +5977,10 @@ function registerIpc(): void {
     listInstalledSkills((request as { userId?: string } | undefined)?.userId),
   );
   secureHandle("desktop:list-available-skills", (_event, request) =>
-    listAvailableSkills((request as { userId?: string } | undefined)?.userId),
+    listAvailableSkills(
+      (request as { userId?: string; coreOnly?: boolean } | undefined)?.userId,
+      (request as { userId?: string; coreOnly?: boolean } | undefined)?.coreOnly,
+    ),
   );
   secureHandle("desktop:get-skill-content", (_event, request) =>
     getSkillContent((request as { skillPath: string }).skillPath),
@@ -5490,6 +6000,75 @@ function registerIpc(): void {
     const r = (request ?? {}) as { threadId?: string; userId?: string };
     return reloadSkills(r.threadId, r.userId);
   });
+  secureHandle("desktop:import-skill-folder", (_event, request) =>
+    importSkillFromFolderPath(
+      (request as { folderPath: string }).folderPath,
+      request as Parameters<typeof importSkillFromFolderPath>[1],
+    ),
+  );
+  secureHandle("desktop:install-skill-zip", (_event, request) =>
+    installSkillFromZipPath(
+      (request as { zipPath: string }).zipPath,
+      request as Parameters<typeof installSkillFromZipPath>[1],
+    ),
+  );
+
+  // Skills Square (WebUI marketplace)
+  secureHandle("desktop:get-skills-square-status", () => getSkillsSquareStatus());
+  secureHandle("desktop:list-skills-square", (_event, request) =>
+    listSkillsSquare(request as Parameters<typeof listSkillsSquare>[0]),
+  );
+  secureHandle("desktop:get-skills-square-detail", (_event, request) =>
+    getSkillsSquareDetail(request as { slug: string; userEmail?: string }),
+  );
+  secureHandle("desktop:get-skills-square-skill-md", (_event, request) =>
+    getSkillsSquareSkillMd(request as { slug: string }),
+  );
+  secureHandle("desktop:get-skills-square-stats", () => getSkillsSquareStats());
+  secureHandle("desktop:list-skills-square-tags", (_event, request) =>
+    listSkillsSquareTags(request as Parameters<typeof listSkillsSquareTags>[0]),
+  );
+  secureHandle("desktop:create-skills-square-tag", (_event, request) =>
+    createSkillsSquareTag(request as Parameters<typeof createSkillsSquareTag>[0]),
+  );
+  secureHandle("desktop:update-skills-square-tag", (_event, request) =>
+    updateSkillsSquareTag(request as Parameters<typeof updateSkillsSquareTag>[0]),
+  );
+  secureHandle("desktop:delete-skills-square-tag", (_event, request) =>
+    deleteSkillsSquareTag(request as Parameters<typeof deleteSkillsSquareTag>[0]),
+  );
+  secureHandle("desktop:install-skills-square", (_event, request) =>
+    installSkillsSquare(request as Parameters<typeof installSkillsSquare>[0]),
+  );
+  secureHandle("desktop:download-skills-square", (_event, request) =>
+    downloadSkillsSquare(request as Parameters<typeof downloadSkillsSquare>[0]),
+  );
+  secureHandle("desktop:upload-skills-square", (_event, request) =>
+    uploadSkillsSquare(request as Parameters<typeof uploadSkillsSquare>[0]),
+  );
+  secureHandle("desktop:update-skills-square", (_event, request) =>
+    updateSkillsSquare(request as Parameters<typeof updateSkillsSquare>[0]),
+  );
+  secureHandle("desktop:delete-skills-square", (_event, request) =>
+    deleteSkillsSquare(request as Parameters<typeof deleteSkillsSquare>[0]),
+  );
+  secureHandle("desktop:toggle-skills-square-visibility", (_event, request) =>
+    toggleSkillsSquareVisibility(
+      request as Parameters<typeof toggleSkillsSquareVisibility>[0],
+    ),
+  );
+  secureHandle("desktop:collect-skills-square", (_event, request) =>
+    collectSkillsSquare(request as Parameters<typeof collectSkillsSquare>[0]),
+  );
+  secureHandle("desktop:create-skills-square-share", (_event, request) =>
+    createSkillsSquareShare(request as Parameters<typeof createSkillsSquareShare>[0]),
+  );
+  secureHandle("desktop:list-skills-square-shares", (_event, request) =>
+    listSkillsSquareShares(request as Parameters<typeof listSkillsSquareShares>[0]),
+  );
+  secureHandle("desktop:revoke-skills-square-share", (_event, request) =>
+    revokeSkillsSquareShare(request as Parameters<typeof revokeSkillsSquareShare>[0]),
+  );
 
   // GFS cloud storage
   secureHandle("desktop:gfs-list", (_event, request) =>
@@ -5508,8 +6087,14 @@ function registerIpc(): void {
   secureHandle("desktop:gfs-upload-file", (_event, request) =>
     gfsUploadFile(request as Parameters<typeof gfsUploadFile>[0]),
   );
+  secureHandle("desktop:gfs-upload-content", (_event, request) =>
+    gfsUploadContent(request as Parameters<typeof gfsUploadContent>[0]),
+  );
   secureHandle("desktop:gfs-download-file", (_event, request) =>
     gfsDownloadFile(request as Parameters<typeof gfsDownloadFile>[0]),
+  );
+  secureHandle("desktop:gfs-download-to-disk", (_event, request) =>
+    gfsDownloadToDisk((request as { path: string }).path),
   );
   secureHandle("desktop:gfs-delete", (_event, request) =>
     gfsDelete((request as { path: string }).path),
@@ -5523,6 +6108,11 @@ function registerIpc(): void {
     return gfsShareUrl(r.path, r.ttlMinutes, r.responseContentType);
   });
   secureHandle("desktop:gfs-healthcheck", () => gfsHealthcheck());
+  secureHandle("desktop:gfs-get-config", () => gfsGetConfig());
+  secureHandle("desktop:gfs-save-config", (_event, request) =>
+    gfsSaveConfig(request as Parameters<typeof gfsSaveConfig>[0]),
+  );
+  secureHandle("desktop:gfs-clear-config", () => gfsClearConfig());
 
   secureHandle("desktop:prepare-fork-worktree", async (_event, request) => {
     const workspacePath = getStringProperty(request, "workspacePath");
@@ -5660,6 +6250,16 @@ function registerIpc(): void {
   secureHandle("desktop:channel-adapters-list", (_event, workspacePath?: string) =>
     listChannelAdapters(workspacePath),
   );
+  secureHandle("desktop:wechat-channel-status", () => getWeChatChannelStatus());
+  secureHandle("desktop:wechat-login-start", () => startWeChatLogin());
+  secureHandle("desktop:wechat-login-poll", (_event, request: DesktopWeChatLoginPollRequest) => pollWeChatLogin(request));
+  secureHandle("desktop:wechat-login-cancel", (_event, request: DesktopWeChatLoginPollRequest) => cancelWeChatLogin(request));
+  secureHandle("desktop:wechat-channel-start", () => startWeChatChannel());
+  secureHandle("desktop:wechat-channel-stop", () => stopWeChatChannel());
+  secureHandle("desktop:wechat-channel-logout", () => logoutWeChatChannel());
+  secureHandle("desktop:wechat-sessions-summary", () => getWeChatSessionSummary());
+  secureHandle("desktop:wechat-reply-capability", (_event, request: DesktopWeChatReplyCapabilityRequest) => getWeChatReplyCapability(request));
+  secureHandle("desktop:wechat-send-outbound", (_event, request: DesktopWeChatOutboundRequest) => sendToWeChat(request));
   secureHandle(
     "desktop:channel-adapter-configure",
     (_event, request: DesktopChannelAdapterConfigureRequest) =>
@@ -5996,47 +6596,28 @@ function registerIpc(): void {
     "desktop:voice-runtime-status",
     () => getVoiceRuntimeStatus(),
   );
-  secureHandle(
-    "desktop:voice-streaming-capabilities",
-    () => getStreamingVoiceCapabilities(),
-  );
+  secureHandle("desktop:voice-preferences-get", () => getVoicePreferences());
+  secureHandle("desktop:voice-preferences-update", async (_event, request: import("../../../shared/api/desktopApi").DesktopVoicePreferencesUpdateRequest) => {
+    const preferences = await updateVoicePreferences(request);
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) safeWebContentsSend(window.webContents, "desktop:voice-preferences-changed", preferences);
+    }
+    return preferences;
+  });
   secureHandle("desktop:voice-duplex-capabilities", () => getDuplexVoiceCapabilities());
+  secureHandle("desktop:voice-duplex-readiness", () => getDuplexVoiceReadiness());
+  secureHandle("desktop:voice-duplex-occupancy", (event) => getDuplexVoiceOccupancy(event.sender));
   secureHandle("desktop:voice-duplex-start", (event, request: DesktopDuplexVoiceSessionStartRequest) => startDuplexVoiceSession(event.sender, request));
+  secureHandle("desktop:voice-duplex-takeover", (event, request: DesktopDuplexVoiceTakeoverRequest) => takeOverDuplexVoiceSession(event.sender, request));
   secureHandle("desktop:voice-duplex-update", (event, request: DesktopDuplexVoiceSessionStartRequest) => updateDuplexVoiceSession(event.sender, request));
   secureHandle("desktop:voice-duplex-interrupt", (event, request: DesktopDuplexVoiceInterruptRequest) => interruptDuplexVoiceSession(event.sender, request));
   secureHandle("desktop:voice-duplex-tool-result", (event, request: DesktopDuplexVoiceToolResultRequest) => submitDuplexVoiceToolResult(event.sender, request));
+  secureHandle("desktop:voice-duplex-tool-approval", (event, request: DesktopDuplexVoiceToolApprovalRequest) => requestDuplexToolApproval(event, request));
+  secureHandle("desktop:voice-duplex-text-input", (event, request: DesktopDuplexVoiceTextInputRequest) => submitDuplexVoiceTextInput(event.sender, request));
   secureHandle("desktop:voice-duplex-stop", (event, sessionId: string) => stopDuplexVoiceSession(event.sender, typeof sessionId === "string" ? sessionId : ""));
+  secureHandle("desktop:voice-duplex-finish-turn", (event, sessionId: string) => finishDuplexVoiceTurn(event.sender, typeof sessionId === "string" ? sessionId : ""));
   secureHandle("desktop:voice-duplex-cancel", (event, sessionId: string) => cancelDuplexVoiceSession(event.sender, typeof sessionId === "string" ? sessionId : ""));
   secureHandle("desktop:voice-duplex-dispose", (event, sessionId: string) => disposeDuplexVoiceSession(event.sender, typeof sessionId === "string" ? sessionId : ""));
-  secureHandle(
-    "desktop:voice-streaming-start",
-    (event, request: DesktopStreamingVoiceStartRequest) => startStreamingVoiceTranscription(event.sender, request),
-  );
-  secureHandle(
-    "desktop:voice-streaming-stop",
-    (event, sessionId: string, reason?: "provider" | "local_vad" | "manual") => stopStreamingVoiceTranscription(
-      event.sender,
-      typeof sessionId === "string" ? sessionId : "",
-      reason === "provider" || reason === "local_vad" ? reason : "manual",
-    ),
-  );
-  secureHandle(
-    "desktop:voice-streaming-cancel",
-    (event, sessionId: string) => cancelStreamingVoiceTranscription(event.sender, typeof sessionId === "string" ? sessionId : ""),
-  );
-  ipcMain.on("desktop:voice-streaming-audio-port", (event: IpcMainEvent, request: unknown) => {
-    if (!isTrustedSender(event as unknown as IpcMainInvokeEvent)) {
-      event.ports[0]?.close();
-      return;
-    }
-    const sessionId = getStringProperty(request, "sessionId");
-    const port = event.ports[0];
-    if (!sessionId || !port) {
-      port?.close();
-      return;
-    }
-    attachStreamingVoiceAudioPort(event.sender, sessionId, port);
-  });
   ipcMain.on("desktop:voice-duplex-audio-port", (event: IpcMainEvent, request: unknown) => {
     if (!isTrustedSender(event as unknown as IpcMainInvokeEvent)) { event.ports[0]?.close(); return; }
     const sessionId = getStringProperty(request, "sessionId");
@@ -6080,6 +6661,16 @@ function registerIpc(): void {
   secureHandle("desktop:channel-adapter-auth-revoke", (_event, request: DesktopChannelAdapterAuthRevokeRequest) => revokeChannelAdapterAuth(request));
   secureHandle("desktop:channel-provider-token-configure", (_event, request: DesktopChannelProviderTokenConfigureRequest) => configureChannelProviderToken(request));
   secureHandle("desktop:recover-agent-run", (event, threadId: string) => recoverAgentRun(threadId, event.sender));
+  // P1: Renderer health report → updates backpressure controller for adaptive flush delay
+  ipcMain.on("desktop:render-health", (event: IpcMainEvent, report: unknown) => {
+    if (!isTrustedSender(event as unknown as IpcMainInvokeEvent)) return;
+    const fps = typeof (report as any)?.fps === "number" ? (report as any).fps : 0;
+    const tier = (report as any)?.tier === "healthy" || (report as any)?.tier === "degraded" || (report as any)?.tier === "critical"
+      ? (report as any).tier
+      : "healthy";
+    handleRenderHealthReport(event.sender, fps, tier);
+    handleChatRenderHealthReport(event.sender, fps, tier);
+  });
   secureHandle("desktop:save-api-key", (_event, apiKey: string) => {
     if (process.env.OPENDRSAI_DESKTOP_DEV !== "1") {
       return { ok: false, message: "This build receives service authorization through HepAI OIDC." };
@@ -6250,6 +6841,7 @@ async function decidePendingDesktopApprovalUnlocked(
   const pendingChannelOutboundDraft = pendingChannelOutboundDrafts.get(typed.id);
   const pendingMcpLiveEnumeration = pendingMcpLiveEnumerations.get(typed.id);
   const pendingMcpToolExecution = pendingMcpToolExecutions.get(typed.id);
+  const pendingDuplexToolApproval = pendingDuplexToolApprovals.get(typed.id);
   const pendingF2ApprovalEffect = pendingF2ApprovalEffects.get(typed.id);
   const pendingF3ApprovalEffect = pendingF3ApprovalEffects.get(typed.id);
   let decided: boolean;
@@ -6375,6 +6967,12 @@ async function decidePendingDesktopApprovalUnlocked(
     await executeMcpToolAfterApproval(pendingMcpToolExecution, typed.id);
     return true;
   }
+  if (pendingDuplexToolApproval) {
+    if (typed.approved) { executedDesktopApprovalIds.add(typed.id); await assertExecutionAllowed("external.service", { approved: true }); }
+    const decision: DesktopDuplexVoiceToolApprovalDecision = { sessionId: pendingDuplexToolApproval.sessionId, callId: pendingDuplexToolApproval.callId, decision: typed.approved ? "allow" : decisionReason };
+    if (!pendingDuplexToolApproval.sender.isDestroyed()) pendingDuplexToolApproval.sender.send("desktop:voice-duplex-tool-approval-decision", decision);
+    return true;
+  }
   if (pendingF2ApprovalEffect) {
     if (!typed.approved) return true;
     executedDesktopApprovalIds.add(typed.id);
@@ -6418,6 +7016,7 @@ async function decidePendingDesktopApprovalUnlocked(
   pendingChannelOutboundDrafts.delete(typed.id);
   pendingMcpLiveEnumerations.delete(typed.id);
   pendingMcpToolExecutions.delete(typed.id);
+  pendingDuplexToolApprovals.delete(typed.id);
   pendingF2ApprovalEffects.delete(typed.id);
   pendingF3ApprovalEffects.delete(typed.id);
   deleteDesktopApprovalPayloads(typed.id);
@@ -6478,13 +7077,26 @@ async function startDeferredStartupTasks(): Promise<void> {
 
 app.whenReady().then(async () => {
   recordStartupMilestone("electron-ready");
+
+  // Register the auth-session-invalidated notifier so any auth failure
+  // (expired token, refresh failure, session invalidation) broadcasts
+  // `desktop:auth-session-invalidated` to all renderer windows. The
+  // renderer's AuthProvider then shows a "Sign in again" prompt.
+  setAuthSessionInvalidatedNotifier(() => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+        safeWebContentsSend(window.webContents, "desktop:auth-session-invalidated");
+      }
+    }
+  });
+
   configureCompletionNotifications({
     notifications: WINDOWS_NOTIFICATION_SERVICE,
     focusApp: focusMainWindow,
     publishClick: (event) => {
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-          window.webContents.send("desktop:completion-notification-click", event);
+          safeWebContentsSend(window.webContents, "desktop:completion-notification-click", event);
         }
       }
     },
@@ -6515,14 +7127,17 @@ app.whenReady().then(async () => {
   desktopDiagnostics.setPublisher((event) => {
     productionDiagnostics.observeEvent(Buffer.byteLength(JSON.stringify(event), "utf8"), event.workspaceId);
     for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
+      try {
         window.webContents.send("desktop:diagnostics-event", event);
+      } catch {
+        // Renderer can dispose mid-send (OOM / navigation); never fail the publisher.
       }
     }
   });
   interactiveDebugger.setPublisher((debugSession) => {
     for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("desktop:interactive-debug-event", debugSession);
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) safeWebContentsSend(window.webContents, "desktop:interactive-debug-event", debugSession);
     }
     void desktopDiagnostics.record({
       traceId: debugSession.traceId ?? debugSession.id,
@@ -6541,16 +7156,27 @@ app.whenReady().then(async () => {
     });
   });
   registerIpc();
-  const publishLifecycle = (reason: import("../../../shared/api/desktopApi").DesktopLifecycleEvent["reason"]): void => {
-    const event = { reason, recoveredGateway: false, at: new Date().toISOString() };
-    for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send("desktop:lifecycle-event", event);
+  let lifecycleGatewayRecovery: Promise<boolean> | null = null;
+  const recoverLifecycleGateway = async (): Promise<boolean> => {
+    const before = await getGatewayStatus().catch(() => ({ ready: false }));
+    if (before.ready) return false;
+    lifecycleGatewayRecovery ??= startGateway().finally(() => { lifecycleGatewayRecovery = null; });
+    if (!await lifecycleGatewayRecovery) return false;
+    return (await getGatewayStatus().catch(() => ({ ready: false }))).ready;
   };
-  powerMonitor.on("suspend", () => { disposeAllDuplexVoiceSessions(); publishLifecycle("suspend"); });
-  powerMonitor.on("lock-screen", () => { disposeAllDuplexVoiceSessions(); publishLifecycle("lock-screen"); });
-  powerMonitor.on("resume", () => publishLifecycle("resume"));
-  powerMonitor.on("unlock-screen", () => publishLifecycle("unlock-screen"));
+  const publishLifecycle = async (reason: import("../../../shared/api/desktopApi").DesktopLifecycleEvent["reason"]): Promise<void> => {
+    const recoveredGateway = reason === "resume" || reason === "unlock-screen"
+      ? await recoverLifecycleGateway()
+      : false;
+    const event = { reason, recoveredGateway, at: new Date().toISOString() };
+    for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed() && !window.webContents.isDestroyed()) safeWebContentsSend(window.webContents, "desktop:lifecycle-event", event);
+  };
+  powerMonitor.on("suspend", () => { void publishLifecycle("suspend"); });
+  powerMonitor.on("lock-screen", () => { void publishLifecycle("lock-screen"); });
+  powerMonitor.on("resume", () => { void publishLifecycle("resume"); });
+  powerMonitor.on("unlock-screen", () => { void publishLifecycle("unlock-screen"); });
   setRemoteWorkspaceStatusPublisher((status) => {
-    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:remote-workspace-status-event", status);
+    for (const window of BrowserWindow.getAllWindows()) safeWebContentsSend(window.webContents, "desktop:remote-workspace-status-event", status);
     desktopDiagnostics.registerHealth({
       id: `remote:${status.hostAlias}`,
       module: "workspace",
@@ -6568,7 +7194,7 @@ app.whenReady().then(async () => {
     });
   });
   setRemoteGatewayOperationPublisher((operation) => {
-    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:remote-gateway-operation-event", operation);
+    for (const window of BrowserWindow.getAllWindows()) safeWebContentsSend(window.webContents, "desktop:remote-gateway-operation-event", operation);
     void desktopDiagnostics.record({
       traceId: operation.operationId,
       module: "runtime",
@@ -6585,8 +7211,12 @@ app.whenReady().then(async () => {
     });
   });
   setRemoteFileChangePublisher((change) => {
-    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("desktop:workspace-file-change-event", change);
+    for (const window of BrowserWindow.getAllWindows()) safeWebContentsSend(window.webContents, "desktop:workspace-file-change-event", change);
   });
+  // Eager gateway start: the gateway process starts in the background while
+  // the renderer renders the login screen. When the user finishes signing in
+  // the gateway is already running or nearly ready, so bootstrapDesktop is fast.
+  void startGateway();
   createWindow();
   startUpdateScheduler();
   handleDeepLinkArgv(process.argv);
@@ -6876,10 +7506,10 @@ let gatewayShutdownStarted = false;
 
 app.on("before-quit", (event) => {
   appQuitRequested = true;
+  disposeAllDuplexVoiceSessions();
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
     cancelVoiceTranscriptionsForSender(mainWindow.webContents);
     cancelVoiceSynthesisForSender(mainWindow.webContents);
-    cancelStreamingVoiceSessionsForSender(mainWindow.webContents);
   }
   stopScheduledTaskWorker();
   browserTaskService.shutdown();

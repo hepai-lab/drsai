@@ -13,7 +13,7 @@
 import { render } from 'ink'
 
 import { App } from './app.js'
-import { GatewayClient } from './gatewayClient.js'
+import { createTuiGatewayClient } from './oaepRuntimeGatewayClient.js'
 import { setInkInstance } from './app/inkInstanceRef.js'
 import { initTerminalSize } from './hooks/terminalSizeStore.js'
 import { VERSION } from './version.js'
@@ -47,7 +47,7 @@ import {
 // composer's prompt history). Toggleable at runtime via Ctrl+Y so users
 // can select / copy text with the mouse natively.
 
-const gw = new GatewayClient()
+const gw = createTuiGatewayClient()
 
 let inkInstance: ReturnType<typeof render> | null = null
 let terminalRestored = false

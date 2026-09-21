@@ -168,7 +168,12 @@ internal class PythonSharedCoreChatEngine(
                 .put("prompt_version", "p9-agent-kernel-v1"),
             projectInstructions(request),
         )
-        val currentToolSchemas = operationalPolicy.toolSchemas(toolSchemas(request.accountSubject))
+        val environment = RunEnvironmentSnapshot.freeze(
+            operationalPolicy.toolSchemas(toolSchemas(request.accountSubject)),
+            operationalPolicy.skillSchemas(skillSchemas(request)),
+            runHostCapabilities,
+        )
+        val currentToolSchemas = environment.tools
         val start = if (recovering) {
             val allowedToolNames = (0 until currentToolSchemas.length())
                 .mapTo(linkedSetOf()) { currentToolSchemas.getJSONObject(it).getString("name") }
@@ -199,7 +204,7 @@ internal class PythonSharedCoreChatEngine(
                     }
                 }))
                 .put("tools", currentToolSchemas)
-                .put("skills", operationalPolicy.skillSchemas(skillSchemas(request)))
+                .put("skills", environment.skills)
                 .put("capability_diagnostics", capabilityDiagnostics(request))
                 .put("host_port", JSONObject()
                     .put("schema_version", 1)
@@ -242,9 +247,30 @@ internal class PythonSharedCoreChatEngine(
         }.catch { error ->
         onFailure(error)
         val failure = error.message.orEmpty()
-        val reconciliation = PythonRuntimeReconciliation.envelope(request, failure)
+        val recoveryAction = FullRuntimeRecoveryPolicy.decide(failure, sideEffectEvidence.get())
+        val reconciliationFailure = when (recoveryAction) {
+            FullRuntimeRecoveryAction.RECONCILE_SIDE_EFFECT ->
+                "python_tool_needs_reconciliation:${request.runId}"
+            else -> failure
+        }
+        val reconciliation = PythonRuntimeReconciliation.envelope(request, reconciliationFailure)
         if (reconciliation != null) {
             val envelope = reconciliation
+            normalizedSink.accept(request, envelope, PythonRuntimeEventMapper.decodeAll(envelope))
+            emit(RuntimeEvent.Paused)
+        } else if (recoveryAction == FullRuntimeRecoveryAction.PAUSE_AND_RESUME) {
+            val envelope = PythonRuntimeEnvelope(
+                messageType = PythonRuntimeMessageType.RUNTIME_EVENT,
+                requestId = "runtime-recovery:${request.runId.take(100)}",
+                runId = request.runId,
+                sessionId = request.conversation.id,
+                sequence = 0,
+                idempotencyKey = "${request.runId}:runtime-recovery",
+                payload = JSONObject()
+                    .put("kind", "run.waiting")
+                    .put("reason", "runtime_rebinding")
+                    .put("retryable", true),
+            )
             normalizedSink.accept(request, envelope, PythonRuntimeEventMapper.decodeAll(envelope))
             emit(RuntimeEvent.Paused)
         } else {

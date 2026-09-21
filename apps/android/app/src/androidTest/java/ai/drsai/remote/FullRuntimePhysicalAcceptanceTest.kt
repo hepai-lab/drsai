@@ -23,10 +23,13 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
+import org.junit.FixMethodOrder
+import org.junit.runners.MethodSorters
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
+@FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class FullRuntimePhysicalAcceptanceTest {
     @Before
     fun requireExplicitPhysicalAcceptanceOptIn() {

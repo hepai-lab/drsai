@@ -11,12 +11,34 @@ import signal
 import uuid
 import asyncio
 import base64
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Union, List, Dict, Any, Optional
 from datetime import datetime
 
 import aiofiles
 
 from .bash_task_persistence import BashTaskPersistence
+
+
+# A Host-driven Runtime approval is deliberately scoped to one async tool
+# execution. It is not the same as the TUI's session-wide `/dangerous on`
+# switch and must never mutate that switch. ContextVar keeps concurrent runs
+# isolated while allowing the Workbench call stack to consume the proof.
+_RUNTIME_TOOL_APPROVAL_GRANTED: ContextVar[bool] = ContextVar(
+    "drsai_runtime_tool_approval_granted", default=False,
+)
+
+
+@contextmanager
+def runtime_tool_approval_scope(*, granted: bool):
+    """Carry a Host-verified, single-call approval through the Workbench."""
+
+    token = _RUNTIME_TOOL_APPROVAL_GRANTED.set(granted is True)
+    try:
+        yield
+    finally:
+        _RUNTIME_TOOL_APPROVAL_GRANTED.reset(token)
 
 # Dangerous command patterns (regex)
 _DANGEROUS_PATTERNS = [
@@ -110,27 +132,691 @@ def _win_subprocess_hide_kwargs() -> dict:
     }
 
 
+# Allow child processes to leave Electron/Chromium job objects when the job
+# permits breakaway. Without this, CreateProcess often returns WinError 5
+# (Access Denied) for powershell.exe spawned from the Desktop gateway.
+_CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+
+
+def _is_win_access_denied(exc: BaseException) -> bool:
+    winerror = getattr(exc, "winerror", None)
+    if winerror == 5:
+        return True
+    errno = getattr(exc, "errno", None)
+    if errno == 13 and platform.system() == "Windows":
+        return True
+    text = str(exc).lower()
+    return "winerror 5" in text or "access is denied" in text or "拒绝访问" in text
+
+
+# GBK / CP936 bytes for "拒绝访问" — cmd.exe often emits OEM/ANSI, not UTF-8.
+_GBK_ACCESS_DENIED = b"\xbe\xdc\xbe\xf8\xb7\xc3\xce\xca"
+
+
+def _decode_subprocess_output(data: bytes | None) -> str:
+    """Decode child stdout/stderr. Windows cmd often writes GBK, not UTF-8."""
+    if not data:
+        return ""
+    if platform.system() == "Windows":
+        for enc in ("utf-8", "gbk", "cp936", "mbcs"):
+            try:
+                return data.decode(enc)
+            except UnicodeDecodeError:
+                continue
+    return data.decode("utf-8", errors="replace")
+
+
+def _looks_like_win_access_denied_output(text: str) -> bool:
+    low = (text or "").lower()
+    if (
+        "winerror 5" in low
+        or "access is denied" in low
+        or "拒绝访问" in (text or "")
+    ):
+        return True
+    # UTF-8 mis-decode of GBK 拒绝访问 collapses to U+FFFD replacement chars.
+    if text and "\ufffd" in text and len(text.strip()) <= 24:
+        compact = "".join(ch for ch in text if not ch.isspace())
+        if compact.count("\ufffd") >= 3 and len(compact) <= 16:
+            return True
+    return False
+
+
+def _looks_like_win_access_denied_bytes(data: bytes | None) -> bool:
+    if not data:
+        return False
+    low = data.lower()
+    if b"access is denied" in low or b"winerror 5" in low:
+        return True
+    if _GBK_ACCESS_DENIED in data:
+        return True
+    return False
+
+
+def _should_prefer_node_shell_trampoline() -> bool:
+    """Prefer Node→powershell only when direct CreateProcess is known-blocked.
+
+    Desktop Gateway now defaults to python.exe (not pythonw) so powershell can
+    spawn directly. Force the trampoline when:
+    - OPENDRSAI_SHELL_NODE_TRAMPOLINE=1 (explicit), or
+    - the runtime is still pythonw.exe (legacy / OPENDRSAI_GATEWAY_PYTHONW=1).
+    Cached Access Denied flips _PS_SPAWN_PREFER_NODE separately.
+    """
+    if platform.system() != "Windows":
+        return False
+    if os.environ.get("OPENDRSAI_SHELL_NODE_TRAMPOLINE") == "1":
+        return True
+    import sys
+
+    return Path(sys.executable).name.lower() in {"pythonw.exe", "pythonw"}
+
+
+# Cache: once we observe Access Denied for direct powershell, skip straight to Node.
+_PS_SPAWN_PREFER_NODE: list[bool] = [False]
+
+
+def _win_subprocess_spawn_variants(base_kwargs: dict) -> list[dict]:
+    """Ordered CreateProcess kwargs to try when spawning shell tools on Windows.
+
+    Desktop gateway runs under Electron and is often assigned to a Job Object.
+    Endpoint security (e.g. Sangfor) may also deny pythonw→powershell. The first
+    attempt keeps the normal hidden-console flags; later attempts break away
+    and/or drop CREATE_NO_WINDOW so WinError 5 does not permanently block
+    Agent tool execution.
+    """
+    variants = [dict(base_kwargs)]
+    if platform.system() != "Windows":
+        return variants
+
+    breakaway = dict(base_kwargs)
+    flags = int(breakaway.get("creationflags") or 0) | _CREATE_BREAKAWAY_FROM_JOB
+    breakaway["creationflags"] = flags
+    variants.append(breakaway)
+
+    visible = dict(base_kwargs)
+    visible.pop("startupinfo", None)
+    visible_flags = int(visible.get("creationflags") or 0)
+    visible_flags = (visible_flags & ~subprocess.CREATE_NO_WINDOW) | _CREATE_BREAKAWAY_FROM_JOB
+    if visible_flags:
+        visible["creationflags"] = visible_flags
+    else:
+        visible.pop("creationflags", None)
+    variants.append(visible)
+
+    # De-dupe while preserving order.
+    unique: list[dict] = []
+    seen: set[tuple] = set()
+    for item in variants:
+        key = (
+            int(item.get("creationflags") or 0),
+            "startupinfo" in item,
+            item.get("cwd"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def _wmi_create_process(command_line: str, cwd: Optional[str] = None) -> int:
+    """Create a process via WMI so parent is WmiPrvSE, not the Electron job tree.
+
+    Endpoint agents that deny CreateProcess(powershell) from pythonw under
+    Electron often still allow Win32_Process.Create. Returns the new PID.
+    """
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    locator = win32com.client.Dispatch("WbemScripting.SWbemLocator")
+    service = locator.ConnectServer(".", r"root\cimv2")
+    process = service.Get("Win32_Process")
+    in_params = process.Methods_("Create").InParameters.SpawnInstance_()
+    in_params.CommandLine = command_line
+    if cwd:
+        in_params.CurrentDirectory = cwd
+    startup = service.Get("Win32_ProcessStartup").SpawnInstance_()
+    startup.Properties_("ShowWindow").Value = 0  # SW_HIDE
+    in_params.ProcessStartupInformation = startup
+    out_params = process.ExecMethod_("Create", in_params)
+    return_value = int(out_params.Properties_("ReturnValue").Value)
+    if return_value != 0:
+        raise OSError(return_value, f"WMI Win32_Process.Create failed (ReturnValue={return_value})")
+    return int(out_params.Properties_("ProcessId").Value)
+
+
+def _resolve_spawn_cwd(cwd: Optional[str]) -> str:
+    """Prefer a non-Temp cwd; endpoint agents often deny shells started under Temp."""
+    if cwd and Path(cwd).exists():
+        return str(Path(cwd).resolve())
+    home = str(Path.home())
+    if Path(home).exists():
+        return home
+    return os.environ.get("SystemRoot", r"C:\Windows") + r"\System32"
+
+
+def _windows_path_dirs_from_registry() -> list[Path]:
+    """Return Machine+User PATH entries (endpoint-stripped process PATH often omits these)."""
+    if platform.system() != "Windows":
+        return []
+    dirs: list[Path] = []
+    try:
+        import winreg
+    except ImportError:
+        return dirs
+
+    for root, subkey in (
+        (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        (winreg.HKEY_CURRENT_USER, r"Environment"),
+    ):
+        try:
+            with winreg.OpenKey(root, subkey) as key:
+                raw, _ = winreg.QueryValueEx(key, "Path")
+        except OSError:
+            continue
+        for part in str(raw or "").split(";"):
+            part = part.strip().strip('"')
+            if not part:
+                continue
+            expanded = os.path.expandvars(part)
+            if expanded:
+                dirs.append(Path(expanded))
+    return dirs
+
+
+def _detect_node_executable() -> Optional[str]:
+    """Locate node.exe for Access Denied trampolines (same pattern as desktop .cmd)."""
+    for name in ("node", "node.exe"):
+        found = shutil.which(name)
+        if found:
+            return found
+
+    candidates: list[Path] = [
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "nodejs" / "node.exe",
+        Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "nodejs" / "node.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "node" / "node.exe",
+    ]
+    for entry in _windows_path_dirs_from_registry():
+        candidates.append(entry / "node.exe")
+
+    # Last resort: common WinGet OpenJS.NodeJS package roots.
+    local_app = Path(os.environ.get("LOCALAPPDATA", ""))
+    winget_root = local_app / "Microsoft" / "WinGet" / "Packages"
+    if winget_root.is_dir():
+        try:
+            for pkg in winget_root.glob("OpenJS.NodeJS*"):
+                for node_exe in pkg.glob("node-*/node.exe"):
+                    candidates.append(node_exe)
+                    break
+        except OSError:
+            pass
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = str(candidate.resolve()) if candidate.exists() else ""
+        except OSError:
+            continue
+        if not resolved or resolved in seen:
+            continue
+        seen.add(resolved)
+        if Path(resolved).is_file():
+            return resolved
+    return None
+
+
+def _is_powershell_executable(exe: str) -> bool:
+    low = str(exe or "").lower()
+    return low.endswith("powershell.exe") or low.endswith("pwsh.exe") or low in {
+        "powershell", "powershell.exe", "pwsh", "pwsh.exe",
+    }
+
+
+def _run_via_wmi_file_capture(
+    exe: str,
+    argv: list[str],
+    *,
+    cwd: Optional[str],
+    timeout: float,
+) -> tuple[int, str, str]:
+    """Run exe+argv through WMI with stdout/stderr captured to temp files."""
+    import tempfile
+    import time
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="drsai_wmi_"))
+    out_path = tmp_dir / "out.txt"
+    err_path = tmp_dir / "err.txt"
+    code_path = tmp_dir / "code.txt"
+    process_cwd = _resolve_spawn_cwd(cwd)
+    try:
+        # Prefer creating the target exe directly. A cmd.exe trampoline that then
+        # starts powershell.exe is often still denied by endpoint agents even when
+        # the parent is WmiPrvSE (cmd→powershell CreateProcess hooks).
+        if _is_powershell_executable(exe):
+            wrap_ps1 = tmp_dir / "wrap.ps1"
+            # Capture all streams inside PowerShell — CreateProcess has no redirects.
+            wrap_ps1.write_text(
+                "\r\n".join(
+                    [
+                        "$ErrorActionPreference = 'Continue'",
+                        f"$outFile = {repr(str(out_path))}",
+                        f"$errFile = {repr(str(err_path))}",
+                        f"$codeFile = {repr(str(code_path))}",
+                        "$argv = @(",
+                        *[f"  {repr(arg)}" for arg in argv],
+                        ")",
+                        "try {",
+                        f"  $p = Start-Process -FilePath {repr(str(exe))} -ArgumentList $argv "
+                        "-NoNewWindow -Wait -PassThru "
+                        "-RedirectStandardOutput $outFile -RedirectStandardError $errFile",
+                        "  $code = if ($null -eq $p.ExitCode) { 1 } else { $p.ExitCode }",
+                        "} catch {",
+                        "  $_ | Out-File -FilePath $errFile -Encoding utf8",
+                        "  $code = 1",
+                        "}",
+                        "Set-Content -Path $codeFile -Value $code -Encoding ascii",
+                    ]
+                )
+                + "\r\n",
+                encoding="utf-8",
+            )
+            # WmiPrvSE → powershell (wrapper) → Start-Process target. The outer
+            # powershell is often allowlisted when pythonw/Electron are not.
+            command_line = subprocess.list2cmdline(
+                [exe, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(wrap_ps1)]
+            )
+        else:
+            bat_path = tmp_dir / "run.cmd"
+            bat_lines = [
+                "@echo off",
+                "setlocal",
+                f"cd /d {subprocess.list2cmdline([process_cwd])}",
+                (
+                    f"{subprocess.list2cmdline([exe, *argv])} "
+                    f"> {subprocess.list2cmdline([str(out_path)])} "
+                    f"2> {subprocess.list2cmdline([str(err_path)])}"
+                ),
+                "set RC=%ERRORLEVEL%",
+                f"> {subprocess.list2cmdline([str(code_path)])} echo %RC%",
+            ]
+            bat_path.write_text("\r\n".join(bat_lines) + "\r\n", encoding="utf-8")
+            command_line = f"cmd.exe /d /c {subprocess.list2cmdline([str(bat_path)])}"
+        pid = _wmi_create_process(command_line, process_cwd)
+        deadline = time.monotonic() + max(1.0, float(timeout))
+        while time.monotonic() < deadline:
+            try:
+                import ctypes
+
+                SYNCHRONIZE = 0x00100000
+                handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
+                if handle:
+                    wait = ctypes.windll.kernel32.WaitForSingleObject(handle, 200)
+                    ctypes.windll.kernel32.CloseHandle(handle)
+                    if wait == 0:  # WAIT_OBJECT_0 — exited
+                        break
+                else:
+                    if code_path.exists():
+                        break
+                    time.sleep(0.1)
+            except Exception:
+                time.sleep(0.2)
+                if code_path.exists():
+                    break
+        else:
+            try:
+                _kill_process_tree(pid)
+            except Exception:
+                pass
+            raise TimeoutError(f"WMI-spawned process {pid} timed out after {timeout}s")
+
+        time.sleep(0.05)
+        stdout = out_path.read_text(encoding="utf-8", errors="replace") if out_path.exists() else ""
+        stderr = err_path.read_text(encoding="utf-8", errors="replace") if err_path.exists() else ""
+        code_text = code_path.read_text(encoding="utf-8", errors="replace").strip() if code_path.exists() else "1"
+        try:
+            returncode = int(code_text.splitlines()[-1].strip())
+        except Exception:
+            returncode = 1
+        if _looks_like_win_access_denied_output(stdout + stderr):
+            raise OSError(5, "Access is denied (WMI child reported 拒绝访问)")
+        return returncode, stdout, stderr
+    finally:
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+_NODE_TRAMPOLINE_JS = r"""
+const fs = require('fs');
+const {spawnSync} = require('child_process');
+const req = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const r = spawnSync(req.exe, req.argv, {
+  cwd: req.cwd || undefined,
+  windowsHide: true,
+  timeout: req.timeoutMs,
+  maxBuffer: 32 * 1024 * 1024,
+  env: process.env,
+});
+const out = r.stdout || Buffer.alloc(0);
+const errParts = [];
+if (r.stderr && r.stderr.length) errParts.push(r.stderr);
+if (r.error) errParts.push(Buffer.from(String(r.error.message || r.error), 'utf8'));
+fs.writeFileSync(req.out, out);
+fs.writeFileSync(req.err, Buffer.concat(errParts));
+let code = 1;
+if (r.status !== null && r.status !== undefined) code = r.status;
+else if (r.error && r.error.code === 'ETIMEDOUT') code = 124;
+else if (r.signal) code = 1;
+fs.writeFileSync(req.code, String(code));
+process.exit(0);
+"""
+
+
+def _run_via_node_file_capture(
+    exe: str,
+    argv: list[str],
+    *,
+    cwd: Optional[str],
+    timeout: float,
+) -> tuple[int, str, str]:
+    """Run exe+argv via node child_process when CreateProcess is blocked for this parent.
+
+    Matches apps/desktop/windows-desktop-dev.cmd: on machines where cmd/pythonw→
+    powershell is denied (WinError 5), node→powershell is often still allowed.
+    """
+    import json
+    import tempfile
+
+    node = _detect_node_executable()
+    if not node:
+        raise FileNotFoundError("node.exe not found for Access Denied trampoline")
+
+    process_cwd = _resolve_spawn_cwd(cwd)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="drsai_node_"))
+    try:
+        req_path = tmp_dir / "req.json"
+        out_path = tmp_dir / "out.bin"
+        err_path = tmp_dir / "err.bin"
+        code_path = tmp_dir / "code.txt"
+        js_path = tmp_dir / "run.js"
+        req_path.write_text(
+            json.dumps(
+                {
+                    "exe": exe,
+                    "argv": list(argv),
+                    "cwd": process_cwd,
+                    "timeoutMs": int(max(1.0, float(timeout)) * 1000),
+                    "out": str(out_path),
+                    "err": str(err_path),
+                    "code": str(code_path),
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        js_path.write_text(_NODE_TRAMPOLINE_JS, encoding="utf-8")
+
+        # Spawn node with the same hide/breakaway variants used for shells.
+        node_argv = [node, str(js_path), str(req_path)]
+        hide = _win_subprocess_hide_kwargs()
+        last_error: BaseException | None = None
+        completed = False
+        for variant in _win_subprocess_spawn_variants(
+            {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "stdin": subprocess.DEVNULL,
+                "cwd": process_cwd,
+                **hide,
+            }
+        ):
+            try:
+                result = subprocess.run(
+                    node_argv,
+                    timeout=max(5.0, float(timeout) + 5.0),
+                    **variant,
+                )
+                completed = True
+                if result.returncode not in (0, None) and not code_path.exists():
+                    err = (result.stderr or b"").decode("utf-8", errors="replace")
+                    raise OSError(result.returncode or 5, f"node trampoline failed: {err[:500]}")
+                break
+            except Exception as exc:
+                last_error = exc
+                if _is_win_access_denied(exc):
+                    continue
+                raise
+        if not completed:
+            raise last_error or OSError(5, "Access is denied (node trampoline)")
+
+        stdout = out_path.read_bytes().decode("utf-8", errors="replace") if out_path.exists() else ""
+        stderr = err_path.read_bytes().decode("utf-8", errors="replace") if err_path.exists() else ""
+        code_text = code_path.read_text(encoding="utf-8", errors="replace").strip() if code_path.exists() else "1"
+        try:
+            returncode = int(code_text.splitlines()[-1].strip())
+        except Exception:
+            returncode = 1
+        if _looks_like_win_access_denied_output(stdout + stderr):
+            raise OSError(5, "Access is denied (node child reported 拒绝访问)")
+        return returncode, stdout, stderr
+    finally:
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+def _run_win_access_denied_fallbacks(
+    exe: str,
+    argv: list[str],
+    *,
+    cwd: Optional[str],
+    timeout: float,
+) -> tuple[int, str, str, str]:
+    """Try Node and/or WMI trampolines. Returns (code, stdout, stderr, via_label).
+
+    For powershell.exe, prefer Node first: many endpoint agents deny
+    cmd/pythonw→powershell (and even WMI cmd trampolines) while still allowing
+    node→powershell — same escalation as windows-desktop-dev.cmd.
+    """
+    errors: list[str] = []
+    steps: list[tuple[str, Any]] = []
+    if _is_powershell_executable(exe):
+        steps = [("node-trampoline", _run_via_node_file_capture), ("wmi-fallback", _run_via_wmi_file_capture)]
+    else:
+        steps = [("wmi-fallback", _run_via_wmi_file_capture), ("node-trampoline", _run_via_node_file_capture)]
+
+    for label, runner in steps:
+        try:
+            code, out, err = runner(exe, argv, cwd=cwd, timeout=timeout)
+            return code, out, err, label
+        except Exception as exc:
+            errors.append(f"{label}:{exc}")
+    raise OSError(5, "Access is denied (" + "; ".join(errors) + ")")
+
+
+async def _create_subprocess_exec_with_win_fallback(
+    *args: str,
+    **kwargs,
+):
+    """Spawn a process, retrying Windows Access Denied with alternate flags."""
+    variants = _win_subprocess_spawn_variants(kwargs)
+    last_error: BaseException | None = None
+    for index, variant in enumerate(variants):
+        try:
+            return await asyncio.create_subprocess_exec(*args, **variant)
+        except Exception as exc:
+            last_error = exc
+            if index + 1 < len(variants) and _is_win_access_denied(exc):
+                continue
+            # Fall through to cmd trampoline / sync when Access Denied exhausted.
+            if not _is_win_access_denied(exc):
+                raise
+            break
+
+    if platform.system() == "Windows" and args:
+        # Many endpoint agents deny pythonw→powershell but allow pythonw→cmd.
+        exe = args[0]
+        is_ps = _is_powershell_executable(str(exe))
+        if is_ps:
+            cmd_path = os.environ.get("ComSpec") or r"C:\Windows\System32\cmd.exe"
+            wrapped = (cmd_path, "/d", "/s", "/c", subprocess.list2cmdline(list(args)))
+            cmd_variants = _win_subprocess_spawn_variants(kwargs)
+            for index, variant in enumerate(cmd_variants):
+                try:
+                    return await asyncio.create_subprocess_exec(*wrapped, **variant)
+                except Exception as exc:
+                    last_error = exc
+                    if index + 1 < len(cmd_variants) and _is_win_access_denied(exc):
+                        continue
+                    if not _is_win_access_denied(exc):
+                        raise
+                    break
+
+        # Sync CreateProcess in a worker thread (different code path than asyncio).
+        def _sync_popen():
+            sync_kwargs = {
+                k: v for k, v in kwargs.items()
+                if k in {"cwd", "env", "startupinfo", "creationflags"}
+            }
+            sync_kwargs["stdout"] = subprocess.PIPE
+            sync_kwargs["stderr"] = subprocess.PIPE
+            sync_kwargs["stdin"] = subprocess.DEVNULL
+            for variant in _win_subprocess_spawn_variants(sync_kwargs):
+                try:
+                    return subprocess.Popen(list(args), **variant)
+                except Exception as exc:
+                    if _is_win_access_denied(exc):
+                        continue
+                    raise
+            if is_ps:
+                cmd_path = os.environ.get("ComSpec") or r"C:\Windows\System32\cmd.exe"
+                wrapped = [cmd_path, "/d", "/s", "/c", subprocess.list2cmdline(list(args))]
+                for variant in _win_subprocess_spawn_variants(sync_kwargs):
+                    try:
+                        return subprocess.Popen(wrapped, **variant)
+                    except Exception as exc:
+                        if _is_win_access_denied(exc):
+                            continue
+                        raise
+            raise last_error or OSError(5, "Access is denied")
+
+        try:
+            popen = await asyncio.to_thread(_sync_popen)
+
+            class _ThreadProcessAdapter:
+                def __init__(self, proc: subprocess.Popen):
+                    self._proc = proc
+                    self.pid = proc.pid
+                    self.returncode = None
+
+                async def communicate(self):
+                    stdout, stderr = await asyncio.to_thread(self._proc.communicate)
+                    self.returncode = self._proc.returncode
+                    return stdout, stderr
+
+            return _ThreadProcessAdapter(popen)
+        except Exception as exc:
+            last_error = exc
+            if not _is_win_access_denied(exc):
+                raise
+
+    assert last_error is not None
+    raise last_error
+
+
+def _windows_python_executable() -> str:
+    import sys
+
+    current = Path(sys.executable)
+    if current.name.lower() == "pythonw.exe":
+        sibling = current.with_name("python.exe")
+        if sibling.exists():
+            return str(sibling)
+    return sys.executable
+
+
+def _parse_direct_python_command(command: str) -> Optional[list[str]]:
+    """Return argv for a direct python.exe spawn, or None if not a python command.
+
+    Skill workflows (pptx create/validate/render) almost always invoke
+    ``python script.py ...``. Running those through PowerShell on Desktop is
+    both slower and more likely to hit endpoint CreateProcess blocks.
+    """
+    import shlex
+    import sys
+
+    text = (command or "").strip()
+    if not text:
+        return None
+    # Reject obvious PowerShell pipelines / multi-statements.
+    if any(token in text for token in ("|", ";", "&&", "||", "`", "\n")):
+        return None
+    try:
+        # Agent commands use shell-style quoting; posix=True strips quotes the
+        # way Python expects for ``-c`` payloads even on Windows.
+        parts = shlex.split(text, posix=True)
+    except ValueError:
+        return None
+    if not parts:
+        return None
+    launcher = parts[0].lower().rstrip(".exe")
+    if launcher not in {"python", "python3", "py"}:
+        return None
+    # Prefer the runtime interpreter over whatever "python" resolves to on PATH.
+    exe = _windows_python_executable() if sys.platform == "win32" else sys.executable
+    return [exe, *parts[1:]]
+
+
+async def _run_direct_python_command(
+    argv: list[str],
+    *,
+    cwd: Optional[str],
+    timeout: float,
+) -> tuple[int, str]:
+    hide = _win_subprocess_hide_kwargs()
+    kwargs = {
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
+        "stdin": asyncio.subprocess.DEVNULL,
+        **hide,
+    }
+    if cwd:
+        kwargs["cwd"] = cwd
+    proc = await _create_subprocess_exec_with_win_fallback(*argv, **kwargs)
+    async with asyncio.timeout(timeout):
+        stdout, stderr = await proc.communicate()
+    raw = _decode_subprocess_output(stdout) + _decode_subprocess_output(stderr)
+    return int(proc.returncode or 0), raw
+
+
 def _detect_powershell() -> Optional[str]:
     """Detect available PowerShell executable (pwsh or powershell)."""
     global _POWERSHELL_PATH_CACHE
 
     if _POWERSHELL_PATH_CACHE is not None:
-        return _POWERSHELL_PATH_CACHE
+        return _POWERSHELL_PATH_CACHE if _POWERSHELL_PATH_CACHE else None
 
-    # Try PowerShell Core (cross-platform) first
+    # Prefer the absolute System32 host on Windows. A bare "powershell" name is
+    # sometimes denied by endpoint CreateProcess hooks (WinError 5 / 拒绝访问).
+    if platform.system() == "Windows":
+        system_root = os.environ.get("SystemRoot", r"C:\Windows")
+        system_ps = Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        if system_ps.exists():
+            _POWERSHELL_PATH_CACHE = str(system_ps)
+            return _POWERSHELL_PATH_CACHE
+
+    # Try PowerShell Core (cross-platform)
     pwsh_path = shutil.which("pwsh")
     if pwsh_path:
         _POWERSHELL_PATH_CACHE = pwsh_path
         return pwsh_path
 
-    # Fall back to Windows PowerShell on Windows
+    # Fall back to Windows PowerShell on PATH
     if platform.system() == "Windows":
-        ps_path = shutil.which("powershell.exe")
-        if ps_path:
-            _POWERSHELL_PATH_CACHE = ps_path
-            return ps_path
-        # Also try just "powershell" (without .exe extension)
-        ps_path = shutil.which("powershell")
+        ps_path = shutil.which("powershell.exe") or shutil.which("powershell")
         if ps_path:
             _POWERSHELL_PATH_CACHE = ps_path
             return ps_path
@@ -323,12 +1009,32 @@ def get_operator_funcs(
         try:
             fp = safe_path(path)
             async with asyncio.timeout(timeout):
-                async with aiofiles.open(fp, 'r', encoding='utf-8') as f:
-                    text = await f.read()
-                    lines = text.splitlines()
-                    if minilimit:
-                        lines = lines[minilimit:maxlimit]
-                    return "\n".join(lines)
+                if os.name == "nt":
+                    # Lazy import avoids coupling Agent module initialization to
+                    # backend package initialization; the Tool contract stays unchanged.
+                    from drsai.backend.runtime.security_boundary.filesystem import WindowsWorkspaceFilesystem
+                    roots = [root for root in ALLOWED_DIRS if fp.is_relative_to(root)]
+                    if not roots:
+                        raise ValueError(f"Path escapes workspace: {path}")
+                    root = max(roots, key=lambda value: len(value.parts))
+                    relative = fp.relative_to(root).as_posix()
+                    if relative.split("/", 1)[0].casefold() in {
+                        ".git", ".agents", ".codex", ".opendrsai-trash",
+                    }:
+                        raise ValueError("Agent control paths cannot be read")
+                    raw = await asyncio.to_thread(
+                        WindowsWorkspaceFilesystem(root).read_bytes,
+                        relative,
+                        max_bytes=16 * 1024 * 1024,
+                    )
+                    text = raw.decode("utf-8")
+                else:
+                    async with aiofiles.open(fp, 'r', encoding='utf-8') as f:
+                        text = await f.read()
+                lines = text.splitlines()
+                if minilimit:
+                    lines = lines[minilimit:maxlimit]
+                return "\n".join(lines)
         except asyncio.TimeoutError:
             return f"Error: Read operation timed out after {timeout}s"
         except Exception as e:
@@ -1364,7 +2070,7 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
                     "Use /dangerous on to authorize for the rest of the session."
                 )
 
-        if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(command):
+        if not _dangerous_allowed[0] and not _RUNTIME_TOOL_APPROVAL_GRANTED.get() and _SCRIPT_EXEC_RE.search(command):
             if not await _request_dangerous_approval(command, "script"):
                 return (
                     "Error: Script execution denied by user. "
@@ -1382,6 +2088,87 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
 
         ps_command = _build_ps_command(command)
         subproc_kwargs = _ps_subprocess_kwargs()
+
+        # Fast path: skill scripts are almost always `python …`. Spawning
+        # python.exe directly avoids PowerShell CreateProcess denials and the
+        # multi-second WMI fallback on Desktop Windows.
+        if not run_in_background:
+            direct_argv = _parse_direct_python_command(command)
+            if direct_argv:
+                try:
+                    cwd = subproc_kwargs.get("cwd")
+                    code, raw = await _run_direct_python_command(
+                        direct_argv,
+                        cwd=str(cwd) if cwd else None,
+                        timeout=float(timeout),
+                    )
+                    extra = ["[spawn=direct-python]"]
+                    clean_output, new_cwd_str = _parse_ps_output(raw)
+                    _update_ps_cwd(new_cwd_str, extra)
+                    if extra:
+                        clean_output = "\n".join(extra + [clean_output])
+                    if code != 0:
+                        clean_output += f"\n[exit code: {code}]"
+                    return clean_output[:50000]
+                except Exception as direct_error:
+                    if platform.system() == "Windows" and _is_win_access_denied(direct_error):
+                        try:
+                            cwd = subproc_kwargs.get("cwd")
+                            code, stdout, stderr, via = await asyncio.to_thread(
+                                _run_win_access_denied_fallbacks,
+                                direct_argv[0],
+                                list(direct_argv[1:]),
+                                cwd=str(cwd) if cwd else None,
+                                timeout=float(timeout),
+                            )
+                            extra = [f"[spawn=direct-python-{via}]"]
+                            clean_output, new_cwd_str = _parse_ps_output(stdout + stderr)
+                            _update_ps_cwd(new_cwd_str, extra)
+                            if extra:
+                                clean_output = "\n".join(extra + [clean_output])
+                            if code != 0:
+                                clean_output += f"\n[exit code: {code}]"
+                            return clean_output[:50000]
+                        except Exception:
+                            pass
+                    # Fall through to PowerShell / WMI / Node for other failures.
+
+        # Shared helpers for foreground + background (same Access Denied escalation).
+        ps_argv = list(_ps_args(ps_path, ps_command))
+
+        def _finish_from_raw(raw_output: str, returncode: int | None, *, via: str | None = None) -> str:
+            extra_lines = []
+            if via:
+                extra_lines.append(f"[spawn={via}]")
+            clean_output, new_cwd_str = _parse_ps_output(raw_output)
+            _update_ps_cwd(new_cwd_str, extra_lines)
+            if extra_lines:
+                clean_output = "\n".join(extra_lines + [clean_output])
+            if returncode not in (None, 0):
+                clean_output += f"\n[exit code: {returncode}]"
+            return clean_output[:50000]
+
+        def _raw_looks_denied(stdout_b: bytes | None, stderr_b: bytes | None, raw_output: str) -> bool:
+            return platform.system() == "Windows" and (
+                _looks_like_win_access_denied_output(raw_output)
+                or _looks_like_win_access_denied_bytes(stdout_b)
+                or _looks_like_win_access_denied_bytes(stderr_b)
+            )
+
+        async def _run_denied_fallbacks() -> tuple[str, int]:
+            # Node trampoline first for powershell; WMI second. cmd→powershell often
+            # still denied and may hide GBK "拒绝访问" behind a fake CreateProcess success.
+            cwd = subproc_kwargs.get("cwd")
+            returncode, stdout, stderr, via = await asyncio.to_thread(
+                _run_win_access_denied_fallbacks,
+                ps_path,
+                ps_argv,
+                cwd=str(cwd) if cwd else None,
+                timeout=float(timeout),
+            )
+            _PS_SPAWN_PREFER_NODE[0] = True
+            code = int(returncode or 0)
+            return _finish_from_raw(stdout + stderr, code, via=via), code
 
         # Background execution
         if run_in_background:
@@ -1402,36 +2189,41 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
             async def run_bg_task():
                 proc = None
                 try:
-                    proc = await asyncio.create_subprocess_exec(
-                        ps_path, *_ps_args(ps_path, ps_command),
+                    prefer_node = (
+                        _PS_SPAWN_PREFER_NODE[0]
+                        or _should_prefer_node_shell_trampoline()
+                    )
+                    if prefer_node:
+                        output, code = await _run_denied_fallbacks()
+                        task_info["output"] = output
+                        task_info["status"] = "completed"
+                        task_info["exit_code"] = code
+                        return
+
+                    proc = await _create_subprocess_exec_with_win_fallback(
+                        ps_path, *ps_argv,
                         **subproc_kwargs,
                     )
                     task_info["pid"] = proc.pid
 
                     async with asyncio.timeout(timeout):
-                        stdout, stderr = await proc.communicate()
+                        stdout_b, stderr_b = await proc.communicate()
                         raw_output = (
-                            (stdout.decode('utf-8', errors='replace') if stdout else '')
-                            + (stderr.decode('utf-8', errors='replace') if stderr else '')
+                            _decode_subprocess_output(stdout_b)
+                            + _decode_subprocess_output(stderr_b)
                         )
-                        clean_output, new_cwd_str = _parse_ps_output(raw_output)
-                        
-                        # Update cwd
-                        extra_lines = []
-                        _update_ps_cwd(new_cwd_str, extra_lines)
-                        if extra_lines:
-                            clean_output = "\n".join(extra_lines + [clean_output])
+                        if _raw_looks_denied(stdout_b, stderr_b, raw_output):
+                            output, code = await _run_denied_fallbacks()
+                            task_info["output"] = output
+                            task_info["status"] = "completed"
+                            task_info["exit_code"] = code
+                            return
 
-                        # Append exit code for non-zero exits
-                        if proc.returncode != 0:
-                            clean_output += f"\n[exit code: {proc.returncode}]"
-
-                        task_info["output"] = clean_output[:50000]
+                        task_info["output"] = _finish_from_raw(raw_output, proc.returncode)
                         task_info["status"] = "completed"
                         task_info["exit_code"] = proc.returncode
 
                 except asyncio.TimeoutError:
-                    # Kill process on timeout (cross-platform)
                     if proc and proc.pid:
                         _kill_process_tree(proc.pid)
                     task_info["error"] = f"Command timeout after {timeout}s (process terminated)"
@@ -1439,6 +2231,19 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
                 except Exception as e:
                     if proc and proc.pid:
                         _kill_process_tree(proc.pid)
+                    if platform.system() == "Windows" and _is_win_access_denied(e):
+                        try:
+                            output, code = await _run_denied_fallbacks()
+                            task_info["output"] = output
+                            task_info["status"] = "completed"
+                            task_info["exit_code"] = code
+                            return
+                        except Exception as fallback_error:
+                            task_info["error"] = (
+                                f"Error: {e} (access-denied fallbacks also failed: {fallback_error})"
+                            )
+                            task_info["status"] = "failed"
+                            return
                     task_info["error"] = f"Error: {e}"
                     task_info["status"] = "failed"
                 finally:
@@ -1456,38 +2261,52 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
             }
 
         # Foreground execution
+        # Fast path: known-denied hosts (pythonw / explicit env) skip CreateProcess.
+        if _PS_SPAWN_PREFER_NODE[0] or _should_prefer_node_shell_trampoline():
+            try:
+                output, _code = await _run_denied_fallbacks()
+                return output
+            except Exception:
+                # Fall through to CreateProcess as a secondary path.
+                pass
+
         proc = None
         try:
-            proc = await asyncio.create_subprocess_exec(
-                ps_path, *_ps_args(ps_path, ps_command),
+            proc = await _create_subprocess_exec_with_win_fallback(
+                ps_path, *ps_argv,
                 **subproc_kwargs,
             )
 
             async with asyncio.timeout(timeout):
-                stdout, stderr = await proc.communicate()
+                stdout_b, stderr_b = await proc.communicate()
                 raw_output = (
-                    (stdout.decode('utf-8', errors='replace') if stdout else '')
-                    + (stderr.decode('utf-8', errors='replace') if stderr else '')
+                    _decode_subprocess_output(stdout_b)
+                    + _decode_subprocess_output(stderr_b)
                 )
-                extra_lines = []
-                clean_output, new_cwd_str = _parse_ps_output(raw_output)
-                _update_ps_cwd(new_cwd_str, extra_lines)
-
-                if extra_lines:
-                    clean_output = "\n".join(extra_lines + [clean_output])
-
-                # Append exit code for non-zero exits so LLM knows the command failed
-                if proc.returncode != 0:
-                    clean_output += f"\n[exit code: {proc.returncode}]"
-
-                return clean_output[:50000]
+                # cmd.exe trampoline can start successfully while the inner
+                # powershell.exe is still denied — detect GBK/UTF-8 forms and escalate.
+                if _raw_looks_denied(stdout_b, stderr_b, raw_output):
+                    try:
+                        output, _code = await _run_denied_fallbacks()
+                        return output
+                    except Exception as fallback_error:
+                        return (
+                            _finish_from_raw(raw_output, proc.returncode)
+                            + f"\n(access-denied fallbacks also failed: {fallback_error})"
+                        )[:50000]
+                return _finish_from_raw(raw_output, proc.returncode)
 
         except asyncio.TimeoutError:
-            # Kill process on timeout (cross-platform)
             if proc and proc.pid:
                 _kill_process_tree(proc.pid)
             return f"Error: Command timeout after {timeout}s (process terminated)"
         except Exception as e:
+            if platform.system() == "Windows" and _is_win_access_denied(e):
+                try:
+                    output, _code = await _run_denied_fallbacks()
+                    return output
+                except Exception as fallback_error:
+                    return f"Error: {e} (access-denied fallbacks also failed: {fallback_error})"
             return f"Error: {e}"
 
 

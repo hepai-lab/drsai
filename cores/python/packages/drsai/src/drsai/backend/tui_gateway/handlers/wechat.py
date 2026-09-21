@@ -26,6 +26,10 @@ except ImportError:
 
 CREDS_FILE = os.path.join(str(WECHAT_DIR), "credentials.json")
 
+from drsai.backend.wechat.auth_service import WeChatAuthError, WeChatAuthService
+
+_wechat_auth = WeChatAuthService(CREDS_FILE)
+
 
 # ── RPC methods ───────────────────────────────────────────────────────────
 
@@ -45,35 +49,16 @@ def _wechat_status(rid, params: dict) -> dict:
             active_daemons: list,
         }
     """
+    shared = _run(_wechat_auth.status())
     result = {
-        "configured": os.path.exists(CREDS_FILE),
-        "credentials_valid": False,
-        "login_time": None,
-        "expires_at": None,
+        "configured": shared["configured"],
+        "credentials_valid": shared["credential_state"] == "valid",
+        "login_time": shared.get("login_time"),
+        "expires_at": shared.get("expires_at"),
         "bot_token": None,
-        "account_id": None,
+        "account_id": shared.get("account_label"),
         "active_daemons": [],
     }
-
-    if os.path.exists(CREDS_FILE):
-        try:
-            with open(CREDS_FILE, encoding="utf-8") as f:
-                creds = json.load(f)
-            result["credentials_valid"] = _check_creds_valid(creds)
-            login_time = creds.get("login_time")
-            if login_time:
-                result["login_time"] = datetime.fromtimestamp(login_time).isoformat()
-                expiry_ts = login_time + 7 * 24 * 3600
-                result["expires_at"] = datetime.fromtimestamp(expiry_ts).isoformat()
-            # Mask bot token
-            token = creds.get("bot_token", "")
-            if len(token) > 12:
-                result["bot_token"] = f"{token[:8]}...{token[-4:]}"
-            elif token:
-                result["bot_token"] = "***"
-            result["account_id"] = creds.get("account_id")
-        except Exception:
-            logger.exception("wechat.status parse error")
 
     # Check running daemons with wechat enabled
     try:
@@ -128,16 +113,10 @@ def _wechat_login(rid, params: dict) -> dict:
     The frontend should then poll wechat.login_status.
     """
     try:
-        import asyncio
-        from drsai.backend.wechat.wechat_login import get_qrcode
-
-        async def _get_qr():
-            return await get_qrcode()
-
-        qrcode_url, qrcode_id = asyncio.get_event_loop().run_until_complete(_get_qr())
+        started = _run(_wechat_auth.start_login())
         return _ok(rid, {
-            "qr_url": qrcode_url,
-            "qr_id": qrcode_id,
+            "qr_url": started["qr_content"],
+            "qr_id": started["operation_id"],
             "status": "pending",
         })
     except Exception as e:
@@ -157,29 +136,9 @@ def _wechat_login_status(rid, params: dict) -> dict:
         return _err(rid, -32602, "qr_id is required")
 
     try:
-        import httpx
-        import asyncio
-
-        async def _check():
-            url = f"https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode={qr_id}"
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                return resp.json()
-
-        data = asyncio.get_event_loop().run_until_complete(_check())
-        status = data.get("status", "unknown")
-
-        if status == "confirmed":
-            # Save credentials
-            from drsai.backend.wechat.wechat_login import save_credentials
-            save_credentials(data)
-            return _ok(rid, {
-                "status": "confirmed",
-                "account_id": data.get("ilink_bot_id"),
-            })
-
-        return _ok(rid, {"status": status})
+        result = _run(_wechat_auth.poll_login(qr_id))
+        status = {"waiting": "wait", "scanned": "scaned"}.get(result["status"], result["status"])
+        return _ok(rid, {"status": status, "account_id": result.get("account_label")})
     except Exception as e:
         logger.exception("wechat.login_status failed")
         return _err(rid, -32603, str(e))
@@ -189,9 +148,7 @@ def _wechat_login_status(rid, params: dict) -> dict:
 def _wechat_logout(rid, params: dict) -> dict:
     """Logout WeChat and delete credentials."""
     try:
-        if os.path.exists(CREDS_FILE):
-            os.unlink(CREDS_FILE)
-        return _ok(rid, {"status": "logged_out"})
+        return _ok(rid, _run(_wechat_auth.logout()))
     except Exception as e:
         return _err(rid, -32603, str(e))
 
@@ -205,3 +162,12 @@ def _check_creds_valid(creds: dict) -> bool:
     if not login_time:
         return False
     return (time.time() - login_time) < 7 * 24 * 3600
+
+
+def _run(awaitable):
+    """Run shared async service calls from the TUI gateway's sync handlers."""
+    import asyncio
+    try:
+        return asyncio.run(awaitable)
+    except WeChatAuthError:
+        raise

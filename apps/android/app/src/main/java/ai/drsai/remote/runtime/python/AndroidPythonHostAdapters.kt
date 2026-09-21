@@ -37,6 +37,7 @@ class HaiPythonModelHostPort(
         val calls = StreamedToolCallAssembler()
         var finishReason: String? = null
         var receivedDelta = false
+        val providerReasoningContent = StringBuilder()
         suspend fun complete(tools: JSONArray) {
             val messages = request.messages.toRuntimeMessages().toMutableList().apply {
                 compatibleRequest.requiredToolName?.let { name ->
@@ -55,6 +56,7 @@ class HaiPythonModelHostPort(
                 delta.reasoningSummary?.takeIf(String::isNotEmpty)?.let {
                     send(HostModelChunk(request.requestId, reasoningSummary = it))
                 }
+                delta.providerReasoningContent?.let(providerReasoningContent::append)
                 delta.toolCalls.forEach { part ->
                     calls.append(part)
                 }
@@ -101,6 +103,7 @@ class HaiPythonModelHostPort(
                         }
                     }
                 }),
+                providerReasoningContent = providerReasoningContent.toString(),
             )
         )
     }
@@ -343,6 +346,7 @@ private fun JSONArray.toRuntimeMessages(): List<RuntimeMessage> = buildList {
                 content = content,
                 toolCallId = row.optString("tool_call_id").ifBlank { null },
                 toolCalls = toolCalls,
+                providerReasoningContent = row.optString("reasoning_content").ifBlank { null },
             )
         )
     }

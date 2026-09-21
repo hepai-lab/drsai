@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "feature_id": "M02-F05",
+  "acceptance_run_id": "p10-round-010-full-runtime-smoke",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "runtime": "shared Python Android Agent Runtime through PythonRuntimeClient and PythonAgentLoopCoordinator",
+  "tool": {"name":"get_current_time","risk":"read_only","approval":false},
+  "required_success_sequence": [
+    "model_request",
+    "tool_call_request",
+    "successful_tool_result",
+    "model_request_after_tool",
+    "final_message",
+    "run.completed"
+  ],
+  "fail_closed_cases": ["direct answer without tool", "tool result failure", "missing final answer", "run failed or cancelled"],
+  "proof_scope": ["account", "provider revision", "model", "runtime version", "credential verification generation"],
+  "tests": {
+    "testDebugUnitTest":"660 tests, 0 failures, 2 skipped",
+    "FullRuntimeSmokeInstrumentedTest_API35":"2 passed",
+    "MainInterfaceTest_plus_smoke_API35":"28 passed"
+  }
+}

@@ -182,7 +182,7 @@ class RuntimeImageOperationAdapter:
         except Exception:
             target.unlink(missing_ok=True)
             raise
-        self.emit_artifact(context.run_id, "artifact.created", artifact)
+        self.emit_artifact(context.run_id, "artifact.created", artifact, context)
         return {
             **artifact,
             "operation": operation,

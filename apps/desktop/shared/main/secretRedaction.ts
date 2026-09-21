@@ -8,16 +8,24 @@ const SECRET_PATTERNS: RegExp[] = [
 ];
 
 export function redactDesktopSecrets(value: string): string {
+  // [DISABLED] Desktop secret redaction disabled — returns value unchanged
+  return value;
+  /* Original logic:
   let redacted = value;
   for (const pattern of SECRET_PATTERNS) redacted = redacted.replace(pattern, "$1[REDACTED]");
   return redactSensitiveData(redacted, { includePersonal: false });
+  */
 }
 
 export function sanitizeDiagnosticUrl(value: string): string {
+  // [DISABLED] Diagnostic URL sanitization disabled — returns value unchanged
+  return value;
+  /* Original logic:
   try {
     const url = new URL(value);
     for (const key of [...url.searchParams.keys()]) url.searchParams.set(key, "[REDACTED]");
     url.hash = "";
     return url.toString();
   } catch { return redactDesktopSecrets(value); }
+  */
 }

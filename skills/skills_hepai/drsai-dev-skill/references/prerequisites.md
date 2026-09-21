@@ -43,19 +43,18 @@ grep "HEPAI_API_KEY" /path/to/drsai/.env
 
 ### 4. 检查 `drsai-ui` 命令
 
+脚本只认仓库根 `.venv/bin/drsai-ui`，不走 conda。
+
 ```bash
-which drsai-ui
-drsai-ui --help 2>&1 | head -5
+ls /path/to/drsai/.venv/bin/drsai-ui
+/path/to/drsai/.venv/bin/drsai-ui --help 2>&1 | head -5
 ```
 
 **不可用时**，引导安装：
 ```bash
-# 源码安装（推荐）
-cd /path/to/drsai/apps/webui/backend
-pip install -e .
-
-# 或 pip 安装
-pip install drsai_ui -U
+cd /path/to/drsai
+python3 -m venv .venv
+.venv/bin/pip install -e apps/webui/backend
 ```
 
 ### 5. 检查 Node.js 和 yarn

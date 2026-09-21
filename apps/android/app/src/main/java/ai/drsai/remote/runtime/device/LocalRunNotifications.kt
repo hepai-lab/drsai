@@ -4,9 +4,11 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.work.WorkManager
@@ -18,6 +20,8 @@ import ai.drsai.remote.workbench.model.WorkbenchId
 const val ACTION_STOP_LOCAL_RUN = "ai.drsai.remote.action.STOP_LOCAL_RUN"
 const val ACTION_CONTINUE_LOCAL_RUN = "ai.drsai.remote.action.CONTINUE_LOCAL_RUN"
 const val ACTION_OPEN_OAEP_RUN = "ai.drsai.remote.action.OPEN_OAEP_RUN"
+const val ACTION_OPEN_RUN_APPROVAL = "ai.drsai.remote.action.OPEN_RUN_APPROVAL"
+const val ACTION_OPEN_RUN_RESULT = "ai.drsai.remote.action.OPEN_RUN_RESULT"
 const val EXTRA_RUN_ID = "run_id"
 const val EXTRA_SESSION_ID = "session_id"
 const val EXTRA_INTERACTION_ID = "interaction_id"
@@ -29,7 +33,7 @@ private const val CHANNEL_ID = "agent-runs"
 
 internal fun ensureLocalRunNotificationChannel(context: Context) {
     context.getSystemService(NotificationManager::class.java)?.createNotificationChannel(
-        NotificationChannel(CHANNEL_ID, "Agent 任务", NotificationManager.IMPORTANCE_LOW),
+        NotificationChannel(CHANNEL_ID, context.getString(R.string.local_run_channel_name), NotificationManager.IMPORTANCE_LOW),
     )
 }
 
@@ -37,47 +41,52 @@ internal fun oaepRunOpenIntent(
     context: Context,
     runId: String,
     sessionId: String,
+    subject: String,
     interactionId: String? = null,
     action: String = ACTION_OPEN_OAEP_RUN,
 ): Intent {
-    require(runId.isNotBlank() && sessionId.isNotBlank()) { "oaep_notification_scope_required" }
+    require(subject.isNotBlank() && runId.isNotBlank() && sessionId.isNotBlank()) { "oaep_notification_scope_required" }
+    require(action in setOf(ACTION_OPEN_OAEP_RUN, ACTION_OPEN_RUN_APPROVAL, ACTION_OPEN_RUN_RESULT, ai.drsai.remote.runtime.reliability.ACTION_OPEN_RECOVERABLE_RUN)) {
+        "oaep_notification_action_invalid"
+    }
     return Intent(context, MainActivity::class.java)
         .setAction(action)
+        .putExtra(EXTRA_ACCOUNT_SUBJECT, subject)
         .putExtra(EXTRA_RUN_ID, runId)
         .putExtra(EXTRA_SESSION_ID, sessionId)
         .putExtra(EXTRA_INTERACTION_ID, interactionId)
         .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
 }
 
-internal fun localRunActionIntent(context: Context, action: String, runId: String, sessionId: String): Intent {
+internal fun localRunActionIntent(context: Context, action: String, subject: String, runId: String, sessionId: String): Intent {
     require(action in setOf(ACTION_CONTINUE_LOCAL_RUN, ACTION_STOP_LOCAL_RUN)) { "local_run_action_invalid" }
-    require(runId.isNotBlank() && sessionId.isNotBlank()) { "local_run_action_scope_required" }
+    require(subject.isNotBlank() && runId.isNotBlank() && sessionId.isNotBlank()) { "local_run_action_scope_required" }
     return Intent(context, MainActivity::class.java).setAction(action)
-        .putExtra(EXTRA_RUN_ID, runId).putExtra(EXTRA_SESSION_ID, sessionId)
+        .putExtra(EXTRA_ACCOUNT_SUBJECT, subject).putExtra(EXTRA_RUN_ID, runId).putExtra(EXTRA_SESSION_ID, sessionId)
         .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
 }
 
-internal fun localRunNotification(context: Context, runId: String, sessionId: String, status: String) =
+internal fun localRunNotification(context: Context, subject: String, runId: String, sessionId: String, status: String) =
     NotificationCompat.Builder(context, CHANNEL_ID)
         .setSmallIcon(R.drawable.ic_launcher_foreground)
-        .setContentTitle("OpenDrSai 正在运行")
+        .setContentTitle(context.getString(R.string.local_run_notification_title))
         .setContentText(status)
         .setOnlyAlertOnce(true)
         .setOngoing(true)
         .setProgress(0, 0, true)
         .setContentIntent(PendingIntent.getActivity(
             context, LocalRunNotificationController.stableNotificationId(runId) xor 0x01000000,
-            oaepRunOpenIntent(context, runId, sessionId),
+            oaepRunOpenIntent(context, runId, sessionId, subject),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         ))
-        .addAction(0, "继续", PendingIntent.getActivity(
+        .addAction(0, context.getString(R.string.continue_action), PendingIntent.getActivity(
             context, LocalRunNotificationController.stableNotificationId(runId) xor 0x02000000,
-            localRunActionIntent(context, ACTION_CONTINUE_LOCAL_RUN, runId, sessionId),
+            localRunActionIntent(context, ACTION_CONTINUE_LOCAL_RUN, subject, runId, sessionId),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         ))
-        .addAction(0, "取消", PendingIntent.getActivity(
+        .addAction(0, context.getString(R.string.cancel), PendingIntent.getActivity(
             context, LocalRunNotificationController.stableNotificationId(runId),
-            localRunActionIntent(context, ACTION_STOP_LOCAL_RUN, runId, sessionId),
+            localRunActionIntent(context, ACTION_STOP_LOCAL_RUN, subject, runId, sessionId),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         ))
         .build()
@@ -111,8 +120,27 @@ class LocalRunForegroundService : Service() {
             transitionToRecoverable(subject, runId, sessionId, startId)
             return START_NOT_STICKY
         }
-        val status = intent.getStringExtra(EXTRA_STATUS).orEmpty().ifBlank { "正在思考…" }
-        startForeground(LocalRunNotificationController.stableNotificationId(runId), localRunNotification(this, runId, sessionId, status))
+        val power = getSystemService(PowerManager::class.java)
+        val activityManager = getSystemService(ActivityManager::class.java)
+        val backgroundRestricted = activityManager?.isBackgroundRestricted == true
+        val importance = ActivityManager.RunningAppProcessInfo().also(ActivityManager::getMyMemoryState).importance
+        val appForeground = importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+        val backgroundDecision = ai.drsai.remote.runtime.reliability.BackgroundExecutionPolicy.decide(
+            ai.drsai.remote.runtime.reliability.BackgroundExecutionConditions(
+                appForeground = appForeground,
+                foregroundServiceActive = true,
+                doze = power?.isDeviceIdleMode == true,
+                batterySaver = power?.isPowerSaveMode == true,
+                backgroundRestricted = backgroundRestricted,
+                foregroundServiceTimedOut = false,
+            ),
+        )
+        if (backgroundDecision.action != ai.drsai.remote.runtime.reliability.BackgroundExecutionAction.CONTINUE_FOREGROUND) {
+            transitionToRecoverable(subject, runId, sessionId, startId)
+            return START_NOT_STICKY
+        }
+        val status = intent.getStringExtra(EXTRA_STATUS).orEmpty().ifBlank { getString(R.string.thinking) }
+        startForeground(LocalRunNotificationController.stableNotificationId(runId), localRunNotification(this, subject, runId, sessionId, status))
         return START_REDELIVER_INTENT
     }
 
@@ -138,7 +166,7 @@ class LocalRunForegroundService : Service() {
     private fun transitionToRecoverable(subject: String, runId: String, sessionId: String, startId: Int) {
         startForeground(
             LocalRunNotificationController.stableNotificationId(runId),
-            localRunNotification(this, runId, sessionId, "任务已暂停，可继续或取消"),
+            localRunNotification(this, subject, runId, sessionId, getString(R.string.local_run_paused_recoverable)),
         )
         scheduleRecovery(subject, runId)
         stopForeground(STOP_FOREGROUND_DETACH)
@@ -165,6 +193,9 @@ class LocalRunNotificationController(private val context: Context) {
             .putExtra(EXTRA_ACCOUNT_SUBJECT, subject).putExtra(EXTRA_STATUS, status)
         runCatching { ContextCompat.startForegroundService(context, intent) }
     }
+
+    fun show(subject: String, snapshot: ai.drsai.remote.runtime.reliability.LongTaskSnapshot) =
+        show(subject, snapshot.runId, snapshot.sessionId, snapshot.stepLabel)
 
     fun dismiss(runId: String) {
         active -= runId

@@ -6,12 +6,12 @@
 
 服务启动后，按以下步骤逐步验证服务是否真正可用。
 
-## 验证后端（端口 4291）
+## 验证后端（端口 8086）
 
 ### Step 1：确认端口已监听
 
 ```bash
-ss -tlnp | grep 4291
+ss -tlnp | grep 8086
 ```
 
 预期输出中应有 `python` 或 `uvicorn` 进程。如果无输出，说明后端未启动。
@@ -19,13 +19,13 @@ ss -tlnp | grep 4291
 ### Step 2：验证 HTTP 响应
 
 ```bash
-curl -s -o /dev/null -w "Backend HTTP status: %{http_code}\n" http://localhost:4291/
+curl -s -o /dev/null -w "Backend HTTP status: %{http_code}\n" http://localhost:8086/
 ```
 
 ### Step 3：验证 API 端点
 
 ```bash
-curl -s http://localhost:4291/api/version 2>/dev/null | python3 -m json.tool
+curl -s http://localhost:8086/api/version 2>/dev/null | python3 -m json.tool
 ```
 
 ### Step 4：验证本地登录链路（DEV）
@@ -33,12 +33,12 @@ curl -s http://localhost:4291/api/version 2>/dev/null | python3 -m json.tool
 ```bash
 # 用默认管理员账号登录，应返回 access_token
 TOKEN=$(curl -s -X POST \
-  "http://localhost:4291/api/umtlocal/login?user_id=admin&password=admin123456" \
+  "http://localhost:8086/api/umtlocal/login?user_id=admin&password=admin123456" \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['access_token'])")
 echo "token: ${TOKEN:0:20}..."
 
 # 用 token 校验 /auth/me，应返回 {"status":true,"data":{"user_id":"admin"}}
-curl -s http://localhost:4291/api/auth/me -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:8086/api/auth/me -H "Authorization: Bearer $TOKEN"
 ```
 
 ### 判断标准
@@ -51,12 +51,12 @@ curl -s http://localhost:4291/api/auth/me -H "Authorization: Bearer $TOKEN"
 | HTTP 500 / 422 | ⚠️ 启动了但有配置错误，检查日志 |
 | HTTP 401 / 403 | ⚠️ API Key 未配置或无效 |
 
-## 验证前端开发服务器（端口 4290）
+## 验证前端开发服务器（端口 8001）
 
 ### Step 1：确认端口已监听
 
 ```bash
-ss -tlnp | grep 4290
+ss -tlnp | grep 8001
 ```
 
 预期输出中应有 `node` 进程。
@@ -64,7 +64,7 @@ ss -tlnp | grep 4290
 ### Step 2：验证 HTTP 响应
 
 ```bash
-curl -s -o /dev/null -w "Frontend HTTP status: %{http_code}\n" http://localhost:4290/
+curl -s -o /dev/null -w "Frontend HTTP status: %{http_code}\n" http://localhost:8001/
 ```
 
 Gatsby 开发服务器首次启动编译需要 1-3 分钟，在此期间请等待后重试。
@@ -97,21 +97,21 @@ pm2 进程状态说明：
 ## 本地快速验证脚本
 
 ```bash
-echo "=== 检查后端端口 4291 ==="
-ss -tlnp | grep 4291 && echo "✅ 后端端口 4291 正在监听" || echo "❌ 后端端口 4291 未监听"
+echo "=== 检查后端端口 8086 ==="
+ss -tlnp | grep 8086 && echo "✅ 后端端口 8086 正在监听" || echo "❌ 后端端口 8086 未监听"
 
 echo ""
-echo "=== 检查前端端口 4290 ==="
-ss -tlnp | grep 4290 && echo "✅ 前端端口 4290 正在监听" || echo "❌ 前端端口 4290 未监听"
+echo "=== 检查前端端口 8001 ==="
+ss -tlnp | grep 8001 && echo "✅ 前端端口 8001 正在监听" || echo "❌ 前端端口 8001 未监听"
 
 echo ""
 echo "=== 验证后端 HTTP ==="
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 http://localhost:4291/ 2>/dev/null)
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 http://localhost:8086/ 2>/dev/null)
 [ "$STATUS" = "200" ] && echo "✅ 后端响应正常 (HTTP $STATUS)" || echo "⚠️  后端响应异常 (HTTP $STATUS)"
 
 echo ""
 echo "=== 验证前端 HTTP ==="
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 http://localhost:4290/ 2>/dev/null)
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 http://localhost:8001/ 2>/dev/null)
 [ "$STATUS" = "200" ] && echo "✅ 前端响应正常 (HTTP $STATUS)" || echo "⚠️  前端响应异常 (HTTP $STATUS)"
 ```
 

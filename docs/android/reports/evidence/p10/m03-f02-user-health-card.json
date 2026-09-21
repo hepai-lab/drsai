@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "feature_id": "M03-F02",
+  "acceptance_run_id": "p10-round-003-setup-readiness",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "readiness_states": ["READY", "CHECKING", "CONFIGURATION_REQUIRED", "PERMISSION_REQUIRED", "TEMPORARILY_UNAVAILABLE"],
+  "ui_rules": ["plain_language_title", "plain_language_summary", "one_primary_action", "technical_digests_hidden"],
+  "tests": {
+    "AgentReadinessTest": "3 passed",
+    "api35_MainInterfaceTest": "24 passed, 0 failed"
+  },
+  "device": "OpenDrSai_P9_API35 x86_64 emulator"
+}

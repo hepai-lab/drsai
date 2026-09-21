@@ -1,0 +1,3220 @@
+import { useEffect, useRef, useState } from "react";
+import type {
+  ChatAttachment,
+  ChatEvent,
+  ChatMessage,
+  DesktopApprovalProposalResult,
+  DesktopAgent,
+  DesktopCommitApprovalChecklist,
+  DesktopCustomCommand,
+  DesktopForkQueueDispatchResult,
+  DesktopForkQueueStartApprovalResult,
+  DesktopProjectMemoryEntry,
+  DesktopTeamMemoryEntry,
+  DesktopUserPreference,
+  DesktopThread,
+  DesktopThreadSnapshot,
+  MyDrSaiModelConfig,
+  WorkspaceCheckpoint,
+  WorkspaceCheckpointPreviewResult,
+  WorkspaceCheckpointRestoreResult,
+  WorkspaceContextOverview,
+  WorkspaceInstructionSummary,
+} from "@shared/desktopApi";
+import {
+  applyStructuredConversationEvent,
+  createStructuredTurnState,
+  migrateLegacyMessageToStructuredTurn,
+  settleInterruptedStructuredTurn,
+  type StructuredAssistantPart,
+  type StructuredActivityEvent,
+  type StructuredConversationEvent,
+  type StructuredTurnState,
+} from "@shared/structuredConversation";
+import { stripAttachmentContextFromUserContent } from "@shared/attachmentContextDisplay";
+import {
+  parseChatCommand,
+  parseForkQueueEntries,
+  parseForkQueueItems,
+  runChatCommand,
+  type ChatCommandAction,
+  type ChatRuntimeMode,
+  type ForkQueueItem,
+} from "../chatCommands";
+import type { ChatSubmitOptions, UiMessage } from "../components/ChatWorkspace";
+import { desktopApi } from "../desktopApi";
+import { describeUserFacingError, type UserFacingRecoveryAction } from "../userFacingErrors";
+import {
+  formatRecentTerminalTestResult,
+  readRecentTerminalTestResult,
+} from "../terminalTestResults";
+import { acceptChatEventSequence, getVisibleChatText } from "../chatOutputModel";
+import { sanitizeSensitiveValue } from "../../../api/sensitiveData";
+import {
+  appendDebugLog,
+  appendRuntimeLogEvent,
+  appendStructuredActivityLog,
+  appendStructuredProtocolLog,
+} from "../debugLogStore";
+import {
+  analyzeMemorySafetyIntent,
+  buildUserPreferenceSystemSection,
+  formatMemorySafetyNotice,
+  formatAppliedPreferenceNotice,
+  formatPreferenceConfirmation,
+  isPreferenceOnlyRequest,
+  parseExplicitUserPreferenceIntent,
+  redactSensitiveMemoryText,
+} from "../userPreferenceIntent";
+
+export interface DesktopChatAdapter {
+  activeRequestId: string | null;
+  cancellingRequestId: string | null;
+  currentRuntimeMode: ChatRuntimeMode | null;
+  commandAttachments: ChatAttachment[];
+  input: string;
+  messages: UiMessage[];
+  clearRuntimeMode: () => void;
+  clearCommandAttachments: () => void;
+  removeCommandAttachment: (index: number) => void;
+  dismissRecoveryActions: (messageId: string) => void;
+  deleteMessage: (messageId: string) => void;
+  setInput: (value: string) => void;
+  submit: (
+    attachments?: ChatAttachment[],
+    options?: ChatSubmitOptions,
+  ) => Promise<boolean>;
+  abort: () => Promise<void>;
+}
+
+export type ChatThreadSnapshot = DesktopThreadSnapshot;
+
+const LOCAL_COMPACT_MAX_MESSAGES = 10;
+const LOCAL_COMPACT_MAX_REUSABLE_ITEMS = 6;
+const LOCAL_COMPACT_MAX_MESSAGE_CHARS = 360;
+const LOCAL_COMPACT_MAX_ITEM_CHARS = 220;
+
+interface LiveThreadChatView {
+  messages: UiMessage[];
+  activeRequestId: string | null;
+  cancellingRequestId: string | null;
+  currentRuntimeMode: ChatRuntimeMode | null;
+  streamingAssistantByRequest: Record<string, string>;
+  structuredRequests: string[];
+  completedStructuredRequests: string[];
+  lastSequenceByRequest: Record<string, number>;
+  pendingDeltasByRequest: Record<string, { text: string; reasoning: string }>;
+  pendingStructuredEventsByRequest: Record<string, StructuredConversationEvent[]>;
+}
+
+interface ComposerThreadDraft {
+  input: string;
+  commandAttachments: ChatAttachment[];
+}
+
+export function useDesktopChatAdapter({
+  availableAgents,
+  availableModels,
+  canChat,
+  developerMode,
+  language,
+  onChatComplete,
+  onForkThreadCreated,
+  onOpenSkillsSquare,
+  onSelectAgent,
+  onSelectModel,
+  onThreadUpdated,
+  threadId,
+  threadSnapshot,
+  workspaceInstructions,
+  workspaceId,
+  workspaceName,
+  workspacePath,
+}: {
+  availableAgents?: DesktopAgent[];
+  availableModels?: MyDrSaiModelConfig[];
+  canChat: boolean;
+  developerMode: boolean;
+  language: "en" | "zh";
+  onChatComplete: (successful: boolean) => void;
+  onForkThreadCreated?: (thread: DesktopThread) => void;
+  onOpenSkillsSquare?: (target?: Extract<ChatCommandAction, { type: "open-view" }>["target"]) => void;
+  onSelectAgent?: (agentId: string) => void;
+  onSelectModel?: (model: string) => void;
+  onThreadUpdated?: (snapshot: ChatThreadSnapshot) => void | Promise<void>;
+  threadId: string;
+  threadSnapshot?: ChatThreadSnapshot | null;
+  workspaceInstructions?: WorkspaceInstructionSummary[];
+  workspaceId?: string;
+  workspaceName?: string;
+  workspacePath?: string;
+}): DesktopChatAdapter {
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<UiMessage[]>([createWelcomeMessage(language, [])]);
+  const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
+  const [cancellingRequestId, setCancellingRequestId] = useState<string | null>(null);
+  const activeRequestIdRef = useRef<string | null>(null);
+  const cancellingRequestIdRef = useRef<string | null>(null);
+  const messagesRef = useRef<UiMessage[]>([createWelcomeMessage(language, [])]);
+  const liveThreadViewsRef = useRef<Map<string, LiveThreadChatView>>(new Map());
+  const composerDraftsRef = useRef<Map<string, ComposerThreadDraft>>(new Map());
+  const backgroundChatEventsRef = useRef<Map<string, ChatEvent[]>>(new Map());
+  const [currentRuntimeMode, setCurrentRuntimeMode] = useState<ChatRuntimeMode | null>(null);
+  const [commandAttachments, setCommandAttachments] = useState<ChatAttachment[]>([]);
+  const inputRef = useRef("");
+  const commandAttachmentsRef = useRef<ChatAttachment[]>([]);
+  const [customCommands, setCustomCommands] = useState<DesktopCustomCommand[]>([]);
+  const [projectMemory, setProjectMemory] = useState<DesktopProjectMemoryEntry[]>([]);
+  const [userPreferences, setUserPreferences] = useState<DesktopUserPreference[]>([]);
+  const streamingAssistantByRequest = useRef<Record<string, string>>({});
+  const structuredRequests = useRef<Set<string>>(new Set());
+  const completedStructuredRequests = useRef<Set<string>>(new Set());
+  const lastSequenceByRequest = useRef<Record<string, number>>({});
+  const pendingDeltasByRequest = useRef<Record<string, { text: string; reasoning: string }>>({});
+  const deltaFlushFrameRef = useRef<number | null>(null);
+  const restoredSnapshotThreadRef = useRef<string | null>(null);
+  const pendingStructuredEventsByRequest = useRef<Record<string, StructuredConversationEvent[]>>({});
+  const structuredFlushFrameRef = useRef<number | null>(null);
+  const appliedSnapshotUpdatedAtRef = useRef(0);
+  const lastPublishedSnapshotAtRef = useRef(0);
+  const pendingThreadSnapshotRef = useRef<ChatThreadSnapshot | null>(null);
+  const threadSnapshotPublishQueuedRef = useRef(false);
+  const onThreadUpdatedRef = useRef(onThreadUpdated);
+  const threadIdRef = useRef(threadId);
+  const languageRef = useRef(language);
+  const developerModeRef = useRef(developerMode);
+  const currentRuntimeModeRef = useRef<ChatRuntimeMode | null>(null);
+  const customCommandsRef = useRef<DesktopCustomCommand[]>([]);
+  const projectMemoryRef = useRef<DesktopProjectMemoryEntry[]>([]);
+  const teamMemoryRef = useRef<DesktopTeamMemoryEntry[]>([]);
+  const userPreferencesRef = useRef<DesktopUserPreference[]>([]);
+
+  onThreadUpdatedRef.current = onThreadUpdated;
+  messagesRef.current = messages;
+  cancellingRequestIdRef.current = cancellingRequestId;
+  languageRef.current = language;
+  inputRef.current = input;
+  commandAttachmentsRef.current = commandAttachments;
+
+  function clearStructuredFlush(): void {
+    pendingStructuredEventsByRequest.current = {};
+    if (structuredFlushFrameRef.current !== null) window.cancelAnimationFrame(structuredFlushFrameRef.current);
+    structuredFlushFrameRef.current = null;
+  }
+
+  function applyStructuredEventBatch(requestId: string, events: StructuredConversationEvent[]): void {
+    if (!events.length) return;
+    const assistantId = streamingAssistantByRequest.current[requestId];
+    setMessages((current) => {
+      const updated = updateAssistantByIdOrLatestStreaming(current, assistantId, (message) =>
+        events.reduce(applyStructuredEventToMessage, message),
+      );
+      return publishAndReturn(
+        events.some((event) => event.type === "turn.error")
+          ? settleAssistantAfterHiddenError(updated, assistantId)
+          : updated,
+      );
+    });
+  }
+
+  function flushStructuredEventDeltas(): void {
+    structuredFlushFrameRef.current = null;
+    const pending = pendingStructuredEventsByRequest.current;
+    pendingStructuredEventsByRequest.current = {};
+    const committedAt = Date.now();
+    setMessages((current) => {
+      let next = current;
+      for (const [requestId, events] of Object.entries(pending)) {
+        const assistantId = streamingAssistantByRequest.current[requestId];
+        next = updateAssistantByIdOrLatestStreaming(next, assistantId, (message) => {
+          const updated = events.reduce(applyStructuredEventToMessage, message);
+          return {
+            ...updated,
+            firstDeltaAt: message.firstDeltaAt ?? committedAt,
+            lastEventAt: committedAt,
+          };
+        });
+      }
+      return next === current ? current : publishAndReturn(next);
+    });
+  }
+
+  function restoreActiveStructuredTurns(snapshotMessages: UiMessage[]): void {
+    let latestActiveRequestId: string | null = null;
+    const settleUnrecoverableTurn = (requestId: string, turnId: string): void => {
+      setMessages((current) => publishAndReturn(current.map((candidate) => {
+        if (candidate.structuredTurn?.turnId !== turnId) return candidate;
+        const settled = settleInterruptedStructuredTurn(
+          candidate.structuredTurn,
+          languageRef.current === "zh"
+            ? "桌面端无法确认这次运行仍然存在。已保留收到的内容，你可以重新发送请求。"
+            : "The desktop could not confirm that this run still exists. Received content was kept; you can send the request again.",
+        );
+        return settled === candidate.structuredTurn
+          ? candidate
+          : { ...candidate, structuredTurn: settled, streaming: false, lastEventAt: Date.now() };
+      })));
+      setActiveRequestId((current) => current === requestId ? null : current);
+      if (activeRequestIdRef.current === requestId) activeRequestIdRef.current = null;
+    };
+    for (const message of snapshotMessages) {
+      const turn = message.structuredTurn;
+      const hasRecoveryNotice = turn?.parts.some((part) =>
+        part.kind === "notice" && typeof part.debugRef === "string" && part.debugRef.startsWith("recovery:"),
+      );
+      const isActive = turn?.status === "pending" || turn?.status === "running";
+      if (message.role !== "assistant" || !turn || (!isActive && !hasRecoveryNotice) || turn.turnId.startsWith("legacy:")) continue;
+      const requestId = turn.turnId;
+      if (isActive) latestActiveRequestId = requestId;
+      streamingAssistantByRequest.current[requestId] = message.id;
+      structuredRequests.current.add(requestId);
+      let recoveryTimeout: number | undefined;
+      const recovery = Promise.race([
+        desktopApi.recoverChatRun({ requestId, sessionId: threadIdRef.current }),
+        new Promise<ChatEvent[]>((_, reject) => {
+          recoveryTimeout = window.setTimeout(
+            () => reject(new Error(`Structured turn recovery timed out: ${requestId}`)),
+            30_000,
+          );
+        }),
+      ]).finally(() => {
+        if (recoveryTimeout !== undefined) window.clearTimeout(recoveryTimeout);
+      });
+      void recovery
+        .then((events) => {
+          if (!events.length) {
+            settleUnrecoverableTurn(requestId, turn.turnId);
+            return;
+          }
+          // An in-process startChat still owns this Run. Reattach without
+          // replaying history or dropping the structured live listener.
+          if (isActive && events.length === 1 && events[0]?.type === "start") {
+            setActiveRequestId(requestId);
+            activeRequestIdRef.current = requestId;
+            return;
+          }
+          // Runtime recovery emits the same normalized chunks as a live Codex
+          // stream. Do not suppress them merely because the snapshot used the
+          // structured-turn representation before Electron restarted.
+          structuredRequests.current.delete(requestId);
+          if (hasRecoveryNotice) {
+            setMessages((current) => current.map((candidate) =>
+              candidate.structuredTurn?.turnId === requestId
+                ? {
+                    ...candidate,
+                    content: "",
+                    error: false,
+                    streaming: true,
+                    structuredTurn: createStructuredTurnState(requestId),
+                    lastEventAt: Date.now(),
+                  }
+                : candidate,
+            ));
+          }
+          window.setTimeout(() => events.forEach(applyChatEvent), 0);
+        })
+        .catch((error) => {
+          settleUnrecoverableTurn(requestId, turn.turnId);
+          appendDebugLog("warn", error instanceof Error ? error.message : `Structured turn recovery failed: ${requestId}`, "chat");
+        });
+    }
+    setActiveRequestId(latestActiveRequestId);
+    activeRequestIdRef.current = latestActiveRequestId;
+  }
+
+  function captureLiveThreadView(): LiveThreadChatView {
+    return {
+      messages: messagesRef.current,
+      activeRequestId: activeRequestIdRef.current,
+      cancellingRequestId: cancellingRequestIdRef.current,
+      currentRuntimeMode: currentRuntimeModeRef.current,
+      streamingAssistantByRequest: { ...streamingAssistantByRequest.current },
+      structuredRequests: [...structuredRequests.current],
+      completedStructuredRequests: [...completedStructuredRequests.current],
+      lastSequenceByRequest: { ...lastSequenceByRequest.current },
+      pendingDeltasByRequest: { ...pendingDeltasByRequest.current },
+      pendingStructuredEventsByRequest: { ...pendingStructuredEventsByRequest.current },
+    };
+  }
+
+  function restoreLiveThreadView(view: LiveThreadChatView): void {
+    streamingAssistantByRequest.current = { ...view.streamingAssistantByRequest };
+    structuredRequests.current = new Set(view.structuredRequests);
+    completedStructuredRequests.current = new Set(view.completedStructuredRequests);
+    lastSequenceByRequest.current = { ...view.lastSequenceByRequest };
+    pendingDeltasByRequest.current = { ...view.pendingDeltasByRequest };
+    pendingStructuredEventsByRequest.current = { ...view.pendingStructuredEventsByRequest };
+    currentRuntimeModeRef.current = view.currentRuntimeMode;
+    setCurrentRuntimeMode(view.currentRuntimeMode);
+    setCancellingRequestId(view.cancellingRequestId);
+    cancellingRequestIdRef.current = view.cancellingRequestId;
+    setActiveRequestId(view.activeRequestId);
+    activeRequestIdRef.current = view.activeRequestId;
+    setMessages(view.messages);
+    messagesRef.current = view.messages;
+    if (Object.keys(view.pendingStructuredEventsByRequest).length && structuredFlushFrameRef.current === null) {
+      structuredFlushFrameRef.current = window.requestAnimationFrame(flushStructuredEventDeltas);
+    }
+  }
+
+  function cacheLiveThreadView(threadKey: string): void {
+    if (!activeRequestIdRef.current) {
+      liveThreadViewsRef.current.delete(threadKey);
+      return;
+    }
+    liveThreadViewsRef.current.set(threadKey, captureLiveThreadView());
+  }
+
+  function persistComposerDraft(threadKey: string): void {
+    const draftInput = inputRef.current;
+    const draftAttachments = commandAttachmentsRef.current;
+    if (!draftInput && draftAttachments.length === 0) {
+      composerDraftsRef.current.delete(threadKey);
+      return;
+    }
+    composerDraftsRef.current.set(threadKey, {
+      input: draftInput,
+      commandAttachments: [...draftAttachments],
+    });
+  }
+
+  useEffect(() => {
+    if (!activeRequestId) setCancellingRequestId(null);
+  }, [activeRequestId]);
+
+  useEffect(() => {
+    threadIdRef.current = threadId;
+    const cached = liveThreadViewsRef.current.get(threadId);
+    if (cached?.activeRequestId) {
+      liveThreadViewsRef.current.delete(threadId);
+      restoreLiveThreadView(cached);
+      restoredSnapshotThreadRef.current = threadId;
+      appliedSnapshotUpdatedAtRef.current = threadSnapshot?.threadId === threadId
+        ? threadSnapshot.updatedAt
+        : appliedSnapshotUpdatedAtRef.current;
+      const queued = backgroundChatEventsRef.current.get(threadId) ?? [];
+      backgroundChatEventsRef.current.delete(threadId);
+      if (queued.length) window.setTimeout(() => queued.forEach(applyChatEvent), 0);
+      return () => { cacheLiveThreadView(threadId); };
+    }
+    streamingAssistantByRequest.current = {};
+    structuredRequests.current.clear();
+    completedStructuredRequests.current.clear();
+    lastSequenceByRequest.current = {};
+    pendingDeltasByRequest.current = {};
+    clearStructuredFlush();
+    restoredSnapshotThreadRef.current = null;
+    appliedSnapshotUpdatedAtRef.current = threadSnapshot?.threadId === threadId
+      ? threadSnapshot.updatedAt
+      : 0;
+    lastPublishedSnapshotAtRef.current = 0;
+    if (deltaFlushFrameRef.current !== null) {
+      window.cancelAnimationFrame(deltaFlushFrameRef.current);
+      deltaFlushFrameRef.current = null;
+    }
+    setActiveRequestId(null);
+    setCurrentRuntimeMode(null);
+    currentRuntimeModeRef.current = null;
+    const restoredMessages = threadSnapshot?.messages?.length
+      ? hydrateStructuredMessages(threadSnapshot.messages).filter((message) => message.id !== "welcome")
+      : [createWelcomeMessage(languageRef.current, userPreferencesRef.current)];
+    if (threadSnapshot?.messages?.length) {
+      restoreActiveStructuredTurns(restoredMessages);
+      restoredSnapshotThreadRef.current = threadId;
+    }
+    setMessages(restoredMessages);
+    return () => {
+      cacheLiveThreadView(threadId);
+    };
+  }, [threadId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    desktopApi.listUserPreferences().then((preferences) => {
+      if (cancelled) return;
+      userPreferencesRef.current = preferences;
+      setUserPreferences(preferences);
+    }).catch(() => {
+      if (cancelled) return;
+      userPreferencesRef.current = [];
+      setUserPreferences([]);
+    });
+    return () => { cancelled = true; };
+  }, [threadId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!canChat) {
+      teamMemoryRef.current = [];
+      return () => { cancelled = true; };
+    }
+    desktopApi.listTeamMemory({ limit: 20 }).then((entries) => {
+      if (cancelled) return;
+      teamMemoryRef.current = entries;
+    }).catch(() => {
+      if (cancelled) return;
+      teamMemoryRef.current = [];
+    });
+    return () => { cancelled = true; };
+  }, [canChat, threadId, workspacePath]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!workspacePath) {
+      customCommandsRef.current = [];
+      setCustomCommands([]);
+      projectMemoryRef.current = [];
+      setProjectMemory([]);
+      return;
+    }
+    desktopApi
+      .listCustomCommands({ workspacePath, limit: 100 })
+      .then((entries) => {
+        if (cancelled) return;
+        customCommandsRef.current = entries;
+        setCustomCommands(entries);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        customCommandsRef.current = [];
+        setCustomCommands([]);
+      });
+    desktopApi
+      .listProjectMemory({ workspacePath, limit: 20 })
+      .then((entries) => {
+        if (cancelled) return;
+        projectMemoryRef.current = entries;
+        setProjectMemory(entries);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        projectMemoryRef.current = [];
+        setProjectMemory([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, workspacePath]);
+
+  useEffect(() => {
+    if (threadSnapshot?.threadId !== threadId) return;
+    if (activeRequestId || activeRequestIdRef.current) return;
+    if (threadSnapshot.updatedAt <= appliedSnapshotUpdatedAtRef.current) return;
+    if (threadSnapshot.updatedAt <= lastPublishedSnapshotAtRef.current) return;
+    const restoredMessages = threadSnapshot.messages.length
+      ? hydrateStructuredMessages(threadSnapshot.messages).filter((message) => message.id !== "welcome")
+      : [createWelcomeMessage(language, userPreferencesRef.current)];
+    if (threadSnapshot.messages.length && restoredSnapshotThreadRef.current !== threadId) {
+      restoreActiveStructuredTurns(restoredMessages);
+      restoredSnapshotThreadRef.current = threadId;
+    }
+    appliedSnapshotUpdatedAtRef.current = threadSnapshot.updatedAt;
+    setMessages(restoredMessages);
+  }, [activeRequestId, language, threadId, threadSnapshot]);
+
+  useEffect(() => {
+    if (threadSnapshot?.messages?.length) return;
+    setMessages((current) => current.every((message) => message.id === "welcome")
+      ? [createWelcomeMessage(language, userPreferences)]
+      : current);
+  }, [language, threadId, threadSnapshot, userPreferences]);
+
+  useEffect(() => {
+    developerModeRef.current = developerMode;
+  }, [developerMode]);
+
+  useEffect(() => {
+    return desktopApi.onChatEvent((event) => {
+      applyChatEvent(event);
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (deltaFlushFrameRef.current !== null) window.cancelAnimationFrame(deltaFlushFrameRef.current);
+  }, []);
+
+  async function submit(
+    attachments: ChatAttachment[] = [],
+    options?: ChatSubmitOptions,
+  ): Promise<boolean> {
+    const skillName = options?.skillName?.trim();
+    const skillPrefix = skillName
+      ? languageRef.current === "zh"
+        ? `用 ${skillName} `
+        : `Use ${skillName} skill to `
+      : "";
+    const rawInput = (options?.text ?? input).trim();
+    const alreadyPrefixed = Boolean(
+      skillName &&
+        (languageRef.current === "zh"
+          ? new RegExp(`^用\\s+${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(rawInput)
+          : new RegExp(`^Use\\s+${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+skill\\s+to\\b`, "i").test(rawInput)),
+    );
+    const text = (skillPrefix && !alreadyPrefixed ? `${skillPrefix}${rawInput}` : rawInput).trim();
+    if (!text) return false;
+    const preserveComposer = options?.text !== undefined;
+
+    const replaceFromMessageId = options?.replaceFromMessageId?.trim();
+    const replaceIndex = replaceFromMessageId
+      ? messagesRef.current.findIndex((message) => message.id === replaceFromMessageId)
+      : -1;
+    const historyMessages = (replaceIndex >= 0
+      ? messagesRef.current.slice(0, replaceIndex)
+      : messagesRef.current
+    ).filter((message) => message.id !== "welcome");
+    const draftParts = options?.draftParts
+      ? (skillPrefix && !alreadyPrefixed
+          ? [{ type: "text" as const, text: skillPrefix }, ...options.draftParts]
+          : options.draftParts)
+      : undefined;
+
+    const materialPaths = [...new Set(attachments
+      .filter((attachment) => attachment.kind === "file" && !attachment.blockedReason && attachment.path)
+      .map((attachment) => attachment.path))];
+    if (materialPaths.length > 0 && isMaterialInventoryIntent(text)) {
+      try {
+        const analysis = await desktopApi.analyzeMaterialRoles({ paths: materialPaths });
+        publishLocalAssistantResult(text, formatMaterialInventoryAnswer(analysis, languageRef.current), attachments, historyMessages);
+        if (!preserveComposer) setInput("");
+        return true;
+      } catch {
+        // Fall through to the normal chat route when local material inspection is unavailable.
+      }
+    }
+    // Questions about attached materials go to the Agent, not to a local
+    // keyword matcher. The previous shortcut triggered on any sentence
+    // containing a question mark and answered from `queryMaterials`, so the
+    // Agent never saw the turn: no retrieval call, no interactive citations,
+    // and a "not found" reply that meant "no keyword matched" rather than
+    // "the material does not say so". `desktopApi.queryMaterials` itself is
+    // unchanged and still available to callers that want it.
+
+    const memorySafety = analyzeMemorySafetyIntent(text);
+    const explicitPreferences = memorySafety.temporary ? [] : parseExplicitUserPreferenceIntent(text);
+    const saved: DesktopUserPreference[] = [];
+    if (explicitPreferences.length) {
+      for (const preference of explicitPreferences) saved.push(await desktopApi.upsertUserPreference(preference));
+      const refreshed = await desktopApi.listUserPreferences();
+      userPreferencesRef.current = refreshed;
+      setUserPreferences(refreshed);
+    }
+    const handleSensitiveLocally = memorySafety.hasSensitiveContent;
+    const handleTemporaryLocally = memorySafety.explicitMemoryRequest && memorySafety.temporary && isPreferenceOnlyRequest(text);
+    if (attachments.length === 0 && (handleSensitiveLocally || handleTemporaryLocally || (saved.length > 0 && isPreferenceOnlyRequest(text)))) {
+      const response = [
+        saved.length ? formatPreferenceConfirmation(saved, languageRef.current) : "",
+        formatMemorySafetyNotice(memorySafety, languageRef.current),
+      ].filter(Boolean).join("\n\n");
+      publishLocalAssistantResult(memorySafety.hasSensitiveContent ? redactSensitiveMemoryText(text) : text, response, [], historyMessages);
+      if (!preserveComposer) setInput("");
+      return true;
+    }
+
+    const command = parseChatCommand(text);
+    if (command) {
+      const result = runChatCommand(command, {
+        attachments,
+        availableAgents,
+        availableModels,
+        canChat,
+        currentRuntimeMode: currentRuntimeModeRef.current ?? undefined,
+        customCommands,
+        options,
+        projectMemory,
+        workspaceInstructions,
+        workspacePath,
+      });
+      applyChatCommandAction(result.action);
+      const customCommandText = await maybeApplyCustomCommand(command, workspacePath);
+      const approvalText = await maybeRequestCommitApproval(command, workspacePath);
+      const goalText = await maybeApplyGoalCommand(command, workspacePath);
+      const memoryText = await maybeApplyMemoryCommand(command, workspacePath);
+      const mcpLiveText = await maybeRequestMcpLiveBridge(command, workspacePath);
+      const mcpContextText = await maybeImportMcpContext(command, workspacePath);
+      const compactText = await maybeApplyCompactCommand(
+        command,
+        messages,
+        workspacePath,
+        refreshProjectMemory,
+      );
+      const checkpointText = await maybeApplyWorkspaceCheckpointCommand(command, workspacePath);
+      const forkHandoffResult = await maybeHandoffForkQueueThread(command);
+      const forkScheduleResult = await maybeScheduleForkQueue(command, workspacePath, options);
+      const forkDispatchResult = await maybeDispatchForkQueue(command, workspacePath, options);
+      const forkResult = await maybeCreateForkThread(command, workspacePath, options);
+      publishLocalAssistantResult(
+        text,
+        [
+          `**${result.title}**`,
+          "",
+          result.content,
+          customCommandText,
+          approvalText,
+          goalText,
+          memoryText,
+          mcpLiveText,
+          mcpContextText,
+          compactText,
+          checkpointText,
+          forkHandoffResult?.text,
+          forkScheduleResult?.text,
+          forkDispatchResult?.text,
+          forkResult?.text,
+        ]
+          .filter((item) => item !== undefined && item !== "")
+          .join("\n\n"),
+        [],
+        historyMessages,
+      );
+      if (forkHandoffResult?.thread) onForkThreadCreated?.(forkHandoffResult.thread);
+      forkScheduleResult?.threads?.forEach((thread) => onForkThreadCreated?.(thread));
+      forkDispatchResult?.threads?.forEach((thread) => onForkThreadCreated?.(thread));
+      forkResult?.threads?.forEach((thread) => onForkThreadCreated?.(thread));
+      if (result.action?.type !== "set-input" && !preserveComposer) {
+        setInput("");
+      }
+      return true;
+    }
+
+    if (!canChat) {
+      const liveGateway = await desktopApi.getGatewayStatus().catch(() => null);
+      if (!liveGateway?.ready || liveGateway.externalConflict) return false;
+    }
+
+    const userMessage: UiMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: text,
+      ...(attachments.length ? { attachments } : {}),
+      ...(draftParts?.length ? { draftParts } : {}),
+    };
+    const assistantId = crypto.randomUUID();
+    const requestId = crypto.randomUUID();
+    options?.onStarted?.({
+      assistantMessageId: assistantId,
+      requestId,
+      userMessageId: userMessage.id,
+    });
+    setCancellingRequestId(null);
+    activeRequestIdRef.current = requestId;
+    const nextMessages: UiMessage[] = [
+      ...historyMessages,
+      userMessage,
+      {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        streaming: true,
+        structuredTurn: createStructuredTurnState(requestId),
+        queuedAt: Date.now(),
+        lastEventAt: Date.now(),
+      },
+    ];
+    setMessages(nextMessages);
+    publishThreadUpdate(nextMessages);
+    streamingAssistantByRequest.current[requestId] = assistantId;
+    if (!preserveComposer) setInput("");
+    setActiveRequestId(requestId);
+
+    try {
+      await desktopApi.startChat({
+        requestId,
+        agentId: options?.agentId?.trim() || undefined,
+        sessionId: threadIdRef.current,
+        runId: requestId,
+        workspaceId,
+        workspaceName,
+        workspacePath,
+        attachments,
+        draftParts,
+        model: options?.model?.trim() || undefined,
+        metadata: {
+          selected_agent_id: options?.agentId?.trim() || undefined,
+          selected_skill_id: skillName || undefined,
+          goal_confirmation_required: options?.goalConfirmationRequired === true,
+          workspace_instructions: workspaceInstructions || [],
+          selected_agent: options?.agentName?.trim() || undefined,
+          thinking_effort: options?.thinkingEffort,
+          reasoning_effort: options?.thinkingEffort,
+          runtime_mode: currentRuntimeModeRef.current
+            ? serializeRuntimeMode(currentRuntimeModeRef.current)
+            : undefined,
+          user_preferences: userPreferencesRef.current.map(({ category, value }) => ({ category, value })),
+          project_memory: projectMemoryRef.current.map(({ id, content }) => ({ id, content })),
+          team_memory: teamMemoryRef.current.map(({ id, teamId, content }) => ({ id, teamId, content })),
+        },
+        messages: buildRequestMessages(
+          [...historyMessages, userMessage]
+            .filter((message) => message.id !== "welcome" && !message.error && message.content.trim().length > 0)
+            .map(({ role, content }) => ({ role, content })),
+          workspaceInstructions,
+          projectMemoryRef.current,
+          teamMemoryRef.current,
+          userPreferencesRef.current,
+          currentRuntimeModeRef.current,
+        ),
+      });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : languageRef.current === "zh" ? "聊天未能启动。" : "Chat failed to start.";
+      appendDebugLog(
+        "error",
+        describeUserFacingError(error, languageRef.current).diagnosticCode,
+        "chat",
+      );
+      setActiveRequestId(null);
+      activeRequestIdRef.current = null;
+      delete streamingAssistantByRequest.current[requestId];
+      setMessages((current) => current.filter((item) => item.id !== assistantId));
+      if (!preserveComposer) setInput(text);
+      return false;
+    }
+  }
+
+  async function abort(): Promise<void> {
+    const requestId = activeRequestIdRef.current ?? activeRequestId;
+    if (!requestId || cancellingRequestId === requestId) return;
+    setCancellingRequestId(requestId);
+    const assistantId = streamingAssistantByRequest.current[requestId];
+    setMessages((current) => updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+      ...message,
+      streaming: false,
+      lastEventAt: Date.now(),
+    })));
+    try {
+      const runtimeRunId = messages.find((message) => message.id === assistantId)?.runtimeRunId;
+      const result = await desktopApi.cancelChatTurn({ requestId, sessionId: threadIdRef.current, runId: runtimeRunId });
+      if (result.state === "cancelling") return;
+      setMessages((current) => publishAndReturn(
+        updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+          ...message,
+          streaming: false,
+          structuredTurn: finalizeStructuredTurn(
+            message.structuredTurn,
+            message.id,
+            result.state === "completed" ? "completed" : "cancelled",
+          ),
+          lastEventAt: Date.now(),
+        })),
+      ));
+      setCancellingRequestId((current) => current === requestId ? null : current);
+      setActiveRequestId((current) => current === requestId ? null : current);
+      activeRequestIdRef.current = null;
+    } catch (error) {
+      setCancellingRequestId((current) => current === requestId ? null : current);
+      setMessages((current) => updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+        ...message,
+        streaming: message.structuredTurn?.status === "pending" || message.structuredTurn?.status === "running",
+        lastEventAt: Date.now(),
+      })));
+      appendDebugLog(
+        "error",
+        error instanceof Error ? error.message : "Chat stop request failed.",
+        "chat",
+      );
+    }
+  }
+
+  function clearRuntimeMode(): void {
+    currentRuntimeModeRef.current = null;
+    setCurrentRuntimeMode(null);
+  }
+
+  function clearCommandAttachments(): void {
+    setCommandAttachments([]);
+  }
+
+  function removeCommandAttachment(index: number): void {
+    setCommandAttachments((current) => current.filter((_item, itemIndex) => itemIndex !== index));
+  }
+
+  function applyChatEvent(event: ChatEvent): void {
+    if (event.sessionId && event.sessionId !== threadIdRef.current) {
+      const queued = backgroundChatEventsRef.current.get(event.sessionId) ?? [];
+      if (queued.length < 4_096) queued.push(event);
+      backgroundChatEventsRef.current.set(event.sessionId, queued);
+      return;
+    }
+    if (!acceptChatEventSequence(lastSequenceByRequest.current, event.requestId, event.seq)) return;
+    event = sanitizeSensitiveValue(event);
+    if (event.type === "start") {
+      const assistantId = streamingAssistantByRequest.current[event.requestId];
+      const startedAt = Date.now();
+      setMessages((current) => publishAndReturn(
+        updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+          ...message,
+          ...(event.runId ? { runtimeRunId: event.runId } : {}),
+          startedAt: message.startedAt ?? startedAt,
+          firstFeedbackAt: message.firstFeedbackAt ?? startedAt,
+          lastEventAt: startedAt,
+        })),
+      ));
+      setActiveRequestId(event.requestId);
+      return;
+    }
+    if (event.type === "oaep" && event.oaepEvent) {
+      const oaep = event.oaepEvent;
+      // High-frequency stream events must not fill the debug ring buffer with
+      // full envelopes — that previously OOMed the renderer on long runs.
+      if (
+        oaep.type === "event.item.delta"
+        || oaep.type === "event.session.updated"
+        || (oaep.type === "event.run.resumed" && !(typeof oaep.data?.reason === "string" && oaep.data.reason.trim()))
+      ) {
+        return;
+      }
+      appendRuntimeLogEvent({
+        id: oaep.event_id,
+        timestamp: oaep.timestamp,
+        level: oaep.type.endsWith(".failed") ? "error" : "debug",
+        status: oaep.type.endsWith(".failed") ? "failed"
+          : oaep.type.endsWith(".completed") ? "completed"
+            : oaep.type.endsWith(".cancelled") ? "cancelled"
+              : oaep.type.endsWith(".waiting") ? "waiting" : "running",
+        protocol: "oaep/1",
+        phase: "event",
+        operation: "oaep.event.received",
+        message: `${oaep.type} · sequence ${oaep.sequence}`,
+        threadId: event.requestId,
+        sessionId: oaep.session_id,
+        ...(oaep.run_id ? { runId: oaep.run_id } : {}),
+        ...(oaep.item_id ? { itemId: oaep.item_id } : {}),
+        eventType: oaep.type,
+        sequence: oaep.sequence,
+        cursor: oaep.sequence,
+        source: oaep.source.backend,
+        details: {
+          eventId: oaep.event_id,
+          dedupeKey: oaep.dedupe_key,
+          type: oaep.type,
+        },
+      });
+      const capabilityConfiguration = capabilityConfigurationPartFromOaep(oaep);
+      if (capabilityConfiguration) {
+        // The authoritative OAEP item is sufficient to show the recoverable
+        // configuration interaction. Do not rely exclusively on the adjacent
+        // presentation event: losing that one event would otherwise leave the
+        // Run waiting for a choice that the user cannot see.
+        structuredRequests.current.add(event.requestId);
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        setMessages((current) => publishAndReturn(
+          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => {
+            const structuredTurn = message.structuredTurn?.turnId === event.requestId
+              ? message.structuredTurn
+              : createStructuredTurnState(event.requestId);
+            const existingIndex = structuredTurn.parts.findIndex(
+              (part) => part.id === capabilityConfiguration.id,
+            );
+            const parts = existingIndex >= 0
+              ? structuredTurn.parts.map((part, index) => index === existingIndex ? capabilityConfiguration : part)
+              : [...structuredTurn.parts, capabilityConfiguration];
+            const interactionIsActive = capabilityConfiguration.status === "pending"
+              || capabilityConfiguration.status === "running";
+            const turnIsActive = structuredTurn.status === "pending" || structuredTurn.status === "running";
+            return {
+              ...message,
+              structuredTurn: {
+                ...structuredTurn,
+                status: interactionIsActive ? "pending" : structuredTurn.status,
+                parts,
+              },
+              streaming: interactionIsActive || turnIsActive,
+              lastEventAt: Date.now(),
+            };
+          }),
+        ));
+      }
+      return;
+    }
+    if (event.type === "structured" && event.structuredEvent) {
+      if (event.runId) {
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        setMessages((current) => publishAndReturn(
+          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+            ...message,
+            runtimeRunId: event.runId,
+          })),
+        ));
+      }
+      structuredRequests.current.add(event.requestId);
+      delete pendingDeltasByRequest.current[event.requestId];
+      const structuredEvent = event.structuredEvent;
+      appendStructuredProtocolLog(structuredEvent);
+      if (structuredEvent.type === "activity.updated") {
+        appendStructuredActivityLog(structuredEvent.activity);
+      }
+      if (structuredEvent.type === "part.delta") {
+        pendingStructuredEventsByRequest.current[event.requestId] = [
+          ...(pendingStructuredEventsByRequest.current[event.requestId] ?? []),
+          structuredEvent,
+        ];
+        if (structuredFlushFrameRef.current === null) {
+          structuredFlushFrameRef.current = window.requestAnimationFrame(flushStructuredEventDeltas);
+        }
+        return;
+      }
+      const pendingStructuredEvents = pendingStructuredEventsByRequest.current[event.requestId] ?? [];
+      delete pendingStructuredEventsByRequest.current[event.requestId];
+      applyStructuredEventBatch(event.requestId, [...pendingStructuredEvents, structuredEvent]);
+      if (structuredEvent.type === "turn.error") {
+        const friendly = describeUserFacingError({
+          code: structuredEvent.code ?? "backend_fault",
+          retryable: false,
+          diagnostic_reference: structuredEvent.debugRef,
+        }, languageRef.current);
+        appendDebugLog(
+          "error",
+          `${friendly.title} ${friendly.action}\n${friendly.diagnosticCode}`,
+          "chat",
+        );
+      }
+      if (
+        structuredEvent.type === "turn.completed" ||
+        structuredEvent.type === "turn.cancelled" ||
+        structuredEvent.type === "turn.error"
+      ) {
+        if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
+        setActiveRequestId((current) => current === event.requestId ? null : current);
+        if (!completedStructuredRequests.current.has(event.requestId)) {
+          completedStructuredRequests.current.add(event.requestId);
+          if (completedStructuredRequests.current.size > 128) {
+            const oldest = completedStructuredRequests.current.values().next().value;
+            if (oldest) completedStructuredRequests.current.delete(oldest);
+          }
+          onChatComplete(structuredEvent.type === "turn.completed");
+        }
+        structuredRequests.current.delete(event.requestId);
+        delete streamingAssistantByRequest.current[event.requestId];
+        delete lastSequenceByRequest.current[event.requestId];
+        delete pendingDeltasByRequest.current[event.requestId];
+      }
+      return;
+    }
+    if (event.type === "connection" && event.connection) {
+      const turnId = event.runId || event.requestId;
+      const activity: StructuredActivityEvent = {
+        id: `${turnId}:connection`,
+        turnId,
+        timestamp: event.connection.timestamp,
+        source: event.connection.source,
+        status: event.connection.status === "restored" ? "completed" : "running",
+        title: event.connection.status === "restored"
+          ? (languageRef.current === "zh" ? "连接已恢复" : "Connection restored")
+          : (languageRef.current === "zh" ? "正在恢复连接" : "Reconnecting"),
+        kind: "retry",
+        attempt: event.connection.attempt,
+        limit: Math.max(1, event.connection.attempt),
+        ...(event.connection.delayMs !== undefined ? { delayMs: event.connection.delayMs } : {}),
+      };
+      appendStructuredActivityLog(activity);
+      if (!structuredRequests.current.has(event.requestId)) {
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        setMessages((current) => publishAndReturn(
+          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+            ...message,
+            structuredTurn: appendConnectionActivity(message.structuredTurn, turnId, activity),
+            lastEventAt: Date.now(),
+          })),
+        ));
+      }
+      return;
+    }
+    if (
+      structuredRequests.current.has(event.requestId) &&
+      (event.type === "chunk" || event.type === "reasoning" || event.type === "status")
+    ) return;
+    if (event.type === "chunk") {
+      queueAssistantDelta(event.requestId, "text", event.content ?? "");
+      return;
+    }
+    if (event.type === "status") {
+      const statusContent = event.content ?? "";
+      if (statusContent.trim()) appendDebugLog(getDebugLevel(event.level), statusContent.trim(), "chat");
+      return;
+    }
+    if (event.type === "reasoning") {
+      queueAssistantDelta(event.requestId, "reasoning", event.content ?? "");
+      return;
+    }
+    if (event.type === "tool_timeline" && event.toolTimeline) {
+      const toolTimeline = event.toolTimeline;
+      appendDebugLog(
+        toolTimeline.status === "failed" ? "error" : "info",
+        formatToolTimelineDebugLog(toolTimeline),
+        "chat",
+      );
+      appendStructuredActivityLog(createStructuredToolActivity(event.requestId, toolTimeline));
+      setMessages((current) =>
+        publishAndReturn(
+          appendAssistantToolTimeline(
+            current,
+            streamingAssistantByRequest.current[event.requestId],
+            toolTimeline,
+          ),
+        ),
+      );
+      return;
+    }
+    if (event.type === "input_request" && event.prompt) {
+      const assistantId = streamingAssistantByRequest.current[event.requestId];
+      setMessages((current) =>
+        publishAndReturn(
+          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+            ...message,
+            inputRequest: {
+              requestId: event.inputRequestId || event.requestId,
+              prompt: event.prompt || "Input required",
+              inputType: event.inputType || "text_input",
+              options: event.inputOptions,
+              defaultValue: event.inputDefault,
+              allowCustom: event.inputAllowCustom,
+              timeoutAt: event.inputTimeoutAt,
+            },
+          })),
+        ),
+      );
+      return;
+    }
+    if (event.type === "done" || event.type === "aborted") {
+      if (completedStructuredRequests.current.delete(event.requestId)) {
+        delete lastSequenceByRequest.current[event.requestId];
+        return;
+      }
+      if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
+      flushPendingDeltas();
+      if (structuredRequests.current.has(event.requestId)) {
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        const alreadyCompleted = completedStructuredRequests.current.has(event.requestId);
+        setMessages((current) => publishAndReturn(
+          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+            ...message,
+            streaming: false,
+            inputRequest: undefined,
+            structuredTurn: finalizeStructuredTurn(
+              message.structuredTurn,
+              message.id,
+              event.type === "aborted" ? "cancelled" : "completed",
+            ),
+            lastEventAt: Date.now(),
+          })),
+        ));
+        structuredRequests.current.delete(event.requestId);
+        completedStructuredRequests.current.delete(event.requestId);
+        delete streamingAssistantByRequest.current[event.requestId];
+        delete lastSequenceByRequest.current[event.requestId];
+        delete pendingDeltasByRequest.current[event.requestId];
+        setActiveRequestId((current) => current === event.requestId ? null : current);
+        if (!alreadyCompleted) onChatComplete(event.type === "done");
+        return;
+      }
+      const assistantId = streamingAssistantByRequest.current[event.requestId];
+      setMessages((current) =>
+        publishAndReturn(
+          updateAssistantByIdOrLatestStreaming(current, assistantId, (message) => ({
+            ...message,
+            streaming: false,
+            inputRequest: undefined,
+            structuredTurn: finalizeStructuredTurn(
+              message.structuredTurn,
+              message.id,
+              event.type === "aborted" ? "cancelled" : "completed",
+            ),
+          })),
+        ),
+      );
+      delete streamingAssistantByRequest.current[event.requestId];
+      delete lastSequenceByRequest.current[event.requestId];
+      delete pendingDeltasByRequest.current[event.requestId];
+      setActiveRequestId((current) => (current === event.requestId ? null : current));
+      onChatComplete(event.type === "done");
+      return;
+    }
+    if (event.type === "error") {
+      if (completedStructuredRequests.current.delete(event.requestId)) {
+        delete lastSequenceByRequest.current[event.requestId];
+        return;
+      }
+      if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
+      flushPendingDeltas();
+      const rawError = event.errorEnvelope ?? event.failureRecovery ?? { code: "unexpected_error", retryable: true };
+      const friendlyError = describeUserFacingError(rawError, languageRef.current);
+      const runtimeVisibleError = `${friendlyError.title} ${friendlyError.action}`;
+      if (structuredRequests.current.has(event.requestId)) {
+        const assistantId = streamingAssistantByRequest.current[event.requestId];
+        setMessages((current) =>
+          publishAndReturn(settleAssistantAfterHiddenError(
+            current,
+            assistantId,
+            runtimeVisibleError,
+            friendlyError.actions,
+          )),
+        );
+        structuredRequests.current.delete(event.requestId);
+        completedStructuredRequests.current.delete(event.requestId);
+        delete streamingAssistantByRequest.current[event.requestId];
+        delete lastSequenceByRequest.current[event.requestId];
+        delete pendingDeltasByRequest.current[event.requestId];
+        setActiveRequestId((current) => current === event.requestId ? null : current);
+        return;
+      }
+      const assistantId = streamingAssistantByRequest.current[event.requestId];
+      appendDebugLog(
+        "error",
+        `${runtimeVisibleError}\n${friendlyError.diagnosticCode}`,
+        "chat",
+      );
+      setMessages((current) =>
+        publishAndReturn(settleAssistantAfterHiddenError(
+          current,
+          assistantId,
+          runtimeVisibleError,
+          friendlyError.actions,
+        )),
+      );
+      delete streamingAssistantByRequest.current[event.requestId];
+      delete lastSequenceByRequest.current[event.requestId];
+      delete pendingDeltasByRequest.current[event.requestId];
+      setActiveRequestId((current) => (current === event.requestId ? null : current));
+    }
+  }
+
+  function queueAssistantDelta(requestId: string, kind: "text" | "reasoning", content: string): void {
+    if (!content) return;
+    const pending = pendingDeltasByRequest.current[requestId] ?? { text: "", reasoning: "" };
+    pending[kind] += content;
+    pendingDeltasByRequest.current[requestId] = pending;
+    if (deltaFlushFrameRef.current !== null) return;
+    deltaFlushFrameRef.current = window.requestAnimationFrame(flushPendingDeltas);
+  }
+
+  function flushPendingDeltas(): void {
+    if (deltaFlushFrameRef.current !== null) {
+      window.cancelAnimationFrame(deltaFlushFrameRef.current);
+      deltaFlushFrameRef.current = null;
+    }
+    const queued = pendingDeltasByRequest.current;
+    pendingDeltasByRequest.current = {};
+    if (!Object.keys(queued).length) return;
+    setMessages((current) => {
+      let next = current;
+      for (const [requestId, delta] of Object.entries(queued)) {
+        const assistantId = streamingAssistantByRequest.current[requestId];
+        if (delta.reasoning) next = appendAssistantReasoning(next, assistantId, delta.reasoning);
+        if (delta.text) next = appendAssistantChunk(next, assistantId, delta.text);
+      }
+      return publishAndReturn(next);
+    });
+  }
+
+  function touchStreamingAssistant(requestId: string, metric?: "feedback" | "delta"): void {
+    const assistantId = streamingAssistantByRequest.current[requestId];
+    const timestamp = Date.now();
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === assistantId ? {
+          ...message,
+          lastEventAt: timestamp,
+          ...(metric === "feedback" && !message.firstFeedbackAt ? { firstFeedbackAt: timestamp } : {}),
+          ...(metric === "delta" && !message.firstDeltaAt ? { firstDeltaAt: timestamp } : {}),
+        } : message,
+      ),
+    );
+  }
+
+  function publishAndReturn(nextMessages: UiMessage[]): UiMessage[] {
+    messagesRef.current = nextMessages;
+    scheduleThreadUpdate(nextMessages);
+    return nextMessages;
+  }
+
+  function publishThreadUpdate(nextMessages: UiMessage[]): void {
+    const snapshot = createThreadSnapshot(nextMessages);
+    if (snapshot) notifyThreadUpdated(snapshot);
+  }
+
+  function scheduleThreadUpdate(nextMessages: UiMessage[]): void {
+    const snapshot = createThreadSnapshot(nextMessages);
+    if (!snapshot) return;
+    pendingThreadSnapshotRef.current = snapshot;
+    if (threadSnapshotPublishQueuedRef.current) return;
+    threadSnapshotPublishQueuedRef.current = true;
+    queueMicrotask(() => {
+      threadSnapshotPublishQueuedRef.current = false;
+      const pendingSnapshot = pendingThreadSnapshotRef.current;
+      pendingThreadSnapshotRef.current = null;
+      if (pendingSnapshot) notifyThreadUpdated(pendingSnapshot);
+    });
+  }
+
+  function notifyThreadUpdated(snapshot: ChatThreadSnapshot): void {
+    try {
+      const result = onThreadUpdatedRef.current?.(snapshot);
+      if (result) void result.catch((error) => {
+        appendDebugLog(
+          "error",
+          error instanceof Error ? error.message : "Thread snapshot update failed.",
+          "chat",
+        );
+      });
+    } catch (error) {
+      appendDebugLog(
+        "error",
+        error instanceof Error ? error.message : "Thread snapshot update failed.",
+        "chat",
+      );
+    }
+  }
+
+  function createThreadSnapshot(nextMessages: UiMessage[], allowEmpty = false): ChatThreadSnapshot | null {
+    const nonWelcome = nextMessages.filter((message) => message.id !== "welcome");
+    if (!nonWelcome.length && !allowEmpty) return null;
+    const firstUser = nonWelcome.find((message) => message.role === "user");
+    const updatedAt = Math.max(Date.now(), lastPublishedSnapshotAtRef.current + 1);
+    lastPublishedSnapshotAtRef.current = updatedAt;
+    appliedSnapshotUpdatedAtRef.current = updatedAt;
+    return {
+      threadId: threadIdRef.current,
+      title: firstUser?.content.replace(/[\r\n]+/g, " ").trim().slice(0, 48)
+        || (languageRef.current === "zh" ? "新会话" : "New chat"),
+      messages: nextMessages,
+      updatedAt,
+      messageCount: nonWelcome.length,
+    };
+  }
+
+  function publishLocalAssistantResult(
+    userText: string,
+    assistantText: string,
+    attachments: ChatAttachment[] = [],
+    baseMessages: UiMessage[] = messagesRef.current,
+  ): void {
+    const commandMessages: UiMessage[] = [
+      ...baseMessages.filter((message) => message.id !== "welcome"),
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: userText,
+        ...(attachments.length ? { attachments } : {}),
+      },
+      {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: assistantText,
+      },
+    ];
+    setMessages(commandMessages);
+    publishThreadUpdate(commandMessages);
+  }
+
+  function applyChatCommandAction(action: ReturnType<typeof runChatCommand>["action"]): void {
+    if (!action) return;
+    if (action.type === "select-agent") {
+      onSelectAgent?.(action.agentId);
+      return;
+    }
+    if (action.type === "select-model") {
+      onSelectModel?.(action.model);
+      return;
+    }
+    if (action.type === "attach-selection") {
+      setCommandAttachments((current) => [...current, action.attachment]);
+      return;
+    }
+    if (action.type === "open-view") {
+      // Temporarily hide Skills management entry — keep for later reuse.
+      // if (action.viewId === "skills_square") {
+      //   onOpenSkillsSquare?.(action.target);
+      // }
+      return;
+    }
+    if (action.type === "set-input") {
+      setInput(action.input);
+      return;
+    }
+    currentRuntimeModeRef.current = action.mode;
+    setCurrentRuntimeMode(action.mode);
+  }
+
+  async function maybeRequestCommitApproval(
+    command: ReturnType<typeof parseChatCommand>,
+    selectedWorkspacePath?: string,
+  ): Promise<string | undefined> {
+    if (!command || command.name !== "commit" || !command.args.trim()) return undefined;
+    if (!selectedWorkspacePath) {
+      return "Commit approval was not requested because no workspace is selected.";
+    }
+    try {
+      const preflight = await buildCommitPreflight(selectedWorkspacePath);
+      if (!preflight.canCommit) return preflight.chatSummary;
+      const result = await desktopApi.requestGitCommitApproval({
+        workspacePath: selectedWorkspacePath,
+        message: command.args.trim(),
+        body: preflight.approvalBody,
+        checklist: preflight.checklist,
+        requestId: crypto.randomUUID(),
+      });
+      return [preflight.chatSummary, formatCommitApprovalResult(result)].join("\n\n");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Commit approval request failed.";
+      return `Commit approval request failed: ${message}`;
+    }
+  }
+
+  async function maybeApplyMemoryCommand(
+    command: ReturnType<typeof parseChatCommand>,
+    selectedWorkspacePath?: string,
+  ): Promise<string | undefined> {
+    if (!command || command.name !== "memory") return undefined;
+    if (!selectedWorkspacePath) return undefined;
+    const args = command.args.trim();
+    const addMatch = command.args.match(/^add\s+([\s\S]+)$/i);
+    if (addMatch?.[1]?.trim()) {
+      const entry = await desktopApi.addProjectMemory({
+        workspacePath: selectedWorkspacePath,
+        content: addMatch[1].trim(),
+        source: "chat_command",
+      });
+      await refreshProjectMemory(selectedWorkspacePath);
+      return `Saved project memory: ${entry.content}`;
+    }
+    const retrospectiveMatch = command.args.match(/^retrospective\s+([\s\S]+)$/i);
+    if (retrospectiveMatch?.[1]?.trim()) {
+      const entry = await desktopApi.addProjectMemory({
+        workspacePath: selectedWorkspacePath,
+        content: retrospectiveMatch[1].trim(),
+        source: "retrospective",
+      });
+      await refreshProjectMemory(selectedWorkspacePath);
+      return `Saved project retrospective memory: ${entry.content}`;
+    }
+    const editMatch = command.args.match(/^edit\s+(\S+)\s+([\s\S]+)$/i);
+    if (editMatch?.[1] && editMatch?.[2]?.trim()) {
+      const entries = await refreshProjectMemory(selectedWorkspacePath);
+      const target = resolveProjectMemoryEntry(editMatch[1], entries);
+      if (!target) {
+        return `Project memory entry not found: ${editMatch[1]}. Run /memory to review current entries.`;
+      }
+      const entry = await desktopApi.updateProjectMemory({
+        workspacePath: selectedWorkspacePath,
+        entryId: target.id,
+        content: editMatch[2].trim(),
+      });
+      await refreshProjectMemory(selectedWorkspacePath);
+      return `Updated project memory #${entries.indexOf(target) + 1}: ${entry.content}`;
+    }
+    const deleteMatch = command.args.match(/^(?:delete|remove)\s+(\S+)$/i);
+    if (deleteMatch?.[1]) {
+      const entries = await refreshProjectMemory(selectedWorkspacePath);
+      const target = resolveProjectMemoryEntry(deleteMatch[1], entries);
+      if (!target) {
+        return `Project memory entry not found: ${deleteMatch[1]}. Run /memory to review current entries.`;
+      }
+      const result = await desktopApi.clearProjectMemory({
+        workspacePath: selectedWorkspacePath,
+        entryId: target.id,
+      });
+      await refreshProjectMemory(selectedWorkspacePath);
+      return `Deleted ${result.removedCount} project memory entry: ${target.content}`;
+    }
+    if (/^clear(?:\s+all)?$/i.test(args)) {
+      const result = await desktopApi.clearProjectMemory({
+        workspacePath: selectedWorkspacePath,
+      });
+      projectMemoryRef.current = [];
+      setProjectMemory([]);
+      return `Cleared ${result.removedCount} project memory entr${result.removedCount === 1 ? "y" : "ies"}.`;
+    }
+    return undefined;
+  }
+
+  async function maybeImportMcpContext(
+    command: ReturnType<typeof parseChatCommand>,
+    selectedWorkspacePath?: string,
+  ): Promise<string | undefined> {
+    if (!command || command.name !== "mcp") return undefined;
+    const match = command.args.match(/^(resource|tool)s?(?:\s+([\s\S]+))?$/i);
+    if (!match) return undefined;
+    if (!selectedWorkspacePath) {
+      return "MCP context import skipped because no workspace is selected.";
+    }
+    const kind = match[1].toLowerCase() === "tool" ? "tool" : "resource";
+    const selector = match[2]?.trim() || undefined;
+    try {
+      const result = await desktopApi.importMcpContext({
+        workspacePath: selectedWorkspacePath,
+        kind,
+        selector,
+        limit: 6,
+      });
+      if (!result.items.length) {
+        return [
+          result.message,
+          result.verification,
+          "Create `.drsai/mcp-context.json` with reviewed `resources` or `tools` entries before importing.",
+        ].join("\n");
+      }
+      const attachments: ChatAttachment[] = result.items.map((item) => ({
+        kind: "selection",
+        path: `mcp-${item.kind}:${item.server}:${item.name}`,
+        name: `MCP ${item.kind}: ${item.title}`,
+        visibleText: item.content,
+        note: [
+          `Reviewed MCP ${item.kind} context imported from .drsai/mcp-context.json.`,
+          `Server: ${item.server}.`,
+          "No MCP server connection or tool execution was performed.",
+          item.truncated ? "Content was truncated before attaching." : "",
+        ].filter(Boolean).join(" "),
+      }));
+      setCommandAttachments((current) => [...current, ...attachments]);
+      return [
+        result.message,
+        `Attached context chips: ${attachments.length}.`,
+        result.truncated ? "Additional matching MCP handoff items were omitted by the limit." : "",
+        result.verification,
+      ].filter(Boolean).join("\n");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "MCP context import failed.";
+      return `MCP context import failed: ${message}`;
+    }
+  }
+
+  async function maybeRequestMcpLiveBridge(
+    command: ReturnType<typeof parseChatCommand>,
+    selectedWorkspacePath?: string,
+  ): Promise<string | undefined> {
+    if (!command || command.name !== "mcp") return undefined;
+    const cancelMatch = command.args.match(/^cancel\s+(\S+)$/i);
+    if (cancelMatch) {
+      try {
+        const cancelled = await desktopApi.decidePendingApproval({
+          id: cancelMatch[1],
+          approved: false,
+          reason: "cancel",
+        });
+        return cancelled
+          ? [
+              `Cancelled pending MCP approval: ${cancelMatch[1]}.`,
+              "No MCP stdio runtime was started by this cancellation.",
+              "Open Approval Center to review the MCP session lifecycle audit.",
+            ].join("\n")
+          : `No pending MCP approval matched: ${cancelMatch[1]}.`;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "MCP approval cancellation failed.";
+        return `MCP approval cancellation failed: ${message}`;
+      }
+    }
+    if (!selectedWorkspacePath) {
+      if (/^(sync|exec)\b/i.test(command.args)) {
+        return "MCP live bridge skipped because no workspace is selected.";
+      }
+      return undefined;
+    }
+    const syncMatch = command.args.match(/^sync(?:\s+([\s\S]+))?$/i);
+    if (syncMatch) {
+      try {
+        const syncArgs = syncMatch[1]?.trim() || "";
+        const reuseSession = /^--reuse(?:\s|$)/i.test(syncArgs);
+        const server = reuseSession
+          ? syncArgs.replace(/^--reuse\s*/i, "").trim()
+          : syncArgs;
+        const result = await desktopApi.requestMcpLiveEnumeration({
+          workspacePath: selectedWorkspacePath,
+          server: server || undefined,
+          reuseSession,
+        });
+        return [
+          result.message,
+          result.approvalQueued && result.approvalId
+            ? `Approval queued: ${result.approvalId}. Open Approval Center to approve live MCP enumeration.`
+            : "",
+          result.status === "completed"
+            ? `Reviewed handoff updated: ${result.sourcePath}. Resources: ${result.resourceCount}; tools: ${result.toolCount}.`
+            : "",
+          result.reusedSession && result.sessionReuseKey
+            ? `Reusable MCP session: ${result.sessionReuseKey}.`
+            : "",
+          "After approval, run `/mcp resource` or `/mcp tool` to attach the reviewed enumerated context.",
+          result.verification,
+        ].filter(Boolean).join("\n");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "MCP live enumeration failed.";
+        return `MCP live enumeration failed: ${message}`;
+      }
+    }
+    const execMatch = command.args.match(/^exec\s+(?:(--reuse)\s+)?([^\s]+)\s+([^\s]+)(?:\s+([\s\S]+))?$/i);
+    if (execMatch) {
+      try {
+        const result = await desktopApi.requestMcpToolExecutionApproval({
+          workspacePath: selectedWorkspacePath,
+          server: execMatch[2],
+          tool: execMatch[3],
+          input: execMatch[4]?.trim() || undefined,
+          reuseSession: Boolean(execMatch[1]),
+        });
+        return [
+          result.message,
+          result.queued && result.approvalId
+            ? `Approval queued: ${result.approvalId}.`
+            : "",
+          result.status === "completed" && result.sourcePath
+            ? `Reviewed tool result written: ${result.sourcePath}. Run \`/mcp tool ${result.resultContextName ?? result.tool}\` to attach it as visible context.`
+            : "",
+          result.reusedSession && result.sessionReuseKey
+            ? `Reusable MCP session: ${result.sessionReuseKey}.`
+            : "",
+          result.blocked || result.queued
+            ? "No MCP tool was executed by the context import path."
+            : "",
+          result.verification,
+        ].filter(Boolean).join("\n");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "MCP tool approval failed.";
+        return `MCP tool approval failed: ${message}`;
+      }
+    }
+    return undefined;
+  }
+
+  async function maybeApplyCustomCommand(
+    command: ReturnType<typeof parseChatCommand>,
+    selectedWorkspacePath?: string,
+  ): Promise<string | undefined> {
+    if (!command || command.name !== "command") return undefined;
+    if (!selectedWorkspacePath) return undefined;
+    const addMatch = command.args.match(/^add\s+([a-z][a-z0-9_-]{1,31})(?:\s*=\s*|\s+)([\s\S]+)$/i);
+    if (addMatch?.[1] && addMatch?.[2]?.trim()) {
+      const entry = await desktopApi.upsertCustomCommand({
+        workspacePath: selectedWorkspacePath,
+        name: addMatch[1],
+        prompt: addMatch[2].trim(),
+        source: "chat_command",
+      });
+      await refreshCustomCommands(selectedWorkspacePath);
+      return `Saved custom command \`/${entry.name}\`. Invoke it with \`/${entry.name} [args]\`.`;
+    }
+    const deleteMatch = command.args.match(/^(?:delete|remove)\s+(\S+)$/i);
+    if (deleteMatch?.[1]) {
+      const result = await desktopApi.deleteCustomCommand({
+        workspacePath: selectedWorkspacePath,
+        commandIdOrName: deleteMatch[1],
+      });
+      await refreshCustomCommands(selectedWorkspacePath);
+      return `Deleted ${result.removedCount} custom command${result.removedCount === 1 ? "" : "s"}.`;
+    }
+    return undefined;
+  }
+
+  async function maybeApplyGoalCommand(
+    command: ReturnType<typeof parseChatCommand>,
+    selectedWorkspacePath?: string,
+  ): Promise<string | undefined> {
+    if (!command || command.name !== "goal") return undefined;
+    if (!selectedWorkspacePath) return undefined;
+    const args = command.args.trim();
+    const setMatch = args.match(/^(?:set|start|track)\s+([\s\S]+)$/i);
+    if (setMatch?.[1]?.trim()) {
+      const entry = await desktopApi.addProjectMemory({
+        workspacePath: selectedWorkspacePath,
+        content: `goal: ${setMatch[1].trim()}`,
+        source: "chat_command",
+      });
+      await refreshProjectMemory(selectedWorkspacePath);
+      return [
+        `Saved durable goal: ${formatGoalContent(entry.content)}`,
+        "Active durable goals are included as explicit project memory context in later natural-language chat.",
+      ].join("\n");
+    }
+    const doneMatch = args.match(/^(?:done|complete)\s+(\S+)$/i);
+    if (doneMatch?.[1]) {
+      const entries = await refreshProjectMemory(selectedWorkspacePath);
+      const goal = resolveGoalMemoryEntry(doneMatch[1], entries);
+      if (!goal) {
+        return `Durable goal not found: ${doneMatch[1]}. Run /goal list to review current goals.`;
+      }
+      const entry = await desktopApi.updateProjectMemory({
+        workspacePath: selectedWorkspacePath,
+        entryId: goal.entry.id,
+        content: `goal-done: ${goal.label}`,
+        source: "chat_command",
+      });
+      await refreshProjectMemory(selectedWorkspacePath);
+      return `Marked durable goal #${goal.index + 1} complete: ${formatGoalContent(entry.content)}`;
+    }
+    const clearMatch = args.match(/^(?:clear|delete|remove)\s+(\S+)$/i);
+    if (clearMatch?.[1]) {
+      const entries = await refreshProjectMemory(selectedWorkspacePath);
+      const goal = resolveGoalMemoryEntry(clearMatch[1], entries);
+      if (!goal) {
+        return `Durable goal not found: ${clearMatch[1]}. Run /goal list to review current goals.`;
+      }
+      const result = await desktopApi.clearProjectMemory({
+        workspacePath: selectedWorkspacePath,
+        entryId: goal.entry.id,
+      });
+      await refreshProjectMemory(selectedWorkspacePath);
+      return `Cleared ${result.removedCount} durable goal: ${goal.label}`;
+    }
+    if (!args || /^list$/i.test(args)) {
+      const entries = await refreshProjectMemory(selectedWorkspacePath);
+      const goals = listGoalMemoryEntries(entries);
+      if (!goals.length) return "No durable goals have been saved for this workspace.";
+      return [
+        "Durable goals:",
+        ...goals.map((goal, index) => `${index + 1}. ${formatGoalContent(goal.content)}`),
+      ].join("\n");
+    }
+    return undefined;
+  }
+
+  async function maybeApplyWorkspaceCheckpointCommand(
+    command: ReturnType<typeof parseChatCommand>,
+    selectedWorkspacePath?: string,
+  ): Promise<string | undefined> {
+    if (!command || (command.name !== "checkpoint" && command.name !== "rollback")) return undefined;
+    if (!selectedWorkspacePath) {
+      return "Workspace checkpoint command skipped because no workspace is selected.";
+    }
+
+    if (command.name === "checkpoint") {
+      try {
+        const label = command.args.replace(/^create\s+/i, "").trim() || "Slash command checkpoint";
+        const checkpoint = await desktopApi.createWorkspaceCheckpoint({
+          workspacePath: selectedWorkspacePath,
+          label,
+        });
+        return formatCheckpointCreateResult(checkpoint);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Workspace checkpoint creation failed.";
+        return `Workspace checkpoint creation failed: ${message}`;
+      }
+    }
+
+    const rollback = parseRollbackCommandArgs(command.args);
+    try {
+      const checkpoints = await desktopApi.listWorkspaceCheckpoints(selectedWorkspacePath);
+      if (rollback.action === "list" || !rollback.selector) {
+        return formatCheckpointListForRollback(checkpoints, rollback.action === "list");
+      }
+      const checkpoint = resolveWorkspaceCheckpointSelector(rollback.selector, checkpoints);
+      if (!checkpoint) {
+        return [
+          `Rollback checkpoint not found: ${rollback.selector}.`,
+          formatCheckpointListForRollback(checkpoints),
+        ].filter(Boolean).join("\n\n");
+      }
+      const preview = await desktopApi.previewWorkspaceCheckpoint({
+        workspacePath: selectedWorkspacePath,
+        checkpointId: checkpoint.id,
+        maxFiles: 12,
+        maxCharsPerFile: 1200,
+      });
+      if (rollback.action === "preview") {
+        return formatRollbackPreviewResult(preview);
+      }
+      const restore = await desktopApi.restoreWorkspaceCheckpoint({
+        workspacePath: selectedWorkspacePath,
+        checkpointId: checkpoint.id,
+      });
+      return [formatRollbackPreviewResult(preview), formatRollbackRestoreResult(restore)]
+        .join("\n\n");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Rollback checkpoint command failed.";
+      return `Rollback checkpoint command failed: ${message}`;
+    }
+  }
+
+  async function maybeCreateForkThread(
+    command: ReturnType<typeof parseChatCommand>,
+    selectedWorkspacePath?: string,
+    options?: ChatSubmitOptions,
+  ): Promise<{ text: string; threads?: DesktopThread[] } | undefined> {
+    if (!command || command.name !== "fork") return undefined;
+    if (/^(?:dispatch|start|run)\b/i.test(command.args.trim())) return undefined;
+    if (/^(?:schedule|auto|autoschedule)\b/i.test(command.args.trim())) return undefined;
+    if (/^handoff\b/i.test(command.args.trim())) return undefined;
+    if (!selectedWorkspacePath) {
+      return { text: "Fork thread was not created because no workspace is selected." };
+    }
+    const queueItems = parseForkQueueItems(command.args);
+    const queueEntries = parseForkQueueEntries(command.args);
+    if (queueItems.length > 1) {
+      const createdThreads: DesktopThread[] = [];
+      const queueGroupId = `forkqueue:${crypto.randomUUID().replace(/-/g, "")}`;
+      const lines = [
+        `Fork queue requested ${queueItems.length} queued subtasks.`,
+        "Each queued subtask is prepared as an isolated fork thread before any code execution.",
+      ];
+      for (const [index, item] of queueEntries.entries()) {
+        const visualAssignment = resolveForkQueueVisualAgentAssignment(
+          index + 1,
+          options?.forkQueueAgentAssignments,
+          availableAgents ?? [],
+        );
+        const prefixAssignment = resolveForkQueueAgentAssignment(item, availableAgents ?? []);
+        const assignment = visualAssignment ?? prefixAssignment;
+        const forkResult = await createSingleForkThread(selectedWorkspacePath, item.intent, {
+          queueGroupId,
+          queueIndex: index + 1,
+          queueSize: queueEntries.length,
+          agentHint: item.agentHint,
+          agentId: assignment?.agentId,
+          agentName: assignment?.agentName,
+        });
+        if (forkResult.thread) createdThreads.push(forkResult.thread);
+        lines.push(`${index + 1}. ${forkResult.text}`);
+      }
+      lines.push(
+        createdThreads.length
+          ? `Fork queue created ${createdThreads.length}/${queueItems.length} isolated subtask thread${createdThreads.length === 1 ? "" : "s"}.`
+          : "Fork queue did not create any isolated subtask threads.",
+      );
+      if (createdThreads.length) {
+        const approval = await desktopApi.requestForkQueueStartApproval({
+          threadIds: createdThreads.map((thread) => thread.id),
+        });
+        lines.push(formatForkQueueStartApprovalResult(approval));
+        return {
+          text: lines.join("\n"),
+          threads: approval.threads.length ? approval.threads : createdThreads,
+        };
+      }
+      return { text: lines.join("\n"), threads: createdThreads };
+    }
+    const intent = command.args.trim();
+    const forkResult = await createSingleForkThread(selectedWorkspacePath, intent);
+    return { text: forkResult.text, threads: forkResult.thread ? [forkResult.thread] : [] };
+  }
+
+  async function maybeHandoffForkQueueThread(
+    command: ReturnType<typeof parseChatCommand>,
+  ): Promise<{ text: string; thread?: DesktopThread } | undefined> {
+    if (!command || command.name !== "fork") return undefined;
+    const handoff = parseForkHandoffArgs(command.args);
+    if (!handoff) return undefined;
+    try {
+      const threads = await desktopApi.listThreads();
+      const thread = threads.find((item) => item.id === handoff.threadId);
+      if (!thread?.fork?.queueStatus) {
+        return {
+          text: `Fork handoff failed: no queued fork thread matched ${handoff.threadId}.`,
+        };
+      }
+      const assignment = resolveForkQueueAgentName(handoff.agent, availableAgents ?? []);
+      const updated = await desktopApi.updateThread({
+        id: thread.id,
+        fork: {
+          ...thread.fork,
+          queueAgentHint: handoff.agent,
+          queueAgentId: assignment.agentId,
+          queueAgentName: assignment.agentName,
+          queueMessage: `Fork queue handoff assigned this subtask to ${assignment.agentName}. Dispatch still requires the existing approval and /fork dispatch path.`,
+          queueUpdatedAt: new Date().toISOString(),
+        },
+      });
+      return {
+        thread: updated,
+        text: [
+          `Fork queue handoff saved for ${updated.title}.`,
+          `Thread id: ${updated.id}.`,
+          `Assigned agent: ${assignment.agentName}.`,
+          "No agent run was started; approved ready queues still dispatch through `/fork dispatch`.",
+        ].join("\n"),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Fork handoff failed.";
+      return { text: `Fork handoff failed: ${message}` };
+    }
+  }
+
+  async function maybeDispatchForkQueue(
+    command: ReturnType<typeof parseChatCommand>,
+    selectedWorkspacePath: string | undefined,
+    options?: ChatSubmitOptions,
+  ): Promise<{ text: string; threads?: DesktopThread[] } | undefined> {
+    if (!command || command.name !== "fork") return undefined;
+    if (!/^(?:dispatch|start|run)\b/i.test(command.args.trim())) return undefined;
+    if (!selectedWorkspacePath) {
+      return { text: "Fork queue was not dispatched because no workspace is selected." };
+    }
+    try {
+      const allThreads = await desktopApi.listThreads();
+      const readyThreads = allThreads.filter((thread) => {
+        if (!thread.fork || thread.fork.queueStatus !== "ready") return false;
+        return (
+          normalizePathForCompare(thread.fork.sourceWorkspacePath) === normalizePathForCompare(selectedWorkspacePath) ||
+          normalizePathForCompare(thread.fork.worktreePath) === normalizePathForCompare(selectedWorkspacePath)
+        );
+      });
+      if (!readyThreads.length) {
+        return {
+          text: "No approved ready fork queue subtasks were found for this workspace. Approve `/fork queue ...` in Approval Center before dispatching.",
+        };
+      }
+      const selectedAgent = findSelectedAgent(options?.agentName, availableAgents ?? []);
+      const threadAgentAssignments = Object.fromEntries(
+        readyThreads
+          .filter((thread) => thread.fork?.queueAgentId || thread.fork?.queueAgentName)
+          .map((thread) => [
+            thread.id,
+            {
+              agentId: thread.fork?.queueAgentId,
+              agentName: thread.fork?.queueAgentName,
+            },
+          ]),
+      );
+      const result = await desktopApi.dispatchForkQueue({
+        threadIds: readyThreads.map((thread) => thread.id),
+        selectedAgentId: selectedAgent?.id,
+        selectedAgentName: selectedAgent?.name || options?.agentName,
+        ...(Object.keys(threadAgentAssignments).length ? { threadAgentAssignments } : {}),
+        model: options?.model || undefined,
+      });
+      return {
+        text: formatForkQueueDispatchResult(result),
+        threads: result.threads,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Fork queue dispatch failed.";
+      return { text: `Fork queue dispatch failed: ${message}` };
+    }
+  }
+
+  async function maybeScheduleForkQueue(
+    command: ReturnType<typeof parseChatCommand>,
+    selectedWorkspacePath: string | undefined,
+    options?: ChatSubmitOptions,
+  ): Promise<{ text: string; threads?: DesktopThread[] } | undefined> {
+    if (!command || command.name !== "fork") return undefined;
+    if (!/^(?:schedule|auto|autoschedule)\b/i.test(command.args.trim())) return undefined;
+    if (!selectedWorkspacePath) {
+      return { text: "Fork queue scheduler did not run because no workspace is selected." };
+    }
+    try {
+      const limit = parseForkScheduleLimit(command.args);
+      const allThreads = await desktopApi.listThreads();
+      const readyThreads = selectSchedulableForkQueueThreads(allThreads, selectedWorkspacePath, limit);
+      if (!readyThreads.length) {
+        return {
+          text: "Fork queue scheduler found no approved ready subtasks for this workspace. Create a `/fork queue ...` and approve queue start first.",
+        };
+      }
+      const selectedAgent = findSelectedAgent(options?.agentName, availableAgents ?? []);
+      const threadAgentAssignments = buildForkQueueThreadAssignments(readyThreads);
+      const result = await desktopApi.dispatchForkQueue({
+        threadIds: readyThreads.map((thread) => thread.id),
+        selectedAgentId: selectedAgent?.id,
+        selectedAgentName: selectedAgent?.name || options?.agentName,
+        ...(Object.keys(threadAgentAssignments).length ? { threadAgentAssignments } : {}),
+        model: options?.model || undefined,
+      });
+      return {
+        text: [
+          `Fork queue scheduler selected ${readyThreads.length} approved ready subtask${readyThreads.length === 1 ? "" : "s"} by queue order${limit ? ` (limit ${limit})` : ""}.`,
+          formatForkQueueDispatchResult(result),
+        ].join("\n\n"),
+        threads: result.threads,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Fork queue scheduler failed.";
+      return { text: `Fork queue scheduler failed: ${message}` };
+    }
+  }
+
+  async function createSingleForkThread(
+    selectedWorkspacePath: string,
+    intent: string,
+    queue?: {
+      queueGroupId: string;
+      queueIndex: number;
+      queueSize: number;
+      agentHint?: string;
+      agentId?: string;
+      agentName?: string;
+    },
+  ): Promise<{ text: string; thread?: DesktopThread }> {
+    try {
+      const fork = await desktopApi.prepareForkWorktree({
+        workspacePath: selectedWorkspacePath,
+        intent,
+      });
+      const thread = await desktopApi.createThread({
+        kind: "agent_run",
+        title: `${queue ? `Fork ${queue.queueIndex}:` : "Fork:"} ${intent || "subtask"}`.slice(0, 120),
+        workspacePath: fork.worktreePath,
+        fork: {
+          ...(fork.worktreeId ? { worktreeId: fork.worktreeId } : {}),
+          ...(fork.sourceWorkspaceId ? { sourceWorkspaceId: fork.sourceWorkspaceId } : {}),
+          ...(fork.workspaceId ? { workspaceId: fork.workspaceId } : {}),
+          sourceWorkspacePath: fork.sourceWorkspacePath,
+          repoRoot: fork.repoRoot,
+          worktreePath: fork.worktreePath,
+          branch: fork.branch,
+          baseRef: fork.baseRef,
+          createdAt: new Date().toISOString(),
+          sourceHasChanges: fork.sourceHasChanges,
+          sourceStatusSummary: fork.sourceStatusSummary,
+          lifecycleStatus: "active",
+          ...(queue
+            ? {
+                queueGroupId: queue.queueGroupId,
+                queueIndex: queue.queueIndex,
+                queueSize: queue.queueSize,
+                queueStatus: "queued" as const,
+                ...(queue.agentHint ? { queueAgentHint: queue.agentHint } : {}),
+                ...(queue.agentId ? { queueAgentId: queue.agentId } : {}),
+                ...(queue.agentName ? { queueAgentName: queue.agentName } : {}),
+                queueMessage: "Subtask fork is queued and waiting for queue-start approval.",
+                queueUpdatedAt: new Date().toISOString(),
+              }
+            : {}),
+        },
+      });
+      const dirtySourceText = fork.sourceHasChanges
+        ? `Source workspace has uncommitted changes that were not copied into the fork: ${fork.sourceStatusSummary || "dirty worktree"}.`
+        : "Source workspace was clean at fork creation.";
+      return {
+        thread,
+        text: [
+          `Created fork thread: ${thread.title}.`,
+          `Thread id: ${thread.id}.`,
+          `Isolated worktree: ${fork.worktreePath}.`,
+          `Branch: ${fork.branch} from ${fork.baseRef}.`,
+          dirtySourceText,
+          "The app will switch to the forked thread so the subtask can continue in the isolated workspace.",
+        ].join("\n"),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Fork worktree creation failed.";
+      return { text: `Fork thread was not created because isolated worktree creation failed: ${message}` };
+    }
+  }
+
+  async function refreshProjectMemory(
+    selectedWorkspacePath: string,
+  ): Promise<DesktopProjectMemoryEntry[]> {
+    const entries = await desktopApi.listProjectMemory({
+      workspacePath: selectedWorkspacePath,
+      limit: 20,
+    });
+    projectMemoryRef.current = entries;
+    setProjectMemory(entries);
+    return entries;
+  }
+
+  async function refreshCustomCommands(
+    selectedWorkspacePath: string,
+  ): Promise<DesktopCustomCommand[]> {
+    const entries = await desktopApi.listCustomCommands({
+      workspacePath: selectedWorkspacePath,
+      limit: 100,
+    });
+    customCommandsRef.current = entries;
+    setCustomCommands(entries);
+    return entries;
+  }
+
+  function dismissRecoveryActions(messageId: string): void {
+    setMessages((current) => current.map((message) =>
+      message.id === messageId ? { ...message, recoveryActions: undefined } : message,
+    ));
+  }
+
+  function deleteMessage(messageId: string): void {
+    if (!messageId || messageId === "welcome") return;
+    const remaining = messagesRef.current.filter((message) => message.id !== messageId && message.id !== "welcome");
+    const next = remaining.length
+      ? remaining
+      : [createWelcomeMessage(languageRef.current, userPreferencesRef.current)];
+    messagesRef.current = next;
+    setMessages(next);
+    const snapshot = createThreadSnapshot(remaining, true);
+    if (snapshot) notifyThreadUpdated(snapshot);
+  }
+
+  if (threadIdRef.current !== threadId) {
+    persistComposerDraft(threadIdRef.current);
+    const draft = composerDraftsRef.current.get(threadId);
+    threadIdRef.current = threadId;
+    setInput(draft?.input ?? "");
+    setCommandAttachments(draft?.commandAttachments ? [...draft.commandAttachments] : []);
+  }
+
+  return {
+    activeRequestId,
+    cancellingRequestId,
+    commandAttachments,
+    currentRuntimeMode,
+    input,
+    messages,
+    clearCommandAttachments,
+    clearRuntimeMode,
+    removeCommandAttachment,
+    dismissRecoveryActions,
+    deleteMessage,
+    setInput,
+    submit,
+    abort,
+  };
+}
+
+function isMaterialInventoryIntent(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return /(?:(?:我|系统)(?:目前|现在)?)?(?:有|拥有|导入|上传)(?:了|的)?哪些材料|材料(?:清单|列表|角色|分别是什么)|what (?:files|materials|sources) (?:do i|are)|list (?:my )?(?:files|materials|sources)/i.test(normalized);
+}
+
+function formatMaterialInventoryAnswer(
+  analysis: Awaited<ReturnType<typeof desktopApi.analyzeMaterialRoles>>,
+  language: "en" | "zh",
+): string {
+  const roles = [
+    ["previous_report", language === "zh" ? "旧报告" : "Previous reports"],
+    ["latest_data", language === "zh" ? "最新数据" : "Latest data"],
+    ["result_image", language === "zh" ? "结果图片" : "Result images"],
+    ["reference_material", language === "zh" ? "参考材料" : "Reference materials"],
+  ] as const;
+  const sections = roles.map(([role, label]) => {
+    const matching = analysis.items.filter((item) => item.role === role);
+    const files = matching.length
+      ? matching.map((item) => `- **${item.name}**（${Math.round(item.confidence * 100)}%）：${item.reason}${language === "zh" ? "用途：" : " Use: "}${item.suggestedUse}`).join("\n")
+      : `- ${language === "zh" ? "暂未发现" : "None detected"}`;
+    return `### ${label}（${matching.length}）\n\n${files}`;
+  });
+  return [
+    language === "zh" ? `我识别到 ${analysis.items.length} 项材料，并按它们在当前任务中的用途分成四类：` : `I found ${analysis.items.length} materials and grouped them by their likely role in this task:`,
+    ...sections,
+    language === "zh" ? "建议先用最新数据核对结果图片，再以旧报告为结构基线生成新版本；参考材料只用于补充背景和出处。" : "I suggest checking result images against the latest data first, then using the previous report as the structure for a new version. Use references for context and citations.",
+  ].join("\n\n");
+}
+
+function resolveProjectMemoryEntry(
+  selector: string,
+  entries: DesktopProjectMemoryEntry[],
+): DesktopProjectMemoryEntry | undefined {
+  const normalized = selector.trim();
+  const index = Number(normalized);
+  if (Number.isInteger(index) && index >= 1) {
+    return entries[index - 1];
+  }
+  return entries.find((entry) => entry.id === normalized);
+}
+
+function listGoalMemoryEntries(entries: DesktopProjectMemoryEntry[]): DesktopProjectMemoryEntry[] {
+  return entries.filter((entry) => /^goal(?::|-done:)/i.test(entry.content.trim()));
+}
+
+function resolveGoalMemoryEntry(
+  selector: string,
+  entries: DesktopProjectMemoryEntry[],
+): { entry: DesktopProjectMemoryEntry; index: number; label: string } | undefined {
+  const normalized = selector.trim();
+  const goals = listGoalMemoryEntries(entries);
+  const index = Number(normalized);
+  const entry = Number.isInteger(index) && index >= 1
+    ? goals[index - 1]
+    : goals.find((item) => item.id === normalized);
+  if (!entry) return undefined;
+  return {
+    entry,
+    index: goals.indexOf(entry),
+    label: formatGoalContent(entry.content),
+  };
+}
+
+function formatGoalContent(content: string): string {
+  return content.replace(/^goal-done:\s*/i, "[done] ").replace(/^goal:\s*/i, "").trim();
+}
+
+function parseRollbackCommandArgs(args: string): {
+  action: "list" | "preview" | "restore";
+  selector: string;
+} {
+  const trimmed = args.trim();
+  if (/^(?:list|ls)$/i.test(trimmed)) {
+    return {
+      action: "list",
+      selector: "",
+    };
+  }
+  const match = trimmed.match(/^(preview|restore)\s+([\s\S]+)$/i);
+  if (match?.[1]) {
+    return {
+      action: match[1].toLowerCase() === "restore" ? "restore" : "preview",
+      selector: match[2]?.trim() ?? "",
+    };
+  }
+  return {
+    action: "preview",
+    selector: trimmed,
+  };
+}
+
+function resolveWorkspaceCheckpointSelector(
+  selector: string,
+  checkpoints: WorkspaceCheckpoint[],
+): WorkspaceCheckpoint | undefined {
+  const normalized = selector.trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (normalized === "latest") return checkpoints[0];
+  return checkpoints.find((checkpoint) =>
+    checkpoint.id.toLowerCase() === normalized ||
+    checkpoint.id.toLowerCase().startsWith(normalized) ||
+    checkpoint.label.trim().toLowerCase() === normalized,
+  );
+}
+
+function formatCheckpointCreateResult(checkpoint: WorkspaceCheckpoint): string {
+  return [
+    `Checkpoint created from slash command: ${checkpoint.label}.`,
+    `Checkpoint id: ${checkpoint.id}.`,
+    `Stored files: ${checkpoint.storedFileCount}/${checkpoint.changedFileCount}.`,
+    checkpoint.skippedFileCount ? `Skipped files: ${checkpoint.skippedFileCount}.` : "",
+    "Restore remains Approval Center gated; use `/rollback preview latest` or `/rollback restore latest` after visible review.",
+  ].filter(Boolean).join("\n");
+}
+
+function formatCheckpointListForRollback(checkpoints: WorkspaceCheckpoint[], explicitList = false): string {
+  if (!checkpoints.length) {
+    return "No rollback checkpoints exist for this workspace. Run `/checkpoint <label>` before risky edits.";
+  }
+  const lines = checkpoints.slice(0, 6).map((checkpoint, index) =>
+    `${index + 1}. ${checkpoint.id} - ${checkpoint.label} (${checkpoint.storedFileCount}/${checkpoint.changedFileCount} stored)`,
+  );
+  return [
+    explicitList ? "Rollback checkpoints listed from slash command (most recent first)." : "",
+    "Rollback checkpoint selector required. Use `/rollback preview <id|label|latest>` or `/rollback restore <id|label|latest>`.",
+    ...lines,
+  ].filter(Boolean).join("\n");
+}
+
+function formatRollbackPreviewResult(preview: WorkspaceCheckpointPreviewResult): string {
+  const entries = preview.entries.slice(0, 6).map((entry, index) =>
+    `${index + 1}. ${entry.relativePath}: ${entry.change} (${entry.message})`,
+  );
+  return [
+    `Rollback preview prepared for checkpoint ${preview.checkpointId} (${preview.label}).`,
+    preview.message,
+    `Changed entries: ${preview.changedEntryCount}; skipped: ${preview.skippedEntryCount}; total: ${preview.totalEntries}.`,
+    preview.truncated ? "Preview was truncated before chat display." : "",
+    ...entries,
+  ].filter(Boolean).join("\n");
+}
+
+function formatRollbackRestoreResult(result: WorkspaceCheckpointRestoreResult): string {
+  if (result.approvalQueued) {
+    return [
+      `Checkpoint restore is waiting in Approval Center: ${result.approvalId}.`,
+      result.message,
+      "No workspace files are restored until the approval item is accepted.",
+    ].join("\n");
+  }
+  if (result.restored) {
+    return [
+      result.message,
+      `Restored files: ${result.restoredFileCount}; removed files: ${result.removedFileCount}; skipped files: ${result.skippedFileCount}.`,
+    ].join("\n");
+  }
+  return result.message;
+}
+
+function formatCommitApprovalResult(result: DesktopApprovalProposalResult): string {
+  if (result.blocked || !result.allowed) {
+    return `Commit approval blocked: ${result.reason}`;
+  }
+  if (result.queued && result.approval) {
+    return `Commit approval queued in Approval Center: ${result.approval.title}.`;
+  }
+  if (!result.requiresApproval) {
+    return "Commit policy allowed immediate execution.";
+  }
+  return result.reason;
+}
+
+function formatForkQueueStartApprovalResult(result: DesktopForkQueueStartApprovalResult): string {
+  if (result.blocked || !result.allowed) {
+    return `Fork queue start approval blocked: ${result.reason}`;
+  }
+  if (result.queued && result.approval) {
+    return `Fork queue start approval queued in Approval Center: ${result.approval.title}. Subtasks remain waiting until approval.`;
+  }
+  return `Fork queue is ready: ${result.reason}`;
+}
+
+function formatForkQueueDispatchResult(result: DesktopForkQueueDispatchResult): string {
+  const started = result.startedRuns.length
+    ? result.startedRuns
+        .map((run, index) => `${index + 1}. ${run.threadId} -> ${run.runId}`)
+        .join("\n")
+    : "none";
+  const blocked = result.blockedThreadIds.length ? result.blockedThreadIds.join(", ") : "none";
+  return [
+    `Fork queue dispatch: ${result.reason}`,
+    `Started runs: ${result.startedRuns.length}.`,
+    started,
+    `Blocked threads: ${blocked}.`,
+  ].join("\n");
+}
+
+function findSelectedAgent(
+  agentName: string | undefined,
+  agents: DesktopAgent[],
+): DesktopAgent | undefined {
+  const normalized = agentName?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  return agents.find((agent) =>
+    [agent.id, agent.name]
+      .filter((item): item is string => Boolean(item))
+      .some((item) => item.trim().toLowerCase() === normalized),
+  );
+}
+
+function selectSchedulableForkQueueThreads(
+  threads: DesktopThread[],
+  selectedWorkspacePath: string,
+  limit?: number,
+): DesktopThread[] {
+  const selectedWorkspace = normalizePathForCompare(selectedWorkspacePath);
+  const readyThreads = threads
+    .filter((thread) => {
+      if (!thread.fork || thread.fork.queueStatus !== "ready") return false;
+      return (
+        normalizePathForCompare(thread.fork.sourceWorkspacePath) === selectedWorkspace ||
+        normalizePathForCompare(thread.fork.worktreePath) === selectedWorkspace
+      );
+    })
+    .sort(compareForkQueueScheduleOrder);
+  return limit ? readyThreads.slice(0, limit) : readyThreads;
+}
+
+function compareForkQueueScheduleOrder(left: DesktopThread, right: DesktopThread): number {
+  const leftGroup = left.fork?.queueGroupId ?? "";
+  const rightGroup = right.fork?.queueGroupId ?? "";
+  const groupOrder = leftGroup.localeCompare(rightGroup);
+  if (groupOrder !== 0) return groupOrder;
+  const leftIndex = left.fork?.queueIndex ?? Number.MAX_SAFE_INTEGER;
+  const rightIndex = right.fork?.queueIndex ?? Number.MAX_SAFE_INTEGER;
+  if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+  const leftUpdated = Date.parse(left.fork?.queueUpdatedAt ?? left.updatedAt) || 0;
+  const rightUpdated = Date.parse(right.fork?.queueUpdatedAt ?? right.updatedAt) || 0;
+  if (leftUpdated !== rightUpdated) return leftUpdated - rightUpdated;
+  return left.id.localeCompare(right.id);
+}
+
+function parseForkScheduleLimit(args: string): number | undefined {
+  const match = args.match(/(?:^|\s)(?:limit\s+|--limit\s*=?|limit=)(\d{1,2})(?:\s|$)/i);
+  if (!match?.[1]) return undefined;
+  const parsed = Number(match[1]);
+  if (!Number.isInteger(parsed) || parsed < 1) return undefined;
+  return Math.min(parsed, 12);
+}
+
+function buildForkQueueThreadAssignments(
+  threads: DesktopThread[],
+): Record<string, { agentId?: string; agentName?: string }> {
+  return Object.fromEntries(
+    threads
+      .filter((thread) => thread.fork?.queueAgentId || thread.fork?.queueAgentName)
+      .map((thread) => [
+        thread.id,
+        {
+          agentId: thread.fork?.queueAgentId,
+          agentName: thread.fork?.queueAgentName,
+        },
+      ]),
+  );
+}
+
+function resolveForkQueueAgentAssignment(
+  item: ForkQueueItem,
+  agents: DesktopAgent[],
+): { agentId?: string; agentName?: string } | undefined {
+  if (!item.agentHint) return undefined;
+  const normalized = item.agentHint.trim().toLowerCase();
+  const agent = agents.find((candidate) =>
+    [candidate.id, candidate.name]
+      .filter((value): value is string => Boolean(value))
+      .some((value) => value.trim().toLowerCase() === normalized),
+  );
+  return {
+    agentId: agent?.id,
+    agentName: agent?.name ?? item.agentHint,
+  };
+}
+
+function resolveForkQueueVisualAgentAssignment(
+  queueIndex: number,
+  assignments: ChatSubmitOptions["forkQueueAgentAssignments"] | undefined,
+  agents: DesktopAgent[],
+): { agentId?: string; agentName?: string } | undefined {
+  const assignment = assignments?.find((item) => item.queueIndex === queueIndex);
+  if (!assignment?.agentId && !assignment?.agentName) return undefined;
+  const normalizedId = assignment.agentId?.trim().toLowerCase();
+  const normalizedName = assignment.agentName?.trim().toLowerCase();
+  const agent = agents.find((candidate) =>
+    [candidate.id, candidate.name]
+      .filter((value): value is string => Boolean(value))
+      .some((value) => {
+        const normalized = value.trim().toLowerCase();
+        return normalized === normalizedId || normalized === normalizedName;
+      }),
+  );
+  return {
+    agentId: agent?.id ?? assignment.agentId,
+    agentName: agent?.name ?? assignment.agentName,
+  };
+}
+
+function resolveForkQueueAgentName(
+  requested: string,
+  agents: DesktopAgent[],
+): { agentId?: string; agentName: string } {
+  const normalized = requested.trim().replace(/^@/, "").toLowerCase();
+  const agent = agents.find((candidate) =>
+    [candidate.id, candidate.name]
+      .filter((value): value is string => Boolean(value))
+      .some((value) => value.trim().toLowerCase() === normalized),
+  );
+  return {
+    agentId: agent?.id,
+    agentName: agent?.name ?? requested.replace(/^@/, "").trim(),
+  };
+}
+
+function parseForkHandoffArgs(args: string): { threadId: string; agent: string } | null {
+  const match = args.trim().match(/^handoff\s+(\S+)\s+@?(.+)$/i);
+  const threadId = match?.[1]?.trim();
+  const agent = match?.[2]?.trim();
+  if (!threadId || !agent) return null;
+  return { threadId, agent };
+}
+
+function normalizePathForCompare(path: string): string {
+  return path.trim().replace(/\\/g, "/").replace(/\/+$/g, "").toLowerCase();
+}
+
+async function buildCommitPreflight(workspacePath: string): Promise<{
+  approvalBody: string;
+  canCommit: boolean;
+  checklist?: DesktopCommitApprovalChecklist;
+  chatSummary: string;
+}> {
+  const [overview, stagedDiff] = await Promise.all([
+    desktopApi.getWorkspaceContextOverview(workspacePath),
+    desktopApi.getWorkspaceGitDiff({ workspacePath, staged: true, maxChars: 80_000 }),
+  ]);
+  const stagedFiles = extractDiffFilePaths(stagedDiff.diff);
+  const changedCount = overview.stats.changedFileCount;
+  const unstagedCount = countUnstagedFiles(overview, stagedFiles);
+  if (!stagedDiff.diff.trim()) {
+    return {
+      approvalBody: "",
+      canCommit: false,
+      chatSummary: [
+        "**Commit preflight**",
+        "",
+        "Commit approval was not requested because there are no staged changes.",
+        `Changed files detected in workspace: ${changedCount}. Stage the intended files first, then run /commit again.`,
+      ].join("\n"),
+    };
+  }
+
+  const diffLines = stagedDiff.diff.split(/\r?\n/).length;
+  const risk = stagedDiff.truncated
+    ? "High: staged diff was truncated before review."
+    : unstagedCount > 0
+      ? "Medium: unstaged workspace changes will not be included."
+      : "Low: staged diff fits the preflight budget.";
+  const testCommitment = "Run relevant verification before pushing or mark the commit as unverified.";
+  const recentTestResult = formatRecentTerminalTestResult(
+    readRecentTerminalTestResult(workspacePath),
+  );
+  const filesPreview = stagedFiles.slice(0, 8).join(", ");
+  const fileSuffix = stagedFiles.length > 8 ? `, +${stagedFiles.length - 8} more` : "";
+  const approvalBody = [
+    "Commit preflight:",
+    `- Staged files: ${stagedFiles.length}${filesPreview ? ` (${filesPreview}${fileSuffix})` : ""}`,
+    `- Workspace changed files: ${changedCount}`,
+    `- Unstaged/untracked files not included: ${unstagedCount}`,
+    `- Staged diff lines reviewed: ${diffLines}${stagedDiff.truncated ? " (truncated)" : ""}`,
+    `- Risk: ${risk}`,
+    `- Test commitment: ${testCommitment}`,
+    `- Recent test result: ${recentTestResult}`,
+  ].join("\n");
+
+  return {
+    approvalBody,
+    canCommit: true,
+    checklist: {
+      type: "git_commit",
+      stagedFiles,
+      workspaceChangedFileCount: changedCount,
+      unstagedFileCount: unstagedCount,
+      diffLineCount: diffLines,
+      diffTruncated: stagedDiff.truncated,
+      riskSummary: risk,
+      testCommitment,
+      recentTestResult,
+    },
+    chatSummary: [
+      "**Commit preflight**",
+      "",
+      `Staged files: ${stagedFiles.length}`,
+      `Workspace changed files: ${changedCount}`,
+      `Unstaged/untracked files not included: ${unstagedCount}`,
+      `Staged diff lines reviewed: ${diffLines}${stagedDiff.truncated ? " (truncated)" : ""}`,
+      `Risk: ${risk}`,
+      `Test commitment: ${testCommitment}`,
+      `Recent test result: ${recentTestResult}`,
+    ].join("\n"),
+  };
+}
+
+function extractDiffFilePaths(diff: string): string[] {
+  const paths = new Set<string>();
+  for (const match of diff.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm)) {
+    paths.add((match[2] || match[1] || "").trim());
+  }
+  return [...paths].filter(Boolean).sort((left, right) => left.localeCompare(right));
+}
+
+function countUnstagedFiles(
+  overview: WorkspaceContextOverview,
+  stagedFiles: string[],
+): number {
+  const staged = new Set(stagedFiles.map((item) => item.replace(/\\/g, "/")));
+  const changedFiles = overview.git?.changedFiles ?? [];
+  return changedFiles.filter((item) => !staged.has(item.path.replace(/\\/g, "/"))).length;
+}
+
+async function maybeApplyCompactCommand(
+  command: ReturnType<typeof parseChatCommand>,
+  currentMessages: UiMessage[],
+  selectedWorkspacePath?: string,
+  refreshMemory?: (selectedWorkspacePath: string) => Promise<DesktopProjectMemoryEntry[]>,
+): Promise<string | undefined> {
+  if (!command || command.name !== "compact") return undefined;
+  const saveMatch = command.args.match(/^(?:save|persist|memory)(?:\s+([\s\S]+))?$/i);
+  const compactIntent = saveMatch ? saveMatch[1]?.trim() ?? "" : command.args;
+  const summary = buildLocalCompactSummary(currentMessages, compactIntent);
+  if (!saveMatch) return summary;
+  if (!selectedWorkspacePath) {
+    return [
+      summary,
+      "Compact summary was not saved because no workspace is selected.",
+    ].join("\n\n");
+  }
+  const entry = await desktopApi.addProjectMemory({
+    workspacePath: selectedWorkspacePath,
+    content: `compact-summary: ${clampCompactText(summary, 3800)}`,
+    source: "retrospective",
+  });
+  await refreshMemory?.(selectedWorkspacePath);
+  return [
+    summary,
+    `Saved compact summary to project memory: ${clampCompactText(entry.content, LOCAL_COMPACT_MAX_ITEM_CHARS)}`,
+    "Future natural-language chat includes this reviewed compact summary through the existing project memory context path.",
+  ].join("\n\n");
+}
+
+function buildLocalCompactSummary(messages: UiMessage[], compactIntent: string): string {
+  const visibleMessages = messages
+    .filter((message) => message.id !== "welcome" && !message.error)
+    .map((message) => ({
+      role: message.role,
+      text: sanitizeCompactText(getVisibleChatText(message.content || "")),
+    }))
+    .filter((message) => message.text.length > 0);
+
+  const focus = sanitizeCompactText(compactIntent.trim()) || "current thread";
+  if (!visibleMessages.length) {
+    return [
+      "Local context compaction prepared from visible chat only.",
+      `Focus: ${focus}`,
+      "No prior visible messages were available to summarize.",
+      "Verification: no gateway, model provider, external connector, filesystem mutation, or network call was performed.",
+    ].join("\n");
+  }
+
+  const recentMessages = visibleMessages.slice(-LOCAL_COMPACT_MAX_MESSAGES);
+  const recentLines = recentMessages.map((message) =>
+    `- ${message.role}: ${clampCompactText(message.text, LOCAL_COMPACT_MAX_MESSAGE_CHARS)}`,
+  );
+  const reusableItems = collectCompactReusableItems(visibleMessages);
+  const userCount = visibleMessages.filter((message) => message.role === "user").length;
+  const assistantCount = visibleMessages.filter((message) => message.role === "assistant").length;
+
+  return [
+    "Local context compaction prepared from visible chat only.",
+    `Messages summarized: ${visibleMessages.length} visible (${recentMessages.length} most recent shown); user: ${userCount}; assistant: ${assistantCount}.`,
+    `Focus: ${focus}`,
+    "Recent context:",
+    ...recentLines,
+    "Reusable decisions / follow-ups:",
+    ...(reusableItems.length ? reusableItems.map((item) => `- ${item}`) : ["- No explicit decision or follow-up cue found in visible chat."]),
+    "Verification: no gateway, model provider, external connector, filesystem mutation, or network call was performed.",
+  ].join("\n");
+}
+
+function collectCompactReusableItems(
+  messages: Array<{ role: ChatMessage["role"]; text: string }>,
+): string[] {
+  const items: string[] = [];
+  const seen = new Set<string>();
+  for (const message of messages) {
+    for (const sentence of splitCompactSentences(message.text)) {
+      if (!/\b(?:decid(?:e|ed|ing)|choose|chosen|approved|blocked|todo|follow[- ]?up|next|risk|assumption|verify|test)\b/i.test(sentence)) {
+        continue;
+      }
+      const item = clampCompactText(`${message.role}: ${sentence}`, LOCAL_COMPACT_MAX_ITEM_CHARS);
+      const key = item.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push(item);
+      if (items.length >= LOCAL_COMPACT_MAX_REUSABLE_ITEMS) return items;
+    }
+  }
+  return items;
+}
+
+function splitCompactSentences(text: string): string[] {
+  return text
+    .split(/(?:\r?\n|(?<=[.!?])\s+)/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function sanitizeCompactText(text: string): string {
+  return text
+    .replace(/\s+/g, " ")
+    .replace(/([?&](?:token|key|secret|password|code)=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [redacted]")
+    .replace(
+      /\b(password|passwd|pwd|token|api[_-]?key|secret|authorization)(\s*[:=]\s*)(["']?)[^\s,;]+/gi,
+      (_match, label: string, separator: string, quote: string) => `${label}${separator}${quote}[redacted]`,
+    )
+    .trim();
+}
+
+function clampCompactText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function buildRequestMessages(
+  messages: ChatMessage[],
+  workspaceInstructions: WorkspaceInstructionSummary[] | undefined,
+  projectMemory: DesktopProjectMemoryEntry[],
+  teamMemory: DesktopTeamMemoryEntry[],
+  userPreferences: DesktopUserPreference[],
+  runtimeMode: ChatRuntimeMode | null,
+): ChatMessage[] {
+  const systemSections: string[] = [];
+  const userPreferenceSection = buildUserPreferenceSystemSection(userPreferences);
+  if (userPreferenceSection) systemSections.push(userPreferenceSection);
+  if (runtimeMode) {
+    systemSections.push(
+      [
+        "Current chat runtime mode:",
+        `Mode: ${runtimeMode.label} (${runtimeMode.name})`,
+        `Description: ${runtimeMode.description}`,
+        runtimeMode.intent ? `Intent: ${runtimeMode.intent}` : null,
+      ].filter((item): item is string => Boolean(item)).join("\n"),
+    );
+  }
+  if (workspaceInstructions?.length) {
+    systemSections.push(
+      [
+        "Workspace instructions for this project:",
+        ...workspaceInstructions.map((instruction) =>
+          `# ${instruction.name}\n${instruction.content}${instruction.truncated ? "\n[truncated]" : ""}`,
+        ),
+      ].join("\n\n"),
+    );
+  }
+  if (projectMemory.length) {
+    const activeGoals = projectMemory.filter((entry) => /^goal:\s*/i.test(entry.content.trim()));
+    if (activeGoals.length) {
+      systemSections.push(
+        [
+          "Active durable goals for this workspace:",
+          ...activeGoals
+            .slice(0, 5)
+            .map((entry, index) => `${index + 1}. ${formatGoalContent(entry.content)}`),
+        ].join("\n"),
+      );
+    }
+    systemSections.push(
+      [
+        "Project memory for this workspace:",
+        ...projectMemory
+          .slice(0, 12)
+          .map((entry, index) => `${index + 1}. ${entry.content}`),
+      ].join("\n"),
+    );
+  }
+  if (teamMemory.length) {
+    systemSections.push(
+      [
+        "Authorized team memory for the signed-in user:",
+        ...teamMemory
+          .slice(0, 12)
+          .map((entry, index) => `${index + 1}. [${entry.teamId}] ${entry.content}`),
+      ].join("\n"),
+    );
+  }
+  if (!systemSections.length) return messages;
+  return [{ role: "system", content: systemSections.join("\n\n") }, ...messages];
+}
+
+function serializeRuntimeMode(mode: ChatRuntimeMode): Record<string, string> {
+  return {
+    name: mode.name,
+    label: mode.label,
+    description: mode.description,
+    activated_by: mode.activatedBy,
+    ...(mode.intent ? { intent: mode.intent } : {}),
+  };
+}
+
+function createWelcomeMessage(language: "en" | "zh", preferences: DesktopUserPreference[]): UiMessage {
+  const preferenceNotice = formatAppliedPreferenceNotice(preferences, language);
+  return {
+    id: "welcome",
+    role: "assistant",
+    content:
+      language === "zh"
+        ? `OpenDrSai 桌面端已就绪。安装或启动本地网关后即可发送消息。${preferenceNotice ? `\n\n${preferenceNotice}` : ""}`
+        : `OpenDrSai desktop is ready. Install or start the local gateway, then send a message.${preferenceNotice ? `\n\n${preferenceNotice}` : ""}`,
+  };
+}
+
+function hydrateStructuredMessages(messages: UiMessage[]): UiMessage[] {
+  const hydrated = messages.map((message) => {
+    if (message.role !== "assistant") return message;
+    if (message.structuredTurn) return sanitizeStructuredAssistantMessage(message);
+    return sanitizeStructuredAssistantMessage({
+      ...message,
+      structuredTurn: migrateLegacyMessageToStructuredTurn({
+        id: message.id,
+        content: message.content,
+        reasoningContent: message.reasoningContent,
+        statusContent: message.statusContent,
+        streaming: message.streaming,
+        error: message.error,
+        parts: message.parts as Array<Record<string, unknown>> | undefined,
+        toolTimeline: message.toolTimeline as Array<Record<string, unknown>> | undefined,
+      }),
+    });
+  });
+  return consolidateHydratedAssistantRuns(hydrated);
+}
+
+function consolidateHydratedAssistantRuns(messages: UiMessage[]): UiMessage[] {
+  const consolidated: UiMessage[] = [];
+  const assistantIndexByRun = new Map<string, number>();
+  for (const message of messages) {
+    if (message.role !== "assistant") {
+      assistantIndexByRun.clear();
+      consolidated.push(message);
+      continue;
+    }
+    const runId = readPersistedRunId(message.id);
+    if (!runId) {
+      consolidated.push(message);
+      continue;
+    }
+    const existingIndex = assistantIndexByRun.get(runId);
+    if (existingIndex === undefined) {
+      assistantIndexByRun.set(runId, consolidated.length);
+      consolidated.push(message);
+      continue;
+    }
+    consolidated[existingIndex] = mergeHydratedAssistantMessages(consolidated[existingIndex], message);
+  }
+  return consolidated;
+}
+
+function readPersistedRunId(messageId: string): string | undefined {
+  return messageId.match(/(?:^|:)run-[A-Za-z0-9-]{8,}(?=:|$)/)?.[0].replace(/^:/, "");
+}
+
+function mergeHydratedAssistantMessages(primary: UiMessage, secondary: UiMessage): UiMessage {
+  const primaryTurn = primary.structuredTurn;
+  const secondaryTurn = secondary.structuredTurn;
+  if (!primaryTurn || !secondaryTurn) return primary;
+  const partIds = new Set(primaryTurn.parts.map((part) => part.id));
+  const activityIds = new Set(primaryTurn.activities.map((activity) => activity.id));
+  const parts = [
+    ...primaryTurn.parts,
+    ...secondaryTurn.parts.filter((part) => !partIds.has(part.id)),
+  ];
+  const activities = [
+    ...primaryTurn.activities,
+    ...secondaryTurn.activities
+      .filter((activity) => !activityIds.has(activity.id))
+      .map((activity) => ({ ...activity, turnId: primaryTurn.turnId })),
+  ];
+  const structuredTurn: StructuredTurnState = {
+    ...primaryTurn,
+    parts,
+    activities,
+    lastSequence: Math.max(primaryTurn.lastSequence, secondaryTurn.lastSequence),
+    seenDedupeKeys: [...new Set([...primaryTurn.seenDedupeKeys, ...secondaryTurn.seenDedupeKeys])],
+    protocolIssues: [...primaryTurn.protocolIssues, ...secondaryTurn.protocolIssues],
+  };
+  const secondaryContent = secondary.content.trim();
+  return sanitizeStructuredAssistantMessage({
+    ...primary,
+    content: secondaryContent && !primary.content.includes(secondaryContent)
+      ? [primary.content, secondary.content].filter(Boolean).join("\n\n")
+      : primary.content,
+    reasoningContent: [primary.reasoningContent, secondary.reasoningContent].filter(Boolean).join(""),
+    structuredTurn,
+    lastEventAt: Math.max(primary.lastEventAt ?? 0, secondary.lastEventAt ?? 0) || undefined,
+  });
+}
+
+function coalesceUiAssistantMessages(messages: UiMessage[]): UiMessage[] {
+  const merged: UiMessage[] = [];
+  for (const message of messages) {
+    if (message.role !== "assistant") {
+      merged.push(message);
+      continue;
+    }
+    const body = [message.content, message.reasoningContent, message.statusContent]
+      .map((value) => value?.trim() ?? "")
+      .filter(Boolean)
+      .join("\n");
+    if (!body && !message.streaming && !message.error && !message.structuredTurn) continue;
+    const previous = merged[merged.length - 1];
+    const previousThin = previous?.role === "assistant" && !previous.content.trim();
+    const currentThin = !message.content.trim();
+    if (previous?.role === "assistant" && (previousThin || currentThin)) {
+      const preferCurrent = !previous.content.trim() && Boolean(message.content.trim());
+      merged[merged.length - 1] = {
+        ...previous,
+        id: preferCurrent ? message.id : previous.id,
+        content: previous.content.trim() || message.content,
+        reasoningContent: [previous.reasoningContent, message.reasoningContent]
+          .map((value) => value?.trim() ?? "")
+          .filter(Boolean)
+          .join("\n\n") || undefined,
+        statusContent: [previous.statusContent, message.statusContent]
+          .map((value) => value?.trim() ?? "")
+          .filter(Boolean)
+          .join("\n\n") || undefined,
+        streaming: Boolean(previous.streaming || message.streaming),
+        error: Boolean(previous.error || message.error),
+        attachments: previous.attachments?.length ? previous.attachments : message.attachments,
+        structuredTurn: previous.structuredTurn ?? message.structuredTurn,
+        startedAt: Math.min(previous.startedAt ?? Number.MAX_SAFE_INTEGER, message.startedAt ?? Number.MAX_SAFE_INTEGER),
+        lastEventAt: Math.max(previous.lastEventAt ?? 0, message.lastEventAt ?? 0),
+      };
+      continue;
+    }
+    merged.push(message);
+  }
+  return merged;
+}
+
+function appendAssistantChunk(
+  messages: UiMessage[],
+  assistantId: string | undefined,
+  content: string,
+): UiMessage[] {
+  const next = [...messages];
+  const index = findAssistantIndex(next, assistantId);
+  if (index === -1) return next;
+  const structuredTurn = appendStructuredDelta(next[index].structuredTurn, next[index].id, "markdown", content);
+  const canonicalContent = readStructuredMarkdown(structuredTurn);
+  const committedAt = Date.now();
+  next[index] = {
+    ...next[index],
+    content: canonicalContent,
+    structuredTurn,
+    firstDeltaAt: next[index].firstDeltaAt ?? committedAt,
+    lastEventAt: committedAt,
+  };
+  return next;
+}
+
+function appendAssistantReasoning(
+  messages: UiMessage[],
+  assistantId: string | undefined,
+  content: string,
+): UiMessage[] {
+  if (!content) return messages;
+  const next = [...messages];
+  const index = findAssistantIndex(next, assistantId);
+  if (index === -1) return next;
+  const structuredTurn = appendStructuredDelta(next[index].structuredTurn, next[index].id, "reasoning", content);
+  const canonicalReasoning = readStructuredReasoning(structuredTurn);
+  const committedAt = Date.now();
+  next[index] = {
+    ...next[index],
+    reasoningContent: canonicalReasoning,
+    structuredTurn,
+    firstDeltaAt: next[index].firstDeltaAt ?? committedAt,
+    lastEventAt: committedAt,
+  };
+  return next;
+}
+
+function appendAssistantToolTimeline(
+  messages: UiMessage[],
+  assistantId: string | undefined,
+  event: NonNullable<ChatEvent["toolTimeline"]>,
+): UiMessage[] {
+  const next = [...messages];
+  const index = findAssistantIndex(next, assistantId);
+  if (index === -1) return next;
+  const boundedEvent = event.content && event.content.length > 80_000
+    ? { ...event, content: `${event.content.slice(0, 80_000)}\n\n[output truncated in chat]` }
+    : event;
+  next[index] = {
+    ...next[index],
+    structuredTurn: appendStructuredActivity(next[index].structuredTurn, next[index].id, boundedEvent),
+    lastEventAt: Date.now(),
+  };
+  return next;
+}
+
+function appendStructuredDelta(
+  current: StructuredTurnState | undefined,
+  turnId: string,
+  kind: "markdown" | "reasoning",
+  content: string,
+): StructuredTurnState {
+  let state = current ?? createStructuredTurnState(turnId);
+  if (state.status === "pending") state = applyLocalStructuredEvent(state, { type: "turn.started" });
+  const partId = `${turnId}:${kind}`;
+  if (!state.parts.some((part) => part.id === partId)) {
+    const part: StructuredAssistantPart = kind === "markdown"
+      ? { id: partId, kind: "markdown", status: "running", markdown: "" }
+      : { id: partId, kind: "reasoning", status: "running", segments: [] };
+    state = applyLocalStructuredEvent(state, { type: "part.started", part });
+  }
+  return applyLocalStructuredEvent(state, kind === "markdown"
+    ? { type: "part.delta", partId, delta: { kind: "markdown.append", text: content } }
+    : {
+        type: "part.delta",
+        partId,
+        delta: { kind: "reasoning.append", segmentId: `${partId}:stream`, text: content, source: "desktop-sse" },
+      });
+}
+
+function appendStructuredActivity(
+  current: StructuredTurnState | undefined,
+  turnId: string,
+  event: NonNullable<ChatEvent["toolTimeline"]>,
+): StructuredTurnState {
+  let state = current ?? createStructuredTurnState(turnId);
+  if (state.status === "pending") state = applyLocalStructuredEvent(state, { type: "turn.started" });
+  return applyLocalStructuredEvent(state, {
+    type: "activity.updated",
+    activity: createStructuredToolActivity(state.turnId, event),
+  });
+}
+
+function createStructuredToolActivity(
+  turnId: string,
+  event: NonNullable<ChatEvent["toolTimeline"]>,
+): Extract<StructuredActivityEvent, { kind: "tool" }> {
+  return {
+    id: event.id,
+    ...(event.oaepItemId ? { oaepItemId: event.oaepItemId } : {}),
+    turnId,
+    timestamp: event.timestamp?.trim() || new Date().toISOString(),
+    source: "desktop-sse",
+    status: event.status === "failed" ? "error" : event.status === "completed" ? "completed" : "running",
+    title: event.title,
+    kind: "tool",
+    toolName: event.toolName ?? event.title,
+    callId: event.id,
+    ...(event.content
+      ? event.kind === "tool_call"
+        ? { input: event.content }
+        : { output: event.content }
+      : {}),
+  };
+}
+
+function appendConnectionActivity(
+  current: StructuredTurnState | undefined,
+  turnId: string,
+  activity: StructuredActivityEvent,
+): StructuredTurnState {
+  let state = current?.turnId === turnId ? current : createStructuredTurnState(turnId);
+  if (state.status === "pending") state = applyLocalStructuredEvent(state, { type: "turn.started" });
+  return applyLocalStructuredEvent(state, { type: "activity.updated", activity });
+}
+
+type LocalStructuredEvent =
+  | Pick<Extract<StructuredConversationEvent, { type: "turn.started" }>, "type">
+  | Pick<Extract<StructuredConversationEvent, { type: "part.started" }>, "type" | "part">
+  | Pick<Extract<StructuredConversationEvent, { type: "part.delta" }>, "type" | "partId" | "delta">
+  | Pick<Extract<StructuredConversationEvent, { type: "part.completed" }>, "type" | "part">
+  | Pick<Extract<StructuredConversationEvent, { type: "activity.updated" }>, "type" | "activity">
+  | Pick<Extract<StructuredConversationEvent, { type: "turn.completed" }>, "type" | "meta">
+  | Pick<Extract<StructuredConversationEvent, { type: "turn.cancelled" }>, "type">
+  | Pick<Extract<StructuredConversationEvent, { type: "turn.error" }>, "type" | "message" | "code" | "debugRef">;
+
+function applyLocalStructuredEvent(state: StructuredTurnState, event: LocalStructuredEvent): StructuredTurnState {
+  const sequence = state.lastSequence + 1;
+  return applyStructuredConversationEvent(state, {
+    ...event,
+    version: 2,
+    turnId: state.turnId,
+    sequence,
+    dedupeKey: `${state.turnId}:${sequence}:${event.type}`,
+    timestamp: new Date().toISOString(),
+    source: "desktop-adapter",
+  } as StructuredConversationEvent);
+}
+
+function readStructuredMarkdown(state: StructuredTurnState): string {
+  return state.parts
+    .filter((part): part is Extract<StructuredAssistantPart, { kind: "markdown" }> => part.kind === "markdown")
+    .map((part) => part.markdown)
+    .join("\n\n");
+}
+
+function capabilityConfigurationPartFromOaep(
+  event: NonNullable<ChatEvent["oaepEvent"]>,
+): Extract<StructuredAssistantPart, { kind: "interaction" }> | null {
+  const item = event.data.item;
+  if (!item || typeof item !== "object" || item.type !== "interaction") return null;
+  const content = item.content;
+  if (!content || typeof content !== "object" || content.interaction_type !== "capability_configuration") {
+    return null;
+  }
+  const summary = content.request_summary && typeof content.request_summary === "object"
+    ? content.request_summary as Record<string, unknown>
+    : {};
+  const requestId = String(content.approval_id || item.id || "").trim();
+  if (!requestId) return null;
+  const status = item.status === "completed"
+    ? "completed"
+    : item.status === "failed"
+      ? "error"
+      : item.status === "cancelled"
+        ? "cancelled"
+        : item.status === "pending"
+          ? "pending"
+          : "running";
+  return {
+    id: String(item.id || `capability:${requestId}`),
+    kind: "interaction",
+    // This OAEP branch is deliberately able to stand on its own when the
+    // adjacent presentation event is lost during batching or gap recovery.
+    // Preserve the authoritative item lifecycle instead of resurrecting a
+    // completed configuration request as pending.
+    status,
+    requestId,
+    interactionType: "capability_configuration",
+    prompt: String(content.prompt || summary.prompt || "[REDACTED]"),
+    ...(summary.capability ? { capability: String(summary.capability) } : {}),
+    ...(summary.resource_kind ? { resourceKind: String(summary.resource_kind) } : {}),
+    ...(summary.preferred_adapter ? { preferredAdapter: String(summary.preferred_adapter) } : {}),
+    ...(summary.reason ? { reason: String(summary.reason) } : {}),
+    ...(typeof summary.query_disclosed === "boolean" ? { queryDisclosed: summary.query_disclosed } : {}),
+  };
+}
+
+function readStructuredReasoning(state: StructuredTurnState): string {
+  return state.parts
+    .filter((part): part is Extract<StructuredAssistantPart, { kind: "reasoning" }> => part.kind === "reasoning")
+    .flatMap((part) => part.segments.map((segment) => segment.text))
+    .join("");
+}
+
+function applyStructuredEventToMessage(
+  message: UiMessage,
+  event: StructuredConversationEvent,
+): UiMessage {
+  const current = message.structuredTurn?.turnId === event.turnId
+    ? message.structuredTurn
+    : createStructuredTurnState(event.turnId);
+  const structuredTurn = sanitizeStructuredTurnForChat(applyStructuredConversationEvent(current, event));
+  const content = readStructuredMarkdown(structuredTurn);
+  const reasoningContent = readStructuredReasoning(structuredTurn);
+  const activeInteraction = [...structuredTurn.parts]
+    .reverse()
+    .find((part): part is Extract<StructuredAssistantPart, { kind: "interaction" }> =>
+      part.kind === "interaction" && (part.status === "pending" || part.status === "running"));
+  const errorNotice = [...structuredTurn.parts]
+    .reverse()
+    .find((part): part is Extract<StructuredAssistantPart, { kind: "notice" }> =>
+      part.kind === "notice" && part.level === "error");
+  return sanitizeStructuredAssistantMessage({
+    ...message,
+    structuredTurn,
+    content: content || errorNotice?.message || message.content,
+    reasoningContent,
+    streaming: structuredTurn.status === "pending" || structuredTurn.status === "running",
+    error: structuredTurn.status === "completed" || structuredTurn.status === "cancelled"
+      ? false
+      : structuredTurn.status === "error" || Boolean(message.error),
+    inputRequest: activeInteraction && activeInteraction.interactionType !== "capability_configuration"
+      ? {
+          requestId: activeInteraction.requestId,
+          prompt: activeInteraction.prompt,
+          inputType: activeInteraction.interactionType,
+          options: activeInteraction.options,
+        }
+      : undefined,
+    lastEventAt: Date.now(),
+  });
+}
+
+function sanitizeStructuredAssistantMessage(message: UiMessage): UiMessage {
+  const current = message.structuredTurn;
+  if (!current) return message;
+  const hiddenMessages = current.parts
+    .filter(isTerminalErrorNotice)
+    .map((part) => part.message.trim())
+    .filter(Boolean);
+  if (current.status === "error" && current.error?.message.trim()) {
+    hiddenMessages.push(current.error.message.trim());
+  }
+  const hadTerminalError = current.status === "error" || hiddenMessages.length > 0;
+  const structuredTurn = sanitizeStructuredTurnForChat(current);
+  const content = hiddenMessages.includes(message.content.trim())
+    ? readStructuredMarkdown(structuredTurn)
+    : message.content;
+  return {
+    ...message,
+    content,
+    structuredTurn,
+    // The structured turn is authoritative. Persisted renderer snapshots from an
+    // interrupted/cancelled run may still carry the older `streaming: true`
+    // flag, which otherwise leaves the elapsed-time indicator running forever.
+    streaming: structuredTurn.status === "pending" || structuredTurn.status === "running",
+    // A late transport/error event must not keep "Reply failed" after OAEP has
+    // already completed or cancelled the same turn.
+    error: structuredTurn.status === "completed" || structuredTurn.status === "cancelled"
+      ? false
+      : hadTerminalError ? false : Boolean(message.error),
+  };
+}
+
+function sanitizeStructuredTurnForChat(state: StructuredTurnState): StructuredTurnState {
+  const parts = state.parts.filter((part) => !isTerminalErrorNotice(part));
+  if (state.status !== "error") return parts.length === state.parts.length ? state : { ...state, parts };
+  const { error: _error, ...rest } = state;
+  return { ...rest, status: "cancelled", parts };
+}
+
+function isTerminalErrorNotice(
+  part: StructuredAssistantPart,
+): part is Extract<StructuredAssistantPart, { kind: "notice" }> {
+  return part.kind === "notice"
+    && part.level === "error"
+    && part.id.endsWith(":notice:turn-error");
+}
+
+function finalizeStructuredTurn(
+  current: StructuredTurnState | undefined,
+  turnId: string,
+  status: "completed" | "cancelled",
+): StructuredTurnState {
+  let state = current ?? createStructuredTurnState(turnId);
+  if (status === "cancelled") return applyLocalStructuredEvent(state, { type: "turn.cancelled" });
+  for (const part of state.parts) {
+    if (part.status === "running" || part.status === "pending") {
+      state = applyLocalStructuredEvent(state, { type: "part.completed", part: { ...part, status: "completed" } });
+    }
+  }
+  return applyLocalStructuredEvent(state, { type: "turn.completed" });
+}
+
+function formatToolTimelineDebugLog(event: NonNullable<ChatEvent["toolTimeline"]>): string {
+  return [
+    `Tool event: ${event.title}`,
+    `id: ${event.id}`,
+    `kind: ${event.kind}`,
+    event.status ? `status: ${event.status}` : "",
+    event.toolName ? `tool: ${event.toolName}` : "",
+    event.path ? `path: ${event.path}` : "",
+    event.content ? `output:\n${event.content}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+function getDebugLevel(level: string | undefined): "log" | "info" | "warn" | "error" {
+  if (/error|fatal/i.test(level ?? "")) return "error";
+  if (/warn/i.test(level ?? "")) return "warn";
+  return "info";
+}
+
+function updateAssistantByIdOrLatestStreaming(
+  messages: UiMessage[],
+  assistantId: string | undefined,
+  update: (message: UiMessage) => UiMessage,
+): UiMessage[] {
+  const next = [...messages];
+  const index = findAssistantIndex(next, assistantId);
+  if (index === -1) return next;
+  next[index] = update(next[index]);
+  return next;
+}
+
+function settleAssistantAfterHiddenError(
+  messages: UiMessage[],
+  assistantId: string | undefined,
+  visibleError?: string,
+  recoveryActions?: UserFacingRecoveryAction[],
+): UiMessage[] {
+  const next = [...messages];
+  const index = findAssistantIndex(next, assistantId);
+  if (index === -1) return next;
+  const message = next[index];
+  if (!message.content.trim()) {
+    if (visibleError?.trim()) {
+      next[index] = {
+        ...message,
+        content: visibleError,
+        replyFailed: false,
+        streaming: false,
+        error: true,
+        recoveryActions,
+        structuredTurn: message.structuredTurn
+          ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
+          : undefined,
+        lastEventAt: Date.now(),
+      };
+      return next;
+    }
+    next[index] = {
+      ...message,
+      replyFailed: true,
+      streaming: false,
+      error: false,
+      structuredTurn: message.structuredTurn
+        ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
+        : undefined,
+    };
+    return next;
+  }
+  next[index] = {
+    ...message,
+    streaming: false,
+    error: false,
+    recoveryActions,
+    structuredTurn: message.structuredTurn
+      ? finalizeStructuredTurn(message.structuredTurn, message.id, "cancelled")
+      : undefined,
+  };
+  return next;
+}
+
+function findAssistantIndex(messages: UiMessage[], assistantId: string | undefined): number {
+  if (assistantId) {
+    const byId = messages.findIndex((message) => message.id === assistantId);
+    if (byId !== -1) return byId;
+  }
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "assistant" && messages[index].streaming) return index;
+  }
+  return -1;
+}

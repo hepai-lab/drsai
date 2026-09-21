@@ -20,11 +20,11 @@ const EXPLICIT_ACTIONS = new Set<RuntimeRecoveryAction>([
 export function runtimeErrorCategory(code: string): RuntimeErrorCategory {
   const value = code.toLowerCase();
   if (["binding", "resume_required", "session_recovery", "session_model", "session_workspace"].some((part) => value.includes(part))) return "binding";
-  if (["auth", "token", "logged_in", "permission_denied"].some((part) => value.includes(part))) return "auth";
+  if (["auth", "token", "logged_in", "permission_denied", "session_missing", "session_expired", "refresh_failed", "refresh_unavailable"].some((part) => value.includes(part))) return "auth";
   if (value.includes("approval")) return "approval";
   if (["resource", "attachment", "workspace_escape", "disk_", "path_"].some((part) => value.includes(part))) return "resource";
   if (["history", "cursor", "snapshot"].some((part) => value.includes(part))) return "history";
-  if (value.includes("model")) return "model";
+  if (value.includes("image_understanding") || value.includes("worker_unavailable") || value.includes("model")) return "model";
   if (["connection", "transport", "eof", "timeout", "network", "bridge"].some((part) => value.includes(part))) return "transport";
   if (["contract", "schema", "protocol", "jsonrpc", "jsonl", "response_invalid"].some((part) => value.includes(part))) return "contract";
   if (["runtime", "gateway", "run_"].some((part) => value.includes(part))) return "runtime";

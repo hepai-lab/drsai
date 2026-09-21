@@ -256,6 +256,7 @@ internal class AndroidUpdateCheckEngine(
     private val installedVersion: () -> InstalledAndroidVersion,
     private val allowInsecureLocal: Boolean,
     private val http: OkHttpClient,
+    private val strings: AndroidUpdateStrings = EnglishAndroidUpdateStrings,
 ) {
     suspend fun check(): AndroidUpdateState = withContext(Dispatchers.IO) {
         val failures = mutableListOf<String>()
@@ -284,7 +285,7 @@ internal class AndroidUpdateCheckEngine(
         }
         AndroidUpdateState.Failed(
             "manifest-sources-failed",
-            "无法从 CDN 或 GitHub 获取更新，请检查网络后重试 (${failures.joinToString()})",
+            strings.text(AndroidUpdateText.MANIFEST_FAILED, failures.joinToString()),
         )
     }
 
@@ -332,6 +333,7 @@ internal class AndroidUpdateDownloadEngine(
     private val http: OkHttpClient,
     private val verifier: (File, AndroidApkUpdate) -> Boolean,
     private val isCancelled: () -> Boolean = { false },
+    private val strings: AndroidUpdateStrings = EnglishAndroidUpdateStrings,
 ) {
     suspend fun download(
         requested: AndroidApkUpdate,
@@ -366,9 +368,9 @@ internal class AndroidUpdateDownloadEngine(
         AndroidUpdateState.Failed(
             code = if (timeout) "download-timeout" else "download-sources-failed",
             message = if (timeout) {
-                "下载超时，已保留已下载部分，请重试继续"
+                strings.text(AndroidUpdateText.DOWNLOAD_TIMEOUT)
             } else {
-                "CDN 和 GitHub 均无法完成下载或校验 (${failures.joinToString()})"
+                strings.text(AndroidUpdateText.DOWNLOAD_FAILED, failures.joinToString())
             },
             update = requested,
         )
@@ -555,6 +557,7 @@ class AndroidUpdateRepository(
             },
             allowInsecureLocal = allowInsecureLocal,
             http = http,
+            strings = LocalizedAndroidUpdateStrings(context),
         ).check()
     }
 
@@ -583,6 +586,7 @@ class AndroidUpdateRepository(
         http = http,
         verifier = { file, candidate -> ApkVerifier(context).verify(file, candidate) },
         isCancelled = isCancelled,
+        strings = LocalizedAndroidUpdateStrings(context),
     ).download(update, onProgress, onVerifying)
 
     @SuppressLint("NewApi")

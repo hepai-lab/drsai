@@ -10,14 +10,7 @@ from ...datamodel.db import Userinfo
 from ...datamodel.db import UserRole
 from ..deps import get_db
 from ..auth_source import record_auth_source
-from ...datamodel.db import UserAgents, AgentModeSettings
-
-from .....agent_factory.agent_mode_cofigs import (
-    get_default_agent_mode_config,
-    get_user_agents,
-    get_agents_mode,
-    )
-from datetime import timedelta
+from ...datamodel.db import AgentModeSettings
 from .....drsai_adapter.sso.jwt import create_jwt_token
 
 router = APIRouter()
@@ -178,10 +171,7 @@ async def local_login(user_id: str, password: str, db=Depends(get_db)) -> Dict:
 
         response = db.get(AgentModeSettings, filters={"user_id": user_id})
         if not response.status or not response.data:
-            # 将默认的配置存储进入对应的数据库
-            agents_list = get_default_agent_mode_config(user_id)
-            db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
-            db.upsert(UserAgents(user_id=user_id, agents=agents_list))
+            db.upsert(AgentModeSettings(user_id=user_id, agents_mode=[]))
 
         # Auto-provision GFS on login (silent failures — login succeeds either way).
         try:

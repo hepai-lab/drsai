@@ -7,7 +7,7 @@ from drsai_ui.env_load import load_webui_dotenv
 
 load_webui_dotenv()
 
-from .routes import access_compat, admin_analytics, agent_mode, agent_skills, agent_worker, auth, cloud, deer_flow, desktop_auth, docmaster, files, local_login, models, native, plans, releases, runs, sessions, settingsroute, skill_tags, skills, skills_gfs, skills_share, teams, users, validation
+from .routes import access_compat, admin_analytics, agent_mode, agent_skills, agent_worker, auth, cloud, deer_flow, desktop_auth, docmaster, files, local_login, models, native, releases, runs, sessions, settingsroute, skill_tags, skills, skills_gfs, skills_share, teams, users, validation
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator, Any
@@ -15,6 +15,7 @@ from typing import AsyncGenerator, Any
 # import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -27,7 +28,6 @@ from .routes import (
     admin_analytics,
     cloud,
     deer_flow,
-    plans,
     runs,
     sessions,
     settingsroute,
@@ -97,6 +97,34 @@ def _resolve_ui_path_prefix(ui_root: Path) -> str:
     return _detect_ui_path_prefix_from_build(ui_root)
 
 
+_HASHED_STATIC_SUFFIXES = (
+    ".js",
+    ".css",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".png",
+    ".svg",
+    ".webp",
+    ".jpg",
+    ".jpeg",
+    ".ico",
+)
+
+
+class CachedStaticFiles(StaticFiles):
+    """Long-cache hashed webpack assets; keep HTML/json revalidated."""
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        lowered = (path or "").lower()
+        if lowered.endswith(".html") or lowered in ("", "/", "index.html"):
+            response.headers["Cache-Control"] = "no-cache"
+        elif lowered.endswith(_HASHED_STATIC_SUFFIXES):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
@@ -120,7 +148,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         ui_mount = ui_path_prefix or "/"
         app.mount(
             ui_mount,
-            StaticFiles(directory=initializer.ui_root, html=True),
+            CachedStaticFiles(directory=initializer.ui_root, html=True),
             name="ui",
         )
         if ui_path_prefix:
@@ -235,6 +263,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
 # Create API router with version and documentation
 api = FastAPI(
     root_path="/api",
@@ -243,19 +273,13 @@ api = FastAPI(
     description="OpenDrSai-UI API is an application to interact with web agents.",
     docs_url="/docs" if settings.API_DOCS else None,
 )
+api.add_middleware(GZipMiddleware, minimum_size=500)
 
 # Include all routers with their prefixes
 api.include_router(
     sessions.router,
     prefix="/sessions",
     tags=["sessions"],
-    responses={404: {"description": "Not found"}},
-)
-
-api.include_router(
-    plans.router,
-    prefix="/plans",
-    tags=["plans"],
     responses={404: {"description": "Not found"}},
 )
 
@@ -513,7 +537,9 @@ if SERVICE_MODE == "PROD" or _oidc_enabled:
 
 if _oidc_enabled:
     from ....drsai_adapter.sso.hepai_oidc_router import router as hepai_oidc_router
+    # Mount on app (direct) and api (Caddy already proxies /api → backend).
     app.include_router(hepai_oidc_router, tags=["oidc"])
+    api.include_router(hepai_oidc_router, tags=["oidc"])
 
 if SERVICE_MODE == "PROD":
     from ....drsai_adapter.sso.ihep_sso_router import router as ihep_sso_router

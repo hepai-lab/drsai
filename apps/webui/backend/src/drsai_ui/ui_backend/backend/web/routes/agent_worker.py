@@ -9,7 +9,7 @@ from hepai import HepAI
 from hepai import HRModel
 from hepai.components.haiddf.worker._related_class import WorkerInfo
 from sqlmodel import Session as DBSession, select
-from ...datamodel.db import UserAgents, UserRemoteAgents, UserDDFAgents, AgentModeSettings, UserAgentUsage
+from ...datamodel.db import UserDDFAgents, AgentModeSettings, UserAgentUsage
 from ..deps import get_db
 from drsai_ui.ui_backend.backend.database import DatabaseManager
 import uuid
@@ -17,9 +17,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .....agent_factory.agent_mode_cofigs import (
+    assemble_catalog_agents,
+    delete_user_remote_agent,
+    find_catalog_agent,
     get_default_agent_mode_config,
     get_platform_agent_policy,
     get_user_agents,
+    get_user_remote_agents,
+    list_user_remote_agents,
+    patch_user_agent,
+    upsert_user_remote_agent,
 )
 from ..auth_source import get_user_source
 
@@ -111,18 +118,6 @@ def _same_agent_id(a: str, b: str) -> bool:
     return str(a or "").strip() == str(b or "").strip()
 
 
-def _iter_agents_user_remote_rows(db: DatabaseManager, user_id: str) -> list[dict]:
-    """All agent dicts from every userremoteagents row (some DBs have multiple rows per user)."""
-    out: list[dict] = []
-    remote_resp = db.get(UserRemoteAgents, filters={"user_id": user_id})
-    if not (remote_resp.status and remote_resp.data):
-        return out
-    for row in remote_resp.data:
-        agents = getattr(row, "agents", None) or (row.get("agents") if isinstance(row, dict) else None) or []
-        out.extend(agents)
-    return out
-
-
 def _add_display_name_keys(
     agents: list,
     exclude_agent_id: str,
@@ -153,7 +148,7 @@ def _existing_saved_agent_display_name_keys(
         for ddf_row in ddf_resp.data:
             _add_display_name_keys(ddf_row.agents or [], exclude_agent_id, keys)
 
-    _add_display_name_keys(_iter_agents_user_remote_rows(db, user_id), exclude_agent_id, keys)
+    _add_display_name_keys(list_user_remote_agents(db, user_id), exclude_agent_id, keys)
 
     return keys
 
@@ -167,6 +162,16 @@ class RemoteAgentTestRequest(BaseModel):
     model_name: str
     api_key: str
 
+
+@router.get("/remote_agent/list")
+async def list_remote_agents(user_id: str, db=Depends(get_db)) -> Dict:
+    """List user-owned remote/custom agents (row table; migrates legacy blob)."""
+    try:
+        return await get_user_remote_agents(user_id=user_id, db=db)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @router.post("/remote_agent/test")
 async def test_remote_agent(
     request: RemoteAgentTestRequest) -> Dict:
@@ -174,16 +179,18 @@ async def test_remote_agent(
     测试远程智能体连接并获取智能体信息
     '''
     try:
-        # 使用用户提供的远程 API key 连接远程智能体
-        worker = HRModel.connect(
+        def _connect_and_get_info():
+            worker = HRModel.connect(
                 name=request.model_name,
                 api_key=request.api_key,
                 base_url=request.base_url,
             )
-        # get_info() is sync and may hang on remote issues; enforce timeout
+            return worker.get_info()
+
+        # connect() and get_info() are sync and may hang; keep them off the event loop
         try:
             agent_info: dict = await asyncio.wait_for(
-                asyncio.to_thread(worker.get_info),
+                asyncio.to_thread(_connect_and_get_info),
                 timeout=float(os.getenv("DRSAI_REMOTE_AGENT_TEST_TIMEOUT", "12")),
             )
             logger.info(f"[test_remote_agent] model={request.model_name}, get_info keys: {list(agent_info.keys())}, announcements: {agent_info.get('announcements')}")
@@ -228,7 +235,7 @@ async def save_remote_agent(
     request: SaveRemoteAgentRequest,
     db=Depends(get_db)) -> Dict:
     '''
-    保存用户的远程智能体配置
+    保存用户的远程智能体配置（一行一智能体）
     '''
     try:
         saved_agent_config = request.agent_config
@@ -256,27 +263,7 @@ async def save_remote_agent(
             if not saved_agent_config.get("url"):
                 saved_agent_config["url"] = remote_url
 
-        # 获取用户现有的远程智能体配置
-        response = db.get(UserRemoteAgents, filters={"user_id": request.user_id})
-        if response.status and response.data:
-            # 用户已有配置，更新现有配置
-            user_agents: UserRemoteAgents = response.data[0]
-            agents_list = user_agents.agents or []
-            for agent in agents_list:
-                if _same_agent_id(str(agent.get("id")), agent_id):
-                    agents_list.remove(agent)
-                    break
-            agents_list.append(saved_agent_config)
-            user_agents.agents = agents_list
-            db.upsert(user_agents)
-        else:
-            # 用户没有配置，创建新配置
-            agents_list = [saved_agent_config]
-            user_agents = UserRemoteAgents(
-                user_id=request.user_id,
-                agents=agents_list
-            )
-            db.upsert(user_agents)
+        upsert_user_remote_agent(db, request.user_id, saved_agent_config)
 
         return {"status": True, "message": "智能体配置保存/更新成功"}
 
@@ -298,33 +285,13 @@ async def remove_remote_agent(
     删除用户的远程智能体
     '''
     try:
-
         del_id = request.id
+        if delete_user_remote_agent(db, request.user_id, del_id):
+            return {"status": True, "message": f"Remote agent '{request.id}' removed successfully"}
+        raise HTTPException(status_code=404, detail=f"Remote agent '{request.id}' not found")
 
-        # 获取用户的智能体数据
-        response = db.get(UserRemoteAgents, filters={"user_id": request.user_id})
-
-        if response.status and response.data:
-            user_agents: UserRemoteAgents = response.data[0]
-            agents_list = user_agents.agents or []
-
-            # 检查智能体是否存在
-            for agent in agents_list:
-                if agent["id"] == del_id:
-                    agents_list.remove(agent)
-                    # 更新数据库
-                    user_agents.agents = agents_list
-                    update_response = db.upsert(user_agents)
-                    if update_response.status:
-                        return {"status": True, "message": f"Remote agent '{request.id}' removed successfully"}
-                    else:
-                        raise HTTPException(status_code=500, detail="Failed to update database")
-                    
-            else:
-                raise HTTPException(status_code=404, detail=f"Remote agent '{request.id}' not found")
-        else:
-            raise HTTPException(status_code=404, detail="User agents not found")
-
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     
@@ -333,11 +300,8 @@ async def remove_remote_agent(
 async def get_user_agents_route(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
 
     try:
-        logger.info("[user_agents/list] Request: user_id=%s, is_refresh=%s", user_id, is_refresh)
         user_source = get_user_source(db, user_id)
         result = await get_user_agents(user_id, authorization, is_refresh, db, user_source=user_source)
-        logger.info("[user_agents/list] Response: count=%d, agents=%s", 
-                     len(result.get("data", [])), result.get("data"))
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -345,18 +309,16 @@ async def get_user_agents_route(user_id: str, authorization: str = Header(...), 
 @router.get("/user_agents/{agent_id}")
 async def get_user_agent_by_id(user_id: str, agent_id: str, db=Depends(get_db)) -> Dict:
     try:
-        response = db.get(UserAgents, filters={"user_id": user_id})
-        if response.status and response.data:
-            user_agents: UserAgents = response.data[0]
-            agent = next((agent for agent in user_agents.agents if agent.get("id") == agent_id), None)
-            if agent:
-                return {"status": True, "data": agent}
-            else:
-                # raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
-               return {"status": False, "message": "该智能体已经下线或更新，请删除图标，联系智能体开发者或者刷新后重新添加"}
-        else:
-            # raise HTTPException(status_code=404, detail="User agents not found")
-            return {"status": False, "message": "该智能体已经下线或更新，请删除图标，联系智能体开发者或者刷新后重新添加"}
+        user_source = get_user_source(db, user_id)
+        agent = find_catalog_agent(
+            user_id, agent_id, db, user_source=user_source
+        )
+        if agent:
+            return {"status": True, "data": agent}
+        return {
+            "status": False,
+            "message": "该智能体已经下线或更新，请删除图标，联系智能体开发者或者刷新后重新添加",
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -365,47 +327,26 @@ async def update_user_agent(
     request: SaveRemoteAgentRequest,
     db=Depends(get_db)) -> Dict:
     '''
-    保存用户的远程智能体配置
+    部分更新已有智能体。前端切模型时只传 id + defult_config_name，
+    不要求 mode，也不会把目录智能体误存成用户 remote。
     '''
     try:
         saved_agent_config = request.agent_config
-        agent_id: str|None = saved_agent_config.get("id")
-        if agent_id is None:
-            raise HTTPException(status_code=500, detail="Please to provide agent id")
-        updated_agent = None
+        agent_id: str|None = saved_agent_config.get("id") if isinstance(saved_agent_config, dict) else None
+        if not agent_id:
+            raise HTTPException(status_code=400, detail="请提供智能体 id。")
 
-        response = db.get(UserAgents, filters={"user_id": request.user_id})
-        if response.status and response.data:
-            # 用户已有配置，更新现有配置
-            user_agents: UserAgents = response.data[0]
-            agents_list = user_agents.agents or []
-            for agent in agents_list:
-                if agent["id"] == agent_id:
-                    updated_agent = agent
-                    agents_list.remove(agent)
-                    updated_agent.update(saved_agent_config)
-                    agents_list.append(updated_agent)
-                    user_agents.agents = agents_list
-                    db.upsert(user_agents)
-                    break
-        
-        response = db.get(AgentModeSettings, filters={"user_id": request.user_id}, return_json = False)
-        if response.status and response.data:
-            # 用户已有配置，更新现有配置
-            user_agents: AgentModeSettings = response.data[0]
-            agents_list = user_agents.agents_mode or []
-            for agent in agents_list:
-                if agent["id"] == agent_id:
-                    updated_agent = agent
-                    agents_list.remove(agent)
-                    updated_agent.update(saved_agent_config)
-                    agents_list.append(updated_agent)
-                    user_agents.agents_mode = agents_list
-                    db.upsert(user_agents)
-                    break
-
+        user_source = get_user_source(db, request.user_id)
+        patch_user_agent(
+            db,
+            request.user_id,
+            saved_agent_config,
+            user_source=user_source,
+        )
         return {"status": True, "message": "智能体配置保存/更新成功"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -518,10 +459,8 @@ def _resolve_default_agent_id(
     - Otherwise, fall back to the first agent in the list.
     - If the list is empty, return ``None``.
     """
-    resp = db.get(UserAgents, filters={"user_id": user_id})
-    agents: list[dict] = []
-    if resp.status and resp.data:
-        agents = resp.data[0].agents or []
+    user_source = get_user_source(db, user_id)
+    agents = assemble_catalog_agents(user_id, db, user_source=user_source)
 
     available_ids = {str(a.get("id") or "") for a in agents}
 

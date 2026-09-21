@@ -1,6 +1,5 @@
 import { Dropdown, Tooltip } from "antd";
 import {
-  Archive,
   BookOpen,
   ChevronDown,
   ChevronUp,
@@ -27,9 +26,9 @@ import { appContext } from "../../hooks/provider";
 import { useLang } from "../../i18n/useLang";
 import { logoutToIhepSso } from "../../utils/authSession";
 import { Agent } from "../../types/common";
+import { BrandLogo } from "../common/BrandLogo";
 import { Button } from "../common/Button";
 import SubMenu from "../common/SubMenu";
-import LearnPlanButton from "../features/Plans/LearnPlanButton";
 import SettingsMenu from "../settings";
 import type { RunStatus, Session } from "../types/datamodel";
 import UserProfileModal from "../userProfile";
@@ -154,6 +153,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         // const status = sessionRunStatuses[s.id];
         const isActive = [
           "active",
+          "ready",
           "awaiting_input",
           "pausing",
           "paused",
@@ -251,16 +251,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         disabled: isLoading,
                         danger: true,
                       },
-                      {
-                        key: "learn-plan",
-                        label: (
-                          <LearnPlanButton
-                            sessionId={Number(s.id)}
-                            messageId={-1}
-                          />
-                        ),
-                        onClick: (e) => e.domEvent.stopPropagation(),
-                      },
                     ],
                   }}
                   placement="bottomRight"
@@ -329,10 +319,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div
               className="flex items-center gap-2 flex-shrink-0"
             >
-              <img
-                src="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview"
+              <BrandLogo
                 alt="Dr.Sai Logo"
-                className="w-6 h-6 rounded-md object-cover"
+                className="w-6 h-6 rounded-md object-contain"
               />
             </div>
 
@@ -381,11 +370,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   id: "current_session",
                   label: "Current Session",
                   icon: <FileText className="w-4 h-4" />,
-                },
-                {
-                  id: "saved_plan",
-                  label: "Saved Plans",
-                  icon: <Archive className="w-4 h-4" />,
                 },
                 {
                   id: "agent_square",

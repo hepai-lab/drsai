@@ -14,8 +14,7 @@ from drsai.backend.runtime.journal import SessionCursorExpired
 
 
 class RuntimeLegacyConversationHandlers:
-    def __init__(self, *, sync_session: Callable[[str], Any], engine: Callable[[], Any]):
-        self._sync_session = sync_session
+    def __init__(self, *, engine: Callable[[], Any]):
         self._engine = engine
 
     def router(self) -> APIRouter:
@@ -36,29 +35,6 @@ class RuntimeLegacyConversationHandlers:
         limit: Annotated[int, Query(ge=1, le=500)] = 100,
     ):
         try:
-            projection = self._sync_session(session_id)
-            if projection.has_thread(session_id):
-                desktop_items = projection.conversation(session_id)
-                runtime_items: list[dict[str, Any]] = []
-                runtime_cursor = None
-                while len(runtime_items) < 5_000:
-                    runtime_page = self._engine().list_conversation(
-                        session_id, cursor=runtime_cursor, limit=500,
-                    )
-                    runtime_items.extend(runtime_page["data"])
-                    runtime_cursor = runtime_page.get("next_cursor")
-                    if not runtime_cursor:
-                        break
-                combined = desktop_items + runtime_items
-                for sequence, item in enumerate(combined, start=1):
-                    item["sequence"] = sequence
-                start = projection.decode_cursor(cursor)
-                page = combined[start:start + limit]
-                next_cursor = (
-                    projection.encode_cursor(start + len(page))
-                    if start + len(page) < len(combined) else None
-                )
-                return {"object": "list", "data": page, "next_cursor": next_cursor}
             return self._engine().list_conversation(session_id, cursor=cursor, limit=limit)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -67,7 +43,6 @@ class RuntimeLegacyConversationHandlers:
 
     async def conversation_snapshot(self, session_id: str):
         try:
-            self._sync_session(session_id)
             return self._engine().conversation_snapshot(session_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -78,7 +53,6 @@ class RuntimeLegacyConversationHandlers:
         limit: Annotated[int, Query(ge=1, le=2000)] = 500,
     ):
         try:
-            self._sync_session(session_id)
             events = self._engine().list_session_events(
                 session_id, after_sequence=after_sequence, limit=limit,
             )
@@ -96,7 +70,6 @@ class RuntimeLegacyConversationHandlers:
         after_sequence: Annotated[int, Query(ge=0)] = 0,
     ):
         try:
-            self._sync_session(session_id)
             self._engine().list_session_events(
                 session_id, after_sequence=after_sequence, limit=1,
             )

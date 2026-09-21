@@ -399,6 +399,26 @@ export function createGatewayEventHandler(
         }))
         return
       }
+      case 'artifact.created': {
+        flushBuffers()
+        const p = ev.payload as import('../gatewayTypes.js').ArtifactCreatedPayload
+        if (!p?.artifact_id || !p.name) return
+        updateCurrent(t => ({
+          ...t,
+          contentParts: [...t.contentParts, {
+            kind: 'artifact',
+            id: `artifact-${p.artifact_id}`,
+            artifactId: p.artifact_id,
+            name: p.name,
+            ...(p.path ? { path: p.path } : {}),
+            ...(typeof p.size === 'number' ? { size: p.size } : {}),
+            ...(typeof p.previewable === 'boolean' ? { previewable: p.previewable } : {}),
+            ...(typeof p.downloadable === 'boolean' ? { downloadable: p.downloadable } : {}),
+            ...(p.resource_ref ? { resourceRef: p.resource_ref } : {}),
+          }],
+        }))
+        return
+      }
 
       // ── Interactive prompts ──────────────────────────────────
       case 'approval.request':

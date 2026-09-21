@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import time
 from typing import Any, Mapping, Sequence
 
 from drsai.backend.runtime.agent import RuntimeExecutionError
@@ -22,13 +23,15 @@ class CodexModelCapability:
 
 
 class CodexModelCatalog:
-    def __init__(self, client: CodexJSONRPCClient):
+    def __init__(self, client: CodexJSONRPCClient, *, ttl_seconds: float = 30.0):
         self.client = client
+        self.ttl_seconds = max(0.1, ttl_seconds)
         self.models: dict[str, CodexModelCapability] = {}
         self.generation: int | None = None
         self.last_successful_at: str | None = None
         self.last_error: str | None = None
         self._refresh_lock = asyncio.Lock()
+        self._refreshed_monotonic = 0.0
 
     async def refresh(self, *, generation: int | None = None, force: bool = False) -> Mapping[str, CodexModelCapability]:
         async with self._refresh_lock:
@@ -74,11 +77,15 @@ class CodexModelCatalog:
             self.models = parsed
             self.generation = generation
             self.last_successful_at = datetime.now(timezone.utc).isoformat()
+            self._refreshed_monotonic = time.monotonic()
             self.last_error = None
             return dict(parsed)
 
     def is_current(self, generation: int) -> bool:
-        return bool(self.models) and self.generation == generation and self.last_error is None
+        return (
+            bool(self.models) and self.generation == generation and self.last_error is None
+            and time.monotonic() - self._refreshed_monotonic < self.ttl_seconds
+        )
 
     def select(self, requested_model: str) -> CodexModelCapability:
         if not requested_model:

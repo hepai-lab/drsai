@@ -13,6 +13,7 @@ from typing import Any, Iterable, Mapping
 INPUT_RESOURCE_PROTOCOL = "oaep.input/1"
 INPUT_RESOURCE_KINDS = frozenset({"file", "folder", "selection", "terminal", "browser"})
 MAX_INPUT_RESOURCES = 32
+MAX_INPUT_PARTS = 100
 MAX_RESOURCE_CONTENT_CHARS = 100_000
 MAX_TOTAL_RESOURCE_CONTENT_CHARS = 200_000
 MAX_NATIVE_IMAGE_BYTES = 20 * 1024 * 1024
@@ -25,6 +26,54 @@ _IMAGE_FORMAT_MIMES = MappingProxyType({
 })
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_OWOP_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
+
+
+def normalize_input_parts(
+    values: object,
+    resources: Iterable[Mapping[str, Any]],
+    *,
+    fallback_text: str,
+) -> tuple[Mapping[str, Any], ...]:
+    """Validate ordered public input Parts against the request's resources."""
+    normalized_resources = tuple(resources)
+    resource_ids = {str(resource["resource_id"]) for resource in normalized_resources}
+    if values is None:
+        default: list[Mapping[str, Any]] = []
+        if fallback_text:
+            default.append(MappingProxyType({"type": "text", "text": fallback_text}))
+        default.extend(
+            MappingProxyType({"type": "resource", "resource_id": str(resource["resource_id"])})
+            for resource in normalized_resources
+        )
+        return tuple(default)
+    if not isinstance(values, (list, tuple)):
+        raise ValueError("input_parts must be an array")
+    if not values or len(values) > MAX_INPUT_PARTS:
+        raise ValueError(f"input_parts must contain 1 to {MAX_INPUT_PARTS} entries")
+    normalized: list[Mapping[str, Any]] = []
+    total_text = 0
+    for index, raw in enumerate(values):
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"input_parts[{index}] must be an object")
+        part_type = str(raw.get("type") or "")
+        if part_type == "text":
+            text = raw.get("text")
+            if not isinstance(text, str) or not text:
+                raise ValueError(f"input_parts[{index}].text is invalid")
+            total_text += len(text)
+            if total_text > MAX_TOTAL_RESOURCE_CONTENT_CHARS:
+                raise ValueError("input_parts text exceeds the request limit")
+            normalized.append(MappingProxyType({"type": "text", "text": text}))
+            continue
+        if part_type == "resource":
+            resource_id = str(raw.get("resource_id") or "")
+            if resource_id not in resource_ids:
+                raise ValueError(f"input_parts[{index}] references an unknown resource")
+            normalized.append(MappingProxyType({"type": "resource", "resource_id": resource_id}))
+            continue
+        raise ValueError(f"input_parts[{index}] has an unsupported type")
+    return tuple(normalized)
 
 
 def normalize_input_resources(values: object) -> tuple[Mapping[str, Any], ...]:
@@ -106,6 +155,34 @@ def normalize_input_resources(values: object) -> tuple[Mapping[str, Any], ...]:
             record["sha256"] = sha256
         if isinstance(captured_at, str):
             record["captured_at"] = captured_at
+        resource_ref = raw.get("resource_ref")
+        if resource_ref is not None:
+            if not isinstance(resource_ref, Mapping):
+                raise ValueError(f"input_resources[{index}].resource_ref must be an object")
+            if (
+                resource_ref.get("protocol") != "owop/1"
+                or resource_ref.get("resource_type") != "file"
+                or not _OWOP_ID.fullmatch(str(resource_ref.get("workspace_id") or ""))
+                or not _OWOP_ID.fullmatch(str(resource_ref.get("resource_id") or ""))
+            ):
+                raise ValueError(f"input_resources[{index}].resource_ref is invalid")
+            normalized_ref: dict[str, Any] = {
+                "protocol": "owop/1",
+                "workspace_id": str(resource_ref["workspace_id"]),
+                "resource_type": "file",
+                "resource_id": str(resource_ref["resource_id"]),
+                "relation": "input_attachment",
+                "presentation": "inline",
+            }
+            if isinstance(resource_ref.get("label"), str) and resource_ref.get("label"):
+                normalized_ref["label"] = str(resource_ref["label"])[:512]
+            ref_digest = str(resource_ref.get("digest") or "")
+            if ref_digest:
+                raw_digest = ref_digest.removeprefix("sha256:")
+                if not _SHA256.fullmatch(raw_digest):
+                    raise ValueError(f"input_resources[{index}].resource_ref.digest is invalid")
+                normalized_ref["digest"] = f"sha256:{raw_digest}"
+            record["resource_ref"] = MappingProxyType(normalized_ref)
         seen.add(resource_id)
         normalized.append(MappingProxyType(record))
     return tuple(normalized)
@@ -116,11 +193,31 @@ def codex_input_items(
     resources: Iterable[Mapping[str, Any]],
     *,
     workspace_path: Path,
+    input_parts: object = None,
 ) -> list[dict[str, Any]]:
     """Encode OAEP resources into reviewed stable Codex UserInput variants."""
-    items: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    normalized_resources = normalize_input_resources(list(resources))
+    ordered_parts = normalize_input_parts(input_parts, normalized_resources, fallback_text=prompt)
+    by_id = {str(resource["resource_id"]): resource for resource in normalized_resources}
+    items: list[dict[str, Any]] = []
     root = workspace_path.resolve(strict=True)
-    for resource in normalize_input_resources(list(resources)):
+    consumed: set[str] = set()
+    for ordered in ordered_parts:
+        if ordered["type"] == "text":
+            items.append({"type": "text", "text": str(ordered["text"])})
+            continue
+        resource = by_id[str(ordered["resource_id"])]
+        consumed.add(str(resource["resource_id"]))
+        _append_codex_resource(items, resource, root)
+    # Host-generated companion context (for example a browser screenshot's
+    # visible text) is not a Composer Part, but must still reach the Backend.
+    for resource in normalized_resources:
+        if str(resource["resource_id"]) not in consumed:
+            _append_codex_resource(items, resource, root)
+    return items
+
+
+def _append_codex_resource(items: list[dict[str, Any]], resource: Mapping[str, Any], root: Path) -> None:
         kind = str(resource["kind"])
         if kind in {"file", "folder"}:
             reference = str(resource["reference"])
@@ -130,7 +227,7 @@ def codex_input_items(
                 items.append({"type": "localImage", "path": str(target)})
             else:
                 items.append({"type": "mention", "name": str(resource["name"]), "path": str(target)})
-            continue
+            return
         header = f"[OpenDrSai input resource: {kind}; name={resource['name']}]"
         details = [header]
         if resource.get("title"):
@@ -139,7 +236,6 @@ def codex_input_items(
             details.append(f"URL: {resource['url']}")
         details.append(str(resource["content"]))
         items.append({"type": "text", "text": "\n".join(details)})
-    return items
 
 
 def autogen_input_task(
@@ -147,6 +243,7 @@ def autogen_input_task(
     resources: Iterable[Mapping[str, Any]],
     *,
     workspace_path: Path,
+    input_parts: object = None,
 ) -> Any:
     """Encode the same OAEP resources for the production OpenDrSai Agent.
 
@@ -156,50 +253,71 @@ def autogen_input_task(
     store or Backend-specific manifest is introduced.
     """
     normalized = normalize_input_resources(list(resources))
-    if not normalized:
+    ordered_parts = normalize_input_parts(input_parts, normalized, fallback_text=prompt)
+    if not normalized and len(ordered_parts) == 1 and ordered_parts[0].get("type") == "text":
         return prompt
     from autogen_agentchat.messages import MultiModalMessage
-    from autogen_core import Image
 
     root = workspace_path.resolve(strict=True)
-    content: list[Any] = [prompt]
+    content: list[Any] = []
+    by_id = {str(resource["resource_id"]): resource for resource in normalized}
+    consumed: set[str] = set()
+    for ordered in ordered_parts:
+        if ordered["type"] == "text":
+            content.append(str(ordered["text"]))
+            continue
+        resource = by_id[str(ordered["resource_id"])]
+        consumed.add(str(resource["resource_id"]))
+        _append_autogen_resource(content, resource, root)
     for resource in normalized:
-        kind = str(resource["kind"])
-        # Regression controls are trusted Runtime policy, never model input.
-        # Exposing fault schedules or successful fixtures would leak expected
-        # answers and allow a model to pass without the controlled Tool path.
-        if kind == "selection" and resource.get("name") in {
-            "OpenDrSai regression control", "OpenDrSai trusted evidence",
-        }:
-            continue
-        if kind in {"file", "folder"}:
-            reference = str(resource["reference"])
-            target = _resolve_workspace_resource(root, reference, kind=kind, resource=resource)
-            image = _inspect_native_image(target, resource) if kind == "file" else None
-            if image is not None:
-                content.append(
-                    f"[OpenDrSai image resource: resource_id={resource['resource_id']}; "
-                    f"name={resource['name']}]"
-                )
-                content.append(Image.from_file(target))
-            else:
-                content.append(
-                    f"[OpenDrSai input resource: {kind}; name={resource['name']}; "
-                    f"workspace_path={reference}]"
-                )
-            continue
-        details = [f"[OpenDrSai input resource: {kind}; name={resource['name']}]" ]
-        if resource.get("title"):
-            details.append(f"Title: {resource['title']}")
-        if resource.get("url"):
-            details.append(f"URL: {resource['url']}")
-        details.append(str(resource["content"]))
-        content.append("\n".join(details))
+        if str(resource["resource_id"]) not in consumed:
+            _append_autogen_resource(content, resource, root)
     return MultiModalMessage(content=content, source="user")
 
 
+def _append_autogen_resource(content: list[Any], resource: Mapping[str, Any], root: Path) -> None:
+    kind = str(resource["kind"])
+    # Regression controls are trusted Runtime policy, never model input.
+    # Exposing fault schedules or successful fixtures would leak expected
+    # answers and allow a model to pass without the controlled Tool path.
+    if kind == "selection" and resource.get("name") in {
+        "OpenDrSai regression control", "OpenDrSai trusted evidence",
+    }:
+        return
+    if kind in {"file", "folder"}:
+        reference = str(resource["reference"])
+        target = _resolve_workspace_resource(root, reference, kind=kind, resource=resource)
+        image = _inspect_native_image(target, resource) if kind == "file" else None
+        if image is not None:
+            from autogen_core import Image
+            content.append(
+                f"[OpenDrSai image resource: resource_id={resource['resource_id']}; "
+                f"name={resource['name']}]"
+            )
+            content.append(Image.from_file(target))
+        else:
+            content.append(
+                f"[OpenDrSai input resource: {kind}; name={resource['name']}; "
+                f"workspace_path={reference}]"
+            )
+        return
+    details = [f"[OpenDrSai input resource: {kind}; name={resource['name']}]" ]
+    if resource.get("title"):
+        details.append(f"Title: {resource['title']}")
+    if resource.get("url"):
+        details.append(f"URL: {resource['url']}")
+    details.append(str(resource["content"]))
+    content.append("\n".join(details))
+
+
 def serializable_input_resources(values: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    return [dict(value) for value in values]
+    return [
+        {
+            **dict(value),
+            **({"resource_ref": dict(value["resource_ref"])} if isinstance(value.get("resource_ref"), Mapping) else {}),
+        }
+        for value in values
+    ]
 
 
 def inspect_native_image_resources(

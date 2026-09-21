@@ -1,0 +1,22 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
+  "include": [
+    "../shared/renderer/src/env.d.ts",
+    "../shared/renderer/src/**/*",
+    "../shared/renderer/src/**/*.tsx",
+    "src/shared/**/*",
+    "../shared/api/**/*",
+    "src/preload/*.d.ts"
+  ],
+  "compilerOptions": {
+    "composite": true,
+    "jsx": "react-jsx",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "paths": {
+      "@renderer/*": ["../shared/renderer/src/*"],
+      "@shared/*": ["../shared/api/*"]
+    }
+  }
+}
+

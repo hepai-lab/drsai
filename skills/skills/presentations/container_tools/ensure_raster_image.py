@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Copyright (c) OpenAI. All rights reserved.
+"""Ensure input images are rasterized, converting to PNG when needed.
 
-Ensures input images are rasterized, converting to PNG when needed. Primarily used to
-preview image assets extracted from PowerPoint files.
-
+Primarily used to preview image assets extracted from PowerPoint files. Dependencies
+are resolved from the local OpenDrSai/Python environment and PATH.
 
 Dependencies used by this tool:
-- Codex runtime Node + sharp: SVG/SVGZ rasterization
-- Codex runtime Poppler + pdf2image: PDF rasterization (first page)
-- Codex runtime Pillow: TIFF/JPEG XR output bridging
+- local Node + sharp: SVG/SVGZ rasterization
+- local Poppler + pdf2image: PDF rasterization (first page)
+- local Pillow: TIFF/JPEG XR output bridging
 - libheif-examples: heif-convert for HEIC/HEIF -> PNG
 - jxr-tools (or libjxr-tools on older distros): JxrDecApp for JPEG XR (JXR/WDP)
 """
@@ -129,12 +128,12 @@ def ensure_raster_image(path: str, out_dir: str | None = None) -> str:
     # Convertible formats
     if ext_lower in (".emf", ".wmf"):
         _unsupported_format(
-            path, "No equivalent standalone EMF/WMF converter exists in the Codex runtime bundle."
+            path, "No standalone EMF/WMF converter is configured in the local environment."
         )
 
     if ext_lower in (".emz", ".wmz"):
         _unsupported_format(
-            path, "No equivalent standalone EMF/WMF converter exists in the Codex runtime bundle."
+            path, "No standalone EMF/WMF converter is configured in the local environment."
         )
 
     if ext_lower == ".svg":
@@ -173,7 +172,7 @@ def ensure_raster_image(path: str, out_dir: str | None = None) -> str:
 
     if ext_lower in (".eps", ".ps"):
         _unsupported_format(
-            path, "No equivalent EPS/PS converter exists in the Codex runtime bundle."
+            path, "No standalone EPS/PS converter is configured in the local environment."
         )
 
     if ext_lower in RASTER_EXTS:

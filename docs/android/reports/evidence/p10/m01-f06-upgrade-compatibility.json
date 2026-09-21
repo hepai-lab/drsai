@@ -1,0 +1,42 @@
+{
+  "schema_version": "opendrsai.p10-upgrade-compatibility-result/1",
+  "feature_id": "M01-F06",
+  "generated_at": "2026-08-14T09:40:43.161955+00:00",
+  "passed": true,
+  "environment": {
+    "serial": "emulator-5554",
+    "api": 35,
+    "kind": "emulator_preacceptance"
+  },
+  "upgrade_paths": {
+    "v1.5.5": {
+      "source_schema": 11,
+      "target_schema": 16,
+      "test": "v155Schema11SnapshotUpgradesWithoutDataLossOrDuplicateSetup",
+      "passed": true
+    },
+    "v1.5.6": {
+      "source_schema": 13,
+      "target_schema": 16,
+      "test": "v156Schema13SnapshotUpgradesWithoutDataLossOrDuplicateSetup",
+      "passed": true
+    }
+  },
+  "preserved_capabilities": {
+    "conversations_and_messages": true,
+    "oaep": true,
+    "model_configuration": true,
+    "credential_reference": true,
+    "saf_workspace_reference": true,
+    "memory": true,
+    "tool_artifact": true,
+    "setup_completion_without_duplicate_wizard": true
+  },
+  "fail_closed": true,
+  "provenance": {
+    "app_apk_sha256": "9ec66dc4d64b9de90350a76799d895c6144c1fbb902151b72058aef6f8daaaa8",
+    "test_apk_sha256": "7210e730d0c3da21b11be167c376359bcf4aa220a15ffa9d5a2666bae46f848b",
+    "instrumented_test_sha256": "21a740fe007aa15e5bbb85eb054d5d04ba9af6c5b895de81250b711a75d1a9f6"
+  },
+  "instrumentation_summary": "OK (2 tests)"
+}

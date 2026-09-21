@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "feature_id": "M09-F01",
+  "acceptance_run_id": "p10-round-045-talkback-semantics",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "invariants": {
+    "core_icon_controls_have_accessible_names": true,
+    "disabled_and_expandable_controls_expose_state": true,
+    "active_run_updates_use_polite_live_region": true,
+    "timeline_semantic_order_matches_visual_order": true,
+    "composer_exposes_name_and_editability_state": true
+  },
+  "tests": {
+    "CoreAccessibilitySemanticsTest_API35": "3 tests, 0 failures",
+    "testDebugUnitTest": "723 tests, 0 failures, 2 skipped"
+  }
+}

@@ -1,8 +1,16 @@
 package ai.drsai.remote.ui
 
+import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.view.WindowManager
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -16,6 +24,7 @@ import ai.drsai.remote.data.AppState
 import ai.drsai.remote.data.ModelInfo
 import ai.drsai.remote.data.ModelProviderConfig
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -61,7 +70,7 @@ class ModelSettingsScreenUiTest {
                 ModelSettingsScreen(
                     state = state(), onBack = {}, onSelectModel = {}, onDeleteProvider = {},
                     onSaveProvider = { _, _, _, _, _, _, _, _ -> saves += 1 },
-                    onDiscoverModels = { _, _, _, _ -> }, onTestConnection = { _, _, _, _ -> },
+                    onDiscoverModels = { _, _, _, _ -> }, onTestConnection = { _, _, _, _, _ -> },
                     onClearMessage = {},
                 )
             }
@@ -82,8 +91,91 @@ class ModelSettingsScreenUiTest {
 
         rule.onNodeWithText("https://api.zhizengzeng.com/v1/chat/completions").assertIsDisplayed()
         rule.onAllNodesWithText("deepseek-v4-flash").assertCountEquals(2)
+        rule.onNodeWithTag("provider-api-key").assertIsEnabled()
+        rule.onAllNodesWithText("OpenAI Compatible").assertCountEquals(0)
         rule.onNodeWithTag("model-provider-editor-list").performScrollToIndex(6)
         rule.onAllNodesWithText("deepseek-v4-pro").assertCountEquals(2)
+    }
+
+    @Test fun openAiPresetNeedsOnlyKeyAndRecommendedModelChoice() {
+        render()
+        rule.onNodeWithTag("add-model-provider").performClick()
+        rule.onNodeWithText("OpenAI").assertIsDisplayed().performClick()
+
+        rule.onNodeWithText("https://api.openai.com/v1/chat/completions").assertIsDisplayed()
+        rule.onNodeWithTag("provider-api-key").assertIsEnabled()
+        rule.onAllNodesWithText("gpt-5.1").assertCountEquals(2)
+    }
+
+    @Test fun hepAiPresetPinsSignedInEndpointAndRecommendedModel() {
+        render()
+        rule.onNodeWithTag("add-model-provider").performClick()
+        rule.onNodeWithText("HepAI").assertIsDisplayed().performClick()
+
+        rule.onAllNodesWithText("deepseek-ai/deepseek-v4-pro").assertCountEquals(2)
+    }
+
+    @Test fun credentialEditorBlocksScreenshotsAndScrubsDraftWhenDiscarded() {
+        var activity: Activity? = null
+        rule.setContent {
+            activity = LocalContext.current as? Activity
+            MaterialTheme {
+                ModelSettingsScreen(
+                    state = state(), onBack = {}, onSelectModel = {}, onDeleteProvider = {},
+                    onSaveProvider = { _, _, _, _, _, _, _, _ -> },
+                    onDiscoverModels = { _, _, _, _ -> }, onTestConnection = { _, _, _, _, _ -> },
+                    onClearMessage = {},
+                )
+            }
+        }
+        rule.onNodeWithTag("add-model-provider").performClick()
+        rule.onNodeWithText("智增增").performClick()
+        val clipboard = activity!!.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("sentinel", "clipboard-before-entry"))
+        rule.onNodeWithTag("provider-api-key").performTextReplacement("secret-draft-canary")
+        rule.runOnIdle {
+            assertTrue(activity!!.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
+        }
+        assertTrue(
+            rule.onNodeWithTag("provider-api-key").fetchSemanticsNode()
+                .config.contains(SemanticsProperties.Password),
+        )
+        assertEquals("clipboard-before-entry", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+
+        rule.onNodeWithTag("model-provider-editor-back").performClick()
+        rule.onNodeWithText("放弃修改").performClick()
+        rule.runOnIdle {
+            assertEquals(0, activity!!.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
+        }
+
+        rule.onNodeWithTag("add-model-provider").performClick()
+        rule.onNodeWithText("智增增").performClick()
+        val editable = rule.onNodeWithTag("provider-api-key").fetchSemanticsNode()
+            .config[SemanticsProperties.EditableText].text
+        assertEquals("", editable)
+        clipboard.clearPrimaryClip()
+    }
+
+    @Test fun credentialDraftIsExcludedFromSavedInstanceState() {
+        val restoration = StateRestorationTester(rule)
+        restoration.setContent {
+            MaterialTheme {
+                ModelSettingsScreen(
+                    state = state(), onBack = {}, onSelectModel = {}, onDeleteProvider = {},
+                    onSaveProvider = { _, _, _, _, _, _, _, _ -> },
+                    onDiscoverModels = { _, _, _, _ -> }, onTestConnection = { _, _, _, _, _ -> },
+                    onClearMessage = {},
+                )
+            }
+        }
+        rule.onNodeWithTag("add-model-provider").performClick()
+        rule.onNodeWithText("智增增").performClick()
+        rule.onNodeWithTag("provider-api-key").performTextReplacement("saved-state-secret-canary")
+
+        restoration.emulateSavedInstanceStateRestore()
+
+        rule.onNodeWithTag("add-model-provider").assertIsDisplayed()
+        rule.onAllNodesWithText("saved-state-secret-canary").assertCountEquals(0)
     }
 
     private fun render(onDelete: (String) -> Unit = {}) {
@@ -93,7 +185,7 @@ class ModelSettingsScreenUiTest {
                 ModelSettingsScreen(
                     state = state, onBack = {}, onSelectModel = {}, onDeleteProvider = onDelete,
                     onSaveProvider = { _, _, _, _, _, _, _, _ -> },
-                    onDiscoverModels = { _, _, _, _ -> }, onTestConnection = { _, _, _, _ -> },
+                    onDiscoverModels = { _, _, _, _ -> }, onTestConnection = { _, _, _, _, _ -> },
                     onClearMessage = {},
                 )
             }

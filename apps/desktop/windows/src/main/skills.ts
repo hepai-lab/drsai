@@ -12,18 +12,21 @@ const GATEWAY_BASE_URL = `http://127.0.0.1:${resolveGatewayPort()}`;
 
 /**
  * Skills must use the same user_id as chat/agent creation.
- * Chat sends authContext.userId (OIDC sub / email); skills previously
- * omitted user_id so the gateway fell back to the OS username and wrote
- * under a different WORKDIR/<user>/configs/skills tree — making Skills UI
- * and the agent disagree about what is installed.
+ * When authenticated, gateway storage is keyed by OIDC subject — never email.
  */
 async function resolveSkillsUserId(explicit?: string): Promise<string | undefined> {
+  try {
+    const session = await getAuthSession();
+    const subject = session.user?.id?.trim();
+    if (subject) return subject;
+  } catch {
+    /* fall through */
+  }
   const trimmed = explicit?.trim();
   if (trimmed) return trimmed;
   try {
     const session = await getAuthSession();
-    const userId = session.user?.id || session.user?.email;
-    return userId?.trim() || undefined;
+    return session.user?.email?.trim() || undefined;
   } catch {
     return undefined;
   }
@@ -89,9 +92,12 @@ export async function listInstalledSkills(userId?: string): Promise<GatewaySkill
   return res.data ?? [];
 }
 
-export async function listAvailableSkills(userId?: string): Promise<GatewayAvailableSkill[]> {
+export async function listAvailableSkills(userId?: string, coreOnly?: boolean): Promise<GatewayAvailableSkill[]> {
   const uid = await resolveSkillsUserId(userId);
-  const qs = uid ? `?user_id=${encodeURIComponent(uid)}` : "";
+  const params = new URLSearchParams();
+  if (uid) params.set("user_id", uid);
+  if (coreOnly) params.set("core_only", "true");
+  const qs = params.toString() ? `?${params.toString()}` : "";
   const res = await gatewayFetch<{ data: GatewayAvailableSkill[] }>("GET", `/v1/skills/available${qs}`);
   return res.data ?? [];
 }

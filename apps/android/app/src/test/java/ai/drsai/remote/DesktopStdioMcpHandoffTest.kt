@@ -49,8 +49,8 @@ class DesktopStdioMcpHandoffTest {
         )) {
             assertEquals(DesktopHandoffState.UNAVAILABLE, decision.state)
             assertEquals(setOf(RuntimeCapability.MCP_STDIO), decision.required)
-            assertTrue(decision.message.contains("Android 不支持本地 stdio MCP"))
-            assertTrue(decision.message.contains("尚未调用任何工具"))
+            assertTrue(decision.message.contains("Android cannot run local stdio MCP"))
+            assertTrue(decision.message.contains("no tool was called"))
             assertEquals("research", decision.resourceId)
         }
     }
@@ -62,8 +62,8 @@ class DesktopStdioMcpHandoffTest {
         assertEquals(DesktopHandoffState.OFFER, decision.state)
         assertEquals("alpha", decision.target?.displayName)
         assertEquals("Desktop Runtime", decision.executionLocation)
-        assertTrue(decision.message.contains("执行位置为 Desktop Runtime"))
-        assertTrue(decision.message.contains("仍需审批"))
+        assertTrue(decision.message.contains("Desktop Runtime"))
+        assertTrue(decision.message.contains("require approval"))
     }
 
     @Test fun stdioHandoffPackageRequiresConfirmationAndBindsTransportAndResourceIntoDigest() {

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "feature_id": "M01-F03",
+  "acceptance_run_id": "p10-round-003-setup-readiness",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "covered_states": ["new_unready", "new_ready", "configured_upgrade", "active_interrupted", "completed", "skipped"],
+  "production_behavior": [
+    "account_scoped setup state",
+    "configured upgrades with history are not interrupted",
+    "new unready users enter the exact repair step",
+    "successful first task marks setup complete"
+  ],
+  "tests": {
+    "SetupJourneyTest": "5 passed",
+    "full_android_debug_jvm": "648 tests, 0 failed, 2 skipped",
+    "api35_MainInterfaceTest": "24 passed, 0 failed"
+  },
+  "device": "OpenDrSai_P9_API35 x86_64 emulator"
+}

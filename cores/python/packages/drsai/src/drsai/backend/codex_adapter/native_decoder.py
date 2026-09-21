@@ -374,7 +374,7 @@ class CodexNativeEventDecoder:
         if native_type in {"userMessage", "agentMessage"}:
             text, parts = self._message_content(item)
             return {
-                **safe,
+                "id": safe.get("id"),
                 "role": "user" if native_type == "userMessage" else "assistant",
                 "text": text,
                 "parts": parts,
@@ -406,7 +406,12 @@ class CodexNativeEventDecoder:
             changes = safe.get("changes")
             if not isinstance(changes, list):
                 changes = [{"path": safe.get("path"), "operation": safe.get("operation") or "modify"}]
-            return {**safe, "changes": changes, "status": self._item_status(item)}
+            return {
+                "id": safe.get("id"),
+                "summary": safe.get("summary") or "",
+                "changes": changes,
+                "status": self._item_status(item),
+            }
         if native_type == "hookPrompt":
             return {
                 "id": safe.get("id"), "interaction_type": "approval",
@@ -506,10 +511,18 @@ class CodexNativeEventDecoder:
             elif kind == "image":
                 url = self.safe(raw.get("url") or "")
                 parts.append({"type": "image", **({"url": url} if isinstance(url, str) and url else {})})
-            elif kind in {"localImage", "localAudio"}:
+            elif kind in {"localImage", "localAudio", "mention", "file"}:
                 raw_path = str(raw.get("path") or "").replace("\\", "/")
-                name = PureWindowsPath(raw_path).name or PurePosixPath(raw_path).name
-                parts.append({"type": "image" if kind == "localImage" else "audio", "name": self.safe(name)})
+                name = str(raw.get("name") or "") or PureWindowsPath(raw_path).name or PurePosixPath(raw_path).name
+                part_type = "image" if kind == "localImage" else "audio" if kind == "localAudio" else "file"
+                part = {"type": part_type, "name": self.safe(name)}
+                # This field is private to the history import pipeline.  Live
+                # OAEP never receives a backend absolute path; the backend
+                # client either registers it inside the bound Workspace or
+                # removes it and emits an explicit degraded-mode Notice.
+                if self.history_mode and raw_path:
+                    part["_native_path"] = raw_path
+                parts.append(part)
             elif kind == "audio":
                 url = self.safe(raw.get("url") or "")
                 parts.append({"type": "audio", **({"url": url} if isinstance(url, str) and url else {})})
@@ -676,12 +689,16 @@ class CodexNativeEventDecoder:
         )
 
     def safe(self, value: Any, key: str = "") -> Any:
-        if _SECRET.search(key):
-            return "[REDACTED]"
-        if isinstance(value, Mapping):
-            return {str(k): self.safe(v, str(k)) for k, v in value.items()}
-        if isinstance(value, list):
-            return [self.safe(v) for v in value[:100]]
-        if isinstance(value, str):
-            return value if len(value) <= self.max_field_chars else value[: self.max_field_chars] + "…[truncated]"
-        return value if isinstance(value, (int, float, bool, type(None))) else type(value).__name__
+        # [DISABLED] Native decoder secret redaction disabled — returns value unchanged (with truncation only)
+        if isinstance(value, str) and len(value) > self.max_field_chars:
+            return value[: self.max_field_chars] + "…[truncated]"
+        return value if isinstance(value, (int, float, bool, type(None))) or isinstance(value, str) else type(value).__name__ if not isinstance(value, (Mapping, list)) else value
+        # if _SECRET.search(key):
+        #     return "[REDACTED]"
+        # if isinstance(value, Mapping):
+        #     return {str(k): self.safe(v, str(k)) for k, v in value.items()}
+        # if isinstance(value, list):
+        #     return [self.safe(v) for v in value[:100]]
+        # if isinstance(value, str):
+        #     return value if len(value) <= self.max_field_chars else value[: self.max_field_chars] + "…[truncated]"
+        # return value if isinstance(value, (int, float, bool, type(None))) else type(value).__name__

@@ -110,8 +110,8 @@ def test_authlib_register_uses_confidential_secret():
 
 def test_callback_redirect_uri_allowlist():
     allowed = (
-        "https://opendrsai.ihep.ac.cn/auth/oidc/callback",
-        "https://drsaiv2.ihep.ac.cn/auth/oidc/callback",
+        "https://opendrsai.ihep.ac.cn/api/auth/oidc/callback",
+        "https://drsaiv2.ihep.ac.cn/api/auth/oidc/callback",
     )
     request = MagicMock()
     request.headers = {
@@ -120,8 +120,17 @@ def test_callback_redirect_uri_allowlist():
     }
     request.url.scheme = "http"
     request.url.netloc = "127.0.0.1:8086"
-    request.url_for.return_value = "http://127.0.0.1:8086/auth/oidc/callback"
+    request.url_for.return_value = "http://127.0.0.1:8086/api/auth/oidc/callback"
     assert callback_redirect_uri(request, allowed) == allowed[0]
+
+    request.headers = {
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "drsaiv2.ihep.ac.cn",
+        "host": "drsaiv2.ihep.ac.cn",
+    }
+    request.url.scheme = "https"
+    request.url.netloc = "drsaiv2.ihep.ac.cn"
+    assert callback_redirect_uri(request, allowed) == allowed[1]
 
     request.headers = {
         "x-forwarded-proto": "https",
@@ -132,6 +141,24 @@ def test_callback_redirect_uri_allowlist():
     request.url.netloc = "evil.example"
     with pytest.raises(OidcError, match="not registered"):
         callback_redirect_uri(request, allowed)
+
+
+def test_callback_redirect_uri_prefers_env():
+    allowed = (
+        "https://opendrsai.ihep.ac.cn/api/auth/oidc/callback",
+        "https://drsaiv2.ihep.ac.cn/api/auth/oidc/callback",
+    )
+    request = MagicMock()
+    request.headers = {
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "drsaiv2.ihep.ac.cn",
+    }
+    request.url.scheme = "https"
+    request.url.netloc = "drsaiv2.ihep.ac.cn"
+    assert (
+        callback_redirect_uri(request, allowed, preferred=allowed[0])
+        == allowed[0]
+    )
 
 
 def test_session_user_payload_and_id():

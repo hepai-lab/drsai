@@ -12,6 +12,7 @@ import ai.drsai.remote.remote.generated.OaepPlanContent
 import ai.drsai.remote.remote.generated.OaepReasoningContent
 import ai.drsai.remote.remote.generated.OaepSubtaskContent
 import ai.drsai.remote.remote.generated.OaepToolCallContent
+import ai.drsai.remote.remote.data.OaepJsonCodec
 import ai.drsai.remote.runtime.oaep.NormalizedAgentEvent
 import ai.drsai.remote.runtime.oaep.OaepDiagnosticMetadata
 import org.json.JSONObject
@@ -220,7 +221,7 @@ object PythonRuntimeEventMapper {
                     payload.optString("role", "assistant"), payload.optString("text"),
                     payload.optString("phase", "final"),
                     payload.optJSONArray("citations")?.objects()?.map(::jsonMap).orEmpty(),
-                    payload.optJSONArray("parts")?.objects()?.map(::jsonMap).orEmpty(),
+                    payload.optJSONArray("parts")?.objects()?.map(::jsonMap)?.map(OaepJsonCodec::messagePart).orEmpty(),
                 ),
             )
             "reasoning.delta" -> NormalizedAgentEvent.ItemDelta(

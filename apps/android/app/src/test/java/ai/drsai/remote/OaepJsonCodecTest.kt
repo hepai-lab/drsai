@@ -6,8 +6,11 @@ import ai.drsai.remote.remote.generated.OaepArtifactContent
 import ai.drsai.remote.remote.generated.OaepCommandExecutionContent
 import ai.drsai.remote.remote.generated.OaepContract
 import ai.drsai.remote.remote.generated.OaepMessageContent
+import ai.drsai.remote.remote.generated.OaepLegacyMessagePart
 import ai.drsai.remote.remote.generated.OaepNoticeContent
 import ai.drsai.remote.remote.generated.OaepReasoningContent
+import ai.drsai.remote.remote.model.OaepTimelineEntry
+import ai.drsai.remote.remote.model.projectOaepPresentation
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -16,6 +19,16 @@ import org.junit.Test
 import java.io.File
 
 class OaepJsonCodecTest {
+    private fun protocolFixture(name: String): JSONObject {
+        val candidates = listOf(
+            File("../../../cores/protocol/oaep/$name"),
+            File("../../cores/protocol/oaep/$name"),
+            File("cores/protocol/oaep/$name"),
+        )
+        return JSONObject(candidates.firstOrNull(File::isFile)?.readText()
+            ?: error("OAEP fixture $name was not found"))
+    }
+
     private fun fixture(): JSONObject {
         val candidates = listOf(
             File("../../../cores/protocol/oaep/examples.json"),
@@ -93,7 +106,7 @@ class OaepJsonCodecTest {
 
         val decoded = OaepJsonCodec.item(message)
         val content = decoded.content as OaepMessageContent
-        assertEquals("visible", content.parts.single()["text"])
+        assertEquals("visible", (content.parts.single() as OaepLegacyMessagePart).text)
         assertEquals(
             "visible",
             JSONObject(OaepJsonCodec.contentJson(content))
@@ -101,6 +114,45 @@ class OaepJsonCodecTest {
                 .getJSONObject(0)
                 .getString("text"),
         )
+    }
+
+    @Test
+    fun `unknown message part becomes safe unsupported projection`() {
+        val message = protocolFixture("conversation-resources-p2.fixture.json")
+            .getJSONObject("snapshot").getJSONArray("items").getJSONObject(0)
+        message.getJSONObject("content").getJSONArray("parts").put(
+            JSONObject().put("part_id", "part-future").put("type", "future_object")
+                .put("opaque", JSONObject().put("secret", true)),
+        )
+        val content = OaepJsonCodec.item(message).content as OaepMessageContent
+        val unsupported = content.parts.last() as OaepLegacyMessagePart
+        assertEquals("unsupported", unsupported.type)
+        assertTrue(!OaepJsonCodec.contentJson(content).contains("secret"))
+    }
+
+    @Test
+    fun `conversation resource P1 fixture preserves part-only references on mobile`() {
+        val snapshot = OaepJsonCodec.snapshot(protocolFixture("conversation-resources-p1.fixture.json"))
+        val message = projectOaepPresentation(snapshot).filterIsInstance<OaepTimelineEntry.UserMessage>().single()
+        assertEquals(listOf("file-plan-p1"), message.resources.map { it.id })
+        assertEquals("方案.md", message.resources.single().label)
+        assertEquals("sha256:${"a".repeat(64)}", message.resources.single().digest)
+    }
+
+    @Test
+    fun `conversation resource P2 fixture preserves associations parts and operation identity`() {
+        val fixture = protocolFixture("conversation-resources-p2.fixture.json")
+        val snapshot = OaepJsonCodec.snapshot(fixture.getJSONObject("snapshot"))
+        val message = snapshot.items.first { it.id == "message-resource-p2" }
+        assertEquals(listOf("assoc-plan-first", "assoc-plan-second"), message.associations.map { it.associationId })
+        assertEquals(message.associations[0].resource, message.associations[1].resource)
+        assertTrue(message.associations[0].locator != message.associations[1].locator)
+        assertEquals("operation-publish-report", snapshot.items.last().associations.single().operationId)
+        val projected = projectOaepPresentation(snapshot).filterIsInstance<OaepTimelineEntry.UserMessage>().single()
+        assertEquals(listOf("assoc-plan-first", "assoc-plan-second"), projected.resources.map { it.id })
+        val encoded = OaepJsonCodec.itemJson(message)
+        assertEquals("assoc-plan-first", encoded.getJSONArray("associations").getJSONObject(0).getString("association_id"))
+        assertEquals("resource", encoded.getJSONObject("content").getJSONArray("parts").getJSONObject(1).getString("type"))
     }
 
     @Test

@@ -56,8 +56,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   const [recentAgentIds, setRecentAgentIds] = useState<string[]>([]);
   /** 未配置平台模型 API Key：不阻塞页面，仍可使用「连接远程」 */
   const [noModelApiKeyForList, setNoModelApiKeyForList] = useState(false);
-  /** Server-side user default agent id */
-  const [userDefaultAgentId, setUserDefaultAgentId] = useState<string | null>(null);
   /** Search expand toggle */
   const [searchExpanded, setSearchExpanded] = useState(false);
   /** Selected agent for detail panel */
@@ -125,29 +123,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     }
   }, [user?.email]);
 
-  const loadUserDefaultAgent = useCallback(async () => {
-    if (!user?.email) return;
-    try {
-      const result = await agentWorkerAPI.getUserDefaultAgent(user.email);
-      // Prefer the explicit user choice; default_agent_id may be a resolved fallback.
-      setUserDefaultAgentId(result.stored_default_agent_id ?? null);
-    } catch {
-      // ignore — old backend without the endpoint
-    }
-  }, [user?.email]);
-
-  const handleSetDefault = useCallback(async (agentId?: string) => {
-    if (!agentId || !user?.email) return;
-    try {
-      await agentWorkerAPI.setUserDefaultAgent(user.email, agentId);
-      setUserDefaultAgentId(agentId);
-      message.success(t("agentsquare.defaultSet"));
-    } catch (err) {
-      console.error("Failed to set default agent:", err);
-      message.error(t("agentsquare.defaultSetFailed"));
-    }
-  }, [user?.email]);
-
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const handleRemoveRemoteAgent = useCallback(async (id?: string) => {
     if (!id || !user?.email) return;
@@ -190,15 +165,13 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       api_key: agent.api_key || config.api_key || config.apiKey,
       featured: Boolean(agent.featured),
       is_default: Boolean(agent.is_default),
-      is_user_default: Boolean(agent.id && agent.id === userDefaultAgentId),
       is_public: Boolean(agent.is_public),
       onRemove: (agent.mode === "remote" || agent.mode === "custom")
         ? (id?: string) => handleRemoveRemoteAgent(id || agent.id)
         : undefined,
-      // onSetDefault: (id?: string) => handleSetDefault(id || agent.id),
       onClick: () => { },
     };
-  }, [user?.email, handleRemoveRemoteAgent, handleSetDefault, userDefaultAgentId]);
+  }, [user?.email, handleRemoveRemoteAgent]);
 
   // 提取获取 API Key 和 BaseUrl 的逻辑
   const getApiKeyFromSettings = useCallback(async (userEmail: string) => {
@@ -475,8 +448,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
   useEffect(() => {
     loadAgentList();
-    loadUserDefaultAgent();
-  }, [loadAgentList, loadUserDefaultAgent]);
+  }, [loadAgentList]);
 
   useEffect(() => {
     if (isCustomModalOpen) {
@@ -499,7 +471,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     return () => window.removeEventListener("drsai:recentAgentsUpdated", handler as EventListener);
   }, [readRecentAgentIds, syncRecentFromServer, user?.email]);
 
-  // 仅当用户显式默认存在时自动写入 agentId；否则留空，由用户在智能体广场选择
+  // Platform / science policy may auto-select an agent when none is chosen yet
   useEffect(() => {
     if (agentId) return;
     if (!agentList.length) return;
@@ -510,7 +482,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       try {
         const userDefault = await agentWorkerAPI.getUserDefaultAgent(email).catch(() => null);
         if (cancelled) return;
-        const userDefaultId = userDefault?.stored_default_agent_id ?? null;
         const platformPolicy = {
           auto_load_default_agent: userDefault?.auto_load_default_agent,
           default_agent_name: userDefault?.default_agent_name ?? null,
@@ -518,7 +489,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         };
         const target = pickAgentForSessionStart(
           agentList as Agent[],
-          userDefaultId,
           platformPolicy,
         );
         if (!target?.id) return;
@@ -574,11 +544,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   const baseList = agentList.filter(
     (agent) => agent.mode !== "magentic-one"
   );
-
-  /** 主推位：仅展示用户设置的默认智能体 */
-  const defaultAgent = userDefaultAgentId
-    ? baseList.find((a) => a.id === userDefaultAgentId)
-    : undefined;
 
   const filteredList = baseList.filter((agent) => matchOwner(agent) && matchSearch(agent));
 

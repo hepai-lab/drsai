@@ -1,18 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownAZ,
   ArrowLeft,
   ArrowRight,
-  CalendarClock,
+  // Temporarily unused while Scheduled nav is hidden — keep for later reuse.
+  // CalendarClock,
   ChevronDown,
-  // Temporarily unused while GFS cloud entry is hidden — keep for later reuse.
-  // Cloud,
+  Cloud,
   Copy,
   FileText,
   FolderCode,
   FolderPlus,
-  GitBranch,
-  GitMerge,
   HelpCircle,
   Info,
   Keyboard,
@@ -46,12 +44,6 @@ import type {
   DesktopThreadContentSearchResult,
   DesktopThreadForkMetadata,
   DesktopThreadMessageSnapshot,
-  DesktopWorktreeListRequest,
-  DesktopWorktreeEventRequest,
-  DesktopWorktreeEventBatch,
-  DesktopWorktreeMigrationDiagnostic,
-  DesktopWorktreeSummary,
-  WorkspaceGitDiffResult,
   WorkspaceProject,
 } from "@shared/desktopApi";
 import drsaiLogo from "../assets/drsai.png";
@@ -70,8 +62,12 @@ import { extractShareConclusion, extractShareMessageText } from "@shared/threadS
 import { ChatMessageContent } from "./ChatMessageContent";
 import { MENU_IDS, type AppLanguage, type NavId, type NavSection, type RightTab } from "../navigation";
 import { userFacingFailureMessage } from "../userFacingLanguage";
-import { showAppNotice } from "./AppDecisionDialog";
+import type { WorkspaceSortMode } from "../workspaceOrdering";
+import { showAppNotice, requestAppDecision } from "./AppDecisionDialog";
+import { deleteDesktopThread } from "../deleteDesktopThread";
 import { ThreadActivityBubble } from "./ThreadActivityBubble";
+import { OpenAiBrandIcon } from "./OpenAiBrandIcon";
+import { WeChatLogo } from "./WeChatChannelCard";
 import type { ThreadActivityState } from "../threadActivity";
 import {
   getConflictMarkerCount,
@@ -86,7 +82,6 @@ import {
   type ForkConflictDraftHunk,
   type ForkConflictSemanticPreview,
 } from "./forkConflictAnalysis";
-import { buildWorktreeReview, getWorktreeActions, getWorktreeListMode, getWorktreeVisualState } from "./worktreePresentation";
 
 export interface WorkspaceThread {
   id: string;
@@ -100,7 +95,7 @@ export interface WorkspaceThread {
   archived?: boolean;
   unread?: boolean;
   activity: ThreadActivityState;
-  source?: "codex" | "opendrsai" | "remote";
+  source?: "codex" | "opendrsai" | "remote" | "wechat";
 }
 
 export interface ForkConflictFile {
@@ -154,14 +149,17 @@ interface WorkspaceShellProps {
   rightTabIcons: Record<RightTab, LucideIcon>;
   rightTabs: Array<{ id: RightTab; label: string }>;
   sidebarCollapsed: boolean;
+  showThreadSourceIcons: boolean;
   sidebarComponents: {
     square: boolean;
     agents: boolean;
     skills: boolean;
   };
   user: AuthUser | null;
-  workspaceSortMode: "recent" | "name" | "created";
+  workspaceSortMode: WorkspaceSortMode;
   workspaceThreads: WorkspaceThread[];
+  workspaceThreadsHasMore: boolean;
+  workspaceThreadsLoading: boolean;
   workspaces: WorkspaceProject[];
   onGoBack: () => void;
   onGoForward: () => void;
@@ -170,17 +168,15 @@ interface WorkspaceShellProps {
   onPickWorkspaceFolder: () => Promise<string | null>;
   onLanguageChange: (language: AppLanguage) => void;
   onLogout: () => void;
+  onOpenFeedback: () => void;
+  onOpenFeedbackAdmin: () => void;
   onLoadForkConflictContent: (
     thread: WorkspaceThread,
     file: ForkConflictFile,
   ) => Promise<ForkConflictContentPreviewResult>;
+  onLoadMoreWorkspaceThreads: () => void | Promise<void>;
   onNavChange: (id: NavId) => void;
-  onListWorktrees: (request: DesktopWorktreeListRequest) => Promise<DesktopWorktreeSummary[]>;
-  onListWorktreeEvents: (request: DesktopWorktreeEventRequest) => Promise<DesktopWorktreeEventBatch>;
-  onGetWorktreeMigrationDiagnostics: (request: DesktopWorktreeListRequest) => Promise<DesktopWorktreeMigrationDiagnostic[]>;
-  onGetWorktreeDiff: (request: { workspacePath: string; workspaceId?: string; maxChars?: number }) => Promise<WorkspaceGitDiffResult>;
   onCreateWorkspaceSession: (workspace: WorkspaceProject) => void | Promise<void>;
-  onCreateWorktreeSession: (worktree: DesktopWorktreeSummary) => void | Promise<void>;
   onNewChat: () => void;
   onOpenWorkspaceResults: (workspaceId: string) => void;
   onOpenWorkspacePath: (path: string) => void | Promise<void>;
@@ -199,7 +195,7 @@ interface WorkspaceShellProps {
     draft: string,
     expectedDiffHash?: string,
   ) => Promise<ForkConflictDraftWriteResult>;
-  onThreadSelect: (threadId: string) => void;
+  onThreadSelect: (threadId: string, messageId?: string) => void;
   onSearchThreadMessages: (
     query: string,
     threadIds: string[],
@@ -210,15 +206,16 @@ interface WorkspaceShellProps {
   onToggleSidebar: () => void;
   onUpdateWorkspace: (id: string, updates: Partial<Pick<WorkspaceProject, "name" | "description" | "trusted" | "pinned">>) => void | Promise<void>;
   onWorkspaceChange: (workspaceId: string) => void;
-  onWorkspaceSortModeChange: (mode: "recent" | "name" | "created") => void;
+  onWorkspaceSortModeChange: (mode: WorkspaceSortMode) => void;
 }
 
-type ShortcutId = "newChat" | "newWorkspace" | "find" | "commandPalette" | "back" | "forward" | "toggleSidebar" | "toggleRightPanel" | "modelPicker" | "debug" | "settings" | "shortcuts";
+type ShortcutId = "newChat" | "newWorkspace" | "voiceRecording" | "find" | "commandPalette" | "back" | "forward" | "toggleSidebar" | "toggleRightPanel" | "modelPicker" | "debug" | "settings" | "reload" | "shortcuts";
 type WorkbenchMenuId = "file" | "edit" | "layout" | "help";
 
 const SHORTCUT_STORAGE_KEY = "opendrsai.keyboardShortcuts";
 const SHORTCUTS: Array<{ id: ShortcutId; category: "task" | "navigation" | "panels" | "project" | "app"; zh: string; en: string; fallback: string }> = [
   { id: "newChat", category: "task", zh: "新聊天", en: "New chat", fallback: "Ctrl+Alt+N" },
+  { id: "voiceRecording", category: "task", zh: "按住录音", en: "Hold to record voice", fallback: "Ctrl+Shift+D" },
   { id: "newWorkspace", category: "project", zh: "打开文件夹", en: "Open folder", fallback: "Ctrl+O" },
   { id: "find", category: "navigation", zh: "查找", en: "Find", fallback: "Ctrl+F" },
   { id: "commandPalette", category: "navigation", zh: "打开命令菜单", en: "Open command menu", fallback: "Ctrl+K" },
@@ -229,6 +226,7 @@ const SHORTCUTS: Array<{ id: ShortcutId; category: "task" | "navigation" | "pane
   { id: "modelPicker", category: "panels", zh: "打开模型选择器", en: "Open model picker", fallback: "Ctrl+Shift+M" },
   { id: "debug", category: "panels", zh: "打开调试面板", en: "Open debug panel", fallback: "F12" },
   { id: "settings", category: "app", zh: "设置", en: "Settings", fallback: "Ctrl+," },
+  { id: "reload", category: "app", zh: "重新加载应用界面", en: "Reload application interface", fallback: "Ctrl+R" },
   { id: "shortcuts", category: "app", zh: "显示键盘快捷键", en: "Show keyboard shortcuts", fallback: "Ctrl+Shift+/" },
 ];
 
@@ -252,10 +250,13 @@ export function WorkspaceShell({
   rightTabIcons,
   rightTabs,
   sidebarCollapsed,
+  showThreadSourceIcons,
   sidebarComponents,
   user,
   workspaceSortMode,
   workspaceThreads,
+  workspaceThreadsHasMore,
+  workspaceThreadsLoading,
   workspaces,
   onGoBack,
   onGoForward,
@@ -264,13 +265,11 @@ export function WorkspaceShell({
   onPickWorkspaceFolder,
   onLanguageChange,
   onLogout,
+  onOpenFeedback,
+  onOpenFeedbackAdmin,
   onLoadForkConflictContent,
-  onListWorktrees,
-  onListWorktreeEvents,
-  onGetWorktreeMigrationDiagnostics,
-  onGetWorktreeDiff,
+  onLoadMoreWorkspaceThreads,
   onCreateWorkspaceSession,
-  onCreateWorktreeSession,
   onNavChange,
   onNewChat,
   onOpenWorkspaceResults,
@@ -295,6 +294,7 @@ export function WorkspaceShell({
   const [shortcutDialogOpen, setShortcutDialogOpen] = useState(false);
   const [shortcutDrafts, setShortcutDrafts] = useState<Record<ShortcutId, string>>(() => loadShortcutSettings());
   const [capturingShortcut, setCapturingShortcut] = useState<ShortcutId | null>(null);
+  const voiceShortcutHeldRef = useRef(false);
   const [openWorkbenchMenu, setOpenWorkbenchMenu] = useState<WorkbenchMenuId | null>(null);
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -305,17 +305,6 @@ export function WorkspaceShell({
     () => new Set(activeWorkspaceId ? [activeWorkspaceId] : []),
   );
   const [showAllWorkspaceThreads, setShowAllWorkspaceThreads] = useState<Set<string>>(() => new Set());
-  const [worktreeOpen, setWorktreeOpen] = useState(false);
-  const [worktrees, setWorktrees] = useState<DesktopWorktreeSummary[]>([]);
-  const [worktreesLoading, setWorktreesLoading] = useState(false);
-  const [worktreesError, setWorktreesError] = useState<string | null>(null);
-  const [worktreesDegraded, setWorktreesDegraded] = useState<DesktopWorktreeEventBatch["degraded"] | null>(null);
-  const [worktreeMigrationDiagnostics, setWorktreeMigrationDiagnostics] = useState<DesktopWorktreeMigrationDiagnostic[]>([]);
-  const [reviewWorktreeId, setReviewWorktreeId] = useState<string | null>(null);
-  const [reviewDiff, setReviewDiff] = useState<WorkspaceGitDiffResult | null>(null);
-  const [reviewLoading, setReviewLoading] = useState(false);
-  const [reviewError, setReviewError] = useState<string | null>(null);
-  const worktreeEventCursor = useRef(0);
   const [workspaceDetailsId, setWorkspaceDetailsId] = useState<string | null>(null);
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
   const [workspaceDescriptionDraft, setWorkspaceDescriptionDraft] = useState("");
@@ -329,10 +318,18 @@ export function WorkspaceShell({
   const [contentSearchLoading, setContentSearchLoading] = useState(false);
   const [threadMenu, setThreadMenu] = useState<{
     thread: WorkspaceThread;
+    anchorX: number;
+    anchorY: number;
     x: number;
     y: number;
+    preferAbove: boolean;
   } | null>(null);
-  const [deleteConfirmThread, setDeleteConfirmThread] = useState<WorkspaceThread | null>(null);
+  const threadMenuRef = useRef<HTMLDivElement | null>(null);
+  const [renameDialog, setRenameDialog] = useState<{
+    thread: WorkspaceThread;
+    title: string;
+  } | null>(null);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
   const [shareDialog, setShareDialog] = useState<{
     thread: WorkspaceThread;
     loading: boolean;
@@ -379,6 +376,7 @@ export function WorkspaceShell({
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const rightTabMenuRef = useRef<HTMLDivElement | null>(null);
   const commandPaletteRef = useRef<HTMLDivElement | null>(null);
+  const lastEditableSelectionRef = useRef<EditableSelectionSnapshot | null>(null);
   const commandPaletteInputRef = useRef<HTMLInputElement | null>(null);
   const commandPaletteResultsRef = useRef<HTMLElement | null>(null);
   const contentSearchRequestRef = useRef(0);
@@ -391,16 +389,16 @@ export function WorkspaceShell({
     { id: "help", label: zh ? "帮助" : "Help" },
   ];
   const agentItems = sidebarComponents.square
-    ? getEnabledNavItems(navSections, "agents").filter((item) =>
-        item.id === MENU_IDS.agentSquare
-          ? sidebarComponents.agents
-          : item.id === MENU_IDS.skillsSquare
-            ? sidebarComponents.skills
-            : true,
-      )
+    ? getEnabledNavItems(navSections, "agents").filter((item) => {
+        if (item.id === MENU_IDS.skillsSquare) return false;
+        if (item.id === MENU_IDS.agentSquare) return sidebarComponents.agents;
+        return true;
+      })
     : [];
   const agentSectionLabel = navSections.find((section) => section.id === "agents")?.label ?? (zh ? "广场" : "Square");
-  const resultsItem = getEnabledNavItems(navSections, "chat").find((item) => item.id === MENU_IDS.results);
+  const libraryItem = getEnabledNavItems(navSections, "chat").find((item) => item.id === MENU_IDS.library);
+  const knowledgeBaseItem = getEnabledNavItems(navSections, "chat").find((item) => item.id === MENU_IDS.knowledgeBase);
+  const skillsItem = getEnabledNavItems(navSections, "agents").find((item) => item.id === MENU_IDS.skillsSquare);
   const workspaceItems = getEnabledNavItems(navSections, "workspace");
   const workspaceDetails = workspaces.find((workspace) => workspace.id === workspaceDetailsId) ?? null;
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0] ?? null;
@@ -409,10 +407,14 @@ export function WorkspaceShell({
       (path ?? "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
     return new Map(workspaces.map((workspace) => [
       workspace.id,
-      workspaceThreads.filter((thread) =>
-        thread.workspaceId === workspace.id ||
-        (Boolean(thread.workspacePath) && normalizePath(thread.workspacePath) === normalizePath(workspace.path)),
-      ),
+      [...new Map(
+        workspaceThreads
+          .filter((thread) =>
+            thread.workspaceId === workspace.id ||
+            (Boolean(thread.workspacePath) && normalizePath(thread.workspacePath) === normalizePath(workspace.path)),
+          )
+          .map((thread) => [thread.id, thread]),
+      ).values()],
     ]));
   }, [workspaces, workspaceThreads]);
 
@@ -426,119 +428,11 @@ export function WorkspaceShell({
     });
   }, [activeWorkspaceId]);
 
-  async function refreshWorktrees(): Promise<void> {
-    if (!activeWorkspace?.path) {
-      setWorktrees([]);
-      setWorktreesDegraded(null);
-      return;
-    }
-    setWorktreesLoading(true);
-    setWorktreesError(null);
-    try {
-      const request = {
-        workspacePath: activeWorkspace.path,
-        ...(activeWorkspace.id ? { workspaceId: activeWorkspace.id } : {}),
-      };
-      setWorktrees(await onListWorktrees(request));
-      setWorktreesDegraded(null);
-      setWorktreeMigrationDiagnostics(await onGetWorktreeMigrationDiagnostics(request));
-    } catch (error) {
-      // Preserve the last successful Runtime projection while the managed
-      // Gateway recovers. Clearing it turns a transient health miss into an
-      // apparent data-loss event in the UI.
-      setWorktreesError(userFacingFailureMessage(error, language, "operation"));
-    } finally {
-      setWorktreesLoading(false);
-    }
-  }
-
-  async function openWorktreeReview(worktree: DesktopWorktreeSummary): Promise<void> {
-    setReviewWorktreeId(worktree.worktreeId);
-    setReviewDiff(null);
-    setReviewError(null);
-    setReviewLoading(true);
-    try {
-      setReviewDiff(await onGetWorktreeDiff({
-        workspacePath: worktree.canonicalPath,
-        workspaceId: worktree.workspaceId || undefined,
-        maxChars: 120_000,
-      }));
-    } catch (error) {
-      setReviewError(userFacingFailureMessage(error, language, "operation"));
-    } finally {
-      setReviewLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!worktreeOpen) return;
-    worktreeEventCursor.current = 0;
-    void refreshWorktrees();
-  // Opening the Worktree view or changing its authoritative Workspace is the
-  // refresh boundary. Keeping this dormant while the view is closed prevents
-  // a read-only sidebar feature from starting the Runtime during app startup.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeWorkspace?.id, activeWorkspace?.path, worktreeOpen]);
-
-  useEffect(() => {
-    if (!worktreeOpen || !activeWorkspace?.path) return;
-    let disposed = false;
-    let reading = false;
-    let consecutiveFailures = 0;
-    let retryAfter = 0;
-    const recordFailure = (): void => {
-      consecutiveFailures += 1;
-      retryAfter = Date.now() + Math.min(60_000, 5_000 * (2 ** Math.min(4, consecutiveFailures - 1)));
-    };
-    const readEvents = async (): Promise<void> => {
-      if (disposed || reading || document.visibilityState !== "visible" || Date.now() < retryAfter) return;
-      reading = true;
-      try {
-        const batch = await onListWorktreeEvents({
-          workspacePath: activeWorkspace.path,
-          ...(activeWorkspace.id ? { workspaceId: activeWorkspace.id } : {}),
-          afterSequence: worktreeEventCursor.current,
-        });
-        if (disposed) return;
-        worktreeEventCursor.current = Math.max(worktreeEventCursor.current, batch.nextSequence);
-        if (batch.degraded) {
-          setWorktreesDegraded(batch.degraded);
-          recordFailure();
-          return;
-        }
-        consecutiveFailures = 0;
-        retryAfter = 0;
-        setWorktreesDegraded(null);
-        if (batch.events.length > 0) await refreshWorktrees();
-      } catch {
-        // Keep the last Runtime projection visible; the next generation retries.
-        recordFailure();
-      } finally {
-        reading = false;
-      }
-    };
-    void readEvents();
-    const timer = window.setInterval(() => void readEvents(), 5_000);
-    const handleVisibilityChange = (): void => {
-      if (document.visibilityState === "visible") void readEvents();
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  // Event cursors are reset only when the Worktree view opens or its
-  // authoritative Workspace changes.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeWorkspace?.id, activeWorkspace?.path, worktreeOpen]);
   const isRightPanelExpanded = rightPanelExpanded && !rightPanelCollapsed;
   const rightPanelExpandLabel = isRightPanelExpanded
     ? zh ? "还原聊天视图" : "Restore chat view"
     : zh ? "展开上下文环境" : "Expand context environment";
-  const rightPanelClassName = `right-panel context-right-panel ${
-    activeRightTab === "browser" ? "browser-right-panel" : ""
-  }`;
+  const rightPanelClassName = `right-panel context-right-panel`;
   const searchableThreadIds = useMemo(
     () => searchableThreads.map((thread) => thread.id),
     [searchableThreads],
@@ -577,6 +471,25 @@ export function WorkspaceShell({
   }
 
   useEffect(() => {
+    function captureFromElement(element: Element | null): void {
+      const snapshot = snapshotEditableSelection(element);
+      if (snapshot) lastEditableSelectionRef.current = snapshot;
+    }
+    function handleFocusIn(event: FocusEvent): void {
+      captureFromElement(event.target instanceof Element ? event.target : null);
+    }
+    function handleSelectionChange(): void {
+      captureFromElement(document.activeElement);
+    }
+    window.addEventListener("focusin", handleFocusIn);
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      window.removeEventListener("focusin", handleFocusIn);
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, []);
+
+  useEffect(() => {
     function handlePointerDown(event: PointerEvent): void {
       if (!userMenuRef.current?.contains(event.target as Node)) {
         setUserMenuOpen(false);
@@ -602,6 +515,10 @@ export function WorkspaceShell({
   }, [activeRightTab, rightPanelCollapsed, rightTabs]);
 
   useEffect(() => {
+    function dispatchVoiceShortcut(phase: "press" | "release"): void {
+      window.dispatchEvent(new CustomEvent("drsai:voice-recording-shortcut", { detail: { phase } }));
+    }
+
     function handleKeyDown(event: KeyboardEvent): void {
       if (capturingShortcut) return;
       if (
@@ -618,6 +535,11 @@ export function WorkspaceShell({
         event.preventDefault();
         if (command === "newChat") onNewChat();
         else if (command === "newWorkspace") void onAddWorkspace();
+        else if (command === "voiceRecording") {
+          if (event.repeat || voiceShortcutHeldRef.current) return;
+          voiceShortcutHeldRef.current = true;
+          dispatchVoiceShortcut("press");
+        }
         else if (command === "find" || command === "commandPalette") setCommandPaletteOpen(true);
         else if (command === "back") onGoBack();
         else if (command === "forward") onGoForward();
@@ -625,10 +547,10 @@ export function WorkspaceShell({
         else if (command === "toggleRightPanel") onToggleRightPanel();
         else if (command === "modelPicker") window.dispatchEvent(new Event("drsai:open-model-picker"));
         else if (command === "debug") {
-          if (!rightPanelCollapsed && activeRightTab === "debug") onToggleRightPanel();
-          else { if (rightPanelCollapsed) onToggleRightPanel(); onRightTabChange("debug"); }
+          onToggleRightPanel();
         }
         else if (command === "settings") onNavChange(MENU_IDS.profile);
+        else if (command === "reload") window.location.reload();
         else if (command === "shortcuts") setShortcutDialogOpen(true);
         return;
       }
@@ -642,8 +564,19 @@ export function WorkspaceShell({
       }
     }
 
+    function handleKeyUp(event: KeyboardEvent): void {
+      if (!voiceShortcutHeldRef.current || !shortcutIncludesReleasedKey(shortcutDrafts.voiceRecording, event.key)) return;
+      event.preventDefault();
+      voiceShortcutHeldRef.current = false;
+      dispatchVoiceShortcut("release");
+    }
+
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
   }, [activeRightTab, capturingShortcut, onAddWorkspace, onGoBack, onGoForward, onNavChange, onNewChat, onRightTabChange, onToggleRightPanel, onToggleSidebar, rightPanelCollapsed, shortcutDrafts]);
 
   useEffect(() => {
@@ -689,7 +622,6 @@ export function WorkspaceShell({
   function openDebugPanelFromMenu(): void {
     closeWorkbenchMenu();
     if (rightPanelCollapsed) onToggleRightPanel();
-    onRightTabChange("debug");
   }
 
   function resetLayoutFromMenu(): void {
@@ -701,12 +633,50 @@ export function WorkspaceShell({
 
   async function performEditCommand(command: DesktopEditCommand): Promise<void> {
     closeWorkbenchMenu();
+    restoreEditableSelection(lastEditableSelectionRef.current);
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => resolve());
+    });
     await desktopApi.performEditCommand(command).catch(() => false);
   }
 
   useEffect(() => {
     setForkConflictPreview(null);
   }, [threadMenu?.thread.id]);
+
+  useLayoutEffect(() => {
+    if (!threadMenu || !threadMenuRef.current) return;
+    const menu = threadMenuRef.current;
+    const pad = 10;
+    const maxHeight = Math.max(180, window.innerHeight - pad * 2);
+    menu.style.maxHeight = `${maxHeight}px`;
+    const rect = menu.getBoundingClientRect();
+    const width = rect.width;
+    const height = Math.min(rect.height, maxHeight);
+    const nextX = Math.min(
+      Math.max(pad, threadMenu.anchorX),
+      Math.max(pad, window.innerWidth - width - pad),
+    );
+    // Prefer opening upward near the bottom so the full menu stays in view
+    // without looking like a cramped scroll panel.
+    let nextY = threadMenu.preferAbove
+      ? threadMenu.anchorY - height
+      : threadMenu.anchorY;
+    if (nextY + height > window.innerHeight - pad) nextY = threadMenu.anchorY - height;
+    if (nextY < pad) nextY = pad;
+    if (nextY + height > window.innerHeight - pad) {
+      nextY = Math.max(pad, window.innerHeight - height - pad);
+    }
+    if (nextX !== threadMenu.x || nextY !== threadMenu.y) {
+      setThreadMenu((current) => (current ? { ...current, x: nextX, y: nextY } : null));
+    }
+  }, [threadMenu]);
+
+  useEffect(() => {
+    if (!renameDialog) return;
+    renameInputRef.current?.focus();
+    renameInputRef.current?.select();
+  }, [renameDialog?.thread.id]);
 
   useEffect(() => {
     if (!commandPaletteOpen) return;
@@ -804,17 +774,6 @@ export function WorkspaceShell({
     setWorkspaceSavePending(false);
     setWorkspaceSaveError(null);
     setWorkspaceDeleteConfirm(false);
-  }
-
-  function openWorkspaceWorktrees(workspace: WorkspaceProject): void {
-    if (workspace.id !== activeWorkspaceId) onWorkspaceChange(workspace.id);
-    setReviewWorktreeId(null);
-    setReviewDiff(null);
-    setReviewError(null);
-    setWorktreeOpen(true);
-    closeWorkspaceDetails();
-    onRightTabChange("files");
-    if (rightPanelCollapsed) onToggleRightPanel();
   }
 
   async function saveWorkspaceDetails(): Promise<void> {
@@ -931,21 +890,36 @@ export function WorkspaceShell({
     const contentMatchByThread = new Map(
       contentSearchResults.map((result) => [`thread:${result.threadId}`, result]),
     );
+    const selectThreadFromPalette = (itemId: string, messageId?: string) => {
+      const threadId = itemId.startsWith("thread:") ? itemId.slice("thread:".length) : itemId;
+      onThreadSelect(threadId, messageId);
+    };
     const titleMatches = searchableChatItems
       .filter((item) => item.label.toLowerCase().includes(query))
-      .map((item) => ({
-        ...item,
-        description: contentMatchByThread.get(item.id)?.snippet,
-      }));
+      .map((item) => {
+        const match = contentMatchByThread.get(item.id);
+        return {
+          ...item,
+          description: match?.snippet,
+          run: () => selectThreadFromPalette(item.id, match?.messageId),
+        };
+      });
     const titleMatchIds = new Set(titleMatches.map((item) => item.id));
     const contentMatches = searchableChatItems
       .filter((item) => contentMatchByThread.has(item.id) && !titleMatchIds.has(item.id))
-      .map((item) => ({
-        ...item,
-        description: contentMatchByThread.get(item.id)?.snippet,
-      }));
+      .map((item) => {
+        const match = contentMatchByThread.get(item.id);
+        return {
+          ...item,
+          description: match?.snippet,
+          run: () => onThreadSelect(
+            item.id.startsWith("thread:") ? item.id.slice("thread:".length) : item.id,
+            match?.messageId,
+          ),
+        };
+      });
     return [...titleMatches, ...contentMatches, ...recommendationMatches];
-  }, [commandPaletteItems, commandPaletteQuery, contentSearchResults, searchableChatItems]);
+  }, [commandPaletteItems, commandPaletteQuery, contentSearchResults, onThreadSelect, searchableChatItems]);
 
   useEffect(() => {
     setCommandPaletteSelectedIndex((index) =>
@@ -971,12 +945,16 @@ export function WorkspaceShell({
   function openThreadMenu(event: React.MouseEvent, thread: WorkspaceThread): void {
     event.preventDefault();
     event.stopPropagation();
-    const menuWidth = 260;
-    const menuHeight = thread.fork ? 560 : 306;
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const anchorX = rect.right;
+    const anchorY = rect.bottom + 4;
     setThreadMenu({
       thread,
-      x: Math.min(event.clientX, Math.max(12, window.innerWidth - menuWidth - 12)),
-      y: Math.min(event.clientY, Math.max(46, window.innerHeight - menuHeight - 12)),
+      anchorX,
+      anchorY,
+      x: anchorX,
+      y: anchorY,
+      preferAbove: anchorY > window.innerHeight * 0.55,
     });
   }
 
@@ -985,14 +963,27 @@ export function WorkspaceShell({
   }
 
   function renameThread(thread: WorkspaceThread): void {
-    const nextTitle = window.prompt(
-      thread.source === "codex"
-        ? (zh ? "设置 OpenDrSai 本地显示名（不会修改 Codex 原始任务名）" : "Set the local OpenDrSai display name (the original Codex task name is unchanged)")
-        : (zh ? "重命名对话" : "Rename conversation"),
-      thread.title,
-    );
-    if (!nextTitle || nextTitle.trim() === thread.title) return;
-    void onThreadUpdate(thread.id, { title: nextTitle.trim() });
+    setRenameDialog({ thread, title: thread.title });
+  }
+
+  function closeRenameDialog(): void {
+    setRenameDialog(null);
+  }
+
+  function submitRenameDialog(): void {
+    if (!renameDialog) return;
+    const nextTitle = renameDialog.title.trim();
+    const threadId = renameDialog.thread.id;
+    const previousTitle = renameDialog.thread.title;
+    setRenameDialog(null);
+    if (!nextTitle || nextTitle === previousTitle) return;
+    void Promise.resolve(onThreadUpdate(threadId, { title: nextTitle })).catch((error) => {
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : (zh ? "重命名失败，请重试。" : "Rename failed. Please retry."),
+      );
+    });
   }
 
   function closeShareDialog(): void {
@@ -1263,42 +1254,85 @@ export function WorkspaceShell({
     return `opendrsai://thread/${encodeURIComponent(thread.id)}`;
   }
 
-  function renderWorkspaceThread(thread: WorkspaceThread): React.JSX.Element {
+  function renderWorkspaceThread(thread: WorkspaceThread, showSourceIcon: boolean): React.JSX.Element {
+    const menuOpen = threadMenu?.thread.id === thread.id;
     return (
-      <button
+      <div
         key={thread.id}
-        type="button"
-        className={`thread-item workspace-thread-item ${thread.active ? "active" : ""}`}
-        onClick={() => onThreadSelect(thread.id)}
-        onContextMenu={(event) => openThreadMenu(event, thread)}
+        className={`workspace-thread-row${thread.active ? " active" : ""}${thread.activity.kind === "error" ? " failed" : ""}${menuOpen ? " menu-open" : ""}`}
       >
-        <span>
-          {thread.unread && <b className="thread-unread-dot" aria-hidden />}
-          {thread.pinned && <b className="thread-pinned-mark" aria-hidden>{"\u2022"}</b>}
-          {thread.fork && (
-            <b
-              className={`thread-fork-mark ${thread.fork.queueStatus ? `queue-${thread.fork.queueStatus}` : ""}`}
-              title={[
-                `Fork worktree: ${thread.fork.worktreePath}`,
-                thread.fork.queueStatus ? `Queue: ${thread.fork.queueStatus}` : "",
-              ].filter(Boolean).join("\n")}
-            >
-              {thread.fork.queueStatus === "waiting_approval" ? "Wait" : thread.fork.queueStatus === "ready" ? "Ready" : "Fork"}
-            </b>
-          )}
-          {thread.title}
-          <small className={`thread-source-label source-${thread.source ?? "opendrsai"}`}>
-            {thread.source === "codex" ? "Codex" : thread.source === "remote" ? (zh ? "远程" : "Remote") : "OpenDrSai"}
-          </small>
-        </span>
-        <span className="thread-item-status">
-          {thread.activity.kind === "idle" ? (
-            <time>{thread.timeLabel}</time>
-          ) : (
-            <ThreadActivityBubble state={thread.activity} language={language} />
-          )}
-        </span>
-      </button>
+        <button
+          type="button"
+          className={`thread-item workspace-thread-item ${showSourceIcon ? "has-source-icon " : ""}${thread.active ? "active" : ""}${thread.activity.kind === "error" ? " failed" : ""}`}
+          onClick={() => onThreadSelect(thread.id)}
+        >
+          <span>
+            {thread.unread && <b className="thread-unread-dot" aria-hidden />}
+            {thread.pinned && <b className="thread-pinned-mark" aria-hidden>{"\u2022"}</b>}
+            {thread.fork && (
+              <b
+                className={`thread-fork-mark ${thread.fork.queueStatus ? `queue-${thread.fork.queueStatus}` : ""}`}
+                title={[
+                  `Fork worktree: ${thread.fork.worktreePath}`,
+                  thread.fork.queueStatus ? `Queue: ${thread.fork.queueStatus}` : "",
+                ].filter(Boolean).join("\n")}
+              >
+                {thread.fork.queueStatus === "waiting_approval" ? "Wait" : thread.fork.queueStatus === "ready" ? "Ready" : "Fork"}
+              </b>
+            )}
+            {thread.title}
+          </span>
+          <span className="thread-item-status">
+            {thread.activity.kind === "idle" ? (
+              <time>{thread.timeLabel}</time>
+            ) : thread.activity.kind === "error" ? (
+              <span
+                className="thread-activity-failed"
+                role="status"
+                aria-label={zh ? "失败" : "Failed"}
+                title={zh ? "失败" : "Failed"}
+              >
+                {zh ? "失败" : "Failed"}
+              </span>
+            ) : (
+              <ThreadActivityBubble state={thread.activity} language={language} />
+            )}
+          </span>
+          {showSourceIcon && <ThreadSourceIcon source={thread.source} zh={zh} />}
+        </button>
+        <button
+          className="thread-menu-button"
+          type="button"
+          aria-label={zh ? "对话操作" : "Conversation actions"}
+          title={zh ? "对话操作" : "Conversation actions"}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={(event) => openThreadMenu(event, thread)}
+        >
+          <MoreHorizontal size={14} />
+        </button>
+      </div>
+    );
+  }
+
+  function ThreadSourceIcon({ source = "opendrsai", zh: useZh }: { source?: WorkspaceThread["source"]; zh: boolean }): React.JSX.Element {
+    const agentName = source === "codex"
+      ? "Codex"
+      : source === "remote"
+        ? (useZh ? "远程" : "remote")
+        : source === "wechat"
+          ? (useZh ? "微信" : "WeChat")
+          : "OpenDrSai";
+    const label = useZh
+      ? `该会话由 ${agentName} 智能体运行。可在“设置 → 集成 → 通用设置”中隐藏。`
+      : `This conversation is run by the ${agentName} agent. You can hide this icon in Settings → Integrations → General settings.`;
+    return (
+      <small className={`thread-source-icon source-${source}`} title={label} aria-label={label}>
+        {source === "codex" ? <OpenAiBrandIcon size={12} />
+          : source === "wechat" ? <WeChatLogo />
+            : source === "remote" ? <Cloud size={12} aria-hidden="true" />
+              : <img src={drsaiLogo} alt="" />}
+      </small>
     );
   }
 
@@ -1976,98 +2010,6 @@ export function WorkspaceShell({
     );
   }
 
-  function renderWorktreePanel(): React.JSX.Element {
-    return (
-      <section className="worktree-context-panel" data-testid="runtime-worktree-list" aria-label={zh ? "隔离工作区" : "Isolated Workspaces"}>
-        <header className="worktree-context-header">
-          <div>
-            <GitBranch size={16} />
-            <span>
-              <strong>{zh ? "隔离工作区" : "Isolated Workspaces"}</strong>
-              <small>{activeWorkspace?.name || activeWorkspaceName}</small>
-            </span>
-          </div>
-          <button type="button" aria-label={zh ? "刷新隔离工作区" : "Refresh isolated workspaces"} onClick={() => void refreshWorktrees()} disabled={worktreesLoading}>
-            <RefreshCw size={14} className={worktreesLoading ? "spin" : undefined} />
-          </button>
-        </header>
-        <div className="worktree-context-body">
-          {getWorktreeListMode(worktrees.length, worktreesLoading, worktreesError) === "offline" ? <small className="worktree-error">{worktreesError}</small> : null}
-          {worktreesDegraded ? (
-            <small className="worktree-warning" data-testid="worktree-degraded-status" title={worktreesDegraded.code} role="status">
-              {zh ? "本地 Runtime 暂不可用，隔离工作区状态已暂停刷新。" : "Local Runtime is unavailable; isolated workspace refresh is paused."}
-            </small>
-          ) : null}
-          {worktreeMigrationDiagnostics.filter((item) => item.status === "pending").map((item) => (
-            <small className="worktree-error" key={`migration-${item.threadId}`} title={item.code}>
-              {zh ? "旧 Fork 等待迁移" : "Legacy Fork migration pending"}: {item.message}
-            </small>
-          ))}
-          {getWorktreeListMode(worktrees.length, worktreesLoading, worktreesError) === "empty" ? (
-            <div className="worktree-empty-state">
-              <GitBranch size={18} />
-              <span>{zh ? "当前工作区没有隔离工作区" : "No isolated workspaces for this Workspace"}</span>
-            </div>
-          ) : null}
-          <div className="worktree-list">
-            {worktrees.map((worktree) => {
-              const linkedThread = searchableThreads.find((thread) => thread.fork?.worktreeId === worktree.worktreeId);
-              const { canMerge, canRemove } = getWorktreeActions(worktree, Boolean(linkedThread));
-              return (
-                <div className={`worktree-row state-${getWorktreeVisualState(worktree)}`} key={worktree.worktreeId}>
-                  <button type="button" className="worktree-main" onClick={() => void onOpenWorkspacePath(worktree.canonicalPath)} title={worktree.canonicalPath}>
-                    <span className="worktree-branch">{worktree.branch}</span>
-                    <span className="worktree-meta">
-                      {worktree.status} · {worktree.location}
-                      {worktree.dirty ? ` · ${zh ? "未提交" : "dirty"}` : ""}
-                      {typeof worktree.ahead === "number" ? ` · ↑${worktree.ahead}` : ""}
-                      {typeof worktree.behind === "number" ? ` ↓${worktree.behind}` : ""}
-                      {worktree.activity.total ? ` · ${worktree.activity.total} ${zh ? "个活动资源" : "active"}` : ""}
-                    </span>
-                  </button>
-                  <div className="worktree-actions">
-                    <button type="button" title={zh ? "查看变更" : "Review changes"} onClick={() => void openWorktreeReview(worktree)}><Search size={13} /></button>
-                    {worktree.workspaceId && worktree.status !== "removed" ? (
-                      <button type="button" title={zh ? "在此隔离工作区新建会话" : "New session in this isolated workspace"} onClick={() => void onCreateWorktreeSession(worktree)}><MessageSquarePlus size={13} /></button>
-                    ) : null}
-                    {canMerge ? (
-                      <button type="button" title={zh ? "申请合并" : "Request merge"} onClick={() => void onRequestForkLifecycle(linkedThread!.id, "merge_back")}><GitMerge size={13} /></button>
-                    ) : null}
-                    {canRemove ? (
-                      <button type="button" title={zh ? "申请归档并清理" : "Request archive and cleanup"} onClick={() => void onRequestForkLifecycle(linkedThread!.id, "discard")}><Trash2 size={13} /></button>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {reviewWorktreeId ? (() => {
-            const worktree = worktrees.find((item) => item.worktreeId === reviewWorktreeId);
-            if (!worktree) return null;
-            const linkedThread = searchableThreads.find((thread) => thread.fork?.worktreeId === worktree.worktreeId);
-            const review = buildWorktreeReview(worktree, linkedThread?.fork, reviewDiff || undefined);
-            return (
-              <section className="worktree-review-panel" data-testid="worktree-review-panel" aria-label="Worktree Review">
-                <header><strong>{zh ? "变更审查" : "Worktree Review"}</strong><button type="button" onClick={() => setReviewWorktreeId(null)} aria-label={zh ? "关闭审查" : "Close Review"}><X size={13} /></button></header>
-                <dl>
-                  <div><dt>{zh ? "分支" : "Branch"}</dt><dd>{review.branch}</dd></div>
-                  <div><dt>{zh ? "提交" : "Commits"}</dt><dd title={review.commitRange}>{review.commitRange}</dd></div>
-                  <div><dt>{zh ? "冲突" : "Conflicts"}</dt><dd className={review.conflict.active ? "is-blocked" : "is-ready"}>{review.conflict.active ? (review.conflict.detail || "present") : "none"}</dd></div>
-                  <div><dt>{zh ? "测试结果" : "Tests"}</dt><dd>{review.tests.status}: {review.tests.detail}</dd></div>
-                  <div><dt>{zh ? "合并就绪" : "Merge readiness"}</dt><dd className={`is-${review.readiness.status}`}>{review.readiness.status}</dd></div>
-                </dl>
-                {review.readiness.reasons.length ? <ul>{review.readiness.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : null}
-                {reviewLoading ? <small>{zh ? "正在读取 Runtime diff…" : "Loading Runtime diff…"}</small> : null}
-                {reviewError ? <small className="worktree-error">{reviewError}</small> : null}
-                {!reviewLoading && !reviewError ? <pre>{review.diff || (zh ? "没有 diff" : "No diff")}{review.diffTruncated ? "\n… truncated" : ""}</pre> : null}
-              </section>
-            );
-          })() : null}
-        </div>
-      </section>
-    );
-  }
-
   return (
     <div
       className={`app-shell platform-${platformId} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
@@ -2095,6 +2037,7 @@ export function WorkspaceShell({
                 role="menuitem"
                 aria-haspopup="menu"
                 aria-expanded={openWorkbenchMenu === menu.id}
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => setOpenWorkbenchMenu((current) => current === menu.id ? null : menu.id)}
               >
                 {menu.label}
@@ -2217,6 +2160,14 @@ export function WorkspaceShell({
                 <Settings size={15} />
                 {zh ? "设置" : "Settings"}
               </button>
+              <button type="button" role="menuitem" data-testid="user-menu-feedback" onClick={() => { setUserMenuOpen(false); onOpenFeedback(); }}>
+                <HelpCircle size={15} />
+                {zh ? "反馈与建议" : "Feedback"}
+              </button>
+              {user?.role === "admin" ? <button type="button" role="menuitem" data-testid="user-menu-feedback-admin" onClick={() => { setUserMenuOpen(false); onOpenFeedbackAdmin(); }}>
+                <FileText size={15} />
+                {zh ? "反馈处理台" : "Feedback console"}
+              </button> : null}
               <div className="titlebar-language-row">
                 <span className="titlebar-language-label">
                   <Languages size={15} aria-hidden />
@@ -2298,17 +2249,40 @@ export function WorkspaceShell({
           onScroll={(event) => setSidebarScrolled(event.currentTarget.scrollTop > 0)}
         >
           <div className="sidebar-primary-action">
-            <SidebarButton active={activeNav === MENU_IDS.currentSession} icon={MessageSquarePlus} label={zh ? "新建任务" : "New task"} onClick={onNewChat} />
+            <SidebarButton
+              active={activeNav === MENU_IDS.currentSession}
+              icon={MessageSquarePlus}
+              label={zh ? "新建任务" : "New task"}
+              navId={MENU_IDS.currentSession}
+              onClick={onNewChat}
+            />
           </div>
           <div className="sidebar-action-list">
-            <SidebarButton active={activeNav === MENU_IDS.savedPlan} icon={CalendarClock} label={zh ? "已安排" : "Scheduled"} onClick={() => onNavChange(MENU_IDS.savedPlan)} />
-            {resultsItem ? (
+            {libraryItem ? (
               <SidebarButton
-                active={activeNav === MENU_IDS.results}
-                icon={navIcons[MENU_IDS.results]}
-                label={resultsItem.label}
-                navId={MENU_IDS.results}
-                onClick={() => onNavChange(MENU_IDS.results)}
+                active={activeNav === MENU_IDS.library}
+                icon={Cloud}
+                label={libraryItem.label}
+                navId={MENU_IDS.library}
+                onClick={() => onNavChange(MENU_IDS.library)}
+              />
+            ) : null}
+            {knowledgeBaseItem ? (
+              <SidebarButton
+                active={activeNav === MENU_IDS.knowledgeBase}
+                icon={navIcons[MENU_IDS.knowledgeBase]}
+                label={knowledgeBaseItem.label}
+                navId={MENU_IDS.knowledgeBase}
+                onClick={() => onNavChange(MENU_IDS.knowledgeBase)}
+              />
+            ) : null}
+            {skillsItem ? (
+              <SidebarButton
+                active={activeNav === MENU_IDS.skillsSquare}
+                icon={navIcons[MENU_IDS.skillsSquare]}
+                label={skillsItem.label}
+                navId={MENU_IDS.skillsSquare}
+                onClick={() => onNavChange(MENU_IDS.skillsSquare)}
               />
             ) : null}
           </div>
@@ -2355,8 +2329,6 @@ export function WorkspaceShell({
           )}
 
             {workspaceItems.map(({ id, label }) => {
-            // Temporarily hide GFS cloud icon special-case — keep for later reuse.
-            // const Icon = id === MENU_IDS.library ? Cloud : navIcons[id];
             const Icon = navIcons[id];
             return (
               <SidebarButton
@@ -2377,7 +2349,7 @@ export function WorkspaceShell({
               <span className="workspace-section-title sidebar-group-title">{zh ? "工作区" : "Workspace"}</span>
               <div className="workspace-section-actions">
                 <button
-                  className={`workspace-sort-button ${workspaceSortMode !== "recent" ? "active" : ""}`}
+                  className="workspace-sort-button active"
                   type="button"
                   aria-label={getWorkspaceSortButtonLabel(workspaceSortMode, zh)}
                   title={getWorkspaceSortButtonLabel(workspaceSortMode, zh)}
@@ -2422,6 +2394,9 @@ export function WorkspaceShell({
                   const expanded = expandedWorkspaceIds.has(workspace.id);
                   const showAll = showAllWorkspaceThreads.has(workspace.id);
                   const visibleWorkspaceThreads = showAll ? threadsForWorkspace : threadsForWorkspace.slice(0, 5);
+                  const hasMixedThreadSources = new Set(
+                    threadsForWorkspace.map((thread) => thread.source ?? "opendrsai"),
+                  ).size > 1;
                   return (
                     <div className="workspace-tree-node" key={workspace.id}>
                       <div className={`workspace-row ${workspace.id === activeWorkspaceId ? "active" : ""}`}>
@@ -2472,7 +2447,7 @@ export function WorkspaceShell({
                       </div>
                       {expanded && (
                         <div className="workspace-thread-list">
-                          {visibleWorkspaceThreads.map(renderWorkspaceThread)}
+                          {visibleWorkspaceThreads.map((thread) => renderWorkspaceThread(thread, showThreadSourceIcons && hasMixedThreadSources))}
                           {threadsForWorkspace.length === 0 && <p>{zh ? "暂无任务" : "No tasks yet"}</p>}
                           {threadsForWorkspace.length > 5 && (
                             <button
@@ -2488,6 +2463,11 @@ export function WorkspaceShell({
                               {showAll
                                 ? (zh ? "收起" : "Show less")
                                 : (zh ? `显示全部 ${threadsForWorkspace.length} 个任务` : `Show all ${threadsForWorkspace.length} tasks`)}
+                            </button>
+                          )}
+                          {showAll && workspace.id === activeWorkspaceId && workspaceThreadsHasMore && (
+                            <button className="workspace-thread-more" type="button" disabled={workspaceThreadsLoading} onClick={() => void onLoadMoreWorkspaceThreads()}>
+                              {workspaceThreadsLoading ? (zh ? "正在加载…" : "Loading…") : (zh ? "加载更多" : "Load more")}
                             </button>
                           )}
                         </div>
@@ -2581,22 +2561,7 @@ export function WorkspaceShell({
                   {isRightPanelExpanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
                 </button>
               </div>
-              {openRightTabs.includes(activeRightTab) ? activeRightTab === "files" ? (
-                <div className="files-worktree-context">
-                  <div className="files-worktree-switcher" role="tablist" aria-label={zh ? "文件面板视图" : "Files panel view"}>
-                    <button type="button" role="tab" aria-selected={!worktreeOpen} className={!worktreeOpen ? "active" : ""} onClick={() => setWorktreeOpen(false)}>
-                      <FolderCode size={13} />
-                      <span>{zh ? "文件" : "Files"}</span>
-                    </button>
-                    <button type="button" role="tab" aria-selected={worktreeOpen} className={worktreeOpen ? "active" : ""} onClick={() => setWorktreeOpen(true)}>
-                      <GitBranch size={13} />
-                      <span>{zh ? "隔离工作区" : "Worktrees"}</span>
-                      {worktrees.length > 0 ? <small>{worktrees.length}</small> : null}
-                    </button>
-                  </div>
-                  {worktreeOpen ? renderWorktreePanel() : rightPanel}
-                </div>
-              ) : rightPanel : (
+              {openRightTabs.includes(activeRightTab) ? rightPanel : (
                 <button
                   type="button"
                   className="right-tabs-empty"
@@ -2613,6 +2578,7 @@ export function WorkspaceShell({
       {threadMenu && (
         <div className="thread-context-layer" role="presentation" onMouseDown={closeThreadMenu}>
           <div
+            ref={threadMenuRef}
             className="thread-context-menu"
             role="menu"
             style={{ left: threadMenu.x, top: threadMenu.y }}
@@ -3145,14 +3111,55 @@ export function WorkspaceShell({
               role="menuitem"
               className="thread-context-danger"
               onClick={() =>
-                runThreadMenuAction(() => {
-                  setDeleteConfirmThread(threadMenu.thread);
+                runThreadMenuAction(async () => {
+                  const thread = threadMenu.thread;
+                  const approved = await requestAppDecision({
+                    id: `delete-thread:${thread.id}`,
+                    title: thread.source === "codex"
+                      ? (zh ? "删除 OpenDrSai 与 Runtime 会话？" : "Delete the OpenDrSai and Runtime session?")
+                      : (zh ? "永久删除对话？" : "Permanently delete this conversation?"),
+                    description: thread.source === "codex"
+                      ? (zh
+                        ? `「${thread.title}」会删除 OpenDrSai 本地记录，并把 Runtime 会话标为已移除。Codex 侧会尽量同步归档，且不可从侧栏恢复。`
+                        : `"${thread.title}" deletes the local OpenDrSai record and marks the Runtime session removed. Codex is archived when possible and cannot be restored from the sidebar.`)
+                      : (zh
+                        ? `「${thread.title}」会永久删除本地聊天记录和 Runtime 会话，且不可恢复。若只想隐藏，请改用归档。`
+                        : `"${thread.title}" permanently deletes the local chat history and the Runtime session. This cannot be undone. Use Archive if you only want to hide it.`),
+                    tone: "danger",
+                    kind: "confirmation",
+                    confirmLabel: zh ? "删除" : "Delete",
+                    cancelLabel: zh ? "取消" : "Cancel",
+                  });
+                  if (!approved) return;
+                  // Persist here so delete does not depend on App.tsx HMR
+                  // (App.tsx exceeds Babel's 500KB limit and often keeps a stale handler
+                  // that rethrows into thread-menu-action-failed without writing disk).
+                  try {
+                    await deleteDesktopThread(thread.id);
+                  } catch (error) {
+                    const detail = error instanceof Error ? error.message : String(error);
+                    console.error("[delete-thread] persist failed", thread.id, error);
+                    void showAppNotice({
+                      id: "delete-thread-failed",
+                      title: zh ? "删除失败" : "Delete failed",
+                      description: zh
+                        ? `本地对话未能永久删除。${detail}`
+                        : `The local conversation could not be permanently deleted. ${detail}`,
+                    });
+                    return;
+                  }
+                  try {
+                    await onDeleteThread(thread.id);
+                  } catch (error) {
+                    // Catalog/tombstone already persisted; stale App handlers may still throw.
+                    console.warn("[delete-thread] UI cleanup failed after persist", thread.id, error);
+                  }
                 })
               }
             >
               {threadMenu.thread.source === "codex"
-                ? (zh ? "从 OpenDrSai 列表移除…" : "Remove from OpenDrSai list…")
-                : (zh ? "永久删除本地对话…" : "Permanently delete local conversation…")}
+                ? (zh ? "删除会话…" : "Delete conversation…")
+                : (zh ? "永久删除对话…" : "Permanently delete conversation…")}
             </button>
           </div>
         </div>
@@ -3308,56 +3315,77 @@ export function WorkspaceShell({
           </section>
         </div>
       )}
-      {deleteConfirmThread && (
+      {renameDialog && (
         <div
           className="thread-delete-confirm-overlay"
           role="presentation"
-          onMouseDown={() => setDeleteConfirmThread(null)}
+          onMouseDown={closeRenameDialog}
         >
           <section
-            className="thread-delete-confirm-dialog"
-            role="alertdialog"
+            className="thread-delete-confirm-dialog thread-rename-dialog"
+            role="dialog"
             aria-modal="true"
-            aria-labelledby="thread-delete-confirm-title"
-            aria-describedby="thread-delete-confirm-desc"
+            aria-labelledby="thread-rename-title"
             onMouseDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                closeRenameDialog();
+              }
+            }}
           >
             <div className="thread-delete-confirm-body">
-              <span className="thread-delete-confirm-icon" aria-hidden>
-                !
-              </span>
               <div className="thread-delete-confirm-copy">
-                <h2 id="thread-delete-confirm-title">
-                  {deleteConfirmThread.source === "codex"
-                    ? (zh ? "从 OpenDrSai 列表移除？" : "Remove from the OpenDrSai list?")
-                    : (zh ? "永久删除本地对话？" : "Permanently delete this local conversation?")}
+                <h2 id="thread-rename-title">
+                  {renameDialog.thread.source === "codex"
+                    ? (zh ? "设置本地显示名" : "Set local display name")
+                    : (zh ? "重命名对话" : "Rename conversation")}
                 </h2>
-                <p id="thread-delete-confirm-desc">
-                  <span className="thread-delete-confirm-name">{deleteConfirmThread.title}</span>
-                  {deleteConfirmThread.source === "codex"
-                    ? (zh ? "只移除 OpenDrSai 的本地列表记录，不会删除或归档 Codex 历史；下次同步可重新导入。" : "This only removes the local OpenDrSai list entry. Codex history is not deleted or archived and can be imported again.")
-                    : (zh ? "这会永久删除 OpenDrSai 本地聊天记录，且不可恢复。若只想隐藏，请改用归档。" : "This permanently deletes the local OpenDrSai chat history and cannot be undone. Use Archive if you only want to hide it.")}
-                </p>
+                {renameDialog.thread.source === "codex" ? (
+                  <p className="thread-delete-confirm-note">
+                    {zh
+                      ? "只会修改 OpenDrSai 本地显示名，不会改动 Codex 原始任务名。"
+                      : "This only changes the local OpenDrSai display name. The original Codex task name is unchanged."}
+                  </p>
+                ) : null}
+                <label className="thread-rename-form">
+                  <span>{zh ? "对话名称" : "Conversation name"}</span>
+                  <input
+                    ref={renameInputRef}
+                    value={renameDialog.title}
+                    onChange={(event) =>
+                      setRenameDialog((current) =>
+                        current ? { ...current, title: event.target.value } : current,
+                      )
+                    }
+                    onKeyDown={(event) => {
+                      if (isTextCompositionEvent(event.nativeEvent)) return;
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        submitRenameDialog();
+                      }
+                    }}
+                    maxLength={200}
+                    aria-label={zh ? "对话名称" : "Conversation name"}
+                  />
+                </label>
               </div>
             </div>
             <div className="thread-delete-confirm-actions">
               <button
                 type="button"
                 className="thread-delete-confirm-cancel"
-                onClick={() => setDeleteConfirmThread(null)}
+                onClick={closeRenameDialog}
               >
                 {zh ? "取消" : "Cancel"}
               </button>
               <button
                 type="button"
-                className="thread-delete-confirm-delete"
-                onClick={() => {
-                  const threadId = deleteConfirmThread.id;
-                  setDeleteConfirmThread(null);
-                  void onDeleteThread(threadId);
-                }}
+                className="thread-rename-confirm-save"
+                disabled={!renameDialog.title.trim() || renameDialog.title.trim() === renameDialog.thread.title}
+                onClick={submitRenameDialog}
               >
-                {zh ? "删除" : "Delete"}
+                {zh ? "保存" : "Save"}
               </button>
             </div>
           </section>
@@ -3403,7 +3431,7 @@ export function WorkspaceShell({
                 return <section key={category}><h3>{labels[category]}</h3>{entries.map((item) => <div className="shortcut-settings-row" key={item.id}><span>{zh ? item.zh : item.en}</span><button type="button" className={capturingShortcut === item.id ? "capturing" : ""} onClick={() => setCapturingShortcut(item.id)} onKeyDown={(event) => { if (capturingShortcut !== item.id) return; event.preventDefault(); event.stopPropagation(); const next = keyboardShortcutFromEvent(event.nativeEvent); if (!next || next === "Escape") return; setShortcutDrafts((current) => ({ ...current, [item.id]: next })); setCapturingShortcut(null); }}>{capturingShortcut === item.id ? (zh ? "请按快捷键" : "Press shortcut") : shortcutDrafts[item.id]}</button></div>)}</section>;
               })}
             </div>
-            <footer><button type="button" onClick={() => { const defaults = defaultShortcutSettings(); setShortcutDrafts(defaults); window.localStorage.removeItem(SHORTCUT_STORAGE_KEY); }}>{zh ? "恢复默认" : "Restore defaults"}</button><button type="button" onClick={() => { window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcutDrafts)); setShortcutDialogOpen(false); }}>{zh ? "完成" : "Done"}</button></footer>
+            <footer><button type="button" onClick={() => { const defaults = defaultShortcutSettings(); setShortcutDrafts(defaults); window.localStorage.removeItem(SHORTCUT_STORAGE_KEY); }}>{zh ? "恢复默认" : "Restore defaults"}</button><button type="button" onClick={() => { window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcutDrafts)); window.dispatchEvent(new Event("drsai:keyboard-shortcuts-updated")); setShortcutDialogOpen(false); }}>{zh ? "完成" : "Done"}</button></footer>
           </section>
         </div>
       )}
@@ -3500,11 +3528,6 @@ export function WorkspaceShell({
                 <PackageOpen size={14} />
                 {zh ? "查看成果" : "View Results"}
               </button>
-              <button type="button" onClick={() => openWorkspaceWorktrees(workspaceDetails)}>
-                <GitBranch size={14} />
-                {zh ? "隔离工作区" : "Isolated Workspaces"}
-                {workspaceDetails.id === activeWorkspaceId && worktrees.length > 0 ? <small>{worktrees.length}</small> : null}
-              </button>
               <button type="button" onClick={() => onOpenWorkspacePath(workspaceDetails.path)}>
                 {zh ? "打开文件夹" : "Open Folder"}
               </button>
@@ -3572,24 +3595,75 @@ function SidebarButton({
 }
 
 function getNextWorkspaceSortMode(
-  mode: "recent" | "name" | "created",
-): "recent" | "name" | "created" {
-  if (mode === "recent") return "name";
-  if (mode === "name") return "created";
-  return "recent";
+  mode: WorkspaceSortMode,
+): WorkspaceSortMode {
+  return mode === "name" ? "created" : "name";
+}
+
+type EditableSelectionSnapshot = {
+  element: HTMLElement;
+  kind: "field" | "contenteditable";
+  start?: number;
+  end?: number;
+  range?: Range;
+};
+
+function isTextEditableField(element: Element): element is HTMLInputElement | HTMLTextAreaElement {
+  if (element instanceof HTMLTextAreaElement) return !element.readOnly && !element.disabled;
+  if (!(element instanceof HTMLInputElement) || element.readOnly || element.disabled) return false;
+  return ["text", "search", "url", "tel", "password", "email", "number", ""].includes(element.type);
+}
+
+function snapshotEditableSelection(element: Element | null): EditableSelectionSnapshot | null {
+  if (!element) return null;
+  if (isTextEditableField(element)) {
+    return {
+      element,
+      kind: "field",
+      start: element.selectionStart ?? 0,
+      end: element.selectionEnd ?? 0,
+    };
+  }
+  if (element instanceof HTMLElement && element.isContentEditable) {
+    const selection = window.getSelection();
+    return {
+      element,
+      kind: "contenteditable",
+      range: selection && selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : undefined,
+    };
+  }
+  return null;
+}
+
+function restoreEditableSelection(snapshot: EditableSelectionSnapshot | null): boolean {
+  if (!snapshot?.element.isConnected) return false;
+  snapshot.element.focus({ preventScroll: true });
+  if (snapshot.kind === "field" && isTextEditableField(snapshot.element)) {
+    const start = snapshot.start ?? snapshot.element.value.length;
+    const end = snapshot.end ?? start;
+    try {
+      snapshot.element.setSelectionRange(start, end);
+    } catch {
+      // Some input types reject selection ranges.
+    }
+    return true;
+  }
+  if (snapshot.kind === "contenteditable" && snapshot.range) {
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(snapshot.range);
+  }
+  return true;
 }
 
 function getWorkspaceSortButtonLabel(
-  mode: "recent" | "name" | "created",
+  mode: WorkspaceSortMode,
   zh: boolean,
 ): string {
-  if (mode === "recent") {
-    return zh ? "工作区按最近打开排序，点击切换为按名称排序" : "Workspaces sorted by recent use. Click to sort by name.";
-  }
   if (mode === "name") {
     return zh ? "工作区按名称排序，点击切换为按创建时间排序" : "Workspaces sorted by name. Click to sort by created time.";
   }
-  return zh ? "工作区按创建时间排序，点击切换为按最近打开排序" : "Workspaces sorted by created time. Click to sort by recent use.";
+  return zh ? "工作区按创建时间排序，点击切换为按名称排序" : "Workspaces sorted by created time. Click to sort by name.";
 }
 
 function getEnabledNavItems(navSections: NavSection[], sectionId: NavSection["id"]): NavSection["items"] {
@@ -3637,6 +3711,16 @@ function keyboardShortcutFromEvent(event: KeyboardEvent): string {
           : event.key.length === 1 ? event.key.toUpperCase() : event.key;
   const parts = [event.ctrlKey || event.metaKey ? "Ctrl" : "", event.altKey ? "Alt" : "", event.shiftKey ? "Shift" : "", key].filter(Boolean);
   return parts.join("+");
+}
+
+function shortcutIncludesReleasedKey(shortcut: string, releasedKey: string): boolean {
+  const normalizedKey = releasedKey === "Control" || releasedKey === "Meta"
+    ? "ctrl"
+    : releasedKey === " " ? "space" : releasedKey.toLowerCase();
+  return shortcut
+    .split("+")
+    .map((part) => part.trim().toLowerCase())
+    .includes(normalizedKey);
 }
 
 function UserAvatar({ user, fallback }: { user: AuthUser | null; fallback: string }) {

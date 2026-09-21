@@ -21,9 +21,13 @@ logger = logger.bind(name="HepAI-OIDC")
 DEFAULT_ISSUER = "https://ai-dev.ihep.ac.cn/api"
 DEFAULT_SCOPE = "openid email profile hai_api offline_access"
 DEFAULT_CLIENT_ID = "opendrsai-webui"
-CALLBACK_PATH = "/auth/oidc/callback"
+# Prefer /api/... so Caddy (which already proxies /api) reaches FastAPI.
+# Legacy /auth/... URIs remain allowlisted while IdP keeps them registered.
+CALLBACK_PATH = "/api/auth/oidc/callback"
 DEFAULT_IDP_LOGOUT_URL = "https://newlogin.ihep.ac.cn/logout/"
 DEFAULT_ALLOWED_REDIRECT_URIS = (
+    "https://opendrsai.ihep.ac.cn/api/auth/oidc/callback",
+    "https://drsaiv2.ihep.ac.cn/api/auth/oidc/callback",
     "https://opendrsai.ihep.ac.cn/auth/oidc/callback",
     "https://drsaiv2.ihep.ac.cn/auth/oidc/callback",
 )
@@ -47,6 +51,7 @@ class OidcClientConfig:
     scope: str
     session_secret: str
     allowed_redirect_uris: tuple[str, ...]
+    redirect_uri: str = ""
 
     @property
     def discovery_url(self) -> str:
@@ -89,13 +94,16 @@ def load_oidc_config(env: Mapping[str, str] | None = None) -> OidcClientConfig:
     )
     if not session_secret:
         raise OidcError("SESSION_SECRET is not set")
+    allowed = _allowed_redirect_uris(source)
+    preferred = _strip_env(source.get("OIDC_REDIRECT_URI"))
     return OidcClientConfig(
         issuer=issuer.rstrip("/"),
         client_id=client_id,
         client_secret=client_secret,
         scope=scope,
         session_secret=session_secret,
-        allowed_redirect_uris=_allowed_redirect_uris(source),
+        allowed_redirect_uris=allowed,
+        redirect_uri=preferred if preferred in allowed else "",
     )
 
 
@@ -255,7 +263,13 @@ def public_base_parts(request: Request) -> tuple[str, str]:
     return proto, host
 
 
-def callback_redirect_uri(request: Request, allowed: tuple[str, ...]) -> str:
+def callback_redirect_uri(
+    request: Request,
+    allowed: tuple[str, ...],
+    preferred: str = "",
+) -> str:
+    if preferred and preferred in allowed:
+        return preferred
     proto, host = public_base_parts(request)
     candidate = f"{proto}://{host}{CALLBACK_PATH}"
     if candidate in allowed:

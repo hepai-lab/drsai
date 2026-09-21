@@ -15,6 +15,7 @@ wechat_bot.py — 微信 ilink Bot 主循环
 import asyncio
 import json
 import logging
+import hashlib
 from typing import TYPE_CHECKING
 
 from .wechat_client import AsyncWeChatAPI, MessageType, split_text
@@ -24,9 +25,6 @@ if TYPE_CHECKING:
     from drsai.backend.run import DrSaiWorkerModel
 
 logger = logging.getLogger(__name__)
-
-# 等待提示：当 agent 处理时间可能较长时先发一条占位消息
-THINKING_HINT = "⏳ 正在处理，请稍候..."
 
 HELP_TEXT = """OpenDrSai Bot 命令列表：
 /help                 —— 显示此帮助
@@ -49,6 +47,10 @@ BACKOFF_LONG = 30
 MAX_DEDUP_SIZE = 1000
 
 
+class WeChatCredentialsExpired(RuntimeError):
+    """Raised when iLink rejects the persisted login session."""
+
+
 class WeChatBot:
     """
     微信 Bot 主控类。
@@ -60,15 +62,17 @@ class WeChatBot:
 
     def __init__(
         self,
-        model: "DrSaiWorkerModel",
+        model: "DrSaiWorkerModel | None",
         creds: dict,
         api_key: str,
-        session_manager: SessionManager,
+        session_manager: SessionManager | None,
+        runtime_bridge=None,
     ):
         self.model = model
         self.creds = creds
         self.api_key = api_key
         self.session_manager = session_manager
+        self.runtime_bridge = runtime_bridge
         self.api = AsyncWeChatAPI(
             bot_token=creds["bot_token"],
             base_url=creds.get("base_url", "https://ilinkai.weixin.qq.com"),
@@ -108,9 +112,8 @@ class WeChatBot:
 
             # session 过期
             if resp.get("ret") == -14:
-                logger.error("微信 session 已过期，Bot 暂停。请重新启动后端并扫码登录。")
-                await asyncio.sleep(3600)
-                continue
+                logger.error("WeChat credentials expired; scan a new QR code to reconnect.")
+                raise WeChatCredentialsExpired("wechat_credentials_expired")
 
             # 更新游标
             new_buf = resp.get("get_updates_buf")
@@ -163,71 +166,134 @@ class WeChatBot:
         user_id = msg.get("from_user_id", "")
         context_token = msg.get("context_token", "")
         text = AsyncWeChatAPI.extract_text(msg).strip()
+        image_items = AsyncWeChatAPI.extract_images(msg)
 
-        logger.info("[msg#%s] from=%s text=%r", msg.get("message_id"), user_id, text[:80])
+        logger.info("WeChat inbound message id=%s user=%s characters=%d", _safe_message_id(msg.get("message_id")), _safe_user_id(user_id), len(text))
 
-        if not text:
+        if not text and not image_items:
             await self._reply(user_id, context_token, "暂不支持此类消息，请发送文字。")
             return
 
         # ── 命令路由 ──────────────────────────────────────────────────────────
-        if text == "/help":
+        if text == "/help" and not image_items:
             await self._reply(user_id, context_token, HELP_TEXT)
             return
 
-        if text == "/newsession":
-            chat_id = self.session_manager.new_session(user_id)
+        if text == "/newsession" and not image_items:
+            if self.runtime_bridge is not None:
+                chat_id = self.runtime_bridge.new_session(user_id)["title"]
+            else:
+                if self.session_manager is None:
+                    raise RuntimeError("wechat_session_manager_unavailable")
+                chat_id = self.session_manager.new_session(user_id)
             await self._reply(user_id, context_token,
                               f"✅ 已创建新会话 {chat_id}，后续对话将在此会话中进行。")
             return
 
-        if text == "/session":
-            sessions = self.session_manager.list_sessions(user_id)
-            current = self.session_manager.get_current(user_id)
+        if text == "/session" and not image_items:
+            if self.runtime_bridge is not None:
+                session_rows, current = self.runtime_bridge.list_sessions(user_id)
+                sessions = [str(row["session_id"]) for row in session_rows]
+                labels = {str(row["session_id"]): str(row["title"]) for row in session_rows}
+            else:
+                if self.session_manager is None:
+                    raise RuntimeError("wechat_session_manager_unavailable")
+                sessions = self.session_manager.list_sessions(user_id)
+                current = self.session_manager.get_current(user_id)
+                labels = {sid: sid for sid in sessions}
             if not sessions:
                 await self._reply(user_id, context_token, "暂无历史会话，发送任意消息即可自动创建。")
             else:
                 lines = [f"历史会话列表（当前: {current}）："]
                 for sid in sessions:
                     mark = " ←当前" if sid == current else ""
-                    lines.append(f"  • {sid}{mark}")
+                    lines.append(f"  • {labels[sid]} ({sid}){mark}")
                 lines.append("\n发送 /session <id> 切换会话。")
                 await self._reply(user_id, context_token, "\n".join(lines))
             return
 
-        if text.startswith("/session "):
+        if text.startswith("/session ") and not image_items:
             target = text[9:].strip()
-            if self.session_manager.switch_session(user_id, target):
-                await self._reply(user_id, context_token, f"✅ 已切换到会话 {target}。")
+            try:
+                if self.runtime_bridge is not None:
+                    selected = self.runtime_bridge.switch_session(user_id, target)
+                    switched = True
+                    target_label = str(selected["title"])
+                else:
+                    if self.session_manager is None:
+                        raise RuntimeError("wechat_session_manager_unavailable")
+                    switched = self.session_manager.switch_session(user_id, target)
+                    target_label = target
+            except KeyError:
+                switched = False
+                target_label = target
+            if switched:
+                await self._reply(user_id, context_token, f"✅ 已切换到会话 {target_label}。")
             else:
                 await self._reply(user_id, context_token,
                                   f"❌ 会话 {target!r} 不存在或不属于你，请用 /session 查看列表。")
             return
 
         # ── 转发给 agent ──────────────────────────────────────────────────────
+        if not image_items and (text.startswith("/models") or text.startswith("/model ")):
+            await self._reply(user_id, context_token, "当前微信频道暂不支持切换模型，请在 Desktop 设置中配置默认模型。")
+            return
+        if self.runtime_bridge is not None:
+            typing_task = asyncio.create_task(
+                self._maintain_typing(user_id, context_token),
+                name=f"wechat-typing-{_safe_user_id(user_id)}",
+            )
+            try:
+                inbound_images: list[tuple[bytes, str]] = []
+                for image_item in image_items:
+                    inbound_images.append(await self.api.download_image(image_item))
+                turn = await self.runtime_bridge.run_turn(
+                    provider_user_id=user_id,
+                    message_id=str(msg.get("message_id") or ""),
+                    text=text or "请理解这张图片并回答。",
+                    images=inbound_images,
+                )
+                delivery, created = self.runtime_bridge.begin_agent_reply_delivery(turn)
+                if created:
+                    try:
+                        if turn.text:
+                            await self._reply(user_id, context_token, turn.text)
+                        for image in turn.images:
+                            await self._reply_image(
+                                user_id, context_token, image.content
+                            )
+                    except Exception as exc:
+                        self.runtime_bridge.complete_outbound(
+                            str(delivery["delivery_id"]), status="unknown",
+                            error_code=f"wechat_send_{type(exc).__name__}",
+                        )
+                        raise
+                    self.runtime_bridge.complete_outbound(
+                        str(delivery["delivery_id"]), status="sent"
+                    )
+            except Exception as e:
+                logger.exception(
+                    "WeChat Runtime turn failed message=%s error_type=%s",
+                    _safe_message_id(msg.get("message_id")), type(e).__name__,
+                )
+                await self._reply(user_id, context_token, "❌ Agent 处理失败，请在 Desktop 诊断中查看详情。")
+            finally:
+                typing_task.cancel()
+                try:
+                    await typing_task
+                except asyncio.CancelledError:
+                    pass
+            return
+
+        if self.session_manager is None or self.model is None:
+            raise RuntimeError("wechat_legacy_runtime_unavailable")
         chat_id = self.session_manager.get_or_create_session(user_id)
 
-        # 先发"处理中"占位消息
-        await self._reply(user_id, context_token, THINKING_HINT)
-
         # 确保 agent 已初始化
-        await self._ensure_agent(chat_id, user_id)
-
-        if text.startswith("/models"):
-            llm_mode_config: dict = self.model.drsai.agent_instance[chat_id]._llm_mode_config
-            llm_mode_config_format = "可用的模型配置：\n"
-            for k, _ in llm_mode_config.items():
-                llm_mode_config_format += f"{k}\n\n"
-            await self._reply(user_id, context_token, llm_mode_config_format)
-            return
-        
-        
-        if text.startswith("/model "):
-            model_name = text[7:].strip()
-            # self.model.drsai.agent_instance[chat_id].set_llm_mode(model_name)
-            self._msg_metadata.update({"settings_config": json.dumps({"defult_config_name": model_name})})
-            await self._reply(user_id, context_token, f"已切换模型为 {model_name}")
-            return
+        typing_task = asyncio.create_task(
+            self._maintain_typing(user_id, context_token),
+            name=f"wechat-typing-{_safe_user_id(user_id)}",
+        )
         # 以 a_drsai_ui_completions 为核心，收到每条 TextMessage 立即发送
         messages = [
             {
@@ -248,6 +314,7 @@ class WeChatBot:
         replied = False
         daemon_buffer = ""  # 缓冲 daemon 的流式输出，完成后一次性发送
         try:
+            await self._ensure_agent(chat_id, user_id)
             async for line in self.model.drsai.a_drsai_ui_completions(**kwargs):
                 if not isinstance(line, str):
                     continue
@@ -303,8 +370,8 @@ class WeChatBot:
                         await self._reply(user_id, context_token, daemon_buffer)
                         replied = True
                     daemon_buffer = ""
-                    err_msg = event.get("message", "未知错误")
-                    await self._reply(user_id, context_token, f"❌ {err_msg}")
+                    await self._reply(user_id, context_token, "❌ Agent 处理失败，请在 Desktop 诊断中查看详情。")
+                    replied = True
                 elif event_type == "TaskResult":
                     # 任务完成 — 发送缓冲的全部内容
                     if daemon_buffer.strip():
@@ -314,19 +381,52 @@ class WeChatBot:
                     break
 
         except Exception as e:
-            logger.exception("agent 调用出错 (chat_id=%s): %s", chat_id, e)
+            logger.exception("WeChat Agent call failed chat_id=%s error_type=%s", chat_id, type(e).__name__)
             # 异常时发送已缓冲的 daemon 内容
             if daemon_buffer.strip():
                 try:
                     await self._reply(user_id, context_token, daemon_buffer)
                 except Exception:
                     pass
+        finally:
+            typing_task.cancel()
+            try:
+                await typing_task
+            except asyncio.CancelledError:
+                pass
 
         if not replied:
             await self._reply(user_id, context_token, "（Agent 未返回内容，请重试）")
 
         # 更新活跃时间
         self.session_manager.touch(chat_id)
+
+    async def _maintain_typing(self, user_id: str, context_token: str) -> None:
+        """Best-effort native typing indicator; never affects message delivery."""
+        get_ticket = getattr(self.api, "get_typing_ticket", None)
+        send_typing = getattr(self.api, "send_typing", None)
+        if not callable(get_ticket) or not callable(send_typing):
+            return
+        ticket = None
+        try:
+            ticket = await get_ticket(user_id, context_token)
+            while True:
+                await send_typing(user_id, ticket, active=True)
+                await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.info(
+                "WeChat native typing indicator unavailable user=%s error_type=%s",
+                _safe_user_id(user_id),
+                type(error).__name__,
+            )
+        finally:
+            if ticket:
+                try:
+                    await send_typing(user_id, ticket, active=False)
+                except Exception:
+                    pass
 
     # ── 发送消息（自动分段） ──────────────────────────────────────────────────
 
@@ -337,7 +437,56 @@ class WeChatBot:
             try:
                 await self.api.send_text(account_id, to_user_id, context_token, chunk)
             except Exception as e:
-                logger.error("发送消息失败 to=%s: %s", to_user_id, e)
+                logger.error("WeChat send failed user=%s error_type=%s", _safe_user_id(to_user_id), type(e).__name__)
+                raise
+
+    async def _reply_image(
+        self, to_user_id: str, context_token: str, content: bytes
+    ) -> None:
+        try:
+            await self.api.send_image(
+                self.creds["account_id"], to_user_id, context_token, content
+            )
+        except Exception as error:
+            logger.error(
+                "WeChat image send failed user=%s error_type=%s",
+                _safe_user_id(to_user_id), type(error).__name__,
+            )
+            raise
+
+    def desktop_outbound_capability(self, session_id: str) -> dict:
+        if self.runtime_bridge is None:
+            return {"available": False, "reason": "runtime_session_unavailable"}
+        user_id = self.runtime_bridge.provider_user_for_session(session_id)
+        if not user_id:
+            return {"available": False, "reason": "waiting_for_inbound"}
+        if not self._user_context_tokens.get(user_id):
+            return {"available": False, "reason": "waiting_for_inbound"}
+        return {"available": True, "reason": None}
+
+    async def send_desktop_outbound(
+        self, session_id: str, *, text: str, idempotency_key: str
+    ) -> dict:
+        capability = self.desktop_outbound_capability(session_id)
+        if not capability["available"]:
+            raise RuntimeError(str(capability["reason"]))
+        user_id = self.runtime_bridge.provider_user_for_session(session_id)
+        context_token = self._user_context_tokens[str(user_id)]
+        delivery, created = self.runtime_bridge.begin_outbound(
+            session_id, idempotency_key=idempotency_key, text=text
+        )
+        if not created:
+            return delivery
+        try:
+            await self._reply(str(user_id), context_token, text)
+        except Exception as exc:
+            return self.runtime_bridge.complete_outbound(
+                str(delivery["delivery_id"]), status="unknown",
+                error_code=f"wechat_send_{type(exc).__name__}",
+            )
+        return self.runtime_bridge.complete_outbound(
+            str(delivery["delivery_id"]), status="sent"
+        )
 
     # ── 主动推送通知 ───────────────────────────────────────────────────────
 
@@ -355,14 +504,14 @@ class WeChatBot:
         """
         context_token = self._user_context_tokens.get(user_id)
         if not context_token:
-            logger.warning("No cached context_token for WeChat user %s, skip push", user_id)
+            logger.warning("No cached context token for WeChat user %s", _safe_user_id(user_id))
             return False
         try:
             await self._reply(user_id, context_token, text)
-            logger.info("WeChat push_notification sent to %s", user_id)
+            logger.info("WeChat notification sent user=%s", _safe_user_id(user_id))
             return True
         except Exception as e:
-            logger.error("WeChat push_notification failed for %s: %s", user_id, e)
+            logger.error("WeChat notification failed user=%s error_type=%s", _safe_user_id(user_id), type(e).__name__)
             return False
 
     # ── 确保 agent 已初始化 ───────────────────────────────────────────────────
@@ -377,5 +526,15 @@ class WeChatBot:
             stream=True,
         )
         if not result.get("status"):
-            raise RuntimeError(f"lazy_init 失败: {result.get('message')}")
+            error = result.get("error") or "init_failed"
+            detail = result.get("detail") or result.get("message") or "unknown"
+            raise RuntimeError(f"lazy_init 失败: {error}: {detail}")
+
+
+def _safe_user_id(value: str) -> str:
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:12]
+
+
+def _safe_message_id(value) -> str:
+    return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()[:12]
 

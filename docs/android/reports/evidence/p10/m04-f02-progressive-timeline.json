@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "feature_id": "M04-F02",
+  "acceptance_run_id": "p10-round-017-progressive-timeline",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "presentation_levels": {
+    "default": "human-readable step count and run status; no JSON or internal tool name",
+    "expanded": "purpose, safe input summary, duration, result, execution location and sources",
+    "advanced": "internal tool/server/error detail"
+  },
+  "screenshots_generated": [
+    "p10-m04-f02-default.png",
+    "p10-m04-f02-expanded.png",
+    "p10-m04-f02-advanced.png"
+  ],
+  "tests": {
+    "testDebugUnitTest": "673 tests, 0 failures, 2 skipped",
+    "OaepProjectionTest": "all passed",
+    "OaepToolVisibilityUiTest_API35": "1 passed"
+  }
+}

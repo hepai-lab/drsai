@@ -85,7 +85,7 @@ function contentPartSummary(parts: ContentPart[]): string[] {
       const preview = text.length > 40 ? text.slice(0, 37) + '...' : text
       return `text:"${preview}"`
     }
-    return `tool:${p.toolId}`
+    return p.kind === 'tool' ? `tool:${p.toolId}` : `artifact:${p.artifactId}`
   })
 }
 

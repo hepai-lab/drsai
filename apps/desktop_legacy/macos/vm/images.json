@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "toolchain": {
+    "tartVersion": "2.32.1",
+    "nodeMajor": 22
+  },
+  "host": {
+    "minimumFreeGiB": 80,
+    "recommendedFreeGiB": 100,
+    "minimumMemoryGiB": 12
+  },
+  "artifacts": {
+    "approvedDownloadHosts": [
+      "download-opendrsai.ihep.ac.cn"
+    ]
+  },
+  "defaults": {
+    "cpu": 4,
+    "memoryMiB": 6144,
+    "diskGiB": 70,
+    "display": "1440x900",
+    "networkMode": "shared-nat",
+    "lifecycleRounds": 5,
+    "bootTimeoutSeconds": 300
+  },
+  "images": [
+    {
+      "id": "macos26-pristine",
+      "localName": "opendrsai-pristine-macos26",
+      "bootstrapSource": "ghcr.io/cirruslabs/macos-tahoe-base:latest",
+      "sourceDigest": "sha256:1214590cd279a1ff82897d802624362ced1ff960d7b9f99a6ced5bbf8071e319",
+      "guestMajorVersion": 26,
+      "guestVersion": "26.6.1",
+      "guestBuild": "25G76",
+      "username": "admin",
+      "status": "ready",
+      "sealedAt": "2026-08-13T15:03:01.386Z",
+      "notes": "本地基础镜像由 bootstrapSource 首次创建；正式验收依据 sourceDigest、guestVersion 和 guestBuild，不消费浮动 latest。"
+    }
+  ]
+}

@@ -16,6 +16,9 @@ import {
 import { IPlan } from "../../components/types/plan";
 import { sessionAPI } from "../../components/views/api";
 import { getAgentConfig } from "./config/agentConfigs";
+import {
+  resolvePresentationAgentName,
+} from "./config/agentPresentationProfile";
 import { useChatWebSocket } from "./hooks/useChatWebSocket";
 import { usePlanManagement } from "./hooks/usePlanManagement";
 import { useProgressTracking } from "./hooks/useProgressTracking";
@@ -25,8 +28,13 @@ import { messageUtils } from "./rendermessage";
 import RunView from "./runview";
 import WelcomeScreen from "./WelcomeScreen";
 import type { ServerUploadedFileInfo } from "./chat/hooks/useFileUpload";
-import type { HepaiSkillPickRow } from "./chat/chat/types";
+import type { HepaiSkillPickRow } from "./chat/types";
 import { parseFlexibleTimestampToUnixSeconds } from "../../utils/apiDatetime";
+import {
+  normalizeRunInteractionStatus,
+  reconcilePersistedMessages,
+} from "./chatStreamReducer";
+import { useModeConfigStore } from "../../store/modeConfig";
 
 // Extend RunStatus for sidebar status reporting
 type SidebarRunStatus = BaseRunStatus | "final_answer_awaiting_input";
@@ -116,6 +124,19 @@ export default function ChatView({
   }, [visible, session]);
 
   const agentConfig = React.useMemo(() => getAgentConfig(agentType), [agentType]);
+
+  const selectedAgentName = useModeConfigStore((s) => s.selectedAgent?.name);
+  const agentInfoName = useModeConfigStore((s) => s.agentInfo?.name);
+  const presentationAgentName = React.useMemo(() => {
+    const cfg = session?.agent_mode_config as
+      | { name?: string; config?: { name?: string } }
+      | undefined;
+    return resolvePresentationAgentName({
+      sessionAgentName: cfg?.name || cfg?.config?.name || null,
+      agentInfoName,
+      selectedAgentName,
+    });
+  }, [session?.agent_mode_config, agentInfoName, selectedAgentName]);
 
   const [isPanelMinimized, setIsPanelMinimized] = React.useState(
     agentConfig.panel.defaultMinimized
@@ -398,6 +419,7 @@ export default function ChatView({
         if (!latestRun.session_id && session.id) {
           latestRun.session_id = session.id;
         }
+        latestRun = normalizeRunInteractionStatus(latestRun);
       }
 
       return latestRun;
@@ -449,7 +471,7 @@ export default function ChatView({
           // (active/pausing/paused/awaiting_input/error) but the WebSocket
           // was already lost, force it to "stopped" so the user can send a
           // fresh message instead of a stale input_response.
-          const nonTerminal = new Set(["active", "awaiting_input", "pausing", "paused", "error"]);
+          const nonTerminal = new Set(["active", "ready", "awaiting_input", "pausing", "paused", "error"]);
           if (
             nonTerminal.has(latestRun.status) &&
             !setupWebSocket(latestRun.id, false, true)
@@ -466,12 +488,19 @@ export default function ChatView({
               // Keep prev if it has more messages (live WS data is ahead of DB snapshot)
               // or if the run is still active (streaming in progress).
               const liveIsAhead = prev.messages.length > latestRun!.messages.length;
-              const liveIsActive = new Set(["active", "awaiting_input", "pausing", "paused"]).has(prev.status);
+              const liveIsActive = new Set(["active", "ready", "awaiting_input", "pausing", "paused"]).has(prev.status);
               if (liveIsAhead || liveIsActive) {
                 return prev;
               }
             }
-            return latestRun!;
+            if (!prev) return latestRun!;
+            return {
+              ...latestRun!,
+              messages: reconcilePersistedMessages(
+                prev.messages,
+                latestRun!.messages
+              ),
+            };
           });
           setNoMessagesYet(latestRun.messages.length === 0);
 
@@ -492,26 +521,31 @@ export default function ChatView({
   // Keep wsActiveRef in sync with run status so initializeSession skips DB
   // reload while streaming is in progress.
   React.useEffect(() => {
-    const activeStatuses = new Set(["active", "awaiting_input", "pausing", "paused"]);
+    const activeStatuses = new Set(["active", "ready", "awaiting_input", "pausing", "paused"]);
     wsActiveRef.current = !!currentRun && activeStatuses.has(currentRun.status);
   }, [currentRun?.status]);
 
-  // When the run transitions to awaiting_input, the backend may have saved
-  // messages (e.g. the DocMaster final TextMessage inside a Response object)
-  // that were never sent over WS. Do a one-time DB merge to pick them up.
+  // When the run transitions to awaiting_input / ready, the backend may have
+  // saved messages that were never sent over WS. Do a one-time DB merge.
   const prevStatusRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     const status = currentRun?.status ?? null;
-    if (status === "awaiting_input" && prevStatusRef.current !== "awaiting_input") {
+    const shouldMerge =
+      (status === "awaiting_input" || status === "ready") &&
+      prevStatusRef.current !== status;
+    if (shouldMerge) {
       loadSessionRun().then((latestRun) => {
         if (!latestRun) return;
         setCurrentRun((prev) => {
           if (!prev || prev.id !== latestRun.id) return prev;
-          // Always replace with DB messages — DB is authoritative at awaiting_input
-          // and contains messages (e.g. final TextMessage) that WS never sent.
+          // Persistence can fill missing completed rows, but must not replace a
+          // live stream or change an existing message's identity/order.
           return {
             ...prev,
-            messages: latestRun.messages,
+            messages: reconcilePersistedMessages(
+              prev.messages,
+              latestRun.messages
+            ),
             file_events: latestRun.file_events ?? prev.file_events,
             logs: latestRun.logs ?? prev.logs,
           };
@@ -555,7 +589,8 @@ export default function ChatView({
             messageUtils.isFinalAnswer(
               beforeLastMsg.config?.metadata
             ))) &&
-        currentRun.status == "awaiting_input"
+        currentRun.status == "awaiting_input" ||
+        currentRun.status == "ready"
       ) {
         statusToReport = "final_answer_awaiting_input";
       }
@@ -708,7 +743,7 @@ export default function ChatView({
                 {currentRun && (
                   <RunView
                     run={currentRun}
-                    sessionId={session.id}
+                    sessionId={session?.id || currentRun.session_id}
                     onSavePlan={handlePlanUpdate}
                     onPause={handlePause}
                     onRegeneratePlan={handleRegeneratePlan}
@@ -717,6 +752,7 @@ export default function ChatView({
                     showPanel={showPanel}
                     setShowPanel={setShowPanel}
                     agentConfig={agentConfig}
+                    agentName={presentationAgentName}
                     onApprove={handleApprove}
                     onDeny={handleDeny}
                     onAcceptPlan={handleAcceptPlan}
@@ -772,7 +808,11 @@ export default function ChatView({
                   attachedSkills: attachedSkills?.map((s) => ({ id: s.id, source: s.source })) ?? [],
                   query,
                 });
-                if (currentRun?.status === "awaiting_input" && activeSocketRef?.current?.readyState === WebSocket.OPEN) {
+                if (
+                  (currentRun?.status === "awaiting_input" ||
+                    currentRun?.status === "ready") &&
+                  activeSocketRef?.current?.readyState === WebSocket.OPEN
+                ) {
                   handleInputResponse(query, accepted, plan, files, llm, undefined, attachedSkills);
                 } else {
                   runTaskWithActiveFlag(query, files, plan, true, llm, attachedSkills);

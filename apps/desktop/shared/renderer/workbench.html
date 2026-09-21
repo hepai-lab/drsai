@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      Note what `connect-src` does not contain: any remote origin.
+
+      The workbench renderer makes no network requests at all -- every call goes over the
+      IPC bridge and out through the main process, which is what holds the
+      pairing token and the HepAI bearer. The localhost entries are Vite's dev
+      server and its HMR socket; in a packaged build nothing but 'self' is
+      reachable, so a prompt injection that reaches this document has no
+      egress path to take a credential down.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:*;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenDrSai</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/workbench/main.tsx"></script>
+  </body>
+</html>

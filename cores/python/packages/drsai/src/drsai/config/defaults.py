@@ -9,7 +9,13 @@ from drsai.platform_upstream import (
     resolve_hepai_model_base_url,
 )
 
-DEFAULT_MODEL = "deepseek-v4-flash"
+from .model_defaults import DEFAULT_CONFIG_NAME
+
+# Unified default model: ``DEFAULT_MODEL`` is the single source of truth for
+# the desktop bootstrap, resolver, and agent policy.  It mirrors
+# ``DEFAULT_CONFIG_NAME`` from ``model_defaults.py`` so that the model catalog,
+# config.toml, and Agent TOML all agree on the same default.
+DEFAULT_MODEL = DEFAULT_CONFIG_NAME
 DEFAULT_PROVIDER = "hepai"
 
 

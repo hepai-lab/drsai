@@ -44,7 +44,7 @@ class WorkspaceFilesViewModel(
         val result = client.searchFiles(workspaceId, query, null, 5_000, UUID.randomUUID().toString(), UUID.randomUUID().toString())
         result.fold(
             success = { map -> mutableState.update { it.copy(searchResults = map.nodes(), searchTruncated = map.bool("truncated")) } },
-            failure = { failure -> mutableState.update { it.copy(ignoredHint = safeRemoteFailureMessage(failure)) } },
+            failure = { failure -> mutableState.update { it.copy(ignoredHint = safeRemoteFailureMessage(getApplication(), failure)) } },
         )
     }
 
@@ -70,7 +70,7 @@ class WorkspaceFilesViewModel(
                 buildFilePreview(node, bytes, size > bytes.size)
             }.onSuccess { preview -> mutableState.update { it.copy(preview = preview) } }
                 .onFailure { failure -> mutableState.update { it.copy(preview = FilePreviewUiState(node.relativePath,
-                    PreviewKind.UNSUPPORTED, summary = safeRemoteFailureMessage(failure), loading = false,
+                    PreviewKind.UNSUPPORTED, summary = safeRemoteFailureMessage(getApplication(), failure), loading = false,
                     canOpenExternal = false)) } }
         }
     }
@@ -108,7 +108,7 @@ class WorkspaceFilesViewModel(
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 getApplication<Application>().startActivity(intent)
             }.onFailure { failure -> mutableState.update { state -> state.copy(preview = state.preview?.copy(
-                summary = safeRemoteFailureMessage(failure), loading = false)) } }
+                summary = safeRemoteFailureMessage(getApplication(), failure), loading = false)) } }
         }
     }
 
@@ -122,7 +122,7 @@ class WorkspaceFilesViewModel(
                     nextCursor = map.string("next_cursor"), truncated = map.bool("truncated"),
                     ignoredHint = map.string("ignored_hint"))
             } },
-            failure = { failure -> mutableState.update { it.copy(loading = false, ignoredHint = safeRemoteFailureMessage(failure)) } },
+            failure = { failure -> mutableState.update { it.copy(loading = false, ignoredHint = safeRemoteFailureMessage(getApplication(), failure)) } },
         )
     }
 
@@ -194,9 +194,9 @@ internal fun buildFilePreview(node: RemoteFileNode, bytes: ByteArray, truncated:
         mime.startsWith("image/") -> FilePreviewUiState(node.relativePath, PreviewKind.IMAGE,
             imageBytes = bytes, truncated = truncated)
         mime == "application/octet-stream" -> FilePreviewUiState(node.relativePath, PreviewKind.BINARY,
-            summary = "二进制文件 · ${node.size ?: bytes.size.toLong()} B", truncated = truncated)
+            sizeBytes = node.size ?: bytes.size.toLong(), truncated = truncated)
         else -> FilePreviewUiState(node.relativePath, PreviewKind.UNSUPPORTED,
-            summary = "暂不支持 ${mime} 内嵌预览")
+            mimeType = mime)
     }
 }
 private fun simpleFactory(create: () -> ViewModel): ViewModelProvider.Factory = object : ViewModelProvider.Factory {

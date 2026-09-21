@@ -18,6 +18,7 @@
  */
 import { Message } from "../../components/types/datamodel";
 import { messageUtils } from "./rendermessage";
+import { streamMessageId } from "./chatStreamReducer";
 
 export type ChatMsgKind =
   | "user"
@@ -255,7 +256,23 @@ export function classifyMessage(msg: Message): ChatMsgKind {
     meta._is_final_reply ||
     meta._sealed_from_stream
   ) {
-    if (contentLen(cfg.content) === 0) return "empty";
+    const isV2 =
+      meta.stream_protocol === "2" ||
+      meta.stream_protocol === 2 ||
+      typeof meta.stream_status === "string";
+    const hasThoughtPlane = Boolean(
+      (typeof meta._peeled_thought === "string" && meta._peeled_thought.trim()) ||
+      (typeof meta.reasoning_summary === "string" && meta.reasoning_summary.trim()) ||
+      (typeof meta._live_thought === "string" && meta._live_thought.trim())
+    );
+    if (contentLen(cfg.content) === 0 && !(isV2 && hasThoughtPlane)) {
+      return "empty";
+    }
+    // Protocol v2 already splits reasoning into <think>; never demote the
+    // whole bubble to "thought" via monologue heuristics on that channel.
+    if (isV2) {
+      return "reply";
+    }
     if (typeof cfg.content === "string" && looksLikeAgentMonologue(cfg.content)) {
       return "thought";
     }
@@ -381,9 +398,11 @@ export function collapseMessagesForDisplay(messages: Message[]): PipelineResult 
       const raw =
         typeof msg.config.content === "string" ? msg.config.content : "";
       const meta = (msg.config.metadata || {}) as Record<string, unknown>;
+      const isTurnFinal = meta.turn_plane === "final";
 
-      // Live stream already carries a stable thought plane — keep the bubble intact.
-      if (kind === "stream" && typeof meta._live_thought === "string") {
+      // Live stream already carries a stable thought plane — keep the bubble intact
+      // unless it is the turn's final reply (thinking belongs in 处理过程).
+      if (kind === "stream" && typeof meta._live_thought === "string" && !isTurnFinal) {
         projected.push(msg);
         decisions.push({
           idx: i,
@@ -395,14 +414,21 @@ export function collapseMessagesForDisplay(messages: Message[]): PipelineResult 
         continue;
       }
 
+      const metaThought = [
+        meta._live_thought,
+        meta._peeled_thought,
+        meta.reasoning_summary,
+      ]
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .find(Boolean) || "";
       const { reply, thought } = splitAgentVisibleContent(raw);
-      // Keep think embedded in the same message so ThinkBubble does not remount
-      // as a separate list item.
-      const display = thought
-        ? `<think>${thought}</think>\n\n${reply}`
-        : reply;
+      const mergedThought = thought || metaThought;
+      const display =
+        !isTurnFinal && mergedThought
+          ? `<think>${mergedThought}</think>\n\n${reply}`
+          : reply;
 
-      if (display) {
+      if (display || (isTurnFinal && mergedThought)) {
         if (kind === "stream") {
           projected.push({
             ...msg,
@@ -412,14 +438,33 @@ export function collapseMessagesForDisplay(messages: Message[]): PipelineResult 
               metadata: {
                 ...meta,
                 _stream_draft: true,
-                ...(thought
-                  ? { _live_thought: thought, _thought_done: true }
-                  : {}),
+                ...(isTurnFinal
+                  ? mergedThought
+                    ? { _peeled_thought: mergedThought }
+                    : {}
+                  : thought
+                    ? { _live_thought: thought, _thought_done: true }
+                    : {}),
               },
             } as any,
           });
         } else {
-          projected.push(withReplyContent(msg, display));
+          const next = withReplyContent(msg, display || reply);
+          projected.push(
+            isTurnFinal && mergedThought
+              ? {
+                  ...next,
+                  config: {
+                    ...next.config,
+                    metadata: {
+                      ...((next.config.metadata || {}) as Record<string, unknown>),
+                      _peeled_thought: mergedThought,
+                      turn_plane: "final",
+                    },
+                  } as any,
+                }
+              : next
+          );
         }
         decisions.push({
           idx: i,
@@ -472,10 +517,14 @@ export function collapseMessagesForDisplay(messages: Message[]): PipelineResult 
       if (classifyMessage(later) !== "reply") continue;
       const laterText =
         typeof later.config.content === "string" ? later.config.content : "";
-      if (
-        isNearDuplicateReply(text, laterText) ||
-        contentLen(laterText) >= Math.min(contentLen(text), 40)
-      ) {
+      const laterId = streamMessageId(later);
+      const thisId = streamMessageId(msg);
+      const laterStreamId = (later.config.metadata as any)?.stream_id;
+      const thisStreamId = (msg.config.metadata as any)?.stream_id;
+      const sameLogicalMessage =
+        (thisId && laterId && thisId === laterId) ||
+        (thisStreamId && laterStreamId && thisStreamId === laterStreamId);
+      if (isNearDuplicateReply(text, laterText) || sameLogicalMessage) {
         keep.delete(i);
         break;
       }
@@ -502,6 +551,8 @@ export function collapseMessagesForDisplay(messages: Message[]): PipelineResult 
       if (String(prior.config.source || "assistant") !== source) continue;
       const priorKind = classifyMessage(prior);
       if (priorKind !== "reply" && priorKind !== "stream") continue;
+      const priorMeta = (prior.config.metadata || {}) as Record<string, unknown>;
+      if (priorMeta.turn_plane === "final") continue;
       const raw =
         typeof prior.config.content === "string" ? prior.config.content : "";
       const split = splitAgentVisibleContent(raw);

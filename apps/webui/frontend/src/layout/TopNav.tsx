@@ -15,11 +15,10 @@ import { useLocation, useNavigate } from "../hooks/useRouter";
 import { useLang } from "../i18n/useLang";
 import UserProfileModal from "../components/userProfile";
 import { logoutToIhepSso } from "../utils/authSession";
+import { BrandLogo } from "../components/common/BrandLogo";
 
 const DOCS_URL = "https://docs-drsai.ihep.ac.cn/";
 const GITHUB_URL = "https://github.com/hepai-lab/drsai";
-const LOGO_URL =
-  "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview";
 
 interface TopNavProps {
   isSidebarOpen: boolean;
@@ -109,10 +108,9 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
         <div className="flex flex-1 items-center min-w-0 px-1 sm:px-2">
           <div className="flex items-center gap-2 sm:gap-4 min-w-0">
             <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
-              <img
-                src={LOGO_URL}
+              <BrandLogo
                 alt=""
-                className="w-5 h-5 sm:w-6 sm:h-6 rounded-md object-cover flex-shrink-0"
+                className="w-5 h-5 sm:w-6 sm:h-6 rounded-md object-contain flex-shrink-0"
               />
               <span className="text-xs sm:text-sm font-semibold tracking-wide text-primary whitespace-nowrap">
                 OpenDrSai

@@ -130,6 +130,7 @@ data class WorkbenchApprovalEntity(
     val toolCallId: String,
     val operation: String,
     val argumentsDigest: String,
+    val previewJson: String,
     val scope: String,
     val status: String,
     val expiresAt: String,
@@ -230,6 +231,24 @@ interface WorkbenchDao {
     @Query("UPDATE workbench_sessions SET unread=:unread WHERE subject=:subject AND sessionId=:sessionId")
     suspend fun setSessionUnread(subject: String, sessionId: String, unread: Boolean): Int
 
+    @Query("DELETE FROM workbench_audit WHERE subject=:subject AND runId IN (SELECT runId FROM workbench_runs WHERE subject=:subject AND sessionId=:sessionId)")
+    suspend fun deleteSessionAudit(subject: String, sessionId: String): Int
+
+    @Query("DELETE FROM workbench_approval_grants WHERE subject=:subject AND sessionId=:sessionId")
+    suspend fun deleteSessionApprovalGrants(subject: String, sessionId: String): Int
+
+    @Query("DELETE FROM workbench_approvals WHERE subject=:subject AND sessionId=:sessionId")
+    suspend fun deleteSessionApprovals(subject: String, sessionId: String): Int
+
+    @Query("DELETE FROM workbench_events WHERE subject=:subject AND sessionId=:sessionId")
+    suspend fun deleteSessionEvents(subject: String, sessionId: String): Int
+
+    @Query("DELETE FROM workbench_runs WHERE subject=:subject AND sessionId=:sessionId")
+    suspend fun deleteSessionRuns(subject: String, sessionId: String): Int
+
+    @Query("DELETE FROM workbench_sessions WHERE subject=:subject AND sessionId=:sessionId")
+    suspend fun deleteSession(subject: String, sessionId: String): Int
+
     @Query("SELECT * FROM workbench_runs WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND runId=:runId")
     suspend fun run(subject: String, organization: String, runtimeId: String, runId: String): WorkbenchRunEntity?
 
@@ -239,6 +258,9 @@ interface WorkbenchDao {
     @Query("SELECT * FROM workbench_runs WHERE runId=:runId LIMIT 1")
     suspend fun runById(runId: String): WorkbenchRunEntity?
 
+    @Query("SELECT * FROM workbench_runs WHERE subject=:subject AND runId=:runId LIMIT 1")
+    suspend fun runBySubjectAndId(subject: String, runId: String): WorkbenchRunEntity?
+
     @Query("SELECT pythonStateJson FROM workbench_runs WHERE runId=:runId LIMIT 1")
     suspend fun pythonState(runId: String): String?
 
@@ -247,6 +269,12 @@ interface WorkbenchDao {
 
     @Query("SELECT * FROM workbench_runs WHERE subject=:subject AND status IN ('QUEUED','RUNNING','WAITING_APPROVAL','PAUSED') ORDER BY updatedAt")
     suspend fun recoverableRuns(subject: String): List<WorkbenchRunEntity>
+
+    @Query("UPDATE workbench_runs SET status='PAUSED', failureCode='stale_running_recovered', updatedAt=:now WHERE subject=:subject AND status IN ('QUEUED','RUNNING') AND updatedAt < :staleBefore AND updatedAt >= :expiresAfter")
+    suspend fun pauseStaleRuns(subject: String, staleBefore: Long, expiresAfter: Long, now: Long): Int
+
+    @Query("SELECT r.* FROM workbench_runs r WHERE r.subject=:subject AND r.updatedAt >= :expiresAfter AND r.status IN ('QUEUED','RUNNING','WAITING_APPROVAL','PAUSED','FAILED') AND NOT EXISTS (SELECT 1 FROM workbench_audit a WHERE a.subject=r.subject AND a.organization=r.organization AND a.runId=r.runId AND a.action='run.archived') ORDER BY r.updatedAt DESC, r.runId")
+    suspend fun recoveryCenterRuns(subject: String, expiresAfter: Long): List<WorkbenchRunEntity>
 
     @Query("SELECT * FROM workbench_runs WHERE subject=:subject ORDER BY updatedAt DESC, runId ASC")
     suspend fun allRuns(subject: String): List<WorkbenchRunEntity>
@@ -283,6 +311,12 @@ interface WorkbenchDao {
 
     @Query("SELECT COUNT(*) > 0 FROM workbench_approval_grants WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId AND toolId=:toolId AND (expiresAt IS NULL OR expiresAt >= :now)")
     suspend fun hasApprovalGrant(subject: String, organization: String, runtimeId: String, sessionId: String, toolId: String, now: Long): Boolean
+
+    @Query("SELECT * FROM workbench_approval_grants WHERE subject=:subject ORDER BY createdAt DESC")
+    suspend fun approvalGrantsForSubject(subject: String): List<WorkbenchApprovalGrantEntity>
+
+    @Query("DELETE FROM workbench_approval_grants WHERE subject=:subject AND organization=:organization AND runtimeId=:runtimeId AND sessionId=:sessionId AND toolId=:toolId")
+    suspend fun revokeApprovalGrant(subject: String, organization: String, runtimeId: String, sessionId: String, toolId: String): Int
 
     @Query("SELECT * FROM workbench_audit WHERE subject=:subject AND organization=:organization ORDER BY createdAt DESC")
     suspend fun audit(subject: String, organization: String): List<WorkbenchAuditEntity>
@@ -391,7 +425,7 @@ class WorkbenchProjectionRepository(private val dao: WorkbenchDao) {
                     organization = "",
                     runtimeId = ANDROID_LOCAL_RUNTIME_ID,
                     workspaceId = localWorkspaceId(subject),
-                    displayName = "OpenDrSai 本地",
+            displayName = "OpenDrSai Local",
                     kind = "LOCAL",
                     authority = "LOCAL_DEVICE",
                     lastSyncedAt = newest,
@@ -459,6 +493,7 @@ sealed interface SessionMutationResult {
     data object Applied : SessionMutationResult
     data object NotFound : SessionMutationResult
     data object RemoteAuthorityRequired : SessionMutationResult
+    data object ActiveRun : SessionMutationResult
 }
 
 /** Account-scoped mutations and search for the unified drawer read model. */
@@ -492,6 +527,25 @@ class UnifiedWorkbenchRepository(private val database: ChatDatabase) {
 
     suspend fun setUnread(subject: String, sessionId: String, unread: Boolean): SessionMutationResult =
         mutateLocal(subject, sessionId) { database.workbenchDao().setSessionUnread(subject, sessionId, unread) }
+
+    suspend fun delete(subject: String, sessionId: String): SessionMutationResult {
+        val session = database.workbenchDao().session(subject, sessionId) ?: return SessionMutationResult.NotFound
+        if (session.authority != RuntimeAuthority.LOCAL_DEVICE.name) return SessionMutationResult.RemoteAuthorityRequired
+        val active = database.workbenchDao().sessionRuns(subject, session.organization, sessionId)
+            .any { it.status in setOf("QUEUED", "RUNNING", "WAITING_APPROVAL") }
+        if (active) return SessionMutationResult.ActiveRun
+        database.withTransaction {
+            val dao = database.workbenchDao()
+            dao.deleteSessionAudit(subject, sessionId)
+            dao.deleteSessionApprovalGrants(subject, sessionId)
+            dao.deleteSessionApprovals(subject, sessionId)
+            dao.deleteSessionEvents(subject, sessionId)
+            dao.deleteSessionRuns(subject, sessionId)
+            dao.deleteSession(subject, sessionId)
+            session.sourceConversationId?.let { database.dao().deleteConversation(it) }
+        }
+        return SessionMutationResult.Applied
+    }
 
     private suspend fun mutateLocal(
         subject: String,

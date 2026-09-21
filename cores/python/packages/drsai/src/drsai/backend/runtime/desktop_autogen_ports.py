@@ -1,4 +1,9 @@
-"""Autogen Host Port adapters for the shared Desktop/TUI Agent Kernel."""
+"""Autogen Host Port adapters for the shared Desktop/TUI Agent Kernel.
+
+ARCHIVED(2026-09-02): Desktop now reuses the TUI legacy path; see
+desktop_agent_kernel_adapter.py for details. Kept importable for legacy
+callers only.
+"""
 
 from __future__ import annotations
 
@@ -207,7 +212,7 @@ class AutogenDesktopModelPort:
             raise ValueError("desktop_model_messages_invalid")
         attempt = 0
         tool_choice = payload.get("tool_choice")
-        extra_create_args: dict[str, Any] = {}
+        extra_create_args = _desktop_reasoning_create_args(self._model_client)
         def tool_name(tool: Any) -> str:
             schema = getattr(tool, "schema", tool)
             if isinstance(schema, Mapping):
@@ -337,6 +342,59 @@ class AutogenDesktopModelPort:
         )
 
 
+def _is_anthropic_client(model_client: Any) -> bool:
+    """Return True if *model_client* is an Anthropic-based chat client."""
+    return any(
+        getattr(cls, "__name__", "") == "AnthropicChatCompletionClient"
+        for cls in type(model_client).__mro__
+    )
+
+
+def _desktop_reasoning_create_args(model_client: Any) -> dict[str, Any]:
+    """Translate the cached Agent effort knob into the provider wire args.
+
+    Desktop reuses one Agent across turns.  The manager updates
+    ``_reasoning_effort`` immediately before each turn, so read it here rather
+    than copying a value into the model client at construction time.
+
+    * OpenAI clients (HepAIChatCompletionClient) accept ``reasoning_effort``
+      in ``extra_create_args`` and normalize it for Responses / Chat
+      Completions internally.
+    * Anthropic clients (HepAIAnthropicChatCompletionClient) ignore
+      ``reasoning_effort`` silently; they need the ``thinking`` parameter
+      instead.
+
+    Passing ``thinking`` to an OpenAI client raises
+    ``ValueError: Extra create args are invalid: {'thinking'}`` because
+    ``thinking`` is not in the autogen ``create_kwargs`` set.
+    """
+    agent = getattr(model_client, "_desktop_agent", None)
+    effort = getattr(agent, "_reasoning_effort", None)
+    if effort in (None, "", "off"):
+        return {}
+
+    model_info = getattr(model_client, "model_info", None) or getattr(model_client, "_model_info", {})
+    reasoning = model_info.get("reasoning_config") if isinstance(model_info, Mapping) else None
+    param_type = str(getattr(reasoning, "param_type", "none") or "none")
+
+    if _is_anthropic_client(model_client) and param_type in {"deepseek_reasoning_effort", "adaptive"}:
+        # Anthropic-style: use `thinking` parameter
+        if effort in {"off", "none"}:
+            return {"thinking": {"type": "disabled"}}
+        if param_type == "adaptive":
+            return {
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": "max" if effort == "xhigh" else effort},
+            }
+        # deepseek_reasoning_effort
+        return {"thinking": {"type": "enabled"}, "reasoning_effort": str(effort)}
+
+    # OpenAI-style: use `reasoning_effort` parameter
+    if effort in {"off", "none"}:
+        return {"reasoning_effort": "none"}
+    return {"reasoning_effort": str(effort)}
+
+
 SpecialToolPort = Callable[[Mapping[str, Any]], Awaitable[DesktopToolResult]]
 
 
@@ -403,9 +461,18 @@ class AutogenDesktopToolPort:
             value = await tool.run_json(dict(arguments), self._cancellation_token)
             text = tool.return_value_as_string(value)
             return await self._artifactize(DesktopToolResult(call_id, True, {"content": text}), name)
-        result = await self._workbench.call_tool(
-            name=name, arguments=dict(arguments), cancellation_token=self._cancellation_token,
+        # The shared Kernel adds this proof only after the Host has approved
+        # the exact call_id. Scope it around the Workbench invocation so the
+        # legacy operator layer does not ask the TUI a second time.
+        from ...modules.agents.skills_agent.managers.operater_funs import (
+            runtime_tool_approval_scope,
         )
+        with runtime_tool_approval_scope(
+            granted=payload.get("runtime_approval_granted") is True,
+        ):
+            result = await self._workbench.call_tool(
+                name=name, arguments=dict(arguments), cancellation_token=self._cancellation_token,
+            )
         text = result.to_text()
         return await self._artifactize(DesktopToolResult(
             call_id, not bool(result.is_error), {"content": text},

@@ -80,6 +80,16 @@ import type {
   DesktopChannelProviderTokenConfigureRequest,
   DesktopChannelProviderTokenConfigureResult,
   DesktopChannelAdapterListResult,
+  DesktopWeChatChannelStatus,
+  DesktopWeChatLoginStartResult,
+  DesktopWeChatLoginPollRequest,
+  DesktopWeChatLoginPollResult,
+  DesktopWeChatLoginCancelResult,
+  DesktopWeChatSessionSummary,
+  DesktopWeChatReplyCapability,
+  DesktopWeChatReplyCapabilityRequest,
+  DesktopWeChatOutboundRequest,
+  DesktopWeChatOutboundResult,
   DesktopChannelContextImportRequest,
   DesktopChannelContextImportResult,
   DesktopChannelLiveSyncRequest,
@@ -154,11 +164,6 @@ import type {
   DesktopVoiceTranscriptionStartResult,
   DesktopVoiceRuntimeStatus,
   DesktopVoiceTranscriptionEvent,
-  DesktopStreamingVoiceAudioChunk,
-  DesktopStreamingVoiceCapabilities,
-  DesktopStreamingVoiceStartRequest,
-  DesktopStreamingVoiceStartResult,
-  DesktopStreamingVoiceTranscriptionEvent,
   DesktopVoiceSynthesisEvent,
   DesktopVoiceSynthesisRequest,
   DesktopVoiceSynthesisRuntimeStatus,
@@ -280,6 +285,11 @@ import type {
   WorkspaceCheckpointRestoreResult,
   WorkspaceFilePreview,
   WorkspaceFilePreviewRequest,
+  ConversationResourceResolveRequest,
+  ConversationResourceResolveResult,
+  ConversationResourcePreviewRequest,
+  ConversationResourceDownloadRequest,
+  ConversationResourceDownloadResult,
   WorkspaceFileSaveAsRequest,
   WorkspaceFileSaveAsResult,
   WorkspaceFileWriteRequest,
@@ -301,6 +311,16 @@ import type {
   GatewaySkill,
   GatewayAvailableSkill,
   GatewaySkillInstallRequest,
+  SkillsSquareStatus,
+  DesktopSquareSkillDetail,
+  DesktopSquareSkillsPage,
+  DesktopSquareSkillsListRequest,
+  DesktopSquareSkillStats,
+  DesktopSquareSkillTag,
+  DesktopSquareInstallRequest,
+  DesktopSquareUploadRequest,
+  DesktopSquareUpdateRequest,
+  DesktopSquareShareInfo,
   GfsListRequest,
   GfsListResult,
   GfsObjectInfo,
@@ -308,7 +328,6 @@ import type {
   GfsDownloadRequest,
 } from "../api/desktopApi";
 
-const streamingVoicePorts = new Map<string, MessagePort>();
 const duplexVoicePorts = new Map<string, MessagePort>();
 
 const api: DesktopApi = {
@@ -368,12 +387,28 @@ const api: DesktopApi = {
   previewDiagnosticPackage: () => ipcRenderer.invoke("desktop:production-diagnostics-preview"),
   exportProductionDiagnosticPackage: () => ipcRenderer.invoke("desktop:production-diagnostics-export"),
   importProductionDiagnosticPackage: () => ipcRenderer.invoke("desktop:production-diagnostics-import"),
+  previewFeedback: (draft) => ipcRenderer.invoke("desktop:feedback-preview", draft),
+  submitFeedback: (draft) => ipcRenderer.invoke("desktop:feedback-submit", draft),
+  listPendingFeedback: () => ipcRenderer.invoke("desktop:feedback-pending-list"),
+  retryPendingFeedback: () => ipcRenderer.invoke("desktop:feedback-pending-retry"),
+  deletePendingFeedback: (clientFeedbackId) => ipcRenderer.invoke("desktop:feedback-pending-delete", clientFeedbackId),
+  getPendingCrashFeedback: () => ipcRenderer.invoke("desktop:feedback-crash-pending"),
+  clearPendingCrashFeedback: (incidentId) => ipcRenderer.invoke("desktop:feedback-crash-clear", incidentId),
+  captureFeedbackScreenshot: () => ipcRenderer.invoke("desktop:feedback-screenshot-capture"),
+  listFeedbackAdmin: (status) => ipcRenderer.invoke("desktop:feedback-admin-list", status),
+  updateFeedbackAdmin: (feedbackId, update) => ipcRenderer.invoke("desktop:feedback-admin-update", feedbackId, update),
+  deleteFeedbackAdmin: (feedbackId) => ipcRenderer.invoke("desktop:feedback-admin-delete", feedbackId),
   getAuthSession: (): Promise<AuthSession> =>
     ipcRenderer.invoke("desktop:get-auth-session"),
   onAuthSessionInvalidated: (callback: () => void): (() => void) => {
     const listener = (): void => callback();
     ipcRenderer.on("desktop:auth-session-invalidated", listener);
     return () => ipcRenderer.removeListener("desktop:auth-session-invalidated", listener);
+  },
+  onAuthSessionRestored: (callback: () => void): (() => void) => {
+    const listener = (): void => callback();
+    ipcRenderer.on("desktop:auth-session-restored", listener);
+    return () => ipcRenderer.removeListener("desktop:auth-session-restored", listener);
   },
   getA5ServiceGuidanceScenario: () =>
     ipcRenderer.invoke("desktop:e2e-a5-service-guidance-scenario"),
@@ -473,6 +508,7 @@ const api: DesktopApi = {
   revokeMobileRuntimeEnrollment: () =>
     ipcRenderer.invoke("desktop:mobile-enrollment-revoke"),
   listSshHosts: () => ipcRenderer.invoke("desktop:ssh-hosts"),
+  saveSshHost: (host) => ipcRenderer.invoke("desktop:ssh-host-save", host),
   diagnoseSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-diagnose", hostAlias),
   inspectSshHostKeys: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-host-keys", hostAlias),
   testSshHost: (hostAlias: string) => ipcRenderer.invoke("desktop:ssh-test", hostAlias),
@@ -567,11 +603,15 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:update-workspace", request),
   deleteWorkspace: (id: string) =>
     ipcRenderer.invoke("desktop:delete-workspace", id),
-  listThreads: () => ipcRenderer.invoke("desktop:list-threads"),
+  listThreads: (request) => ipcRenderer.invoke("desktop:list-threads", request),
   listAgents: (options) => ipcRenderer.invoke("desktop:list-agents", options),
   getAgentCatalogSnapshot: (options) => ipcRenderer.invoke("desktop:get-agent-catalog-snapshot", options),
   setDefaultAgent: (agentId) => ipcRenderer.invoke("desktop:set-default-agent", agentId),
   recordAgentUsage: (agentId) => ipcRenderer.invoke("desktop:record-agent-usage", agentId),
+  getAgentPreferences: () => ipcRenderer.invoke("desktop:get-agent-preferences"),
+  testRemoteAgent: (request) => ipcRenderer.invoke("desktop:test-remote-agent", request),
+  saveRemoteAgent: (request) => ipcRenderer.invoke("desktop:save-remote-agent", request),
+  removeRemoteAgent: (agentId) => ipcRenderer.invoke("desktop:remove-remote-agent", agentId),
   getPlatformAgentStatus: () => ipcRenderer.invoke("desktop:get-platform-agent-status"),
   getMyDrSaiConfig: (workspacePath?: string): Promise<MyDrSaiConfig> =>
     ipcRenderer.invoke("desktop:get-my-drsai-config", workspacePath),
@@ -591,13 +631,20 @@ const api: DesktopApi = {
   testKnowledgeBase: (knowledgeId) => ipcRenderer.invoke("desktop:test-knowledge-base", knowledgeId),
   searchKnowledgeBase: (knowledgeId, query) => ipcRenderer.invoke("desktop:search-knowledge-base", knowledgeId, query),
   listKnowledgeBases: () => ipcRenderer.invoke("desktop:list-knowledge-bases"),
+  discoverRagflowDatasets: (credential) => ipcRenderer.invoke("desktop:discover-ragflow-datasets", credential),
+  rediscoverRagflowDatasets: () => ipcRenderer.invoke("desktop:rediscover-ragflow-datasets"),
   listPerceptors: () => ipcRenderer.invoke("desktop:list-perceptors"),
+  getWebSearchProviderPolicy: () => ipcRenderer.invoke("desktop:get-web-search-provider-policy"),
+  updateWebSearchProviderPolicy: (mode) => ipcRenderer.invoke("desktop:update-web-search-provider-policy", mode),
   savePerceptor: (request) => ipcRenderer.invoke("desktop:save-perceptor", request),
   updatePerceptor: (perceptorId, request) => ipcRenderer.invoke("desktop:update-perceptor", perceptorId, request),
   testPerceptor: (perceptorId, capability) => ipcRenderer.invoke("desktop:test-perceptor", perceptorId, capability),
   deletePerceptor: (perceptorId) => ipcRenderer.invoke("desktop:delete-perceptor", perceptorId),
   createKnowledgeBase: (request) => ipcRenderer.invoke("desktop:create-knowledge-base", request),
   deleteKnowledgeBase: (knowledgeId) => ipcRenderer.invoke("desktop:delete-knowledge-base", knowledgeId),
+  listKnowledgeBaseFiles: (knowledgeId) => ipcRenderer.invoke("desktop:list-knowledge-base-files", knowledgeId),
+  checkKnowledgeBaseStale: (knowledgeId) => ipcRenderer.invoke("desktop:check-knowledge-base-stale", knowledgeId),
+  refreshKnowledgeBaseIfStale: (knowledgeId) => ipcRenderer.invoke("desktop:refresh-knowledge-base-if-stale", knowledgeId),
   getMyDrSaiAgentModelCapabilityStatus: (agentId) => ipcRenderer.invoke("desktop:get-my-drsai-agent-model-capability-status", agentId),
   updateMyDrSaiAgentModelPolicy: (agentId, policy) => ipcRenderer.invoke("desktop:update-my-drsai-agent-model-policy", agentId, policy),
   migrateMyDrSaiAgentModelPolicy: (agentId, legacyModel, expectedRevision) => ipcRenderer.invoke("desktop:migrate-my-drsai-agent-model-policy", agentId, legacyModel, expectedRevision),
@@ -699,7 +746,7 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:reveal-thread-share", filePath),
   listInstalledSkills: (request?: { userId?: string }): Promise<GatewaySkill[]> =>
     ipcRenderer.invoke("desktop:list-installed-skills", request),
-  listAvailableSkills: (request?: { userId?: string }): Promise<GatewayAvailableSkill[]> =>
+  listAvailableSkills: (request?: { userId?: string; coreOnly?: boolean }): Promise<GatewayAvailableSkill[]> =>
     ipcRenderer.invoke("desktop:list-available-skills", request),
   getSkillContent: (request: { skillPath: string }): Promise<{ path: string; content: string }> =>
     ipcRenderer.invoke("desktop:get-skill-content", request),
@@ -707,6 +754,20 @@ const api: DesktopApi = {
     request: GatewaySkillInstallRequest,
   ): Promise<{ status: string; name: string; path: string }> =>
     ipcRenderer.invoke("desktop:install-skill", request),
+  importSkillFolder: (request: {
+    folderPath: string;
+    name?: string;
+    userId?: string;
+    threadId?: string;
+  }): Promise<{ status: string; name: string; path: string; files: number }> =>
+    ipcRenderer.invoke("desktop:import-skill-folder", request),
+  installSkillZip: (request: {
+    zipPath: string;
+    name?: string;
+    userId?: string;
+    threadId?: string;
+  }): Promise<{ status: string; name: string; path: string; files: number }> =>
+    ipcRenderer.invoke("desktop:install-skill-zip", request),
   updateSkill: (request: {
     name: string;
     content: string;
@@ -724,6 +785,91 @@ const api: DesktopApi = {
   }): Promise<{ ok: boolean; reloaded: boolean }> =>
     ipcRenderer.invoke("desktop:reload-skills", request),
 
+  getSkillsSquareStatus: (): Promise<SkillsSquareStatus> =>
+    ipcRenderer.invoke("desktop:get-skills-square-status"),
+  listSkillsSquare: (request?: DesktopSquareSkillsListRequest): Promise<DesktopSquareSkillsPage> =>
+    ipcRenderer.invoke("desktop:list-skills-square", request),
+  getSkillsSquareDetail: (request: { slug: string; userEmail?: string }): Promise<DesktopSquareSkillDetail> =>
+    ipcRenderer.invoke("desktop:get-skills-square-detail", request),
+  getSkillsSquareSkillMd: (request: { slug: string }): Promise<{ content: string }> =>
+    ipcRenderer.invoke("desktop:get-skills-square-skill-md", request),
+  getSkillsSquareStats: (): Promise<DesktopSquareSkillStats> =>
+    ipcRenderer.invoke("desktop:get-skills-square-stats"),
+  listSkillsSquareTags: (request?: { operatorUserId?: string }): Promise<DesktopSquareSkillTag[]> =>
+    ipcRenderer.invoke("desktop:list-skills-square-tags", request),
+  createSkillsSquareTag: (request: {
+    name: string;
+    sortOrder?: number;
+    operatorUserId?: string;
+  }): Promise<DesktopSquareSkillTag> =>
+    ipcRenderer.invoke("desktop:create-skills-square-tag", request),
+  updateSkillsSquareTag: (request: {
+    tagId: number;
+    name?: string;
+    sortOrder?: number;
+    operatorUserId?: string;
+  }): Promise<DesktopSquareSkillTag> =>
+    ipcRenderer.invoke("desktop:update-skills-square-tag", request),
+  deleteSkillsSquareTag: (request: {
+    tagId: number;
+    operatorUserId?: string;
+  }): Promise<{ id: number }> =>
+    ipcRenderer.invoke("desktop:delete-skills-square-tag", request),
+  installSkillsSquare: (request: DesktopSquareInstallRequest): Promise<{
+    status: string;
+    name: string;
+    path: string;
+    files: number;
+  }> => ipcRenderer.invoke("desktop:install-skills-square", request),
+  downloadSkillsSquare: (request: { slug: string }): Promise<{ fileName: string; base64: string }> =>
+    ipcRenderer.invoke("desktop:download-skills-square", request),
+  uploadSkillsSquare: (request: DesktopSquareUploadRequest): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke("desktop:upload-skills-square", request),
+  updateSkillsSquare: (request: DesktopSquareUpdateRequest): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke("desktop:update-skills-square", request),
+  deleteSkillsSquare: (request: {
+    slug: string;
+    intent?: "delete" | "uncollect";
+    userId?: string;
+    userEmail?: string;
+  }): Promise<{ slug: string }> =>
+    ipcRenderer.invoke("desktop:delete-skills-square", request),
+  toggleSkillsSquareVisibility: (request: {
+    slug: string;
+    visibility: "public" | "private" | "team";
+  }): Promise<{ slug: string; visibility: string }> =>
+    ipcRenderer.invoke("desktop:toggle-skills-square-visibility", request),
+  collectSkillsSquare: (request: {
+    slug: string;
+    displayName?: string;
+    icon?: string;
+    description?: string;
+    version?: string;
+    tags?: string;
+    owner?: string;
+    ownerId?: string;
+    changelog?: string;
+  }): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke("desktop:collect-skills-square", request),
+  createSkillsSquareShare: (request: {
+    slug: string;
+    userId: string;
+    password?: string;
+    expiresInHours?: number;
+  }): Promise<DesktopSquareShareInfo> =>
+    ipcRenderer.invoke("desktop:create-skills-square-share", request),
+  listSkillsSquareShares: (request: {
+    slug: string;
+    userId: string;
+  }): Promise<DesktopSquareShareInfo[]> =>
+    ipcRenderer.invoke("desktop:list-skills-square-shares", request),
+  revokeSkillsSquareShare: (request: {
+    slug: string;
+    shareId: string;
+    userId: string;
+  }): Promise<void> =>
+    ipcRenderer.invoke("desktop:revoke-skills-square-share", request),
+
   gfsList: (request: GfsListRequest): Promise<GfsListResult> =>
     ipcRenderer.invoke("desktop:gfs-list", request),
   gfsStat: (request: { path: string }): Promise<GfsObjectInfo> =>
@@ -740,10 +886,20 @@ const api: DesktopApi = {
     request: GfsUploadRequest,
   ): Promise<{ path: string; size: number }> =>
     ipcRenderer.invoke("desktop:gfs-upload-file", request),
+  gfsUploadContent: (request: {
+    remotePath: string;
+    contentBase64: string;
+    contentType?: string;
+  }): Promise<{ path: string; size: number; etag?: string }> =>
+    ipcRenderer.invoke("desktop:gfs-upload-content", request),
   gfsDownloadFile: (
     request: GfsDownloadRequest,
   ): Promise<{ localPath: string; size: number }> =>
     ipcRenderer.invoke("desktop:gfs-download-file", request),
+  gfsDownloadToDisk: (
+    request: { path: string },
+  ): Promise<{ canceled: boolean; localPath?: string; size?: number }> =>
+    ipcRenderer.invoke("desktop:gfs-download-to-disk", request),
   gfsDelete: (request: { path: string }): Promise<{ path: string }> =>
     ipcRenderer.invoke("desktop:gfs-delete", request),
   gfsShareUrl: (request: {
@@ -757,7 +913,54 @@ const api: DesktopApi = {
     bucket?: string;
     mode?: string;
     reason?: string;
+    needsSetup?: boolean;
+    portalUrl?: string;
   }> => ipcRenderer.invoke("desktop:gfs-healthcheck"),
+  gfsGetConfig: (): Promise<{
+    configured: boolean;
+    enabled: boolean;
+    needsSetup: boolean;
+    mode: string;
+    bucket?: string;
+    email?: string;
+    endpoint?: string;
+    accessKey?: string;
+    secretKey?: string;
+    accessKeyMasked?: string;
+    secretKeyMasked?: string;
+    portalUrl: string;
+    homeEnvPath?: string;
+    cliConfigPath?: string;
+  }> => ipcRenderer.invoke("desktop:gfs-get-config"),
+  gfsSaveConfig: (request: {
+    accessKey: string;
+    secretKey: string;
+    bucket: string;
+    email?: string;
+    endpoint?: string;
+  }): Promise<{
+    ok: boolean;
+    configured: boolean;
+    enabled?: boolean;
+    needsSetup: boolean;
+    mode: string;
+    bucket?: string;
+    portalUrl: string;
+    message?: string;
+    homeEnvPath?: string;
+    cliConfigPath?: string;
+  }> => ipcRenderer.invoke("desktop:gfs-save-config", request),
+  gfsClearConfig: (): Promise<{
+    ok: boolean;
+    configured: boolean;
+    enabled: boolean;
+    needsSetup: boolean;
+    mode: string;
+    portalUrl: string;
+    message?: string;
+    homeEnvPath?: string;
+    cliConfigPath?: string;
+  }> => ipcRenderer.invoke("desktop:gfs-clear-config"),
   prepareForkWorktree: (
     request: DesktopForkWorktreeRequest,
   ): Promise<DesktopForkWorktreeResult> =>
@@ -812,11 +1015,25 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:voice-transcription-cancel", requestId),
   getVoiceRuntimeStatus: (): Promise<DesktopVoiceRuntimeStatus> =>
     ipcRenderer.invoke("desktop:voice-runtime-status"),
-  getStreamingVoiceCapabilities: (): Promise<DesktopStreamingVoiceCapabilities> =>
-    ipcRenderer.invoke("desktop:voice-streaming-capabilities"),
+  getVoicePreferences: () => ipcRenderer.invoke("desktop:voice-preferences-get"),
+  updateVoicePreferences: (request) => ipcRenderer.invoke("desktop:voice-preferences-update", request),
+  onVoicePreferencesChanged: (callback) => {
+    const listener = (_event: IpcRendererEvent, preferences: import("../api/desktopApi").DesktopVoicePreferences): void => callback(preferences);
+    ipcRenderer.on("desktop:voice-preferences-changed", listener);
+    return () => ipcRenderer.removeListener("desktop:voice-preferences-changed", listener);
+  },
   getDuplexVoiceCapabilities: () => ipcRenderer.invoke("desktop:voice-duplex-capabilities"),
+  getDuplexVoiceReadiness: () => ipcRenderer.invoke("desktop:voice-duplex-readiness"),
+  getDuplexVoiceOccupancy: () => ipcRenderer.invoke("desktop:voice-duplex-occupancy"),
   startDuplexVoiceSession: async (request) => {
     const result = await ipcRenderer.invoke("desktop:voice-duplex-start", request);
+    const channel = new MessageChannel();
+    duplexVoicePorts.set(result.sessionId, channel.port2);
+    ipcRenderer.postMessage("desktop:voice-duplex-audio-port", { sessionId: result.sessionId }, [channel.port1]);
+    return result;
+  },
+  takeOverDuplexVoiceSession: async (request) => {
+    const result = await ipcRenderer.invoke("desktop:voice-duplex-takeover", request);
     const channel = new MessageChannel();
     duplexVoicePorts.set(result.sessionId, channel.port2);
     ipcRenderer.postMessage("desktop:voice-duplex-audio-port", { sessionId: result.sessionId }, [channel.port1]);
@@ -828,10 +1045,19 @@ const api: DesktopApi = {
     port.postMessage({ ...chunk, audioData: new Uint8Array(chunk.audioData) });
     return true;
   },
+  sendDuplexVoicePlaybackAck: (ack) => {
+    const port = duplexVoicePorts.get(ack.sessionId);
+    if (!port) return false;
+    port.postMessage({ ...ack, type: "playback_ack" });
+    return true;
+  },
   updateDuplexVoiceSession: (request) => ipcRenderer.invoke("desktop:voice-duplex-update", request),
   interruptDuplexVoiceSession: (request) => ipcRenderer.invoke("desktop:voice-duplex-interrupt", request),
   submitDuplexVoiceToolResult: (request) => ipcRenderer.invoke("desktop:voice-duplex-tool-result", request),
+  requestDuplexVoiceToolApproval: (request) => ipcRenderer.invoke("desktop:voice-duplex-tool-approval", request),
+  submitDuplexVoiceTextInput: (request) => ipcRenderer.invoke("desktop:voice-duplex-text-input", request),
   stopDuplexVoiceSession: (sessionId) => ipcRenderer.invoke("desktop:voice-duplex-stop", sessionId),
+  finishDuplexVoiceTurn: (sessionId) => ipcRenderer.invoke("desktop:voice-duplex-finish-turn", sessionId),
   cancelDuplexVoiceSession: async (sessionId) => {
     const result = await ipcRenderer.invoke("desktop:voice-duplex-cancel", sessionId);
     if (result) { duplexVoicePorts.get(sessionId)?.close(); duplexVoicePorts.delete(sessionId); }
@@ -841,42 +1067,6 @@ const api: DesktopApi = {
     const result = await ipcRenderer.invoke("desktop:voice-duplex-dispose", sessionId);
     duplexVoicePorts.get(sessionId)?.close(); duplexVoicePorts.delete(sessionId);
     return result;
-  },
-  startStreamingVoiceTranscription: async (
-    request: DesktopStreamingVoiceStartRequest,
-  ): Promise<DesktopStreamingVoiceStartResult> => {
-    const result = await ipcRenderer.invoke("desktop:voice-streaming-start", request) as DesktopStreamingVoiceStartResult;
-    const channel = new MessageChannel();
-    streamingVoicePorts.set(result.sessionId, channel.port2);
-    ipcRenderer.postMessage("desktop:voice-streaming-audio-port", { sessionId: result.sessionId }, [channel.port1]);
-    return result;
-  },
-  sendStreamingVoiceAudioChunk: (chunk: DesktopStreamingVoiceAudioChunk): boolean => {
-    const port = streamingVoicePorts.get(chunk.sessionId);
-    if (!port) return false;
-    // contextBridge arguments are proxied values. Rebuild a plain payload
-    // before handing it to MessagePort; directly transferring a proxied typed
-    // array can arrive as null in the Main process in packaged Electron.
-    const audioData = new Uint8Array(chunk.audioData);
-    const payload: DesktopStreamingVoiceAudioChunk = { ...chunk, audioData };
-    // Electron 39 packaged builds can deliver a null MessageEvent when an
-    // ArrayBuffer is included in this cross-context port's transfer list.
-    // Structured clone is bounded by the 100 ms batching and Main queue caps.
-    port.postMessage(payload);
-    return true;
-  },
-  stopStreamingVoiceTranscription: async (sessionId: string, reason = "manual"): Promise<boolean> => {
-    const stopped = await ipcRenderer.invoke("desktop:voice-streaming-stop", sessionId, reason) as boolean;
-    if (!stopped) return false;
-    return true;
-  },
-  cancelStreamingVoiceTranscription: async (sessionId: string): Promise<boolean> => {
-    const cancelled = await ipcRenderer.invoke("desktop:voice-streaming-cancel", sessionId) as boolean;
-    if (cancelled) {
-      streamingVoicePorts.get(sessionId)?.close();
-      streamingVoicePorts.delete(sessionId);
-    }
-    return cancelled;
   },
   startVoiceSynthesis: (
     request: DesktopVoiceSynthesisRequest,
@@ -930,6 +1120,42 @@ const api: DesktopApi = {
     request: WorkspaceFilePreviewRequest,
   ): Promise<WorkspaceFilePreview> =>
     ipcRenderer.invoke("desktop:workspace-file-preview", request),
+  resolveConversationResource: (
+    request: ConversationResourceResolveRequest,
+  ): Promise<ConversationResourceResolveResult> =>
+    ipcRenderer.invoke("desktop:conversation-resource-resolve", request),
+  previewConversationResource: (
+    request: ConversationResourcePreviewRequest,
+  ): Promise<WorkspaceFilePreview> =>
+    ipcRenderer.invoke("desktop:conversation-resource-preview", request),
+  revealConversationResource: (
+    request: ConversationResourceResolveRequest,
+  ): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:conversation-resource-reveal", request),
+  copyConversationResourceLogicalPath: (
+    request: ConversationResourceResolveRequest,
+  ): Promise<string> =>
+    ipcRenderer.invoke("desktop:conversation-resource-copy-logical-path", request),
+  downloadConversationResource: (
+    request: ConversationResourceDownloadRequest,
+  ): Promise<ConversationResourceDownloadResult> =>
+    ipcRenderer.invoke("desktop:conversation-resource-download", request),
+  cancelConversationResourceDownload: (operationId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:conversation-resource-download-cancel", operationId),
+  onConversationResourceDownloadProgress: (callback) => {
+    const listener = (_event: IpcRendererEvent, progress: import("../api/desktopApi").ConversationResourceDownloadProgressEvent): void => callback(progress);
+    ipcRenderer.on("desktop:conversation-resource-download-progress", listener);
+    return () => ipcRenderer.removeListener("desktop:conversation-resource-download-progress", listener);
+  },
+  startConversationResourceSubscription: (request) =>
+    ipcRenderer.invoke("desktop:conversation-resource-subscription-start", request),
+  stopConversationResourceSubscription: (subscriptionId) =>
+    ipcRenderer.invoke("desktop:conversation-resource-subscription-stop", subscriptionId),
+  onConversationResourceStateEvent: (callback) => {
+    const listener = (_event: IpcRendererEvent, value: import("../api/desktopApi").ConversationResourceStateEvent): void => callback(value);
+    ipcRenderer.on("desktop:conversation-resource-state-event", listener);
+    return () => ipcRenderer.removeListener("desktop:conversation-resource-state-event", listener);
+  },
   saveWorkspaceFileAs: (
     request: WorkspaceFileSaveAsRequest,
   ): Promise<WorkspaceFileSaveAsResult> =>
@@ -1220,6 +1446,26 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:shared-artifact-download", request),
   listChannelAdapters: (workspacePath?: string): Promise<DesktopChannelAdapterListResult> =>
     ipcRenderer.invoke("desktop:channel-adapters-list", workspacePath),
+  getWeChatChannelStatus: (): Promise<DesktopWeChatChannelStatus> =>
+    ipcRenderer.invoke("desktop:wechat-channel-status"),
+  startWeChatLogin: (): Promise<DesktopWeChatLoginStartResult> =>
+    ipcRenderer.invoke("desktop:wechat-login-start"),
+  pollWeChatLogin: (request: DesktopWeChatLoginPollRequest): Promise<DesktopWeChatLoginPollResult> =>
+    ipcRenderer.invoke("desktop:wechat-login-poll", request),
+  cancelWeChatLogin: (request: DesktopWeChatLoginPollRequest): Promise<DesktopWeChatLoginCancelResult> =>
+    ipcRenderer.invoke("desktop:wechat-login-cancel", request),
+  startWeChatChannel: (): Promise<DesktopWeChatChannelStatus> =>
+    ipcRenderer.invoke("desktop:wechat-channel-start"),
+  stopWeChatChannel: (): Promise<DesktopWeChatChannelStatus> =>
+    ipcRenderer.invoke("desktop:wechat-channel-stop"),
+  logoutWeChatChannel: (): Promise<DesktopWeChatChannelStatus> =>
+    ipcRenderer.invoke("desktop:wechat-channel-logout"),
+  getWeChatSessionSummary: (): Promise<DesktopWeChatSessionSummary> =>
+    ipcRenderer.invoke("desktop:wechat-sessions-summary"),
+  getWeChatReplyCapability: (request: DesktopWeChatReplyCapabilityRequest): Promise<DesktopWeChatReplyCapability> =>
+    ipcRenderer.invoke("desktop:wechat-reply-capability", request),
+  sendToWeChat: (request: DesktopWeChatOutboundRequest): Promise<DesktopWeChatOutboundResult> =>
+    ipcRenderer.invoke("desktop:wechat-send-outbound", request),
   configureChannelAdapter: (
     request: DesktopChannelAdapterConfigureRequest,
   ): Promise<DesktopChannelAdapterConfigureResult> =>
@@ -1372,19 +1618,6 @@ const api: DesktopApi = {
     ipcRenderer.on("desktop:voice-transcription-event", listener);
     return () => ipcRenderer.removeListener("desktop:voice-transcription-event", listener);
   },
-  onStreamingVoiceTranscriptionEvent: (
-    callback: (event: DesktopStreamingVoiceTranscriptionEvent) => void,
-  ): (() => void) => {
-    const listener = (_event: IpcRendererEvent, event: DesktopStreamingVoiceTranscriptionEvent): void => {
-      callback(event);
-      if (event.type === "completed" || event.type === "cancelled" || event.type === "failed") {
-        streamingVoicePorts.get(event.sessionId)?.close();
-        streamingVoicePorts.delete(event.sessionId);
-      }
-    };
-    ipcRenderer.on("desktop:voice-streaming-transcription-event", listener);
-    return () => ipcRenderer.removeListener("desktop:voice-streaming-transcription-event", listener);
-  },
   onDuplexVoiceEvents: (callback) => {
     const listener = (_event: IpcRendererEvent, events: import("../api/desktopApi").DesktopDuplexVoiceEvent[]): void => {
       callback(events);
@@ -1394,6 +1627,11 @@ const api: DesktopApi = {
     };
     ipcRenderer.on("desktop:voice-duplex-events", listener);
     return () => ipcRenderer.removeListener("desktop:voice-duplex-events", listener);
+  },
+  onDuplexVoiceToolApprovalDecision: (callback) => {
+    const listener = (_event: IpcRendererEvent, decision: import("../api/desktopApi").DesktopDuplexVoiceToolApprovalDecision): void => callback(decision);
+    ipcRenderer.on("desktop:voice-duplex-tool-approval-decision", listener);
+    return () => ipcRenderer.removeListener("desktop:voice-duplex-tool-approval-decision", listener);
   },
   onVoiceSynthesisEvent: (
     callback: (event: DesktopVoiceSynthesisEvent) => void,
@@ -1440,6 +1678,10 @@ const api: DesktopApi = {
     ipcRenderer.on("desktop:browser-task-event", listener);
     return () =>
       ipcRenderer.removeListener("desktop:browser-task-event", listener);
+  },
+  /** P1: Send renderer FPS health report to main process for adaptive backpressure control. */
+  sendRenderHealthReport: (report: { fps: number; tier: "healthy" | "degraded" | "critical" }): void => {
+    ipcRenderer.send("desktop:render-health", report);
   },
 };
 

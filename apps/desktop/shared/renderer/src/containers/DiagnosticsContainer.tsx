@@ -1,19 +1,31 @@
 import { useEffect, useRef, useState } from "react";
-import type { OperationalStateDecision } from "@shared/operationalState";
+import type { OperationalStateBlockerInfo, OperationalStateDecision } from "@shared/operationalState";
 import { copyTextSafely } from "../clipboard";
 import { OperationalStateBar } from "../components/OperationalStateBar";
 
 interface DiagnosticsContainerProps {
   decision: OperationalStateDecision;
+  blocker?: OperationalStateBlockerInfo | null;
+  installMissing?: string[] | null;
   formatError: (error: unknown) => string;
   language: "en" | "zh";
   report: () => Record<string, unknown>;
   onRecover: () => Promise<string | void>;
+  onDismissBlocker?: () => void;
 }
 
 /** Owns transient recovery and diagnostic-copy state; callers provide only
  * domain operations and a redacted report projection. */
-export function DiagnosticsContainer({ decision, formatError, language, onRecover, report }: DiagnosticsContainerProps): React.JSX.Element {
+export function DiagnosticsContainer({
+  decision,
+  blocker,
+  installMissing,
+  formatError,
+  language,
+  onRecover,
+  report,
+  onDismissBlocker,
+}: DiagnosticsContainerProps): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const mountedRef = useRef(true);
@@ -40,16 +52,29 @@ export function DiagnosticsContainer({ decision, formatError, language, onRecove
   }
 
   async function copyDiagnostics(): Promise<void> {
-    await copyTextSafely(JSON.stringify(report(), null, 2));
+    const base = report();
+    await copyTextSafely(JSON.stringify({
+      ...base,
+      blocker: blocker ? {
+        kind: blocker.kind,
+        title: blocker.title,
+        message: blocker.message,
+        diagnosticCode: blocker.diagnosticCode,
+      } : null,
+      installMissing: installMissing ?? null,
+    }, null, 2));
     setMessage(language === "zh" ? "脱敏诊断已复制。" : "Redacted diagnostics copied.");
   }
 
   return <OperationalStateBar
     decision={decision}
     language={language}
+    blocker={blocker}
+    installMissing={installMissing}
     busy={busy}
     actionMessage={message}
     onPrimaryAction={recover}
     onCopyDiagnostics={copyDiagnostics}
+    onDismissBlocker={onDismissBlocker}
   />;
 }

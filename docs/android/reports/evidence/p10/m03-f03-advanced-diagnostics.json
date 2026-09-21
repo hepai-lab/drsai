@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "feature_id": "M03-F03",
+  "acceptance_run_id": "p10-round-012-advanced-diagnostics",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "default_presentation":"collapsed plain-language route, binding and health",
+  "advanced_fields":[
+    "version","route","binding","process","run_id","error_id",
+    "kernel version/digest","prompt version/digest","tool manifest",
+    "skill version/digest","capability version/digest","available and blocked capabilities"
+  ],
+  "actions":{"expand":true,"copy":true,"share":"ACTION_SEND text/plain"},
+  "security":{"export_redaction":"fail-safe at model boundary","secret_matches":0},
+  "tests":{
+    "testDebugUnitTest":"664 tests, 0 failures, 2 skipped",
+    "FullRuntimeUiContractTest":"3 passed",
+    "MainInterfaceTest_API35":"28 passed"
+  }
+}

@@ -270,6 +270,7 @@ export function createFallbackHealth(): DesktopHealth {
     baseUrl: "http://127.0.0.1:18642",
     pid: null,
     lastLog: "",
+    startState: "idle" as const,
   };
   const update = {
     phase: "failed" as const,

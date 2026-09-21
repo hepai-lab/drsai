@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "feature_id": "M06-F03",
+  "acceptance_run_id": "p10-round-029-capability-repair",
+  "generated_at": "2026-08-14T00:00:00+08:00",
+  "passed": true,
+  "fixtures": ["saf_revoked", "network_offline", "model_tools_unsupported", "desktop_offline"],
+  "invariants": {
+    "each_failure_routes_to_exact_repair": true,
+    "normal_retry_hidden_until_repaired": true,
+    "view_model_retry_blocked_until_repaired": true,
+    "original_run_preserved": true,
+    "no_run_created_before_readiness": true
+  },
+  "tests": {
+    "testDebugUnitTest": "693 tests, 0 failures, 2 skipped",
+    "MainInterfaceTest_API35": "31 passed"
+  }
+}

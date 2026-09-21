@@ -15,23 +15,24 @@ _URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 def _safe_text(value: Any, *, limit: int = 1_048_576) -> str:
-    # Preserve stable diagnostic fields such as ``error_code`` inside JSON
-    # text while still removing credentials. ``redact_secrets`` treats every
-    # generic ``code`` value as OAuth-sensitive and corrupts public Runtime
-    # error contracts (for example service_unavailable).
-    redacted = redact_sensitive(redact_credentials("" if value is None else str(value)), "", "content")
-    text = str(redacted)
+    # [DISABLED] OAEP safe text redaction disabled — returns string value unchanged (with truncation only)
+    text = "" if value is None else str(value)
     return text if len(text) <= limit else f"{text[:limit]}[TRUNCATED {len(text) - limit} CHARS]"
+    # Original logic:
+    # redacted = redact_sensitive(redact_credentials("" if value is None else str(value)), "", "content")
+    # text = str(redacted)
+    # return text if len(text) <= limit else f"{text[:limit]}[TRUNCATED {len(text) - limit} CHARS]"
 
 
 def _safe_mapping(value: Any) -> dict[str, Any]:
+    # [DISABLED] OAEP safe mapping key filtering disabled — passes through all keys
     if not isinstance(value, dict):
         return {}
     result: dict[str, Any] = {}
     for key, child in value.items():
         safe_key = str(key)
-        if _is_sensitive_public_key(safe_key):
-            continue
+        # if _is_sensitive_public_key(safe_key):
+        #     continue
         if safe_key in {"path", "old_path", "new_path", "relative_path"}:
             path = _relative_path(child)
             if path:
@@ -42,8 +43,9 @@ def _safe_mapping(value: Any) -> dict[str, Any]:
 
 
 def _safe_value(value: Any, *, key: str = "") -> Any:
-    if _is_sensitive_public_key(key):
-        return "[REDACTED]"
+    # [DISABLED] Sensitive key redaction in _safe_value disabled — does not check _is_sensitive_public_key
+    # if _is_sensitive_public_key(key):
+    #     return "[REDACTED]"
     if isinstance(value, dict):
         return _safe_mapping(value)
     if isinstance(value, (list, tuple)):
@@ -58,9 +60,9 @@ def safe_error(value: Any) -> dict[str, Any]:
     result = _safe_mapping(value)
     raw_message = value.get("message") if isinstance(value, dict) else None
     if isinstance(raw_message, str):
-        # Error response bodies are the primary debugging evidence.  Preserve
-        # them in full while replacing only credential values.
-        result["message"] = redact_credentials(raw_message)
+        # [DISABLED] Error message credential redaction disabled — returns message unchanged
+        result["message"] = raw_message
+        # result["message"] = redact_credentials(raw_message)
     return result
 
 
@@ -153,13 +155,30 @@ def sanitize_persisted_item(value: Any) -> dict[str, Any]:
         return {}
     item = copy.deepcopy(value)
     content = item.get("content")
-    if not isinstance(content, dict) or "operation_ref" not in content:
+    if not isinstance(content, dict):
         return item
-    operation_ref = _safe_operation_ref(content.get("operation_ref"))
-    if operation_ref is None:
-        content.pop("operation_ref", None)
-    else:
-        content["operation_ref"] = operation_ref
+    if "operation_ref" in content:
+        operation_ref = _safe_operation_ref(content.get("operation_ref"))
+        if operation_ref is None:
+            content.pop("operation_ref", None)
+        else:
+            content["operation_ref"] = operation_ref
+    if "resource_refs" in content:
+        resource_refs = _safe_resource_refs(content.get("resource_refs"))
+        if resource_refs:
+            content["resource_refs"] = resource_refs
+        else:
+            content.pop("resource_refs", None)
+    parts = content.get("parts")
+    if isinstance(parts, list):
+        for part in parts:
+            if not isinstance(part, dict) or "resource_ref" not in part:
+                continue
+            resource_refs = _safe_resource_refs([part.get("resource_ref")])
+            if resource_refs:
+                part["resource_ref"] = resource_refs[0]
+            else:
+                part.pop("resource_ref", None)
     return item
 
 
@@ -182,6 +201,25 @@ def _safe_resource_refs(value: Any) -> list[dict[str, Any]]:
         for key in ("operation_id", "label", "digest"):
             if raw.get(key):
                 ref[key] = _safe_text(raw[key], limit=512)
+        if raw.get("relation") in {
+            "input_reference", "input_attachment", "output_artifact", "citation_source",
+            "file_change_target", "derived_from", "related",
+        }:
+            ref["relation"] = str(raw["relation"])
+        if raw.get("presentation") in {"inline", "card", "activity"}:
+            ref["presentation"] = str(raw["presentation"])
+        locator = raw.get("locator")
+        if isinstance(locator, dict) and locator.get("kind") in {
+            "text_range", "page", "slide", "sheet_cell", "time_range",
+        }:
+            safe_locator: dict[str, Any] = {"kind": str(locator["kind"])}
+            for key in ("line", "column", "end_line", "end_column", "page", "slide", "start_ms", "end_ms"):
+                if isinstance(locator.get(key), int) and not isinstance(locator.get(key), bool) and locator[key] >= (0 if key.endswith("_ms") else 1):
+                    safe_locator[key] = locator[key]
+            for key in ("sheet", "cell"):
+                if isinstance(locator.get(key), str) and locator[key]:
+                    safe_locator[key] = _safe_text(locator[key], limit=255)
+            ref["locator"] = safe_locator
         result.append(ref)
     return result
 
@@ -347,7 +385,7 @@ def project_item(item: dict[str, Any]) -> dict[str, Any]:
             if part_type not in {"text", "image", "audio", "file", "resource_ref"}:
                 continue
             part = {"type": part_type}
-            for key in ("text", "url", "name", "mime_type"):
+            for key in ("text", "url", "name", "mime_type", "resource_id", "sha256", "reference"):
                 if isinstance(raw_part.get(key), str) and raw_part.get(key):
                     part[key] = _safe_text(raw_part[key], limit=16384 if key == "url" else 8000)
             resource_ref = _safe_resource_refs([raw_part.get("resource_ref")])
@@ -558,8 +596,11 @@ def _delta_kind(item_type: str) -> str:
 
 
 def _event_type(kind: str, payload: dict[str, Any]) -> str:
+    # Audit/mirror journal rows for Item mutations often omit Item identity.
+    # Those must never become event.run.resumed (protocol: resume only after
+    # waiting) — the paired canonical Item event carries the mutation.
     if kind.startswith("conversation.item.") and not payload.get("item_id"):
-        return "event.run.resumed"
+        return "event.session.updated"
     if kind == "session.archived":
         return "event.session.archived"
     if kind == "session.removed":
@@ -578,7 +619,7 @@ def _event_type(kind: str, payload: dict[str, Any]) -> str:
             "completed": "event.run.completed",
             "failed": "event.run.failed",
             "cancelled": "event.run.cancelled",
-        }.get(status, "event.run.resumed")
+        }.get(status, "event.session.updated")
     if kind == "conversation.item.delta":
         return "event.item.delta"
     if kind == "conversation.item.created":

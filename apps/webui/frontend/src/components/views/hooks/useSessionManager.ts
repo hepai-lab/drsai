@@ -8,6 +8,22 @@ import { useModeConfigStore } from '../../../store/modeConfig';
 import { useSessionStorage } from './useSessionStorage';
 import { LOCATION_CHANGE_EVENT } from '../../../hooks/useRouter';
 
+function mergeAgentSnapshot(snapshot: any) {
+  const prev = useModeConfigStore.getState().agentInfo as any;
+  const snapId = String(snapshot?.agent_id ?? snapshot?.id ?? "");
+  const prevId = String(prev?.agent_id ?? prev?.id ?? "");
+  const same =
+    (snapId && prevId && snapId === prevId) ||
+    (!!snapshot?.name && !!prev?.name && snapshot.name === prev.name);
+  const agent_config =
+    snapshot?.agent_config || (same ? prev?.agent_config : undefined);
+  return {
+    ...(same && prev ? prev : {}),
+    ...snapshot,
+    ...(agent_config ? { agent_config } : {}),
+  };
+}
+
 interface UseSessionManagerProps {
   userEmail: string | undefined;
   onSuccess?: (message: string) => void;
@@ -76,14 +92,15 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
               
               // Update agent config
               if (fullSessionData.agent_mode_config) {
-                setSelectedAgent(fullSessionData.agent_mode_config);
+                const merged = mergeAgentSnapshot(fullSessionData.agent_mode_config);
+                setSelectedAgent(merged);
                 setMode(fullSessionData.agent_mode_config.mode);
                 const sid =
                   (fullSessionData.agent_mode_config as any)?.agent_id ??
                   (fullSessionData.agent_mode_config as any)?.id ??
                   null;
                 if (sid) setAgentId(String(sid));
-                setAgentInfo(fullSessionData.agent_mode_config as any);
+                setAgentInfo(merged);
                 
                 try {
                   const agentConfig = await agentAPI.getAgentConfig(userEmail, fullSessionData.agent_mode_config.mode);
@@ -159,14 +176,15 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
 
       // 同步更新全局选中智能体
       if (data.agent_mode_config) {
-        setSelectedAgent(data.agent_mode_config);
+        const merged = mergeAgentSnapshot(data.agent_mode_config);
+        setSelectedAgent(merged);
         setMode(data.agent_mode_config.mode);
         const sid =
           (data.agent_mode_config as any)?.agent_id ??
           (data.agent_mode_config as any)?.id ??
           null;
         if (sid) setAgentId(String(sid));
-        setAgentInfo(data.agent_mode_config as any);
+        setAgentInfo(merged);
         
         try {
           const agentConfig = await agentAPI.getAgentConfig(userEmail, data.agent_mode_config.mode);
@@ -274,9 +292,13 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
           name: agent.name,
           // Ensure per-agent default config label is stored with the session.
           defult_config_name:
-            (agent as any)?.defult_config_name ??
-            (agent as any)?.config?.defult_config_name ??
-            (agent as any)?.agent_config?.defult_config_name,
+            llm?.label ||
+            (agent as any)?.defult_config_name ||
+            (agent as any)?.config?.defult_config_name,
+          ...(((agent as any)?.agent_config && {
+            agent_config: (agent as any).agent_config,
+          }) ||
+            {}),
           ...agent.config,
         },
       };

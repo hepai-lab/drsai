@@ -1,12 +1,14 @@
-import React, { useContext, useEffect, useState } from "react";
+import React, { useContext, useEffect, useLayoutEffect, useState } from "react";
 import { useLocation, useNavigate } from "../hooks/useRouter";
 import { appContext } from "../hooks/provider";
 import { verifyAuthSession, saveAuthSession } from "../utils/authSession";
 import { authAPI } from "../components/views/api";
+import { BootSplash } from "./BootSplash";
+import { hideBootSplash } from "./bootSplash";
 import ScienceUserErrorPage from "./ScienceUserErrorPage";
 
 const PUBLIC_ROUTES = ["/welcome", "/login", "/auth", "/share"];
-const PUBLIC_ROUTE_PREFIXES = ["/share/skill", "/auth/login", "/auth/oidc", "/umt/oidc-login"];
+const PUBLIC_ROUTE_PREFIXES = ["/share/skill", "/auth/login", "/auth/oidc", "/umt/oidc-login", "/umt/oidc-callback"];
 
 const normalizePath = (path: string) => path.replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";
 
@@ -43,6 +45,10 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
     const [checked, setChecked] = useState(false);
     const [scienceAuthError, setScienceAuthError] = useState<"invalidToken" | "networkError" | "missingToken" | null>(null);
 
+    useLayoutEffect(() => {
+        hideBootSplash();
+    }, []);
+
     useEffect(() => {
         let cancelled = false;
 
@@ -52,20 +58,17 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
             // Science user iframe embed:
             //   统一认证: ?user_source=science_user&access_token=<ihep_token>
             //   院平台:   ?user_source=science_user&tokenId=<cas_token>
-            // CSNS user_agent embed:
-            //   ?user_source=user_agent&access_token=<csns_token>
+            // CSNS user_agent:
+            //   推荐: ?user_source=user_agent&ticket=<one-time>
+            //   过渡: ?user_source=user_agent&access_token=<csns_token>&email=<cstnetId>
             // 在所有其他守卫逻辑之前处理，避免跳转到登录页
             const userSource = (searchParams.get("user_source") || "").trim();
             if (userSource === "user_agent") {
-                const accessToken =
-                    searchParams.get("access_token") || searchParams.get("token");
-                if (!accessToken) {
-                    if (!cancelled) setScienceAuthError("missingToken");
-                    return;
-                }
-                try {
-                    const result = await authAPI.userAgentVerify(accessToken);
-                    if (cancelled) return;
+                const finishLogin = (result: {
+                    access_token: string;
+                    user_id: string;
+                    agent_name?: string | null;
+                }) => {
                     saveAuthSession(result.access_token, result.user_id);
                     localStorage.removeItem("drsai-mode-config");
                     localStorage.removeItem("drsai.recentAgents");
@@ -74,6 +77,35 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
                     window.location.replace(
                         `/?menu=current_session&view=chat&share_agent=true&agentName=${encodeURIComponent(agentName)}`
                     );
+                };
+                const ticket = (searchParams.get("ticket") || "").trim();
+                if (ticket) {
+                    try {
+                        const result = await authAPI.userAgentConsume(ticket);
+                        if (cancelled) return;
+                        finishLogin(result);
+                    } catch (err: any) {
+                        if (cancelled) return;
+                        const isNetwork = err instanceof TypeError || String(err?.message).includes("fetch");
+                        setScienceAuthError(isNetwork ? "networkError" : "invalidToken");
+                    }
+                    return;
+                }
+                const accessToken =
+                    searchParams.get("access_token") || searchParams.get("token");
+                const email =
+                    searchParams.get("email") ||
+                    searchParams.get("cstnetId") ||
+                    searchParams.get("username") ||
+                    "";
+                if (!accessToken) {
+                    if (!cancelled) setScienceAuthError("missingToken");
+                    return;
+                }
+                try {
+                    const result = await authAPI.userAgentVerify(accessToken, email);
+                    if (cancelled) return;
+                    finishLogin(result);
                 } catch (err: any) {
                     if (cancelled) return;
                     const isNetwork = err instanceof TypeError || String(err?.message).includes("fetch");
@@ -203,22 +235,16 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
         return <ScienceUserErrorPage errorType={scienceAuthError} />;
     }
 
-    // science_user / user_agent 验证中：显示全屏 loading，等待跳转
     const searchParams = new URLSearchParams(location.search);
     const embedSource = (searchParams.get("user_source") || "").trim();
-    if (embedSource === "science_user" || embedSource === "user_agent") {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950">
-                <div className="flex flex-col items-center gap-3">
-                    <span className="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                    <p className="text-sm text-gray-500 dark:text-slate-400">正在验证身份，请稍候...</p>
-                </div>
-            </div>
-        );
-    }
+    const isEmbed = embedSource === "science_user" || embedSource === "user_agent";
 
     if (!checked) {
-        return null;
+        return (
+            <BootSplash
+                message={isEmbed ? "正在验证身份，请稍候..." : "正在加载"}
+            />
+        );
     }
 
     return <>{children}</>;

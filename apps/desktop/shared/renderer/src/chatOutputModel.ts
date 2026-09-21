@@ -148,8 +148,49 @@ export function stripAgentToolDebugText(content: string): string {
   text = text.replace(/I am using tools?:[^\n]*/gi, "");
   text = text.replace(/\[FunctionCall\([\s\S]*?\)\]/g, "");
   text = text.replace(/^LOG Tool:?[^\n]*/gim, "");
+
+  // Model sometimes prints raw DSML / tool-call markup as the final answer
+  // (e.g. when GFS tools are off and it invents run_bash + jcli). Replace with
+  // a short user-readable explanation instead of leaking internals.
+  if (looksLikeRawToolCallMarkup(text)) {
+    return explainRawToolCallMarkup(text);
+  }
+
   text = text.replace(/\n{3,}/g, "\n\n").trim();
   return text;
+}
+
+function looksLikeRawToolCallMarkup(text: string): boolean {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact) return false;
+  if (/DSML/i.test(compact) && /tool_calls|invoke\s+name=/i.test(compact)) return true;
+  if (/<\s*\|\s*\|\s*DSML/i.test(compact)) return true;
+  // Entire bubble is a fenced dump of a single shell/tool invoke.
+  if (
+    compact.length < 1200
+    && /```/.test(text)
+    && /(?:run_bash|run_powershell|jcli\s)/i.test(compact)
+    && /invoke|tool_calls|parameter\s+name=/i.test(compact)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function explainRawToolCallMarkup(text: string): string {
+  const wantsGfs = /gfs|jcli|云盘|ihep-gfs/i.test(text);
+  if (wantsGfs) {
+    return [
+      "当前会话没有可用的 GFS 云盘工具，所以没法直接列出云盘内容。",
+      "",
+      "请打开左侧「GFS 云盘」，开启开关并保存 Access Key / Secret Key / 桶名后，再新建任务重试。",
+      "若已开启仍出现此提示，请重启桌面端后再试。",
+    ].join("\n");
+  }
+  return [
+    "模型输出了未执行的内部工具调用标记，而不是可用的结果。",
+    "请换一种说法重试，或新建任务后再问一次。",
+  ].join("\n");
 }
 
 export function isUserVisibleChatStatus(statusContent: string): boolean {

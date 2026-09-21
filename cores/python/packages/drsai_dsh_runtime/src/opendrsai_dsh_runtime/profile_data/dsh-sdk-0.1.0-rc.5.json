@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "profile_id": "dsh-sdk/0.1.0-rc.5",
+  "server_name": "deepseek-harness-sdk-runtime",
+  "supported_versions": [
+    "0.0.1",
+    "0.1.0-rc.5"
+  ],
+  "source_commits": [
+    "47f943859bef60e4160492346772ded9b24f765a"
+  ],
+  "native_contract_sha256": "b9de1f85d14956fb79573d24a220e687e78efe6903e6bae820ad21a41d536878",
+  "required_methods": [
+    "initialize",
+    "session/prompt",
+    "shutdown"
+  ],
+  "required_notifications": [
+    "session.event",
+    "session.status",
+    "subagent.started",
+    "subagent.finished"
+  ],
+  "required_capabilities": [
+    "approval.respond",
+    "run.cancel",
+    "run.terminal",
+    "run.turn-binding",
+    "session.history",
+    "session.resume",
+    "tool.side-effect-ledger",
+    "workspace.containment"
+  ],
+  "mapping_version": "dsh-oaep/1",
+  "event_disposition_sha256": "c6ef209122c0e4a779c5394c5192619b4cc8a7dfbe51d5dc2d4f7847b4511159",
+  "production_ready": false,
+  "blockers": [
+    "upstream SDK wire has no protocol negotiation",
+    "upstream initialize fixes cwd, provider and model process-wide rather than per Session",
+    "upstream SDK wire has no exact Run cancellation",
+    "upstream SDK wire has no approval server requests",
+    "upstream SDK wire does not expose durable history/resume control",
+    "messageId does not by itself prove the matching turn terminal",
+    "upstream carrier does not attest OS-enforced workspace containment",
+    "upstream carrier does not expose an exact tool side-effect ledger"
+  ]
+}

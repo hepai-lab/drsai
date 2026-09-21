@@ -8,6 +8,7 @@ import os
 import hashlib
 import json
 from collections import OrderedDict
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -30,8 +31,10 @@ from drsai.backend.codex_adapter.models import CodexModelCatalog
 from drsai.backend.codex_adapter.event_mapper import CodexEventMapper
 from drsai.backend.codex_adapter.native_decoder import CodexNativeEventDecoder
 from drsai.backend.runtime.input_resources import codex_input_items
+from drsai.owop.local_workspace import LocalWorkspaceOperations, WorkspaceWatchJournal
+from drsai.owop.protocol import OWOPError
 from drsai.backend.runtime.turn_coordinator import EntityLockRegistry, SessionTurnCoordinator
-from drsai.backend.runtime.normalized_events import BackendBinding, NormalizedAgentEvent, NormalizedEventKind
+from drsai.backend.runtime.normalized_events import BackendBinding, NormalizedAgentEvent, NormalizedEventKind, NormalizedItemType
 from drsai.backend.codex_adapter.run_finalizer import CodexRunFinalizer
 from drsai.backend.codex_adapter.security import CodexAccountManager
 from drsai.backend.codex_adapter.security import CodexApprovalBridge
@@ -59,6 +62,119 @@ def _codex_timestamp(value: Any) -> str | None:
         except (OSError, OverflowError, ValueError):
             return None
     return None
+
+
+def _history_workspace_relative(root: Path, native_path: str, *, strict: bool) -> str:
+    normalized = native_path.replace("\\", os.sep).replace("/", os.sep)
+    candidate = Path(normalized)
+    if not candidate.is_absolute() and len(normalized) >= 2 and normalized[1] == ":":
+        raise ValueError("backend path belongs to another platform")
+    resolved = (candidate if candidate.is_absolute() else root / candidate).resolve(strict=strict)
+    return resolved.relative_to(root.resolve(strict=True)).as_posix()
+
+
+def _history_file_ref(workspace_id: str, resource: Mapping[str, Any], *, relation: str, presentation: str) -> dict[str, Any]:
+    reference: dict[str, Any] = {
+        "protocol": "owop/1",
+        "workspace_id": workspace_id,
+        "resource_type": "file",
+        "resource_id": str(resource["file_id"]),
+        "label": str(resource.get("name") or resource["file_id"]),
+        "relation": relation,
+        "presentation": presentation,
+    }
+    if resource.get("digest"):
+        reference["digest"] = str(resource["digest"])
+    return reference
+
+
+def _associate_history_resources(
+    payload: dict[str, Any],
+    *,
+    workspace_id: str,
+    workspace_root: Path | None,
+    operations: LocalWorkspaceOperations | None,
+) -> list[str]:
+    """Replace private Codex paths with Workspace-scoped ResourceRefs."""
+    warnings: list[str] = []
+    parts = payload.get("parts")
+    references: list[dict[str, Any]] = []
+    if isinstance(parts, list):
+        normalized_parts: list[dict[str, Any]] = []
+        for raw_part in parts:
+            if not isinstance(raw_part, Mapping):
+                continue
+            part = dict(raw_part)
+            native_path = str(part.pop("_native_path", "") or "")
+            if native_path:
+                try:
+                    if workspace_root is None or operations is None:
+                        raise ValueError("Workspace is unavailable")
+                    relative = _history_workspace_relative(workspace_root, native_path, strict=True)
+                    resource = operations.register_file({"path": relative})["resource"]
+                    reference = _history_file_ref(
+                        workspace_id,
+                        resource,
+                        relation="input_attachment" if payload.get("role") == "user" else "related",
+                        presentation="inline",
+                    )
+                    part["resource_ref"] = reference
+                    part["name"] = str(part.get("name") or resource["name"])
+                    if resource.get("mime_type"):
+                        part["mime_type"] = resource["mime_type"]
+                    references.append(reference)
+                except (OSError, ValueError, OWOPError):
+                    warnings.append("backend_history_attachment_unavailable")
+            normalized_parts.append(part)
+        payload["parts"] = normalized_parts
+    if references:
+        payload["resource_refs"] = references
+
+    changes = payload.get("changes")
+    if isinstance(changes, list):
+        normalized_changes: list[dict[str, Any]] = []
+        for raw_change in changes:
+            if not isinstance(raw_change, Mapping):
+                continue
+            operation = {
+                "add": "create", "create": "create",
+                "update": "modify", "modify": "modify",
+                "delete": "remove", "remove": "remove",
+                "move": "move", "rename": "rename",
+            }.get(str(raw_change.get("operation") or "modify").lower(), "modify")
+            change: dict[str, Any] = {"operation": operation}
+            if raw_change.get("diff_summary"):
+                change["diff_summary"] = str(raw_change["diff_summary"])[:4000]
+            native_paths = {
+                "path": str(raw_change.get("path") or ""),
+                "old_path": str(raw_change.get("old_path") or raw_change.get("oldPath") or ""),
+                "new_path": str(raw_change.get("new_path") or raw_change.get("newPath") or ""),
+            }
+            try:
+                if workspace_root is None or operations is None or not any(native_paths.values()):
+                    raise ValueError("Workspace file change is unavailable")
+                for key, native_path in native_paths.items():
+                    if native_path:
+                        change[key] = _history_workspace_relative(workspace_root, native_path, strict=False)
+                target = str(change.get("new_path") or change.get("path") or "")
+                try:
+                    resource = operations.register_file({"path": target})["resource"]
+                except OWOPError as exc:
+                    if exc.code not in {"workspace_path_unavailable", "workspace_path_invalid"}:
+                        raise
+                else:
+                    change["resource_ref"] = _history_file_ref(
+                        workspace_id, resource, relation="file_change_target", presentation="activity",
+                    )
+                normalized_changes.append(change)
+            except (OSError, ValueError, OWOPError):
+                warnings.append("backend_history_file_change_unavailable")
+                normalized_changes.append({
+                    "operation": operation,
+                    "diff_summary": "The backend path was not inside the bound Workspace and was not associated.",
+                })
+        payload["changes"] = normalized_changes
+    return warnings
 
 
 def _codex_turn_timing(turn: Mapping[str, Any]) -> tuple[str | None, str | None, int | None]:
@@ -100,25 +216,60 @@ class CodexAgentBackendClient:
         turn_terminal_timeout: float = 60 * 60,
         turn_coordinator: SessionTurnCoordinator | None = None,
         lifecycle_writer_release_timeout: float = 1.0,
+        session_resume_writer_release_timeout: float = 5 * 60,
     ):
         self.rpc = rpc
         self.bindings = bindings
+        self.runtime_state = runtime_state
         self.models = CodexModelCatalog(rpc)
         self.accounts = CodexAccountManager(rpc)
-        self.event_mapper = CodexEventMapper()
+        self.event_mapper = CodexEventMapper(event_transformer=self._normalize_live_resource_event)
         self.run_finalizer = CodexRunFinalizer(self.event_mapper)
         self.fault_injector = fault_injector or (lambda _point: None)
-        self.runtime_state = runtime_state
         self.approval_bridge = approval_bridge
         self.turn_terminal_timeout = max(0.01, float(turn_terminal_timeout))
         self.turn_coordinator = turn_coordinator or SessionTurnCoordinator()
         self.lifecycle_writer_release_timeout = max(0.05, float(lifecycle_writer_release_timeout))
+        self.session_resume_writer_release_timeout = max(
+            self.lifecycle_writer_release_timeout,
+            float(session_resume_writer_release_timeout),
+        )
         self._cancelled_runs: set[str] = set()
         self._entity_locks = EntityLockRegistry()
         self._resumed_generation: OrderedDict[str, int] = OrderedDict()
         self._maximum_resumed_sessions = 256
         self._active_turns: dict[str, asyncio.Future] = {}
         self._closed = False
+
+    def _normalize_live_resource_event(
+        self,
+        context: RuntimeRunContext,
+        event: NormalizedAgentEvent,
+    ) -> NormalizedAgentEvent:
+        if event.item_type is not NormalizedItemType.FILE_CHANGE:
+            return event
+        payload = dict(event.payload)
+        operations: LocalWorkspaceOperations | None = None
+        try:
+            root = context.workspace_path.resolve(strict=True)
+            operations = LocalWorkspaceOperations(
+                context.workspace_id,
+                root,
+                WorkspaceWatchJournal(self.bindings.database.parent / "workspace-events.sqlite3"),
+            )
+            warnings = _associate_history_resources(
+                payload,
+                workspace_id=context.workspace_id,
+                workspace_root=root,
+                operations=operations,
+            )
+            if warnings:
+                summary = str(payload.get("summary") or "File changes")
+                payload["summary"] = f"{summary} Some backend paths could not be associated with this Workspace."
+            return replace(event, payload=payload)
+        finally:
+            if operations is not None:
+                operations.close()
 
     async def account_status(self, *, refresh: bool = False) -> Mapping[str, Any]:
         await self.rpc.connect()
@@ -297,6 +448,10 @@ class CodexAgentBackendClient:
         try:
             input_items = codex_input_items(
                 prompt, context.input_resources, workspace_path=context.workspace_path,
+                # Older persisted runs and direct adapter callers predate ordered
+                # input parts.  An empty tuple means "legacy input", not an
+                # explicitly empty OAEP message (which is rejected at ingress).
+                input_parts=context.input_parts or None,
             )
         except (OSError, ValueError) as exc:
             raise RuntimeExecutionError(
@@ -385,7 +540,10 @@ class CodexAgentBackendClient:
             try:
                 self.fault_injector("before_turn_request")
                 self.bindings.mark_operation_requesting("run", context.run_id)
-                result = await self.rpc.request("turn/start", request, timeout=60)
+                result = await self._request_after_writer_release(
+                    "turn/start", request, timeout=60,
+                    busy_message="This task is still finishing its previous response. Wait a moment, then try again.",
+                )
                 turn_id = self._response_id(result, "turn")
                 turn_identity["id"] = turn_id
                 self.bindings.mark_operation_response("run", context.run_id, turn_id)
@@ -561,6 +719,46 @@ class CodexAgentBackendClient:
                     await asyncio.sleep(min(delay, remaining))
                     delay = min(0.5, delay * 2)
 
+    async def _request_after_writer_release(
+        self, method: str, request: Mapping[str, Any], *, timeout: float | None = None,
+        busy_message: str, writer_release_timeout: float | None = None,
+    ) -> Mapping[str, Any]:
+        """Perform a writer-taking request after a previous client releases it.
+
+        App Server can publish ``turn/completed`` slightly before the rollout
+        writer is released. Resuming an imported Thread or starting its next
+        Turn from another Adapter client in that window must remain pending
+        instead of exposing the native writer conflict to the user. The failed
+        request is safe to retry because App Server rejected it before changing
+        Thread or Turn state.
+        """
+        deadline = asyncio.get_running_loop().time() + (
+            self.lifecycle_writer_release_timeout
+            if writer_release_timeout is None
+            else max(0.05, float(writer_release_timeout))
+        )
+        delay = 0.05
+        while True:
+            try:
+                return await self.rpc.request(method, request, timeout=timeout)
+            except RuntimeExecutionError as exc:
+                active_writer = (
+                    exc.code == "codex_jsonrpc_error"
+                    and "active writer" in str(exc).lower()
+                )
+                remaining = deadline - asyncio.get_running_loop().time()
+                if not active_writer:
+                    raise
+                if remaining <= 0:
+                    raise RuntimeExecutionError(
+                        "codex_session_busy",
+                        busy_message,
+                        retryable=True,
+                        detail={"operation": method, "thread_id": str(request.get("threadId") or "")},
+                    ) from exc
+                await asyncio.sleep(min(delay, remaining))
+                delay = min(0.5, delay * 2)
+
     async def respond_approval(self, run_id: str, approval_id: str, decision: str) -> None:
         if self.approval_bridge is None:
             raise RuntimeExecutionError("approval_bridge_not_ready", "Codex Approval Bridge is not configured.")
@@ -625,6 +823,7 @@ class CodexAgentBackendClient:
         )
         installed = bool(health.get("available"))
         model_catalog = self.models.capability(current_generation=self.rpc.generation)
+        account_readiness = self.accounts.capability(current_generation=self.rpc.generation)
         transport_state = "ready" if health.get("available") and health.get("reason") != "ready_not_started" else (
             "stopped" if health.get("reason") == "ready_not_started" else "fault"
         )
@@ -646,6 +845,12 @@ class CodexAgentBackendClient:
             blockers.append("contract")
         if model_state != "ready":
             blockers.append("models")
+        if account_readiness["state"] != "signed_in":
+            blockers.append("account")
+        executable_state = "ready" if not blockers else (
+            "blocked" if any(item in blockers for item in ("installed", "contract")) else "unknown"
+        )
+        refreshed_at = datetime.now(timezone.utc).isoformat()
         return {
             **health,
             "available": contract_available,
@@ -657,6 +862,10 @@ class CodexAgentBackendClient:
             "app_server_state": "running" if health.get("available") and health.get("reason") != "ready_not_started" else "stopped",
             "transport": str(health.get("transport") or "local-process"),
             "adapter_version": CODEX_ADAPTER_MAPPING_VERSION,
+            "binary_identity": (
+                active_binary.identity() if active_binary is not None and hasattr(active_binary, "identity")
+                else health.get("binary_identity")
+            ),
             "contract": {
                 "version": 2,
                 "digest": CONTRACT_DIGEST,
@@ -667,13 +876,32 @@ class CodexAgentBackendClient:
             },
             "model_catalog": model_catalog,
             "readiness": {
-                "refreshed_at": datetime.now(timezone.utc).isoformat(),
-                "transport": {"state": transport_state, "reason": health.get("reason")},
-                "installed": {"state": installed_state, "reason": health.get("reason") if installed_state != "ready" else None},
-                "contract": {"state": contract_state, "reason": None if contract_state == "ready" else "codex_contract_incompatible"},
-                "account": {"state": "unknown", "reason": "not_probed"},
-                "models": {"state": model_state, "reason": model_catalog.get("error")},
-                "executable": {"state": "unknown", "reason": "account_not_probed", "blockers": blockers},
+                "refreshed_at": refreshed_at,
+                "runtime": {"state": "ready", "reason": None, "observed_at": refreshed_at,
+                            "last_success_at": refreshed_at, "retryable": False, "actions": []},
+                "transport": {"state": transport_state, "reason": health.get("reason"),
+                              "observed_at": refreshed_at, "last_success_at": refreshed_at if transport_state != "fault" else None,
+                              "retryable": transport_state == "fault", "actions": ["reconnect"] if transport_state == "fault" else []},
+                "process": {"state": "ready" if transport_state == "ready" else transport_state,
+                            "reason": health.get("reason"), "observed_at": refreshed_at,
+                            "last_success_at": refreshed_at if transport_state == "ready" else None,
+                            "retryable": transport_state != "ready", "actions": ["restart"] if transport_state == "fault" else []},
+                "installed": {"state": installed_state, "reason": health.get("reason") if installed_state != "ready" else None,
+                              "observed_at": refreshed_at, "last_success_at": refreshed_at if installed_state == "ready" else None,
+                              "retryable": False, "actions": ["install"] if installed_state == "missing" else []},
+                "contract": {"state": contract_state, "reason": None if contract_state == "ready" else "codex_contract_incompatible",
+                             "observed_at": refreshed_at, "last_success_at": refreshed_at if contract_state == "ready" else None,
+                             "retryable": False, "actions": ["upgrade"] if contract_state != "ready" else []},
+                "account": account_readiness,
+                "models": {"state": model_state, "reason": model_catalog.get("error"),
+                           "observed_at": model_catalog.get("last_successful_at"),
+                           "last_success_at": model_catalog.get("last_successful_at"),
+                           "retryable": model_state != "ready", "actions": ["refresh"] if model_state != "ready" else []},
+                "executable": {"state": executable_state,
+                               "reason": None if executable_state == "ready" else "backend_not_ready",
+                               "observed_at": refreshed_at, "last_success_at": refreshed_at if executable_state == "ready" else None,
+                               "retryable": executable_state == "unknown", "actions": ["refresh"] if blockers else [],
+                               "blockers": blockers},
             },
             "run_finalizer": self.run_finalizer.diagnostics(),
             "turn_coordinator": self.turn_coordinator.diagnostics(),
@@ -754,11 +982,13 @@ class CodexAgentBackendClient:
             await self.models.refresh(generation=self.rpc.generation, force=refresh)
         return self.models.capability(current_generation=self.rpc.generation)
 
-    async def discover_sessions(self, workspace_path: str) -> list[Mapping[str, Any]]:
+    async def discover_sessions(
+        self, workspace_path: str, *, include_archived: bool = True,
+    ) -> list[Mapping[str, Any]]:
         await self.rpc.connect()
         expected = os.path.normcase(str(Path(workspace_path).resolve(strict=False)))
         discovered: dict[str, dict[str, Any]] = {}
-        for archived in (False, True):
+        for archived in ((False, True) if include_archived else (False,)):
             cursor: str | None = None
             for _ in range(100):
                 params: dict[str, Any] = {
@@ -906,43 +1136,82 @@ class CodexAgentBackendClient:
         # Only historical reprojection enables the narrowly scoped repair for
         # pre-OAEP serialized message-parts. Live text remains literal.
         decoder = CodexNativeEventDecoder(history_mode=True)
+        workspace_root: Path | None = None
+        workspace_operations: LocalWorkspaceOperations | None = None
+        if self.runtime_state is not None:
+            try:
+                workspace = self.runtime_state.get_workspace(binding.workspace_id, include_closed=True)
+                if workspace is not None and getattr(workspace, "path", None):
+                    workspace_root = Path(workspace.path).resolve(strict=True)
+                    workspace_operations = LocalWorkspaceOperations(
+                        binding.workspace_id,
+                        workspace_root,
+                        WorkspaceWatchJournal(self.bindings.database.parent / "workspace-events.sqlite3"),
+                    )
+            except (OSError, ValueError, OWOPError):
+                workspace_root = None
+                workspace_operations = None
         history: list[Mapping[str, Any]] = []
-        for turn_index, raw_turn in enumerate(turns[:10_000]):
-            if not isinstance(raw_turn, Mapping):
-                continue
-            turn_id = str(raw_turn.get("id") or f"turn-{turn_index}")
-            started_at, completed_at, duration_ms = _codex_turn_timing(raw_turn)
-            raw_items = raw_turn.get("items") if isinstance(raw_turn.get("items"), list) else []
-            items: list[dict[str, Any]] = []
-            for item_index, raw_item in enumerate(raw_items[:20_000]):
-                if not isinstance(raw_item, Mapping):
+        try:
+            for turn_index, raw_turn in enumerate(turns[:10_000]):
+                if not isinstance(raw_turn, Mapping):
                     continue
-                native_item = dict(raw_item)
-                native_item.setdefault("id", f"item-{turn_index}-{item_index}-{hashlib.sha256(json.dumps(native_item, sort_keys=True, default=str).encode()).hexdigest()[:16]}")
-                decoded = decoder.decode({
-                    "method": "item/completed",
-                    "params": {"threadId": backend_session_id, "turnId": turn_id, "item": native_item},
+                turn_id = str(raw_turn.get("id") or f"turn-{turn_index}")
+                started_at, completed_at, duration_ms = _codex_turn_timing(raw_turn)
+                raw_items = raw_turn.get("items") if isinstance(raw_turn.get("items"), list) else []
+                items: list[dict[str, Any]] = []
+                for item_index, raw_item in enumerate(raw_items[:20_000]):
+                    if not isinstance(raw_item, Mapping):
+                        continue
+                    native_item = dict(raw_item)
+                    native_item.setdefault("id", f"item-{turn_index}-{item_index}-{hashlib.sha256(json.dumps(native_item, sort_keys=True, default=str).encode()).hexdigest()[:16]}")
+                    decoded = decoder.decode({
+                        "method": "item/completed",
+                        "params": {"threadId": backend_session_id, "turnId": turn_id, "item": native_item},
+                    })
+                    if decoded is None or decoded.item_type is None:
+                        continue
+                    payload = dict(decoded.payload)
+                    payload["status"] = str(payload.get("status") or "completed")
+                    warnings = _associate_history_resources(
+                        payload,
+                        workspace_id=binding.workspace_id,
+                        workspace_root=workspace_root,
+                        operations=workspace_operations,
+                    )
+                    items.append({
+                        "item_id": str(native_item["id"]),
+                        "kind": decoded.item_type.value,
+                        "role": payload.get("role"),
+                        "status": payload["status"],
+                        "payload": payload,
+                    })
+                    for warning_index, warning_code in enumerate(dict.fromkeys(warnings)):
+                        items.append({
+                            "item_id": f"{native_item['id']}-resource-notice-{warning_index + 1}",
+                            "kind": "notice",
+                            "role": None,
+                            "status": "completed",
+                            "payload": {
+                                "id": f"{native_item['id']}-resource-notice-{warning_index + 1}",
+                                "level": "warning",
+                                "code": warning_code,
+                                "message": "A Codex history resource could not be associated with the bound Workspace.",
+                                "status": "completed",
+                            },
+                        })
+                history.append({
+                    "backend_run_id": turn_id,
+                    "backend_run_index": turn_index,
+                    "status": str(raw_turn.get("status") or "completed"),
+                    "created_at": started_at,
+                    "completed_at": completed_at,
+                    "duration_ms": duration_ms,
+                    "items": items,
                 })
-                if decoded is None or decoded.item_type is None:
-                    continue
-                payload = dict(decoded.payload)
-                payload["status"] = str(payload.get("status") or "completed")
-                items.append({
-                    "item_id": str(native_item["id"]),
-                    "kind": decoded.item_type.value,
-                    "role": payload.get("role"),
-                    "status": payload["status"],
-                    "payload": payload,
-                })
-            history.append({
-                "backend_run_id": turn_id,
-                "backend_run_index": turn_index,
-                "status": str(raw_turn.get("status") or "completed"),
-                "created_at": started_at,
-                "completed_at": completed_at,
-                "duration_ms": duration_ms,
-                "items": items,
-            })
+        finally:
+            if workspace_operations is not None:
+                workspace_operations.close()
         return history
 
     async def close(self) -> None:
@@ -969,10 +1238,15 @@ class CodexAgentBackendClient:
     async def _resume_if_needed(self, binding: AgentBackendSessionBinding, context: RuntimeRunContext) -> None:
         if self._resumed_generation.get(context.session_id) == self.rpc.generation:
             return
-        result = await self.rpc.request("thread/resume", {
-            "threadId": binding.backend_session_id, "cwd": str(context.workspace_path),
-            "approvalsReviewer": "user",
-        })
+        result = await self._request_after_writer_release(
+            "thread/resume",
+            {
+                "threadId": binding.backend_session_id, "cwd": str(context.workspace_path),
+                "approvalsReviewer": "user",
+            },
+            busy_message="This Codex task is still finishing another response. Wait a moment, then try again.",
+            writer_release_timeout=self.session_resume_writer_release_timeout,
+        )
         returned = self._response_id(result, "thread")
         if returned != binding.backend_session_id:
             raise RuntimeExecutionError("codex_thread_identity_mismatch", "Codex resumed a different Thread identity.")

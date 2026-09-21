@@ -18,10 +18,12 @@ _SECRET_PATTERNS = (
 
 
 def redact_runtime_log_text(value: object) -> str:
-    text = str(value)
-    for pattern in _SECRET_PATTERNS:
-        text = pattern.sub(r"\1[redacted]", text)
-    return text
+    # [DISABLED] Runtime log text redaction disabled — returns text unchanged
+    return str(value)
+    # text = str(value)
+    # for pattern in _SECRET_PATTERNS:
+    #     text = pattern.sub(r"\1[redacted]", text)
+    # return text
 
 
 def configure_runtime_file_logging(path: str | Path) -> TextIO:

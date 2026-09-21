@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +26,25 @@ class AgentSessionAdapter:
     此适配器实现这两个接口，底层对接 AgentSession.run_turn()。
     """
 
-    def __init__(self, sessions_dict: dict, daemon_config: Any):
+    def __init__(
+        self,
+        sessions_dict: dict,
+        daemon_config: Any,
+        auth_context_provider: Callable[[], Any | None] | None = None,
+    ):
         self._sessions = sessions_dict
         self._config = daemon_config
+        self._auth_context_provider = auth_context_provider
         self.drsai = self  # WeChatBot 访问 model.drsai
+
+    def _run_with_platform_auth(self, callback, *args):
+        """Propagate Desktop OIDC credentials into AgentSession worker threads."""
+        from contextlib import nullcontext
+        from drsai.platform_auth import platform_auth_scope
+
+        context = self._auth_context_provider() if self._auth_context_provider else None
+        with platform_auth_scope(context) if context is not None else nullcontext():
+            return callback(*args)
 
     async def lazy_init(
         self,
@@ -47,7 +62,9 @@ class AgentSessionAdapter:
         from drsai.backend.tui_gateway.server import _get_db_manager
 
         if chat_id not in self._sessions:
-            user_id = run_info.get("email", _resolve_user_id())
+            # Provider user ids are routing identifiers, never trusted OpenDrSai
+            # principals. Every WeChat session runs under the local Runtime owner.
+            user_id = _resolve_user_id()
             cfg = get_config_manager(user_id)
             if api_key:
                 cfg = dict(cfg)
@@ -59,7 +76,7 @@ class AgentSessionAdapter:
                 db_manager=_get_db_manager(),
             )
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, sess.init)
+            await loop.run_in_executor(None, self._run_with_platform_auth, sess.init)
             self._sessions[chat_id] = {
                 "agent_session": sess,
                 "user_id": user_id,
@@ -107,7 +124,13 @@ class AgentSessionAdapter:
             frame = _json.dumps({"type": event_type, **payload})
             loop.call_soon_threadsafe(event_queue.put_nowait, (event_type, frame))
 
-        future = loop.run_in_executor(None, sess.run_turn, text, on_event)
+        future = loop.run_in_executor(
+            None,
+            self._run_with_platform_auth,
+            sess.run_turn,
+            text,
+            on_event,
+        )
 
         SENTINEL = object()
 

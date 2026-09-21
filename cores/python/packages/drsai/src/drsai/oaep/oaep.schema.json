@@ -300,6 +300,305 @@
         }
       }
     },
+    "resourceRelation": {
+      "enum": [
+        "input_reference",
+        "input_attachment",
+        "output_artifact",
+        "citation_source",
+        "file_change_target",
+        "derived_from",
+        "related"
+      ]
+    },
+    "resourceLocatorLegacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "text_range",
+            "page",
+            "slide",
+            "sheet_cell",
+            "time_range"
+          ]
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "slide": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sheet": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "cell": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "start_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "resourceLocator": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "line",
+            "column",
+            "end_line",
+            "end_column"
+          ],
+          "properties": {
+            "kind": {
+              "const": "text_range"
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "column": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "end_line": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "end_column": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "page"
+          ],
+          "properties": {
+            "kind": {
+              "const": "page"
+            },
+            "page": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "slide"
+          ],
+          "properties": {
+            "kind": {
+              "const": "slide"
+            },
+            "slide": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "sheet",
+            "cell"
+          ],
+          "properties": {
+            "kind": {
+              "const": "sheet_cell"
+            },
+            "sheet": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "cell": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "start_ms",
+            "end_ms"
+          ],
+          "properties": {
+            "kind": {
+              "const": "time_range"
+            },
+            "start_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "end_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "resourceKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol",
+        "authority_id",
+        "workspace_id",
+        "resource_type",
+        "resource_id",
+        "generation"
+      ],
+      "properties": {
+        "protocol": {
+          "const": "owop/1"
+        },
+        "authority_id": {
+          "$ref": "#/$defs/id"
+        },
+        "workspace_id": {
+          "$ref": "#/$defs/id"
+        },
+        "resource_type": {
+          "enum": [
+            "workspace",
+            "worktree",
+            "file",
+            "git",
+            "process",
+            "pty",
+            "checkpoint",
+            "artifact"
+          ]
+        },
+        "resource_id": {
+          "$ref": "#/$defs/id"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "resourceVersionSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version_id"
+      ],
+      "properties": {
+        "version_id": {
+          "$ref": "#/$defs/id"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mime_type": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "captured_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "resourceAssociation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "association_id",
+        "resource",
+        "relation",
+        "label_snapshot",
+        "presentation"
+      ],
+      "properties": {
+        "association_id": {
+          "$ref": "#/$defs/id"
+        },
+        "resource": {
+          "$ref": "#/$defs/resourceKey"
+        },
+        "relation": {
+          "$ref": "#/$defs/resourceRelation"
+        },
+        "label_snapshot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "version_snapshot": {
+          "$ref": "#/$defs/resourceVersionSnapshot"
+        },
+        "locator": {
+          "$ref": "#/$defs/resourceLocator"
+        },
+        "presentation": {
+          "enum": [
+            "inline",
+            "card",
+            "activity"
+          ]
+        },
+        "operation_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
     "resourceRef": {
       "type": "object",
       "additionalProperties": false,
@@ -340,9 +639,114 @@
         },
         "digest": {
           "type": "string",
-          "pattern": "^[a-f0-9]{64}$"
+          "pattern": "^(?:sha256:)?[a-f0-9]{64}$"
+        },
+        "relation": {
+          "$ref": "#/$defs/resourceRelation"
+        },
+        "locator": {
+          "$ref": "#/$defs/resourceLocatorLegacy"
+        },
+        "presentation": {
+          "enum": [
+            "inline",
+            "card",
+            "activity"
+          ]
         }
       }
+    },
+    "messagePartV2": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "part_id",
+            "type",
+            "text"
+          ],
+          "properties": {
+            "part_id": {
+              "$ref": "#/$defs/id"
+            },
+            "type": {
+              "const": "text"
+            },
+            "text": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "part_id",
+            "type",
+            "association_id"
+          ],
+          "properties": {
+            "part_id": {
+              "$ref": "#/$defs/id"
+            },
+            "type": {
+              "const": "resource"
+            },
+            "association_id": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        }
+      ]
+    },
+    "messagePart": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/messagePartV2"
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "not": {
+            "required": [
+              "part_id"
+            ]
+          },
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "enum": [
+                "text",
+                "image",
+                "audio",
+                "file",
+                "resource_ref"
+              ]
+            },
+            "text": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string",
+              "maxLength": 16384
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "mime_type": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "resource_ref": {
+              "$ref": "#/$defs/resourceRef"
+            }
+          }
+        }
+      ]
     },
     "contentReferences": {
       "type": "object",
@@ -393,40 +797,7 @@
               "type": "array",
               "maxItems": 100,
               "items": {
-                "type": "object",
-                "additionalProperties": true,
-                "required": [
-                  "type"
-                ],
-                "properties": {
-                  "type": {
-                    "enum": [
-                      "text",
-                      "image",
-                      "audio",
-                      "file",
-                      "resource_ref"
-                    ]
-                  },
-                  "text": {
-                    "type": "string"
-                  },
-                  "url": {
-                    "type": "string",
-                    "maxLength": 16384
-                  },
-                  "name": {
-                    "type": "string",
-                    "maxLength": 512
-                  },
-                  "mime_type": {
-                    "type": "string",
-                    "maxLength": 256
-                  },
-                  "resource_ref": {
-                    "$ref": "#/$defs/resourceRef"
-                  }
-                }
+                "$ref": "#/$defs/messagePart"
               }
             },
             "citations": {
@@ -776,6 +1147,12 @@
                   "diff_summary": {
                     "type": "string",
                     "maxLength": 4000
+                  },
+                  "resource_ref": {
+                    "$ref": "#/$defs/resourceRef"
+                  },
+                  "association_id": {
+                    "$ref": "#/$defs/id"
                   }
                 }
               }
@@ -852,6 +1229,9 @@
             },
             "downloadable": {
               "type": "boolean"
+            },
+            "association_id": {
+              "$ref": "#/$defs/id"
             }
           }
         }
@@ -1051,11 +1431,52 @@
         "source": {
           "$ref": "#/$defs/source"
         },
+        "associations": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/resourceAssociation"
+          }
+        },
         "content": {
           "type": "object"
         }
       },
       "allOf": [
+        {
+          "if": {
+            "required": [
+              "associations"
+            ]
+          },
+          "then": {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "message"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "content": {
+                  "properties": {
+                    "parts": {
+                      "type": "array",
+                      "maxItems": 100,
+                      "items": {
+                        "$ref": "#/$defs/messagePartV2"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
         {
           "if": {
             "properties": {
@@ -1500,6 +1921,11 @@
           "items": {
             "$ref": "#/$defs/item"
           }
+        },
+        "mapping_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
         },
         "snapshot_sequence": {
           "type": "integer",

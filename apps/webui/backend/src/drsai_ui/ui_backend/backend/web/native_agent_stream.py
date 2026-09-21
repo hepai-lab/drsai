@@ -113,7 +113,11 @@ def _public_error_message(message: dict[str, Any]) -> str:
     if isinstance(data, dict):
         task_result = data.get("task_result")
         if isinstance(task_result, dict):
-            stop_reason = task_result.get("stop_reason")
-            if isinstance(stop_reason, str) and stop_reason:
-                return stop_reason[:500]
-    return "Agent execution failed."
+            messages = task_result.get("messages")
+            if isinstance(messages, list) and messages:
+                last = messages[-1]
+                if isinstance(last, dict):
+                    content = last.get("content")
+                    if isinstance(content, str) and content.strip():
+                        return content.strip()[:500]
+    return "这次回复出错了，请稍后重试。"

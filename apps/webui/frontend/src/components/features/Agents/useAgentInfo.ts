@@ -21,6 +21,28 @@ function resolveAgentRecordId(agent: Partial<Agent> | null | undefined): string 
   return raw != null && raw !== '' ? String(raw) : null;
 }
 
+/** Live catalog match: id first, then same display name (+ mode when present). */
+export function findLiveCatalogAgent(
+  agents: any[] | null | undefined,
+  agentId: string,
+  snapshot: Partial<Agent> | null | undefined,
+): any | null {
+  const list = Array.isArray(agents) ? agents : [];
+  const byId = list.find((a) => String(a?.id ?? "") === String(agentId));
+  if (byId) return byId;
+
+  const name = typeof snapshot?.name === "string" ? snapshot.name.trim() : "";
+  if (!name) return null;
+  const mode = typeof snapshot?.mode === "string" ? snapshot.mode.trim() : "";
+  const named = list.filter((a) => String(a?.name ?? "").trim() === name);
+  if (named.length === 0) return null;
+  if (mode) {
+    const typed = named.filter((a) => String(a?.mode ?? "").trim() === mode);
+    if (typed.length > 0) return typed[0];
+  }
+  return named[0];
+}
+
 /**
  * 全局 agent_info：用 getUserAgentById 拉取 UserAgents 详情。
  * userId 未传入时从 localStorage user_email 读取，避免 Provider 尚未恢复 user 时首屏永远不请求。
@@ -90,17 +112,31 @@ export const useAgentInfo = (userIdProp?: string) => {
         console.error('Failed to fetch agent info:', error);
         const errorMessage = error instanceof Error ? error.message : String(error);
         const isOfflineAgentError = errorMessage.includes('该智能体已经下线或更新');
+        const sa = useModeConfigStore.getState().selectedAgent;
 
-        if (isOfflineAgentError) {
-          const sa = useModeConfigStore.getState().selectedAgent;
-          // Opening a historical session restores agent snapshot into selectedAgent; UserAgents
-          // may no longer list that id — keep the snapshot so chat/history stays usable.
-          if (resolveAgentRecordId(sa) === String(id)) {
+        try {
+          const [agents, userDefault] = await Promise.all([
+            agentWorkerAPI.getUserAgents(userId, "", false),
+            agentWorkerAPI.getUserDefaultAgent(userId).catch(() => null),
+          ]);
+          if (cancelled) return;
+          // DDF catalog ids churn on cache rebuild; the same agent may still be
+          // live under a new uuid. Match by name so historical sessions stay active.
+          const live = findLiveCatalogAgent(agents, String(id), sa as Partial<Agent>);
+          if (live) {
+            setAgentOfflineSnapshot(false);
+            setAgentInfo(live as Partial<Agent>);
+            return;
+          }
+
+          if (isOfflineAgentError && resolveAgentRecordId(sa) === String(id)) {
+            // Agent is gone from the live list; keep session snapshot, mark archived.
             setAgentInfo(sa as Partial<Agent>);
             setAgentOfflineSnapshot(true);
             return;
           }
-          if (!shownOfflineModalAgentKeys.has(requestKey)) {
+
+          if (isOfflineAgentError && !shownOfflineModalAgentKeys.has(requestKey)) {
             shownOfflineModalAgentKeys.add(requestKey);
             Modal.confirm({
               title: '智能体不可用',
@@ -132,21 +168,6 @@ export const useAgentInfo = (userIdProp?: string) => {
             setAgentInfo(null);
             return;
           }
-          // Modal already shown for this agent id; fall through to list/default fallback.
-        }
-
-        try {
-          const [agents, userDefault] = await Promise.all([
-            agentWorkerAPI.getUserAgents(userId, "", false),
-            agentWorkerAPI.getUserDefaultAgent(userId).catch(() => null),
-          ]);
-          const byId = agents?.find((a: any) => a.id === id);
-          if (byId) {
-            setAgentOfflineSnapshot(false);
-            setAgentInfo(byId as Partial<Agent>);
-            return;
-          }
-          const userDefaultId = userDefault?.stored_default_agent_id ?? null;
           const platformPolicy = {
             auto_load_default_agent: userDefault?.auto_load_default_agent,
             default_agent_name: userDefault?.default_agent_name ?? null,
@@ -154,7 +175,6 @@ export const useAgentInfo = (userIdProp?: string) => {
           };
           const preferred = pickAgentForSessionStart(
             agents || [],
-            userDefaultId,
             platformPolicy,
           );
           if (

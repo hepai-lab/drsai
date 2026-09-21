@@ -82,16 +82,21 @@ def record_display_name(db, user_id: str, display_name: str) -> None:
         db.upsert(user)
 
 
-def get_display_name(db, user_id: str) -> str:
-    """Read display_name from Userinfo.meta, defaulting to empty string."""
+def get_profile_fields(db, user_id: str) -> tuple[str, str]:
+    """Return (cooper_info, display_name) from one Userinfo lookup."""
     if not user_id:
-        return ""
+        return "", ""
     response = db.get(Userinfo, filters={"user_id": user_id}, return_json=False)
     if response.status and response.data:
         user: Userinfo = response.data[0]
         meta = dict(getattr(user, "meta", None) or {})
-        return meta.get("display_name", "")
-    return ""
+        return str(meta.get("cooper_info") or ""), str(meta.get("display_name") or "")
+    return "", ""
+
+
+def get_display_name(db, user_id: str) -> str:
+    """Read display_name from Userinfo.meta, defaulting to empty string."""
+    return get_profile_fields(db, user_id)[1]
 
 
 def record_cooper_info(db, user_id: str, cooper_info: str) -> None:
@@ -107,14 +112,7 @@ def record_cooper_info(db, user_id: str, cooper_info: str) -> None:
 
 def get_cooper_info(db, user_id: str) -> str:
     """Read cooper_info from Userinfo.meta, defaulting to empty string."""
-    if not user_id:
-        return ""
-    response = db.get(Userinfo, filters={"user_id": user_id}, return_json=False)
-    if response.status and response.data:
-        user: Userinfo = response.data[0]
-        meta = dict(getattr(user, "meta", None) or {})
-        return meta.get("cooper_info", "")
-    return ""
+    return get_profile_fields(db, user_id)[0]
 
 
 # ── skill role helpers ────────────────────────────────────────────────────────
