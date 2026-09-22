@@ -6,6 +6,8 @@ import {
   // Temporarily unused while Scheduled nav is hidden — keep for later reuse.
   // CalendarClock,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Cloud,
   Copy,
   FileText,
@@ -2260,19 +2262,6 @@ export function WorkspaceShell({
             </div>
           )}
         </div>
-        {isConversationPage ? (
-          <button
-            className="titlebar-right-panel-toggle"
-            data-testid="titlebar-right-panel-toggle"
-            type="button"
-            onClick={onToggleRightPanel}
-            title={rightPanelCollapsed ? (zh ? "显示右侧栏" : "Show right panel") : (zh ? "隐藏右侧栏" : "Hide right panel")}
-            aria-label={rightPanelCollapsed ? (zh ? "显示右侧栏" : "Show right panel") : (zh ? "隐藏右侧栏" : "Hide right panel")}
-            aria-pressed={!rightPanelCollapsed}
-          >
-            <span aria-hidden />
-          </button>
-        ) : null}
         {showCustomWindowControls ? (
           <>
             <div className="titlebar-window-divider" aria-hidden />
@@ -2714,6 +2703,19 @@ export function WorkspaceShell({
               )}
           </aside> : null}
         </section>
+        {isConversationPage ? (
+          <button
+            className="right-panel-float-toggle titlebar-right-panel-toggle"
+            data-testid="titlebar-right-panel-toggle"
+            type="button"
+            onClick={onToggleRightPanel}
+            title={rightPanelCollapsed ? (zh ? "显示右侧栏" : "Show right panel") : (zh ? "隐藏右侧栏" : "Hide right panel")}
+            aria-label={rightPanelCollapsed ? (zh ? "显示右侧栏" : "Show right panel") : (zh ? "隐藏右侧栏" : "Hide right panel")}
+            aria-pressed={!rightPanelCollapsed}
+          >
+            {rightPanelCollapsed ? <ChevronLeft size={18} strokeWidth={2.35} aria-hidden /> : <ChevronRight size={18} strokeWidth={2.35} aria-hidden />}
+          </button>
+        ) : null}
       </main>
       {threadMenu && (
         <div className="thread-context-layer" role="presentation" onMouseDown={closeThreadMenu}>

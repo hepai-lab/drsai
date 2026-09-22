@@ -1,4 +1,4 @@
-@font-face {
+﻿@font-face {
   font-family: "Open Sans";
   src: url("./fonts/Open_Sans/OpenSans-VariableFont_wdth,wght.ttf")
     format("truetype-variations");
@@ -2978,6 +2978,7 @@ button {
 }
 
 .workspace {
+  position: relative;
   grid-column: 2;
   grid-row: 2;
   display: flex;
@@ -3009,8 +3010,7 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
   display: none;
 }
 
-.titlebar-sidebar-toggle,
-.titlebar-right-panel-toggle {
+.titlebar-sidebar-toggle {
   display: inline-grid;
   width: 28px;
   height: 24px;
@@ -3021,8 +3021,7 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
   -webkit-app-region: no-drag;
 }
 
-.titlebar-sidebar-toggle span,
-.titlebar-right-panel-toggle span {
+.titlebar-sidebar-toggle span {
   position: relative;
   display: block;
   width: 15px;
@@ -3031,23 +3030,15 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
   border-radius: 3px;
 }
 
-.titlebar-sidebar-toggle span::after,
-.titlebar-right-panel-toggle span::after {
+.titlebar-sidebar-toggle span::after {
   position: absolute;
   top: 1px;
   bottom: 1px;
+  left: 1px;
   width: 4px;
   border-radius: 1.5px;
   background: transparent;
   content: "";
-}
-
-.titlebar-sidebar-toggle span::after {
-  left: 1px;
-}
-
-.titlebar-right-panel-toggle span::after {
-  right: 1px;
 }
 
 .titlebar-sidebar-toggle span::before {
@@ -3061,55 +3052,32 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
   content: "";
 }
 
-.titlebar-right-panel-toggle span::before {
-  position: absolute;
-  top: 1px;
-  right: 4px;
-  bottom: 1px;
-  width: 1.5px;
-  border-radius: 999px;
-  background: var(--app-sidebar-text);
-  content: "";
-}
-
 .titlebar-sidebar-toggle:hover,
 .titlebar-sidebar-toggle:focus-visible,
-.titlebar-sidebar-toggle[aria-pressed="false"],
-.titlebar-right-panel-toggle:hover,
-.titlebar-right-panel-toggle:focus-visible,
-.titlebar-right-panel-toggle[aria-pressed="false"] {
+.titlebar-sidebar-toggle[aria-pressed="false"] {
   background: var(--app-sidebar-hover);
   outline: none;
 }
 
 .titlebar-sidebar-toggle:hover span,
 .titlebar-sidebar-toggle:focus-visible span,
-.titlebar-sidebar-toggle[aria-pressed="false"] span,
-.titlebar-right-panel-toggle:hover span,
-.titlebar-right-panel-toggle:focus-visible span,
-.titlebar-right-panel-toggle[aria-pressed="false"] span {
+.titlebar-sidebar-toggle[aria-pressed="false"] span {
   border-color: var(--app-accent-strong);
 }
 
 .titlebar-sidebar-toggle:hover span::before,
 .titlebar-sidebar-toggle:focus-visible span::before,
-.titlebar-sidebar-toggle[aria-pressed="false"] span::before,
-.titlebar-right-panel-toggle:hover span::before,
-.titlebar-right-panel-toggle:focus-visible span::before,
-.titlebar-right-panel-toggle[aria-pressed="false"] span::before {
+.titlebar-sidebar-toggle[aria-pressed="false"] span::before {
   background: var(--app-accent-strong);
 }
 
-.titlebar-sidebar-toggle[aria-pressed="true"] span::after,
-.titlebar-right-panel-toggle[aria-pressed="true"] span::after {
+.titlebar-sidebar-toggle[aria-pressed="true"] span::after {
   background: currentColor;
   opacity: 0.5;
 }
 
 .titlebar-sidebar-toggle:hover span::after,
-.titlebar-sidebar-toggle:focus-visible span::after,
-.titlebar-right-panel-toggle:hover span::after,
-.titlebar-right-panel-toggle:focus-visible span::after {
+.titlebar-sidebar-toggle:focus-visible span::after {
   background: var(--app-accent-strong);
   opacity: 0.55;
 }
@@ -3603,6 +3571,7 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
 }
 
 .content-grid {
+  position: relative;
   display: grid;
   /* Width from --right-panel-width; JS clamps to ~80% of the content grid. */
   /* minmax(0, …) so intrinsic content (PDF iframe) cannot block shrinking. */
@@ -3614,6 +3583,111 @@ html[data-desktop-platform="macos"] .workbench-menu-items,
   overflow: hidden;
   padding: 0;
   background: var(--app-card-bg);
+}
+
+.right-panel-float-toggle {
+  position: absolute;
+  top: 50%;
+  right: 18px;
+  z-index: 24;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--app-card-bg) 65%, var(--app-accent-border));
+  border-radius: 50%;
+  color: var(--app-accent-strong);
+  background:
+    radial-gradient(
+      circle at 32% 28%,
+      var(--app-card-bg) 0%,
+      color-mix(in srgb, var(--app-card-bg) 82%, var(--app-accent-soft)) 62%,
+      color-mix(in srgb, var(--app-accent-soft) 70%, var(--app-card-bg)) 100%
+    );
+  box-shadow:
+    inset 0 1px 1px color-mix(in srgb, var(--app-card-bg) 92%, transparent),
+    inset 0 -8px 12px color-mix(in srgb, var(--app-accent) 12%, transparent),
+    0 10px 24px color-mix(in srgb, var(--app-sidebar-text) 14%, transparent);
+  backdrop-filter: blur(18px) saturate(1.12);
+  -webkit-backdrop-filter: blur(18px) saturate(1.12);
+  transform: translateY(-50%);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  user-select: none;
+  line-height: 0;
+}
+
+.right-panel-float-toggle svg {
+  display: block;
+}
+
+.right-panel-float-toggle:hover,
+.right-panel-float-toggle:focus-visible {
+  color: var(--app-accent-strong);
+  outline: none;
+  box-shadow:
+    inset 0 1px 1px color-mix(in srgb, var(--app-card-bg) 92%, transparent),
+    inset 0 -8px 12px color-mix(in srgb, var(--app-accent) 16%, transparent),
+    0 14px 28px color-mix(in srgb, var(--app-sidebar-text) 18%, transparent);
+}
+
+.right-panel-float-toggle:focus-visible {
+  box-shadow:
+    inset 0 1px 1px color-mix(in srgb, var(--app-card-bg) 92%, transparent),
+    0 0 0 3px var(--app-focus-ring),
+    0 14px 28px color-mix(in srgb, var(--app-sidebar-text) 18%, transparent);
+}
+
+.right-panel-float-toggle[aria-pressed="true"] {
+  right: calc(var(--right-panel-width, 420px) + 14px);
+  color: var(--app-text-secondary);
+}
+
+.right-panel-float-toggle[aria-pressed="true"]:hover,
+.right-panel-float-toggle[aria-pressed="true"]:focus-visible {
+  color: var(--app-accent-strong);
+}
+
+.content-grid.right-expanded + .right-panel-float-toggle {
+  right: auto;
+  left: 18px;
+  color: var(--app-text-secondary);
+}
+
+.content-grid.right-expanded + .right-panel-float-toggle:hover,
+.content-grid.right-expanded + .right-panel-float-toggle:focus-visible {
+  color: var(--app-accent-strong);
+}
+
+:root[data-theme="dark"] .right-panel-float-toggle {
+  border-color: color-mix(in srgb, var(--app-card-bg) 40%, var(--app-accent-border));
+  background:
+    radial-gradient(
+      circle at 32% 28%,
+      color-mix(in srgb, var(--app-card-bg) 78%, white) 0%,
+      var(--app-card-bg) 55%,
+      color-mix(in srgb, var(--app-accent-soft) 80%, var(--app-card-bg)) 100%
+    );
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.12),
+    inset 0 -10px 14px rgba(0, 0, 0, 0.28),
+    0 12px 28px rgba(0, 0, 0, 0.38);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .right-panel-float-toggle {
+    transition:
+      transform 160ms ease,
+      box-shadow 160ms ease,
+      color 160ms ease;
+  }
+
+  .right-panel-float-toggle:hover,
+  .right-panel-float-toggle:focus-visible {
+    transform: translateY(calc(-50% - 1px));
+  }
 }
 
 .content-grid.right-collapsed {
