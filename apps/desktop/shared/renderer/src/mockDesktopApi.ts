@@ -3519,6 +3519,7 @@ export function installMockDesktopApi(): void {
     getVoiceRuntimeStatus: async () => ({
       runtimeId: "mock-local",
       state: "ready",
+      reasonCode: "ready",
       supportedMimeTypes: ["audio/webm", "audio/wav"],
       maxBytes: 10 * 1024 * 1024,
       maxDurationSeconds: 120,
@@ -6940,6 +6941,12 @@ export function installMockDesktopApi(): void {
     sendRenderHealthReport: () => {
       // Mock: no-op — backpressure control is only active in production
     },
+    setWindowChromeAppearance: async () => true,
+    windowMinimize: async () => true,
+    windowToggleMaximize: async () => false,
+    windowClose: async () => true,
+    getWindowMaximized: async () => false,
+    onWindowMaximizedChanged: () => () => undefined,
   };
 
   window.openDrSai = api;

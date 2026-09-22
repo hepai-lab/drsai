@@ -74,14 +74,18 @@ function createPlaybackController(
   }, onChange);
 }
 
+const PLAYBACK_ENGINE_REV = 13;
+
 export function useSystemVoicePlayback(): SystemVoicePlayback {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [isAvailable, setIsAvailable] = useState(false);
   const controllerRef = useRef<VoicePlaybackController | null>(null);
+  const onChangeRef = useRef(setSnapshot);
+  onChangeRef.current = setSnapshot;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const controller = createPlaybackController(setSnapshot);
+    const controller = createPlaybackController((next) => onChangeRef.current(next));
     controllerRef.current = controller;
     setIsAvailable(controller.isAvailable);
 
@@ -100,11 +104,28 @@ export function useSystemVoicePlayback(): SystemVoicePlayback {
       controller.dispose();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, []);
+  }, [PLAYBACK_ENGINE_REV]);
 
-  const stop = useCallback(() => controllerRef.current?.stop(), []);
-  const pause = useCallback(() => { controllerRef.current?.pause(); }, []);
-  const resume = useCallback(() => { controllerRef.current?.resume(); }, []);
+  const stop = useCallback(() => {
+    controllerRef.current?.stop();
+    setSnapshot({ activeMessageId: null, error: null, phase: "idle" });
+  }, []);
+  const pause = useCallback(() => {
+    controllerRef.current?.pause();
+    setSnapshot((current) => (
+      current.phase === "idle" && !current.activeMessageId
+        ? current
+        : { ...current, phase: "paused" }
+    ));
+  }, []);
+  const resume = useCallback(() => {
+    controllerRef.current?.resume();
+    setSnapshot((current) => (
+      current.activeMessageId
+        ? { ...current, phase: "playing" }
+        : current
+    ));
+  }, []);
   const play = useCallback((
     messageId: string,
     content: string,
@@ -121,20 +142,16 @@ export function useSystemVoicePlayback(): SystemVoicePlayback {
       });
       return;
     }
-    const controller = controllerRef.current;
-    if (!controller) {
-      setSnapshot({
-        activeMessageId: messageId,
-        error: language === "zh" ? "朗读引擎尚未就绪，请稍后再试。" : "Speech playback is not ready yet. Try again.",
-        phase: "failed",
-      });
-      return;
+    let controller = controllerRef.current;
+    if (!controller || controller.isDisposed) {
+      controller = createPlaybackController((next) => onChangeRef.current(next));
+      controllerRef.current = controller;
+      setIsAvailable(controller.isAvailable);
     }
-    // Optimistic UI: show synthesizing immediately even before async provider work.
     setSnapshot({
       activeMessageId: messageId,
       error: null,
-      phase: "synthesizing",
+      phase: "playing",
     });
     controller.play({
       language,

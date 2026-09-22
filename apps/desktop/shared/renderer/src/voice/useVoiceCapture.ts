@@ -10,6 +10,7 @@ import { useVoiceLevelMeter } from "./useVoiceLevelMeter";
 export interface UseVoiceCaptureOptions {
   beforeStart: () => Promise<void>;
   deviceId: string;
+  locale?: "zh" | "en";
   onCaptureError?: (error: unknown, message: string) => void;
   onDeviceUnavailable?: () => void;
   onRecorded: (result: VoiceCaptureResult) => void;
@@ -55,7 +56,8 @@ export function useVoiceCapture(options: UseVoiceCaptureOptions): VoiceCaptureHo
       onDevices: setDevices,
       onElapsed: setElapsedSeconds,
       onError: (captureError) => {
-        const message = captureError ? getVoicePermissionError(captureError) : null;
+        const zh = optionsRef.current.locale !== "en";
+        const message = captureError ? getVoicePermissionError(captureError, zh) : null;
         setError(message);
         if (captureError && message) optionsRef.current.onCaptureError?.(captureError, message);
       },
@@ -91,7 +93,8 @@ export function useVoiceCapture(options: UseVoiceCaptureOptions): VoiceCaptureHo
 
   const start = useCallback(async () => {
     if (!controllerRef.current) {
-      const unavailable = new Error("Voice recording is unavailable in this desktop runtime.");
+      const zh = optionsRef.current.locale !== "en";
+      const unavailable = new Error(zh ? "当前桌面环境无法使用语音录音。" : "Voice recording is unavailable in this desktop runtime.");
       setState("failed");
       setError(unavailable.message);
       optionsRef.current.onCaptureError?.(unavailable, unavailable.message);

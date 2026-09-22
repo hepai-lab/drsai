@@ -32661,3 +32661,170 @@ button.structured-activity-compact:hover > span {
   .model-center-connection code { grid-column: 2; justify-self: start; }
   .model-center-actions { justify-content: flex-start; }
 }
+
+/* ===== Merged from origin/feature/desktop-v2 (9b1e9dd9): styles for new remote UI ===== */
+.sidebar-nav-badge {
+  flex: 0 0 auto;
+  min-width: 16px;
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #c2410c;
+  color: #fff;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.titlebar-window-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  height: var(--app-titlebar-height);
+  align-items: stretch;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-window-btn {
+  display: inline-grid;
+  width: 46px;
+  height: 100%;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  transition: background-color 0.1s ease, color 0.1s ease;
+}
+
+.titlebar-window-btn:hover,
+.titlebar-window-btn:focus-visible {
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--app-text-primary);
+  outline: none;
+}
+
+.titlebar-window-btn:active {
+  background: rgba(0, 0, 0, 0.26);
+}
+
+.titlebar-window-btn-close:hover,
+.titlebar-window-btn-close:focus-visible {
+  background: #e81123;
+  color: #fff;
+}
+
+.titlebar-window-btn-close:active {
+  background: #c50f1f;
+  color: #fff;
+}
+
+:root[data-theme="dark"] .titlebar-window-btn:hover,
+:root[data-theme="dark"] .titlebar-window-btn:focus-visible {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+:root[data-theme="dark"] .titlebar-window-btn:active {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+:root[data-theme="dark"] .titlebar-window-btn-close:hover,
+:root[data-theme="dark"] .titlebar-window-btn-close:focus-visible {
+  background: #e81123;
+  color: #fff;
+}
+
+:root[data-theme="dark"] .titlebar-window-btn-close:active {
+  background: #c50f1f;
+  color: #fff;
+}
+
+/* Native-like Windows caption glyphs (not Lucide). */
+.titlebar-window-glyph {
+  position: relative;
+  display: block;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+
+.titlebar-window-glyph-min::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: currentColor;
+  transform: translateY(-50%);
+}
+
+.titlebar-window-glyph-max::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid currentColor;
+  border-radius: 0;
+}
+
+.titlebar-window-glyph-restore {
+  width: 10px;
+  height: 10px;
+}
+
+.titlebar-window-glyph-restore::before,
+.titlebar-window-glyph-restore::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1px solid currentColor;
+  box-sizing: border-box;
+}
+
+.titlebar-window-glyph-restore::before {
+  top: 0;
+  right: 0;
+}
+
+.titlebar-window-glyph-restore::after {
+  left: 0;
+  bottom: 0;
+  background: var(--app-surface-bg);
+}
+
+.titlebar-window-btn:hover .titlebar-window-glyph-restore::after,
+.titlebar-window-btn:focus-visible .titlebar-window-glyph-restore::after {
+  background: color-mix(in srgb, var(--app-surface-bg) 55%, rgba(0, 0, 0, 0.18));
+}
+
+:root[data-theme="dark"] .titlebar-window-btn:hover .titlebar-window-glyph-restore::after,
+:root[data-theme="dark"] .titlebar-window-btn:focus-visible .titlebar-window-glyph-restore::after {
+  background: color-mix(in srgb, var(--app-surface-bg) 55%, rgba(255, 255, 255, 0.2));
+}
+
+.titlebar-window-glyph-close::before,
+.titlebar-window-glyph-close::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 11px;
+  height: 1px;
+  background: currentColor;
+}
+
+.titlebar-window-glyph-close::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.titlebar-window-glyph-close::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+

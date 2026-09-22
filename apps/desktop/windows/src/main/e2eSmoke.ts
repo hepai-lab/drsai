@@ -8670,31 +8670,18 @@ async function runAgentPlanEditSmoke(window: BrowserWindow): Promise<SmokeResult
       }
       checks.gatewayReady = gateway.ready === true;
 
-      const userMenuDeadline = Date.now() + 5000;
-      let userMenuButton = null;
-      while (Date.now() < userMenuDeadline && !userMenuButton) {
-        userMenuButton = document.querySelector('button[aria-label="User menu"], button[aria-label="用户菜单"]');
-        if (!userMenuButton) await new Promise((resolve) => setTimeout(resolve, 50));
+      const agentThread = await api.createThread({
+        kind: "agent_run",
+        title: "新智能体任务",
+      });
+      window.dispatchEvent(new CustomEvent("drsai:threads-updated"));
+      const itemDeadline = Date.now() + 5000;
+      let threadItem = null;
+      while (Date.now() < itemDeadline && !threadItem) {
+        threadItem = Array.from(document.querySelectorAll(".thread-item")).find((item) => String(item.textContent || "").includes(agentThread.title)) || null;
+        if (!threadItem) await new Promise((resolve) => setTimeout(resolve, 50));
       }
-      userMenuButton?.click();
-      let settingsButton = null;
-      const menuDeadline = Date.now() + 5000;
-      while (Date.now() < menuDeadline && !settingsButton) {
-        settingsButton = Array.from(document.querySelectorAll('[role="menuitem"]')).find((item) => /Settings|设置/.test(String(item.textContent || ""))) || null;
-        if (!settingsButton) await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      settingsButton?.click();
-      const settingsDeadline = Date.now() + 5000;
-      while (Date.now() < settingsDeadline && !document.querySelector(".settings-navigation")) await new Promise((resolve) => setTimeout(resolve, 50));
-      const agentTaskButton = Array.from(document.querySelectorAll(".settings-navigation button")).find((item) => /Agent tasks|Agent 任务/.test(String(item.textContent || ""))) || null;
-      agentTaskButton?.click();
-      const createDeadline = Date.now() + 5000;
-      let createTaskButton = null;
-      while (Date.now() < createDeadline && !createTaskButton) {
-        createTaskButton = document.querySelector(".settings-action-section button");
-        if (!createTaskButton) await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      createTaskButton?.click();
+      threadItem?.click();
       const workspaceDeadline = Date.now() + 5000;
       while (Date.now() < workspaceDeadline && !document.querySelector(".agent-run-workspace")) await new Promise((resolve) => setTimeout(resolve, 50));
       checks.agentWorkspaceVisible = Boolean(document.querySelector(".agent-run-workspace"));
@@ -9387,34 +9374,21 @@ async function runAgentDepthSmoke(window: BrowserWindow): Promise<SmokeResult> {
       }
       checks.gatewayReady = gateway.ready === true;
 
-      let userMenuButton = null;
-      const userMenuDeadline = Date.now() + 5000;
-      while (Date.now() < userMenuDeadline && !userMenuButton) {
-        userMenuButton = document.querySelector('button[aria-label="User menu"], button[aria-label="用户菜单"]');
-        if (!userMenuButton) await new Promise((resolve) => setTimeout(resolve, 50));
+      const agentThread = await api.createThread({
+        kind: "agent_run",
+        title: "新智能体任务",
+      });
+      window.dispatchEvent(new CustomEvent("drsai:threads-updated"));
+      const itemDeadline = Date.now() + 5000;
+      let threadItem = null;
+      while (Date.now() < itemDeadline && !threadItem) {
+        threadItem = Array.from(document.querySelectorAll(".thread-item")).find((item) => String(item.textContent || "").includes(agentThread.title)) || null;
+        if (!threadItem) await new Promise((resolve) => setTimeout(resolve, 50));
       }
-      userMenuButton?.click();
-      let settingsButton = null;
-      const menuDeadline = Date.now() + 5000;
-      while (Date.now() < menuDeadline && !settingsButton) {
-        settingsButton = Array.from(document.querySelectorAll('[role="menuitem"]')).find((item) => /Settings|设置/.test(String(item.textContent || ""))) || null;
-        if (!settingsButton) await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      settingsButton?.click();
-      const settingsDeadline = Date.now() + 5000;
-      while (Date.now() < settingsDeadline && !document.querySelector('.settings-navigation')) await new Promise((resolve) => setTimeout(resolve, 50));
-      const agentTaskButton = Array.from(document.querySelectorAll('.settings-navigation button')).find((item) => /Agent tasks|Agent 任务/.test(String(item.textContent || ""))) || null;
-      agentTaskButton?.click();
-      const createDeadline = Date.now() + 5000;
-      let createTaskButton = null;
-      while (Date.now() < createDeadline && !createTaskButton) {
-        createTaskButton = document.querySelector('.settings-action-section button');
-        if (!createTaskButton) await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      createTaskButton?.click();
+      threadItem?.click();
       const workspaceDeadline = Date.now() + 5000;
-      while (Date.now() < workspaceDeadline && !document.querySelector('.agent-run-workspace')) await new Promise((resolve) => setTimeout(resolve, 50));
-      checks.agentWorkspaceVisible = Boolean(document.querySelector('.agent-run-workspace'));
+      while (Date.now() < workspaceDeadline && !document.querySelector(".agent-run-workspace")) await new Promise((resolve) => setTimeout(resolve, 50));
+      checks.agentWorkspaceVisible = Boolean(document.querySelector(".agent-run-workspace"));
 
       const selector = document.querySelector('[data-testid="agent-depth-selector"]');
       const selectorText = String(selector?.textContent || "");
@@ -9518,34 +9492,21 @@ async function runAgentPlanAdjustmentSmoke(window: BrowserWindow): Promise<Smoke
       }
       checks.gatewayReady = gateway.ready === true;
 
-      let userMenuButton = null;
-      const userMenuDeadline = Date.now() + 5000;
-      while (Date.now() < userMenuDeadline && !userMenuButton) {
-        userMenuButton = document.querySelector('button[aria-label="User menu"], button[aria-label="用户菜单"]');
-        if (!userMenuButton) await new Promise((resolve) => setTimeout(resolve, 50));
+      const agentThread = await api.createThread({
+        kind: "agent_run",
+        title: "新智能体任务",
+      });
+      window.dispatchEvent(new CustomEvent("drsai:threads-updated"));
+      const itemDeadline = Date.now() + 5000;
+      let threadItem = null;
+      while (Date.now() < itemDeadline && !threadItem) {
+        threadItem = Array.from(document.querySelectorAll(".thread-item")).find((item) => String(item.textContent || "").includes(agentThread.title)) || null;
+        if (!threadItem) await new Promise((resolve) => setTimeout(resolve, 50));
       }
-      userMenuButton?.click();
-      let settingsButton = null;
-      const menuDeadline = Date.now() + 5000;
-      while (Date.now() < menuDeadline && !settingsButton) {
-        settingsButton = Array.from(document.querySelectorAll('[role="menuitem"]')).find((item) => /Settings|设置/.test(String(item.textContent || ""))) || null;
-        if (!settingsButton) await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      settingsButton?.click();
-      const settingsDeadline = Date.now() + 5000;
-      while (Date.now() < settingsDeadline && !document.querySelector('.settings-navigation')) await new Promise((resolve) => setTimeout(resolve, 50));
-      const agentTaskButton = Array.from(document.querySelectorAll('.settings-navigation button')).find((item) => /Agent tasks|Agent 任务/.test(String(item.textContent || ""))) || null;
-      agentTaskButton?.click();
-      const createDeadline = Date.now() + 5000;
-      let createTaskButton = null;
-      while (Date.now() < createDeadline && !createTaskButton) {
-        createTaskButton = document.querySelector('.settings-action-section button');
-        if (!createTaskButton) await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      createTaskButton?.click();
+      threadItem?.click();
       const workspaceDeadline = Date.now() + 5000;
-      while (Date.now() < workspaceDeadline && !document.querySelector('.agent-run-workspace')) await new Promise((resolve) => setTimeout(resolve, 50));
-      checks.agentWorkspaceVisible = Boolean(document.querySelector('.agent-run-workspace'));
+      while (Date.now() < workspaceDeadline && !document.querySelector(".agent-run-workspace")) await new Promise((resolve) => setTimeout(resolve, 50));
+      checks.agentWorkspaceVisible = Boolean(document.querySelector(".agent-run-workspace"));
 
       const taskText = '综合这些材料，告诉我目前共识、争议和下一步值得研究的问题。';
       const taskInput = document.querySelector('[data-testid="agent-task-input"]');
@@ -9774,59 +9735,32 @@ async function runAgentRunSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const workspacePath = ${JSON.stringify(process.env.OPENDRSAI_E2E_WORKSPACE_PATH || "C:\\OpenDrSai\\workspace")};
       let thread = null;
       if (${agentUiScenario}) {
-        const userMenuDeadline = Date.now() + 5000;
-        let userMenuButton = null;
-        while (Date.now() < userMenuDeadline && !userMenuButton) {
-          userMenuButton = document.querySelector('[data-testid="user-menu-button"]');
-          if (!userMenuButton) await new Promise((resolve) => setTimeout(resolve, 50));
+        thread = await api.createThread({
+          kind: "agent_run",
+          title: "新智能体任务",
+          workspacePath,
+        });
+        window.dispatchEvent(new CustomEvent("drsai:threads-updated"));
+        const itemDeadline = Date.now() + 5000;
+        let threadItem = null;
+        while (Date.now() < itemDeadline && !threadItem) {
+          threadItem = Array.from(document.querySelectorAll(".thread-item")).find((item) => String(item.textContent || "").includes(thread.title)) || null;
+          if (!threadItem) await new Promise((resolve) => setTimeout(resolve, 50));
         }
-        userMenuButton?.click();
-        const menuDeadline = Date.now() + 5000;
-        let settingsButton = null;
-        while (Date.now() < menuDeadline && !settingsButton) {
-          settingsButton = document.querySelector('[data-testid="user-menu-settings"]');
-          if (!settingsButton) await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-        settingsButton?.click();
-        const settingsDeadline = Date.now() + 5000;
-        while (Date.now() < settingsDeadline && !document.querySelector(".settings-navigation")) {
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-        const agentTaskDeadline = Date.now() + 5000;
-        let agentTaskButton = null;
-        while (Date.now() < agentTaskDeadline && !agentTaskButton) {
-          agentTaskButton = Array.from(document.querySelectorAll(".settings-navigation button"))
-            .find((item) => /Agent tasks|智能体任务/.test(String(item.textContent || ""))) || null;
-          if (!agentTaskButton) await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-        agentTaskButton?.click();
-        const createDeadline = Date.now() + 5000;
-        let createTaskButton = null;
-        while (Date.now() < createDeadline && !createTaskButton) {
-          createTaskButton = document.querySelector(".settings-action-section button");
-          if (!createTaskButton) await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-        createTaskButton?.click();
+        threadItem?.click();
         const workspaceDeadline = Date.now() + 5000;
         while (Date.now() < workspaceDeadline && !document.querySelector(".agent-run-workspace")) {
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
         checks.agentBusinessProgressWorkspaceVisible = Boolean(document.querySelector(".agent-run-workspace"));
-        const threadDeadline = Date.now() + 5000;
-        while (Date.now() < threadDeadline && !thread) {
-          thread = (await api.listThreads()).find((item) => item.kind === "agent_run" && /New agent task|新智能体任务/.test(item.title)) || null;
-          if (!thread) await new Promise((resolve) => setTimeout(resolve, 50));
+        if (!thread || !document.querySelector(".agent-run-workspace")) {
+          throw new Error("The Agent run workspace was not opened after creating an agent_run thread. " + JSON.stringify({
+            threadCreated: Boolean(thread),
+            threadItemFound: Boolean(threadItem),
+            workspaceFound: Boolean(document.querySelector(".agent-run-workspace")),
+            recentThreadTitles: (await api.listThreads()).slice(0, 5).map((item) => item.title),
+          }));
         }
-        if (!thread) throw new Error("The Agent task was not created from the visible Settings entry. " + JSON.stringify({
-          userMenuFound: Boolean(userMenuButton),
-          settingsFound: Boolean(settingsButton),
-          settingsNavigationFound: Boolean(document.querySelector(".settings-navigation")),
-          agentTaskFound: Boolean(agentTaskButton),
-          createTaskFound: Boolean(createTaskButton),
-          workspaceFound: Boolean(document.querySelector(".agent-run-workspace")),
-          settingsLabels: Array.from(document.querySelectorAll(".settings-navigation button")).map((item) => String(item.textContent || "").trim()),
-          recentThreadTitles: (await api.listThreads()).slice(0, 5).map((item) => item.title),
-        }));
       } else {
         thread = await api.createThread({
             kind: "agent_run",

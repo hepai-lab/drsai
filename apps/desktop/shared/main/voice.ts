@@ -78,9 +78,17 @@ async function getGatewayVoiceRuntimeStatus(): Promise<DesktopVoiceRuntimeStatus
       : readiness.state === "auth_required"
         ? "auth_required"
         : "unavailable";
+  const reasonCode = !status.ready
+    ? "gateway_unavailable" as const
+    : readiness.state === "ready"
+      ? "ready" as const
+      : readiness.state === "auth_required"
+        ? "auth_required" as const
+        : "unconfigured" as const;
   return {
     runtimeId: "gateway-provider",
     state,
+    reasonCode,
     supportedMimeTypes: [...SUPPORTED_VOICE_MIME_TYPES],
     maxBytes: MAX_VOICE_RECORDING_BYTES,
     maxDurationSeconds: MAX_VOICE_RECORDING_SECONDS,
@@ -126,6 +134,7 @@ const fixtureVoiceRuntime: VoiceRuntime = {
   getStatus: async () => ({
     runtimeId: "mock-local",
     state: "ready",
+    reasonCode: "ready",
     supportedMimeTypes: [...SUPPORTED_VOICE_MIME_TYPES],
     maxBytes: MAX_VOICE_RECORDING_BYTES,
     maxDurationSeconds: MAX_VOICE_RECORDING_SECONDS,

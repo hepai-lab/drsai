@@ -753,9 +753,16 @@ export interface DesktopVoiceTranscriptionStartResult {
   acceptedAt: string;
 }
 
+export type DesktopVoiceRuntimeReasonCode =
+  | "ready"
+  | "unconfigured"
+  | "auth_required"
+  | "gateway_unavailable";
+
 export interface DesktopVoiceRuntimeStatus {
   runtimeId: DesktopVoiceRuntimeId;
   state: "ready" | "unavailable" | "auth_required" | "degraded";
+  reasonCode?: DesktopVoiceRuntimeReasonCode;
   supportedMimeTypes: string[];
   maxBytes: number;
   maxDurationSeconds: number;
@@ -6675,4 +6682,15 @@ export interface DesktopApi {
   gfsClearConfig(): Promise<GfsConfigClearResult>;
   /** P1: Send renderer FPS health report to main process for adaptive backpressure control. */
   sendRenderHealthReport(report: { fps: number; tier: "healthy" | "degraded" | "critical" }): void;
+  /** Sync Windows title-bar overlay / window chrome with the active renderer theme. */
+  setWindowChromeAppearance(chrome: {
+    color: string;
+    symbolColor: string;
+    backgroundColor: string;
+  }): Promise<boolean>;
+  windowMinimize(): Promise<boolean>;
+  windowToggleMaximize(): Promise<boolean>;
+  windowClose(): Promise<boolean>;
+  getWindowMaximized(): Promise<boolean>;
+  onWindowMaximizedChanged(callback: (maximized: boolean) => void): () => void;
 }
