@@ -19,6 +19,7 @@ import {
 import { messageUtils } from "../rendermessage";
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 import { appContext } from "../../../hooks/provider";
+import { chatTurnLog, socketStatePayload } from "../chatTurnLog";
 
 type SelectedLlm = { label: string; value: string };
 
@@ -117,8 +118,27 @@ export const useTaskActions = ({
         const needsReconnect =
           !activeSocketRef.current ||
           activeSocketRef.current.readyState !== WebSocket.OPEN;
+        const tSend = typeof performance !== "undefined" ? performance.now() : Date.now();
+        chatTurnLog("fe:input_response:start", {
+          runId: currentRun.id,
+          status: currentRun.status,
+          agentWorking: currentRun.agent_working ?? null,
+          needsReconnect,
+          msgCount: currentRun.messages?.length ?? 0,
+          ...socketStatePayload(activeSocketRef.current),
+          queryPreview: String(response || "").replace(/\s+/g, " ").trim().slice(0, 80),
+          attachedSkillCount: attachedSkills?.length ?? 0,
+          fileCount: files?.length ?? 0,
+        });
 
         const socket = await ensureWebSocketConnection(currentRun.id);
+        chatTurnLog("fe:input_response:socket-ready", {
+          runId: currentRun.id,
+          waitMs: Math.round(
+            (typeof performance !== "undefined" ? performance.now() : Date.now()) - tSend
+          ),
+          ...socketStatePayload(socket),
+        });
 
         const lastMessage = currentRun.messages.slice(-1)[0];
         let planString = "";
@@ -156,7 +176,19 @@ export const useTaskActions = ({
         // Prefer correct semantics:
         // - If the run is awaiting input, always send input_response (even after reconnect).
         // - Otherwise, fall back to "continue" only when we had to reconnect mid-flight.
-        const isAwaitingInput = currentRun?.status === "awaiting_input";
+        const isAwaitingInput =
+          currentRun?.status === "awaiting_input" ||
+          currentRun?.status === "ready";
+
+        chatTurnLog("fe:input_response:route", {
+          runId: currentRun.id,
+          status: currentRun.status,
+          isAwaitingInput,
+          needsReconnect,
+          path:
+            needsReconnect && !isAwaitingInput ? "continue" : "input_response",
+          willSetAgentWorking: !(needsReconnect && !isAwaitingInput),
+        });
 
         if (needsReconnect && !isAwaitingInput) {
           let currentSettings = settingsConfig;
@@ -176,6 +208,7 @@ export const useTaskActions = ({
             ((currentSettings as unknown) as Record<string, unknown>) || {};
           const continueMessage = {
             type: "continue",
+            stream_protocol: 2,
             task: responseString,
             metadata: {
               team_config: teamConfig,
@@ -197,6 +230,11 @@ export const useTaskActions = ({
           };
 
           socket.send(JSON.stringify(continueMessage));
+          chatTurnLog("fe:input_response:sent-continue", {
+            runId: currentRun.id,
+            status: currentRun.status,
+            note: "continue path does NOT set agent_working — loading may be missing",
+          });
           return;
         }
 
@@ -220,6 +258,12 @@ export const useTaskActions = ({
           },
         };
         socket.send(JSON.stringify(inputResponseMessage));
+        chatTurnLog("fe:input_response:sent", {
+          runId: currentRun.id,
+          prevStatus: currentRun.status,
+          nextStatus: "active",
+          nextAgentWorking: { phase: "model" },
+        });
 
         setCurrentRun((current: Run | null) => {
           if (!current) return null;
@@ -227,9 +271,14 @@ export const useTaskActions = ({
             ...current,
             status: "active" as BaseRunStatus,
             input_request: undefined,
+            agent_working: { phase: "model" },
           };
         });
       } catch (error) {
+        chatTurnLog("fe:input_response:error", {
+          runId: currentRun?.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
         handleError(error);
       }
     },
@@ -330,7 +379,10 @@ export const useTaskActions = ({
     if (!currentRun) return;
 
     try {
-      if (currentRun.status === "awaiting_input") {
+      if (
+        currentRun.status === "awaiting_input" ||
+        currentRun.status === "ready"
+      ) {
         return;
       }
 
@@ -389,18 +441,30 @@ export const useTaskActions = ({
           throw new Error("Could not setup run");
         }
 
-        // Use cached settings on the send path; refresh in the background.
+        // 点击发送时：再请求全局setting配置 (API) - 确保获取最新配置
         let currentSettings = settingsConfig;
         if (userEmail) {
-          void settingsAPI
-            .getSettings(userEmail)
-            .then((fresh) => {
-              useSettingsStore.getState().updateConfig(fresh as GeneralConfig);
-            })
-            .catch((error) => {
-              console.error("Failed to load settings:", error);
-            });
+          try {
+            // 请求最新的全局settings配置
+            currentSettings = (await settingsAPI.getSettings(
+              userEmail
+            )) as GeneralConfig;
+            // 更新store中的配置
+            useSettingsStore.getState().updateConfig(currentSettings);
+          } catch (error) {
+            console.error("Failed to load settings:", error);
+            // 如果请求失败，使用当前的settingsConfig作为后备
+          }
         }
+
+        chatTurnLog("fe:start:begin", {
+          runId: currentRun.id,
+          status: currentRun.status,
+          fresh_socket,
+          queryPreview: String(query || "").replace(/\s+/g, " ").trim().slice(0, 80),
+          attachedSkillCount: attachedSkills?.length ?? 0,
+          ...socketStatePayload(activeSocketRef.current),
+        });
 
         // Setup websocket connection
         const socket = setupWebSocket(currentRun.id, fresh_socket, false);
@@ -409,43 +473,27 @@ export const useTaskActions = ({
         }
 
         // Wait for socket to be ready (timeout after 10s to avoid hanging on "Processing")
-        if (socket.readyState !== WebSocket.OPEN) {
-          await new Promise<void>((resolve, reject) => {
-            const cleanup = () => {
-              clearTimeout(timeout);
-              socket.removeEventListener("open", onOpen);
-              socket.removeEventListener("error", onError);
-            };
-            const onOpen = () => {
-              cleanup();
-              resolve();
-            };
-            const onError = () => {
-              cleanup();
-              reject(new Error("Socket failed to connect"));
-            };
-            const timeout = setTimeout(() => {
-              cleanup();
-              reject(new Error("WebSocket connection timeout"));
-            }, 10000);
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error("WebSocket connection timeout"));
+          }, 10000);
 
+          const checkState = () => {
             if (socket.readyState === WebSocket.OPEN) {
-              cleanup();
+              clearTimeout(timeout);
               resolve();
-              return;
-            }
-            if (
+            } else if (
               socket.readyState === WebSocket.CLOSED ||
               socket.readyState === WebSocket.CLOSING
             ) {
-              cleanup();
+              clearTimeout(timeout);
               reject(new Error("Socket failed to connect"));
-              return;
+            } else {
+              setTimeout(checkState, 100);
             }
-            socket.addEventListener("open", onOpen);
-            socket.addEventListener("error", onError);
-          });
-        }
+          };
+          checkState();
+        });
 
         // Use files directly (already in the correct format from upload)
         const processedFiles = files && files.length > 0 ? files : [];
@@ -480,6 +528,7 @@ export const useTaskActions = ({
             : baseSettingsConfig;
         const messageToSend = {
           type: "start",
+          stream_protocol: 2,
           task: JSON.stringify(taskJson),
           metadata: {
             files: processedFiles,
@@ -497,15 +546,35 @@ export const useTaskActions = ({
           metadata: messageToSend.metadata,
         });
 
+        setCurrentRun((current: Run | null) => {
+          if (!current) return null;
+          return {
+            ...current,
+            status: "active" as BaseRunStatus,
+            input_request: undefined,
+            agent_working: { phase: "orchestrator" },
+          };
+        });
+
+        chatTurnLog("fe:start:sent", {
+          runId: currentRun.id,
+          nextStatus: "active",
+          nextAgentWorking: { phase: "orchestrator" },
+          ...socketStatePayload(socket),
+        });
+
         socket.send(JSON.stringify(messageToSend));
 
         const sessionData = {
           id: session?.id,
           name: query.slice(0, 50),
         };
-        // Don't contend with stream DB writes on the send path.
-        window.setTimeout(() => onSessionNameChange(sessionData), 1500);
+        onSessionNameChange(sessionData);
       } catch (error) {
+        chatTurnLog("fe:start:error", {
+          runId: currentRun?.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
         console.error("Failed to start task:", error);
       }
     },

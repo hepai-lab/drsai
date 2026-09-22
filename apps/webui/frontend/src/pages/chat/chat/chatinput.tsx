@@ -1,15 +1,11 @@
 import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
-import { Modal } from "antd";
 import * as React from "react";
 import { appContext } from "../../../hooks/provider";
 import { useLang } from "../../../i18n/useLang";
-import PlanView from "../plan";
-import RelevantPlans from "../relevant_plans";
 import "./chatinput.css";
 
 import { useFileUpload } from "./hooks/useFileUpload";
 import { useLlmSelector } from "./hooks/useLlmSelector";
-import { usePlanSearch } from "./hooks/usePlanSearch";
 import { useSkillAttach } from "./hooks/useSkillAttach";
 
 import AttachDropdown from "./components/AttachDropdown";
@@ -18,50 +14,13 @@ import ComposerActionButtons from "./components/ComposerActionButtons";
 import DragDropOverlay from "./components/DragDropOverlay";
 import FilePreview from "./components/FilePreview";
 import LlmSelectorBar from "./components/LlmSelectorBar";
-import PlanPreview from "./components/PlanPreview";
 import SkillAttachModal from "./components/SkillAttachModal";
 
 import type { ChatInputHandle, ChatInputProps } from "./types";
 import { resolveUploadedFiles } from "./utils/resolveUploadedFiles";
+import { chatTurnLog } from "../chatTurnLog";
 
 const getTextAreaDefaultHeight = () => "52px";
-const TEXTAREA_MAX_HEIGHT = 240; // px — increased from 120 to support long-text input
-const TEXTAREA_MIN_HEIGHT = 52; // px
-
-/**
- * Auto-resize the textarea to fit content without causing cursor jumps.
- *
- * Key differences from the previous approach:
- * 1. Uses `height = "auto"` (not a fixed default) to collapse before measuring,
- *    which avoids the layout jitter that caused cursor jumps on fast typing.
- * 2. Runs inside `requestAnimationFrame` so the browser batches the layout
- *    recalculation with the current paint, preventing intermediate reflows
- *    from interrupting the user's caret position.
- * 3. Saves and restores the selection (caret) position so even if a reflow
- *    occurs, the caret stays where the user put it.
- */
-function autoResizeTextarea(ta: HTMLTextAreaElement): void {
-  // Save current selection so we can restore it after height manipulation
-  const selStart = ta.selectionStart;
-  const selEnd = ta.selectionEnd;
-
-  // Collapse to "auto" — the browser computes the natural content height
-  // without the visual flicker of setting a fixed small pixel value first.
-  ta.style.height = "auto";
-
-  const scrollHeight = ta.scrollHeight;
-  const newHeight = Math.min(
-    Math.max(scrollHeight, TEXTAREA_MIN_HEIGHT),
-    TEXTAREA_MAX_HEIGHT
-  );
-  ta.style.height = `${newHeight}px`;
-
-  // Show scrollbar only when content exceeds max height
-  ta.style.overflowY = scrollHeight > TEXTAREA_MAX_HEIGHT ? "auto" : "hidden";
-
-  // Restore selection — prevents caret from jumping to end on fast typing
-  ta.setSelectionRange(selStart, selEnd);
-}
 
 const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
   (
@@ -72,7 +31,6 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
       onCancel,
       runStatus,
       inputRequest,
-      isPlanMessage = false,
       onPause,
       enable_upload = false,
       onExecutePlan,
@@ -145,77 +103,25 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
       sessionId,
     });
 
-    const {
-      isSearching,
-      relevantPlans,
-      attachedPlan,
-      isRelevantPlansVisible,
-      isPlanModalVisible,
-      searchPlans,
-      handleUsePlan,
-      clearAttachedPlan,
-      handlePlanClick,
-      handlePlanModalClose,
-      setRelevantPlans,
-      setIsRelevantPlansVisible,
-    } = usePlanSearch({
-      userId,
-      runStatus,
-      isPlanMessage,
-    });
-
-    // Resize on inputRequest changes (e.g. approval prompt reset) — but NOT on
-    // every `text` keystroke. The per-keystroke resize is done synchronously
-    // inside handleTextChange via requestAnimationFrame, which avoids the
-    // React-state-triggered height-reset that caused cursor jumps.
     React.useEffect(() => {
       const ta = textAreaRef.current;
       if (!ta) return;
-      if (!ta.value?.trim()) {
+
+      if (!text.trim()) {
         ta.style.height = getTextAreaDefaultHeight();
         return;
       }
-      // Use the shared helper for consistent sizing
-      requestAnimationFrame(() => autoResizeTextarea(ta));
-    }, [inputRequest]);
+
+      ta.style.height = getTextAreaDefaultHeight();
+      const scrollHeight = ta.scrollHeight;
+      ta.style.height = `${Math.min(scrollHeight, 120)}px`;
+    }, [text, inputRequest]);
 
     React.useEffect(() => {
       if (!error) {
         resetInput();
       }
     }, [error]);
-
-    React.useEffect(() => {
-      if (!isRelevantPlansVisible) return;
-
-      const handleClickOutside = (e: MouseEvent) => {
-        const target = e.target as Node;
-        const textAreaElement = textAreaRef.current;
-        const planElement = document.querySelector('[data-component="relevant-plans"]');
-
-        const isClickInsideTextArea =
-          textAreaElement && textAreaElement.contains(target);
-        const isClickInsidePlans = planElement && planElement.contains(target);
-
-        if (!isClickInsideTextArea && !isClickInsidePlans) {
-          setIsRelevantPlansVisible(false);
-        }
-      };
-
-      const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.key === "Escape") {
-          setIsRelevantPlansVisible(false);
-        }
-      };
-
-      document.addEventListener("click", handleClickOutside);
-      document.addEventListener("keydown", handleKeyDown);
-
-      return () => {
-        document.removeEventListener("click", handleClickOutside);
-        document.removeEventListener("keydown", handleKeyDown);
-      };
-    }, [isRelevantPlansVisible, setIsRelevantPlansVisible]);
 
     const resetInput = () => {
       if (textAreaRef.current) {
@@ -224,8 +130,6 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
         setText("");
         clearFiles();
         clearAttachedSkills();
-        setRelevantPlans([]);
-        clearAttachedPlan();
       }
 
       if (onTextChange) {
@@ -237,27 +141,8 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
       const newText = event.target.value;
       setText(newText);
 
-      // Resize synchronously in rAF — this is the per-keystroke path.
-      // Doing it here (not in a useEffect on `text`) means the height
-      // updates in the same frame as the value change, preventing the
-      // collapse→expand cycle that caused cursor jumps.
-      const ta = event.target;
-      requestAnimationFrame(() => autoResizeTextarea(ta));
-
       if (onTextChange) {
         onTextChange(newText);
-      }
-
-      setRelevantPlans([]);
-
-      const shouldSearch = !(
-        runStatus === "connected" || runStatus === "awaiting_input"
-      );
-      if (shouldSearch) {
-        searchPlans(newText);
-      } else if (relevantPlans.length > 0) {
-        setRelevantPlans([]);
-        clearAttachedPlan();
       }
     };
 
@@ -267,11 +152,7 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
       accepted: boolean,
       doResetInput: boolean = true
     ) => {
-      if (attachedPlan) {
-        onSubmit(query, files as any, accepted, attachedPlan, selectedLlm, attachedSkills);
-      } else {
-        onSubmit(query, files as any, accepted, undefined, selectedLlm, attachedSkills);
-      }
+      onSubmit(query, files as any, accepted, undefined, selectedLlm, attachedSkills);
 
       if (doResetInput) {
         setTimeout(() => {
@@ -303,6 +184,13 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
         attachedSkills: attachedSkills.map((s) => ({ id: s.id, source: s.source })),
         query,
       });
+      chatTurnLog("fe:composer:submit", {
+        runStatus,
+        isInputDisabled,
+        queryPreview: query.replace(/\s+/g, " ").trim().slice(0, 80),
+        attachedSkillCount: attachedSkills.length,
+        fileCount: files.length,
+      });
 
       const resolved = resolveUploadedFiles({
         fileList,
@@ -333,8 +221,9 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
           if (!value.trim()) {
             textAreaRef.current.style.height = getTextAreaDefaultHeight();
           } else {
-            // Use the shared helper for consistent sizing with the new max height
-            autoResizeTextarea(textAreaRef.current);
+            const scrollHeight = textAreaRef.current.scrollHeight;
+            const newHeight = Math.min(scrollHeight, 120);
+            textAreaRef.current.style.height = `${newHeight}px`;
           }
           textAreaRef.current.focus();
           textAreaRef.current.setSelectionRange(value.length, value.length);
@@ -423,9 +312,6 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
         textAreaRef.current.setSelectionRange(0, 0);
       }
 
-      setRelevantPlans([]);
-      clearAttachedPlan();
-
       if (onTextChange) {
         onTextChange("");
       }
@@ -437,18 +323,9 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
       <div className="mt-2 w-full max-w-4xl mx-auto relative">
         {notificationContextHolder}
 
-        {isRelevantPlansVisible && (
-          <RelevantPlans
-            isSearching={isSearching}
-            relevantPlans={relevantPlans}
-            darkMode={darkMode}
-            onUsePlan={handleUsePlan}
-          />
-        )}
-
         <DragDropOverlay isDragActive={isDragActive && enable_upload} darkMode={darkMode} />
 
-        {(attachedPlan || fileList.length > 0 || attachedSkills.length > 0) && (
+        {(fileList.length > 0 || attachedSkills.length > 0) && (
           <div
             className={`-mb-2 mx-1 ${
               darkMode === "dark"
@@ -458,15 +335,6 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
               darkMode === "dark" ? "" : "border"
             } flex-wrap gap-2`}
           >
-            {attachedPlan && (
-              <PlanPreview
-                plan={attachedPlan}
-                darkMode={darkMode}
-                onRemove={clearAttachedPlan}
-                onClick={handlePlanClick}
-              />
-            )}
-
             <AttachedSkillsPreview
               skills={attachedSkills}
               darkMode={darkMode}
@@ -476,24 +344,6 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
             <FilePreview fileList={fileList} darkMode={darkMode} onRemove={removeFile} />
           </div>
         )}
-
-        <Modal
-          title={`Plan: ${attachedPlan?.task || "Untitled Plan"}`}
-          open={isPlanModalVisible}
-          onCancel={handlePlanModalClose}
-          footer={null}
-          width={800}
-          destroyOnClose
-        >
-          {attachedPlan && (
-            <PlanView
-              task={attachedPlan.task || ""}
-              plan={attachedPlan.steps || []}
-              viewOnly={true}
-              setPlan={() => {}}
-            />
-          )}
-        </Modal>
 
         <SkillAttachModal
           open={skillModalOpen}
@@ -558,7 +408,7 @@ const ChatInput = React.forwardRef<ChatInputHandle, ChatInputProps>(
                       isInputDisabled ? "cursor-not-allowed opacity-50" : ""
                     } focus:outline-none`}
                     style={{
-                      maxHeight: "240px",
+                      maxHeight: "120px",
                       overflowY: "auto",
                       minHeight: "52px",
                     }}

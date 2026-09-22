@@ -152,11 +152,6 @@ def test_native_identity_verifies_rs256_audience_and_derives_subject(monkeypatch
         return {"keys": [jwk]}
 
     monkeypatch.setattr(native_auth, "_get_jwks", fake_jwks)
-    monkeypatch.setattr(
-        native_auth,
-        "get_active_platform",
-        lambda: SimpleNamespace(oidc_issuer="https://ai-dev.ihep.ac.cn/api"),
-    )
     private_pem = private_key.private_bytes(
         serialization.Encoding.PEM,
         serialization.PrivateFormat.PKCS8,
@@ -165,6 +160,7 @@ def test_native_identity_verifies_rs256_audience_and_derives_subject(monkeypatch
     token = jwt.encode(
         {
             "sub": "oidc-subject-42",
+            "email": "native@ihep.ac.cn",
             "iss": "https://ai-dev.ihep.ac.cn/api",
             "aud": "hai-api",
             "exp": 4102444800,
@@ -175,6 +171,7 @@ def test_native_identity_verifies_rs256_audience_and_derives_subject(monkeypatch
     )
     identity = asyncio.run(get_native_identity(f"Bearer {token}"))
     assert identity.user_id == "oidc-subject-42"
+    assert identity.email == "native@ihep.ac.cn"
     assert identity.issuer == "https://ai-dev.ihep.ac.cn/api"
 
 
@@ -217,6 +214,23 @@ def test_native_stream_socket_queues_runtime_messages():
     assert asyncio.run(exercise()) == {"type": "system", "status": "connected"}
 
 
+def test_native_sse_adapter_completion_error_uses_bubble_not_stop_reason():
+    frames, terminal = NativeSseAdapter().encode({
+        "type": "completion",
+        "status": "error",
+        "data": {
+            "task_result": {
+                "messages": [{"content": "这次回复出错了，已经安全结束。请重新发送，或输入 continue。如果反复出现，请刷新页面。"}],
+                "stop_reason": "stream_error",
+            }
+        },
+    })
+    assert terminal is True
+    assert "这次回复出错了" in frames[0]
+    assert "stream_error" not in frames[0]
+    assert "Traceback" not in frames[0]
+
+
 def test_native_sse_adapter_maps_structured_error_without_private_data():
     frames, terminal = NativeSseAdapter().encode({
         "type": "error",
@@ -234,21 +248,32 @@ def test_native_chat_endpoint_reuses_run_and_streams_public_sse(mode, monkeypatc
     async def allow_test_target(agent):
         return {"aiapi.ihep.ac.cn" if agent.get("mode") == "ddf" else "agents.example.com"}
     monkeypatch.setattr(native_routes, "resolve_and_validate_agent_execution_targets", allow_test_target)
+
+    agent = {
+        "id": "ddf-1",
+        "name": "DDF Agent",
+        "mode": mode,
+        "config": {
+            "api_key": "MUST_NOT_STREAM",
+            "base_url": "https://aiapi.ihep.ac.cn/apiv2"
+            if mode == "ddf"
+            else "https://agents.example.com/v1",
+        },
+    }
+    monkeypatch.setattr(
+        native_routes,
+        "find_catalog_agent",
+        lambda user_id, agent_id, db, **_kwargs: agent if agent_id == "ddf-1" else None,
+    )
+
     class FakeDb:
         def __init__(self):
             self.sessions = []
             self.runs = []
-            self.agent = {
-                "id": "ddf-1",
-                "name": "DDF Agent",
-                "mode": mode,
-                "config": {"api_key": "MUST_NOT_STREAM", "base_url": "https://aiapi.ihep.ac.cn/apiv2" if mode == "ddf" else "https://agents.example.com/v1"},
-            }
+            self.agent = agent
 
         def get(self, model, filters=None, **_kwargs):
             filters = filters or {}
-            if model.__name__ == "UserAgents":
-                return SimpleNamespace(status=True, data=[SimpleNamespace(agents=[self.agent])])
             rows = self.sessions if model.__name__ == "Session" else self.runs
             selected = [row for row in rows if all(getattr(row, key, None) == value for key, value in filters.items())]
             return SimpleNamespace(status=True, data=selected)
@@ -372,16 +397,26 @@ def test_native_chat_disconnect_stops_runtime(monkeypatch, tmp_path):
     async def allow_test_target(_agent):
         return {"aiapi.ihep.ac.cn"}
     monkeypatch.setattr(native_routes, "resolve_and_validate_agent_execution_targets", allow_test_target)
+    agent = {
+        "id": "ddf-1",
+        "name": "DDF",
+        "mode": "ddf",
+        "config": {"base_url": "https://aiapi.ihep.ac.cn/apiv2", "api_key": "secret"},
+    }
+    monkeypatch.setattr(
+        native_routes,
+        "find_catalog_agent",
+        lambda user_id, agent_id, db, **_kwargs: agent if agent_id == "ddf-1" else None,
+    )
+
     class FakeDb:
         def __init__(self):
             self.sessions = []
             self.runs = []
-            self.agent = {"id": "ddf-1", "name": "DDF", "mode": "ddf", "config": {"base_url": "https://aiapi.ihep.ac.cn/apiv2", "api_key": "secret"}}
+            self.agent = agent
 
         def get(self, model, filters=None, **_kwargs):
             filters = filters or {}
-            if model.__name__ == "UserAgents":
-                return SimpleNamespace(status=True, data=[SimpleNamespace(agents=[self.agent])])
             rows = self.sessions if model.__name__ == "Session" else self.runs
             return SimpleNamespace(status=True, data=[row for row in rows if all(getattr(row, key, None) == value for key, value in filters.items())])
 

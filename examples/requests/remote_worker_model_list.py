@@ -13,24 +13,26 @@ client = HepAI(
 )
 models = client.agents.list()
 for model in models:
-    print(model.id)
+    mid = model.get("id") if isinstance(model, dict) else getattr(model, "id", None)
+    print(mid)
 
 for model in models.data:
-    if model.id != "hepai/custom-model":
+    mid = model.get("id") if isinstance(model, dict) else getattr(model, "id", None)
+    if mid and mid != "hepai/custom-model":
         # try:
         #     worker = HRModel.connect(
-        #         name=model.id, 
+        #         name=mid, 
         #         api_key=os.environ['HEPAI_API_KEY'],
         #         base_url=base_url,
         #     )
         #     agent_info: dict = worker.get_info()
-        #     agent_info.update({"owner": model.owner})
-        #     agents[model.id] = agent_info
+        #     agent_info.update({"owner": model.get("owner") if isinstance(model, dict) else getattr(model, "owner", None)})
+        #     agents[mid] = agent_info
         # except Exception as e:
         #     pass
 
         model = HRModel.connect(
-                name=model.id, 
+                name=mid,
                 api_key=os.environ['HEPAI_API_KEY'],
                 # base_url="http://localhost:42812/apiv2",
                 base_url=base_url,

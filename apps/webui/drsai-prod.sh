@@ -9,7 +9,7 @@
 #   ./drsai-prod.sh verify                            完整健康链路检查 + 访问地址
 #   ./drsai-prod.sh logs    [backend|frontend]        查看日志
 #
-# 设计说明见 agent_skills/skills/drsai-dev-skill/SKILL.md
+# 设计说明见 skills/skills_hepai/drsai-dev-skill/SKILL.md
 set -euo pipefail
 
 # ───────────────────────── 配置（可用 env 覆盖）─────────────────────────
@@ -23,10 +23,10 @@ if [[ -f "$PROJECT_ROOT/.drsai-prod.local.env" ]]; then
   set -a; source "$PROJECT_ROOT/.drsai-prod.local.env"; set +a
 fi
 
-CONDA_ENV="${DRSAI_CONDA_ENV:-drsai}"
 BACKEND_HOST="${DRSAI_BACKEND_HOST:-0.0.0.0}"
-BACKEND_PORT="${DRSAI_BACKEND_PORT:-4291}"
-FRONTEND_PORT="${DRSAI_FRONTEND_PORT:-4290}"
+BACKEND_PORT="${DRSAI_BACKEND_PORT:-8081}"
+FRONTEND_PORT="${DRSAI_FRONTEND_PORT:-8000}"
+BACKEND_APPDIR="${DRSAI_APPDIR:-$HOME/.drsai_ui}"
 
 PM2_BACKEND="${DRSAI_PM2_BACKEND:-drsai-prod-backend}"
 PM2_FRONTEND="${DRSAI_PM2_FRONTEND:-drsai-prod-frontend}"
@@ -52,8 +52,8 @@ die()  { err "$*"; exit 1; }
 need_cmd()   { command -v "$1" &>/dev/null || die "缺少命令: $1"; }
 ensure_pm2() { need_cmd pm2; }
 
-# 优先用 venv（apps/webui/.venv 或仓库根 .venv），否则回退 conda
-ensure_conda() {
+# 只认 venv：DRSAI_VENV → apps/webui/.venv → 仓库根 .venv
+ensure_backend_bin() {
   local candidates=()
   [[ -n "${DRSAI_VENV:-}" ]] && candidates+=("$DRSAI_VENV")
   candidates+=("$PROJECT_ROOT/.venv" "$PROJECT_ROOT/../../.venv")
@@ -61,30 +61,13 @@ ensure_conda() {
   local v
   for v in "${candidates[@]}"; do
     if [[ -x "$v/bin/drsai-ui" ]]; then
-      # shellcheck disable=SC1091
-      source "$v/bin/activate"
+      BACKEND_VENV="$v"
       ok "使用 venv: $v"
       return 0
     fi
   done
 
-  if ! command -v conda &>/dev/null; then
-    for base in "$HOME/miniconda3" "$HOME/anaconda3" /opt/conda; do
-      if [[ -f "$base/etc/profile.d/conda.sh" ]]; then
-        # shellcheck disable=SC1090
-        source "$base/etc/profile.d/conda.sh"; break
-      fi
-    done
-  fi
-  if command -v conda &>/dev/null; then
-    conda activate "$CONDA_ENV" 2>/dev/null \
-      || die "conda 环境 '$CONDA_ENV' 不存在（conda env list 查看）"
-    command -v drsai-ui &>/dev/null \
-      || die "激活 '$CONDA_ENV' 后仍找不到 drsai-ui（drsai_ui 是否已 editable 安装？）"
-    return 0
-  fi
-
-  die "未找到 drsai-ui：请设置 DRSAI_VENV，或在 apps/webui/.venv / 仓库根 .venv 安装，或配置 conda 环境 '$CONDA_ENV'"
+  die "未找到 drsai-ui：请设置 DRSAI_VENV，或在 apps/webui/.venv / 仓库根 .venv 安装 drsai_ui"
 }
 
 ensure_node() {
@@ -138,7 +121,7 @@ pm2_up() {
 }
 
 start_backend() {
-  ensure_pm2; ensure_backend_env; ensure_conda
+  ensure_pm2; ensure_backend_env; ensure_backend_bin
   local reload_flag=""
   if [[ "${DRSAI_BACKEND_RELOAD:-0}" == "1" ]]; then
     reload_flag="--reload"
@@ -146,24 +129,27 @@ start_backend() {
   else
     info "后端 → $BACKEND_HOST:$BACKEND_PORT"
   fi
-  local drsai_ui_bin
-  drsai_ui_bin="$(command -v drsai-ui)"
-  # 在 pm2 子进程内 source .env 并 exec，确保后端读到密钥/配置；PATH 带上当前 venv
+  local drsai_ui="$BACKEND_VENV/bin/drsai-ui"
+  local prefix="export VIRTUAL_ENV='$BACKEND_VENV'; export PATH='$BACKEND_VENV/bin:'\"\${PATH}\";"
+  mkdir -p "$BACKEND_APPDIR"
+  # 在 pm2 子进程内 source .env 并 exec，确保后端读到密钥/配置
   pm2_up "$PM2_BACKEND" \
     pm2 start -n "$PM2_BACKEND" --cwd "$PROJECT_ROOT" \
-      bash -- -lc "set -a; source '$PROJECT_ROOT/.env'; set +a; exec '$drsai_ui_bin' ui --host $BACKEND_HOST --port $BACKEND_PORT $reload_flag"
+      bash -- -lc "$prefix set -a; source '$PROJECT_ROOT/.env'; set +a; exec '$drsai_ui' ui --host $BACKEND_HOST --port $BACKEND_PORT $reload_flag --appdir '$BACKEND_APPDIR' --database-uri 'sqlite:////$BACKEND_APPDIR/drsai_ui.db'"
   ok "后端已启动"
 }
 
 start_frontend() {
   ensure_pm2; ensure_node; ensure_frontend_env; ensure_frontend_deps
-  [[ -f "$FRONTEND_DIR/public/index.html" ]] \
-    || die "前端尚未构建（缺少 public/index.html）。请先在 frontend 执行: yarn build"
+  info "构建前端 (yarn build)"
+  ( cd "$FRONTEND_DIR" && yarn build ) || die "yarn build 失败"
   info "前端 → 端口 $FRONTEND_PORT (gatsby serve)"
-  # 用 bash -lc 注入 GATSBY_DEV_PORT（pm2 --env 只对 ecosystem 环境名有效）
-  pm2_up "$PM2_FRONTEND" \
-    pm2 start -n "$PM2_FRONTEND" --cwd "$FRONTEND_DIR" \
-      bash -- -lc "export GATSBY_DEV_PORT='$FRONTEND_PORT'; yarn serve"
+  # 命令从 yarn dev 换成 serve：裸 pm2 restart 会沿用旧启动命令，必须删掉再建
+  if pm2 describe "$PM2_FRONTEND" &>/dev/null; then
+    pm2 delete "$PM2_FRONTEND" >/dev/null 2>&1 || true
+  fi
+  pm2 start -n "$PM2_FRONTEND" --cwd "$FRONTEND_DIR" \
+    bash -- -lc "export NVM_DIR='${NVM_DIR}'; [ -s \"\$NVM_DIR/nvm.sh\" ] && . \"\$NVM_DIR/nvm.sh\"; export GATSBY_DEV_PORT='$FRONTEND_PORT'; exec yarn serve"
   ok "前端已启动"
 }
 
@@ -314,7 +300,7 @@ ${C_BLD}drsai-prod.sh${C_RST} — DrSai 生产环境管理 (pm2)
 
   默认账号: ${ADMIN_USER}/${ADMIN_PASS}（管理员）、dev/dev123456（开发者）
   端口可覆盖: DRSAI_BACKEND_PORT(=$BACKEND_PORT) DRSAI_FRONTEND_PORT(=$FRONTEND_PORT)
-            DRSAI_CONDA_ENV(=$CONDA_ENV)
+            DRSAI_APPDIR(=$BACKEND_APPDIR) DRSAI_VENV(=${DRSAI_VENV:-apps/webui/.venv 或仓库根 .venv})
 EOF
 }
 

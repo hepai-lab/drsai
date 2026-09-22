@@ -8,27 +8,19 @@
     "gatsby"
   ],
   "scripts": {
-    "develop": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port ${GATSBY_DEV_PORT:-8000} --host 0.0.0.0",
-    "develop-clean": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby clean && NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port ${GATSBY_DEV_PORT:-8001} --host 0.0.0.0",
-    "develop:8001": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port 8001 --host 0.0.0.0",
-    "dev": "npm run develop",
-    "dev:8001": "NODE_OPTIONS=--max-old-space-size=32768 gatsby develop --port 8001 --host 0.0.0.0",
-    "build": "npm run clean && npm run clean:ui && GATSBY_CPU_COUNT=8 NODE_OPTIONS=--max-old-space-size=32768 gatsby build && npm run sync-build",
-    "build:dev": "npm run clean && npm run clean:ui && NODE_ENV=development GATSBY_SERVICE_MODE=DEV GATSBY_CPU_COUNT=8 NODE_OPTIONS=--max-old-space-size=32768 gatsby build --no-uglify && npm run sync-build",
-    "serve": "NODE_OPTIONS=--max-old-space-size=32768 gatsby serve --port ${GATSBY_DEV_PORT:-8001} --host 0.0.0.0",
-    "clean": "bash -c 'for d in .cache public node_modules/.cache/babel-loader node_modules/.cache/terser-webpack-plugin; do [ -e \"$d\" ] || continue; if mv \"$d\" \"$d.del.$$\"; then rm -rf \"$d.del.$$\" || true; else rm -rf \"$d\" || true; fi; done'",
+    "dev": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=${GATSBY_CPU_COUNT:-16} gatsby develop --port ${GATSBY_DEV_PORT:-8000} --host 0.0.0.0",
+    "dev:8001": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=${GATSBY_CPU_COUNT:-16} gatsby develop --port 8001 --host 0.0.0.0",
+    "build": "npm run clean && npm run clean:ui && NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=${GATSBY_CPU_COUNT:-16} gatsby build && npm run sync-build",
+    "build:dev": "npm run clean && npm run clean:ui && NODE_ENV=development NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=${GATSBY_CPU_COUNT:-16} gatsby build --no-uglify && npm run sync-build",
+    "serve": "gatsby serve --port ${GATSBY_DEV_PORT:-8000} --host 0.0.0.0",
+    "clean": "gatsby clean",
     "clean:ui": "rm -rf ../backend/src/drsai_ui/ui_backend/backend/web/ui/",
-    "sync-build": "bash -c 'dest=../backend/src/drsai_ui/ui_backend/backend/web/ui; if command -v rsync >/dev/null 2>&1; then rsync -a --delete public/ \"$dest/\"; else rm -rf \"$dest\" && mkdir -p \"$dest\" && cp -a public/. \"$dest/\"; fi'",
+    "sync-build": "rsync -a --delete public/ ../backend/src/drsai_ui/ui_backend/backend/web/ui/",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ant-design/cssinjs": "^2.1.2",
-    "@ant-design/icons": "^6.3.2",
-    "@dagrejs/dagre": "^1.1.4",
-    "@dnd-kit/core": "^6.2.0",
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@fontsource/plus-jakarta-sans": "^5.2.8",
-    "@headlessui/react": "^2.2.0",
     "@hello-pangea/dnd": "^17.0.0",
     "@heroicons/react": "^2.0.18",
     "@mdx-js/react": "^3.1.0",
@@ -40,7 +32,6 @@
     "@tiptap/extension-underline": "^3.22.5",
     "@tiptap/react": "^3.22.5",
     "@tiptap/starter-kit": "^3.22.5",
-    "@xyflow/react": "^12.3.5",
     "antd": "^5.22.1",
     "autoprefixer": "^10.4.20",
     "docx-preview": "0.3.7",
@@ -56,7 +47,6 @@
     "gatsby-transformer-sharp": "^5.14.0",
     "install": "^0.13.0",
     "jszip": "^3.10.1",
-    "lodash": "^4.18.1",
     "lucide-react": "^0.460.0",
     "mammoth": "^1.12.0",
     "pdfjs-dist": "^6.1.200",
@@ -69,12 +59,9 @@
     "react-markdown": "^9.0.1",
     "react-syntax-highlighter": "^15.6.1",
     "react-vnc": "^3.0.8",
-    "react-window": "^1.8.11",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.0",
     "tailwindcss": "^3.4.14",
-    "uuid": "^14.0.1",
-    "yaml": "^2.9.0",
     "yarn": "^1.22.22",
     "zustand": "^5.0.1"
   },
@@ -93,19 +80,5 @@
     "prismjs": "1.30.0",
     "cookie": "0.7.0",
     "base-x": "3.0.11"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@parcel/watcher",
-      "core-js",
-      "core-js-pure",
-      "es5-ext",
-      "gatsby",
-      "gatsby-cli",
-      "lmdb",
-      "msgpackr-extract",
-      "sharp",
-      "yarn"
-    ]
   }
 }

@@ -460,15 +460,12 @@ def _raise_for_wechat_error(payload: dict, fallback: str) -> None:
 
 
 def _ensure_default_agents(db: DatabaseManager, user_id: str) -> None:
-    from drsai_ui.agent_factory.agent_mode_cofigs import get_default_agent_mode_config
-    from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, UserAgents
+    from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings
 
     response_agent = db.get(AgentModeSettings, filters={"user_id": user_id})
     if response_agent.status and response_agent.data:
         return
-    agents_list = get_default_agent_mode_config(user_id)
-    db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
-    db.upsert(UserAgents(user_id=user_id, agents=agents_list))
+    db.upsert(AgentModeSettings(user_id=user_id, agents_mode=[]))
 
 
 def _utc_now() -> datetime:

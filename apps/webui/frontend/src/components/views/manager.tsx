@@ -111,7 +111,6 @@ import { useConfigStore } from "../../hooks/store";
 import { useModeConfigStore } from "../../store/modeConfig";
 import { Agent } from "../../types/common";
 import { useAgentInfo } from "../features/Agents/useAgentInfo";
-import PlanList from "../features/Plans/PlanList";
 import { GeneralConfig, useSettingsStore } from "../store";
 import type { Session, FilesEvent, MessageFileItem } from "../types/datamodel";
 import { sessionAPI, settingsAPI, userAPI, docmasterAPI, fileAPI, cloudAPI, type DocMasterTemplateEntry, type DocMasterPptxPreviewSlide } from "./api";
@@ -761,24 +760,7 @@ export const SessionManager: React.FC = () => {
     updateSessionRunStatus(sessionId, "stopped");
   }, [stopSession, updateSessionRunStatus]);
 
-  // Handle create session from plan
-  const handleCreateSessionFromPlan = useCallback((sessionId: number, planData: any) => {
-    selectSession({ id: sessionId } as Session);
-
-    setTimeout(() => {
-      window.dispatchEvent(
-        new CustomEvent("planReady", {
-          detail: {
-            planData: planData,
-            sessionId: sessionId,
-            messageId: `plan_${Date.now()}`,
-          },
-        })
-      );
-    }, 2000);
-  }, [selectSession]);
-
-  // Handle selecting a session from sidebar / plan list:
+  // Handle selecting a session from sidebar:
   // always switch back to "current_session" view so the chat is visible.
   const handleSelectSession = useCallback(
     async (selectedSession: Session) => {
@@ -1821,14 +1803,6 @@ export const SessionManager: React.FC = () => {
           </Suspense>
         ) : activeSubMenuItem === MENU_IDS.profile ? (
           <Config />
-        ) : activeSubMenuItem === MENU_IDS.savedPlan ? (
-          <div className="h-full overflow-hidden">
-            <PlanList
-              onTabChange={(tabId) => navigateToMenu(tabId as MenuId)}
-              onSelectSession={handleSelectSession}
-              onCreateSessionFromPlan={handleCreateSessionFromPlan}
-            />
-          </div>
         ) : (
           <div className="flex items-center justify-center h-full text-secondary">
             <div className="text-center">

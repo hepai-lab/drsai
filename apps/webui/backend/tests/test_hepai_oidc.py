@@ -110,8 +110,8 @@ def test_authlib_register_uses_confidential_secret():
 
 def test_callback_redirect_uri_allowlist():
     allowed = (
-        "https://opendrsai.ihep.ac.cn/auth/oidc/callback",
-        "https://drsaiv2.ihep.ac.cn/auth/oidc/callback",
+        "https://opendrsai.ihep.ac.cn/api/auth/oidc/callback",
+        "https://drsaiv2.ihep.ac.cn/api/auth/oidc/callback",
     )
     request = MagicMock()
     request.headers = {
@@ -120,7 +120,7 @@ def test_callback_redirect_uri_allowlist():
     }
     request.url.scheme = "http"
     request.url.netloc = "127.0.0.1:8086"
-    request.url_for.return_value = "http://127.0.0.1:8086/auth/oidc/callback"
+    request.url_for.return_value = "http://127.0.0.1:8086/api/auth/oidc/callback"
     assert callback_redirect_uri(request, allowed) == allowed[0]
 
     request.headers = {
@@ -145,8 +145,8 @@ def test_callback_redirect_uri_allowlist():
 
 def test_callback_redirect_uri_prefers_env():
     allowed = (
-        "https://opendrsai.ihep.ac.cn/auth/oidc/callback",
-        "https://drsaiv2.ihep.ac.cn/auth/oidc/callback",
+        "https://opendrsai.ihep.ac.cn/api/auth/oidc/callback",
+        "https://drsaiv2.ihep.ac.cn/api/auth/oidc/callback",
     )
     request = MagicMock()
     request.headers = {

@@ -1,8 +1,7 @@
-"""HepAI OIDC routes: login start + GET /auth/oidc/callback.
+"""HepAI OIDC routes: login start + OIDC callback.
 
-Login entry is also served at /umt/oidc-login so reverse proxies that already
-forward /umt (and /api) reach FastAPI without extra Caddy rules. The HAI
-redirect_uri stays /auth/oidc/callback.
+Mounted on both the root app and the /api app. Prefer redirect_uri
+/api/auth/oidc/callback (Caddy already proxies /api). Login alias: /umt/oidc-login.
 """
 
 from __future__ import annotations
@@ -39,8 +38,7 @@ from drsai_ui.ui_backend.backend.web.auth_source import (
     record_auth_source,
     record_display_name,
 )
-from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, UserAgents
-from drsai_ui.agent_factory.agent_mode_cofigs import get_default_agent_mode_config
+from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings
 
 router = APIRouter()
 logger = logger.bind(name="HepAI-OIDC")
@@ -95,7 +93,9 @@ async def oidc_logout(request: Request) -> HTMLResponse:
 
 
 @router.get("/auth/oidc/callback", name="oidc_callback")
+@router.get("/auth/oidc/callback/")
 @router.get("/umt/oidc-callback")
+@router.get("/umt/oidc-callback/")
 async def oidc_callback(request: Request, db=Depends(get_db)) -> RedirectResponse:
     if not oidc_configured():
         raise HTTPException(
@@ -147,8 +147,6 @@ async def oidc_callback(request: Request, db=Depends(get_db)) -> RedirectRespons
 
     response_agent = db.get(AgentModeSettings, filters={"user_id": user_id})
     if not response_agent.status or not response_agent.data:
-        agents_list = get_default_agent_mode_config(user_id)
-        db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
-        db.upsert(UserAgents(user_id=user_id, agents=agents_list))
+        db.upsert(AgentModeSettings(user_id=user_id, agents_mode=[]))
 
     return RedirectResponse(url="/?menu=current_session&view=chat")

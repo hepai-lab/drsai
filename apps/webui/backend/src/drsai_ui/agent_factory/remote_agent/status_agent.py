@@ -51,6 +51,10 @@ from drsai.modules.managers.messages.agent_messages import (
     TaskEvent,
     DrSaiMessageFactory
 )
+from drsai.modules.agents.drsai_worker_agent import (
+    lazy_init_user_message,
+    welcome_from_remote_lazy_init,
+)
 
 class StatusAgent(DrSaiAgent):
     '''
@@ -140,20 +144,20 @@ class StatusAgent(DrSaiAgent):
               ),
               timeout=60.0
             )
-            status = result.get("status", False)
-            message = result.get("message", "")
-            if not status:
-                # raise Exception(message)
-                logger.error(message)
-            else:
-                logger.info(f"Lazy init {self.name} successfully.")
+            message = welcome_from_remote_lazy_init(result, self.name)
             if message:
                 self._init_message = message
                 return message
         except asyncio.TimeoutError:
             logger.error(f"Timeout initializing worker functions for {self.model_name}")
+            message = lazy_init_user_message("timeout")
+            self._init_message = message
+            return message
         except Exception as e:
             logger.error(f"Failed to load worker functions: {e}")
+            message = lazy_init_user_message("init_failed")
+            self._init_message = message
+            return message
         
 
     async def pause(self) -> None:
@@ -242,33 +246,20 @@ class StatusAgent(DrSaiAgent):
             logger.warning(f"Error resuming remote agent: {e}")
         
     async def close(self) -> None:
-        """Clean up resources used by the agent.
+        """Release local resources without destroying the remote chat_id session.
 
-        This method:
-          ...
+        WebUI closes the local team at the end of every stream. RPC ``close``
+        on the worker would drop in-memory history, so the next ``continue``
+        starts empty. Keep the remote instance; only close the local client.
         """
-        logger.info(f"Closing {self.name}...")
-        if not self._funcs_map:
-            return
-
-        # 关闭模型客户端
+        logger.info(
+            f"Closing {self.name} locally; keeping remote session chat_id={self._chat_id}"
+        )
         if self._model_client:
-            await self._model_client.close()
-
-        # result: Dict[str, Any] = self._funcs_map['close'](chat_id=self._chat_id)
-        result: Dict[str, Any] = await asyncio.wait_for(
-              asyncio.to_thread(
-                  self._funcs_map['close'],
-                  chat_id=self._chat_id
-              ),
-              timeout=60.0
-            )
-        status = result.get("status", False)
-        message = result.get("message", "")
-        if not status:
-            raise Exception(message)
-        else:
-            logger.info(f"Closed {self.name} successfully.")
+            try:
+                await self._model_client.close()
+            except Exception as e:
+                logger.warning(f"Error closing local model client for {self.name}: {e}")
 
     async def async_stream_generator(self, stream, timeout: float = 120.0) -> AsyncGenerator[dict, None]:
         loop = asyncio.get_event_loop()
@@ -558,18 +549,16 @@ class StatusAgent(DrSaiAgent):
                     inner_messages=inner_messages,
                 )
         except asyncio.TimeoutError:
-            # If the task times out, we respond with a message.
             yield Response(
                 chat_message=TextMessage(
-                    content="The task timed out.",
+                    content="这次回复超时了，请稍后重试。",
                     source=self.name,
-                    metadata={"internal": "yes"},
+                    metadata={"internal": "no"},
                 ),
                 inner_messages=inner_messages,
             )
         except Exception as e:
             logger.error(f"Error in {self.name}: {e}")
-            # add to chat history
             await model_context.add_message(
                 AssistantMessage(
                     content=f"An error occurred while executing the task: {e}.",
@@ -578,9 +567,13 @@ class StatusAgent(DrSaiAgent):
             )
             yield Response(
                 chat_message=TextMessage(
-                    content=f"An error occurred while executing the task: {e}.",
+                    content=(
+                        "这次回复出错了，已经安全结束。"
+                        "请重新发送，或输入 continue。"
+                        "如果反复出现，请刷新页面。"
+                    ),
                     source=self.name,
-                    metadata={"internal": "no", "error_message": str(e)},
+                    metadata={"internal": "no"},
                 ),
                 inner_messages=inner_messages,
             )

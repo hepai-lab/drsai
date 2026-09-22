@@ -208,6 +208,7 @@ async function listAgentsPage(
     const row = readRecord(value);
     const id = firstString(row.id, row.name);
     if (!id) return [];
+    if (row.available === false) return [];
     return [{
       id,
       owner: firstString(row.owner, row.owned_by) || undefined,

@@ -8,8 +8,14 @@ from pydantic import BaseModel
 from hepai import HepAI
 from hepai import HRModel
 from hepai.components.haiddf.worker._related_class import WorkerInfo
-from drsai_ui.ui_backend.backend.datamodel.db import UserAgents, UserRemoteAgents, UserDDFAgents, AgentModeSettings
+from drsai_ui.ui_backend.backend.datamodel.db import (
+    UserRemoteAgents,
+    UserRemoteAgent,
+    UserDDFAgents,
+    AgentModeSettings,
+)
 from drsai_ui.ui_backend.backend.database import DatabaseManager
+from sqlmodel import Session as DBSession, select
 import uuid
 from dotenv import load_dotenv
 load_dotenv()
@@ -17,6 +23,493 @@ import logging
 from drsai_ui.platform_config import get_active_platform
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_platform_url(url: str | None) -> str:
+    return str(url or "").strip().rstrip("/")
+
+
+def _listed_agent_value(model: Any, key: str, default: Any = None) -> Any:
+    if isinstance(model, dict):
+        return model.get(key, default)
+    return getattr(model, key, default)
+
+
+def _listed_ddf_agent_id(model: Any) -> str:
+    return str(_listed_agent_value(model, "id") or "").strip()
+
+
+def _is_online_listed_ddf_agent(model: Any) -> bool:
+    """Treat missing `available` as online; only drop explicit false."""
+    return _listed_agent_value(model, "available", True) is not False
+
+
+def _list_hepai_agents(api_key: str, base_url: str):
+    """Sync HepAI SDK call — must not run on the asyncio event loop."""
+    client = HepAI(api_key=api_key, base_url=base_url)
+    return client.agents.list()
+
+
+def _ddf_worker_get_info(model_id: str, api_key: str, base_url: str):
+    """Sync connect + get_info — must not run on the asyncio event loop."""
+    worker = HRModel.connect(
+        name=model_id,
+        api_key=api_key,
+        base_url=base_url,
+    )
+    return worker.get_info()
+
+
+def _agent_dict_from_remote_row(row: UserRemoteAgent) -> Dict[str, Any]:
+    payload = dict(row.payload or {})
+    payload["id"] = row.agent_id
+    payload["mode"] = row.mode or payload.get("mode") or "remote"
+    if row.name:
+        payload["name"] = row.name
+    return payload
+
+
+def list_user_remote_agent_rows(db: DatabaseManager, user_id: str) -> List[UserRemoteAgent]:
+    """Return UserRemoteAgent ORM rows for a user (may be empty before migration)."""
+    response = db.get(UserRemoteAgent, filters={"user_id": user_id})
+    if response.status and response.data:
+        return list(response.data)
+    return []
+
+
+def migrate_user_remote_agents_blob(db: DatabaseManager, user_id: str) -> int:
+    """Expand legacy UserRemoteAgents JSON blobs into UserRemoteAgent rows.
+
+    Returns number of rows inserted. Idempotent: skips agent_ids already present.
+    """
+    existing = {
+        str(r.agent_id)
+        for r in list_user_remote_agent_rows(db, user_id)
+        if getattr(r, "agent_id", None)
+    }
+    blob_resp = db.get(UserRemoteAgents, filters={"user_id": user_id})
+    if not (blob_resp.status and blob_resp.data):
+        return 0
+
+    inserted = 0
+    for blob_row in blob_resp.data:
+        agents = getattr(blob_row, "agents", None) or []
+        for agent in agents:
+            if not isinstance(agent, dict):
+                continue
+            agent_id = str(agent.get("id") or "").strip() or str(uuid.uuid4())
+            if agent_id in existing:
+                continue
+            mode = str(agent.get("mode") or "remote").strip() or "remote"
+            name = str(agent.get("name") or "").strip()
+            if not name:
+                cfg = agent.get("config") if isinstance(agent.get("config"), dict) else {}
+                name = str(cfg.get("name") or "").strip()
+            payload = dict(agent)
+            payload["id"] = agent_id
+            row = UserRemoteAgent(
+                user_id=user_id,
+                agent_id=agent_id,
+                mode=mode,
+                name=name,
+                payload=payload,
+            )
+            result = db.upsert(row)
+            if result.status:
+                existing.add(agent_id)
+                inserted += 1
+            else:
+                logger.warning(
+                    "Failed to migrate remote agent %s for user %s: %s",
+                    agent_id,
+                    user_id,
+                    result.message,
+                )
+    if inserted:
+        logger.info(
+            "Migrated %d remote agent(s) from JSON blob to rows for user %s",
+            inserted,
+            user_id,
+        )
+    return inserted
+
+
+def list_user_remote_agents(db: DatabaseManager, user_id: str) -> List[Dict[str, Any]]:
+    """User-owned remote/custom agents as catalog dicts (migrates legacy blob if needed)."""
+    migrate_user_remote_agents_blob(db, user_id)
+    rows = list_user_remote_agent_rows(db, user_id)
+    return [_agent_dict_from_remote_row(r) for r in rows]
+
+
+def get_user_remote_agent_row(
+    db: DatabaseManager, user_id: str, agent_id: str
+) -> UserRemoteAgent | None:
+    """Return the UserRemoteAgent row for (user_id, agent_id), if any."""
+    target = str(agent_id or "").strip()
+    if not target:
+        return None
+    for row in list_user_remote_agent_rows(db, user_id):
+        if str(getattr(row, "agent_id", "") or "").strip() == target:
+            return row
+    return None
+
+
+def upsert_user_remote_agent(
+    db: DatabaseManager, user_id: str, agent: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Insert or update one user-owned agent row. Returns the stored catalog dict."""
+    agent_id = str(agent.get("id") or "").strip() or str(uuid.uuid4())
+    mode = str(agent.get("mode") or "remote").strip() or "remote"
+    name = str(agent.get("name") or "").strip()
+    if not name:
+        cfg = agent.get("config") if isinstance(agent.get("config"), dict) else {}
+        name = str(cfg.get("name") or "").strip()
+    payload = dict(agent)
+    payload["id"] = agent_id
+    payload["mode"] = mode
+    if name:
+        payload["name"] = name
+
+    existing = get_user_remote_agent_row(db, user_id, agent_id)
+
+    if existing:
+        existing.mode = mode
+        existing.name = name
+        existing.payload = payload
+        existing.updated_at = datetime.now()
+        result = db.upsert(existing)
+        if not result.status:
+            raise HTTPException(status_code=500, detail=result.message or "Failed to update agent")
+        return _agent_dict_from_remote_row(existing)
+
+    row = UserRemoteAgent(
+        user_id=user_id,
+        agent_id=agent_id,
+        mode=mode,
+        name=name,
+        payload=payload,
+    )
+    result = db.upsert(row)
+    if not result.status:
+        raise HTTPException(status_code=500, detail=result.message or "Failed to save agent")
+    return payload
+
+
+def delete_user_remote_agent(db: DatabaseManager, user_id: str, agent_id: str) -> bool:
+    """Delete one user-owned agent row. Also strips id from legacy blob if present."""
+    agent_id = str(agent_id or "").strip()
+    deleted = False
+    with DBSession(db.engine) as session:
+        row = session.exec(
+            select(UserRemoteAgent).where(
+                UserRemoteAgent.user_id == user_id,
+                UserRemoteAgent.agent_id == agent_id,
+            )
+        ).first()
+        if row is not None:
+            session.delete(row)
+            session.commit()
+            deleted = True
+
+    # Best-effort cleanup of legacy blob so re-migration does not resurrect it.
+    blob_resp = db.get(UserRemoteAgents, filters={"user_id": user_id})
+    if blob_resp.status and blob_resp.data:
+        for blob_row in blob_resp.data:
+            agents = list(getattr(blob_row, "agents", None) or [])
+            new_agents = [
+                a
+                for a in agents
+                if not (
+                    isinstance(a, dict)
+                    and str(a.get("id") or "").strip() == agent_id
+                )
+            ]
+            if len(new_agents) != len(agents):
+                blob_row.agents = new_agents
+                db.upsert(blob_row)
+                deleted = True
+    return deleted
+
+
+def list_ddf_agents_cached(
+    db: DatabaseManager, user_id: str, platform_url: str | None = None
+) -> List[Dict[str, Any]]:
+    """Read DDF cache only (no remote fetch)."""
+    platform = get_active_platform()
+    target = _normalize_platform_url(platform_url or platform.base_url)
+    response = db.get(UserDDFAgents, filters={"user_id": user_id})
+    if not (response.status and response.data):
+        return []
+    for row in response.data:
+        row_url = _normalize_platform_url(getattr(row, "platform_url", None))
+        if row_url and row_url != target:
+            continue
+        agents = getattr(row, "agents", None) or []
+        if agents:
+            return [dict(a) for a in agents if isinstance(a, dict)]
+        # Prefer explicit platform match even if empty.
+        if row_url == target:
+            return []
+    # Legacy rows without platform_url: use first non-empty.
+    for row in response.data:
+        agents = getattr(row, "agents", None) or []
+        if agents:
+            return [dict(a) for a in agents if isinstance(a, dict)]
+    return []
+
+
+def assemble_catalog_agents(
+    user_id: str,
+    db: DatabaseManager,
+    *,
+    ddf_agents: List[Dict[str, Any]] | None = None,
+    user_source: str | None = None,
+) -> List[Dict[str, Any]]:
+    """Pure in-memory merge of platform defaults + DDF + user-owned remotes.
+
+    Does not write UserAgents. When *ddf_agents* is None, reads DDF cache only.
+    """
+    platform = get_active_platform()
+    agents_list: List[Dict[str, Any]] = []
+    agents_list.extend(
+        get_default_agent_mode_config(user_id=user_id, user_source=user_source)
+    )
+
+    ddf = (
+        ddf_agents
+        if ddf_agents is not None
+        else list_ddf_agents_cached(db, user_id, platform.base_url)
+    )
+    for agent in ddf:
+        if not isinstance(agent, dict):
+            continue
+        agent = dict(agent)
+        if str(agent.get("mode") or "").lower() == "ddf" and agent.get("available") is False:
+            continue
+        if not agent.get("config"):
+            agent["config"] = {
+                "name": agent.get("name"),
+                "url": platform.base_url,
+            }
+        if not agent.get("id"):
+            agent["id"] = str(uuid.uuid4())
+        agents_list.append(agent)
+
+    for agent in list_user_remote_agents(db, user_id):
+        agent = dict(agent)
+        if agent.get("mode") == "remote" and not agent.get("config"):
+            agent["config"] = {
+                "name": agent.get("name"),
+                "url": agent.get("url"),
+            }
+        if not agent.get("id"):
+            agent["id"] = str(uuid.uuid4())
+        agents_list.append(agent)
+
+    _overlay_saved_default_config_names(db, user_id, agents_list)
+    _mark_featured_and_default_agents(agents_list)
+
+    if (user_source or "").strip() == "user_agent":
+        target = get_user_agent_default_agent_name()
+        matched = find_agent_by_name(agents_list, target)
+        if matched and matched.get("id"):
+            matched_id = str(matched["id"])
+            for agent in agents_list:
+                if isinstance(agent, dict):
+                    agent["is_default"] = str(agent.get("id") or "") == matched_id
+
+    return agents_list
+
+
+def find_catalog_agent(
+    user_id: str,
+    agent_id: str,
+    db: DatabaseManager,
+    *,
+    user_source: str | None = None,
+) -> Dict[str, Any] | None:
+    """Look up one agent across the three catalog sources (no UserAgents snapshot)."""
+    target = str(agent_id or "").strip()
+    if not target:
+        return None
+    for agent in assemble_catalog_agents(user_id, db, user_source=user_source):
+        if str(agent.get("id") or "").strip() == target:
+            return agent
+    return None
+
+
+def _resolved_default_config_name(agent: Dict[str, Any] | None) -> str:
+    if not isinstance(agent, dict):
+        return ""
+    value = agent.get("defult_config_name") or agent.get("default_config_name")
+    return str(value).strip() if value is not None else ""
+
+
+def _is_agent_pref_stub(agent: Dict[str, Any]) -> bool:
+    """True when agents_mode entry only stores a model preference, not a full agent."""
+    return not (
+        agent.get("name")
+        or agent.get("config")
+        or agent.get("mode")
+        or agent.get("url")
+    )
+
+
+def _overlay_saved_default_config_names(
+    db: DatabaseManager, user_id: str, agents: List[Dict[str, Any]]
+) -> None:
+    """Apply per-agent defult_config_name saved via PUT /user_agent/save."""
+    response = db.get(AgentModeSettings, filters={"user_id": user_id})
+    if not (response.status and response.data):
+        return
+    prefs: Dict[str, str] = {}
+    for entry in getattr(response.data[0], "agents_mode", None) or []:
+        if not isinstance(entry, dict):
+            continue
+        aid = str(entry.get("id") or "").strip()
+        name = _resolved_default_config_name(entry)
+        if aid and name:
+            prefs[aid] = name
+    if not prefs:
+        return
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        aid = str(agent.get("id") or "").strip()
+        if aid in prefs:
+            agent["defult_config_name"] = prefs[aid]
+
+
+def _upsert_agent_default_config_pref(
+    db: DatabaseManager, user_id: str, agent_id: str, defult_config_name: str
+) -> None:
+    """Persist a user's default model choice for one catalog agent."""
+    agent_id = str(agent_id or "").strip()
+    name = str(defult_config_name or "").strip()
+    if not agent_id or not name:
+        return
+
+    response = db.get(AgentModeSettings, filters={"user_id": user_id})
+    if response.status and response.data:
+        settings = response.data[0]
+        agents = [
+            dict(a) for a in (getattr(settings, "agents_mode", None) or [])
+            if isinstance(a, dict)
+        ]
+        found = False
+        for agent in agents:
+            if str(agent.get("id") or "").strip() == agent_id:
+                agent["defult_config_name"] = name
+                found = True
+                break
+        if not found:
+            agents.append({"id": agent_id, "defult_config_name": name})
+        settings.agents_mode = agents
+        result = db.upsert(settings)
+        if not result.status:
+            raise HTTPException(
+                status_code=500,
+                detail=getattr(result, "message", None) or "Failed to save model preference",
+            )
+        return
+
+    settings = AgentModeSettings(
+        user_id=user_id,
+        agents_mode=[{"id": agent_id, "defult_config_name": name}],
+    )
+    result = db.upsert(settings)
+    if not result.status:
+        raise HTTPException(
+            status_code=500,
+            detail=getattr(result, "message", None) or "Failed to save model preference",
+        )
+
+
+def _apply_stored_agents_mode(
+    defaults: List[Dict[str, Any]], stored: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Merge stored agents_mode onto defaults without promoting model-pref stubs."""
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for agent in defaults:
+        if isinstance(agent, dict) and agent.get("id"):
+            by_id[str(agent["id"])] = dict(agent)
+    for agent in stored:
+        if not isinstance(agent, dict) or not agent.get("id"):
+            continue
+        aid = str(agent["id"])
+        name = _resolved_default_config_name(agent)
+        if aid in by_id:
+            if name:
+                by_id[aid]["defult_config_name"] = name
+            if not _is_agent_pref_stub(agent):
+                merged = dict(by_id[aid])
+                merged.update(agent)
+                by_id[aid] = merged
+        elif not _is_agent_pref_stub(agent):
+            by_id[aid] = dict(agent)
+    return list(by_id.values())
+
+
+def patch_user_agent(
+    db: DatabaseManager,
+    user_id: str,
+    patch: Dict[str, Any],
+    *,
+    user_source: str | None = None,
+) -> Dict[str, Any]:
+    """Merge a partial catalog update (typically id + defult_config_name).
+
+    PUT /user_agent/save is used by the LLM selector before a session exists.
+    It must not require mode, and must not insert a stub UserRemoteAgent row
+    for DDF / platform catalog agents.
+    """
+    if not isinstance(patch, dict):
+        raise HTTPException(status_code=400, detail="agent_config 须为对象。")
+    agent_id = str(patch.get("id") or "").strip()
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="请提供智能体 id。")
+
+    existing = find_catalog_agent(
+        user_id, agent_id, db, user_source=user_source
+    )
+    if not existing:
+        raise HTTPException(
+            status_code=404,
+            detail="该智能体已经下线或更新，请刷新后重试。",
+        )
+
+    merged = dict(existing)
+    for key, value in patch.items():
+        if key == "id" or value is None:
+            continue
+        merged[key] = value
+    merged["id"] = agent_id
+
+    default_name = _resolved_default_config_name(patch)
+    if default_name:
+        _upsert_agent_default_config_pref(db, user_id, agent_id, default_name)
+        merged["defult_config_name"] = default_name
+
+    owned = get_user_remote_agent_row(db, user_id, agent_id)
+    if owned is not None:
+        payload = dict(owned.payload or {})
+        for key, value in patch.items():
+            if key == "id" or value is None:
+                continue
+            payload[key] = value
+        payload["id"] = agent_id
+        payload["mode"] = owned.mode or payload.get("mode") or "remote"
+        if owned.name and not str(payload.get("name") or "").strip():
+            payload["name"] = owned.name
+        if default_name:
+            payload["defult_config_name"] = default_name
+        upsert_user_remote_agent(db, user_id, payload)
+        return _agent_dict_from_remote_row(
+            get_user_remote_agent_row(db, user_id, agent_id) or owned
+        )
+
+    return merged
+
 
 def _truthy_env(value: str | None) -> bool:
     if value is None:
@@ -111,13 +604,24 @@ def _resolve_platform_api_key(
     is_refresh: bool = False,
     user_source: str | None = None,
 ) -> str:
-    """Prefer caller Bearer; on DDF refresh without Bearer use user's HepAI key; else admin env."""
+    """Prefer caller Bearer; else shared/personal key; else admin env.
+
+    CSNS / science embed users (shared-key sources) resolve the shared key even
+    when the client did not pass Bearer and is_refresh is false — otherwise the
+    first catalog load can persist an empty DDF cache and stick on DocMaster.
+    """
     apikey = ""
     if authorization and authorization.startswith("Bearer "):
         apikey = authorization[7:].strip()
     if apikey:
         return apikey
-    if is_refresh and user_id:
+
+    from drsai_ui.drsai_adapter.personal_config_fetcher import uses_shared_api_key
+
+    should_resolve_user_key = bool(user_id) and (
+        is_refresh or uses_shared_api_key(user_source)
+    )
+    if should_resolve_user_key:
         try:
             from drsai_ui.drsai_adapter.singleton import (
                 personal_key_config_fetcher as fetcher,
@@ -213,10 +717,16 @@ def get_agent_mode_config(
 def get_default_agent_mode_config(
     user_id: str, user_source: str | None = None
 ) -> List[Dict[str, Any]]:
-    """Return the default agent list for a user."""
+    """Return the default agent list for a user.
+
+    For CSNS embed users (``user_source=user_agent``), do not mark the first
+    DEFAULT_REMOTE_AGENTS entry (often DocMaster) as ``is_default`` — their
+    product default is iPanda from DDF / ``DRUSER_AGENT_DEFAULT_AGENT_NAME``.
+    """
     agents_list = []
     DEFAULT_REMOTE_AGENTS = os.getenv("DEFAULT_REMOTE_AGENTS", None)
     loaded_default_remote_agents = False
+    source = (user_source or "").strip()
     if DEFAULT_REMOTE_AGENTS:
         try:
             p = Path(DEFAULT_REMOTE_AGENTS).expanduser()
@@ -238,7 +748,14 @@ def get_default_agent_mode_config(
                         agent.update({"id": str(uuid.uuid4())})
                 # First entry is treated as default (downstream-friendly).
                 # If the config already has an explicit `is_default`, we keep it.
-                if default_agents and not any(bool(a.get("is_default")) for a in default_agents):
+                # CSNS users must not inherit DocMaster as is_default.
+                if source == "user_agent":
+                    for agent in default_agents:
+                        if isinstance(agent, dict):
+                            agent["is_default"] = False
+                elif default_agents and not any(
+                    bool(a.get("is_default")) for a in default_agents
+                ):
                     default_agents[0]["is_default"] = True
                 agents_list.extend(default_agents)
                 loaded_default_remote_agents = True
@@ -282,16 +799,10 @@ async def get_agents_mode(
         settings = response.data[0]
 
     stored = [dict(a) for a in (settings.agents_mode or []) if isinstance(a, dict)]
-    by_id: Dict[str, Dict[str, Any]] = {}
-    for agent in get_default_agent_mode_config(
-        user_id=user_id, user_source=user_source
-    ):
-        if isinstance(agent, dict) and agent.get("id"):
-            by_id[str(agent["id"])] = dict(agent)
-    for agent in stored:
-        if isinstance(agent, dict) and agent.get("id"):
-            by_id[str(agent["id"])] = dict(agent)
-    merged = list(by_id.values())
+    merged = _apply_stored_agents_mode(
+        get_default_agent_mode_config(user_id=user_id, user_source=user_source),
+        stored,
+    )
     _mark_featured_and_default_agents(merged)
     payload = settings.model_dump(mode="json")
     payload["agents_mode"] = merged
@@ -305,39 +816,66 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
     user_ddf_agents: UserDDFAgents | None = None
     agents_old: List[Dict[str, Any]] = []
     platform = get_active_platform()
+    platform_url = _normalize_platform_url(platform.base_url)
     try:
-        # Check cache first
+        # Check cache first — prefer row matching current platform_url.
         response = db.get(UserDDFAgents, filters={"user_id": user_id})
-        
+
         agents_name_old = {}
         if response.status and response.data:
-            user_ddf_agents = response.data[0]
-            agents_old = user_ddf_agents.agents or []
-            agents_name_old = {agent["name"]: agent for agent in agents_old}
-            if not is_refresh:
-                # Check if cache is still valid (less than 2 hours old)
-                if user_ddf_agents.updated_at:
-                    time_diff = datetime.now() - user_ddf_agents.updated_at.replace(tzinfo=None)
-                cached_platform_urls = {
-                    str((agent.get("config") or {}).get("url") or "").rstrip("/")
+            matched_row: UserDDFAgents | None = None
+            legacy_row: UserDDFAgents | None = None
+            for row in response.data:
+                row_url = _normalize_platform_url(getattr(row, "platform_url", None))
+                if row_url == platform_url:
+                    matched_row = row
+                    break
+                if not row_url and legacy_row is None:
+                    legacy_row = row
+            user_ddf_agents = matched_row or legacy_row
+            if user_ddf_agents is not None:
+                agents_old = user_ddf_agents.agents or []
+                agents_name_old = {
+                    agent["name"]: agent
                     for agent in agents_old
+                    if isinstance(agent, dict) and agent.get("name")
                 }
-                cache_matches_platform = cached_platform_urls == {platform.base_url}
-                if time_diff < timedelta(hours=2) and cache_matches_platform:
-                    # Return cached data
-                    return {"status": True, "data": agents_old}
+                # Empty catalog is never a valid cache hit.
+                if not is_refresh and agents_old:
+                    time_diff = timedelta(hours=3)
+                    if user_ddf_agents.updated_at:
+                        time_diff = datetime.now() - user_ddf_agents.updated_at.replace(
+                            tzinfo=None
+                        )
+                    row_url = _normalize_platform_url(
+                        getattr(user_ddf_agents, "platform_url", None)
+                    )
+                    if row_url:
+                        cache_matches_platform = row_url == platform_url
+                    else:
+                        cached_platform_urls = {
+                            str((agent.get("config") or {}).get("url") or "").rstrip("/")
+                            for agent in agents_old
+                            if isinstance(agent, dict)
+                        }
+                        cache_matches_platform = cached_platform_urls == {platform_url}
+                    if time_diff < timedelta(hours=2) and cache_matches_platform:
+                        return {"status": True, "data": agents_old}
 
         apikey = _resolve_platform_api_key(
-            authorization, user_id=user_id, is_refresh=is_refresh, user_source=user_source
+            authorization,
+            user_id=user_id,
+            is_refresh=is_refresh,
+            user_source=user_source,
         )
         if not apikey:
             return {"status": True, "data": agents_old}
 
-        client = HepAI(
-            api_key=apikey,
-            base_url=platform.base_url,
+        list_timeout = _float_env("DRSUI_DDF_AGENT_LIST_TIMEOUT", default=15.0, min_value=1.0)
+        models = await asyncio.wait_for(
+            asyncio.to_thread(_list_hepai_agents, apikey, platform.base_url),
+            timeout=list_timeout,
         )
-        models = client.agents.list()
 
         timeout_seconds = _float_env("DRSUI_DDF_AGENT_INFO_TIMEOUT", default=5.0, min_value=0.5)
         max_concurrency = _int_env("DRSUI_DDF_AGENT_INFO_MAX_CONCURRENCY", default=8, min_value=1)
@@ -346,18 +884,18 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
         async def _fetch_model_info(model_id: str) -> Dict[str, Any] | None:
             try:
                 async with semaphore:
-                    worker = HRModel.connect(
-                        name=model_id,
-                        api_key=apikey,
-                        base_url=platform.base_url,
-                    )
                     agent_info: dict | WorkerInfo = await asyncio.wait_for(
-                        asyncio.to_thread(worker.get_info),
+                        asyncio.to_thread(
+                            _ddf_worker_get_info,
+                            model_id,
+                            apikey,
+                            platform.base_url,
+                        ),
                         timeout=timeout_seconds,
                     )
                 if isinstance(agent_info, WorkerInfo):
                     return None
-                agent_info.update({"mode": "ddf"})
+                agent_info.update({"mode": "ddf", "available": True})
                 agent_info.update({"owner": agent_info.get("author")})
                 agent_info.update(
                     {
@@ -368,65 +906,98 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
                     }
                 )
                 if agent_info.get("name") in agents_name_old:
-                    agent_info.update({"id": agents_name_old[agent_info.get("name")]["id"]})
+                    old = agents_name_old[agent_info.get("name")]
+                    agent_info.update({"id": old["id"]})
+                    old_default = old.get("defult_config_name") or old.get(
+                        "default_config_name"
+                    )
+                    if old_default and not agent_info.get("defult_config_name"):
+                        agent_info["defult_config_name"] = old_default
                 else:
                     agent_info.update({"id": str(uuid.uuid4())})
                 return agent_info
             except Exception:
                 return None
 
-        model_ids = [model.id for model in models.data if model.id != "hepai/custom-model"]
+        model_ids = []
+        skipped_offline = 0
+        for model in getattr(models, "data", None) or []:
+            mid = _listed_ddf_agent_id(model)
+            if not mid or mid == "hepai/custom-model":
+                continue
+            if not _is_online_listed_ddf_agent(model):
+                skipped_offline += 1
+                continue
+            model_ids.append(mid)
+        if skipped_offline:
+            logger.info(
+                "Skipping %d offline DDF agents from list_agents for user %s",
+                skipped_offline,
+                user_id,
+            )
         if model_ids:
-            fetched_agents = await asyncio.gather(*(_fetch_model_info(model_id) for model_id in model_ids))
+            fetched_agents = await asyncio.gather(
+                *(_fetch_model_info(model_id) for model_id in model_ids)
+            )
         else:
             fetched_agents = []
         agents = [agent for agent in fetched_agents if agent]
 
-        # 保持用户体验：刷新失败时不要把已有列表变为空
-        if not agents and agents_old:
-            agents = agents_old
-        
-        # Update cache
-        if response.status and response.data:
-            # Update existing record
-            if user_ddf_agents is not None and agents != agents_old:
-                user_ddf_agents.agents = agents
-                db.upsert(user_ddf_agents)
-        else:
-            # Create new record
-            new_user_ddf_agents = UserDDFAgents(
-                user_id=user_id,
-                agents=agents
+        # list() succeeded. Zero listed workers is a real empty catalog
+        # (last DDF agent stopped/unregistered) and must clear the cache.
+        # Keep the old cache only when workers were listed but every
+        # get_info() failed — a transient timeout must not wipe the catalog.
+        listed_count = len(model_ids)
+        if not agents and agents_old and listed_count:
+            logger.warning(
+                "DDF get_info failed for all %d listed workers for user %s; keeping cached catalog",
+                listed_count,
+                user_id,
             )
-            db.upsert(new_user_ddf_agents)
-            
+            agents = agents_old
+
+        if agents:
+            if user_ddf_agents is not None:
+                if agents != agents_old or _normalize_platform_url(
+                    getattr(user_ddf_agents, "platform_url", None)
+                ) != platform_url:
+                    user_ddf_agents.agents = agents
+                    user_ddf_agents.platform_url = platform_url
+                    db.upsert(user_ddf_agents)
+            else:
+                db.upsert(
+                    UserDDFAgents(
+                        user_id=user_id,
+                        platform_url=platform_url,
+                        agents=agents,
+                    )
+                )
+        elif user_ddf_agents is not None:
+            try:
+                db.delete(UserDDFAgents, filters={"user_id": user_id})
+                if agents_old:
+                    logger.info(
+                        "Cleared DDF cache for user %s after HepAI listed 0 workers (was %d cached)",
+                        user_id,
+                        len(agents_old),
+                    )
+            except Exception:
+                logger.warning(
+                    "Failed to clear empty DDF cache for user %s", user_id
+                )
+
         return {"status": True, "data": agents}
-    
+
     except Exception as e:
         logger.warning("Failed to refresh DDF agents for user %s: %s", user_id, str(e))
         return {"status": True, "data": agents_old}
 
 async def get_user_remote_agents(user_id: str, db: DatabaseManager = None) -> Dict:
     '''
-    获取用户保存的远程智能体列表
+    获取用户保存的远程智能体列表（一行一智能体；必要时从旧 JSON blob 迁移）
     '''
     try:
-        agents_list = []
-        # DEFAULT_REMOTE_AGENTS = os.getenv("DEFAULT_REMOTE_AGENTS", None)
-        # if DEFAULT_REMOTE_AGENTS:
-        #     with open(DEFAULT_REMOTE_AGENTS, 'r', encoding='utf-8') as f:
-        #         default_agents =  json.load(f)
-        #         agents_list.extend(default_agents)
-
-        response = db.get(UserRemoteAgents, filters={"user_id": user_id})
-
-        if response.status and response.data:
-            user_agents = response.data[0]
-            agents_list.extend(user_agents.agents or [])
-            return {"status": True, "data":  agents_list}
-        else:
-            return {"status": True, "data": agents_list}
-
+        return {"status": True, "data": list_user_remote_agents(db, user_id)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -439,119 +1010,25 @@ async def get_user_agents(
     user_source: str | None = None,
 ) -> Dict:
     '''
-    获取用户保存的智能体列表，统一的数据格式为agent_mode_config：
-    {
-        "mode": "remote/ddf/custom/besiii/mamagentic-one",
-        "config":{
-            "xxx": "xxx"
-        },
-        "xxx": "xxx"
-    }
-    
-    前端拿到后请直接将该字段传入/ws/run_id的settings_config的agent_mode_config字段中，后端做解析
-    
-    包括:
-    1. mode="remote"
-        {
-            "mode": "remote",
-            "config":{
-                "name": "智能后端启动的名称",
-                "api_key": "访问后端智能体的API Key",
-                "base_url": "访问后端智能体的URL"
-            },
-            "xxx": "描述/examples等其它参数"
-        }
+    组装用户可见的智能体目录（只读合并，不写 UserAgents 快照）：
 
-    2. mode="ddf"
-        {
-            "mode": "ddf",
-            "config":{
-                "name": "智能后端启动的名称",
-                "api_key": "前端的API Key",
-                "base_url": "https://aiapi.ihep.ac.cn/apiv2"
-            },
-            "xxx": "描述/example等其它参数"
-        }
+    1. 系统默认（DEFAULT_REMOTE_AGENTS 文件，不入库）
+    2. DDF 平台目录（UserDDFAgents 缓存；is_refresh / 过期时回源）
+    3. 用户远程/自定义（UserRemoteAgent 一行一智能体）
 
-    3. mode="custom"，该数据结构应该是前端传入
-        {
-            "mode": "custom",
-            "config": {
-                "model_client": {
-                    "base_url":"https://aiapi.ihep.ac.cn/apiv2",
-                    "api_key":"hepai模式时默认为空，千万不要加空格",
-                    "model": "hepai自动获取，其他用户填写"
-                    },
-                "ragflow_configs": {
-                    "ragflow_url":"https://ragflow.ihep.ac.cn",
-                    "ragflow_token":"ragflow-I1OWE2N2U0NTE5ODExZjA5NzgyMDI0Mm",
-                    "dataset_ids":[ "注：根据用户选择获取对应ID", "***"]
-                    },
-                "mcp_sse_list": [
-                        {
-                            "url": "https://example.com/sse",
-                            "token": "默认为None或者空"，
-                            "headers": {"**","用户自定义的json字段，默认为{}"},
-                            "timeout": 默认为20,
-                            "sse_read_timeout":默认为300,
-                            }
-                    ]
-        }
+    前端拿到后请直接将该字段传入 /ws/run_id 的 settings_config.agent_mode_config。
     '''
-    
-    platform = get_active_platform()
-    agents_list = []
-    # 获取默认的远程智能体
-    agents_list.extend(
-        get_default_agent_mode_config(user_id=user_id, user_source=user_source)
-    )
-
-    # 获取用户的DDF智能体
-    agents = await get_ddf_agents(
+    ddf_result = await get_ddf_agents(
         user_id=user_id,
         authorization=authorization,
         is_refresh=is_refresh,
         db=db,
         user_source=user_source,
     )
-    agents = agents["data"]
-    for agent in agents:
-        if not agent.get("config"):
-            agent.update(
-                {"config": {
-                    "name": agent.get("name"),
-                    "url": platform.base_url,
-                }})
-        if not agent.get("id"):
-            agent.update({"id": str(uuid.uuid4())})
-    agents_list.extend(agents)
-
-    # 获取用户的remote/custom智能体
-    agents = await get_user_remote_agents(user_id = user_id, db=db)
-    agents = agents["data"]
-    for agent in agents:
-        if agent.get("mode")=="remote" and not agent.get("config"):
-            agent.update(
-                {"config": {
-                    "name": agent.get("name"),
-                    "url": agent.get("url"),
-                }})
-        if not agent.get("id"):
-            agent.update({"id": str(uuid.uuid4())})
-    agents_list.extend(agents)
-
-    # Mark featured/default agent flags for UI consumption
-    _mark_featured_and_default_agents(agents_list)
-
-    # 刷新进入UserAgents
-    response = db.get(UserAgents, filters={"user_id": user_id})
-    if response.status and response.data:
-        user_agents: UserAgents = response.data[0]
-        user_agents.agents = agents_list
-    else:
-        user_agents = UserAgents(
-            user_id=user_id,
-            agents=agents_list
-        )
-    db.upsert(user_agents)
+    agents_list = assemble_catalog_agents(
+        user_id,
+        db,
+        ddf_agents=ddf_result.get("data") or [],
+        user_source=user_source,
+    )
     return {"status": True, "data": agents_list}

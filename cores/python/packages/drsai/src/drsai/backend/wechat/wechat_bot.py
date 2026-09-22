@@ -523,7 +523,9 @@ class WeChatBot:
             stream=True,
         )
         if not result.get("status"):
-            raise RuntimeError(f"lazy_init 失败: {result.get('message')}")
+            error = result.get("error") or "init_failed"
+            detail = result.get("detail") or result.get("message") or "unknown"
+            raise RuntimeError(f"lazy_init 失败: {error}: {detail}")
 
 
 def _safe_user_id(value: str) -> str:

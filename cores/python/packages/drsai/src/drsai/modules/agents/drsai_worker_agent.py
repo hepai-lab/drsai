@@ -109,6 +109,71 @@ from drsai.modules.managers.messages.agent_messages import (
     DrSaiMessageFactory
 )
 
+
+LAZY_INIT_USER_MESSAGES = {
+    "model_not_found": "所选模型不可用，请换一个模型再试。",
+    "timeout": "智能体初始化超时，请稍后重试。",
+    "worker_unavailable": "后端服务暂时不可用，请稍后重试。",
+    "init_failed": "智能体初始化失败，请稍后重试。",
+}
+
+
+def lazy_init_user_message(error: str | None = None) -> str:
+    """User-visible lazy_init text. Safe to render as a chat bubble."""
+    return LAZY_INIT_USER_MESSAGES.get(
+        error or "init_failed",
+        LAZY_INIT_USER_MESSAGES["init_failed"],
+    )
+
+
+def _looks_like_raw_exception_message(message: Any) -> bool:
+    if message is None:
+        return True
+    if not isinstance(message, str):
+        return False
+    text = message.strip()
+    if not text:
+        return True
+    lowered = text.lower()
+    if text.startswith("Lazy init error:"):
+        return True
+    if "Traceback (most recent call last)" in text:
+        return True
+    if "traceback" in lowered and "error" in lowered:
+        return True
+    return False
+
+
+def welcome_from_remote_lazy_init(result: Dict[str, Any], agent_name: str) -> Any:
+    """Return a chat bubble for remote lazy_init.
+
+    Success forwards the welcome payload. Failures still produce a bubble,
+    but exception strings are replaced with a friendly prompt.
+    """
+    status = result.get("status", False)
+    message = result.get("message")
+    if not status:
+        error = result.get("error") or "init_failed"
+        detail = result.get("detail")
+        if detail is None and isinstance(message, str):
+            detail = message
+        logger.error(
+            f"Lazy init {agent_name} failed: {error}"
+            + (f" ({detail})" if detail else "")
+        )
+        if isinstance(message, dict):
+            content = message.get("content")
+            if _looks_like_raw_exception_message(content):
+                return lazy_init_user_message(error)
+            if isinstance(content, str) and content.strip():
+                return message
+        if isinstance(message, str) and not _looks_like_raw_exception_message(message):
+            return message
+        return lazy_init_user_message(error)
+    logger.info(f"Lazy init {agent_name} successfully.")
+    return message if message else None
+
+
 class HepAIWorkerAgent(DrSaiAgent):
     '''
     连接HepAI Worker 格式的模型或者智能体后端
@@ -215,20 +280,20 @@ class HepAIWorkerAgent(DrSaiAgent):
               ),
               timeout=60.0
             )
-            status = result.get("status", False)
-            message = result.get("message", "")
-            if not status:
-                # raise Exception(message)
-                logger.error(message)
-            else:
-                logger.info(f"Lazy init {self.name} successfully.")
+            message = welcome_from_remote_lazy_init(result, self.name)
             if message:
                 self._init_message = message
                 return message
         except asyncio.TimeoutError:
             logger.error(f"Timeout initializing worker functions for {self.model_name}")
+            message = lazy_init_user_message("timeout")
+            self._init_message = message
+            return message
         except Exception as e:
             logger.error(f"Failed to load worker functions: {e}")
+            message = lazy_init_user_message("init_failed")
+            self._init_message = message
+            return message
         
 
 
@@ -644,7 +709,7 @@ class HepAIWorkerAgent(DrSaiAgent):
             try:
                 async for chunk in self.async_stream_generator(stream, timeout=self._stream_timeout):
                     if self.is_paused:
-                        logger.info(f"[trace={trace_id}] {self.name} was paused, handling gracefully")
+                        logger.info(f"{self.name} was paused, handling gracefully")
                         raise asyncio.CancelledError("Agent paused during streaming")
                     message_type = chunk.get("type", None)
                     if message_type in self._message_factory._message_types:
@@ -681,21 +746,19 @@ class HepAIWorkerAgent(DrSaiAgent):
                                 meta.get("start_flag"),
                             )
                         yield msg
-                    if "stop_reason" in chunk:
+                    if chunk.get("type") == "TaskResult":
                         break
             except asyncio.CancelledError:
                 if self.is_paused:
-                    logger.info(
-                        f"[trace={trace_id}] {self.name} was paused, handling gracefully"
-                    )
+                    logger.info(f"{self.name} was paused, handling gracefully")
                 raise
             except Exception as e:
                 if self.is_paused and "peer closed connection" in str(e).lower():
                     logger.info(
-                        f"[trace={trace_id}] Connection closed due to pause for {self.name}, handling as cancellation"
+                        f"Connection closed due to pause for {self.name}, handling as cancellation"
                     )
                     raise asyncio.CancelledError("Agent paused")
-                logger.error(f"[trace={trace_id}] Error during streaming: {e}")
+                logger.error(f"Error during streaming: {e}")
                 raise
 
             # full_response_str = ""
@@ -780,10 +843,9 @@ class HepAIWorkerAgent(DrSaiAgent):
                     inner_messages=inner_messages,
                 )
         except asyncio.TimeoutError:
-            # If the task times out, we respond with a message.
             yield Response(
                 chat_message=TextMessage(
-                    content="The task timed out.",
+                    content="这次回复超时了，请稍后重试。",
                     source=self.name,
                     metadata={"internal": "no"},
                 ),

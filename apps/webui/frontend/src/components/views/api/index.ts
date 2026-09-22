@@ -4,7 +4,6 @@
 
 export { SessionAPI, sessionAPI } from "./session";
 export { TeamAPI, teamAPI } from "./team";
-export { PlanAPI, planAPI } from "./plan";
 export { SettingsAPI, settingsAPI } from "./settings";
 export { Agent, agentAPI } from "./agent";
 export { AgentWorkerAPI, agentWorkerAPI } from "./agentWorker";

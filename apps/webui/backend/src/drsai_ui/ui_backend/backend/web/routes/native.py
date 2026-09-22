@@ -15,7 +15,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .....agent_factory.agent_mode_cofigs import get_user_agents
-from ...datamodel.db import Run, RunStatus, Session, UserAgents, UserRemoteAgents
+from ...datamodel.db import Run, RunStatus, Session
+from .....agent_factory.agent_mode_cofigs import find_catalog_agent, list_user_remote_agents
 from ..deps import get_db, get_websocket_manager
 from ..native_agent_models import public_agent
 from ..native_attachments import NativeAttachmentStore, get_native_attachment_store
@@ -78,12 +79,10 @@ async def list_native_agents(
         for item in recent_result.get("data", [])
         if isinstance(item, dict) and item.get("agent_id")
     }
-    remote_result = db.get(UserRemoteAgents, filters={"user_id": identity.user_id})
-    remote_rows = remote_result.data if remote_result.status and remote_result.data else []
+    remote_agents = list_user_remote_agents(db, identity.user_id)
     owned_ids = {
         str(agent.get("id") or "")
-        for row in remote_rows
-        for agent in (row.agents or [])
+        for agent in remote_agents
         if isinstance(agent, dict) and agent.get("id")
     }
     agents = [
@@ -489,9 +488,7 @@ def _materialize_native_files(files: list[dict[str, Any]]) -> tuple[list[dict[st
 
 
 def _owned_agent(db, user_id: str, agent_id: str) -> dict[str, Any]:
-    result = db.get(UserAgents, filters={"user_id": user_id})
-    agents = result.data[0].agents or [] if result.status and result.data else []
-    agent = next((item for item in agents if str(item.get("id") or "") == agent_id), None)
+    agent = find_catalog_agent(user_id, agent_id, db)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not available")
     return agent

@@ -4,6 +4,10 @@ const TOKEN_KEY = "token";
 const USER_EMAIL_KEY = "user_email";
 const LEGACY_KEYS = ["username", "user_name"] as const;
 
+export type AuthVerifyResult =
+  | { ok: true; userEmail: string; accessToken: string; displayName?: string }
+  | { ok: false };
+
 /** Refresh access token this many ms before JWT exp (production SSO). */
 const REFRESH_BUFFER_MS = 2 * 60 * 1000;
 /** Fallback interval when JWT exp cannot be parsed (30 min access token − buffer). */
@@ -11,6 +15,8 @@ const FALLBACK_REFRESH_MS = 28 * 60 * 1000;
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let refreshLoopStarted = false;
+let verifyInFlight: Promise<AuthVerifyResult> | null = null;
+let refreshInFlight: Promise<AuthVerifyResult> | null = null;
 
 export function getAuthToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -108,13 +114,8 @@ export function logoutToIhepSso(): void {
   window.location.replace(dest);
 }
 
-export type AuthVerifyResult =
-  | { ok: true; userEmail: string; accessToken: string; displayName?: string }
-  | { ok: false };
-
-/** Use httpOnly refresh-token cookie to obtain a new access token (SSO production). */
-export async function refreshAccessToken(): Promise<AuthVerifyResult> {
-try {
+async function refreshAccessTokenOnce(): Promise<AuthVerifyResult> {
+  try {
     const response = await apiFetch(`${getServerUrl()}/auth/refresh`, {
       method: "POST",
       credentials: "include",
@@ -138,6 +139,17 @@ try {
   }
 }
 
+/** Use httpOnly refresh-token cookie to obtain a new access token (SSO production). */
+export async function refreshAccessToken(): Promise<AuthVerifyResult> {
+  if (refreshInFlight) {
+    return refreshInFlight;
+  }
+  refreshInFlight = refreshAccessTokenOnce().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
 /** Call the server to clear the httpOnly refresh-token cookie. */
 export async function logoutRequest(): Promise<void> {
   try {
@@ -151,79 +163,87 @@ export async function logoutRequest(): Promise<void> {
   }
 }
 
-/** Validate OIDC session cookie, then optional local JWT. Do not probe refresh without a token. */
-export async function verifyAuthSession(): Promise<AuthVerifyResult> {
-  try {
-    const sessionResponse = await apiFetch(`${getServerUrl()}/auth/me`, {
-      credentials: "include",
-    });
-    if (sessionResponse.ok) {
-      const payload = await sessionResponse.json();
-      const userEmail =
-        (payload?.email as string | undefined) ||
-        (payload?.sub as string | undefined) ||
-        (payload?.data?.user_id as string | undefined);
-      if (userEmail) {
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(USER_EMAIL_KEY, userEmail);
-        }
-        const token = getAuthToken();
-        return {
-          ok: true,
-          userEmail,
-          accessToken: token || "",
-          displayName:
-            (payload?.name as string | undefined) ||
-            (payload?.data?.display_name as string | undefined) ||
-            "",
-        };
-      }
-    }
-  } catch {
-    // Fall through.
-  }
-
-  const token = getAuthToken();
-  if (!token) {
+function parseMePayload(payload: any, fallbackToken: string): AuthVerifyResult {
+  const userEmail =
+    (payload?.email as string | undefined) ||
+    (payload?.sub as string | undefined) ||
+    (payload?.data?.user_id as string | undefined) ||
+    getUserEmail() ||
+    undefined;
+  if (!userEmail) {
     return { ok: false };
+  }
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(USER_EMAIL_KEY, userEmail);
+  }
+  return {
+    ok: true,
+    userEmail,
+    accessToken: fallbackToken,
+    displayName:
+      (payload?.name as string | undefined) ||
+      (payload?.data?.display_name as string | undefined) ||
+      "",
+  };
+}
+
+async function verifyAuthSessionOnce(): Promise<AuthVerifyResult> {
+  const token = getAuthToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
   }
 
   let meResponse: Response;
   try {
     meResponse = await apiFetch(`${getServerUrl()}/auth/me`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers,
       credentials: "include",
     });
   } catch {
-    // Network error — try a full refresh instead of giving up
+    if (!token) {
+      return { ok: false };
+    }
     const refreshed = await refreshAccessToken();
     return refreshed.ok ? refreshed : { ok: false };
   }
 
   if (meResponse.ok) {
     const payload = await meResponse.json();
-    const userEmail =
-      (payload?.data?.user_id as string | undefined) || getUserEmail();
-    if (!userEmail) {
-      clearAuthSession();
+    const parsed = parseMePayload(payload, token || "");
+    if (!parsed.ok) {
+      if (token) {
+        clearAuthSession();
+      }
       return { ok: false };
     }
-    const displayName = (payload?.data?.display_name as string | undefined) || "";
-    saveAuthSession(token, userEmail);
-    return { ok: true, userEmail, accessToken: token, displayName };
+    if (token) {
+      saveAuthSession(token, parsed.userEmail);
+    }
+    return parsed;
   }
 
-  if (meResponse.status === 401) {
+  if (meResponse.status === 401 && token) {
     const refreshed = await refreshAccessToken();
     if (refreshed.ok) {
       return refreshed;
     }
+    clearAuthSession();
+    return { ok: false };
   }
 
-  clearAuthSession();
   return { ok: false };
+}
+
+/** Validate OIDC session cookie, then optional local JWT. Do not probe refresh without a token. */
+export async function verifyAuthSession(): Promise<AuthVerifyResult> {
+  if (verifyInFlight) {
+    return verifyInFlight;
+  }
+  verifyInFlight = verifyAuthSessionOnce().finally(() => {
+    verifyInFlight = null;
+  });
+  return verifyInFlight;
 }
 
 /**

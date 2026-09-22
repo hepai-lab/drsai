@@ -1,15 +1,35 @@
 import * as React from "react";
 import { message } from "antd";
-import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
+import { useAgentInfo, findLiveCatalogAgent } from "@/components/features/Agents/useAgentInfo";
 import { agentWorkerAPI, sessionAPI } from "@/components/views/api";
 import { useConfigStore } from "@/hooks/store";
 import { useModeConfigStore } from "@/store/modeConfig";
 import type { Session } from "../../../../components/types/datamodel";
+import type { Agent } from "@/types/common";
 
 interface UseLlmSelectorOptions {
   userId: string;
   userEmail?: string;
   sessionId: number;
+}
+
+function pickAgentConfig(
+  ...sources: Array<{ agent_config?: Record<string, string> } | null | undefined>
+): Record<string, string> | null {
+  for (const src of sources) {
+    const cfg = src?.agent_config;
+    if (cfg && typeof cfg === "object" && !Array.isArray(cfg) && Object.keys(cfg).length > 0) {
+      return cfg as Record<string, string>;
+    }
+  }
+  return null;
+}
+
+function configToLlmList(cfg: Record<string, string>) {
+  return Object.entries(cfg).map(([key, value]) => ({
+    label: key,
+    value: String(value),
+  }));
 }
 
 export function useLlmSelector({
@@ -44,16 +64,60 @@ export function useLlmSelector({
   }, [isSessionBound, effectiveSessionId, session, sessions]);
 
   React.useEffect(() => {
-    if (agentInfo && agentInfo.agent_config) {
-      const next = Object.entries(agentInfo.agent_config).map(([key, value]) => ({
-        label: key,
-        value: value,
-      }));
-      setLlmList(next);
-    } else {
-      setLlmList([]);
+    const sessionAgent = boundSession?.agent_mode_config as
+      | { agent_config?: Record<string, string>; name?: string; mode?: string; id?: string }
+      | undefined;
+    const fromStore = pickAgentConfig(agentInfo, selectedAgent, sessionAgent);
+    if (fromStore) {
+      setLlmList(configToLlmList(fromStore));
+      return;
     }
-  }, [agentInfo]);
+
+    const lookupId = String(
+      agentId ||
+        selectedAgent?.id ||
+        (selectedAgent as { agent_id?: string } | null)?.agent_id ||
+        sessionAgent?.id ||
+        ""
+    );
+    if (!userId || !lookupId) {
+      setLlmList([]);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        let live: Partial<Agent> | null = null;
+        try {
+          live = (await agentWorkerAPI.getUserAgentById(userId, lookupId)) as Partial<Agent>;
+        } catch {
+          const agents = await agentWorkerAPI.getUserAgents(userId, "", false);
+          live = findLiveCatalogAgent(
+            agents,
+            lookupId,
+            (selectedAgent || sessionAgent || agentInfo) as Partial<Agent>,
+          );
+        }
+        if (cancelled) return;
+        const cfg = pickAgentConfig(live);
+        if (!cfg) {
+          setLlmList([]);
+          return;
+        }
+        setLlmList(configToLlmList(cfg));
+        if (live) {
+          setAgentInfo({ ...(agentInfo || {}), ...live, agent_config: cfg });
+        }
+      } catch {
+        if (!cancelled) setLlmList([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agentInfo, selectedAgent, boundSession, agentId, userId, setAgentInfo]);
 
   React.useEffect(() => {
     const sessionConfigName =

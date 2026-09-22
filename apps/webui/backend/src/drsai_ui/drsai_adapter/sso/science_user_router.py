@@ -259,19 +259,78 @@ def _resolve_user_agent_id(body: object, email: str = "") -> str | None:
 
 
 async def _persist_embed_user(user_id: str, user_source: str) -> None:
-    """Record SSO user_source and seed default agents if this is a first login."""
+    """Record SSO user_source and seed default agents if this is a first login.
+
+    CSNS (``user_agent``) users need the full catalog (DDF + remotes) on first
+    login so the post-login ``share_agent=true&agentName=iPanda`` redirect can
+    match. Seeding only DEFAULT_REMOTE_AGENTS leaves DocMaster alone and breaks
+    the iPanda default.
+    """
     from drsai_ui.ui_backend.backend.web.deps import get_db
-    from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, UserAgents
-    from drsai_ui.agent_factory.agent_mode_cofigs import get_default_agent_mode_config
+    from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings
+    from drsai_ui.agent_factory.agent_mode_cofigs import (
+        find_agent_by_name,
+        get_default_agent_mode_config,
+        get_user_agent_default_agent_name,
+        get_user_agents,
+    )
     from drsai_ui.ui_backend.backend.web.auth_source import record_auth_source
 
     db = await get_db()
     record_auth_source(db, user_id, "sso", user_source=user_source)
     resp_agent = db.get(AgentModeSettings, filters={"user_id": user_id})
-    if not resp_agent.status or not resp_agent.data:
+    if resp_agent.status and resp_agent.data:
+        return
+
+    agents_list: list = []
+    default_agent_id = None
+
+    if user_source == "user_agent":
+        try:
+            result = await get_user_agents(
+                user_id=user_id,
+                authorization="",
+                is_refresh=True,
+                db=db,
+                user_source=user_source,
+            )
+            agents_list = list(result.get("data") or [])
+        except Exception:
+            logger.exception(
+                "[CSNS] Failed to refresh full agent catalog for %s; "
+                "falling back to DEFAULT_REMOTE_AGENTS",
+                user_id,
+            )
+            agents_list = get_default_agent_mode_config(
+                user_id, user_source=user_source
+            )
+
+        target_name = get_user_agent_default_agent_name()
+        matched = find_agent_by_name(agents_list, target_name)
+        if matched and matched.get("id"):
+            default_agent_id = str(matched["id"])
+            for agent in agents_list:
+                if isinstance(agent, dict):
+                    agent["is_default"] = str(agent.get("id") or "") == default_agent_id
+        else:
+            logger.warning(
+                "[CSNS] Default agent %r not in catalog for %s (count=%d)",
+                target_name,
+                user_id,
+                len(agents_list),
+            )
+    else:
         agents_list = get_default_agent_mode_config(user_id, user_source=user_source)
-        db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
-        db.upsert(UserAgents(user_id=user_id, agents=agents_list))
+
+    # Prefer empty agents_mode — live catalog is assembled on list; keep row as
+    # first-login gate + default_agent_id store.
+    db.upsert(
+        AgentModeSettings(
+            user_id=user_id,
+            agents_mode=[],
+            default_agent_id=default_agent_id,
+        )
+    )
 
 
 async def _issue_embed_session(user_id: str, user_source: str) -> JSONResponse:

@@ -47,6 +47,35 @@ import json
 
 here = Path(__file__).parent.resolve()
 
+
+def classify_lazy_init_error(exc: BaseException) -> str:
+    """Map lazy_init exceptions to a stable machine-readable code."""
+    if isinstance(exc, KeyError):
+        return "model_not_found"
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return "timeout"
+    if isinstance(exc, ConnectionError):
+        return "worker_unavailable"
+    return "init_failed"
+
+
+def lazy_init_failure_payload(exc: BaseException) -> Dict[str, Any]:
+    """RPC payload for a failed lazy_init.
+
+    ``message`` is a friendly bubble, never the exception string.
+    Callers that need diagnostics should read ``error`` / ``detail``.
+    """
+    from drsai.modules.agents.drsai_worker_agent import lazy_init_user_message
+
+    error = classify_lazy_init_error(exc)
+    return {
+        "status": False,
+        "message": lazy_init_user_message(error),
+        "error": error,
+        "detail": str(exc),
+    }
+
+
 ############################################
 # Dr.Sai application
 ############################################
@@ -560,7 +589,13 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             message = await agent.lazy_init(api_key=api_key, thread_id=chat_id, run_info=run_info, **kwargs)
             return {"status": True, "message": message}
         except Exception as e:
-            return {"status": False, "message": f"Lazy init error: {e}"}
+            payload = lazy_init_failure_payload(e)
+            logger.error(
+                "Lazy init failed [{}]: {}",
+                payload["error"],
+                payload["detail"],
+            )
+            return payload
     
     @HRModel.remote_callable
     async def pause(self, chat_id: str) -> Dict[str, Any]:

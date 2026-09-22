@@ -16,10 +16,15 @@ async def test_remote_worker_agent():
 
     for agent in client.agents.list():
         if agent:
-            # print(agent.id)
-            # print(agent.metadata)
-            if "test" in agent.metadata.get('join_topics', []):
-                print(agent.id, agent.description)
+            agent = agent if isinstance(agent, dict) else {
+                "id": getattr(agent, "id", None),
+                "description": getattr(agent, "description", None),
+                "metadata": getattr(agent, "metadata", None) or {},
+            }
+            # print(agent.get("id"))
+            # print(agent.get("metadata"))
+            if "test" in (agent.get("metadata") or {}).get('join_topics', []):
+                print(agent.get("id"), agent.get("description"))
 # Create a factory function to ensure isolated Agent instances for concurrent access.
 def create_agent() -> HepAIWorkerAgent:
     
@@ -30,15 +35,20 @@ def create_agent() -> HepAIWorkerAgent:
     
     for agent in client.agents.list():
         if agent:
-            if "test" in agent.metadata.get('join_topics', []):
+            agent = agent if isinstance(agent, dict) else {
+                "id": getattr(agent, "id", None),
+                "description": getattr(agent, "description", None),
+                "metadata": getattr(agent, "metadata", None) or {},
+            }
+            if "test" in (agent.get("metadata") or {}).get('join_topics', []):
                 chat_id = "test_123"
                 run_info = {}
                 api_key = os.getenv("HEPAI_API_KEY")
                 url = "https://aiapi.ihep.ac.cn/apiv2"
-                name = agent.id
+                name = agent.get("id")
                 return HepAIWorkerAgent(
-                    name=agent.id,
-                    description=agent.description,
+                    name=name,
+                    description=agent.get("description"),
                     model_remote_configs={
                         "url": url,
                         "api_key": api_key,

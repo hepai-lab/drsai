@@ -18,11 +18,9 @@ interface AgentCardData {
   mode?: AgentMode;
   api_key?: string;
   onRemove?: (id?: string) => void;
-  onSetDefault?: (id?: string) => void;
   id?: string;
   featured?: boolean;
   is_default?: boolean;
-  is_user_default?: boolean;
   is_public?: boolean;
 }
 
@@ -203,28 +201,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit, onCardClick }) => 
             {agent.owner}
           </p>
         </div>
-        {/* 设为默认智能体 - 暂时注释 */}
-        {/* {agent.onSetDefault && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              agent.onSetDefault?.(agent.id);
-            }}
-            title={agent.is_user_default ? t("agentsquare.currentDefault") : t("agentsquare.setAsDefault")}
-            aria-label={agent.is_user_default ? t("agentsquare.currentDefault") : t("agentsquare.setAsDefault")}
-            className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${
-              agent.is_user_default
-                ? "text-amber-500 hover:text-amber-600 dark:text-amber-400 dark:hover:text-amber-300"
-                : "text-secondary/40 hover:text-amber-500 dark:text-secondary/30 dark:hover:text-amber-400"
-            }`}
-          >
-            <Star
-              className="h-3.5 w-3.5"
-              fill={agent.is_user_default ? "currentColor" : "none"}
-            />
-          </button>
-        )} */}
       </div>
 
       {/* Description */}

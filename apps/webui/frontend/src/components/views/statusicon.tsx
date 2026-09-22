@@ -56,6 +56,9 @@ export const getStatusIcon = (
           )}
         </div>
       );
+    case "ready":
+      // Turn finished — ready for the next free-form message. No banner.
+      return null;
     case "complete":
     case "error":
       // Silenced — no user-visible status prompts for terminal states

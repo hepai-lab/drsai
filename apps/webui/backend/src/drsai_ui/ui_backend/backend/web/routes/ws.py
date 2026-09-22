@@ -185,6 +185,23 @@ async def run_websocket(
             try:
                 raw_message = await websocket.receive_text()
                 message = json.loads(raw_message)
+                msg_type = message.get("type")
+                if msg_type in (
+                    "start",
+                    "continue",
+                    "input_response",
+                    "stop",
+                    "pause",
+                    "resume",
+                    "stream.resume",
+                ):
+                    logger.info(
+                        "[CHAT_TURN] run={} event=ws_in type={} task_len={} has_metadata={}",
+                        run_id,
+                        msg_type,
+                        len(message.get("task") or "") if message.get("task") else 0,
+                        bool(message.get("metadata")),
+                    )
                 logger.debug(
                     f"[WS_IN] run={run_id} type={message.get('type')} "
                     f"task_len={len(message.get('task', '')) if message.get('task') else 0}"
@@ -193,6 +210,12 @@ async def run_websocket(
                 if message.get("type") == "start" or message.get("type") == "continue":
                     # Handle start message
                     logger.info(f"Received start request for run {run_id}")
+                    ws_manager.set_stream_protocol(
+                        run_id, message.get("stream_protocol")
+                    )
+                    resume_after = message.get("resume_after_seq")
+                    if isinstance(resume_after, int) and resume_after >= 0:
+                        await ws_manager.replay_stream_events(run_id, resume_after)
                     task: str = message.get("task")
                     start_metadata: dict = message.get("metadata") or {}
                     team_config = start_metadata.pop("team_config")
@@ -236,6 +259,12 @@ async def run_websocket(
                         # input_response instead of calling start_stream which would
                         # cancel the running agent.
                         if message.get("type") == "continue" and ws_manager.has_active_run(run_id):
+                            logger.info(
+                                "[CHAT_TURN] run={} event=continue_as_input_response has_files={} has_skills={}",
+                                run_id,
+                                bool(files),
+                                bool(skills),
+                            )
                             logger.info(
                                 f"Run {run_id} has active team manager — routing 'continue' as input_response"
                             )
@@ -311,20 +340,45 @@ async def run_websocket(
                         {"type": "pong", "timestamp": datetime.utcnow().isoformat()}
                     )
 
+                elif message.get("type") == "stream.resume":
+                    selected = ws_manager.set_stream_protocol(
+                        run_id, message.get("stream_protocol")
+                    )
+                    resume_after = message.get("resume_after_seq", 0)
+                    await ws_manager.replay_stream_events(
+                        run_id,
+                        resume_after if isinstance(resume_after, int) else 0,
+                    )
+                    await websocket.send_json(
+                        {
+                            "type": "stream.ready",
+                            "protocol_version": selected,
+                            "run_id": str(run_id),
+                        }
+                    )
+
                 elif message.get("type") == "input_response":
                     # Handle input response from client
+                    t_in = datetime.utcnow()
+                    logger.info("[CHAT_TURN] run={} event=input_response_recv", run_id)
                     response = message.get("response")
                     metadata = message.get("metadata")
                     if isinstance(metadata, dict):
                         metadata = dict(metadata)
                         _enrich_input_response_with_files(response, metadata)
                         ws_headers = {k: v for k, v in websocket.headers.items()}
+                        skill_t0 = datetime.utcnow()
                         await _enrich_input_response_with_skills(
                             ws_manager=ws_manager,
                             user_id=run_record.user_id,
                             run_id=run_id,
                             metadata=metadata,
                             request_headers=ws_headers,
+                        )
+                        logger.info(
+                            "[CHAT_TURN] run={} event=input_response_skills_done elapsed_ms={}",
+                            run_id,
+                            int((datetime.utcnow() - skill_t0).total_seconds() * 1000),
                         )
                     if metadata:
                         settings_config = metadata.get("settings_config")
@@ -343,6 +397,11 @@ async def run_websocket(
                         }
                     if response is not None:
                         await ws_manager.handle_input_response(run_id, response)
+                        logger.info(
+                            "[CHAT_TURN] run={} event=input_response_handled elapsed_ms={}",
+                            run_id,
+                            int((datetime.utcnow() - t_in).total_seconds() * 1000),
+                        )
                     else:
                         logger.warning(
                             f"Invalid input response format for run {run_id}"

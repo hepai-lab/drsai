@@ -36,7 +36,10 @@ async def test_fetch_latest_windows_release_normalizes_manifest() -> None:
     assert release["version"] == "1.5.3"
     assert release["buildLabel"] == "Beta 3"
     assert release["releaseLabel"] == "Beta 3"
-    assert release["download"]["file"] == "OpenDrSai-Windows-Installer-x64.msi"
+    assert release["download"]["file"] == "OpenDrSai-Windows-v1.5.3-Installer-x64.msi"
+    assert release["download"]["url"].endswith(
+        "/releases/v1.5.3/windows/OpenDrSai-Windows-v1.5.3-Installer-x64.msi"
+    )
     assert release["download"]["sizeBytes"] == 647168
     assert release["program"]["file"] == "OpenDrSai-Windows-v1.5.3-x64.zip"
     assert release["program"]["sha256"].startswith("07b2b300")
@@ -180,6 +183,77 @@ async def test_production_policy_requests_stable_only() -> None:
     assert requested_paths[0] == "/channels/stable/latest-windows.json"
     assert not any("/beta/" in path for path in requested_paths)
     assert release["channel"] == "stable"
+    assert release["download"]["file"] == "OpenDrSai-Windows-v1.5.8-Installer-x64.msi"
+
+
+@pytest.mark.asyncio
+async def test_missing_stable_falls_back_to_published_beta() -> None:
+    requested_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_paths.append(request.url.path)
+        if request.method == "HEAD":
+            if request.url.path.endswith(
+                "OpenDrSai-Windows-v2.0.5-Installer-x64.msi"
+            ):
+                return httpx.Response(
+                    200, request=request, headers={"content-length": "647168"}
+                )
+            return httpx.Response(404, request=request)
+        if request.url.path == "/channels/stable/latest-windows.json":
+            return httpx.Response(404, request=request)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "version": "2.0.5",
+                "channel": "beta",
+                "buildLabel": "Beta 8",
+                "runtime": {
+                    "url": "https://download-opendrsai.ihep.ac.cn/releases/v2.0.5/windows/OpenDrSai-Windows-v2.0.5-x64.zip",
+                    "sizeBytes": 352919562,
+                    "sha256": "d0b649c5df99f3e11aa54e698a32bc29c7e43103770c4b4b74d10b7a41f755ee",
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        release = await fetch_latest_release("windows", client, ("stable",))
+
+    assert requested_paths[0] == "/channels/stable/latest-windows.json"
+    assert "/channels/beta/latest-windows.json" in requested_paths
+    assert release["version"] == "2.0.5"
+    assert release["channel"] == "beta"
+    assert release["releaseLabel"] == "Beta 8"
+    assert release["download"]["file"] == "OpenDrSai-Windows-v2.0.5-Installer-x64.msi"
+    assert release["download"]["sizeBytes"] == 647168
+
+
+@pytest.mark.asyncio
+async def test_windows_installer_falls_back_to_legacy_unversioned_name() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD":
+            if request.url.path.endswith("OpenDrSai-Windows-Installer-x64.msi"):
+                return httpx.Response(200, headers={"content-length": "643072"})
+            return httpx.Response(404, request=request)
+        return httpx.Response(
+            200,
+            json={
+                "version": "1.5.8",
+                "channel": "stable",
+                "runtime": {
+                    "url": "https://download-opendrsai.ihep.ac.cn/releases/v1.5.8/windows/OpenDrSai-Windows-v1.5.8-x64.zip",
+                    "sizeBytes": 355495575,
+                    "sha256": "e710fa6d0837ec7d6f5f8109d6c9d4801736b0452c2a844dd7c70748b6fd9ea1",
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        release = await fetch_latest_release("windows", client, ("stable",))
+
+    assert release["download"]["file"] == "OpenDrSai-Windows-Installer-x64.msi"
+    assert release["download"]["sizeBytes"] == 643072
 
 
 @pytest.mark.asyncio
