@@ -31337,12 +31337,46 @@ button.structured-activity-compact:hover > span {
   color: var(--app-text-secondary);
   font-size: 10px;
 }
+.kb-panel-ragflow-connect {
+  display: grid;
+  gap: 10px;
+}
+
 .kb-panel-ragflow-info {
   grid-column: 1 / -1;
-  font-size: 11px;
-  color: var(--app-text-secondary);
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 8px;
   padding: 2px 0;
+  font-size: 12px;
+  color: var(--app-text-secondary);
 }
+
+.kb-panel-ragflow-info-label {
+  color: var(--app-text-muted, #6b7280);
+  font-size: 12px;
+}
+
+.kb-panel-ragflow-server-link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-accent-strong, #6d4bd6);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.kb-panel-ragflow-server-link:hover {
+  color: var(--app-accent, #8b5cf6);
+}
+
 .kb-panel-hint {
   grid-column: 1 / -1;
   font-size: 10px;
@@ -31484,9 +31518,58 @@ button.structured-activity-compact:hover > span {
   letter-spacing: 0.3px;
 }
 
-/* kb-panel-layout-v2 — same soft surface language as skills pages */
+/* kb-panel-layout-v2 — inherits system palette; only local/remote accents stay here */
 .kb-panel-page.skills-manager-page {
+  --kb-local: var(--app-warning);
+  --kb-local-soft: #fef3c7;
+  --kb-local-line: #f3d39a;
+  --kb-remote: var(--app-info);
+  --kb-remote-soft: var(--app-info-soft);
+  --kb-remote-line: var(--app-info-border);
   gap: 12px;
+}
+
+.kb-panel-page .skills-online-stat-card {
+  overflow: hidden;
+}
+
+.kb-panel-page .skills-online-stat-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--app-accent);
+}
+
+.kb-panel-page .skills-online-stat-card.kb-stat-local::before {
+  background: linear-gradient(90deg, var(--kb-local), #f59e0b);
+}
+
+.kb-panel-page .skills-online-stat-card.kb-stat-remote::before {
+  background: linear-gradient(90deg, var(--kb-remote), #38bdf8);
+}
+
+.kb-panel-page .skills-online-stat-card.kb-stat-enabled::before {
+  background: linear-gradient(90deg, var(--app-accent), #2dd4bf);
+}
+
+.kb-panel-page .skills-online-stat-card.kb-stat-total::before {
+  background: linear-gradient(90deg, #64748b, var(--app-accent));
+}
+
+.kb-panel-page .kb-stat-local .skills-online-stat-title {
+  color: var(--kb-local);
+}
+
+.kb-panel-page .kb-stat-remote .skills-online-stat-title {
+  color: var(--kb-remote);
+}
+
+.kb-panel-page .kb-stat-enabled .skills-online-stat-title,
+.kb-panel-page .kb-stat-enabled .skills-online-stat-value {
+  color: var(--app-accent-strong);
 }
 
 .kb-page-content {
@@ -31538,6 +31621,21 @@ button.structured-activity-compact:hover > span {
   color: var(--app-text-muted, #6b7280);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.kb-panel-page .kb-panel-ragflow-server-link {
+  color: var(--kb-remote);
+}
+
+.kb-panel-page .kb-panel-ragflow-server-link:hover {
+  color: color-mix(in srgb, var(--kb-remote) 80%, #000);
+}
+
+.kb-panel-page .kb-panel-ragflow-info {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--kb-remote-line);
+  background: var(--kb-remote-soft);
 }
 
 .kb-panel-inline-actions {
@@ -31594,7 +31692,16 @@ button.structured-activity-compact:hover > span {
 }
 
 .kb-panel-list-item::before {
-  display: none;
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 0.12s ease, background-color 0.12s ease;
 }
 
 .kb-panel-list-item:hover {
@@ -31606,7 +31713,17 @@ button.structured-activity-compact:hover > span {
 
 .kb-panel-list-item:hover::before,
 .kb-panel-list-item.active::before {
-  display: none;
+  opacity: 1;
+}
+
+.kb-panel-list-item.is-local:hover::before,
+.kb-panel-list-item.is-local.active::before {
+  background: var(--kb-local);
+}
+
+.kb-panel-list-item.is-remote:hover::before,
+.kb-panel-list-item.is-remote.active::before {
+  background: var(--kb-remote);
 }
 
 .kb-panel-list-item.active {
@@ -31615,8 +31732,24 @@ button.structured-activity-compact:hover > span {
   box-shadow: none;
 }
 
+.kb-panel-list-item.is-local.active {
+  background: color-mix(in srgb, var(--kb-local-soft) 70%, #fff);
+}
+
+.kb-panel-list-item.is-remote.active {
+  background: color-mix(in srgb, var(--kb-remote-soft) 75%, #fff);
+}
+
 .kb-panel-list-item.active .kb-panel-list-copy strong {
   color: var(--app-accent-strong, #6d4bd6);
+}
+
+.kb-panel-list-item.is-local.active .kb-panel-list-copy strong {
+  color: #92400e;
+}
+
+.kb-panel-list-item.is-remote.active .kb-panel-list-copy strong {
+  color: #0c4a6e;
 }
 
 .kb-panel-list-item.enabled:not(.active) {
@@ -31636,9 +31769,34 @@ button.structured-activity-compact:hover > span {
   color: var(--app-accent-strong, #6d4bd6);
 }
 
+.kb-panel-list-icon.is-local {
+  border-color: var(--kb-local-line);
+  background: var(--kb-local-soft);
+  color: var(--kb-local);
+}
+
+.kb-panel-list-icon.is-remote {
+  border-color: var(--kb-remote-line);
+  background: var(--kb-remote-soft);
+  color: var(--kb-remote);
+}
+
 .kb-panel-list-item.active .kb-panel-list-icon {
   border-color: color-mix(in srgb, var(--app-accent, #8b5cf6) 35%, var(--app-border-soft, #ddd3ef));
   background: #fff;
+  box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.kb-panel-page .skills-online-tag-pill.kb-tag-local {
+  border-color: var(--kb-local-line);
+  background: var(--kb-local-soft);
+  color: var(--kb-local);
+}
+
+.kb-panel-page .skills-online-tag-pill.kb-tag-remote {
+  border-color: var(--kb-remote-line);
+  background: var(--kb-remote-soft);
+  color: var(--kb-remote);
 }
 
 .kb-panel-list-copy {
@@ -31695,6 +31853,10 @@ button.structured-activity-compact:hover > span {
   border-radius: var(--app-card-radius, 12px);
   background: var(--app-card-bg, #fff);
   box-shadow: var(--app-shadow-card);
+}
+
+.kb-panel-detail.is-remote {
+  border-color: color-mix(in srgb, var(--kb-remote) 28%, var(--app-panel-border, #ddd3ef));
 }
 
 .kb-panel-detail .skills-online-empty {

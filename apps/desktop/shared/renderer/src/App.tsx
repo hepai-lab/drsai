@@ -73,7 +73,7 @@ import type {
   WorkspaceFilePreview,
   WorkspaceProject,
 } from "@shared/desktopApi";
-import { desktopApi } from "./desktopApi";
+import { desktopApi, hasDesktopApi } from "./desktopApi";
 import { copyTextSafely } from "./clipboard";
 import { describeUserFacingError, type UserFacingRecoveryAction } from "./userFacingErrors";
 import { appendRendererStage } from "./debugLogStore";
@@ -82,6 +82,11 @@ import { supportsFullAgentPrimaryRuntime, supportsImageGenerationModel } from ".
 import { getAgentModelOptions, getImageGenerationModelOptions } from "./agentModelOptions";
 import { formatUpdateStatus } from "./statusFormatting";
 import { normalizeWorkspaceSortMode, sortWorkspacesForSidebar, type WorkspaceSortMode } from "./workspaceOrdering";
+import {
+  DEFAULT_COLOR_PALETTE,
+  isColorPaletteId,
+  type ColorPaletteId,
+} from "./colorPalettes";
 import { describeMissingWorkspacePreview, isMissingWorkspacePreview, loadWorkspacePreview } from "./workspacePreview";
 import { LoginScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
@@ -204,6 +209,7 @@ const LAST_THREAD_STORAGE_KEY = "opendrsai.lastThread";
 const LAST_WORKSPACE_STORAGE_KEY = "opendrsai.lastWorkspace";
 const COMPLETION_NOTIFICATION_STORAGE_KEY = "opendrsai.completionNotifications";
 const APPEARANCE_STORAGE_KEY = "opendrsai.appearance";
+const COLOR_PALETTE_STORAGE_KEY = "opendrsai.colorPalette";
 const SIDEBAR_COMPONENTS_STORAGE_KEY = "opendrsai.sidebarComponents";
 const RIGHT_SIDEBAR_COMPONENTS_STORAGE_KEY = "opendrsai.rightSidebarComponents";
 const REMOTE_RECENT_PATHS_STORAGE_KEY = "opendrsai.remoteSsh.recentPaths";
@@ -477,6 +483,11 @@ function AuthenticatedApp({
   const [restoreLastWorkspace, setRestoreLastWorkspace] = useState(() => loadBooleanSetting(RESTORE_WORKSPACE_STORAGE_KEY, true));
   const [completionNotifications, setCompletionNotifications] = useState(() => loadBooleanSetting(COMPLETION_NOTIFICATION_STORAGE_KEY, true));
   const [appearance, setAppearance] = useState<AppearanceMode>(() => loadAppearance());
+  const [colorPalette, setColorPalette] = useState<ColorPaletteId>(() => {
+    const palette = loadColorPalette();
+    document.documentElement.dataset.palette = palette;
+    return palette;
+  });
   const [sidebarComponents, setSidebarComponents] = useState<SidebarComponentVisibility>(() => loadSidebarComponents());
   const [rightSidebarComponents, setRightSidebarComponents] = useState<RightSidebarComponentVisibility>(() => loadRightSidebarComponents());
   const [myDrSaiConfig, setMyDrSaiConfig] = useState<MyDrSaiConfig | null>(null);
@@ -1300,18 +1311,39 @@ function AuthenticatedApp({
   useEffect(() => {
     window.localStorage.setItem(APPEARANCE_STORAGE_KEY, appearance);
     const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+    const syncWindowChrome = (): void => {
+      if (!hasDesktopApi()) return;
+      const styles = getComputedStyle(document.documentElement);
+      const read = (name: string, fallback: string): string => {
+        const value = styles.getPropertyValue(name).trim();
+        return value || fallback;
+      };
+      const color = read("--app-surface-bg", "#eef3f7");
+      const symbolColor = read("--app-text-secondary", "#3d5563");
+      void desktopApi.setWindowChromeAppearance({
+        color,
+        symbolColor,
+        backgroundColor: color,
+      }).catch(() => undefined);
+    };
     const applyTheme = (): void => {
       const resolvedTheme = appearance === "system"
         ? systemTheme.matches ? "dark" : "light"
         : appearance;
       document.documentElement.dataset.theme = resolvedTheme;
       document.documentElement.style.colorScheme = resolvedTheme;
+      window.requestAnimationFrame(syncWindowChrome);
     };
     applyTheme();
     if (appearance !== "system") return;
     systemTheme.addEventListener("change", applyTheme);
     return () => systemTheme.removeEventListener("change", applyTheme);
-  }, [appearance]);
+  }, [appearance, colorPalette]);
+
+  useEffect(() => {
+    window.localStorage.setItem(COLOR_PALETTE_STORAGE_KEY, colorPalette);
+    document.documentElement.dataset.palette = colorPalette;
+  }, [colorPalette]);
 
   useEffect(() => {
     document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
@@ -2062,7 +2094,10 @@ function AuthenticatedApp({
   }
 
   function handleThreadSelect(threadId: string, messageId?: string): void {
-    const thread = threads.find((item) => item.id === threadId);
+    const thread = threads.find((item) => item.id === threadId)
+      ?? threads.find((item) => item.runtimeSessionId === threadId)
+      ?? threadsRef.current.find((item) => item.id === threadId || item.runtimeSessionId === threadId);
+    const resolvedThreadId = thread?.id ?? threadId;
     if (thread?.boundAgentId) {
       const boundAgentId: string = thread.boundAgentId;
       // Normalize both sides: the thread may store a bare routable name (e.g.
@@ -2111,37 +2146,18 @@ function AuthenticatedApp({
         setActiveWorkspaceId(nextWorkspace.id);
       }
     }
-    setActiveThreadId(threadId);
+    activeThreadIdRef.current = resolvedThreadId;
+    setActiveThreadId(resolvedThreadId);
     setRightPanelCollapsed(true);
     if (threadNeedsHistoryHydration(thread)) {
-      void hydrateThreadSnapshot(threadId);
+      void hydrateThreadSnapshot(resolvedThreadId);
     }
     if (messageId) {
       setMessageFocus({ messageId, nonce: Date.now() });
     }
     if (thread?.unread) {
-      void handleThreadUpdate(threadId, { unread: false });
+      void handleThreadUpdate(resolvedThreadId, { unread: false });
     }
-    navigateTo(MENU_IDS.currentSession);
-  }
-
-  async function handleNewAgentTask(): Promise<void> {
-    setRightPanelCollapsed(true);
-    const thread = await desktopApi.createThread({
-      kind: "agent_run",
-      title: language === "zh" ? "新智能体任务" : "New agent task",
-      workspacePath: effectiveWorkspacePath,
-      model: selectedChatModel ?? undefined,
-      reasoningEffort: defaultThinkingEffort,
-      planMode: defaultPlanMode === "plan",
-    });
-    setActiveThreadId(thread.id);
-    setThreads((current) =>
-      sortThreadsForSidebar([
-        thread,
-        ...current.filter((item) => item.id !== thread.id),
-      ]),
-    );
     navigateTo(MENU_IDS.currentSession);
   }
 
@@ -3743,6 +3759,7 @@ function AuthenticatedApp({
         modelSettings={modelSettings}
         agents={availableChatAgents}
         appearance={appearance}
+        colorPalette={colorPalette}
         codexStatus={codexStatus}
         approvalCenterPanel={(
           <ApprovalCenterView
@@ -3794,6 +3811,7 @@ function AuthenticatedApp({
           }
         }}
         onAppearanceChange={setAppearance}
+        onColorPaletteChange={setColorPalette}
         onCompletionNotificationsChange={(enabled) => {
           setCompletionNotifications(enabled);
         }}
@@ -3818,7 +3836,6 @@ function AuthenticatedApp({
         onExportLocalData={() => exportLocalDesktopData(threadSnapshotStore.all())}
         onLanguageChange={setLanguage}
         onLogout={handleLogout}
-        onNewAgentTask={() => void handleNewAgentTask()}
         onOpenMobilePairing={() => setMobilePairingOpen(true)}
         mobilePairingRefreshToken={mobilePairingRefreshToken}
         onOpenBrowserPanel={() => {
@@ -4640,6 +4657,11 @@ function loadAppearance(): AppearanceMode {
   return value === "light" || value === "dark" || value === "system"
     ? value
     : "system";
+}
+
+function loadColorPalette(): ColorPaletteId {
+  const value = window.localStorage.getItem(COLOR_PALETTE_STORAGE_KEY);
+  return isColorPaletteId(value) ? value : DEFAULT_COLOR_PALETTE;
 }
 
 function loadSidebarComponents(): SidebarComponentVisibility {

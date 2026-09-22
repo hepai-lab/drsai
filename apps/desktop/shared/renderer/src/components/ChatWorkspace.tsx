@@ -87,6 +87,7 @@ import type {
   GatewaySkill,
 } from "@shared/desktopApi";
 import type { ChatAttachment, InteractionOption } from "@shared/desktopApi";
+import type { DesktopPlatformDescriptor } from "@shared/platform";
 import type { RunReproducibilityLevel } from "@shared/runInspection";
 import type { ArtifactPart, CitationPart, InteractionPart, StructuredAssistantPart, StructuredTurnState } from "@shared/structuredConversation";
 import type { AppLanguage } from "../navigation";
@@ -126,6 +127,13 @@ import { insertVoiceTranscript } from "../voice/voiceComposer";
 import {
   getVoiceStatusLabel,
 } from "../voice/voiceAudio";
+import {
+  describeSerialSttBlock,
+  getSelectedMicrophoneUnavailableMessage,
+  getSerialVoiceConsentMessage,
+  getVoiceRuntimeUnavailableMessage,
+  type SerialVoiceSetupAction,
+} from "../voice/voiceFailureCopy";
 import { useVoiceCapture } from "../voice/useVoiceCapture";
 import { useDuplexVoiceInput } from "../voice/duplex/useDuplexVoiceInput";
 import type { DuplexCaptureQualityIssue } from "../voice/duplex/captureQuality";
@@ -406,6 +414,8 @@ interface ChatWorkspaceProps {
     attachments?: ChatAttachment[],
     options?: ChatSubmitOptions,
   ) => Promise<boolean>;
+  /** Platform feature flags; serial voice UI shows when serialVoice is true. */
+  featureCapabilities?: DesktopPlatformDescriptor["capabilities"]["features"];
 }
 
 function ChatWorkspaceImpl({
@@ -478,6 +488,7 @@ function ChatWorkspaceImpl({
   onRecoveryAction,
   onLoadEarlierHistory,
   onSubmit,
+  featureCapabilities,
 }: ChatWorkspaceProps): React.JSX.Element {
   useEffect(() => {
     appendRendererStage("chat_workspace.mounted", {
@@ -743,6 +754,7 @@ function ChatWorkspaceImpl({
   const [duplexPrivacyConfirmed, setDuplexPrivacyConfirmed] = useState(false);
   const [duplexTextStrategy, setDuplexTextStrategy] = useState<"after_response" | "interrupt_now">("after_response");
   const [voiceConsentRequired, setVoiceConsentRequired] = useState(false);
+  const [voiceSetupAction, setVoiceSetupAction] = useState<SerialVoiceSetupAction | null>(null);
   const [voiceMenuOpen, setVoiceMenuOpen] = useState(false);
   const voiceMenuRef = useRef<HTMLDivElement | null>(null);
   const voiceButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -830,14 +842,17 @@ function ChatWorkspaceImpl({
     beforeStart: async () => {
       voicePlayback.stop();
       setVoiceConsentRequired(false);
+      setVoiceSetupAction(null);
     },
     deviceId: voiceDeviceId,
+    locale: language === "en" ? "en" : "zh",
     onCaptureError: (error, message) => {
+      setVoiceSetupAction("retry_capture");
       reportVoiceCaptureFailure(error, message, "capture_initialization");
     },
     onDeviceUnavailable: () => {
       updateVoicePreferences({ inputDeviceId: "" });
-      setVoiceError("The selected microphone is no longer available. The default microphone will be used.");
+      setVoiceError(getSelectedMicrophoneUnavailableMessage(language === "zh"));
     },
     onRecorded: ({ blob, durationSeconds }) => {
       if (voiceRecordingProcessTimerRef.current !== null) window.clearTimeout(voiceRecordingProcessTimerRef.current);
@@ -1328,23 +1343,6 @@ function ChatWorkspaceImpl({
     () => visibleMessages.filter((message) => !isEmptyAssistantShell(message)),
     [visibleMessages],
   );
-  const turnRailMarkers = useMemo(
-    () => visibleMessages
-      .filter((message) => message.role === "user")
-      .map((message) => ({ id: message.id })),
-    [visibleMessages],
-  );
-  const canSaveLocalPreference = canHandleMemoryRequestLocally(input);
-  const canAnswerMaterialInventoryLocally = Boolean(materialRoleAnalysis?.items.length) && isMaterialInventoryQuestion(input);
-  const canAnswerMaterialQuestionLocally = Boolean(materialRoleAnalysis?.items.length) && isNaturalMaterialQuestion(input);
-  const emptyChatPreferenceNotice = emptyChat
-    ? messages.find((message) => message.id === "welcome")?.content.split("\n\n").slice(1).join("\n\n").trim() || ""
-    : "";
-  const activeAgent = useMemo(() => agentOptions.find((agent) => agent.id === selectedAgentId), [agentOptions, selectedAgentId]);
-  const activeAgentName = selectedAgentName?.trim() || activeAgent?.name || "OpenDrSai";
-  const isLocalOpenDrSaiAgent = useMemo(() => agentOptions.some(
-    (agent) => agent.id === selectedAgentId && agent.source === "local" && agent.id !== "my-codex",
-  ), [agentOptions, selectedAgentId]);
   const remoteAgentSkills = useMemo(() => (isRemoteAgent ? activeAgent?.remoteSkills ?? [] : []), [activeAgent, isRemoteAgent]);
   const [selectedRemoteSkillId, setSelectedRemoteSkillId] = useState<string | null>(null);
   const selectedRemoteSkill = remoteAgentSkills.find((skill) => skill.id === selectedRemoteSkillId) ?? null;
@@ -1497,6 +1495,7 @@ function ChatWorkspaceImpl({
     Boolean(navigator.mediaDevices?.getUserMedia) &&
     typeof window !== "undefined" &&
     "MediaRecorder" in window;
+  const serialVoiceEnabled = featureCapabilities == null || featureCapabilities.serialVoice === true;
   const showVoiceCaptureBar =
     voiceState === "requesting_permission" ||
     voiceState === "recording";
@@ -1635,7 +1634,7 @@ function ChatWorkspaceImpl({
       latestCompletedAssistantMessage.id,
       latestCompletedAssistantSpeechText,
       zh ? "zh" : "en",
-      { mode: resolveVoiceSynthesisMode(voicePreferences.synthesisMode, voicePreferences.remoteTtsConsent), rate: voicePreferences.playbackRate, voiceName: voicePreferences.voiceName },
+      { mode: resolveVoiceSynthesisMode(voicePreferences.synthesisMode, voicePreferences.remoteTtsConsent, featureCapabilities?.remoteSpeechSynthesis === true), rate: voicePreferences.playbackRate, voiceName: voicePreferences.voiceName },
     );
   }, [
     latestCompletedAssistantMessage?.id,
@@ -1648,6 +1647,7 @@ function ChatWorkspaceImpl({
     voicePreferences.remoteTtsConsent,
     voicePreferences.synthesisMode,
     voicePreferences.voiceName,
+    featureCapabilities?.remoteSpeechSynthesis,
     zh,
   ]);
 
@@ -2491,23 +2491,6 @@ function ChatWorkspaceImpl({
     setToolsOpen(false);
   }
 
-  function startEditAndResend(assistantMessageId: string): void {
-    const user = findPrecedingUserMessage(messages, assistantMessageId);
-    if (!user) return;
-    if (!pendingReplaceFromMessageId) {
-      editResendBackupRef.current = { input, attachments };
-    }
-    applyComposerText(user.content);
-    setPendingReplaceFromMessageId(user.id);
-    setAttachments(user.attachments?.length
-      ? user.attachments.map((attachment) => ({
-          ...attachment,
-          id: `${attachment.path || attachment.name || "attachment"}-${crypto.randomUUID()}`,
-        }))
-      : []);
-    textareaRef.current?.focus({ preventScroll: true });
-  }
-
   function startEditUserMessage(userMessageId: string): void {
     const user = messages.find((message) => message.id === userMessageId && message.role === "user");
     if (!user) return;
@@ -2569,7 +2552,6 @@ function ChatWorkspaceImpl({
   // Stable identities do not mean frozen closures: edits/regeneration must read
   // the current composer, messages, model/agent configuration and parent actions.
   const messageEvents = {
-    startEditAndResend: useEventCallback(startEditAndResend),
     startEditUserMessage: useEventCallback(startEditUserMessage),
     regenerateAssistant: useEventCallback(regenerateAssistant),
     onRetryMessage: useEventCallback((...args: Parameters<NonNullable<ChatWorkspaceProps["onRetryMessage"]>>) => onRetryMessage?.(...args)),
@@ -2789,12 +2771,38 @@ function ChatWorkspaceImpl({
       },
     });
     if (!voiceApiAvailable) {
-      const error = new Error("Voice recording is unavailable in this desktop runtime.");
+      const message = getVoiceRuntimeUnavailableMessage(language === "zh");
+      const error = new Error(message);
       setVoiceState("failed");
-      setVoiceError(error.message);
-      reportVoiceCaptureFailure(error, error.message, "runtime_api_check");
+      setVoiceError(message);
+      setVoiceSetupAction("retry_capture");
+      reportVoiceCaptureFailure(error, message, "runtime_api_check");
       return;
     }
+    let runtime = voiceRuntimeStatus;
+    if (describeSerialSttBlock(runtime, language === "zh") && hasDesktopApi() && typeof desktopApi.getVoiceRuntimeStatus === "function") {
+      try {
+        runtime = await desktopApi.getVoiceRuntimeStatus();
+        setVoiceRuntimeStatus(runtime);
+        setVoiceRuntimeDisclosure(runtime.providerDisclosure);
+        setVoiceRuntimeLabel(runtime.runtimeId === "gateway-provider" ? "Online STT" : "Fixture STT");
+      } catch {
+        runtime = voiceRuntimeStatus;
+      }
+    }
+    const sttBlock = describeSerialSttBlock(runtime, language === "zh");
+    if (sttBlock) {
+      const error = new Error(sttBlock.message);
+      setVoiceState("failed");
+      setVoiceError(sttBlock.message);
+      setVoiceConsentRequired(false);
+      setVoiceSetupAction("open_agent_settings");
+      reportVoiceCaptureFailure(error, sttBlock.message, "stt_runtime_check");
+      return;
+    }
+    setVoiceConsentRequired(false);
+    setVoiceSetupAction(null);
+    setVoiceError(null);
     dispatchVoiceTurn({ type: "begin_capture", turnId: createVoiceTurnId() });
     voiceSelectionRef.current = textareaRef.current
       ? { start: textareaRef.current.selectionStart, end: textareaRef.current.selectionEnd }
@@ -2805,9 +2813,10 @@ function ChatWorkspaceImpl({
     } else {
       const active = voiceCaptureDiagnosticRef.current;
       if (active && !active.failureRecorded) {
-        const message = voiceError || "Microphone capture could not be started.";
+        const message = voiceError || (language === "zh" ? "无法启动麦克风录音。" : "Microphone capture could not be started.");
         setVoiceState("failed");
         setVoiceError(message);
+        setVoiceSetupAction("retry_capture");
         reportVoiceCaptureFailure(
           new Error(message),
           message,
@@ -2995,20 +3004,28 @@ function ChatWorkspaceImpl({
       setVoiceRuntimeStatus(runtime);
       setVoiceRuntimeDisclosure(runtime.providerDisclosure);
       setVoiceRuntimeLabel(runtime.runtimeId === "gateway-provider" ? "Online STT" : "Fixture STT");
+      const sttBlock = describeSerialSttBlock(runtime, zh);
+      if (sttBlock) {
+        setVoiceConsentRequired(false);
+        setVoiceSetupAction("open_agent_settings");
+        failVoiceTranscriptionPreparation("runtime_unavailable", sttBlock.message, true);
+        return false;
+      }
       if (runtime.runtimeId === "gateway-provider" && !skipRemoteConsent && !voicePreferences.remoteSttConsent) {
         setVoiceConsentRequired(true);
+        setVoiceSetupAction("consent");
         failVoiceTranscriptionPreparation(
           "permission_denied",
-          zh
-            ? "录音已保留。允许在线语音识别后将继续识别，不需要重新录音。"
-            : "The recording is preserved. Allow online transcription to continue without recording again.",
+          getSerialVoiceConsentMessage(zh),
           true,
         );
         return false;
       }
       setVoiceConsentRequired(false);
+      setVoiceSetupAction(null);
       return true;
     } catch (error) {
+      setVoiceSetupAction("open_agent_settings");
       failVoiceTranscriptionPreparation(
         "runtime_unavailable",
         error instanceof Error
@@ -3981,643 +3998,6 @@ function ChatWorkspaceImpl({
       <div className={`chat-primary-pane ${emptyChat ? "empty-chat" : ""}`}>
       {searchOpen && (
         <div className="chat-search-overlay" role="dialog" aria-modal="true">
-          <button
-            type="button"
-            className="chat-search-backdrop"
-            aria-label={zh ? "关闭搜索" : "Close search"}
-            onClick={closeSearch}
-          />
-          <section className="chat-search-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="chat-search-modal-header">
-              <h2>{zh ? "搜索当前会话" : "Search Current Chat"}</h2>
-              <button
-                type="button"
-                className="chat-search-close"
-                onClick={closeSearch}
-                title={zh ? "关闭搜索" : "Close search"}
-                aria-label={zh ? "关闭搜索" : "Close search"}
-              >
-                <X size={17} />
-              </button>
-            </div>
-            <div className="chat-search-modal-body">
-          <div className="chat-search-strip">
-          <Search size={15} aria-hidden />
-          <input
-            ref={searchInputRef}
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (isTextCompositionEvent(event.nativeEvent)) return;
-              if (event.key === "Escape") {
-                event.preventDefault();
-                closeSearch();
-              } else if (event.key === "Enter" && event.shiftKey) {
-                event.preventDefault();
-                selectPreviousMatch();
-              } else if (event.key === "Enter") {
-                event.preventDefault();
-                selectNextMatch();
-              }
-            }}
-            placeholder={zh ? "搜索当前会话..." : "Search current chat..."}
-            aria-label={zh ? "搜索当前会话" : "Search current chat"}
-          />
-          <input
-            type="date"
-            className="chat-search-date"
-            value={searchDate}
-            onChange={(event) => locateConversationDate(event.target.value)}
-            aria-label={zh ? "按日期定位" : "Go to date"}
-            title={zh ? "按日期定位" : "Go to date"}
-          />
-          <span className="chat-search-count">
-            {searchQuery.trim()
-              ? searchMatches.length > 0
-                ? `${(activeMatchIndex % searchMatches.length) + 1} / ${searchMatches.length}`
-                : "No results"
-              : "Type to search"}
-          </span>
-          <button
-            type="button"
-            className="chat-search-step previous"
-            disabled={searchMatches.length === 0}
-            onClick={selectPreviousMatch}
-            title="Previous match"
-            aria-label="Previous match"
-          >
-            <ChevronDown size={15} />
-          </button>
-          <button
-            type="button"
-            className="chat-search-step"
-            disabled={searchMatches.length === 0}
-            onClick={selectNextMatch}
-            title="Next match"
-            aria-label="Next match"
-          >
-            <ChevronDown size={15} />
-          </button>
-          <button
-            type="button"
-            className="chat-search-close"
-            onClick={closeSearch}
-            title={zh ? "关闭搜索" : "Close search"}
-            aria-label={zh ? "关闭搜索" : "Close search"}
-          >
-            <X size={15} />
-          </button>
-          </div>
-            </div>
-          </section>
-        </div>
-      )}
-      {emptyChat && operationalStateControl ? (
-        <header className="conversation-titlebar conversation-titlebar-operational-only" data-testid="conversation-titlebar">
-          <div className="conversation-titlebar-main" />
-          <div className="conversation-titlebar-actions">{operationalStateControl}</div>
-        </header>
-      ) : null}
-      {!emptyChat && (
-      <header className="conversation-titlebar" data-testid="conversation-titlebar">
-        <div className="conversation-titlebar-main">
-          <strong title={conversationTitle || conversationId}>{conversationTitle || conversationId.slice(0, 12)}</strong>
-          {conversationHistory?.source === "codex" || continuesExistingTask ? <span className="conversation-backend-badge">Codex</span> : null}
-          <small className={`conversation-sync-status state-${conversationHistory?.state || (conversationHistoryPending ? "loading" : "ready")}`} data-testid="conversation-sync-status">{conversationHistoryPending
-          ? (zh ? "正在同步" : "Syncing")
-          : conversationHistory?.state === "partial"
-            ? (zh ? "部分同步" : "Partially synced")
-            : conversationHistory?.state === "error"
-              ? (zh ? "同步失败" : "Sync failed")
-              : conversationHistory?.source === "codex"
-                ? (zh ? `已同步 · ${conversationHistory.loadedRuns} 轮` : `Synced · ${conversationHistory.loadedRuns} turns`)
-                : (zh ? "已就绪" : "Ready")}</small>
-        </div>
-        <div className="conversation-titlebar-actions">
-          {operationalStateControl}
-          {conversationHistory?.truncated && (conversationHistory.oaepNextCursor || conversationHistory.nextCursor) && onLoadEarlierHistory ? (
-            <button type="button" className="conversation-load-earlier" disabled={conversationHistoryPending} onClick={() => void onLoadEarlierHistory()}>
-              {conversationHistoryPending ? (zh ? "加载中…" : "Loading…") : (zh ? "加载更早内容" : "Load earlier")}
-            </button>
-          ) : null}
-          <details className="conversation-titlebar-details">
-            <summary title={zh ? "会话详情" : "Chat details"} aria-label={zh ? "会话详情" : "Chat details"}>•••</summary>
-            <dl>
-              <div><dt>{zh ? "工作区" : "Workspace"}</dt><dd>{workspaceName || "—"}</dd></div>
-              <div><dt>{zh ? "后端" : "Backend"}</dt><dd>{conversationHistory?.source === "codex" || continuesExistingTask ? "Codex" : selectedAgentName || "OpenDrSai"}</dd></div>
-              <div><dt>{zh ? "会话 ID" : "Session ID"}</dt><dd title={conversationId}>{conversationId}</dd></div>
-              {conversationHistory ? <div><dt>{zh ? "已加载" : "Loaded"}</dt><dd>{conversationHistory.loadedRuns} {zh ? "轮" : "turns"}</dd></div> : null}
-              {continuesExistingTask ? <div><dt>{zh ? "继续方式" : "Continuation"}</dt><dd>{zh ? "在当前 Codex 任务中继续" : "Continue in the current Codex task"}</dd></div> : null}
-            </dl>
-          </details>
-        </div>
-      </header>
-      )}
-      {!emptyChat && awayFromLatest ? <button
-        type="button"
-        className="conversation-jump-latest"
-        data-testid="conversation-jump-latest"
-        onClick={scrollToLatest}
-      >{zh ? "回到最新消息" : "Jump to latest"}</button> : null}
-      {workspaceLocation === "remote" ? <div className="remote-session-migration-notice" role="note" data-testid="remote-session-migration-notice">
-        {zh ? "这是远程工作区。为避免上下文串线，本地会话不会自动绑定到远程 Runtime；请在远程工作区中新建会话，或使用明确的迁移流程。" : "This is a remote workspace. Local sessions are never auto-bound to the remote Runtime; start a remote session or use an explicit migration flow."}
-      </div> : null}
-      {!emptyChat && (
-      <div
-        className="message-list"
-        ref={messageListRef}
-        onScroll={handleMessageListScroll}
-        onWheel={handleMessageListWheel}
-        onPointerDown={handleMessageListPointerDown}
-        onKeyDown={handleMessageListKeyDown}
-      >
-        {renderedMessages.map((message, messageIndex) => (
-          <VirtualizedMessage
-            key={message.id}
-            message={message}
-            className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatchSet.has(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""} ${message.structuredTurn?.turnId === highlightedTurnId ? "structured-turn-focus" : ""}`}
-            pinned={message.streaming === true || visibleMessages.length - messageIndex <= 12}
-            scrollRootRef={messageListRef}
-            language={language}
-            workspacePath={workspacePath}
-            searchQuery={searchQuery}
-            conversationResourceStates={conversationResourceStates}
-            respondedInputRequests={respondedInputRequests}
-            configuredCapabilityRequests={configuredCapabilityRequests}
-            reproducibilityLevel={message.runtimeRunId ? runReproducibility[message.runtimeRunId] : undefined}
-            voicePlayback={messageVoicePlayback}
-            playbackDisabled={showAnyVoiceCaptureBar || isVoiceCaptureActive(voiceTurnState.phase)}
-            playbackRate={voicePreferences.playbackRate}
-            synthesisMode={resolveVoiceSynthesisMode(voicePreferences.synthesisMode, voicePreferences.remoteTtsConsent)}
-            voiceName={voicePreferences.voiceName}
-            turnActionsDisabled={Boolean(activeRequestId) || !canChat}
-            handleMarkdownLink={handleMarkdownLink}
-            openStructuredArtifact={openStructuredArtifact}
-            downloadStructuredArtifact={downloadStructuredArtifact}
-            openConversationResourceMenu={openConversationResourceMenu}
-            openStructuredCitation={openStructuredCitation}
-            respondToStructuredInteraction={respondToStructuredInteraction}
-            requestStructuredTextInput={requestStructuredTextInput}
-            startEditAndResend={messageEvents.startEditAndResend}
-            startEditUserMessage={messageEvents.startEditUserMessage}
-            regenerateAssistant={messageEvents.regenerateAssistant}
-            onRetryMessage={onRetryMessage ? messageEvents.onRetryMessage : undefined}
-            onReportFeedback={onReportFeedback ? messageEvents.onReportFeedback : undefined}
-            onRecoveryAction={onRecoveryAction ? messageEvents.onRecoveryAction : undefined}
-            onDeleteMessage={onDeleteMessage ? messageEvents.onDeleteMessage : undefined}
-          />
-        ))}
-      </div>
-      )}
-      {!emptyChat && turnRailMarkers.length > 0 ? (
-        <nav
-          className="conversation-turn-rail"
-          aria-label={zh ? "用户输入定位" : "User message navigation"}
-          style={{ gridTemplateRows: `repeat(${turnRailMarkers.length}, minmax(0, 1fr))` }}
-        >
-          {turnRailMarkers.map((marker, index) => {
-            const message = messages.find((item) => item.id === marker.id);
-            const label = message?.content.trim().replace(/\s+/g, " ") || `${zh ? "用户输入" : "User message"} ${index + 1}`;
-            return (
-              <button
-                key={marker.id}
-                type="button"
-                className={marker.id === activeTurnRailId ? "active" : ""}
-                data-turn-id={marker.id}
-                title={label}
-                aria-label={`${zh ? "定位到用户输入" : "Go to user message"} ${index + 1}: ${label.slice(0, 80)}`}
-                tabIndex={marker.id === activeTurnRailId || (!activeTurnRailId && index === 0) ? 0 : -1}
-                onClick={() => scrollToUserTurn(marker.id)}
-                onKeyDown={(event) => handleTurnRailKeyDown(event, index)}
-              />
-            );
-          })}
-        </nav>
-      ) : null}
-      {emptyChat && conversationHistoryPending && (
-        <div className="empty-chat-history-loading" role="status" aria-live="polite">
-          <span className="chat-loading-indicator" aria-hidden />
-          <strong>{conversationSource === "codex"
-            ? (zh ? "正在加载 Codex 会话…" : "Loading Codex session…")
-            : (zh ? "正在加载 OpenDrSai 会话…" : "Loading OpenDrSai session…")}</strong>
-          <small>{zh ? "首次打开较长会话可能需要几秒钟。" : "A long conversation can take a few seconds the first time it is opened."}</small>
-        </div>
-      )}
-      {emptyChat && !conversationHistoryPending && (
-        <div className="empty-chat-intro" role="group" aria-label={zh ? "新建会话" : "New conversation"}>
-          <img className="empty-chat-logo" src={drsaiLogo} alt="OpenDrSai" />
-          <h1>
-            <span>
-              {zh ? "在 " : "In "}
-              <strong>{activeWorkspaceName}</strong>
-              {zh ? " 工作区，用 " : " workspace, using "}
-              <strong>{activeAgentName}</strong>
-              {zh ? " 智能体，做什么呢？" : " agent, what should we do?"}
-            </span>
-          </h1>
-          {emptyChatPreferenceNotice ? (
-            <div className="remembered-preferences-notice" data-testid="remembered-preferences-notice" role="status">
-              {emptyChatPreferenceNotice}
-            </div>
-          ) : null}
-        </div>
-      )}
-      {emptyChat && !conversationHistoryPending && (
-        <section className="sample-prompts" aria-label={zh ? "示例任务" : "Example tasks"}>
-          {emptyChatPrompts.map((prompt, index) => {
-            const PromptIcon = [Telescope, Hammer, ScanSearch, Bug][index] ?? Telescope;
-            return (
-              <button
-                className={`sample-prompt-card sample-prompt-card-${index + 1}`}
-                key={`${index}-${prompt.slice(0, 32)}`}
-                type="button"
-                title={prompt}
-                onClick={() => selectSamplePrompt(prompt)}
-              >
-                <PromptIcon size={18} aria-hidden />
-                <span>{prompt}</span>
-              </button>
-            );
-          })}
-        </section>
-      )}
-      <form
-        ref={composerDropRef}
-        className="composer"
-        data-voice-turn-phase={displayedVoicePhase}
-        onSubmit={handleSubmit}
-      >
-        {!canChat && !showStop && chatUnavailableReason ? (
-          <div className="composer-locked-notice" role="status" aria-live="polite" data-testid="composer-locked-notice">
-            {chatUnavailableReason}
-          </div>
-        ) : null}
-        <div className="composer-shell">
-          {pendingReplaceFromMessageId ? (
-            <div className="composer-edit-resend" data-testid="composer-edit-resend" role="status">
-              <span>{zh ? "将用这段文字替换该轮提问及之后的回复" : "This will replace that prompt and later replies"}</span>
-              <button type="button" onClick={cancelEditAndResend}>{zh ? "取消" : "Cancel"}</button>
-            </div>
-          ) : null}
-          {channelSource === "wechat" ? (
-            <div className="wechat-outbound-notice" data-testid="wechat-outbound-notice" role="status">
-              <strong>{zh ? "微信会话" : "WeChat conversation"}</strong>
-              <span>{wechatCapability?.available
-                ? (wechatConfirmationPending ? (zh ? "再次点击“确认发送到微信”才会外发。" : "Click “Confirm send to WeChat” to send externally.") : (zh ? "普通 Desktop 消息不会外发；请使用明确的发送到微信操作。" : "Ordinary Desktop messages are not sent externally; use the explicit WeChat action."))
-                : (zh ? "当前无法回复：等待对方先发消息，或启动微信频道。" : "Reply unavailable: wait for an inbound message or start the WeChat channel.")}</span>
-              {wechatSendStatus ? <small>{wechatSendStatus}</small> : null}
-            </div>
-          ) : null}
-          {externalAttachments.some((attachment) => attachment.kind === "terminal") && (
-            <div className="composer-terminal-cards">
-              {externalAttachments.map((attachment, index) =>
-                attachment.kind === "terminal" ? (
-                  <article
-                    className="composer-terminal-card"
-                    key={`terminal-card-${index}-${attachment.path}`}
-                  >
-                    <Terminal size={15} />
-                    <div>
-                      <strong>{attachment.name}</strong>
-                      <span>{attachment.title || attachment.path}</span>
-                      {attachmentContextSummary(attachment) ? <small>{attachmentContextSummary(attachment)}</small> : null}
-                    </div>
-                    <button
-                      type="button"
-                      aria-label={`Remove ${attachment.name}`}
-                      onClick={() => onRemoveExternalAttachment?.(index)}
-                    >
-                      <X size={13} />
-                    </button>
-                  </article>
-                ) : null,
-              )}
-            </div>
-          )}
-          <div className="composer-attachments" aria-live="polite">
-            {attachments.map((attachment) => (
-              <ComposerAttachmentChip
-                key={attachment.id}
-                attachment={attachment}
-                workspacePath={workspacePath}
-                zh={zh}
-                onRemove={() => removeAttachment(attachment.id)}
-              />
-            ))}
-            {externalAttachments.map((attachment, index) => {
-              if (attachment.kind === "terminal") return null;
-              const name =
-                attachment.title ||
-                attachment.name ||
-                attachment.url ||
-                "Browser context";
-              const Icon =
-                attachment.kind === "folder"
-                  ? FolderPlus
-                  : attachment.kind === "selection"
-                    ? ClipboardList
-                  : attachment.kind === "browser"
-                    ? Globe2
-                    : Paperclip;
-              return (
-                <span
-                  className="composer-attachment-chip"
-                  key={`external-browser-${index}-${attachment.path}`}
-                  title={attachment.path}
-                >
-                  <Icon size={14} />
-                  <span className="composer-attachment-copy">
-                    <strong>{name}</strong>
-                    {attachmentContextSummary(attachment) ? <small>{attachmentContextSummary(attachment)}</small> : null}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={zh ? `绉婚櫎 ${name}` : `Remove ${name}`}
-                    onClick={() => onRemoveExternalAttachment?.(index)}
-                  >
-                    <X size={13} />
-                  </button>
-                </span>
-              );
-            })}
-          </div>
-
-          {materialRolePhase !== "idle" && (
-            <section
-              className={`material-role-panel ${materialRolePhase}`}
-              data-testid="material-role-panel"
-              data-analysis-phase={materialRolePhase}
-              aria-live="polite"
-            >
-              <div className="material-role-panel-header">
-                <strong><Brain size={14} />{zh ? "材料角色" : "Material roles"}</strong>
-                <span>{materialRolePhase === "analyzing" ? (zh ? "正在识别…" : "Analyzing…") : materialRolePhase === "failed" ? (zh ? "暂时无法识别" : "Analysis unavailable") : (zh ? `已识别 ${materialRoleAnalysis?.items.length || 0} 项` : `${materialRoleAnalysis?.items.length || 0} identified`)}</span>
-              </div>
-              {materialRolePhase === "ready" && materialRoleAnalysis ? (
-                <div className="material-role-groups">
-                  {(["previous_report", "latest_data", "result_image", "reference_material"] as const)
-                    .filter((role) => (materialRoleAnalysis.roleCounts[role] || 0) > 0)
-                    .map((role) => (
-                    <article
-                      key={role}
-                      data-material-role={role}
-                      data-role-count={materialRoleAnalysis.roleCounts[role]}
-                    >
-                      <b>{formatMaterialRoleLabel(role, zh)}</b>
-                      <span>{materialRoleAnalysis.roleCounts[role]} {zh ? "项" : "items"}</span>
-                      <small>{formatMaterialRoleFiles(materialRoleAnalysis.items, role, zh)}</small>
-                    </article>
-                  ))}
-                </div>
-              ) : null}
-              {materialRolePhase === "ready" ? <p>{zh ? "你可以直接问：我有哪些材料？" : "You can ask: What materials do I have?"}</p> : null}
-            </section>
-          )}
-
-          {materialConsistencyPhase !== "idle" ? (
-            <section
-              className={`material-consistency-panel ${materialConsistencyPhase}`}
-              data-testid="material-consistency-panel"
-              data-analysis-phase={materialConsistencyPhase}
-              aria-live="polite"
-            >
-              <div className="material-consistency-header">
-                <strong>{zh ? "材料之间有哪些关系" : "How the materials relate"}</strong>
-                <span>{materialConsistencyPhase === "analyzing"
-                  ? (zh ? "正在逐项比较…" : "Comparing…")
-                  : materialConsistencyPhase === "failed"
-                    ? (zh ? "暂时无法完成比较" : "Comparison unavailable")
-                    : (zh ? `发现 ${materialConsistencyAnalysis?.findings.length || 0} 项` : `${materialConsistencyAnalysis?.findings.length || 0} findings`)}</span>
-              </div>
-              {materialConsistencyPhase === "ready" && materialConsistencyAnalysis ? (
-                <>
-                  <p>{materialConsistencyAnalysis.summary}</p>
-                  {materialConsistencyAnalysis.findings.length ? (
-                    <div className="material-consistency-findings">
-                      {materialConsistencyAnalysis.findings.map((finding) => (
-                        <article
-                          key={finding.id}
-                          className={`material-consistency-finding ${finding.kind}`}
-                          data-testid="material-consistency-finding"
-                          data-finding-kind={finding.kind}
-                          data-finding-id={finding.id}
-                        >
-                          <header>
-                            <strong>{finding.title}</strong>
-                            <em>{formatMaterialConsistencyKind(finding.kind, zh)}</em>
-                          </header>
-                          <p>{finding.explanation}</p>
-                          <small>{zh ? "建议：" : "Recommendation: "}{finding.recommendation}</small>
-                          <div className="material-consistency-sources">
-                            {finding.sources.map((source) => (
-                              <button
-                                type="button"
-                                key={`${finding.id}-${source.path}-${source.locator}`}
-                                data-testid="material-consistency-source"
-                                data-source-name={source.name}
-                                data-source-locator={source.locator}
-                                onClick={() => void openMaterialConsistencySource(source)}
-                              >
-                                <strong>{source.name}</strong>
-                                <span>{source.locator} · {source.value}</span>
-                                <small>{source.excerpt}</small>
-                              </button>
-                            ))}
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  ) : <p>{zh ? "暂未发现可以确定的共识、冲突或过期数字。" : "No reliable consensus, conflict, or outdated number was found."}</p>}
-                  {materialConsistencyAnalysis.findings.length ? (
-                    <button
-                      type="button"
-                      className="material-consistency-create-task"
-                      data-testid="material-consistency-create-task"
-                      onClick={createTaskFromMaterialConsistency}
-                    >
-                      {zh ? "基于这些发现继续核对" : "Continue checking these findings"}
-                    </button>
-                  ) : null}
-                  {materialConsistencySourceStatus ? <output data-testid="material-consistency-source-status">{materialConsistencySourceStatus}</output> : null}
-                </>
-              ) : null}
-            </section>
-          ) : null}
-
-          {materialRolePhase === "ready" && !composerText.trim() && materialTaskSuggestions.length > 0 ? (
-            <section className="material-task-suggestions" data-testid="material-task-suggestions">
-              <div className="material-task-suggestions-header">
-                <strong>{zh ? "你可以接着做" : "Suggested next tasks"}</strong>
-                <span>{zh ? "选择后仍可修改" : "Click to edit before sending"}</span>
-              </div>
-              <div className="material-task-suggestion-list">
-                {materialTaskSuggestions.map((suggestion) => (
-                  <button
-                    type="button"
-                    key={suggestion.id}
-                    data-testid="material-task-suggestion"
-                    data-suggestion-id={suggestion.id}
-                    data-suggestion-prompt={suggestion.prompt}
-                    onClick={() => applyMaterialTaskSuggestion(suggestion)}
-                  >
-                    <strong>{suggestion.title}</strong>
-                    <span>{suggestion.description}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          ) : null}
-
-          {showContextPreview && (
-            <section className="context-assembly-preview" aria-label={zh ? "上下文预览" : "Context assembly preview"}>
-              <div className="context-assembly-preview-header">
-                <strong>
-                  <Info size={13} />
-                  {zh ? "上下文预览" : "Context preview"}
-                </strong>
-                <span
-                  className={`context-budget-meter ${contextBudget.level}`}
-                  title={`Estimated prompt context budget: ${contextBudget.estimatedTokens} / ${contextBudget.limit} tokens. Raw estimate ${contextBudget.rawEstimatedTokens} tokens. ${contextBudget.source}. ${contextBudget.calibrationSource ?? "No tokenizer calibration samples."} ${contextBudget.calibrationDrift ?? ""} ${contextBudget.reservedOutputTokens} tokens reserved for output.`}
-                >
-                  {zh ? `${contextPreviewItems.length} 项材料 · ${formatApproxTokensZh(contextBudget.estimatedTokens)}` : `${contextPreviewItems.length} visible source${contextPreviewItems.length === 1 ? "" : "s"} · ${formatApproxTokens(contextBudget.estimatedTokens)}`}
-                  <small>{zh ? formatContextBudgetSourceZh(contextBudget) : contextBudget.calibrationSource ?? contextBudget.source}</small>
-                  {contextBudget.calibrationDrift ? <small>{contextBudget.calibrationDrift}</small> : null}
-                </span>
-              </div>
-              <div className="context-assembly-preview-list">
-                {contextPreviewItems.map((item) => (
-                  <span className="context-assembly-preview-item" key={item.key} title={item.detail}>
-                    <b>{zh ? formatContextKindZh(item.kind) : item.kind}</b>
-                    {item.label}
-                    <small>{zh ? formatApproxTokensZh(item.estimatedTokens) : formatApproxTokens(item.estimatedTokens)}</small>
-                  </span>
-                ))}
-              </div>
-              <p>{zh ? formatContextBudgetMessageZh(contextBudget) : `${contextBudget.message} Only these visible sources and workspace instructions are sent with the next message.`}</p>
-            </section>
-          )}
-
-          {showSlashCommands && (
-            <div className="slash-command-panel" role="listbox" aria-label="Slash commands">
-              {slashCommandMatches.map((command) => (
-                <button
-                  key={command}
-                  type="button"
-                  role="option"
-                  onClick={() => selectSlashCommand(command)}
-                >
-                  <strong>/{command}</strong>
-                  <span>{getSlashCommandDescription(command)}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {showForkQueueAgentPanel && (
-            <section className="composer-fork-queue-agent-panel" aria-label="Fork queue agent assignments">
-              <div className="composer-fork-queue-agent-header">
-                <strong>
-                  <Bot size={13} />
-                  Fork queue agents
-                </strong>
-                <span>Choose per-subtask agents before queue creation.</span>
-              </div>
-              <div className="composer-fork-queue-agent-list">
-                {forkQueueEntries.map((entry, index) => {
-                  const queueIndex = index + 1;
-                  return (
-                    <label className="composer-fork-queue-agent-row" key={`${queueIndex}-${entry.intent}`}>
-                      <span title={entry.intent}>
-                        <b>{queueIndex}</b>
-                        {entry.intent}
-                      </span>
-                      <select
-                        value={forkQueueAgentSelections[queueIndex] ?? ""}
-                        onChange={(event) => selectForkQueueAgent(queueIndex, event.target.value)}
-                        aria-label={`Assign agent for fork queue subtask ${queueIndex}`}
-                      >
-                        <option value="">
-                          {entry.agentHint ? (zh ? `使用 @${entry.agentHint}` : `Use @${entry.agentHint}`) : (zh ? `默认：${activeAgentName}` : `Default: ${activeAgentName}`)}
-                        </option>
-                        {agentOptions.map((agent) => (
-                          <option key={agent.id} value={agent.id}>
-                            {agent.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  );
-                })}
-              </div>
-            </section>
-          )}
-
-          <div className="composer-box">
-            <div className="composer-input-row">
-              <div className="composer-tools" ref={toolsMenuRef}>
-                <button
-                  ref={attachmentButtonRef}
-                  type="button"
-                  className="composer-icon-button"
-                  aria-expanded={toolsOpen}
-                  aria-label={zh ? "添加附件或工具" : "Add attachment or tool"}
-                  title={zh ? "添加附件或工具" : "Add attachment or tool"}
-                  onClick={() => setToolsOpen((open) => !open)}
-                >
-                  <Plus size={18} />
-                </button>
-                {toolsOpen && (
-                  <div className="composer-tool-menu">
-                    {/* Attachments group — the core "+" functionality */}
-                    <div className="composer-tool-group" role="group" aria-label={zh ? "附件" : "Attachments"}>
-                      <button type="button" onClick={addFiles}>
-                        <span data-testid="composer-add-file-label" hidden />
-                        <Paperclip size={15} />
-                        {zh ? "添加文件" : "Add File"}
-                      </button>
-                      <button type="button" onClick={addFolder}>
-                        <span data-testid="composer-add-folder-label" hidden />
-                        <FolderPlus size={15} />
-                        {zh ? "添加文件夹" : "Add Folder"}
-                      </button>
-                    </div>
-                    {/* IDE integration group */}
-                    <div className="composer-tool-group" role="group" aria-label={zh ? "IDE 集成" : "IDE Integration"}>
-                      <button
-                        type="button"
-                        disabled={!canAttachIdeCurrentFile}
-                        title={!canAttachIdeCurrentFile ? (zh ? "需要先在 IDE 中打开文件" : "Open a file in the IDE first") : undefined}
-                        onClick={() => {
-                          onAttachIdeCurrentFile?.();
-                          setToolsOpen(false);
-                        }}
-                      >
-                        <FileCode2 size={15} />
-                        {zh ? "IDE 当前文件" : "IDE current file"}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!canAttachIdeCurrentSelection}
-                        title={!canAttachIdeCurrentSelection ? (zh ? "需要先在 IDE 中选中文本" : "Select text in the IDE first") : undefined}
-                        onClick={() => {
-                          onAttachIdeCurrentSelection?.();
-                          setToolsOpen(false);
-                        }}
-                      >
-                        <TextCursorInput size={15} />
-                        {zh ? "IDE 选中文本" : "IDE selection"}
-                      </button>
-                      <button
-                        type="button"
-                        disabled
-                        title={zh ? "当前版本暂不支持此功能" : "This feature is not currently supported"}
-                      >
-                        <RefreshCw size={15} />
-                        {zh ? "刷新 IDE 上下文" : "Refresh IDE context"}
-                      </button>
-                    </div>
-                    {/* Tools group */}
-                    <div className="composer-tool-group" role="group" aria-label={zh ? "工具" : "Tools"}>
                       <button
                         type="button"
                         disabled
@@ -4853,18 +4233,22 @@ function ChatWorkspaceImpl({
               <div
                 className={`composer-voice-status ${voiceState === "failed" || duplexVoiceInput.phase === "failed" ? "error" : ""}`}
                 aria-live="polite"
+                data-testid="composer-voice-status"
+                data-voice-setup-action={voiceSetupAction ?? undefined}
               >
                 <span>
-                  {getVoiceStatusLabel(voiceState, voiceElapsedSeconds)}
+                  {getVoiceStatusLabel(voiceState, voiceElapsedSeconds, zh)}
                 </span>
                 {voiceError || duplexVoiceInput.error ? <small>{voiceError ?? duplexVoiceInput.error}</small> : null}
                 {voiceConsentRequired ? (
                   <span className="composer-voice-error-actions">
                     <button
                       type="button"
+                      data-testid="voice-failure-consent-allow"
                       onClick={() => {
                         updateVoicePreferences({ remoteSttConsent: true });
                         setVoiceConsentRequired(false);
+                        setVoiceSetupAction(null);
                         setVoiceError(null);
                         void retryVoiceTranscription(true);
                       }}
@@ -4873,8 +4257,10 @@ function ChatWorkspaceImpl({
                     </button>
                     <button
                       type="button"
+                      data-testid="voice-failure-consent-dismiss"
                       onClick={() => {
                         setVoiceConsentRequired(false);
+                        setVoiceSetupAction(null);
                         setVoiceError(null);
                         setVoiceState("idle");
                         voiceRetryBlobRef.current = null;
@@ -4883,6 +4269,37 @@ function ChatWorkspaceImpl({
                       }}
                     >
                       {zh ? "暂不使用" : "Not now"}
+                    </button>
+                  </span>
+                ) : null}
+                {voiceSetupAction === "open_agent_settings" ? (
+                  <span className="composer-voice-error-actions">
+                    <button
+                      type="button"
+                      data-testid="voice-failure-open-agent-settings"
+                      onClick={() => onOpenAgentSettings?.()}
+                    >
+                      {zh ? "打开智能体配置" : "Open Agent configuration"}
+                    </button>
+                    {voiceRetryBlobRef.current ? (
+                      <button type="button" data-testid="voice-failure-retry-transcribe" onClick={() => void retryVoiceTranscription()}>
+                        {zh ? "重试识别" : "Retry transcription"}
+                      </button>
+                    ) : (
+                      <button type="button" data-testid="voice-failure-retry-capture" onClick={() => void startVoiceRecording()}>
+                        {zh ? "重试" : "Retry"}
+                      </button>
+                    )}
+                  </span>
+                ) : null}
+                {voiceSetupAction === "retry_capture" ? (
+                  <span className="composer-voice-error-actions">
+                    <button
+                      type="button"
+                      data-testid="voice-failure-retry-capture"
+                      onClick={() => void startVoiceRecording()}
+                    >
+                      {zh ? "重试" : "Retry"}
                     </button>
                   </span>
                 ) : null}
@@ -4908,10 +4325,10 @@ function ChatWorkspaceImpl({
                     {duplexFailureRecovery.fallback ? <button type="button" onClick={() => updateVoicePreferences({ interactionMode: "serial" })}>{zh ? "使用单次输入" : "Use single input"}</button> : null}
                   </span>
                 </section> : null}
-                {voiceError && voiceRetryBlobRef.current && !voiceConsentRequired ? (
+                {voiceError && voiceRetryBlobRef.current && !voiceConsentRequired && voiceSetupAction !== "open_agent_settings" ? (
                   <span className="composer-voice-error-actions">
-                    <button type="button" onClick={() => void retryVoiceTranscription()}>Retry</button>
-                    <button type="button" onClick={discardVoiceReview}>Discard</button>
+                    <button type="button" onClick={() => void retryVoiceTranscription()}>{zh ? "重试" : "Retry"}</button>
+                    <button type="button" onClick={discardVoiceReview}>{zh ? "丢弃" : "Discard"}</button>
                   </span>
                 ) : null}
                 {voiceTurnState.phase === "failed" && voiceTurnState.error?.stage === "submitting" ? (
@@ -5366,28 +4783,51 @@ function ChatWorkspaceImpl({
                   <button type="button" onClick={() => runDuplexReadinessAction(duplexReadinessActions.primary)}>{duplexReadinessActions.primary === "open_agent_settings" ? (zh ? "打开智能体配置" : "Open Agent configuration") : duplexReadinessActions.primary === "switch_to_serial" ? (zh ? "使用单次输入" : "Use single input") : (zh ? "重新检查" : "Check again")}</button>
                   {duplexReadinessActions.fallback ? <button type="button" onClick={() => runDuplexReadinessAction(duplexReadinessActions.fallback!)}>{zh ? "使用单次输入" : "Use single input"}</button> : null}
                 </div> : null}
+                {serialVoiceEnabled ? (
                                 <div style={VOICE_BUTTON_WRAPPER_STYLE}>
                 <button
                   type="button"
                   ref={voiceButtonRef} className={`composer-icon-button composer-voice-button ${voiceState === "recording" || duplexVoiceInput.phase === "active" ? "recording" : ""}`}
+                  data-testid="composer-voice-button"
                   disabled={voiceState === "requesting_permission" || voiceState === "processing" || duplexVoiceInput.phase === "starting" || duplexVoiceInput.phase === "stopping"}
                   aria-pressed={voiceState === "recording" || duplexVoiceInput.phase === "active"}
-                  aria-keyshortcuts={voicePreferences.interactionMode === "duplex" ? "Alt+Shift+V" : undefined}
+                  aria-keyshortcuts="Alt+Shift+V"
                   aria-label={
                     voiceState === "processing"
-                      ? "Transcribing voice input"
+                      ? (zh ? "正在识别语音" : "Transcribing voice input")
                       : voiceState === "recording" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering"
-                      ? "Stop voice recording"
-                      : "Start voice recording"
+                      ? (zh ? "停止录音并识别" : "Stop voice recording")
+                      : (zh ? "语音输入" : "Start voice recording")
                   }
                   title={
-                    voiceState === "processing"
-                      ? "Transcribing voice input"
-                      : voiceState === "recording" || duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering"
-                      ? "Stop voice recording"
-                      : "Start voice recording"
+                    !voiceApiAvailable
+                      ? (zh ? "当前环境无法使用麦克风" : "Microphone unavailable in this runtime")
+                      : voiceState === "processing"
+                      ? (zh ? "正在识别语音…" : "Transcribing…")
+                      : voiceState === "recording"
+                      ? (zh ? "点击停止并填入输入框" : "Click to stop and fill the composer")
+                      : (zh ? "点击开始语音输入" : "Click to start voice input")
                   }
-                  onClick={() => { setVoiceMenuOpen(!voiceMenuOpen); }}
+                  onClick={() => {
+                    if (voiceState === "recording") {
+                      stopVoiceRecording("transcribe");
+                      return;
+                    }
+                    if (duplexVoiceInput.phase === "active" || duplexVoiceInput.phase === "recovering") {
+                      void duplexVoiceInput.stop();
+                      return;
+                    }
+                    if (voiceState === "processing" || voiceState === "requesting_permission") return;
+                    if (voicePreferences.interactionMode !== "serial") {
+                      updateVoicePreferences({ interactionMode: "serial" });
+                    }
+                    setVoiceMenuOpen(false);
+                    void startVoiceRecording();
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setVoiceMenuOpen((open) => !open);
+                  }}
                 >
                   {voiceState === "processing" ? (
                     <ThreadActivityBubble state={{ kind: "running" }} language={zh ? "zh" : "en"} />
@@ -5446,6 +4886,7 @@ function ChatWorkspaceImpl({
                     </div>
                   )}
                 </div>
+                ) : null}
 
                 {showStop ? (
                   composerText.trim() ? (
@@ -5639,7 +5080,6 @@ interface VirtualizedMessageProps {
   openStructuredCitation: (part: CitationPart) => void;
   respondToStructuredInteraction: (turnId: string, part: InteractionPart, response: InteractionResponse) => void;
   requestStructuredTextInput: (turnId: string, part: InteractionPart) => void;
-  startEditAndResend: (messageId: string) => void;
   startEditUserMessage: (messageId: string) => void;
   regenerateAssistant: (messageId: string) => Promise<void>;
   onRetryMessage: ChatWorkspaceProps["onRetryMessage"];
@@ -5673,7 +5113,6 @@ const VirtualizedMessage = memo(function VirtualizedMessage({
   openStructuredCitation,
   respondToStructuredInteraction,
   requestStructuredTextInput,
-  startEditAndResend,
   startEditUserMessage,
   regenerateAssistant,
   onRetryMessage,
@@ -5776,12 +5215,14 @@ const VirtualizedMessage = memo(function VirtualizedMessage({
                   <StreamingStatus message={message} zh={zh} />
                 )
               ) : message.content ? (
-                <ChatMessageContent
-                  content={assistantContent}
-                  streaming={message.streaming}
-                  language={language}
-                  onOpenLink={handleMarkdownLink}
-                />
+                <div>
+                  <ChatMessageContent
+                    content={assistantContent}
+                    streaming={message.streaming}
+                    language={language}
+                    onOpenLink={handleMarkdownLink}
+                  />
+                </div>
               ) : message.role === "user" && message.attachments?.length ? null : (
                 <StreamingStatus message={message} zh={zh} />
               )}
@@ -5834,7 +5275,6 @@ const VirtualizedMessage = memo(function VirtualizedMessage({
                   zh={zh}
                   turnActionsDisabled={turnActionsDisabled}
                   showTurnActions={!message.replyFailed}
-                  onEditAndResend={startEditAndResend}
                   onRegenerate={() => void regenerateAssistant(message.id)}
                   onDelete={onDeleteMessage}
                 />
@@ -6212,7 +5652,6 @@ function MessageActions({
   zh,
   turnActionsDisabled = false,
   showTurnActions = false,
-  onEditAndResend,
   onRegenerate,
   onDelete,
 }: {
@@ -6226,28 +5665,41 @@ function MessageActions({
   zh: boolean;
   turnActionsDisabled?: boolean;
   showTurnActions?: boolean;
-  onEditAndResend?: (messageId: string) => void;
   onRegenerate?: () => void;
   onDelete?: (messageId: string) => void;
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
-  const [localPending, setLocalPending] = useState(false);
-  const isActive = playback.activeMessageId === messageId;
-  const isPlaying = isActive && playback.phase === "playing";
-  const isPaused = isActive && playback.phase === "paused";
-  const isSynthesizing = localPending || (isActive && playback.phase === "synthesizing");
-  const playbackError = isActive && playback.phase === "failed" ? playback.error : null;
+  const [heldMode, setHeldMode] = useState<"idle" | "playing" | "paused">("idle");
+  const isActive = playback.activeMessageId === messageId || heldMode !== "idle";
+  const isPlaying = heldMode === "playing" || (playback.activeMessageId === messageId && playback.phase === "playing");
+  const isPaused = heldMode === "paused" || (playback.activeMessageId === messageId && playback.phase === "paused");
+  const isSynthesizing = playback.activeMessageId === messageId && playback.phase === "synthesizing" && heldMode === "idle";
+  const playbackError = playback.activeMessageId === messageId && playback.phase === "failed" ? playback.error : null;
 
   useEffect(() => {
-    if (!localPending) return;
-    if (playback.activeMessageId === messageId && playback.phase !== "idle") {
-      setLocalPending(false);
+    if (playback.activeMessageId === messageId && playback.phase === "playing") {
+      setHeldMode("playing");
       return;
     }
-    if (playback.error && playback.phase === "failed") {
-      setLocalPending(false);
+    if (playback.activeMessageId === messageId && playback.phase === "paused") {
+      setHeldMode("paused");
+      return;
     }
-  }, [localPending, messageId, playback.activeMessageId, playback.error, playback.phase]);
+    if (playback.activeMessageId && playback.activeMessageId !== messageId) {
+      setHeldMode("idle");
+    }
+  }, [messageId, playback.activeMessageId, playback.phase]);
+
+  useEffect(() => {
+    if (heldMode !== "playing") return;
+    const timer = window.setInterval(() => {
+      const speaking = Boolean(window.speechSynthesis?.speaking || window.speechSynthesis?.pending);
+      if (!speaking && playback.phase !== "playing" && playback.phase !== "paused") {
+        setHeldMode("idle");
+      }
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [heldMode, playback.phase]);
 
   async function handleCopy(): Promise<void> {
     try {
@@ -6260,7 +5712,7 @@ function MessageActions({
   }
 
   function handleReadAloud(): void {
-    setLocalPending(true);
+    setHeldMode("playing");
     try {
       playback.play(messageId, content, zh ? "zh" : "en", {
         mode: synthesisMode,
@@ -6268,7 +5720,7 @@ function MessageActions({
         voiceName,
       });
     } catch (error) {
-      setLocalPending(false);
+      setHeldMode("idle");
       console.error("voice playback failed to start", error);
     }
   }
@@ -6279,18 +5731,6 @@ function MessageActions({
         {copied ? "✓" : <ClipboardList size={13} />}
         <span>{copied ? (zh ? "已复制" : "Copied") : (zh ? "复制" : "Copy")}</span>
       </button>
-      {showTurnActions && onEditAndResend ? (
-        <button
-          type="button"
-          data-testid={`message-action-edit-resend-${messageId}`}
-          disabled={turnActionsDisabled}
-          onClick={() => onEditAndResend(messageId)}
-          title={zh ? "编辑原问题并重发这一轮" : "Edit the prompt and resend this turn"}
-        >
-          <Pencil size={13} />
-          <span>{zh ? "编辑并重发" : "Edit & resend"}</span>
-        </button>
-      ) : null}
       {showTurnActions && onRegenerate ? (
         <button
           type="button"
@@ -6314,20 +5754,20 @@ function MessageActions({
           <span>{zh ? "删除本条" : "Delete"}</span>
         </button>
       ) : null}
-      {isSynthesizing ? (
-        <button type="button" disabled title={zh ? "正在合成语音" : "Synthesizing speech"}>
-          <RefreshCw size={13} className="spinning" />
-          <span>{zh ? "合成中" : "Synthesizing"}</span>
-        </button>
-      ) : isPlaying ? (
-        <button type="button" onClick={playback.pause} title={zh ? "暂停朗读" : "Pause reading"}>
+      {isPlaying ? (
+        <button type="button" onClick={() => { setHeldMode("paused"); playback.pause(); }} title={zh ? "暂停朗读" : "Pause reading"}>
           <Pause size={13} />
           <span>{zh ? "暂停" : "Pause"}</span>
         </button>
       ) : isPaused ? (
-        <button type="button" onClick={playback.resume} title={zh ? "继续朗读" : "Resume reading"}>
+        <button type="button" onClick={() => { setHeldMode("playing"); playback.resume(); }} title={zh ? "继续朗读" : "Resume reading"}>
           <Play size={13} />
           <span>{zh ? "继续" : "Resume"}</span>
+        </button>
+      ) : isSynthesizing ? (
+        <button type="button" disabled title={zh ? "正在合成语音" : "Synthesizing speech"}>
+          <RefreshCw size={13} className="spinning" />
+          <span>{zh ? "合成中" : "Synthesizing"}</span>
         </button>
       ) : (
         <button
@@ -6350,7 +5790,7 @@ function MessageActions({
         <button
           type="button"
           onClick={() => {
-            setLocalPending(false);
+            setHeldMode("idle");
             playback.stop();
           }}
           title={zh ? "停止朗读" : "Stop reading"}
