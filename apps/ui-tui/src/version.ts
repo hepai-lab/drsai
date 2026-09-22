@@ -7,7 +7,7 @@
  */
 
 /** Full semver string, e.g. "1.5.6". */
-export const VERSION = '2.0.3'
+export const VERSION = '2.0.5'
 
 /** Short alias for convenience. */
 export const __version__ = VERSION

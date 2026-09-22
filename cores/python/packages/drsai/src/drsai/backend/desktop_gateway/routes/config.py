@@ -25,6 +25,7 @@ are adapted from ``gateway_legacy.py`` lines 11604 and 11508.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import Any, Mapping
 
@@ -67,8 +68,11 @@ from drsai.config.schema import DrSaiConfig
 from drsai.config.loader import default_config_path as default_model_config_path
 
 from .._auth import effective_user_id
+from .. import _state
 
 api = APIRouter(tags=["config"])
+
+logger = logging.getLogger(__name__)
 
 # ── Writable CLI config keys (mirrors the renderer's WRITABLE_KEYS) ─────────
 WRITABLE_KEYS = frozenset({"plan_mode", "workspace_enabled", "dangerous_allowed"})
@@ -505,6 +509,7 @@ async def put_agent_model_policy(agent_id: str, req: AgentModelPolicyUpdateReque
     """Persist one provider-aware policy with optimistic concurrency control."""
     await asyncio.to_thread(_require_local_opendrsai_agent, agent_id)
     try:
+        previous_snapshot = await asyncio.to_thread(load_agent_model_policy, agent_id)
         if req.primary_model.ref is None:
             raise ValueError("Primary model selection must include a Provider model reference")
         ref = RuntimeModelRef(req.primary_model.ref.provider_id, req.primary_model.ref.model_id)
@@ -547,6 +552,32 @@ async def put_agent_model_policy(agent_id: str, req: AgentModelPolicyUpdateReque
         )
         if config.source_path is not None:
             await asyncio.to_thread(remove_legacy_model_selection, path=config.source_path)
+        # A policy change must reach the next turn. Only a same-model change of
+        # the primary model or its reasoning effort is hot-swappable: the Agent
+        # cache key carries the model alias, so the next turn's ``get_or_create``
+        # performs the swap (DrSaiAgent.switch_model) without rebuilding the
+        # Agent. Reasoning effort is applied per turn from the request, so it
+        # needs no eviction either. Every other role (image understanding /
+        # generation, TTS, STT, realtime voice) is baked into the Agent at
+        # construction time, so those changes still require a full rebuild.
+        prev = previous_snapshot.policy
+        prev_primary = prev.primary_model.ref
+        hot_swappable = (
+            prev_primary is not None
+            and ref is not None
+            and prev_primary.provider_id == ref.provider_id
+            and prev_primary.model_id == ref.model_id
+            and prev.image_understanding_model == image_understanding_selection
+            and prev.image_generation_model == image_generation_selection
+            and prev.text_to_speech_model == text_to_speech_selection
+            and prev.realtime_voice_model == realtime_voice_selection
+            and prev.speech_to_text_model == speech_to_text_selection
+        )
+        if not hot_swappable:
+            try:
+                await _state.agent_manager().evict_user(effective_user_id())
+            except Exception as exc:  # pragma: no cover - never fail a committed write
+                logger.warning("Agent model policy commit could not evict cached agents: %s", exc)
         return _agent_model_policy_payload(snapshot.policy, snapshot.revision, config)
     except AgentModelPolicyConflict as exc:
         raise HTTPException(status_code=409, detail={"code": "agent_model_policy_conflict", "message": str(exc)}) from exc

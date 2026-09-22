@@ -82,7 +82,8 @@ export function threadSnapshotRequestDemandsWaterline(request: DesktopThreadSnap
   return request.forceFresh === true
     || request.minimumSequence !== undefined
     || request.expectedGeneration !== undefined
-    || request.historyCursor !== undefined;
+    || request.historyCursor !== undefined
+    || request.oaepHistoryCursor !== undefined;
 }
 
 /**

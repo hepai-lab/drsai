@@ -1,7 +1,7 @@
 {
   "archive": "drsai-backend-source.zip",
-  "sha256": "5d5cef7bd019918591f7a7db8a009c536de18852c7701ecf3fb7c459f3692914",
-  "version": "2.0.3",
+  "sha256": "577efcd115b383ae13273b34d3cd7923f5475e85c71407d60f699f6df24ea640",
+  "version": "2.0.5",
   "source": "local-backend-source",
   "contents": [
     "cores/python/packages/drsai/pyproject.toml",

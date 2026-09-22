@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import threading
 import uuid
@@ -39,6 +40,7 @@ from drsai.config import (
     clear_model_discovery_cache,
     commit_agent_model_policy,
     commit_update as commit_model_config_update,
+    delete_provider_model,
     config_revision as model_config_revision,
     current_agent_name,
     diagnose_model_config,
@@ -86,6 +88,8 @@ from .config import (
 
 api = APIRouter(tags=["config"])
 
+logger = logging.getLogger(__name__)
+
 
 # =============================================================================
 # Pydantic request/response models
@@ -106,6 +110,9 @@ class ProviderModelDefinitionRequest(BaseModel):
     token_limit: Optional[int] = Field(default=None, gt=0, le=100_000_000)
     max_tokens: Optional[int] = Field(default=None, gt=0, le=100_000_000)
     reasoning_efforts: list[Literal["none", "low", "medium", "high", "xhigh", "max"]] = Field(default_factory=list, max_length=6)
+    # Wire transport for OpenAI-protocol models.  Tri-state: omitted inherits
+    # the Provider default (then model-name inference), true/false pins it.
+    use_responses_api: Optional[bool] = None
 
 
 class ModelProviderConfigRequest(BaseModel):
@@ -118,6 +125,10 @@ class ModelProviderConfigRequest(BaseModel):
     api_key_credential: Optional[str] = Field(default=None, min_length=1, max_length=512)
     wire_api: str = Field(default="openai", pattern=r"^(openai|anthropic|gemini)$")
     requires_api_key: bool = True
+    # Provider-wide default for OpenAI-protocol chat models. Omitted keeps the
+    # per-model inference; true/false becomes the default for every model that
+    # does not declare its own ``use_responses_api``.
+    use_responses_api: Optional[bool] = None
     models: Optional[dict[str, ProviderModelDefinitionRequest] | list[str]] = Field(default=None, max_length=500)
     model_aliases: Optional[dict[str, str]] = Field(default=None, max_length=500)
     model_upstream_ids: Optional[dict[str, str]] = Field(default=None, max_length=500)
@@ -297,19 +308,28 @@ def _commit_metadata(committed: object) -> dict[str, object]:
 
 
 async def _activate_model_config_commit() -> int:
-    """Invalidate shared discovery state.
+    """Apply a committed Provider/model config change to live sessions.
 
-    The V2 ``DesktopAgentManager`` does not track per-agent model config
-    revisions (the alias comes from the request, not from a policy layer).
-    We still clear the shared discovery cache so subsequent reads pick up the
-    new provider/model topology, but return ``0`` for the evicted-session
-    count since there are no per-user config revisions to evict.
+    Evicting the cached Agents is what makes a config write take effect on the
+    next turn.  The cache key is ``user::session`` + model alias, so a change
+    that does not alter the selected model id (Provider base_url/api_key,
+    token limits, ``use_responses_api``, reasoning, ...) would otherwise keep
+    serving the client built from the previous revision.  ``set_model_client``
+    reloads config.toml on every switch, but a cached Agent never switches.
+
+    Returns the number of evicted Agents (= sessions that will rebuild).
     """
     clear_model_discovery_cache()
-    return 0
+    try:
+        from .._state import agent_manager
+
+        return await agent_manager().evict_all()
+    except Exception as exc:  # pragma: no cover - defensive: never fail a commit
+        logger.warning("Model config commit could not evict cached agents: %s", exc)
+        return 0
 
 
-def _model_provider_references(config: DrSaiConfig, name: str) -> list[dict[str, str]]:
+def _model_provider_references(config: DrSaiConfig, name: str, model_id: str | None = None) -> list[dict[str, str]]:
     """List durable configuration references before a Provider is removed.
 
     Agent policy references join this list in P3-MC03. Keeping the preflight in
@@ -319,7 +339,7 @@ def _model_provider_references(config: DrSaiConfig, name: str) -> list[dict[str,
     for agent_name in list_agent_names():
         policy = load_agent_model_policy(agent_name).policy
         policy_ref = policy.primary_model.ref
-        if policy_ref is not None and policy_ref.provider_id == name:
+        if policy_ref is not None and policy_ref.provider_id == name and (model_id is None or policy_ref.model_id == model_id):
             references.append({
                 "kind": "agent_model_policy",
                 "id": agent_name,
@@ -328,9 +348,14 @@ def _model_provider_references(config: DrSaiConfig, name: str) -> list[dict[str,
             })
         capability_policies = (
             (
-                "agent_image_model_policy",
+                "agent_image_generation_model_policy",
                 "Local OpenDrSai Agent image generation model",
-                policy.image_generation_model or policy.image_model,
+                policy.image_generation_model,
+            ),
+            (
+                "agent_legacy_image_model_policy",
+                "Local OpenDrSai Agent legacy image model",
+                policy.image_model,
             ),
             (
                 "agent_image_understanding_model_policy",
@@ -347,10 +372,15 @@ def _model_provider_references(config: DrSaiConfig, name: str) -> list[dict[str,
                 "Local OpenDrSai Agent speech-to-text model",
                 policy.speech_to_text_model,
             ),
+            (
+                "agent_realtime_voice_model_policy",
+                "Local OpenDrSai Agent realtime voice model",
+                policy.realtime_voice_model,
+            ),
         )
         for kind, label, selection in capability_policies:
             capability_ref = selection.ref if selection is not None else None
-            if capability_ref is not None and capability_ref.provider_id == name:
+            if capability_ref is not None and capability_ref.provider_id == name and (model_id is None or capability_ref.model_id == model_id):
                 references.append({
                     "kind": kind,
                     "id": agent_name,
@@ -385,12 +415,13 @@ async def restore_model_config(req: ModelConfigRestoreRequest):
         ) from exc
     except ModelProviderConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    revision = await _activate_model_config_commit()
+    evicted = await _activate_model_config_commit()
     return {
         "ok": True,
         "effective": committed.resolved.public_dict(),
         "revision": committed.revision,
-        "config_revision": revision,
+        "config_revision": evicted,
+        "evicted_sessions": evicted,
         **_commit_metadata(committed),
     }
 
@@ -493,6 +524,7 @@ async def discover_model_provider_models(req: ModelDiscoveryRequest):
                         model_upstream_ids=existing_provider.model_upstream_ids if existing_provider else {},
                         model_operations=existing_provider.model_operations if existing_provider else {},
                         model_configs=existing_provider.model_configs if existing_provider else {},
+                        use_responses_api=existing_provider.use_responses_api if existing_provider else None,
                     ),
                 },
                 source_path=config.source_path,
@@ -533,8 +565,8 @@ async def update_model_provider(name: str, req: ModelProviderConfigRequest):
         raise HTTPException(status_code=409, detail={"code": "config_conflict", "message": str(exc)}) from exc
     except ModelProviderConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    revision = await _activate_model_config_commit()
-    return {"ok": True, "provider": resolved.provider.public_dict(), "evicted_sessions": 0, "config_revision": revision, "revision": committed.revision, "warnings": list(committed.warnings), **_commit_metadata(committed)}
+    evicted = await _activate_model_config_commit()
+    return {"ok": True, "provider": resolved.provider.public_dict(), "evicted_sessions": evicted, "config_revision": evicted, "revision": committed.revision, "warnings": list(committed.warnings), **_commit_metadata(committed)}
 
 
 @api.get("/v1/config/model-providers/{name}/references", operation_id="listModelProviderReferences")
@@ -552,6 +584,58 @@ async def list_model_provider_references(name: str):
         }
     except ModelProviderConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@api.get("/v1/config/model-providers/{name}/models/{model_id}/references", operation_id="listModelReferences")
+async def list_model_references(name: str, model_id: str):
+    """Return exact provider+model references and deletion semantics."""
+    try:
+        config = await asyncio.to_thread(load_model_provider_config)
+        provider = config.providers.get(name)
+        if provider is None or model_id not in provider.model_configs:
+            raise HTTPException(status_code=404, detail=f"Model '{name}/{model_id}' not found")
+        references = await asyncio.to_thread(_model_provider_references, config, name, model_id)
+        return {
+            "provider": name,
+            "model_id": model_id,
+            "origin": provider.model_configs[model_id].origin,
+            "action": "disable" if provider.model_configs[model_id].origin == "product" else "delete",
+            "references": references,
+            "can_delete": not references,
+        }
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@api.delete("/v1/config/model-providers/{name}/models/{model_id}", operation_id="deleteModel")
+async def delete_model(name: str, model_id: str, expected_revision: Optional[str] = None):
+    """Delete exactly one user model; product models become disabled."""
+    try:
+        config = await asyncio.to_thread(load_model_provider_config)
+        provider = config.providers.get(name)
+        if provider is None or model_id not in provider.model_configs:
+            raise HTTPException(status_code=404, detail=f"Model '{name}/{model_id}' not found")
+        references = await asyncio.to_thread(_model_provider_references, config, name, model_id)
+        if references:
+            raise HTTPException(status_code=409, detail={
+                "code": "model_references_present",
+                "message": "Migrate the affected Agent model selections before deleting this model.",
+                "provider": name, "model_id": model_id, "references": references,
+            })
+        origin = provider.model_configs[model_id].origin
+        committed = await asyncio.to_thread(
+            delete_provider_model,
+            name,
+            model_id,
+            expected_revision=expected_revision or model_config_revision(),
+            reference_check=lambda latest, provider_id, target_id: _model_provider_references(latest, provider_id, target_id),
+        )
+    except ModelProviderConfigConflict as exc:
+        raise HTTPException(status_code=409, detail={"code": "config_conflict", "message": str(exc)}) from exc
+    except ModelProviderConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    evicted = await _activate_model_config_commit()
+    return {"ok": True, "provider": name, "model_id": model_id, "action": "disable" if origin == "product" else "delete", "revision": committed.revision, "evicted_sessions": evicted}
 
 
 @api.delete("/v1/config/model-providers/{name}", operation_id="deleteModelProvider")
@@ -582,8 +666,8 @@ async def delete_model_provider(name: str, expected_revision: Optional[str] = No
         raise HTTPException(status_code=409, detail={"code": "config_conflict", "message": str(exc)}) from exc
     except ModelProviderConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    revision = await _activate_model_config_commit()
-    return {"ok": True, "active": config.model_provider, "evicted_sessions": 0, "config_revision": revision, "revision": committed.revision}
+    evicted = await _activate_model_config_commit()
+    return {"ok": True, "active": config.model_provider, "evicted_sessions": evicted, "config_revision": evicted, "revision": committed.revision}
 
 
 @api.post("/v1/config/model-providers/{name}/test", operation_id="testModelProviderConnection")
@@ -620,6 +704,7 @@ async def test_model_provider_connection(name: str, req: ModelProviderTestReques
                             model_upstream_ids=existing_provider.model_upstream_ids,
                             model_operations=existing_provider.model_operations,
                             model_configs=existing_provider.model_configs,
+                            use_responses_api=existing_provider.use_responses_api,
                         ),
                     },
                     source_path=config.source_path,

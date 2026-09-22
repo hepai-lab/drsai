@@ -689,6 +689,10 @@ const api: DesktopApi = {
     provider: string, deleteCredential?: boolean,
   ): Promise<{ ok: boolean; active?: string }> =>
     ipcRenderer.invoke("desktop:delete-my-drsai-model-provider", provider, deleteCredential),
+  preflightMyDrSaiModelDeletion: (provider, modelId) =>
+    ipcRenderer.invoke("desktop:preflight-my-drsai-model-deletion", provider, modelId),
+  deleteMyDrSaiModel: (provider, modelId, expectedRevision) =>
+    ipcRenderer.invoke("desktop:delete-my-drsai-model", provider, modelId, expectedRevision),
   createThread: (request: CreateThreadRequest) =>
     ipcRenderer.invoke("desktop:create-thread", request),
   updateThread: (request: UpdateThreadRequest) =>
@@ -1394,6 +1398,8 @@ const api: DesktopApi = {
     request: DesktopReusableTaskRunPrepareRequest,
   ): Promise<DesktopReusableTaskRunRecipe> =>
     ipcRenderer.invoke("desktop:reusable-task-run-prepare", request),
+  getCompletionNotificationPreference: (): Promise<CompletionNotificationPreference> =>
+    ipcRenderer.invoke("desktop:completion-notification-preference-get"),
   setCompletionNotificationPreference: (
     preference: CompletionNotificationPreference,
   ): Promise<CompletionNotificationPreference> =>

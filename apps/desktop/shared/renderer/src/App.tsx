@@ -1,3 +1,6 @@
+import { hydrationRequestCovers } from "./hydrationRequestPolicy";
+import type { DesktopThreadSnapshotRequest } from "../../api/desktopApi";
+import { earlierHistoryRequest } from "./threadHistoryRequest";
 ﻿import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { applyThreadSnapshotPatchBatch } from "./threadSnapshotPatch";
 import { ThreadPatchFrameBatcher } from "./threadPatchFrameBatcher";
@@ -139,6 +142,9 @@ import {
   deriveThreadActivity,
   deriveThreadCatalogStatus,
   indexBackgroundTasksByThread,
+  settleLiveMessagesForTerminalStatus,
+  settleSnapshotForTerminalStatus,
+  shouldSettleSnapshotForCatalogEvent,
 } from "./threadActivity";
 import {
   MENU_IDS,
@@ -408,7 +414,7 @@ function AuthenticatedApp({
     () => null,
   );
   const threadSnapshotCoordinatorRef = useRef(new ThreadSnapshotCoordinator());
-  const threadHydrationsRef = useRef(new Map<string, { generation: number; requestId: string; promise: Promise<void> }>());
+  const threadHydrationsRef = useRef(new Map<string, { generation: number; requestId: string; options: DesktopThreadSnapshotRequest; promise: Promise<void> }>());
   const threadResyncInFlightRef = useRef(new Map<string, ThreadResyncEntry>());
   useEffect(() => {
     for (const [threadId, hydration] of threadHydrationsRef.current) {
@@ -469,7 +475,7 @@ function AuthenticatedApp({
   const [agentConfigurations, setAgentConfigurations] = useState<Record<string, AgentConfigurationPreference>>(() => loadAgentConfigurations());
   const [restoreLastSession, setRestoreLastSession] = useState(() => loadBooleanSetting(RESTORE_SESSION_STORAGE_KEY, true));
   const [restoreLastWorkspace, setRestoreLastWorkspace] = useState(() => loadBooleanSetting(RESTORE_WORKSPACE_STORAGE_KEY, true));
-  const [completionNotifications, setCompletionNotifications] = useState(() => loadBooleanSetting(COMPLETION_NOTIFICATION_STORAGE_KEY, false));
+  const [completionNotifications, setCompletionNotifications] = useState(() => loadBooleanSetting(COMPLETION_NOTIFICATION_STORAGE_KEY, true));
   const [appearance, setAppearance] = useState<AppearanceMode>(() => loadAppearance());
   const [sidebarComponents, setSidebarComponents] = useState<SidebarComponentVisibility>(() => loadSidebarComponents());
   const [rightSidebarComponents, setRightSidebarComponents] = useState<RightSidebarComponentVisibility>(() => loadRightSidebarComponents());
@@ -732,6 +738,11 @@ function AuthenticatedApp({
       if (cached && cached.thread === thread && cached.liveMessages === liveMessages) {
         return cached.snapshot;
       }
+      // The active thread changed identity (a settled catalog row replaced the
+      // thread object, or a different conversation was selected) while the
+      // transcript array reference survived. The cached snapshot was built for
+      // the previous identity and must not be reused for the new one.
+      if (cached && cached.thread !== thread) liveRowSnapshotRef.current = null;
       const snapshot: ChatThreadSnapshot = {
         threadId: thread.id,
         title: thread.title,
@@ -857,6 +868,7 @@ function AuthenticatedApp({
         && effectiveWorkspacePath
         && workspaceTrusted,
     ),
+    chatUnavailableReason,
     developerMode,
     onChatComplete: () => {
       void desktop.refreshHealth();
@@ -1097,6 +1109,31 @@ function AuthenticatedApp({
       deletedThreadIdsRef.current.has(event.thread.id)
       || (event.thread.runtimeSessionId && deletedThreadIdsRef.current.has(event.thread.runtimeSessionId))
     ) return;
+    // A conversation that settled while the user read another one never sees
+    // its terminal chat event, so its cached snapshot keeps the pending flag
+    // and the row spins forever. Only an authoritative terminal broadcast
+    // (`settled`) clears it; an ordinary row that merely reports "idle" must
+    // never wipe a still-streaming snapshot.
+    const settleStatus = shouldSettleSnapshotForCatalogEvent({
+      settled: event.settled,
+      incomingThreadId: event.thread.id,
+      incomingStatus: event.thread.status,
+      activeThreadId: activeThreadIdRef.current ?? null,
+    });
+    if (settleStatus) {
+      threadSnapshotStore.update(event.thread.id, (cached) => cached
+        ? settleSnapshotForTerminalStatus(cached, settleStatus) ?? cached
+        : cached);
+      // The active row is derived from the adapter's live transcript, not the
+      // snapshot store, so the store update above cannot stop its spinner.
+      // When an authoritative settled row names the visible Session, settle its
+      // live transcript too; the adapter's no-op guard keeps a genuinely
+      // running turn untouched, so this never races the turn's own terminal
+      // chat event.
+      if (event.thread.id === activeThreadIdRef.current) {
+        chat.settleLiveTranscript();
+      }
+    }
     setThreads((current) => boundWorkspaceSidebarThreads(
       canonicalizeSidebarThreads([event.thread, ...current]),
       {
@@ -1218,6 +1255,16 @@ function AuthenticatedApp({
   useEffect(() => {
     window.localStorage.setItem(RESTORE_WORKSPACE_STORAGE_KEY, String(restoreLastWorkspace));
   }, [restoreLastWorkspace]);
+
+  // Sync the toggle with the persisted main-process preference on startup so a
+  // choice made on another device / a fresh default is reflected in the UI.
+  useEffect(() => {
+    let active = true;
+    void desktopApi.getCompletionNotificationPreference().then((preference) => {
+      if (active) setCompletionNotifications(preference.enabled);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(COMPLETION_NOTIFICATION_STORAGE_KEY, String(completionNotifications));
@@ -2100,15 +2147,23 @@ function AuthenticatedApp({
 
   async function hydrateThreadSnapshot(
     threadId: string,
-    options: { forceFresh?: boolean; minimumSequence?: number; expectedGeneration?: number; historyCursor?: string } = {},
+    options: { forceFresh?: boolean; minimumSequence?: number; expectedGeneration?: number; historyCursor?: string; oaepHistoryCursor?: string } = {},
   ): Promise<void> {
     const generation = threadSnapshotCoordinatorRef.current.get(threadId)?.generation ?? 0;
     const active = threadHydrationsRef.current.get(threadId);
-    if (active?.generation === generation) return active.promise;
+    if (active?.generation === generation) {
+      if (hydrationRequestCovers(active.options, options)) return active.promise;
+      // Do not cancel an earlier page/import operation to issue a stronger read.
+      // Wait, then re-evaluate the current generation and any other queued read.
+      try { await active.promise; } catch { /* The stronger request still needs its own attempt. */ }
+      if (activeThreadIdRef.current !== threadId || deletedThreadIdsRef.current.has(threadId)) return;
+      if (threadHydrationsRef.current.get(threadId) === active) threadHydrationsRef.current.delete(threadId);
+      return hydrateThreadSnapshot(threadId, options);
+    }
     if (active) void desktopApi.cancelThreadSnapshotHydration(active.requestId).catch(() => false);
     const requestId = globalThis.crypto?.randomUUID?.() ?? `hydrate-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const hydrate = hydrateThreadSnapshotOnce(threadId, generation, requestId, options);
-    threadHydrationsRef.current.set(threadId, { generation, requestId, promise: hydrate });
+    threadHydrationsRef.current.set(threadId, { generation, requestId, options: { ...options }, promise: hydrate });
     try { await hydrate; } finally {
       if (threadHydrationsRef.current.get(threadId)?.promise === hydrate) threadHydrationsRef.current.delete(threadId);
     }
@@ -2116,7 +2171,7 @@ function AuthenticatedApp({
 
   async function hydrateThreadSnapshotOnce(
     threadId: string, generation: number, requestId: string,
-    options: { forceFresh?: boolean; minimumSequence?: number; expectedGeneration?: number; historyCursor?: string },
+    options: { forceFresh?: boolean; minimumSequence?: number; expectedGeneration?: number; historyCursor?: string; oaepHistoryCursor?: string },
   ): Promise<void> {
     const isCurrentThread = (): boolean => activeThreadIdRef.current === threadId;
     if (isCurrentThread()) setHydratingThreadId(threadId);
@@ -2169,6 +2224,16 @@ function AuthenticatedApp({
         return;
       }
       if (!isCurrentThread()) return;
+      if (errorCode === "oaep_history_cursor_stale" || String(error).includes("oaep_history_cursor_stale")) {
+        setThreadHydrationError({ threadId, message: language === "zh"
+          ? "历史分页边界已更新，正在刷新当前窗口；请稍后重新加载更早内容。"
+          : "History pagination changed. Refreshing the current window; load earlier content again shortly." });
+        // Refresh once without the expired cursor, never retry the stale page.
+        if (options.oaepHistoryCursor) window.setTimeout(() => {
+          if (activeThreadIdRef.current === threadId) void hydrateThreadSnapshot(threadId, { forceFresh: true });
+        }, 250);
+        return;
+      }
       const state = threadSnapshotCoordinatorRef.current.noteResyncFailure(threadId);
       const friendly = describeUserFacingError(error, language);
       setThreadHydrationError({
@@ -2855,6 +2920,8 @@ function AuthenticatedApp({
   ): Promise<void> {
     if (deletedThreadIdsRef.current.has(snapshot.threadId)) return;
     const storedSnapshot = threadSnapshotStore.get(snapshot.threadId);
+    // A late publisher must not regress either disk content or sidebar status.
+    if (storedSnapshot && storedSnapshot.updatedAt > snapshot.updatedAt) return;
     if (!storedSnapshot || storedSnapshot.updatedAt < snapshot.updatedAt) {
       threadSnapshotStore.set(snapshot.threadId, snapshot);
     }
@@ -3370,11 +3437,9 @@ function AuthenticatedApp({
               })}
             />
           ) : null}
-          onLoadEarlierHistory={activeThreadSnapshot?.history?.nextCursor ? async () => {
-            await hydrateThreadSnapshot(activeThreadId, {
-              forceFresh: true,
-              historyCursor: activeThreadSnapshot.history?.nextCursor ?? undefined,
-            });
+          onLoadEarlierHistory={earlierHistoryRequest(activeThreadSnapshot?.history) ? async () => {
+            const request = earlierHistoryRequest(activeThreadSnapshot?.history);
+            if (request) await hydrateThreadSnapshot(activeThreadId, request);
           } : undefined}
           continuesExistingTask={Boolean(
             activeThread?.runtimeSessionId
@@ -4452,7 +4517,9 @@ function mergeThreadSnapshotForDisplay(
     )))
     : [];
 
-  const messages = preferRicherTranscript(coalescedIncoming, existingMessages);
+  // A canonical OAEP window must not be replaced by stale, larger local history.
+  const messages = incoming.history?.oaepHasMore !== undefined
+    ? coalescedIncoming : preferRicherTranscript(coalescedIncoming, existingMessages);
   const firstUser = messages.find((message) => message.role === "user");
   const titleFromUser = firstUser?.content.trim().slice(0, 48);
   return {

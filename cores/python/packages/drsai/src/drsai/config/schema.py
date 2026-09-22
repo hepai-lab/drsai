@@ -37,6 +37,12 @@ class ProviderModelConfig:
     token_limit: int | None = None
     max_tokens: int | None = None
     reasoning_efforts: tuple[str, ...] = ()
+    # Wire transport for OpenAI-protocol models. Tri-state on purpose:
+    #   None  -> inherit the Provider default, then infer from the model name
+    #   True  -> POST /responses
+    #   False -> POST /chat/completions
+    # Only meaningful when ``api_protocol == "openai"``.
+    use_responses_api: bool | None = None
     # Read-only. Derived from the catalog file, never rendered back into TOML.
     origin: ModelOrigin = "user"
 
@@ -52,6 +58,7 @@ class ProviderModelConfig:
             **({"token_limit": self.token_limit} if self.token_limit is not None else {}),
             **({"max_tokens": self.max_tokens} if self.max_tokens is not None else {}),
             **({"reasoning_efforts": list(self.reasoning_efforts)} if self.reasoning_efforts else {}),
+            **({"use_responses_api": self.use_responses_api} if self.use_responses_api is not None else {}),
             "origin": self.origin,
         }
 
@@ -98,6 +105,11 @@ class ModelCapabilities:
     structured_output: bool = False
     token_model: str = "gpt-4o-2024-11-20"
     reasoning: ReasoningCapabilities = field(default_factory=ReasoningCapabilities)
+    # Effective OpenAI wire transport, already merged from the model entry and
+    # its Provider default. ``None`` means "no explicit declaration": the caller
+    # (run_drsai_agent_factory) falls back to its own model-name inference so
+    # product catalog models keep their previous behaviour.
+    use_responses_api: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +129,10 @@ class ProviderConfig:
     model_upstream_ids: Mapping[str, str] = field(default_factory=dict)
     model_operations: Mapping[str, tuple[ImageModelOperation, ...]] = field(default_factory=dict)
     model_configs: Mapping[str, ProviderModelConfig] = field(default_factory=dict)
+    # Provider-wide default for OpenAI-protocol chat models. Tri-state: None
+    # means "no Provider default", so each model falls back to its own entry or
+    # to the client's model-name inference.
+    use_responses_api: bool | None = None
     # User-owned product-model kill switches (read from the user file's
     # top-level ``disabled`` list) and read-side diagnostics.
     disabled_models: tuple[str, ...] = ()
@@ -148,6 +164,7 @@ class ProviderConfig:
             "model_aliases": dict(self.model_aliases),
             "model_upstream_ids": dict(self.model_upstream_ids),
             "model_operations": {key: list(value) for key, value in self.model_operations.items()},
+            **({"use_responses_api": self.use_responses_api} if self.use_responses_api is not None else {}),
             "disabled_models": list(self.disabled_models),
             "shadowed_models": list(self.shadowed_models),
             "user_models_error": self.user_models_error,
@@ -173,6 +190,10 @@ class ProviderInput:
     model_upstream_ids: Mapping[str, str] = field(default_factory=dict)
     model_operations: Mapping[str, tuple[ImageModelOperation, ...]] = field(default_factory=dict)
     model_configs: Mapping[str, ProviderModelConfig] = field(default_factory=dict)
+    # Provider-wide default for OpenAI-protocol chat models. Tri-state:
+    # None -> per-model inference, True/False -> default for models that do not
+    # declare their own ``use_responses_api``.
+    use_responses_api: bool | None = None
     disabled_models: tuple[str, ...] = ()
     shadowed_models: tuple[str, ...] = ()
     user_models_error: str | None = None
@@ -217,5 +238,11 @@ class ResolvedModelConfig:
                     "effort_levels": list(self.capabilities.reasoning.effort_levels),
                     "param_type": self.capabilities.reasoning.param_type,
                 },
+                # Tri-state: absent means "let the client infer".
+                **(
+                    {"use_responses_api": self.capabilities.use_responses_api}
+                    if self.capabilities.use_responses_api is not None
+                    else {}
+                ),
             },
         }

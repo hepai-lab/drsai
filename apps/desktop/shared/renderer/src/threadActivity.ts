@@ -158,6 +158,92 @@ export function deriveThreadCatalogStatus(snapshot?: DesktopThreadSnapshot): Des
   return "idle";
 }
 
+/**
+ * Settle the tail turn of a stored snapshot once the catalog says its Session
+ * is no longer running. A conversation that finished while the user was
+ * reading another one never receives its terminal chat event (the renderer
+ * queues events for non-active threads), so its cached snapshot keeps the
+ * pending flag and the sidebar row would spin forever. The catalog status is
+ * the authority here; this only clears the pending markers it contradicts.
+ */
+export function settleSnapshotForTerminalStatus(
+  snapshot: DesktopThreadSnapshot,
+  status: "idle" | "error",
+): DesktopThreadSnapshot | null {
+  if (!snapshotIsRunning(snapshot) && pendingInteraction(snapshot) === null) return null;
+  const messages = [...snapshot.messages];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message) continue;
+    if (!messageIsPending(message) && !message.inputRequest) continue;
+    const turn = message.structuredTurn;
+    messages[index] = {
+      ...message,
+      streaming: false,
+      inputRequest: undefined,
+      ...(turn && isPendingStatus(turn.status)
+        ? { structuredTurn: { ...turn, status: status === "error" ? "error" : "completed" } }
+        : {}),
+    };
+  }
+  return { ...snapshot, messages };
+}
+
+/**
+ * Decide whether a catalog row should settle a Session's cached snapshot.
+ *
+ * A conversation that settled without its terminal chat event reaching the
+ * renderer (queued for a non-active thread, or lost to a main-process turn
+ * record that outlived the Runtime run) keeps the pending flag and the row
+ * spins forever. Only an authoritative terminal broadcast (`settled`) resolves
+ * this. A row that merely reports "idle" — the Runtime catalog's default, or a
+ * freshly materialized ghost row — must never wipe a still-streaming snapshot,
+ * or leaving a Session would drop its live progress indicator.
+ *
+ * The active Session is settled too: a `settled` row is emitted from the turn's
+ * own terminal path, so it never races a genuinely running turn, while the
+ * snapshot-store write is a no-op unless the cached snapshot is still marked
+ * pending. The composer itself is not touched here; the active view clears its
+ * running state through the terminal chat event or the recovery path.
+ */
+export function shouldSettleSnapshotForCatalogEvent(input: {
+  settled: boolean | undefined;
+  incomingThreadId: string;
+  incomingStatus: DesktopThread["status"];
+  activeThreadId: string | null;
+}): "idle" | "error" | null {
+  if (!input.settled) return null;
+  if (input.incomingStatus === "idle" || input.incomingStatus === "error") {
+    return input.incomingStatus;
+  }
+  return null;
+}
+
+/**
+ * Settle the live transcript row for the *active* Session when an
+ * authoritative settled catalog row arrives while its terminal chat event is
+ * still in flight. `settleSnapshotForTerminalStatus` only writes the snapshot
+ * store, and the active sidebar row is instead derived from the adapter's live
+ * `chat.messages`; a turn that ended on the Runtime before the renderer
+ * applied its own terminal event would otherwise keep that row spinning until
+ * the event landed. A no-op while any part is still pending — a genuinely
+ * running turn is never settled here.
+ */
+export function settleLiveMessagesForTerminalStatus(
+  messages: DesktopThreadSnapshot["messages"],
+  status: "idle" | "error",
+): DesktopThreadSnapshot["messages"] | null {
+  if (!messages.some(messageIsPending)) return null;
+  const synthetic: DesktopThreadSnapshot = {
+    threadId: "active",
+    title: "",
+    messages,
+    updatedAt: 0,
+    messageCount: messages.length,
+  };
+  return settleSnapshotForTerminalStatus(synthetic, status)?.messages ?? null;
+}
+
 function taskWins(candidate: DesktopBackgroundTask, current?: DesktopBackgroundTask): boolean {
   if (!current) return true;
   const priorityDelta = TASK_PRIORITY[candidate.status] - TASK_PRIORITY[current.status];

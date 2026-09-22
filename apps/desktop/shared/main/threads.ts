@@ -43,7 +43,10 @@ const MAX_THREADS = 1_000;
 const MAX_ARCHIVED_THREADS = 2_000;
 const MAX_THREAD_SNAPSHOTS = 2_000;
 const MAX_DELETED_THREAD_TOMBSTONES = 5_000;
-const MAX_SNAPSHOT_MESSAGES = 500;
+// Persistence is not a renderer window: never evict either end of a conversation.
+// Limits reject new writes atomically; historical files remain readable in full.
+const MAX_SNAPSHOT_MESSAGES = 100_000;
+const MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const MAX_MESSAGE_CHARS = 200_000;
 const MAX_STATUS_CHARS = 80_000;
 const MAX_TITLE_CHARS = 120;
@@ -67,7 +70,7 @@ const threadSnapshotIoMetrics = { shardReads: 0, shardWrites: 0, legacyCatalogRe
  * restart/login upsert cannot resurrect a conversation the user already deleted.
  */
 const deletedThreadIds = new Set<string>();
-let deletedTombstonesLoaded = false;
+let deletedTombstonesLoading: Promise<void> | undefined;
 
 export function getThreadSnapshotIoMetrics(): Readonly<typeof threadSnapshotIoMetrics> {
   return { ...threadSnapshotIoMetrics };
@@ -81,18 +84,26 @@ export function resetThreadSnapshotIoMetrics(): void {
 }
 
 async function ensureDeletedTombstonesLoaded(): Promise<void> {
-  if (deletedTombstonesLoaded) return;
-  deletedTombstonesLoaded = true;
-  try {
-    const parsed = parseStoredJson(await readFile(DELETED_THREADS_FILE, "utf8"));
-    if (!Array.isArray(parsed)) return;
-    for (const value of parsed.slice(-MAX_DELETED_THREAD_TOMBSTONES)) {
-      if (typeof value === "string" && THREAD_ID_PATTERN.test(value) && !/[\r\n]/.test(value)) {
-        deletedThreadIds.add(value);
+  // All callers must await the same read; setting a boolean before readFile
+  // finishes lets a concurrent snapshot writer bypass durable tombstones.
+  deletedTombstonesLoading ??= (async () => {
+    try {
+      const parsed = parseStoredJson(await readFile(DELETED_THREADS_FILE, "utf8"));
+      if (!Array.isArray(parsed)) throw new Error("Stored thread tombstones are invalid.");
+      for (const value of parsed.slice(-MAX_DELETED_THREAD_TOMBSTONES)) {
+        if (typeof value === "string" && THREAD_ID_PATTERN.test(value) && !/[\r\n]/.test(value)) {
+          deletedThreadIds.add(value);
+        }
       }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-  } catch {
-    // First run or missing file — no durable tombstones yet.
+  })();
+  try {
+    await deletedTombstonesLoading;
+  } catch (error) {
+    deletedTombstonesLoading = undefined;
+    throw error;
   }
 }
 
@@ -306,12 +317,15 @@ export async function deleteThread(rawThreadId: unknown): Promise<boolean> {
     // Catalog removal below is still authoritative for this process; a later
     // listThreads/delete retry can persist the tombstone file.
   }
+  const snapshotIds = new Set([threadId]);
   const deleted = await serializeJsonMutation(THREADS_FILE, async () => {
     const threads = await readThreads();
     const existing = threads.find((thread) => thread.id === threadId)
       ?? threads.find((thread) => thread.runtimeSessionId === threadId);
     rememberDeletedThreadIdentity(existing?.id);
     rememberDeletedThreadIdentity(existing?.runtimeSessionId);
+    if (existing) snapshotIds.add(existing.id);
+    if (existing?.runtimeSessionId) snapshotIds.add(existing.runtimeSessionId);
     try {
       await persistDeletedThreadIds();
     } catch {
@@ -325,17 +339,27 @@ export async function deleteThread(rawThreadId: unknown): Promise<boolean> {
       && !(existing.runtimeSessionId && thread.runtimeSessionId === existing.runtimeSessionId)));
     return true;
   });
-  await rm(threadSnapshotPath(threadId), { force: true }).catch(() => undefined);
+  // Drain any in-flight save/migration before removing shards. Tombstones block
+  // later queued work, including saves addressed through the Runtime alias.
+  await Promise.all([...snapshotIds].map((id) => serializeJsonMutation(threadSnapshotPath(id), async () => {
+    await rm(threadSnapshotPath(id), { force: true });
+  })));
   try {
     await serializeJsonMutation(THREAD_SNAPSHOTS_FILE, async () => {
-      const snapshots = await readLegacyThreadSnapshots();
-      if (snapshots[threadId]) {
-        delete snapshots[threadId];
-        await writeThreadSnapshots(snapshots);
+      const snapshots = await readLegacyThreadSnapshotCatalog();
+      let changed = false;
+      for (const [key, value] of Object.entries(snapshots)) {
+        const id = value && typeof value === "object" ? (value as Partial<DesktopThreadSnapshot>).threadId : undefined;
+        if (snapshotIds.has(key) || (id && snapshotIds.has(id))) {
+          delete snapshots[key];
+          changed = true;
+        }
       }
+      // Do not revalidate/cap unrelated legacy entries while deleting one thread.
+      if (changed) await writeAtomicJson(THREAD_SNAPSHOTS_FILE, snapshots);
     });
   } catch {
-    // Shard removal above is enough for getThreadSnapshot(); legacy catalog is best-effort.
+    // Durable tombstones remain authoritative if legacy cleanup cannot complete.
   }
   return deleted;
 }
@@ -344,14 +368,18 @@ export async function getThreadSnapshot(rawThreadId: unknown): Promise<DesktopTh
   const threadId = sanitizeThreadId(rawThreadId);
   await ensureDeletedTombstonesLoaded();
   if (isDeletedThreadIdentity(threadId)) return null;
-  const sharded = await readThreadSnapshotShard(threadId);
-  if (sharded) return sharded;
-  // One-time compatibility path for installations created before snapshots
-  // were sharded. Only the requested legacy entry is migrated; subsequent
-  // opens are O(size of this conversation), not O(all conversations).
-  const legacy = (await readLegacyThreadSnapshots())[threadId] ?? null;
-  if (legacy) await writeThreadSnapshotShard(legacy);
-  return legacy;
+  return serializeJsonMutation(threadSnapshotPath(threadId), async () => {
+    if (isDeletedThreadIdentity(threadId)) return null;
+    const sharded = await readThreadSnapshotShard(threadId);
+    if (isDeletedThreadIdentity(threadId)) return null;
+    if (sharded) return sharded;
+    // Migration shares the save lock, so a delayed legacy read cannot overwrite
+    // a newly saved shard. Read only the requested entry without catalog caps.
+    const legacy = await readLegacyThreadSnapshot(threadId);
+    if (isDeletedThreadIdentity(threadId)) return null;
+    if (legacy) await writeThreadSnapshotShard(legacy, true);
+    return isDeletedThreadIdentity(threadId) ? null : legacy;
+  });
 }
 
 export async function searchThreadMessages(
@@ -402,12 +430,19 @@ function createSearchSnippet(content: string, matchIndex: number, matchLength: n
 }
 
 export async function updateThreadSnapshot(rawRequest: unknown): Promise<DesktopThreadSnapshot> {
+  assertSnapshotWriteLimits(rawRequest);
   const snapshot = validateThreadSnapshot(rawRequest);
   await ensureDeletedTombstonesLoaded();
   if (isDeletedThreadIdentity(snapshot.threadId)) throwThreadDeleted();
   const path = threadSnapshotPath(snapshot.threadId);
   return serializeJsonMutation(path, async () => {
     if (isDeletedThreadIdentity(snapshot.threadId)) throwThreadDeleted();
+    const current = await readThreadSnapshotShard(snapshot.threadId)
+      ?? await readLegacyThreadSnapshot(snapshot.threadId);
+    if (isDeletedThreadIdentity(snapshot.threadId)) throwThreadDeleted();
+    // updatedAt is a best-effort wall clock, NOT a Runtime sequence/watermark.
+    // Equal timestamps retain last-writer semantics for same-millisecond edits.
+    if (current && snapshot.updatedAt < current.updatedAt) return current;
     await writeThreadSnapshotShard(snapshot);
     return snapshot;
   });
@@ -420,13 +455,16 @@ export async function appendDuplexVoiceHistory(rawRequest: DesktopDuplexVoiceHis
     if (!Number.isInteger(message.revision) || message.revision < 1 || !Number.isInteger(message.expectedRevision) || message.expectedRevision < 0) throw new Error("Duplex voice history revision is invalid.");
     return { id: message.id, role: message.role, content: message.content.replace(/\0/g, "").slice(0, 20_000), revision: message.revision, expectedRevision: message.expectedRevision, ...(message.statusContent ? { statusContent: message.statusContent.replace(/\0/g, "").slice(0, 20_000) } : {}), ...(message.voice ? { voice: message.voice } : {}), ...(Array.isArray(message.toolTimeline) ? { toolTimeline: message.toolTimeline.slice(-20).flatMap(sanitizeToolTimelineEvent) } : {}), ...(Array.isArray(message.parts) ? { parts: message.parts.slice(0, 64).flatMap(sanitizeMessagePart) } : {}) };
   });
+  await ensureDeletedTombstonesLoaded();
   const path = threadSnapshotPath(rawRequest.threadId);
   return serializeJsonMutation(path, async () => {
-    const current = await readThreadSnapshotShard(rawRequest.threadId) ?? { threadId: rawRequest.threadId, title: rawRequest.threadId, messages: [], updatedAt: Date.now(), messageCount: 0 };
+    if (isDeletedThreadIdentity(rawRequest.threadId)) throwThreadDeleted();
+    const current = await readThreadSnapshotShard(rawRequest.threadId) ?? await readLegacyThreadSnapshot(rawRequest.threadId) ?? { threadId: rawRequest.threadId, title: rawRequest.threadId, messages: [], updatedAt: Date.now(), messageCount: 0 };
+    if (isDeletedThreadIdentity(rawRequest.threadId)) throwThreadDeleted();
     const merged = new Map(current.messages.map((message) => [message.id, message]));
     for (const message of messages) { const existing = merged.get(message.id); const currentRevision = existing?.voice?.revision ?? 0; if (message.revision === currentRevision) { if (!existing || existing.content !== message.content || existing.role !== message.role || JSON.stringify(existing.parts ?? []) !== JSON.stringify(message.parts ?? existing.parts ?? [])) throw new Error("Duplex voice history revision conflict."); continue; } if (message.expectedRevision !== currentRevision || message.revision !== currentRevision + 1) throw new Error("Duplex voice history revision conflict."); const { revision: _revision, expectedRevision: _expectedRevision, ...value } = message; merged.set(message.id, { ...existing, ...value, voice: { ...value.voice, revision: message.revision } }); }
-    const nextMessages = [...merged.values()].slice(-MAX_SNAPSHOT_MESSAGES);
-    const next = validateThreadSnapshot({ ...current, messages: nextMessages, messageCount: nextMessages.length, updatedAt: Date.now() });
+    const nextMessages = [...merged.values()];
+    const next = validateThreadSnapshot({ ...current, messages: nextMessages, messageCount: Math.max(current.messageCount ?? 0, nextMessages.length), updatedAt: Math.max(current.updatedAt, Date.now()) });
     await writeThreadSnapshotShard(next); return next;
   });
 }
@@ -817,6 +855,33 @@ function retainThreads(threads: DesktopThread[]): DesktopThread[] {
   return [...active, ...archived.sort(compareThreads).slice(0, MAX_ARCHIVED_THREADS)];
 }
 
+/** Strict compatibility read for mutations: unreadable data is not an empty store. */
+async function readLegacyThreadSnapshotCatalog(): Promise<Record<string, unknown>> {
+  let serialized: string;
+  try {
+    threadSnapshotIoMetrics.legacyCatalogReads += 1;
+    serialized = await readFile(THREAD_SNAPSHOTS_FILE, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw error;
+  }
+  const parsed = parseStoredJson(serialized);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Stored thread snapshot catalog is invalid.");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+async function readLegacyThreadSnapshot(threadId: string): Promise<DesktopThreadSnapshot | null> {
+  const catalog = await readLegacyThreadSnapshotCatalog();
+  const value = Object.hasOwn(catalog, threadId) ? catalog[threadId] : Object.values(catalog).find((item) =>
+    item && typeof item === "object" && (item as Partial<DesktopThreadSnapshot>).threadId === threadId);
+  if (value === undefined) return null;
+  const snapshot = validateThreadSnapshot(value);
+  if (snapshot.threadId !== threadId) throw new Error("Stored thread snapshot identity is invalid.");
+  return snapshot;
+}
+
 async function readLegacyThreadSnapshots(): Promise<Record<string, DesktopThreadSnapshot>> {
   try {
     threadSnapshotIoMetrics.legacyCatalogReads += 1;
@@ -865,26 +930,37 @@ function threadSnapshotPath(threadId: string): string {
 }
 
 async function readThreadSnapshotShard(threadId: string): Promise<DesktopThreadSnapshot | null> {
+  let serialized: string;
   try {
     threadSnapshotIoMetrics.shardReads += 1;
-    const snapshot = validateThreadSnapshot(parseStoredJson(await readFile(threadSnapshotPath(threadId), "utf8")));
-    return snapshot.threadId === threadId ? snapshot : null;
-  } catch { return null; }
+    serialized = await readFile(threadSnapshotPath(threadId), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  const snapshot = validateThreadSnapshot(parseStoredJson(serialized));
+  if (snapshot.threadId !== threadId) throw new Error("Stored thread snapshot identity is invalid.");
+  return snapshot;
 }
 
-async function writeThreadSnapshotShard(snapshot: DesktopThreadSnapshot): Promise<void> {
+function assertSnapshotWriteLimits(raw: unknown): void {
+  const messages = (raw as Partial<DesktopThreadSnapshot> | null)?.messages;
+  if ((Array.isArray(messages) && messages.length > MAX_SNAPSHOT_MESSAGES)
+    || Buffer.byteLength(`${JSON.stringify(raw, null, 2)}\n`, "utf8") > MAX_SNAPSHOT_BYTES) {
+    throw Object.assign(new Error(`Thread snapshot exceeds the ${MAX_SNAPSHOT_MESSAGES} message or 64 MiB safety limit; existing history was not changed.`), {
+      code: "thread_snapshot_too_large",
+      retryable: false,
+    });
+  }
+}
+
+async function writeThreadSnapshotShard(snapshot: DesktopThreadSnapshot, legacyMigration = false): Promise<void> {
+  // Existing files predate these write limits. Migration must not make a valid
+  // historical conversation unreadable solely because it exceeds a new limit.
+  if (!legacyMigration) assertSnapshotWriteLimits(snapshot);
+  if (isDeletedThreadIdentity(snapshot.threadId)) throwThreadDeleted();
   threadSnapshotIoMetrics.shardWrites += 1;
   await writeAtomicJson(threadSnapshotPath(snapshot.threadId), snapshot);
-}
-
-async function writeThreadSnapshots(snapshots: Record<string, DesktopThreadSnapshot>): Promise<void> {
-  const capped = Object.fromEntries(
-    Object.values(snapshots)
-      .sort((left, right) => right.updatedAt - left.updatedAt)
-      .slice(0, MAX_THREAD_SNAPSHOTS)
-      .map((snapshot) => [snapshot.threadId, snapshot]),
-  );
-  await writeAtomicJson(THREAD_SNAPSHOTS_FILE, capped);
 }
 
 async function serializeJsonMutation<T>(path: string, mutation: () => Promise<T>): Promise<T> {
@@ -1042,7 +1118,7 @@ function validateThreadSnapshot(rawRequest: unknown): DesktopThreadSnapshot {
   }
   const request = rawRequest as Partial<DesktopThreadSnapshot>;
   const messages = Array.isArray(request.messages)
-    ? request.messages.slice(0, MAX_SNAPSHOT_MESSAGES).map(sanitizeSnapshotMessage)
+    ? request.messages.map(sanitizeSnapshotMessage)
     : [];
   const updatedAt =
     typeof request.updatedAt === "number" && Number.isFinite(request.updatedAt)

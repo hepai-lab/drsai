@@ -40,6 +40,8 @@ export class ThreadSnapshotStore {
     const bytes = previous && Number.isFinite(estimatedByteDelta) && Number(estimatedByteDelta) >= 0
       ? previous.bytes + Number(estimatedByteDelta)
       : new TextEncoder().encode(JSON.stringify(snapshot)).byteLength;
+    // Map.set on an existing key does not refresh its LRU position.
+    this.snapshots.delete(threadId);
     this.snapshots.set(threadId, { snapshot, bytes, touchedAt: Date.now() });
     this.totalBytes += bytes;
     for (const listener of this.listeners.get(threadId) ?? []) listener();
@@ -70,10 +72,12 @@ export class ThreadSnapshotStore {
 
   private evict(): void {
     for (const [threadId, entry] of this.snapshots) {
-      const expired = !this.listeners.has(threadId) && Date.now() - entry.touchedAt > this.ttlMs;
+      // Active subscribers pin entries, but must not hide expired inactive ones.
+      if (this.listeners.has(threadId)) continue;
+      const expired = Date.now() - entry.touchedAt > this.ttlMs;
       const overBudget = this.snapshots.size > this.maximumSessions || this.totalBytes > this.maximumBytes;
       if (!expired && !overBudget) break;
-      if (!this.listeners.has(threadId)) this.delete(threadId);
+      this.delete(threadId);
     }
   }
 

@@ -1,3 +1,4 @@
+import { useStreamingClock } from "../useStreamingClock";
 import {
   FormEvent,
   ClipboardEvent as ReactClipboardEvent,
@@ -810,6 +811,10 @@ function ChatWorkspaceImpl({
   const [voiceProgressMessage, setVoiceProgressMessage] = useState("");
   const [voiceRuntimeLabel, setVoiceRuntimeLabel] = useState("Voice STT");
   const voicePlayback = useSystemVoicePlayback();
+  const messageVoicePlayback = useMemo(() => ({ ...voicePlayback }), [
+    voicePlayback.activeMessageId, voicePlayback.error, voicePlayback.isAvailable, voicePlayback.phase,
+    voicePlayback.pause, voicePlayback.play, voicePlayback.resume, voicePlayback.stop,
+  ]);
   const {
     devices: voiceDevices,
     elapsedSeconds: voiceElapsedSeconds,
@@ -877,6 +882,9 @@ function ChatWorkspaceImpl({
   const [configuredCapabilityRequests, setConfiguredCapabilityRequests] = useState<Set<string>>(() => new Set());
   const [activeTurnRailId, setActiveTurnRailId] = useState<string | null>(null);
   const [awayFromLatest, setAwayFromLatest] = useState(false);
+  // 运行中提交的消息进入排队，待当前 turn 结束后自动发送，
+  // 避免直接并发提交被后端以 session_busy 之类的错误拒绝。
+  const [queuedSend, setQueuedSend] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const turnRailNavigationTargetRef = useRef<string | null>(null);
@@ -1226,6 +1234,10 @@ function ChatWorkspaceImpl({
     setInteractionDraft("");
   }
   const shouldFollowOutputRef = useRef(true);
+  // 粘性暂停：一旦检测到明确的用户向上滚动意图即置位，
+  // 流式 token 触发的自动滚动/atBottom 判定不得自动解除，
+  // 只有用户真正滚回最底部或点击“回到最新”才解锁。
+  const userPausedRef = useRef(false);
   const programmaticScrollRef = useRef(false);
   const programmaticScrollTimerRef = useRef<number | null>(null);
   const [smoothFollowOutput] = useState(() => createSmoothFollowOutputController({
@@ -1247,12 +1259,14 @@ function ChatWorkspaceImpl({
   const autoReadInitializedRef = useRef(false);
   const lastAutoReadMessageIdRef = useRef<string | null>(null);
   const zh = language === "zh";
-  const [now, setNow] = useState(Date.now());
   const activeInputMessage = useMemo(
-    () => [...messages]
-      .reverse()
-      .find((message) => Boolean(message.inputRequest
-        && !respondedInputRequests.has(message.inputRequest.requestId))) ?? null,
+    () => {
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (message.inputRequest && !respondedInputRequests.has(message.inputRequest.requestId)) return message;
+      }
+      return null;
+    },
     [messages, respondedInputRequests],
   );
   const activeInputRequest = activeInputMessage?.inputRequest ?? null;
@@ -1859,7 +1873,7 @@ function ChatWorkspaceImpl({
       const height = `${composer.offsetHeight}px`;
       messageList.style.setProperty("--chat-composer-height", height);
       chatPane?.style.setProperty("--chat-composer-height", height);
-      if (shouldFollowOutputRef.current) {
+      if (shouldFollowOutputRef.current && !userPausedRef.current) {
         window.requestAnimationFrame(() => scrollMessageListToLatest("auto"));
       }
     };
@@ -1947,12 +1961,6 @@ function ChatWorkspaceImpl({
     };
   }, [onInputChange]);
 
-  useEffect(() => {
-    if (!hasStreamingMessage) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [hasStreamingMessage]);
-
   function getMessageListMaxScrollTop(list: HTMLDivElement): number {
     return Math.max(0, list.scrollHeight - list.clientHeight);
   }
@@ -1989,7 +1997,7 @@ function ChatWorkspaceImpl({
 
   useEffect(() => {
     if (!messageListRef.current) return;
-    if (!shouldFollowOutputRef.current) {
+    if (!shouldFollowOutputRef.current || userPausedRef.current) {
       syncAwayFromLatestFromScroll(messageListRef.current);
       return;
     }
@@ -2002,7 +2010,7 @@ function ChatWorkspaceImpl({
       let settleFrame = 0;
       const layoutFrame = window.requestAnimationFrame(() => {
         settleFrame = window.requestAnimationFrame(() => {
-          if (shouldFollowOutputRef.current) scrollMessageListToLatest("auto");
+          if (shouldFollowOutputRef.current && !userPausedRef.current) scrollMessageListToLatest("auto");
         });
       });
       return () => {
@@ -2014,7 +2022,7 @@ function ChatWorkspaceImpl({
     // messages update. Use auto (not smooth) for immediate tracking and
     // defer to the next animation frame so the DOM has been laid out.
     const frame = window.requestAnimationFrame(() => {
-      if (shouldFollowOutputRef.current && messageListRef.current) {
+      if (shouldFollowOutputRef.current && !userPausedRef.current && messageListRef.current) {
         scrollMessageListToLatest("auto");
       }
     });
@@ -2029,7 +2037,7 @@ function ChatWorkspaceImpl({
     const lastMessage = list?.lastElementChild;
     if (!list || !lastMessage) return undefined;
     const observer = new ResizeObserver(() => {
-      if (!shouldFollowOutputRef.current) {
+      if (!shouldFollowOutputRef.current || userPausedRef.current) {
         // Content grew/shrank while the user is paused — keep the jump button
         // in sync with the real distance from the latest messages.
         if (messageListRef.current) syncAwayFromLatestFromScroll(messageListRef.current);
@@ -2039,7 +2047,7 @@ function ChatWorkspaceImpl({
       // Direct scroll on height change — more reliable than handleHeightChange
       // which may be gated by controller state (pendingFrame, following, etc.)
       window.requestAnimationFrame(() => {
-        if (shouldFollowOutputRef.current && messageListRef.current) {
+        if (shouldFollowOutputRef.current && !userPausedRef.current && messageListRef.current) {
           scrollMessageListToLatest("auto");
         }
       });
@@ -2085,10 +2093,9 @@ function ChatWorkspaceImpl({
 
   function scrollToUserTurn(messageId: string): void {
     const list = messageListRef.current;
-    const message = list?.querySelector<HTMLElement>(
-      `.message.user[data-message-id="${CSS.escape(messageId)}"]`,
-    );
-    if (!list || !message) return;
+    if (!list) return;
+    const selector = `.message.user[data-message-id="${CSS.escape(messageId)}"]`;
+    if (!list.querySelector(selector)) return;
     shouldFollowOutputRef.current = false;
     smoothFollowOutput.pause();
     turnRailNavigationTargetRef.current = messageId;
@@ -2096,11 +2103,22 @@ function ChatWorkspaceImpl({
       window.clearTimeout(turnRailNavigationTimerRef.current);
     }
     setActiveTurnRailId(messageId);
-    list.scrollTo({ top: Math.max(0, message.offsetTop - 18), behavior: "smooth" });
+    // 未渲染的消息是估算高度的占位符，offsetTop 可能严重漂移：
+    // 先瞬移到估算位置触发目标渲染，再分阶段用最新 offsetTop 校正。
+    const scrollToTarget = () => {
+      const container = messageListRef.current;
+      const target = container?.querySelector<HTMLElement>(selector);
+      if (!container || !target) return;
+      container.scrollTo({ top: Math.max(0, target.offsetTop - 18), behavior: "auto" });
+    };
+    scrollToTarget();
+    window.requestAnimationFrame(scrollToTarget);
+    window.setTimeout(scrollToTarget, 120);
+    window.setTimeout(scrollToTarget, 400);
     turnRailNavigationTimerRef.current = window.setTimeout(() => {
       turnRailNavigationTargetRef.current = null;
       turnRailNavigationTimerRef.current = null;
-    }, 600);
+    }, 900);
   }
 
   useEffect(() => () => {
@@ -2143,8 +2161,12 @@ function ChatWorkspaceImpl({
           window.clearTimeout(programmaticScrollTimerRef.current);
           programmaticScrollTimerRef.current = null;
         }
-        shouldFollowOutputRef.current = true;
-        smoothFollowOutput.resume();
+        // 用户粘性暂停期间，程序化滚动到底不得重新开启自动跟随，
+        // 否则流式 token 会把用户刚向上滚动的视口又拉回底部。
+        if (!userPausedRef.current) {
+          shouldFollowOutputRef.current = true;
+          smoothFollowOutput.resume();
+        }
         setAwayFromLatest(false);
       }
       return;
@@ -2155,8 +2177,18 @@ function ChatWorkspaceImpl({
     // At-bottom wins over pause intent so the jump button never sticks while
     // the viewport is already on the latest content (e.g. scrollbar click).
     if (atBottom) {
-      shouldFollowOutputRef.current = true;
-      smoothFollowOutput.resume();
+      if (userPausedRef.current) {
+        // 粘性暂停：流式期间内容持续增长，64px 容差会把“只上滚了一小段”
+        // 误判为回到底部。只有真正到达最底部（严格判定）才解除暂停。
+        if (maxScrollTop - list.scrollTop <= 2) {
+          userPausedRef.current = false;
+          shouldFollowOutputRef.current = true;
+          smoothFollowOutput.resume();
+        }
+      } else {
+        shouldFollowOutputRef.current = true;
+        smoothFollowOutput.resume();
+      }
     } else if (userPaused) {
       shouldFollowOutputRef.current = false;
     }
@@ -2179,6 +2211,7 @@ function ChatWorkspaceImpl({
     if (!list) return;
     smoothFollowOutput.handleUserScrollIntent(list.scrollTop);
     shouldFollowOutputRef.current = false;
+    userPausedRef.current = true;
     // Only show the jump button once we've actually left the bottom; a wheel
     // tick / trackpad bounce at the bottom must not leave it stuck visible.
     syncAwayFromLatestFromScroll(list);
@@ -2197,6 +2230,7 @@ function ChatWorkspaceImpl({
     if (!list) return;
     smoothFollowOutput.handleUserScrollIntent(list.scrollTop);
     shouldFollowOutputRef.current = false;
+    userPausedRef.current = true;
     syncAwayFromLatestFromScroll(list);
   }
 
@@ -2212,6 +2246,7 @@ function ChatWorkspaceImpl({
   }
 
   function scrollToLatest(): void {
+    userPausedRef.current = false;
     shouldFollowOutputRef.current = true;
     programmaticScrollRef.current = false;
     smoothFollowOutput.resume();
@@ -2531,6 +2566,18 @@ function ChatWorkspaceImpl({
     );
   }
 
+  // Stable identities do not mean frozen closures: edits/regeneration must read
+  // the current composer, messages, model/agent configuration and parent actions.
+  const messageEvents = {
+    startEditAndResend: useEventCallback(startEditAndResend),
+    startEditUserMessage: useEventCallback(startEditUserMessage),
+    regenerateAssistant: useEventCallback(regenerateAssistant),
+    onRetryMessage: useEventCallback((...args: Parameters<NonNullable<ChatWorkspaceProps["onRetryMessage"]>>) => onRetryMessage?.(...args)),
+    onReportFeedback: useEventCallback((...args: Parameters<NonNullable<ChatWorkspaceProps["onReportFeedback"]>>) => onReportFeedback?.(...args)),
+    onRecoveryAction: useEventCallback((...args: Parameters<NonNullable<ChatWorkspaceProps["onRecoveryAction"]>>) => onRecoveryAction?.(...args)),
+    onDeleteMessage: useEventCallback((...args: Parameters<NonNullable<ChatWorkspaceProps["onDeleteMessage"]>>) => onDeleteMessage?.(...args)),
+  };
+
   async function submitWithAttachments(): Promise<void> {
     // Readiness gate for every text-submission path (form submit, Enter key,
     // voice auto-submit, Send & Stop). While the runtime/bootstrap is still
@@ -2538,7 +2585,16 @@ function ChatWorkspaceImpl({
     // composer instead of dispatching a turn that the backend can only reject.
     // Queueing while a task is already running (showStop) stays allowed.
     if (!canChat && !showStop) return;
+    // 已有任务在运行（showStop）：把当前草稿排队，待当前 turn 结束后由
+    // 下方 useEffect 自动再次调用本函数发送，而不是直接并发提交。
+    if (showStop) {
+      const hasPayload = composerTextRef.current.trim().length > 0
+        || attachments.length > 0 || externalAttachments.length > 0 || inlineMentionAttachments.length > 0;
+      if (hasPayload) setQueuedSend(true);
+      return;
+    }
     // Reset scroll-follow state so the view tracks the latest streaming output.
+    userPausedRef.current = false;
     shouldFollowOutputRef.current = true;
     programmaticScrollRef.current = false;
     smoothFollowOutput.resume();
@@ -2640,6 +2696,19 @@ function ChatWorkspaceImpl({
       setVoiceError(message);
     }
   }
+
+  // 当前任务结束（showStop 由 true→false）后，自动发送排队的草稿。
+  useEffect(() => {
+    if (!showStop && queuedSend) {
+      setQueuedSend(false);
+      void submitWithAttachments();
+    }
+  }, [showStop, queuedSend]);
+
+  // 切换会话时丢弃未发送的排队标记，避免把草稿发到别的会话。
+  useEffect(() => {
+    setQueuedSend(false);
+  }, [conversationId]);
 
   function retryVoiceChatSubmission(): void {
     const requestId = voiceTurnState.sttRequestId;
@@ -4026,7 +4095,7 @@ function ChatWorkspaceImpl({
         </div>
         <div className="conversation-titlebar-actions">
           {operationalStateControl}
-          {conversationHistory?.truncated && conversationHistory.nextCursor && onLoadEarlierHistory ? (
+          {conversationHistory?.truncated && (conversationHistory.oaepNextCursor || conversationHistory.nextCursor) && onLoadEarlierHistory ? (
             <button type="button" className="conversation-load-earlier" disabled={conversationHistoryPending} onClick={() => void onLoadEarlierHistory()}>
               {conversationHistoryPending ? (zh ? "加载中…" : "Loading…") : (zh ? "加载更早内容" : "Load earlier")}
             </button>
@@ -4062,146 +4131,42 @@ function ChatWorkspaceImpl({
         onPointerDown={handleMessageListPointerDown}
         onKeyDown={handleMessageListKeyDown}
       >
-        {renderedMessages.map((message, messageIndex) => {
-          const assistantContent = message.role === "assistant"
-            ? getAssistantDisplayContent(message)
-            : message.content;
-          return (
+        {renderedMessages.map((message, messageIndex) => (
           <VirtualizedMessage
             key={message.id}
             message={message}
             className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatchSet.has(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""} ${message.structuredTurn?.turnId === highlightedTurnId ? "structured-turn-focus" : ""}`}
             pinned={message.streaming === true || visibleMessages.length - messageIndex <= 12}
             scrollRootRef={messageListRef}
-            now={message.streaming ? now : undefined}
-          >
-            {message.role === "user" || !message.structuredTurn ? <strong className="message-author">{message.role === "user" ? "You" : "OpenDrSai"}</strong> : null}
-            <div className="message-body">
-              {message.role === "user" && message.attachments?.length ? (
-                <div className="message-attachment-badges" aria-label={zh ? "附件" : "Attachments"}>
-                  {message.attachments.map((attachment, index) => (
-                    <MessageAttachmentBadge
-                      key={`${message.id}-attachment-${index}-${attachment.path || attachment.name}`}
-                      attachment={attachment}
-                      workspacePath={workspacePath}
-                      zh={zh}
-                    />
-                  ))}
-                </div>
-              ) : null}
-              {message.role === "assistant" && message.replyFailed ? (
-                <div className="chat-reply-failed">
-                  {onRetryMessage ? <span className="chat-retry-actions">
-                    <button type="button" onClick={() => void onRetryMessage(message.id, "same_session")}>{zh ? "在当前会话重试" : "Retry in this session"}</button>
-                    <button type="button" onClick={() => void onRetryMessage(message.id, "new_session")}>{zh ? "分支到新会话" : "Branch to a new session"}</button>
-                  </span> : null}
-                  {onReportFeedback ? <button type="button" data-testid={`message-feedback-${message.id}`} onClick={() => onReportFeedback({ source: "error", errorCode: message.replyFailed ? "reply_incomplete" : "chat_error", errorType: "assistant_message_failure", runId: message.runtimeRunId })}>{zh ? "反馈这个问题" : "Report this problem"}</button> : null}
-                </div>
-              ) : message.content && message.role === "user" ? (
-                <p>{highlightPlainText(message.content, searchQuery)}</p>
-              ) : message.role === "assistant" && message.structuredTurn ? (
-                message.structuredTurn.parts.length || message.structuredTurn.activities.length ? (
-                  <StructuredMessageParts
-                    turn={message.structuredTurn}
-                    language={language}
-                    workspacePath={workspacePath}
-                    resourceStates={conversationResourceStates}
-                    respondedRequestIds={respondedInputRequests}
-                    configuredCapabilityRequestIds={configuredCapabilityRequests}
-                    onOpenLink={handleMarkdownLink}
-                    onOpenArtifact={openStructuredArtifact}
-                    onDownloadArtifact={downloadStructuredArtifact}
-                    onOpenArtifactMenu={openConversationResourceMenu}
-                    onOpenCitation={openStructuredCitation}
-                    onOpenCitationMenu={openConversationResourceMenu}
-                    onRespondInteraction={(part, response) => respondToStructuredInteraction(message.structuredTurn!.turnId, part, response)}
-                    onRequestTextInteraction={(part) => requestStructuredTextInput(message.structuredTurn!.turnId, part)}
-                    reproducibilityLevel={message.runtimeRunId ? runReproducibility[message.runtimeRunId] : undefined}
-                    now={now}
-                    startedAt={message.startedAt}
-                    completedAt={message.lastEventAt}
-                  />
-                ) : (
-                  <StreamingStatus message={message} now={now} zh={zh} />
-                )
-              ) : message.content ? (
-                <ChatMessageContent
-                  content={assistantContent}
-                  streaming={message.streaming}
-                  language={language}
-                  onOpenLink={handleMarkdownLink}
-                />
-              ) : message.role === "user" && message.attachments?.length ? null : (
-                <StreamingStatus message={message} now={now} zh={zh} />
-              )}
-              {message.role === "assistant" && message.errorPresentation ? (
-                <ChatErrorCard
-                  presentation={message.errorPresentation}
-                  messageId={message.id}
-                  zh={zh}
-                  onRecoveryAction={onRecoveryAction}
-                />
-              ) : null}
-              {!message.structuredTurn && message.reasoningContent && (
-                <details className="chat-reasoning chat-event-reasoning">
-                  <summary>
-                    <ChevronRight size={14} />
-                    <span>{message.streaming ? (zh ? "正在思考…" : "Thinking…") : (zh ? "思考过程" : "Reasoning")}</span>
-                  </summary>
-                  <div className="chat-reasoning-content">
-                    <ChatMessageContent
-                      content={getReasoningChatText(message.reasoningContent)}
-                      streaming={message.streaming}
-                      language={language}
-                      onOpenLink={handleMarkdownLink}
-                    />
-                  </div>
-                </details>
-              )}
-              {message.role === "assistant" && !message.errorPresentation && message.recoveryActions?.length && onRecoveryAction ? (
-                <div className="chat-recovery-actions" role="group" aria-label={zh ? "恢复操作" : "Recovery actions"}>
-                  {message.recoveryActions.map((action) => <button type="button" key={action.id}
-                    onClick={() => void onRecoveryAction(message.id, action.id)}>{action.label}</button>)}
-                </div>
-              ) : null}
-              {!message.structuredTurn && message.inputRequest ? (
-                <section className="chat-agent-input-request structured-interaction-compact" aria-label={zh ? "智能体请求输入" : "Agent input request"}>
-                  <span>{respondedInputRequests.has(message.inputRequest.requestId)
-                    ? (zh ? "操作已处理" : "Action handled")
-                    : (zh ? "等待你的操作，请在输入栏处理" : "Action required in the composer")}</span>
-                </section>
-              ) : null}
-              {message.role === "assistant" && !message.streaming && !message.error && assistantContent ? (
-                <MessageActions
-                  content={assistantContent}
-                  messageId={message.id}
-                  playback={voicePlayback}
-                  playbackDisabled={showAnyVoiceCaptureBar || isVoiceCaptureActive(voiceTurnState.phase)}
-                  playbackRate={voicePreferences.playbackRate}
-                  synthesisMode={resolveVoiceSynthesisMode(voicePreferences.synthesisMode, voicePreferences.remoteTtsConsent)}
-                  voiceName={voicePreferences.voiceName}
-                  zh={zh}
-                  turnActionsDisabled={Boolean(activeRequestId) || !canChat}
-                  showTurnActions={!message.replyFailed}
-                  onEditAndResend={startEditAndResend}
-                  onRegenerate={() => void regenerateAssistant(message.id)}
-                  onDelete={onDeleteMessage}
-                />
-              ) : null}
-              {message.role === "user" && message.content ? (
-                <UserMessageActions
-                  content={message.content}
-                  messageId={message.id}
-                  zh={zh}
-                  turnActionsDisabled={Boolean(activeRequestId) || !canChat}
-                  onEditAndResend={startEditUserMessage}
-                  onDelete={onDeleteMessage}
-                />
-              ) : null}
-            </div>
-          </VirtualizedMessage>
-          );
-        })}
+            language={language}
+            workspacePath={workspacePath}
+            searchQuery={searchQuery}
+            conversationResourceStates={conversationResourceStates}
+            respondedInputRequests={respondedInputRequests}
+            configuredCapabilityRequests={configuredCapabilityRequests}
+            reproducibilityLevel={message.runtimeRunId ? runReproducibility[message.runtimeRunId] : undefined}
+            voicePlayback={messageVoicePlayback}
+            playbackDisabled={showAnyVoiceCaptureBar || isVoiceCaptureActive(voiceTurnState.phase)}
+            playbackRate={voicePreferences.playbackRate}
+            synthesisMode={resolveVoiceSynthesisMode(voicePreferences.synthesisMode, voicePreferences.remoteTtsConsent)}
+            voiceName={voicePreferences.voiceName}
+            turnActionsDisabled={Boolean(activeRequestId) || !canChat}
+            handleMarkdownLink={handleMarkdownLink}
+            openStructuredArtifact={openStructuredArtifact}
+            downloadStructuredArtifact={downloadStructuredArtifact}
+            openConversationResourceMenu={openConversationResourceMenu}
+            openStructuredCitation={openStructuredCitation}
+            respondToStructuredInteraction={respondToStructuredInteraction}
+            requestStructuredTextInput={requestStructuredTextInput}
+            startEditAndResend={messageEvents.startEditAndResend}
+            startEditUserMessage={messageEvents.startEditUserMessage}
+            regenerateAssistant={messageEvents.regenerateAssistant}
+            onRetryMessage={onRetryMessage ? messageEvents.onRetryMessage : undefined}
+            onReportFeedback={onReportFeedback ? messageEvents.onReportFeedback : undefined}
+            onRecoveryAction={onRecoveryAction ? messageEvents.onRecoveryAction : undefined}
+            onDeleteMessage={onDeleteMessage ? messageEvents.onDeleteMessage : undefined}
+          />
+        ))}
       </div>
       )}
       {!emptyChat && turnRailMarkers.length > 0 ? (
@@ -5485,9 +5450,16 @@ function ChatWorkspaceImpl({
                 {showStop ? (
                   composerText.trim() ? (
                     <>
-                      <button className="composer-submit" type="submit" title={zh ? "默认排在当前任务之后" : "Queue after the current task"}>
-                        <Send size={16} />{zh ? "排队发送" : "Queue"}
-                      </button>
+                      {queuedSend ? (
+                        <button type="button" className="composer-submit" title={zh ? "已排队，当前任务结束后自动发送；点击取消排队" : "Queued — will send when the current task finishes; click to cancel"}
+                          onClick={() => setQueuedSend(false)}>
+                          <Send size={16} />{zh ? "已排队（点击取消）" : "Queued (click to cancel)"}
+                        </button>
+                      ) : (
+                        <button className="composer-submit" type="submit" title={zh ? "默认排在当前任务之后" : "Queue after the current task"}>
+                          <Send size={16} />{zh ? "排队发送" : "Queue"}
+                        </button>
+                      )}
                       <button type="button" className="composer-submit" title={zh ? "发送并停止当前任务输出，开始新任务" : "Send and stop current task output, start new task"}
                         onClick={async () => { try { await onAbort(); } catch { /* best-effort */ } void submitWithAttachments(); }}>
                         <Send size={16} />{zh ? "发送并停止" : "Send & Stop"}
@@ -5579,9 +5551,12 @@ const CHAT_WORKSPACE_ARRAY_PROPS: ReadonlySet<keyof ChatWorkspaceProps> = new Se
 ]);
 
 function chatWorkspacePropsEqual(previous: ChatWorkspaceProps, next: ChatWorkspaceProps): boolean {
+  // Callback-only changes must reach live event refs; removed optional props
+  // must also invalidate this boundary. Never silently ignore function props.
+  if (Object.keys(previous).length !== Object.keys(next).length) return false;
   return (Object.keys(next) as Array<keyof ChatWorkspaceProps>).every((key) => {
+    if (!Object.prototype.hasOwnProperty.call(previous, key)) return false;
     const nextValue = next[key];
-    if (typeof nextValue === "function") return true;
     const previousValue = previous[key];
     if (CHAT_WORKSPACE_ARRAY_PROPS.has(key)) {
       return shallowArrayEqual(previousValue as readonly unknown[] | undefined, nextValue as readonly unknown[] | undefined);
@@ -5636,21 +5611,80 @@ function getStructuredPartEstimateText(part: StructuredAssistantPart): string {
   return part.message;
 }
 
+// Keep the entire row inside this memo boundary: JSX children created by the
+// workspace would change on every token, while ignoring them freezes UI state.
+// Every display dependency is an explicit prop; event props use live callbacks.
+interface VirtualizedMessageProps {
+  message: UiMessage;
+  className: string;
+  pinned: boolean;
+  scrollRootRef: React.RefObject<HTMLDivElement | null>;
+  language: AppLanguage;
+  workspacePath: string | undefined;
+  searchQuery: string;
+  conversationResourceStates: Readonly<Record<string, ConversationResourceResolveResult["state"]>>;
+  respondedInputRequests: ReadonlySet<string>;
+  configuredCapabilityRequests: ReadonlySet<string>;
+  reproducibilityLevel: RunReproducibilityLevel | undefined;
+  voicePlayback: SystemVoicePlayback;
+  playbackDisabled: boolean;
+  playbackRate: number;
+  synthesisMode: "system" | "provider";
+  voiceName: string;
+  turnActionsDisabled: boolean;
+  handleMarkdownLink: (href: string | undefined) => void;
+  openStructuredArtifact: (part: ArtifactPart) => void;
+  downloadStructuredArtifact: (part: ArtifactPart) => void;
+  openConversationResourceMenu: (part: ArtifactPart | CitationPart, anchor: { x: number; y: number; trigger?: HTMLElement }) => void;
+  openStructuredCitation: (part: CitationPart) => void;
+  respondToStructuredInteraction: (turnId: string, part: InteractionPart, response: InteractionResponse) => void;
+  requestStructuredTextInput: (turnId: string, part: InteractionPart) => void;
+  startEditAndResend: (messageId: string) => void;
+  startEditUserMessage: (messageId: string) => void;
+  regenerateAssistant: (messageId: string) => Promise<void>;
+  onRetryMessage: ChatWorkspaceProps["onRetryMessage"];
+  onReportFeedback: ChatWorkspaceProps["onReportFeedback"];
+  onRecoveryAction: ChatWorkspaceProps["onRecoveryAction"];
+  onDeleteMessage: ChatWorkspaceProps["onDeleteMessage"];
+}
+
 const VirtualizedMessage = memo(function VirtualizedMessage({
   message,
   className,
   pinned,
   scrollRootRef,
-  now,
-  children,
-}: {
-  message: UiMessage;
-  className: string;
-  pinned: boolean;
-  scrollRootRef: React.RefObject<HTMLDivElement | null>;
-  now?: number;
-  children: React.ReactNode;
-}): React.JSX.Element {
+  language,
+  workspacePath,
+  searchQuery,
+  conversationResourceStates,
+  respondedInputRequests,
+  configuredCapabilityRequests,
+  reproducibilityLevel,
+  voicePlayback,
+  playbackDisabled,
+  playbackRate,
+  synthesisMode,
+  voiceName,
+  turnActionsDisabled,
+  handleMarkdownLink,
+  openStructuredArtifact,
+  downloadStructuredArtifact,
+  openConversationResourceMenu,
+  openStructuredCitation,
+  respondToStructuredInteraction,
+  requestStructuredTextInput,
+  startEditAndResend,
+  startEditUserMessage,
+  regenerateAssistant,
+  onRetryMessage,
+  onReportFeedback,
+  onRecoveryAction,
+  onDeleteMessage,
+}: VirtualizedMessageProps): React.JSX.Element {
+  const zh = language === "zh";
+  const assistantContent = message.role === "assistant"
+    ? getAssistantDisplayContent(message)
+    : message.content;
   const elementRef = useRef<HTMLElement | null>(null);
   const [renderContent, setRenderContent] = useState(pinned);
 
@@ -5692,10 +5726,134 @@ const VirtualizedMessage = memo(function VirtualizedMessage({
       style={renderContent ? undefined : { height: placeholderHeight }}
       aria-hidden={renderContent ? undefined : true}
     >
-      {renderContent ? children : null}
+      {renderContent ? (<>
+            {message.role === "user" || !message.structuredTurn ? <strong className="message-author">{message.role === "user" ? "You" : "OpenDrSai"}</strong> : null}
+            <div className="message-body">
+              {message.role === "user" && message.attachments?.length ? (
+                <div className="message-attachment-badges" aria-label={zh ? "附件" : "Attachments"}>
+                  {message.attachments.map((attachment, index) => (
+                    <MessageAttachmentBadge
+                      key={`${message.id}-attachment-${index}-${attachment.path || attachment.name}`}
+                      attachment={attachment}
+                      workspacePath={workspacePath}
+                      zh={zh}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {message.role === "assistant" && message.replyFailed ? (
+                <div className="chat-reply-failed">
+                  {onRetryMessage ? <span className="chat-retry-actions">
+                    <button type="button" onClick={() => void onRetryMessage(message.id, "same_session")}>{zh ? "在当前会话重试" : "Retry in this session"}</button>
+                    <button type="button" onClick={() => void onRetryMessage(message.id, "new_session")}>{zh ? "分支到新会话" : "Branch to a new session"}</button>
+                  </span> : null}
+                  {onReportFeedback ? <button type="button" data-testid={`message-feedback-${message.id}`} onClick={() => onReportFeedback({ source: "error", errorCode: message.replyFailed ? "reply_incomplete" : "chat_error", errorType: "assistant_message_failure", runId: message.runtimeRunId })}>{zh ? "反馈这个问题" : "Report this problem"}</button> : null}
+                </div>
+              ) : message.content && message.role === "user" ? (
+                <p>{highlightPlainText(message.content, searchQuery)}</p>
+              ) : message.role === "assistant" && message.structuredTurn ? (
+                message.structuredTurn.parts.length || message.structuredTurn.activities.length ? (
+                  <StructuredMessageParts
+                    turn={message.structuredTurn}
+                    language={language}
+                    workspacePath={workspacePath}
+                    resourceStates={conversationResourceStates}
+                    respondedRequestIds={respondedInputRequests}
+                    configuredCapabilityRequestIds={configuredCapabilityRequests}
+                    onOpenLink={handleMarkdownLink}
+                    onOpenArtifact={openStructuredArtifact}
+                    onDownloadArtifact={downloadStructuredArtifact}
+                    onOpenArtifactMenu={openConversationResourceMenu}
+                    onOpenCitation={openStructuredCitation}
+                    onOpenCitationMenu={openConversationResourceMenu}
+                    onRespondInteraction={(part, response) => respondToStructuredInteraction(message.structuredTurn!.turnId, part, response)}
+                    onRequestTextInteraction={(part) => requestStructuredTextInput(message.structuredTurn!.turnId, part)}
+                    reproducibilityLevel={reproducibilityLevel}
+                    startedAt={message.startedAt}
+                    completedAt={message.lastEventAt}
+                  />
+                ) : (
+                  <StreamingStatus message={message} zh={zh} />
+                )
+              ) : message.content ? (
+                <ChatMessageContent
+                  content={assistantContent}
+                  streaming={message.streaming}
+                  language={language}
+                  onOpenLink={handleMarkdownLink}
+                />
+              ) : message.role === "user" && message.attachments?.length ? null : (
+                <StreamingStatus message={message} zh={zh} />
+              )}
+              {message.role === "assistant" && message.errorPresentation ? (
+                <ChatErrorCard
+                  presentation={message.errorPresentation}
+                  messageId={message.id}
+                  zh={zh}
+                  onRecoveryAction={onRecoveryAction}
+                />
+              ) : null}
+              {!message.structuredTurn && message.reasoningContent && (
+                <details className="chat-reasoning chat-event-reasoning">
+                  <summary>
+                    <ChevronRight size={14} />
+                    <span>{message.streaming ? (zh ? "正在思考…" : "Thinking…") : (zh ? "思考过程" : "Reasoning")}</span>
+                  </summary>
+                  <div className="chat-reasoning-content">
+                    <ChatMessageContent
+                      content={getReasoningChatText(message.reasoningContent)}
+                      streaming={message.streaming}
+                      language={language}
+                      onOpenLink={handleMarkdownLink}
+                    />
+                  </div>
+                </details>
+              )}
+              {message.role === "assistant" && !message.errorPresentation && message.recoveryActions?.length && onRecoveryAction ? (
+                <div className="chat-recovery-actions" role="group" aria-label={zh ? "恢复操作" : "Recovery actions"}>
+                  {message.recoveryActions.map((action) => <button type="button" key={action.id}
+                    onClick={() => void onRecoveryAction(message.id, action.id)}>{action.label}</button>)}
+                </div>
+              ) : null}
+              {!message.structuredTurn && message.inputRequest ? (
+                <section className="chat-agent-input-request structured-interaction-compact" aria-label={zh ? "智能体请求输入" : "Agent input request"}>
+                  <span>{respondedInputRequests.has(message.inputRequest.requestId)
+                    ? (zh ? "操作已处理" : "Action handled")
+                    : (zh ? "等待你的操作，请在输入栏处理" : "Action required in the composer")}</span>
+                </section>
+              ) : null}
+              {message.role === "assistant" && !message.streaming && !message.error && assistantContent ? (
+                <MessageActions
+                  content={assistantContent}
+                  messageId={message.id}
+                  playback={voicePlayback}
+                  playbackDisabled={playbackDisabled}
+                  playbackRate={playbackRate}
+                  synthesisMode={synthesisMode}
+                  voiceName={voiceName}
+                  zh={zh}
+                  turnActionsDisabled={turnActionsDisabled}
+                  showTurnActions={!message.replyFailed}
+                  onEditAndResend={startEditAndResend}
+                  onRegenerate={() => void regenerateAssistant(message.id)}
+                  onDelete={onDeleteMessage}
+                />
+              ) : null}
+              {message.role === "user" && message.content ? (
+                <UserMessageActions
+                  content={message.content}
+                  messageId={message.id}
+                  zh={zh}
+                  turnActionsDisabled={turnActionsDisabled}
+                  onEditAndResend={startEditUserMessage}
+                  onDelete={onDeleteMessage}
+                />
+              ) : null}
+            </div>
+      </>) : null}
     </article>
   );
-}, (prev, next) => prev.message === next.message && prev.pinned === next.pinned && prev.now === next.now);
+});
 
 function formatPickedFileMeta(file: PickedFileDescriptor, zh: boolean): string {
   const category = {
@@ -5931,13 +6089,12 @@ function ChatErrorCard({
 
 function StreamingStatus({
   message,
-  now,
   zh,
 }: {
   message: UiMessage;
-  now: number;
   zh: boolean;
 }): React.JSX.Element | null {
+  const now = useStreamingClock(Boolean(message.streaming));
   if (!message.streaming) {
     // Empty completed shells are filtered elsewhere; never show the literal placeholder.
     if (message.error && !message.errorPresentation) {

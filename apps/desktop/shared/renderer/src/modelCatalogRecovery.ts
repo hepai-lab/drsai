@@ -29,6 +29,98 @@ export function supportsImageGenerationModel(
   return Boolean(model.operations?.includes("image_generation") && model.output_modalities?.includes("image"));
 }
 
+/**
+ * Model families are disjoint: a model either converses (optionally reading
+ * images) or generates media. The Gateway rejects a model declaring both, and
+ * the two families are offered in different pickers, so the UI must show which
+ * family an entry belongs to instead of relying on the capability badges alone.
+ */
+export type ModelFamily = "chat" | "multimodal_input" | "image_generation" | "audio" | "other";
+
+export function classifyModelFamily(
+  model: {
+    alias?: string;
+    model?: string;
+    operations?: readonly string[];
+    input_modalities?: readonly string[];
+    output_modalities?: readonly string[];
+  },
+): ModelFamily {
+  const operations = model.operations ?? [];
+  if (operations.includes("image_generation") || operations.includes("image_edit")) {
+    return "image_generation";
+  }
+  const converses = operations.some((operation) =>
+    operation === "chat" || operation === "tool_calling" || operation === "reasoning",
+  );
+  if (converses && model.input_modalities?.includes("image")) return "multimodal_input";
+  if (converses) return "chat";
+  if (operations.includes("speech_to_text") || operations.includes("text_to_speech")) return "audio";
+  return "other";
+}
+
+export function modelFamilyLabel(family: ModelFamily, zh: boolean): string {
+  switch (family) {
+    case "multimodal_input":
+      return zh ? "多模态输入" : "Multimodal input";
+    case "image_generation":
+      return zh ? "图像生成" : "Image generation";
+    case "chat":
+      return zh ? "对话" : "Chat";
+    case "audio":
+      return zh ? "语音" : "Audio";
+    default:
+      return zh ? "其他" : "Other";
+  }
+}
+
+/** Whether a model may be offered as a conversational (primary) model. */
+export function isConversationalFamily(family: ModelFamily): boolean {
+  return family === "chat" || family === "multimodal_input";
+}
+
+/** Stable presentation order of the families in the catalog table. */
+export const MODEL_FAMILY_ORDER: readonly ModelFamily[] = [
+  "chat",
+  "multimodal_input",
+  "image_generation",
+  "audio",
+  "other",
+];
+
+export type OrderedModelEntry =
+  | { kind: "family"; family: ModelFamily; count: number }
+  | { kind: "model"; model: string };
+
+/**
+ * Flatten classified models into "family separator + rows" order.
+ *
+ * The caller renders each entry as a *direct* child of the table grid, whose
+ * rows align through ``subgrid``. Keeping this pure (no JSX, no wrapper nodes)
+ * is what guarantees families are separated without nesting the rows.
+ */
+export function orderModelEntriesByFamily(
+  models: ReadonlyArray<{ id: string; family: ModelFamily }>,
+): OrderedModelEntry[] {
+  const buckets = new Map<ModelFamily, string[]>();
+  for (const { id, family } of models) {
+    const bucket = buckets.get(family) ?? [];
+    bucket.push(id);
+    buckets.set(family, bucket);
+  }
+  const entries: OrderedModelEntry[] = [];
+  for (const family of MODEL_FAMILY_ORDER) {
+    const bucket = buckets.get(family);
+    if (!bucket || bucket.length === 0) continue;
+    entries.push({ kind: "family", family, count: bucket.length });
+    for (const model of [...bucket].sort((left, right) => left.localeCompare(right))) {
+      entries.push({ kind: "model", model });
+    }
+  }
+  return entries;
+}
+
+
 const COPY: Record<string, { zh: [string, string]; en: [string, string] }> = {
   unconfigured: { zh: ["尚未配置模型服务", "先在“模型提供方”中配置 Provider 和模型。"], en: ["Model service is not configured", "Configure a Provider and its models in Model providers."] },
   empty: { zh: ["Provider 没有返回模型", "当前连接有效，但目录确实为空；可刷新或手动添加模型。"], en: ["The Provider returned no models", "The connection is configured, but its catalog is empty. Refresh it or add a model manually."] },

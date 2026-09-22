@@ -171,6 +171,22 @@ def resolve_agent_operation(
             f"Agent model '{selection.ref.provider_id}/{selection.ref.model_id}' has no structured model definition.",
         )
     declared = set(configured_model.capabilities)
+    # Role families are disjoint by contract: a media-generation model must not
+    # be bound to a conversational role, and vice versa. The reader rejects new
+    # mixed declarations, so this guard matters for catalogs written before
+    # that rule and keeps the failure explainable instead of a runtime error.
+    generates_media = bool({"image_generation", "image_edit"} & declared)
+    converses = bool({"chat", "tool_calling", "reasoning"} & declared)
+    if role in {"primary_model", "image_understanding_model"} and generates_media:
+        raise ModelOperationRoutingError(
+            "model_role_family_mismatch",
+            f"Agent model '{selection.ref.model_id}' is an image-generation model and cannot serve '{role}'.",
+        )
+    if role == "image_generation_model" and converses:
+        raise ModelOperationRoutingError(
+            "model_role_family_mismatch",
+            f"Agent model '{selection.ref.model_id}' is a chat model and cannot serve 'image_generation_model'.",
+        )
     if operation not in declared and not allow_undeclared_operation:
         raise ModelOperationRoutingError(
             "operation_unsupported",

@@ -95,4 +95,81 @@ state = applyStructuredConversationEvent(state, {
 });
 assert.equal(state.status, "completed");
 
+// One progress part === one timeline card: repeated progress.update deltas
+// replace the same partId entry instead of appending duplicates.
+{
+  let progressTurn = createStructuredTurnState("progress-turn");
+  const progressEvent = <T extends StructuredConversationEvent["type"]>(
+    type: T,
+    payload: Omit<Extract<StructuredConversationEvent, { type: T }>, "version" | "turnId" | "sequence" | "dedupeKey" | "timestamp" | "source" | "type">,
+  ): Extract<StructuredConversationEvent, { type: T }> => ({
+    version: 2, turnId: "progress-turn", sequence: ++sequence, dedupeKey: `progress:${sequence}:${type}`,
+    timestamp: new Date().toISOString(), source: "test", type, ...payload,
+  } as Extract<StructuredConversationEvent, { type: T }>);
+  progressTurn = applyStructuredConversationEvent(progressTurn, progressEvent("part.started", {
+    part: {
+      id: "plan-1", kind: "progress", summary: "Step 1", status: "running",
+      turnId: "progress-turn", timestamp: new Date().toISOString(), source: "test", sequence, title: "Plan",
+    },
+  }));
+  progressTurn = applyStructuredConversationEvent(progressTurn, progressEvent("part.delta", {
+    partId: "plan-1",
+    delta: { kind: "progress.update", summary: "Step 1", completed: 0, total: 3 },
+  }));
+  progressTurn = applyStructuredConversationEvent(progressTurn, progressEvent("part.delta", {
+    partId: "plan-1",
+    delta: { kind: "progress.update", summary: "Step 2", completed: 1, total: 3 },
+  }));
+  progressTurn = applyStructuredConversationEvent(progressTurn, progressEvent("part.delta", {
+    partId: "plan-1",
+    delta: { kind: "progress.update", summary: "Step 3", completed: 2, total: 3 },
+  }));
+  const progressEntries = (progressTurn.processTimeline ?? []).filter((entry) => entry.kind === "progress");
+  assert.equal(progressEntries.length, 1, "progress part must render as a single live card");
+  assert.equal(progressEntries[0]?.kind === "progress" ? progressEntries[0].sequence : 0, progressEntries[0]?.sequence);
+  const progressPart = progressTurn.parts.find((part) => part.id === "plan-1");
+  assert.ok(progressPart && progressPart.kind === "progress");
+  assert.equal(progressPart.summary, "Step 3");
+}
+
+// A turn that ends must not leave activities spinning, and must not forge
+// success for a tool whose result never arrived.
+{
+  let runningTurn = createStructuredTurnState("running-turn");
+  const runningEvent = <T extends StructuredConversationEvent["type"]>(
+    type: T,
+    payload: Omit<Extract<StructuredConversationEvent, { type: T }>, "version" | "turnId" | "sequence" | "dedupeKey" | "timestamp" | "source" | "type">,
+  ): Extract<StructuredConversationEvent, { type: T }> => ({
+    version: 2, turnId: "running-turn", sequence: ++sequence, dedupeKey: `running:${sequence}:${type}`,
+    timestamp: new Date().toISOString(), source: "test", type, ...payload,
+  } as Extract<StructuredConversationEvent, { type: T }>);
+  const openTool: StructuredActivityEvent = {
+    id: "open-tool", kind: "tool", turnId: "running-turn",
+    timestamp: new Date().toISOString(), source: "test", status: "running",
+    title: "Long tool", toolName: "long_tool", callId: "call-long",
+  };
+  const doneTool: StructuredActivityEvent = {
+    ...openTool, id: "done-tool", callId: "call-done", status: "completed",
+  };
+  runningTurn = applyStructuredConversationEvent(runningTurn, runningEvent("activity.updated", { activity: openTool }));
+  runningTurn = applyStructuredConversationEvent(runningTurn, runningEvent("activity.updated", { activity: doneTool }));
+  runningTurn = applyStructuredConversationEvent(runningTurn, runningEvent("turn.completed", {}));
+  const openResult = runningTurn.activities.find((candidate) => candidate.id === "open-tool");
+  const doneResult = runningTurn.activities.find((candidate) => candidate.id === "done-tool");
+  assert.equal(openResult?.status, "cancelled", "unconfirmed tool must not stay running nor be forged completed");
+  assert.equal(doneResult?.status, "completed", "already-terminal tool must keep its authoritative state");
+
+  let failedTurn = createStructuredTurnState("failed-turn");
+  const failedEvent = <T extends StructuredConversationEvent["type"]>(
+    type: T,
+    payload: Omit<Extract<StructuredConversationEvent, { type: T }>, "version" | "turnId" | "sequence" | "dedupeKey" | "timestamp" | "source" | "type">,
+  ): Extract<StructuredConversationEvent, { type: T }> => ({
+    version: 2, turnId: "failed-turn", sequence: ++sequence, dedupeKey: `failed:${sequence}:${type}`,
+    timestamp: new Date().toISOString(), source: "test", type, ...payload,
+  } as Extract<StructuredConversationEvent, { type: T }>);
+  failedTurn = applyStructuredConversationEvent(failedTurn, failedEvent("activity.updated", { activity: { ...openTool, turnId: "failed-turn" } }));
+  failedTurn = applyStructuredConversationEvent(failedTurn, failedEvent("turn.error", { message: "boom" }));
+  assert.equal(failedTurn.activities[0]?.status, "error", "open tool during a failed turn is an error");
+}
+
 console.log("structured conversation reducer tests passed");

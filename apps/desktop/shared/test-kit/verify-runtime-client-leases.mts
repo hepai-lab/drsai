@@ -292,8 +292,8 @@ try {
   assert.ok(Date.now() - stuckStartedAt < 15_000, "A stuck subscription must degrade in seconds, not after the three-minute budget.");
   assert.equal(oaep.MAX_AUTOMATIC_RETRY_ATTEMPTS, 120, "The automatic retry budget must remain the documented three-minute tolerance.");
   const stuckOwnership = oaep.getOaepSessionOwnershipDiagnostics().find((entry) => entry.sessionId === SESSION_STUCK);
-  assert.equal(stuckOwnership?.phase, "degraded");
-  assert.equal(stuckOwnership?.generationRebinds, oaep.MAX_GENERATION_REBINDS);
+  assert.equal(stuckOwnership, undefined,
+    "Initial ready rejection returns no stop handle, so it must release the failed subscription's ownership.");
 
   // ---------------------------------------------------------------------------
   // A Run whose Runtime acknowledgement this Desktop process can no longer

@@ -13,6 +13,7 @@ from typing import (
     # Mapping,
     # TYPE_CHECKING,
     )
+from copy import deepcopy
 import json, re, uuid, shutil
 import base64, io, zipfile
 import asyncio, traceback
@@ -3481,6 +3482,18 @@ class DrSaiAssistant(DrSaiAgent):
             )
         exec_results = controlled_results
 
+        # Every started tool call must end with an explicit execution event so
+        # the Desktop runtime can advance the tool Item from "running" to a
+        # terminal state (completed / failed).  The translator already maps
+        # ToolCallExecutionEvent to ``tool.complete``; without this yield the
+        # ordinary local tool path only ever emitted ToolCallRequestEvent and
+        # the UI showed a tool spinner that never resolved.
+        for result in exec_results:
+            yield ToolCallExecutionEvent(
+                content=[result],
+                source=agent_name,
+            )
+
         # Add all execution results to model context (ensures tool calls and results are paired)
         await model_context.add_message(FunctionExecutionResultMessage(content=exec_results))
 
@@ -3633,6 +3646,7 @@ class DrSaiAssistant(DrSaiAgent):
             only_system_message=True,            # skip UserProfileManager
             max_turn_count=max_turns,
             model_context=model_context_arg,
+            token_limit=self._token_limit,
             # Identity
             thread_id=sub_thread_id,
             user_id=self._user_id,
@@ -3649,6 +3663,18 @@ class DrSaiAssistant(DrSaiAgent):
             sub_agent_config={},                 # no nested subagents
             skills_dir=[],
         )
+
+        # Tools and their Host contract must travel together. Local children
+        # bypass run_drsai_agent_factory, so inheriting only tools leaves their
+        # capability registry empty (notably image_edit/image_generation/web).
+        # Copy configuration, but reuse the current run's callbacks so approval
+        # decisions and oversized tool outputs still reach the parent's Host.
+        # Never share live model snapshots, execution registries or kernel state.
+        for attribute in ("_kernel_host_port", "_tool_loop_policy"):
+            if hasattr(self, attribute):
+                setattr(subagent, attribute, deepcopy(getattr(self, attribute)))
+        subagent._tool_approval_handler = self._tool_approval_handler
+        subagent._tool_output_artifact_handler = self._tool_output_artifact_handler
 
         # Inject depth
         subagent._delegate_depth = self._delegate_depth + 1
@@ -3765,9 +3791,29 @@ class DrSaiAssistant(DrSaiAgent):
         return [TextMessage(content=content, source="user")]
 
     @staticmethod
+    def _subagent_tag(sub_agent_name: str, instance_id: str | None = None) -> str:
+        """Display/identity tag for one subagent invocation.
+
+        ``instance_id`` (the Delegate tool call_id) distinguishes parallel
+        invocations of the same subagent type: without it both streams share
+        the ``sub:<name>`` source and their subtask cards, tool Items and
+        pending-call bookkeeping collapse onto each other.
+        """
+        safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub_agent_name).strip('_') or 'subagent'
+        if instance_id:
+            safe_instance = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(instance_id)).strip('_')
+            if safe_instance:
+                # ``name/instance`` mirrors the existing ``sub:name/src``
+                # convention and lets display layers split the base name off.
+                return f"{safe_name}/{safe_instance}"
+        return safe_name
+
+    @classmethod
     def _tag_message(
+        cls,
         message: "BaseAgentEvent | BaseChatMessage",
         sub_agent_name: str,
+        instance_id: str | None = None,
     ) -> "BaseAgentEvent | BaseChatMessage":
         """Tag a message with subagent source for display differentiation.
 
@@ -3777,7 +3823,7 @@ class DrSaiAssistant(DrSaiAgent):
         ``"RongZai Agent"`` (with a space) don't cause a ValueError on the
         next parent-agent LLM call.
         """
-        safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub_agent_name).strip('_') or 'subagent'
+        safe_name = cls._subagent_tag(sub_agent_name, instance_id)
         # Response is a wrapper: its visible chat message owns the source
         # consumed by the gateway translator. Tag both the wrapper (when
         # possible) and the nested chat message so a subagent final answer
@@ -3833,6 +3879,7 @@ class DrSaiAssistant(DrSaiAgent):
         prompt: str,
         context: str | None = None,
         cancellation_token: CancellationToken | None = None,
+        instance_id: str | None = None,
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage, None]:
         """Unified subagent execution entry point.
 
@@ -3844,6 +3891,9 @@ class DrSaiAssistant(DrSaiAgent):
             prompt: Task description.
             context: Optional background information.
             cancellation_token: Cancellation token for early termination.
+            instance_id: Unique id for this invocation (Delegate call_id).
+                Required when several subagents run in parallel so their
+                display cards and tool identities stay separate.
         """
         subagent = None
         try:
@@ -3893,7 +3943,7 @@ class DrSaiAssistant(DrSaiAgent):
                         cancellation_token=ct,
                     ):
                         # Tag for display
-                        yield self._tag_message(message, sub_agent_name)
+                        yield self._tag_message(message, sub_agent_name, instance_id)
 
                         if isinstance(message, Response):
                             break  # subagent done
@@ -3968,6 +4018,7 @@ class DrSaiAssistant(DrSaiAgent):
                         prompt=prompt,
                         context=context,
                         cancellation_token=cancellation_token,
+                        instance_id=call_id,
                         **common_kwargs,
                     ):
                         # Track last text content for result collection
@@ -3975,10 +4026,12 @@ class DrSaiAssistant(DrSaiAgent):
                             last_content = msg.content or ""
                         elif isinstance(msg, Response):
                             last_content = str(getattr(msg, 'chat_message', msg).content) if hasattr(msg, 'chat_message') else ""
-                        await queue.put((sub_agent_name, msg))
+                        # Queue tag carries the call_id so the merged stream
+                        # re-tags with the instance-unique identity.
+                        await queue.put(((sub_agent_name, call_id), msg))
                 except Exception as e:
                     last_content = f"Error: {e}"
-                    await queue.put((sub_agent_name, TextMessage(
+                    await queue.put(((sub_agent_name, call_id), TextMessage(
                         content=f"⚠️ [{sub_agent_name}] {e}",
                         source="system",
                     )))
@@ -3998,18 +4051,24 @@ class DrSaiAssistant(DrSaiAgent):
 
         # Consume merged stream
         while done_count < total:
-            name, message = await queue.get()
+            tag, message = await queue.get()
             if message is _DONE:
                 done_count += 1
                 continue
-            yield self._tag_message(message, name) if name else message
+            if tag:
+                name, call_id = tag
+                yield self._tag_message(message, name, call_id)
+            else:
+                yield message
 
         # Ensure all tasks complete
         await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Yield collected results for the caller
+        # Yield collected results for the caller. Source carries the
+        # instance-unique tag so each parallel invocation closes its own
+        # subtask card instead of collapsing onto a sibling's.
         for call_id, (sub_agent_name, content) in subagent_results.items():
-            safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub_agent_name).strip('_') or 'subagent'
+            safe_name = self._subagent_tag(sub_agent_name, call_id)
             yield TextMessage(
                 content=f"[{sub_agent_name}] {content}",
                 source=f"sub:{safe_name}",

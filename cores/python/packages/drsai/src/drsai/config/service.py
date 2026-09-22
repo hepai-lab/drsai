@@ -7,7 +7,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 from .defaults import PRODUCT_PROVIDER_IDS
 from .loader import ConfigError, default_config_path, load_user_config
@@ -34,6 +34,8 @@ class ConfigUpdateRequest:
     provider_secret: str | None = field(default=None, repr=False)
     delete_provider_name: str | None = None
     delete_provider_credential: bool = True
+    # Internal-only guard run under the writer lock immediately before update.
+    pre_commit_check: Callable[[DrSaiConfig], None] | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,68 @@ class ConfigSnapshot:
 
     config: DrSaiConfig
     revision: str
+
+
+def delete_provider_model(
+    provider_name: str,
+    model_id: str,
+    *,
+    expected_revision: str | None = None,
+    reference_check: Callable[[DrSaiConfig, str, str], object] | None = None,
+    path: str | Path | None = None,
+    lock_timeout: float = 10.0,
+) -> ConfigCommitResult:
+    """Delete one user model, or disable one product model, atomically.
+
+    The provider and its credential fields are retained. ``reference_check`` is
+    deliberately executed under the writer lock so callers cannot race a
+    preflight result with a policy update.
+    """
+    ensure_model_config_writes_enabled()
+    target = Path(path) if path is not None else default_config_path()
+    revision = config_revision(target)
+    if expected_revision is not None and expected_revision != revision:
+        raise ConfigConflict("Model configuration changed; reload it before deleting")
+    current = load_user_config(target)
+    provider = current.providers.get(provider_name)
+    if provider is None or model_id not in provider.model_configs:
+        raise ConfigError(f"Model '{provider_name}/{model_id}' not found")
+
+    models: dict[str, object] = {}
+    target_origin = provider.model_configs[model_id].origin
+    for current_id, model in provider.model_configs.items():
+        if current_id == model_id and target_origin == "user":
+            continue
+        definition = model.public_dict()
+        definition.pop("origin", None)
+        if current_id == model_id:  # Product deletion is a reversible disable.
+            definition["enabled"] = False
+        models[current_id] = definition
+    values: dict[str, object] = {
+        "base_url": provider.base_url,
+        "wire_api": provider.wire_api,
+        "requires_api_key": provider.requires_api_key,
+        "models": models,
+    }
+    for field_name in ("anthropic_base_url", "google_base_url", "api_key_env", "api_key_credential", "use_responses_api"):
+        value = getattr(provider, field_name, None)
+        if value is not None:
+            values[field_name] = value
+
+    def check(latest: DrSaiConfig) -> None:
+        if reference_check is not None and reference_check(latest, provider_name, model_id):
+            raise ConfigConflict("Model is referenced by an Agent policy")
+
+    return commit_update(
+        ConfigUpdateRequest(
+            provider_name=provider_name,
+            provider_values=values,
+            pre_commit_check=check,
+        ),
+        path=target,
+        expected_revision=revision,
+        lock_timeout=lock_timeout,
+    )
 
 
 def load_config_snapshot(
@@ -121,6 +185,8 @@ def commit_update(
         if expected_revision is not None and expected_revision != previous_revision:
             increment_metric("config_commit_conflict")
             raise ConfigConflict("Model configuration changed; reload it before saving")
+        if request.pre_commit_check is not None:
+            request.pre_commit_check(load_user_config(target))
         new_reference = None
         model_file_backups: list[tuple[Path, bytes | None]] = []
         try:

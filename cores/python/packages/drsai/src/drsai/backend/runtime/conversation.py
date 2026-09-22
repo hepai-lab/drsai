@@ -310,6 +310,9 @@ class StructuredConversationProjector:
         raw_task_id = str(payload.get("subagent_id") or payload.get("task_id") or source)
         source_id = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", raw_task_id).strip("-") or "subtask"
         part_id = f"{self.turn_id}:subtask:{source_id}"
+        # ``sub:<name>/<instance>`` tags distinguish parallel invocations of the
+        # same subagent type; the display name stays the base agent name.
+        display_name = source.replace("sub:", "").split("/", 1)[0] or "Subtask"
         part = self.parts.get(part_id)
         events: list[dict[str, Any]] = []
         if part is None:
@@ -318,8 +321,8 @@ class StructuredConversationProjector:
                 "kind": "subtask",
                 "status": "running",
                 "taskId": source_id,
-                "title": str(payload.get("title") or source.replace("sub:", "") or "Subtask"),
-                "agentName": source.replace("sub:", ""),
+                "title": str(payload.get("title") or display_name),
+                "agentName": display_name,
             }
             self.parts[part_id] = part
             events.append(self._event("part.started", source, part=dict(part)))

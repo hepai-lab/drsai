@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import hashlib
 import base64
 import os
@@ -121,6 +122,36 @@ _OAEP_RUNTIME_COMPAT = {
     "oaep.run.cancelled": "agent.failed",
     "oaep.run.state": "agent.state",
 }
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# ── Backend delta write buffering ──────────────────────────────────────────────
+# Every streamed chunk used to open its own SQLite transaction
+# (append_backend_event: BEGIN IMMEDIATE + commit + journal notify). At
+# token-granularity that is thousands of commits and WAL fsyncs per long
+# answer, which is the bulk of the runtime database's write amplification.
+# The buffering below batches the high-frequency, order-insensitive delta
+# event types through the existing append_backend_events fast path, and
+# flushes on (a) any non-delta write for the same Run (ordering with tool /
+# lifecycle events is preserved exactly), (b) a size cap, or (c) a time
+# bound driven by one lazy daemon timer per engine (default 150ms). A silent
+# tail is also flushed without any reader or later event. Flush and the next
+# same-Run write share the lock so a concurrent delta cannot slip between them.
+_BACKEND_DELTA_BUFFER_TYPES = frozenset({"message.delta", "agent.message.delta"})
+_BACKEND_DELTA_BUFFERING_ENABLED = os.environ.get("OPENDRSAI_BACKEND_DELTA_BUFFERING", "1").strip().lower() not in {"0", "false", "no", "off"}
+_BACKEND_DELTA_BUFFER_SECONDS = _env_float("OPENDRSAI_BACKEND_DELTA_BUFFER_SECONDS", 0.15)
+_BACKEND_DELTA_BUFFER_MAX_CHARS = int(_env_float("OPENDRSAI_BACKEND_DELTA_BUFFER_MAX_CHARS", 4 * 1024 * 1024))
+_BACKEND_DELTA_BUFFER_MAX_EVENTS = 512
 
 
 def _session_event_kind(event_type: str) -> str:
@@ -347,6 +378,13 @@ class RuntimeEngine:
 
         self.shared_mobile_core = create_surface_mobile_core(surface)
         self._lock = threading.RLock()
+        # Per-run buffered delta events awaiting a batch flush (see
+        # _BACKEND_DELTA_BUFFER_TYPES above). Only manipulated under _lock.
+        self._backend_delta_buffer: dict[str, list[tuple[str, dict[str, Any], str]]] = {}
+        self._backend_delta_buffer_chars: dict[str, int] = {}
+        self._backend_delta_last_flush: dict[str, float] = {}
+        self._backend_delta_timer: threading.Timer | None = None
+        self._backend_delta_closed = False
         self._inspection_metrics: dict[str, int | float] = {
             "reads": 0,
             "latency_ms_total": 0.0,
@@ -2987,6 +3025,8 @@ class RuntimeEngine:
     def conversation_snapshot(self, session_id: str) -> dict[str, Any]:
         """Return the Journal projection and its transactionally consistent waterline."""
         self.get_session(session_id)
+        if _BACKEND_DELTA_BUFFERING_ENABLED:
+            self._flush_session_backend_delta_buffers(session_id)
         return self.conversation_journal.snapshot(session_id)
 
     def list_session_events(
@@ -2996,6 +3036,8 @@ class RuntimeEngine:
         after_sequence: int = 0,
         limit: int = 500,
     ) -> list[dict[str, Any]]:
+        if _BACKEND_DELTA_BUFFERING_ENABLED:
+            self._flush_session_backend_delta_buffers(session_id)
         self.get_session(session_id)
         return self.conversation_journal.replay(
             session_id,
@@ -3011,6 +3053,8 @@ class RuntimeEngine:
         timeout: float = 15.0,
         limit: int = 500,
     ) -> list[dict[str, Any]]:
+        if _BACKEND_DELTA_BUFFERING_ENABLED:
+            self._flush_session_backend_delta_buffers(session_id)
         self.get_session(session_id)
         return self.conversation_journal.wait_for_events(
             session_id,
@@ -3027,6 +3071,8 @@ class RuntimeEngine:
         limit: int | None = None,
     ) -> dict[str, Any]:
         session = self.get_session(session_id)
+        if _BACKEND_DELTA_BUFFERING_ENABLED:
+            self._flush_session_backend_delta_buffers(session_id)
         if limit is None and cursor is None:
             # Internal callers retain the complete projection contract. Public
             # mobile routes always provide a bounded limit.
@@ -3111,6 +3157,8 @@ class RuntimeEngine:
         after_sequence: int = 0,
         limit: int = 500,
     ) -> list[dict[str, Any]]:
+        if _BACKEND_DELTA_BUFFERING_ENABLED:
+            self._flush_session_backend_delta_buffers(session_id)
         self.get_session(session_id)
         return self.conversation_journal.replay_oaep(
             session_id, after_sequence=after_sequence, limit=limit
@@ -3124,6 +3172,8 @@ class RuntimeEngine:
         timeout: float = 15.0,
         limit: int = 500,
     ) -> list[dict[str, Any]]:
+        if _BACKEND_DELTA_BUFFERING_ENABLED:
+            self._flush_session_backend_delta_buffers(session_id)
         self.get_session(session_id)
         return self.conversation_journal.wait_for_oaep_events(
             session_id,
@@ -3320,6 +3370,8 @@ class RuntimeEngine:
         error: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         with self._lock, self._connect() as db:
+            if _BACKEND_DELTA_BUFFERING_ENABLED:
+                self._flush_backend_delta_buffer(run_id)
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM runtime_runs WHERE run_id=?", (run_id,)).fetchone()
             if row is None:
@@ -3459,6 +3511,8 @@ class RuntimeEngine:
     def cancel_run(self, run_id: str) -> dict[str, Any]:
         now = _now()
         with self._lock, self._connect() as db:
+            if _BACKEND_DELTA_BUFFERING_ENABLED:
+                self._flush_backend_delta_buffer(run_id)
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM runtime_runs WHERE run_id=?", (run_id,)).fetchone()
             if row is None:
@@ -3593,6 +3647,8 @@ class RuntimeEngine:
     def mark_cancel_requested(self, run_id: str) -> dict[str, Any]:
         now = _now()
         with self._lock, self._connect() as db:
+            if _BACKEND_DELTA_BUFFERING_ENABLED:
+                self._flush_backend_delta_buffer(run_id)
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM runtime_runs WHERE run_id=?", (run_id,)).fetchone()
             if row is None:
@@ -3891,9 +3947,22 @@ class RuntimeEngine:
                 payload["result"] = data.get("output")
             payload["status"] = (
                 "completed"
-                if event_type in {"tool.complete", "tool.completed"}
-                else ("failed" if event_type == "tool.failed" else "running")
+                if event_type in {"tool.complete", "tool.completed"} and not data.get("is_error")
+                else ("failed" if event_type == "tool.failed" or data.get("is_error") else "running")
             )
+        # Terminal-status guard: a late/duplicate event (parallel subagent
+        # streams, retried emissions) must not drag an already-terminal Item
+        # back to "running" — the OAEP journal rejects that transition (and any
+        # content change after a terminal status) with a ValueError that would
+        # kill the whole Run.  Keep the raw Runtime Event (already inserted by
+        # the caller) but skip the Item projection entirely.
+        _prior_status = str(prior.get("status") or "")
+        if _prior_status in {"completed", "failed", "cancelled"} and payload.get("status") == "running":
+            logging.getLogger(__name__).warning(
+                "Ignoring %s for terminal Item %s (status=%s): late event would regress it to running",
+                event_type, item_id, _prior_status,
+            )
+            return True
         # ``payload`` here is the accumulated Item payload: it must be persisted in
         # ``runtime_conversation_items`` so the Item projection can advance.  For
         # delta events the Journal stores only the incremental chunk instead of a
@@ -3981,8 +4050,19 @@ class RuntimeEngine:
         return [dict(row) for row in rows]
 
     def append_event(self, run_id: str, event_type: str, data: dict[str, Any]) -> dict[str, Any]:
+        # Desktop services.emit uses this entry point, not emit_backend. Each
+        # unkeyed chunk is distinct (even identical text); a fresh key lets it
+        # share the timer, batching and failed-flush retry path without deduping
+        # separate chunks. Streaming callers receive the buffered placeholder.
+        if _BACKEND_DELTA_BUFFERING_ENABLED and event_type in _BACKEND_DELTA_BUFFER_TYPES:
+            return self.append_backend_event(
+                run_id, event_type, redact_sensitive(data, "", "content"),
+                f"runtime-delta:{uuid.uuid4()}",
+            )
         safe_data = redact_sensitive(data, "", "content")
         with self._lock, self._connect() as db:
+            if _BACKEND_DELTA_BUFFERING_ENABLED:
+                self._flush_backend_delta_buffer(run_id)
             db.execute("BEGIN IMMEDIATE")
             run = db.execute(
                 "SELECT session_id FROM runtime_runs WHERE run_id=?", (run_id,)
@@ -4022,10 +4102,114 @@ class RuntimeEngine:
         self.conversation_journal.notify_committed()
         return {"event_id": event_id, "run_id": run_id, "sequence": sequence, "type": event_type, "data": safe_data, "created_at": created}
 
+    def _schedule_backend_delta_flush(self) -> None:
+        """One lazy timer per engine, never one timer per event or run. Lock held."""
+        if self._backend_delta_timer is not None or self._backend_delta_closed:
+            return
+        timer = threading.Timer(max(0.01, _BACKEND_DELTA_BUFFER_SECONDS), self._timed_backend_delta_flush)
+        timer.daemon = True
+        self._backend_delta_timer = timer
+        timer.start()
+
+    def _timed_backend_delta_flush(self) -> None:
+        with self._lock:
+            self._backend_delta_timer = None
+            if self._backend_delta_closed:
+                return
+            for run_id in list(self._backend_delta_buffer):
+                try:
+                    self._flush_backend_delta_buffer(run_id)
+                except Exception:
+                    # The atomic writer restores failed buffers. Retry on the
+                    # next tick rather than silently losing the stream tail.
+                    logging.getLogger(__name__).exception("Buffered delta commit failed for %s", run_id)
+            if self._backend_delta_buffer:
+                self._schedule_backend_delta_flush()
+
+    def close(self) -> None:
+        """Stop the scheduler and durably flush tails after producers stop."""
+        with self._lock:
+            self._backend_delta_closed = True
+            if self._backend_delta_timer is not None:
+                self._backend_delta_timer.cancel()
+                self._backend_delta_timer = None
+            for run_id in list(self._backend_delta_buffer):
+                self._flush_backend_delta_buffer(run_id)
+
+    def _flush_backend_delta_buffer(self, run_id: str) -> None:
+        """Commit atomically under the buffer lock; retain data on write failure."""
+        with self._lock:
+            buffered = self._backend_delta_buffer.pop(run_id, None)
+            if not buffered:
+                return
+            chars = self._backend_delta_buffer_chars.pop(run_id, 0)
+            try:
+                self.append_backend_events(run_id, buffered)
+            except Exception:
+                self._backend_delta_buffer[run_id] = buffered
+                self._backend_delta_buffer_chars[run_id] = chars
+                raise
+            else:
+                self._backend_delta_last_flush.pop(run_id, None)
+
+    def _flush_session_backend_delta_buffers(self, session_id: str) -> None:
+        """A session reader must not force unrelated streams into tiny batches."""
+        with self._lock:
+            if not self._backend_delta_buffer:
+                return
+            with self._connect() as db:
+                rows = db.execute(
+                    "SELECT run_id FROM runtime_runs WHERE session_id=?", (session_id,)
+                ).fetchall()
+            for row in rows:
+                if row["run_id"] in self._backend_delta_buffer:
+                    self._flush_backend_delta_buffer(str(row["run_id"]))
+
     def append_backend_event(self, run_id: str, event_type: str, data: dict[str, Any], backend_event_key: str) -> dict[str, Any]:
         if not backend_event_key or len(backend_event_key) > 500:
             raise ValueError("A valid Backend Event key is required")
+        if (
+            _BACKEND_DELTA_BUFFERING_ENABLED
+            and event_type in _BACKEND_DELTA_BUFFER_TYPES
+        ):
+            with self._lock:
+                if self._backend_delta_closed:
+                    raise RuntimeError("Runtime delta writer is closed")
+                if run_id not in self._backend_delta_last_flush:
+                    self._backend_delta_last_flush[run_id] = time.monotonic()
+                buffer = self._backend_delta_buffer.setdefault(run_id, [])
+                buffer.append((event_type, data, backend_event_key))
+                chunk = str(data.get("text") or data.get("content") or data.get("delta") or "")
+                chars = self._backend_delta_buffer_chars.get(run_id, 0) + len(chunk)
+                self._backend_delta_buffer_chars[run_id] = chars
+                elapsed = time.monotonic() - self._backend_delta_last_flush[run_id]
+                self._schedule_backend_delta_flush()
+                if (
+                    chars >= _BACKEND_DELTA_BUFFER_MAX_CHARS
+                    or len(buffer) >= _BACKEND_DELTA_BUFFER_MAX_EVENTS
+                    or elapsed >= _BACKEND_DELTA_BUFFER_SECONDS
+                ):
+                    self._flush_backend_delta_buffer(run_id)
+                if self._backend_delta_buffer:
+                    self._schedule_backend_delta_flush()
+            # Callers ignore the return value on the streaming path; the batch
+            # writer's per-event results are the authoritative identities.
+            return {
+                "event_id": "",
+                "run_id": run_id,
+                "sequence": None,
+                "type": event_type,
+                "data": data,
+                "created_at": _now(),
+                "backend_event_key": backend_event_key,
+                "buffered": True,
+            }
+        # Ordering guard: a non-delta write must never be committed while
+        # earlier deltas for the same Run are still buffered, or the Run's
+        # event sequence would invert (deltas after tool.started / terminal).
         with self._lock, self._connect() as db:
+            if _BACKEND_DELTA_BUFFERING_ENABLED:
+                self._flush_backend_delta_buffer(run_id)
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
                 "SELECT * FROM runtime_events WHERE run_id=? AND backend_event_key=?",
@@ -4111,6 +4295,8 @@ class RuntimeEngine:
         created = _now()
         journal_created = False
         with self._lock, self._connect() as db:
+            if _BACKEND_DELTA_BUFFERING_ENABLED:
+                self._flush_backend_delta_buffer(run_id)
             db.execute("BEGIN IMMEDIATE")
             existing_event = db.execute(
                 "SELECT * FROM runtime_events WHERE run_id=? AND backend_event_key=?",
@@ -4284,6 +4470,8 @@ class RuntimeEngine:
         results: list[dict[str, Any]] = []
         journal_created = False
         with self._lock, self._connect() as db:
+            if _BACKEND_DELTA_BUFFERING_ENABLED:
+                self._flush_backend_delta_buffer(run_id)
             db.execute("BEGIN IMMEDIATE")
             run = db.execute(
                 "SELECT session_id FROM runtime_runs WHERE run_id=?", (run_id,)
@@ -4448,6 +4636,8 @@ class RuntimeEngine:
         return results
 
     def list_events(self, run_id: str, after_sequence: int = 0, limit: int = 500) -> list[dict[str, Any]]:
+        if _BACKEND_DELTA_BUFFERING_ENABLED:
+            self._flush_backend_delta_buffer(run_id)
         with self._connect() as db:
             rows = db.execute("SELECT * FROM runtime_events WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT ?", (run_id, max(0, after_sequence), max(1, min(limit, 2000)))).fetchall()
         return [self._event(row) for row in rows]
@@ -4456,6 +4646,8 @@ class RuntimeEngine:
         approval_id, created = f"approval-{uuid.uuid4()}", _now()
         safe_request = redact_sensitive(request, "", "audit")
         with self._lock, self._connect() as db:
+            if _BACKEND_DELTA_BUFFERING_ENABLED:
+                self._flush_backend_delta_buffer(run_id)
             db.execute("BEGIN IMMEDIATE")
             run = db.execute(
                 "SELECT * FROM runtime_runs WHERE run_id=?", (run_id,)
@@ -5244,6 +5436,8 @@ class RuntimeEngine:
         return [self.get_approval(str(row["approval_id"])) for row in rows]
 
     def save_checkpoint(self, run_id: str, state: dict[str, Any]) -> dict[str, Any]:
+        if _BACKEND_DELTA_BUFFERING_ENABLED:
+            self._flush_backend_delta_buffer(run_id)
         self.get_run(run_id)
         events = self.list_events(run_id)
         checkpoint_id, created = f"checkpoint-{uuid.uuid4()}", _now()

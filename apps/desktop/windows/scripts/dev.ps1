@@ -18,7 +18,7 @@
 $ErrorActionPreference = "Stop"
 $IsProductionLaunch = $LaunchMode -eq "Production"
 $LaunchModeName = $LaunchMode.ToLowerInvariant()
-# Default desktop entry is workbench → desktop_gateway on 28643.
+# Default desktop entry is workbench → desktop_gateway on 28644 (dev) / 28643 (production).
 # V2 surface: Electron owns desktop_gateway directly, no legacy gateway on 28642.
 if ($GatewayPort -eq 0) {
     $GatewayPort = 28644
@@ -915,7 +915,7 @@ try {
     # the only owner during `npm run dev`.
     $env:OPENDRSAI_DESKTOP_DEV = "1"
     # Source Runtime ownership is session-scoped: workbench Electron owns
-    # desktop_gateway on 28643. Legacy hot-load is refused above.
+    # desktop_gateway on the active gateway port. Legacy hot-load is refused above.
     $env:OPENDRSAI_RUNTIME_PERSIST = "0"
     $env:DRSAI_DESKTOP_GATEWAY_PORT = [string]$GatewayPort
     $env:OPENDRSAI_LAUNCH_GATEWAY_PORT = [string]$GatewayPort

@@ -9,7 +9,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -2272,8 +2272,20 @@ class RuntimeConversationJournal:
         self, session_id: str, *, through_sequence: int | None = None
     ) -> list[dict[str, Any]]:
         """Return canonical OAEP Items at a Session waterline."""
+        return list(self.iter_oaep_items(session_id, through_sequence=through_sequence))
+
+    def iter_oaep_items(
+        self, session_id: str, *, through_sequence: int | None = None
+    ) -> Iterator[dict[str, Any]]:
+        """Stream sanitized Items in digest order, retaining one envelope at a time.
+
+        Consume or close the iterator to release its SQLite read transaction.
+        This is the same current-projection waterline filter as ``oaep_items``;
+        it does not reconstruct revisions overwritten after that waterline.
+        """
         self.ensure_oaep_projection(session_id)
         with self._connect() as db:
+            db.execute("BEGIN")
             self._session(db, session_id)
             if through_sequence is None:
                 state = db.execute(
@@ -2281,13 +2293,17 @@ class RuntimeConversationJournal:
                     (session_id,),
                 ).fetchone()
                 through_sequence = int(state["last_sequence"]) if state else 0
+            # These columns are the immutable envelope run_id / sequence / id.
+            # BINARY text order and INTEGER run_sequence match oaep_items_digest,
+            # unlike the latest_sequence ordering used for pagination.
             rows = db.execute(
                 "SELECT envelope_json FROM runtime_oaep_items "
                 "WHERE session_id=? AND latest_sequence<=? "
                 "ORDER BY run_id,run_sequence,item_id",
                 (session_id, through_sequence),
-            ).fetchall()
-        return [sanitize_persisted_item(json.loads(str(row["envelope_json"]))) for row in rows]
+            )
+            for row in rows:
+                yield sanitize_persisted_item(json.loads(str(row["envelope_json"])))
 
     def oaep_items_window(
         self,

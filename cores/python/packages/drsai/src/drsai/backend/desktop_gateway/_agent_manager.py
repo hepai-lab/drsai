@@ -58,6 +58,7 @@ from drsai.modules.managers.datamodel.db import RunStatus, Thread
 from drsai.modules.managers.datamodel.types import Response as DBResponse
 from drsai.utils.utils import compress_state, decompress_state
 
+from ._turn_wait import TurnWaitTimeout, wait_bounded, wait_turn_event
 from ._artifacts import deliver_artifact
 from ._auth import effective_user_id
 from ._image_tools import IMAGE_GENERATION_HOST_POLICY, image_edit, image_generation
@@ -89,6 +90,26 @@ def _env_seconds(name: str, default: float) -> float:
 _AGENT_CREATE_TIMEOUT_SECONDS = _env_seconds("OPENDRSAI_AGENT_CREATE_TIMEOUT_SECONDS", 90.0)
 _AGENT_CLOSE_TIMEOUT_SECONDS = _env_seconds("OPENDRSAI_AGENT_CLOSE_TIMEOUT_SECONDS", 5.0)
 _AGENT_REBUILD_WAIT_TIMEOUT_SECONDS = _env_seconds("OPENDRSAI_AGENT_REBUILD_WAIT_TIMEOUT_SECONDS", 120.0)
+# A turn is only "running" while events keep flowing. A model call that hangs
+# without emitting anything (provider wedged, cancellation ignored) used to
+# hold the per-session turn lock *forever*: every later send on that session
+# got "session_busy" until the gateway was restarted. Both bounds below break
+# the turn loop when the stream goes silent, releasing the lock.
+#   idle  — max seconds without any event while the turn is running normally
+#   grace — max seconds of silence *after* a stop/cancel was requested before
+#           the lock is force-abandoned (the Agent's token may be unobserved)
+_AGENT_TURN_IDLE_TIMEOUT_SECONDS = _env_seconds("OPENDRSAI_AGENT_TURN_IDLE_TIMEOUT_SECONDS", 600.0)
+_AGENT_TURN_CANCEL_GRACE_SECONDS = _env_seconds("OPENDRSAI_AGENT_TURN_CANCEL_GRACE_SECONDS", 30.0)
+
+
+def _token_cancelled(token: Any) -> bool:
+    """Best-effort read of a cancellation token's cancelled flag."""
+    if token is None:
+        return False
+    try:
+        return bool(token.is_cancelled())
+    except Exception:  # pragma: no cover - defensive
+        return False
 
 
 def _database() -> DatabaseManager:
@@ -277,15 +298,24 @@ class DesktopAgentManager:
         # network-facing calls, and holding one process-wide lock across them
         # meant a single stalled Agent froze *every* session in the gateway.
         self._global_lock = asyncio.Lock()
-        # Serializes Agent construction (create + init + state load). Separate
-        # from ``_global_lock`` so the expensive work happens outside the
-        # bookkeeping critical section, and acquired *with a timeout* so a
-        # wedged rebuild cannot block other sessions forever.
-        self._rebuild_lock = asyncio.Lock()
+        # Serializes Agent construction (create + init + state load) *per
+        # Session key*. Separate from ``_global_lock`` so the expensive work
+        # happens outside the bookkeeping critical section, and acquired *with
+        # a timeout* so a wedged rebuild cannot block that Session forever.
+        #
+        # This used to be one process-wide lock. Different Sessions build
+        # different Agents with no shared state between them, but a single lock
+        # made every first send queue behind every other in-flight build: with
+        # three Sessions already constructing, the fourth waited out the whole
+        # back-queue and tripped the wait timeout, so its composer looked dead.
+        # Per-key locking keeps same-Session rebuilds serialized (the actual
+        # invariant: one Agent per key) without coupling unrelated Sessions.
+        self._rebuild_locks: dict[str, asyncio.Lock] = {}
         # Strong references for detached ``close()`` calls. asyncio only holds a
         # weak reference to a running task, so a bare create_task() may be
         # garbage-collected mid-flight and skip its cleanup.
         self._closing_tasks: set[asyncio.Task[Any]] = set()
+        self._quarantined_tasks: dict[str, asyncio.Task[Any]] = {}
 
     @staticmethod
     def _key(user_id: str, session_id: str) -> str:
@@ -294,6 +324,15 @@ class DesktopAgentManager:
     async def _lock_for(self, key: str) -> asyncio.Lock:
         async with self._global_lock:
             return self._locks.setdefault(key, asyncio.Lock())
+
+    async def _rebuild_lock_for(self, key: str) -> asyncio.Lock:
+        """Return the per-Session construction lock.
+
+        Kept out of ``_locks`` so a rebuild lock cannot be handed to the turn
+        path, which assumes it exclusively guards one Session's turn.
+        """
+        async with self._global_lock:
+            return self._rebuild_locks.setdefault(key, asyncio.Lock())
 
     # ── Agent lifecycle ──────────────────────────────────────────────────
 
@@ -316,6 +355,14 @@ class DesktopAgentManager:
             if model_provider and model_id
             else model_alias or DEFAULT_CONFIG_NAME
         )
+        pending = self._quarantined_tasks.get(key)
+        if pending is not None and not pending.done():
+            raise RuntimeExecutionError(
+                "session_recovering",
+                "The previous execution has not stopped safely. Wait or restart the runtime.",
+                retryable=True,
+            )
+        self._quarantined_tasks.pop(key, None)
         # Fast path: an Agent already built for exactly this alias. No lock --
         # the cache dicts are only mutated between awaits, so this read can
         # never observe a torn state.
@@ -323,23 +370,26 @@ class DesktopAgentManager:
         if agent is not None and self._aliases.get(key) == alias:
             return agent
 
-        # Slow path: build (or rebuild) the Agent. The wait for the rebuild lock
-        # is bounded, and so is the build itself, so one stalled Agent can no
-        # longer wedge every other session in the process.
+        # Slow path: build (or rebuild) the Agent. The wait for this Session's
+        # rebuild lock is bounded, and so is the build itself, so one stalled
+        # Agent can no longer wedge every other session in the process.
+        rebuild_lock = await self._rebuild_lock_for(key)
         try:
             await asyncio.wait_for(
-                self._rebuild_lock.acquire(), timeout=_AGENT_REBUILD_WAIT_TIMEOUT_SECONDS
+                rebuild_lock.acquire(), timeout=_AGENT_REBUILD_WAIT_TIMEOUT_SECONDS
             )
         except asyncio.TimeoutError:
             raise RuntimeExecutionError(
                 "agent_rebuild_busy",
-                "Another session is still preparing its Agent. Retry in a moment.",
+                "This session is already preparing its Agent. Retry in a moment.",
                 retryable=True,
             )
         try:
             # Someone else may have built this exact Agent while we waited.
             agent = self._agents.get(key)
             if agent is not None and self._aliases.get(key) == alias:
+                return agent
+            if agent is not None and await self._try_hot_swap_model(key, agent, alias):
                 return agent
             previous = agent
             logger.info(
@@ -377,7 +427,46 @@ class DesktopAgentManager:
             self._aliases[key] = alias
             return agent
         finally:
-            self._rebuild_lock.release()
+            rebuild_lock.release()
+
+    async def _try_hot_swap_model(self, key: str, agent: Any, alias: str) -> bool:
+        """Swap one cached Agent's model client in place instead of rebuilding.
+
+        A model change no longer forces ``_build_agent`` (lazy_init + project
+        instructions + load_state) when the Agent can switch clients itself:
+        ``DrSaiAgent.switch_model`` replaces ``_model_client``, syncs the
+        client into ``model_context`` (token counting / compression / summary),
+        closes the old client, and sanitizes cross-provider tool_call history.
+        The ``set_model_client`` factory re-reads config.toml on every call, so
+        a policy committed through the Gateway is picked up here.
+
+        Runs under this Session's rebuild lock from ``get_or_create``, which is
+        only entered between turns (``run_stream`` holds the turn lock), so the
+        swap can never race an in-flight turn.
+
+        Any failure falls back to the rebuild path -- the worst case is
+        exactly today's behaviour.
+        """
+        set_fn = getattr(agent, "_set_model_client", None)
+        if set_fn is None or not callable(set_fn):
+            return False
+        if not getattr(agent, "_owns_model_client", True):
+            return False
+        switch = getattr(agent, "switch_model", None)
+        if switch is None or not callable(switch):
+            return False
+        try:
+            new_client = set_fn(alias)
+            await asyncio.wait_for(switch(new_client), timeout=_AGENT_CREATE_TIMEOUT_SECONDS)
+        except Exception as exc:
+            logger.warning(
+                "Hot model swap failed for {} ({}); falling back to Agent rebuild",
+                key, exc,
+            )
+            return False
+        self._aliases[key] = alias
+        logger.info("Hot model swap succeeded: session=%s model=%s", key, alias)
+        return True
 
     async def _build_agent(
         self,
@@ -392,7 +481,7 @@ class DesktopAgentManager:
         """Create and initialize one Agent.
 
         Runs outside ``_global_lock`` (see ``get_or_create``); the caller holds
-        ``_rebuild_lock`` and enforces the timeout.
+        this Session's rebuild lock and enforces the timeout.
         """
         kwargs = dict(
             thread_id=session_id,
@@ -517,8 +606,11 @@ class DesktopAgentManager:
         gateway shuts down: an Agent whose model client never answers must not
         be able to block either path.
         """
+        closing = asyncio.create_task(agent.close())
+        self._closing_tasks.add(closing)
+        closing.add_done_callback(self._observe_background_task)
         try:
-            await asyncio.wait_for(agent.close(), timeout=_AGENT_CLOSE_TIMEOUT_SECONDS)
+            await wait_bounded(closing, _AGENT_CLOSE_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
             logger.warning(
                 "close() for Agent {} did not finish within {}s; abandoning it "
@@ -530,6 +622,26 @@ class DesktopAgentManager:
             raise
         except Exception as exc:  # pragma: no cover - best effort
             logger.debug("close() for superseded Agent failed for {}: {}", key, exc)
+
+    def _observe_background_task(self, task: asyncio.Task[Any]) -> None:
+        self._closing_tasks.discard(task)
+        if not task.cancelled():
+            task.exception()  # Retrieve errors from abandoned cleanup/provider tasks.
+
+    def _quarantine(self, key: str, agent: Any, task: asyncio.Task[Any] | None) -> None:
+        if self._agents.get(key) is agent:
+            self._agents.pop(key, None)
+            self._aliases.pop(key, None)
+        if task is not None and not task.done():
+            self._quarantined_tasks[key] = task
+            self._closing_tasks.add(task)
+            task.add_done_callback(self._observe_background_task)
+            # Do not allow another Agent to mutate the same SQLite context until
+            # the old coroutine is actually done. Full process fencing is separate.
+            task.add_done_callback(lambda _: self._supersede(key, agent))
+            task.cancel()
+        else:
+            self._supersede(key, agent)
 
     async def run_stream(
         self,
@@ -607,28 +719,101 @@ class DesktopAgentManager:
             if work_dir:
                 agent._runtime_workspace_path = Path(work_dir).resolve()
             agent._runtime_workspace_id = workspace_id
+            pending_event = None
+            completed_normally = False
+            cancel_deadline: list[float | None] = [None]
             try:
-                async for event in agent.run_stream(task=turn_task, cancellation_token=cancellation_token):
+                event_stream = agent.run_stream(
+                    task=turn_task, cancellation_token=cancellation_token
+                )
+                iterator = event_stream.__aiter__()
+                while True:
+                    pending_event = asyncio.create_task(anext(iterator))
+                    try:
+                        event = await wait_turn_event(
+                            pending_event, lambda: _token_cancelled(cancellation_token),
+                            _AGENT_TURN_IDLE_TIMEOUT_SECONDS,
+                            _AGENT_TURN_CANCEL_GRACE_SECONDS, cancel_deadline,
+                        )
+                    except StopAsyncIteration:
+                        completed_normally = True
+                        break
+                    except TurnWaitTimeout as exc:
+                        raise RuntimeExecutionError(
+                            "agent_cancel_timeout" if exc.cancelled else "agent_turn_idle_timeout",
+                            str(exc), retryable=True,
+                        ) from exc
                     yield event
             finally:
-                setattr(agent, "_selected_skill_for_turn", None)
-                setattr(agent, "_selected_skill_required_tools", [])
-                if had_path:
-                    agent._runtime_workspace_path = previous_path
-                elif hasattr(agent, "_runtime_workspace_path"):
-                    delattr(agent, "_runtime_workspace_path")
-                if had_id:
-                    agent._runtime_workspace_id = previous_id
-                elif hasattr(agent, "_runtime_workspace_id"):
-                    delattr(agent, "_runtime_workspace_id")
-                if hasattr(agent, "save_state"):
+                # A quarantined provider may still be using its turn binding.
+                # Never reset those fields underneath a live coroutine.
+                if pending_event is None or pending_event.done():
+                    setattr(agent, "_selected_skill_for_turn", None)
+                    setattr(agent, "_selected_skill_required_tools", [])
+                    if had_path:
+                        agent._runtime_workspace_path = previous_path
+                    elif hasattr(agent, "_runtime_workspace_path"):
+                        delattr(agent, "_runtime_workspace_path")
+                    if had_id:
+                        agent._runtime_workspace_id = previous_id
+                    elif hasattr(agent, "_runtime_workspace_id"):
+                        delattr(agent, "_runtime_workspace_id")
+                if not completed_normally:
+                    self._quarantine(key, agent, pending_event)
+                elif hasattr(agent, "save_state"):
+                    saving = asyncio.create_task(agent.save_state())
                     try:
-                        await self._save_state(session_id, uid, await agent.save_state())
-                    except Exception as exc:  # pragma: no cover - best effort
+                        state = await wait_bounded(saving, _AGENT_CLOSE_TIMEOUT_SECONDS)
+                        # Do not combine save_state and persistence in the detached
+                        # task: a late save result must never overwrite a newer turn.
+                        await self._save_state(session_id, uid, state)
+                    except asyncio.CancelledError:
+                        self._quarantine(key, agent, saving)
+                        raise
+                    except TimeoutError:
+                        self._quarantine(key, agent, saving)
+                        logger.warning("State capture timed out for {}; Agent quarantined", key)
+                    except Exception as exc:
                         logger.warning(f"Failed to save state for {key}: {exc}")
+                final_status = (
+                    RunStatus.COMPLETE if completed_normally and not _token_cancelled(cancellation_token)
+                    else RunStatus.STOPPED
+                )
+                try:
+                    await self._set_status(session_id, uid, final_status)
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.warning(f"Failed to reset thread status for {key}: {exc}")
 
     async def health(self) -> dict[str, Any]:
         return {"agents": len(self._agents), "sessions": sorted(self._agents)}
+
+    def reset_stale_active_threads(self) -> int:
+        """Reset threads still marked ACTIVE (called once at gateway startup).
+
+        The gateway process runs no turn before startup completes, so any
+        ``active`` Thread row is residue from a previous process: a crash, a
+        force-kill, or a turn abandoned by the old no-timeout lock. Left in
+        place, every session view for that thread claims a turn is running.
+        Best effort; a database error must not block startup.
+        """
+        try:
+            response: DBResponse = _database().get(
+                Thread, filters={"status": RunStatus.ACTIVE}, return_json=False,
+            )
+            threads = list(response.data or [])
+            for thread in threads:
+                thread.status = RunStatus.COMPLETE
+                thread.updated_at = time.time()
+                _database().upsert(thread)
+            if threads:
+                logger.info(
+                    "Reset {} thread(s) left ACTIVE by a previous gateway process",
+                    len(threads),
+                )
+            return len(threads)
+        except Exception as exc:  # pragma: no cover - startup best effort
+            logger.warning("Failed to reset stale ACTIVE threads at startup: {}", exc)
+            return 0
 
     async def close(self) -> None:
         # Shutdown must always finish: a stalled model client used to make this
@@ -638,6 +823,7 @@ class DesktopAgentManager:
         detached = list(self._agents.items())
         self._agents.clear()
         self._aliases.clear()
+        self._rebuild_locks.clear()
         if detached:
             await asyncio.gather(*(self._close_bounded(key, agent) for key, agent in detached))
         # Let detached close() calls finish (bounded) instead of logging
@@ -705,12 +891,15 @@ class DesktopAgentManager:
         """Drop ``keys`` from the cache and return the Agents that were there.
 
         Synchronous on purpose: the caller must not hold ``_global_lock`` (or
-        ``_rebuild_lock``) across the ``close()`` that follows.
+        this Session's rebuild lock) across the ``close()`` that follows.
         """
         detached: list[tuple[str, Any]] = []
         for key in keys:
             agent = self._agents.pop(key, None)
             self._aliases.pop(key, None)
+            # The rebuild lock is created lazily per key, so a Session that is
+            # gone would otherwise leave one idle Lock behind forever.
+            self._rebuild_locks.pop(key, None)
             if agent is not None:
                 detached.append((key, agent))
         return detached

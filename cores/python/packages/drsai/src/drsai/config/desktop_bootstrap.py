@@ -86,6 +86,14 @@ def _build_product_models() -> dict[str, dict[str, object]]:
 
     # Specialised models take precedence on key conflicts (role-specific caps).
     product_models.update(DEFAULT_SPECIALIZED_PRODUCT_MODELS)
+    # Fail loudly at generation time rather than shipping a catalog the reader
+    # would reject: a model must be either chat-capable or media-generating.
+    for model_id, definition in product_models.items():
+        capabilities = set(definition.get("capabilities") or ())
+        if {"image_generation", "image_edit"} & capabilities and {"chat", "tool_calling", "reasoning"} & capabilities:
+            raise ConfigError(
+                f"product model '{model_id}' combines image generation with chat capabilities"
+            )
     return product_models
 
 

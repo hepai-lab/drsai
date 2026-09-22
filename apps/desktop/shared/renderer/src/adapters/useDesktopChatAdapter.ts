@@ -1,3 +1,4 @@
+import { projectStructuredText } from "../structuredTextProjection";
 import { useEffect, useRef, useState } from "react";
 import type {
   ChatAttachment,
@@ -90,6 +91,8 @@ export interface DesktopChatAdapter {
   removeCommandAttachment: (index: number) => void;
   dismissRecoveryActions: (messageId: string) => void;
   deleteMessage: (messageId: string) => void;
+  /** Settle any still-pending live message; a no-op while a turn is running. */
+  settleLiveTranscript: () => void;
   setInput: (value: string) => void;
   submit: (
     attachments?: ChatAttachment[],
@@ -127,6 +130,7 @@ export function useDesktopChatAdapter({
   availableAgents,
   availableModels,
   canChat,
+  chatUnavailableReason,
   developerMode,
   language,
   onChatComplete,
@@ -145,6 +149,7 @@ export function useDesktopChatAdapter({
   availableAgents?: DesktopAgent[];
   availableModels?: MyDrSaiModelConfig[];
   canChat: boolean;
+  chatUnavailableReason?: string;
   developerMode: boolean;
   language: "en" | "zh";
   onChatComplete: (successful: boolean) => void;
@@ -194,6 +199,9 @@ export function useDesktopChatAdapter({
   const threadIdRef = useRef(threadId);
   const languageRef = useRef(language);
   const developerModeRef = useRef(developerMode);
+  // Mirrors the readiness gate that App derives. Held in a ref because submit()
+  // is recreated per render but reads this only to explain a blocked send.
+  const chatUnavailableReasonRef = useRef<string | undefined>(chatUnavailableReason);
   const currentRuntimeModeRef = useRef<ChatRuntimeMode | null>(null);
   const customCommandsRef = useRef<DesktopCustomCommand[]>([]);
   const projectMemoryRef = useRef<DesktopProjectMemoryEntry[]>([]);
@@ -218,13 +226,52 @@ export function useDesktopChatAdapter({
     const assistantId = streamingAssistantByRequest.current[requestId];
     setMessages((current) => {
       const updated = updateAssistantByIdOrLatestStreaming(current, assistantId, (message) =>
-        events.reduce(applyStructuredEventToMessage, message),
+        applyStructuredEventsToMessage(message, events),
       );
       return publishAndReturn(
         events.some((event) => event.type === "turn.error")
           ? settleAssistantAfterHiddenError(updated, assistantId)
           : updated,
       );
+    });
+  }
+
+  /**
+   * Deterministically settle the live transcript once a turn reaches its
+   * terminal chat event. The sidebar derives the *active* row from
+   * `chat.messages`, not from the snapshot store, so clearing only
+   * `activeRequestId` would leave a bubble whose structured turn is still
+   * pending/running spinning the row forever (e.g. when the settled catalog
+   * row arrived before this terminal event and marked the thread idle while
+   * the visible message was never sealed). The reducer's sealed-state
+   * monotonicity keeps a duplicate terminal application harmless, and the
+   * publish goes through the coalescer, which — with `activeRequestIdRef`
+   * already cleared — classifies it as terminal and emits it immediately.
+   */
+  function settleLiveTerminalTurn(requestId: string): void {
+    const assistantId = streamingAssistantByRequest.current[requestId];
+    setMessages((current) => {
+      const index = assistantId
+        ? current.findIndex((message) => message.id === assistantId)
+        : current.findIndex((message) => message.structuredTurn?.turnId === requestId);
+      if (index === -1) return current;
+      const message = current[index];
+      const turn = message.structuredTurn;
+      const isTerminalTurn = turn
+        ? turn.status === "completed" || turn.status === "cancelled" || turn.status === "error"
+        : false;
+      if (!message.streaming && !message.inputRequest && (!turn || isTerminalTurn)) return current;
+      const next = [...current];
+      next[index] = {
+        ...message,
+        streaming: false,
+        inputRequest: undefined,
+        ...(turn && !isTerminalTurn
+          ? { structuredTurn: finalizeStructuredTurn(turn, message.id, "completed") }
+          : {}),
+        lastEventAt: Date.now(),
+      };
+      return publishAndReturn(next);
     });
   }
 
@@ -238,7 +285,7 @@ export function useDesktopChatAdapter({
       for (const [requestId, events] of Object.entries(pending)) {
         const assistantId = streamingAssistantByRequest.current[requestId];
         next = updateAssistantByIdOrLatestStreaming(next, assistantId, (message) => {
-          const updated = events.reduce(applyStructuredEventToMessage, message);
+          const updated = applyStructuredEventsToMessage(message, events);
           return {
             ...updated,
             firstDeltaAt: message.firstDeltaAt ?? committedAt,
@@ -272,7 +319,6 @@ export function useDesktopChatAdapter({
     // must never mutate the newly selected thread.
     const isCurrentThread = (): boolean => threadIdRef.current === expectedThreadId;
     if (!isCurrentThread()) return snapshotMessages;
-    let latestActiveRequestId: string | null = null;
     const settleUnrecoverableTurn = (requestId: string, turnId: string): void => {
       setMessages((current) => publishAndReturn(current.map((candidate) => {
         if (candidate.structuredTurn?.turnId !== turnId) return candidate;
@@ -317,7 +363,6 @@ export function useDesktopChatAdapter({
       const isActive = turn?.status === "pending" || turn?.status === "running";
       if (message.role !== "assistant" || !turn || (!isActive && !hasRecoveryNotice) || turn.turnId.startsWith("legacy:")) continue;
       const requestId = turn.turnId;
-      if (isActive) latestActiveRequestId = requestId;
       streamingAssistantByRequest.current[requestId] = message.id;
       structuredRequests.current.add(requestId);
       let recoveryTimeout: number | undefined;
@@ -372,8 +417,13 @@ export function useDesktopChatAdapter({
           appendDebugLog("warn", error instanceof Error ? error.message : `Structured turn recovery failed: ${requestId}`, "chat");
         });
     }
-    setActiveRequestId(latestActiveRequestId);
-    activeRequestIdRef.current = latestActiveRequestId;
+    // Neutral composer: keep the composer out of the running state until the
+    // recovery above proves the turn is alive (its single-`start` branch puts
+    // the activeRequestId back, and a replayed stream marks the composer
+    // active through the regular `start` event handler). A restored
+    // `streaming: true` snapshot only says the turn *was* running; trusting
+    // it here is what pinned a dead session's composer on "stop" forever
+    // whenever the main process echoed `start` back for a finished turn.
     return preparedMessages;
   }
 
@@ -605,6 +655,10 @@ export function useDesktopChatAdapter({
   }, [developerMode]);
 
   useEffect(() => {
+    chatUnavailableReasonRef.current = chatUnavailableReason;
+  }, [chatUnavailableReason]);
+
+  useEffect(() => {
     return desktopApi.onChatEvent((event) => {
       applyChatEvent(event);
     });
@@ -774,6 +828,28 @@ export function useDesktopChatAdapter({
         ]));
         return false;
       }
+      // The Gateway reports healthy, so the readiness gate that locked the
+      // composer was derived from other state (runtime install, workspace
+      // trust, service bootstrap). Falling through here used to send nothing
+      // and show nothing: the composer kept its text and the turn simply never
+      // happened, which reads as a frozen app. Reject visibly instead.
+      const blockedReason = chatUnavailableReasonRef.current;
+      const blockedError = describeUserFacingError(
+        { code: "chat_blocked_not_ready", message: blockedReason },
+        languageRef.current,
+      );
+      appendDebugLog("error", blockedError.diagnosticCode, "chat");
+      const blockedMessageId = crypto.randomUUID();
+      setMessages((current) => publishAndReturn([
+        ...current,
+        applyChatTransportFailure({
+          id: blockedMessageId,
+          role: "assistant" as const,
+          content: "",
+          lastEventAt: Date.now(),
+        }, createChatErrorPresentation(blockedError, blockedMessageId)),
+      ]));
+      return false;
     }
 
     const userMessage: UiMessage = {
@@ -1151,6 +1227,8 @@ export function useDesktopChatAdapter({
         // `done`/`aborted` event. This lets a late terminal reconciliation
         // update the already-rendered message without reopening the turn.
         delete pendingDeltasByRequest.current[event.requestId];
+        // Settle the live transcript (sidebar derives the active row from it).
+        settleLiveTerminalTurn(event.requestId);
       }
       return;
     }
@@ -1244,10 +1322,15 @@ export function useDesktopChatAdapter({
         // The structured terminal event already sealed and rendered the turn;
         // this transport sentinel only releases per-request bookkeeping.
         structuredRequests.current.delete(event.requestId);
+        delete pendingStructuredEventsByRequest.current[event.requestId];
+        // The structured terminal already sealed the visible turn, but a
+        // settled catalog row may have reached the sidebar first (marking the
+        // thread idle) while this live message still carried a pending marker
+        // — settle it deterministically so the active row stops spinning.
+        settleLiveTerminalTurn(event.requestId);
         delete streamingAssistantByRequest.current[event.requestId];
         delete lastSequenceByRequest.current[event.requestId];
         delete pendingDeltasByRequest.current[event.requestId];
-        delete pendingStructuredEventsByRequest.current[event.requestId];
         return;
       }
       if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
@@ -1302,6 +1385,28 @@ export function useDesktopChatAdapter({
     if (event.type === "error") {
       if (completedStructuredRequests.current.delete(event.requestId)) {
         delete lastSequenceByRequest.current[event.requestId];
+        // As in the done/aborted sentinel above, settle the already-rendered
+        // turn so the active sidebar row cannot keep spinning on a stale
+        // pending marker.
+        settleLiveTerminalTurn(event.requestId);
+        delete streamingAssistantByRequest.current[event.requestId];
+        return;
+      }
+      // A `run_inactive` error is the catalog/liveness authority reporting that
+      // the turn already finished elsewhere; it is terminal bookkeeping, not a
+      // user-visible failure. Settle the composer and the live transcript
+      // without surfacing a "Reply failed" bubble.
+      if (event.error === "run_inactive" || event.errorEnvelope?.code === "run_inactive") {
+        if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
+        setActiveRequestId((current) => current === event.requestId ? null : current);
+        setCancellingRequestId((current) => current === event.requestId ? null : current);
+        settleLiveTerminalTurn(event.requestId);
+        structuredRequests.current.delete(event.requestId);
+        completedStructuredRequests.current.delete(event.requestId);
+        delete streamingAssistantByRequest.current[event.requestId];
+        delete lastSequenceByRequest.current[event.requestId];
+        delete pendingDeltasByRequest.current[event.requestId];
+        delete pendingStructuredEventsByRequest.current[event.requestId];
         return;
       }
       if (activeRequestIdRef.current === event.requestId) activeRequestIdRef.current = null;
@@ -1348,6 +1453,40 @@ export function useDesktopChatAdapter({
       delete pendingDeltasByRequest.current[event.requestId];
       setActiveRequestId((current) => (current === event.requestId ? null : current));
     }
+  }
+
+  /**
+   * Settle every still-pending live message. Invoked when an authoritative
+   * settled catalog row names the active Session but its terminal chat event
+   * never reached this view (a recovered subscription that settled silently, a
+   * turn that finished on another device). A no-op while any part is still
+   * pending, so it never interrupts a genuinely running turn.
+   */
+  function settleLiveTranscript(): void {
+    setMessages((current) => {
+      let changed = false;
+      const next = current.map((message) => {
+        const turn = message.structuredTurn;
+        const pending = turn
+          ? turn.status === "pending" || turn.status === "running"
+          : Boolean(message.streaming);
+        if (!pending && !message.inputRequest) return message;
+        const isTerminalTurn = turn
+          ? turn.status === "completed" || turn.status === "cancelled" || turn.status === "error"
+          : false;
+        changed = true;
+        return {
+          ...message,
+          streaming: false,
+          inputRequest: undefined,
+          ...(turn && !isTerminalTurn
+            ? { structuredTurn: finalizeStructuredTurn(turn, message.id, "completed") }
+            : {}),
+          lastEventAt: Date.now(),
+        };
+      });
+      return changed ? publishAndReturn(next) : current;
+    });
   }
 
   function queueAssistantDelta(requestId: string, kind: "text" | "reasoning", content: string): void {
@@ -1474,7 +1613,14 @@ export function useDesktopChatAdapter({
   ): ChatThreadSnapshot | null {
     const nonWelcome = nextMessages.filter((message) => message.id !== "welcome");
     if (!nonWelcome.length && !allowEmpty) return null;
-    const firstUser = nonWelcome.find((message) => message.role === "user");
+    // Compact older completed turns before persisting. Live state keeps the
+    // full reducer invariants (timeline === aggregate); a *persisted snapshot*
+    // only needs to rehydrate a readable conversation, so dropping the process
+    // timeline and bounding activity payloads on older turns keeps long-session
+    // snapshots (and later hydration memory) linear in the visible answer, not
+    // in every tool output and reasoning chunk ever streamed.
+    const compactedMessages = compactCompletedTurnsForSnapshot(nextMessages);
+    const firstUser = compactedMessages.find((message) => message.role === "user");
     const updatedAt = Math.max(Date.now(), lastPublishedSnapshotAtRef.current + 1);
     lastPublishedSnapshotAtRef.current = updatedAt;
     appliedSnapshotUpdatedAtRef.current = updatedAt;
@@ -1485,9 +1631,9 @@ export function useDesktopChatAdapter({
       threadId: threadIdOverride ?? threadIdRef.current,
       title: firstUser?.content.replace(/[\r\n]+/g, " ").trim().slice(0, 48)
         || (languageRef.current === "zh" ? "新会话" : "New chat"),
-      messages: nextMessages,
+      messages: compactedMessages,
       updatedAt,
-      messageCount: nonWelcome.length,
+      messageCount: compactedMessages.filter((message) => message.id !== "welcome").length,
     };
   }
 
@@ -2259,6 +2405,7 @@ export function useDesktopChatAdapter({
     removeCommandAttachment,
     dismissRecoveryActions,
     deleteMessage,
+    settleLiveTranscript,
     setInput,
     submit,
     abort,
@@ -2895,6 +3042,77 @@ function createWelcomeMessage(language: "en" | "zh", preferences: DesktopUserPre
   };
 }
 
+/**
+ * Compact older *completed* assistant turns for snapshot persistence.
+ *
+ * The live reducer keeps `processTimeline === aggregated parts` invariants, so
+ * truncation there would corrupt rendering. A persisted snapshot only needs to
+ * rehydrate a readable conversation:
+ *   - the most recent turns are preserved verbatim (recent context the user is
+ *     still reading and may continue from);
+ *   - older completed turns keep their answer content (`content`,
+ *     `reasoningContent`) but drop the append-only presentation records
+ *     (`processTimeline`) and bound their activity payloads, which dominate
+ *     snapshot size on tool-heavy / long-reasoning sessions and previously
+ *     made both the persisted snapshot and later rehydration memory grow
+ *     without bound.
+ */
+const SNAPSHOT_RECENT_ASSISTANT_TURNS = 10;
+
+function compactCompletedTurnsForSnapshot(messages: UiMessage[]): UiMessage[] {
+  const assistantIndexes = messages
+    .map((message, index) => ({ message, index }))
+    .filter(({ message }) => message.role === "assistant" && message.structuredTurn)
+    .map(({ index }) => index);
+  if (assistantIndexes.length <= SNAPSHOT_RECENT_ASSISTANT_TURNS) return messages;
+  const recentFrom = assistantIndexes[assistantIndexes.length - SNAPSHOT_RECENT_ASSISTANT_TURNS];
+  return messages.map((message, index) => {
+    if (index >= recentFrom) return message;
+    if (message.role !== "assistant") return message;
+    const turn = message.structuredTurn;
+    if (!turn) return message;
+    const isCompleted = turn.status === "completed" || turn.status === "error" || turn.status === "cancelled";
+    if (!isCompleted) return message;
+    const compactedTurn: StructuredTurnState = {
+      ...turn,
+      processTimeline: [],
+      activities: turn.activities.slice(-16).map(boundActivityForSnapshot),
+      parts: turn.parts.map(boundPartForSnapshot),
+    };
+    return { ...message, structuredTurn: compactedTurn };
+  });
+}
+
+function boundActivityForSnapshot(activity: StructuredActivityEvent): StructuredActivityEvent {
+  if (activity.kind !== "tool") return activity;
+  const boundToolActivity = (value: unknown): unknown => {
+    if (typeof value !== "string") return value;
+    return value.length > 2_000
+      ? `${value.slice(0, 2_000)}\n[truncated in snapshot]`
+      : value;
+  };
+  return {
+    ...activity,
+    ...(activity.input !== undefined ? { input: boundToolActivity(activity.input) } : {}),
+    ...(activity.output !== undefined ? { output: boundToolActivity(activity.output) } : {}),
+  } as StructuredActivityEvent;
+}
+
+function boundPartForSnapshot(part: StructuredAssistantPart): StructuredAssistantPart {
+  if (part.kind === "reasoning") {
+    return { ...part, segments: part.segments.slice(-4) };
+  }
+  if (part.kind === "subtask") {
+    return {
+      ...part,
+      timeline: [],
+      activities: part.activities?.slice(-8).map(boundActivityForSnapshot),
+      reasoningSegments: part.reasoningSegments?.slice(-2),
+    };
+  }
+  return part;
+}
+
 function hydrateStructuredMessages(messages: UiMessage[]): UiMessage[] {
   const hydrated = messages.map((message) => {
     if (message.role !== "assistant") return message;
@@ -3334,12 +3552,36 @@ function applyStructuredEventToMessage(
   message: UiMessage,
   event: StructuredConversationEvent,
 ): UiMessage {
-  const current = message.structuredTurn?.turnId === event.turnId
-    ? message.structuredTurn
-    : createStructuredTurnState(event.turnId);
-  const structuredTurn = sanitizeStructuredTurnForChat(applyStructuredConversationEvent(current, event));
-  const content = readStructuredMarkdown(structuredTurn);
-  const reasoningContent = readStructuredReasoning(structuredTurn);
+  return applyStructuredEventsToMessage(message, [event]);
+}
+
+/**
+ * Apply a batch of structured events to one message with a single canonical
+ * projection pass.
+ *
+ * The previous per-event reducer (`events.reduce(applyStructuredEventToMessage)`)
+ * recomputed `readStructuredMarkdown` / `readStructuredReasoning` — each an
+ * O(total turn content) string join — plus the sanitize and interaction scans
+ * for *every* event in the rAF batch. A streaming frame carrying N delta
+ * events paid N full-content joins per frame, which is what made long turns
+ * progressively slower as their content grew. Here the events fold into the
+ * turn state first and the projection runs once.
+ */
+function applyStructuredEventsToMessage(
+  message: UiMessage,
+  events: StructuredConversationEvent[],
+): UiMessage {
+  if (!events.length) return message;
+  let state = message.structuredTurn;
+  let turnChanged = false;
+  for (const event of events) {
+    const current = state?.turnId === event.turnId ? state : createStructuredTurnState(event.turnId);
+    state = applyStructuredConversationEvent(current, event);
+    turnChanged = true;
+  }
+  if (!turnChanged || !state) return message;
+  const structuredTurn = sanitizeStructuredTurnForChat(state);
+  const { content, reasoningContent } = projectStructuredText(structuredTurn, message.structuredTurn);
   const activeInteraction = [...structuredTurn.parts]
     .reverse()
     .find((part): part is Extract<StructuredAssistantPart, { kind: "interaction" }> =>

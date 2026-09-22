@@ -47,8 +47,82 @@ const LABELS: Record<UserFacingRecoveryAction["id"], { en: string; zh: string }>
   abandon: { en: "Leave as interrupted", zh: "放弃本次任务" },
 };
 
+/**
+ * Guards against leaking internals into user-facing copy. Mirrors the guard in
+ * ``userFacingLanguage.ts`` (kept local to avoid an import cycle): a raw
+ * Gateway ``detail`` may carry stack traces or transport identifiers.
+ */
+const INTERNAL_COPY = /(?:^\s*[\[{]|\b(?:OAEP|JSON-RPC|HTTPException|ValueError|TypeError|Traceback|runtime_side_effects|approval_id|idempotency_key|correlation_id|operation_id|call_id)\b|\bat\s+[A-Za-z0-9_$.]+\s*\([^\n]+:\d+(?::\d+)?\))/i;
+
+/** The Gateway's own ``detail`` text, when it is short and safe to show. */
+function safeDetail(message: unknown, maxLength = 320): string {
+  if (typeof message !== "string") return "";
+  const normalized = message.replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ").trim();
+  if (!normalized || INTERNAL_COPY.test(normalized)) return "";
+  return normalized.slice(0, maxLength);
+}
+
+/**
+ * Provider-credential failures arrive as a plain 400 ``detail`` from the
+ * Gateway ("Model provider 'deepseek' requires an API key"). Falling through to
+ * the generic backend copy tells the user nothing and hides the one action that
+ * fixes it, so these are mapped to an explicit instruction.
+ */
+function describeProviderCredentialFailure(
+  message: string,
+  language: "zh" | "en",
+): Omit<UserFacingError, "diagnosticCode"> | null {
+  if (!message) return null;
+  const requiresApiKey = /requires an API key|requires_credentials|missing api key|no api key/i.test(message);
+  const credentialUnavailable = /saved api credential|api_key_credential|credential is unavailable/i.test(message);
+  if (!requiresApiKey && !credentialUnavailable) return null;
+  const provider = /provider '([^']+)'|provider "([^"]+)"/i.exec(message);
+  const name = provider?.[1] ?? provider?.[2] ?? "";
+  return {
+    title: language === "zh"
+      ? (name ? `模型提供方「${name}」缺少 API Key。` : "模型提供方缺少 API Key。")
+      : (name ? `Model provider "${name}" has no API key.` : "The model provider has no API key."),
+    action: language === "zh"
+      ? "请在「设置 → 模型提供方」中填写该提供方的 API Key 并点击“保存提供方”，然后重新测试或发送消息。"
+      : "Enter the provider's API key in Settings → Model providers, click “Save provider”, then test or send again.",
+    retryable: false,
+    actions: [{ id: "diagnostics", label: LABELS.diagnostics[language] }],
+  };
+}
+
+/**
+ * Other user-fixable provider/configuration rejections: show the Gateway's own
+ * wording instead of a generic "the operation did not complete".
+ */
+function actionableDetailCopy(
+  message: string,
+  language: "zh" | "en",
+): Omit<UserFacingError, "diagnosticCode"> | null {
+  if (!message) return null;
+  if (!/api key|credential|not configured|no selectable models|is not configured|disabled|unauthorized|invalid|must be|unsupported|missing/i.test(message)) {
+    return null;
+  }
+  return {
+    title: language === "zh" ? `${message}。` : `${message}.`,
+    action: language === "zh"
+      ? "请按提示修正「设置 → 模型提供方」中的配置后重试。"
+      : "Fix the model provider configuration as described above, then retry.",
+    retryable: false,
+    actions: [{ id: "diagnostics", label: LABELS.diagnostics[language] }],
+  };
+}
+
 export function describeUserFacingError(error: unknown, language: "zh" | "en"): UserFacingError {
   const envelope = normalizeRuntimeErrorEnvelope(error);
+  const detail = safeDetail(envelope.message);
+  const credentialCopy = describeProviderCredentialFailure(detail, language);
+  if (credentialCopy) {
+    return {
+      ...credentialCopy,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+    };
+  }
   const webSearch = describeWebSearchFailure(envelope.code, envelope.retryable, language);
   if (webSearch) return { ...webSearch, diagnosticCode: envelope.diagnostic_reference === "diag-unavailable" ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}` };
   if (envelope.code === "model_image_input_unsupported") {
@@ -198,6 +272,45 @@ export function describeUserFacingError(error: unknown, language: "zh" | "en"): 
       }),
     };
   }
+  if (envelope.code === "chat_blocked_not_ready") {
+    // The composer's readiness gate was closed but the Gateway itself is
+    // healthy, so the specific blocker is unavailable/one of many. Prefer the
+    // gate's own explanation when present.
+    const detail = typeof envelope.message === "string" ? envelope.message.trim() : "";
+    return {
+      title: language === "zh" ? "暂时无法发送" : "Sending is not available yet",
+      action: detail || (language === "zh"
+        ? "当前会话尚未就绪。请按界面上的提示完成后重试。"
+        : "This session is not ready yet. Complete the pending step shown in the app, then retry."),
+      retryable: true,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: [{ id: "retry", label: LABELS.retry[language] }, { id: "diagnostics", label: LABELS.diagnostics[language] }],
+    };
+  }
+  if (envelope.code === "agent_rebuild_busy" || envelope.code === "agent_create_timeout") {
+    // The gateway could not prepare this Session's Agent in time. It is a
+    // retryable preparation failure, not a model or workspace problem --
+    // without this branch it fell through to the generic unexpected_error
+    // copy, which told the user nothing about what to do.
+    const busy = envelope.code === "agent_rebuild_busy";
+    return {
+      title: language === "zh"
+        ? (busy ? "正在准备本会话的 Agent" : "准备 Agent 超时")
+        : (busy ? "Preparing this session's Agent" : "Preparing the Agent timed out"),
+      action: language === "zh"
+        ? (busy
+          ? "本会话的 Agent 正在准备中，请稍等片刻后重试。其他会话的任务不受影响。"
+          : "准备 Agent 用时过长。请稍后重试；若持续出现，请检查模型服务是否可用。")
+        : (busy
+          ? "This session's Agent is still being prepared. Wait a moment and retry. Other sessions are unaffected."
+          : "Preparing the Agent took too long. Retry shortly; if it keeps happening, check model service availability."),
+      retryable: true,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
+      actions: [{ id: "retry", label: LABELS.retry[language] }, { id: "diagnostics", label: LABELS.diagnostics[language] }],
+    };
+  }
   if (envelope.code === "upstream_unavailable" || envelope.code === "worker_unavailable") {
     return {
       title: language === "zh" ? "所选模型暂时不可用" : "The selected model is temporarily unavailable",
@@ -273,6 +386,17 @@ export function describeUserFacingError(error: unknown, language: "zh" | "en"): 
       }),
     };
   }
+  if (envelope.code === "session_recovering" || envelope.code === "agent_cancel_timeout" || envelope.code === "agent_turn_idle_timeout") {
+    return {
+      title: language === "zh" ? "上一轮执行正在安全恢复" : "Recovering the previous execution",
+      action: language === "zh"
+        ? "输出等待或取消已超时。请勿连续重发；等待旧执行退出。若持续无法恢复，请先确认其他任务状态，再重启 Runtime，并查看诊断。"
+        : "Output or cancellation timed out. Avoid repeated sends; wait for the old execution to exit. If recovery remains stuck, check other tasks before restarting Runtime and inspect diagnostics.",
+      retryable: false,
+      diagnosticCode: envelope.code,
+      actions: [{ id: "diagnostics", label: LABELS.diagnostics[language] }],
+    };
+  }
   if (envelope.code === "session_busy") {
     return {
       title: language === "zh" ? "该会话已有任务正在运行" : "This session already has a running turn",
@@ -306,6 +430,16 @@ export function describeUserFacingError(error: unknown, language: "zh" | "en"): 
         const id = ACTION_IDS[action as RuntimeRecoveryAction];
         return { id, label: LABELS[id][language] };
       }),
+    };
+  }
+  // Before falling back to generic category copy, prefer the Gateway's own
+  // actionable wording for configuration/credential problems.
+  const detailCopy = actionableDetailCopy(detail, language);
+  if (detailCopy && (envelope.category === "backend" || envelope.category === "unknown" || envelope.category === "runtime")) {
+    return {
+      ...detailCopy,
+      diagnosticCode: envelope.diagnostic_reference === "diag-unavailable"
+        ? envelope.code : `${envelope.code} · ${envelope.diagnostic_reference}`,
     };
   }
   const copy = TEXT[envelope.category][language];

@@ -667,7 +667,12 @@ export function applyStructuredConversationEvent(
         // A finished turn must not leave parts "running". The reasoning
         // disclosure derives its open/close transition from the part status, so
         // an unterminated part would stay expanded forever after the turn ends.
-        parts: sealOpenParts(next.parts),
+        parts: sealOpenParts(finalizeOpenSubtaskActivities(next.parts)),
+        // A tool that never reported a terminal state cannot be forged into
+        // "completed" either: the run ended, so its result is simply unconfirmed.
+        // Reusing "cancelled" (rendered as a neutral marker) keeps the activity
+        // from spinning forever without claiming success.
+        activities: finalizeOpenActivities(next.activities, "cancelled"),
         // Final-answer authority belongs to part.completed / the backend. A
         // terminal turn event must never promote unclassified process text.
         meta: { ...next.meta, ...event.meta },
@@ -677,15 +682,18 @@ export function applyStructuredConversationEvent(
         ...next,
         status: "cancelled",
         sealed: true,
-        parts: next.parts.map((part) => part.status === "running" || part.status === "pending"
+        parts: finalizeOpenSubtaskActivities(next.parts.map((part) => part.status === "running" || part.status === "pending"
           ? { ...part, status: "cancelled" }
-          : part),
+          : part)),
+        activities: finalizeOpenActivities(next.activities, "cancelled"),
       };
     case "turn.error":
       return {
         ...next,
         status: "error",
         sealed: true,
+        parts: finalizeOpenSubtaskActivities(next.parts),
+        activities: finalizeOpenActivities(next.activities, "error"),
         error: {
           message: event.message,
           ...(event.code ? { code: event.code } : {}),
@@ -757,6 +765,28 @@ function sealOpenParts(parts: StructuredAssistantPart[]): StructuredAssistantPar
       status: "completed",
       ...(part.kind === "markdown" ? { final: true } : {}),
     } as StructuredAssistantPart;
+  });
+}
+
+/**
+ * Close activities that never reported a terminal state. `status` is never
+ * "completed": an activity whose result did not arrive is unconfirmed, not
+ * successful — the caller decides between "cancelled" (turn ended) and
+ * "error" (turn failed).
+ */
+function finalizeOpenActivities(
+  activities: StructuredActivityEvent[],
+  status: StructuredPartStatus,
+): StructuredActivityEvent[] {
+  return activities.map((activity) =>
+    activity.status === "running" || activity.status === "pending" ? { ...activity, status } : activity);
+}
+
+/** Same closure for the child activities nested inside subtask parts. */
+function finalizeOpenSubtaskActivities(parts: StructuredAssistantPart[]): StructuredAssistantPart[] {
+  return parts.map((part) => {
+    if (part.kind !== "subtask" || !part.activities?.length) return part;
+    return { ...part, activities: finalizeOpenActivities(part.activities, part.status === "error" ? "error" : "cancelled") };
   });
 }
 
@@ -882,7 +912,17 @@ function appendProcessTimelineDelta(
     return [...timeline, { id, kind: "markdown", sequence, partId: part.id, text: delta.text, status: "running", transient } as StructuredProcessTimelineEntry].slice(-500);
   }
   if (part.kind === "progress" && delta.kind === "progress.update") {
-    return [...timeline, { id: `progress:${part.id}:${sequence}`, kind: "progress", sequence, partId: part.id, summary: delta.summary, status: "running", ...(delta.phase ? { phase: delta.phase } : {}), ...(delta.completed !== undefined ? { completed: delta.completed } : {}), ...(delta.total !== undefined ? { total: delta.total } : {}) } as StructuredProcessTimelineEntry].slice(-500);
+    // One progress part === one live card: each update replaces the previous
+    // state instead of appending another entry that all resolve to the same
+    // latest part (which rendered as N duplicate "latest" cards).
+    const existingIndex = timeline.findIndex((entry) => entry.kind === "progress" && entry.partId === part.id);
+    const entry = { id: `progress:${part.id}:${sequence}`, kind: "progress", sequence, partId: part.id, summary: delta.summary, status: "running", ...(delta.phase ? { phase: delta.phase } : {}), ...(delta.completed !== undefined ? { completed: delta.completed } : {}), ...(delta.total !== undefined ? { total: delta.total } : {}) } as StructuredProcessTimelineEntry;
+    if (existingIndex >= 0) {
+      const next = timeline.slice();
+      next[existingIndex] = entry;
+      return next;
+    }
+    return [...timeline, entry].slice(-500);
   }
   if (part.kind === "subtask" && delta.kind === "subtask.reasoning.append") {
     const previous = timeline.at(-1);

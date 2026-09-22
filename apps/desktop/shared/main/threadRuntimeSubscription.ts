@@ -16,7 +16,7 @@ import {
 } from "./sessionConversationSubscription";
 import { sessionSyncState } from "./sessionSyncState";
 import { desktopDiagnostics } from "./diagnostics";
-import { subscribeOaepSession } from "./oaepSessionStream";
+import { subscribeOaepSession, materializeOaepDeltaShadow, type OaepSessionState } from "./oaepSessionStream";
 import { SessionViewStore } from "./sessionViewStore";
 import { syncSessionHistorySingleflight } from "./sessionHistorySync";
 import { LegacyConversationAdapter } from "./legacyConversationAdapter";
@@ -224,6 +224,24 @@ function readyHistory(
   };
 }
 
+const OAEP_HISTORY_RELOAD_MESSAGE = "History checkpoint refreshed. Reload earlier messages to restore the previous window.";
+
+/** Add presentation-window completeness without conflating import continuation. */
+export function withOaepHistory(history: DesktopThreadHistoryState, state: OaepSessionState): DesktopThreadHistoryState {
+  return {
+    ...history,
+    ...(state.history?.reloadRequired ? { message: OAEP_HISTORY_RELOAD_MESSAGE }
+      : history.message === OAEP_HISTORY_RELOAD_MESSAGE ? { message: undefined } : {}),
+    loadedRuns: state.runs.size,
+    totalRuns: Math.max(history.totalRuns, state.runs.size),
+    loadedItems: state.items.size,
+    totalItems: Math.max(history.totalItems, state.history?.totalItems ?? 0, state.items.size),
+    oaepNextCursor: state.history?.nextCursor ?? null,
+    oaepHasMore: Boolean(state.history?.hasMore),
+    truncated: Boolean(history.nextCursor || state.history?.hasMore),
+  };
+}
+
 export async function getRuntimeThreadSnapshot(
   thread: DesktopThread,
 ): Promise<DesktopThreadSnapshot | null> {
@@ -255,10 +273,12 @@ async function getRuntimeThreadSnapshotEnvelopeOnce(
   options: DesktopThreadSnapshotRequest = {},
 ): Promise<DesktopThreadSnapshotEnvelope | null> {
   signal?.throwIfAborted();
+  if (options.historyCursor && options.oaepHistoryCursor) throw new Error("Choose one history cursor domain per request.");
   const runtime = await runtimeForThread(thread);
   signal?.throwIfAborted();
   if (!runtime) return null;
   const cached = latestSnapshotEnvelopeByThread.get(thread.id);
+  const cachedHistory = cached?.runtimeSessionId === runtime.runtimeSessionId ? cached.snapshot.history : undefined;
   if (canUseSnapshotCache(
     cached, latestSnapshotEnvelopeByThread.isStale(thread.id), runtime.runtimeSessionId, options,
   )) return { ...cached, source: "cache" };
@@ -266,7 +286,7 @@ async function getRuntimeThreadSnapshotEnvelopeOnce(
   // predate Desktop's boundAgentId marker, so agent-id based gating leaves
   // their stale projection permanently uncorrected. Non-import backends return
   // an idempotent no-op from this endpoint.
-  const sync = options.historyCursor
+  const sync = options.oaepHistoryCursor ? null : options.historyCursor
     ? await runtime.resolved.client.syncBackendSessionHistory(
       runtime.runtimeSessionId, signal, false, options.historyCursor, 100,
     )
@@ -280,11 +300,14 @@ async function getRuntimeThreadSnapshotEnvelopeOnce(
     const shared = await subscribeOaepSession(runtime.resolved.client, runtime.runtimeSessionId, {});
     try {
       signal?.throwIfAborted();
+      if (options.oaepHistoryCursor) await shared.loadEarlier(options.oaepHistoryCursor, signal);
+      signal?.throwIfAborted();
       const snapshot = projectOaepThreadSnapshot(
         thread,
-        shared.state.items.values(),
+        [...shared.state.items.values(), ...[...shared.state.deltaShadows.values()].map(materializeOaepDeltaShadow)],
         shared.state.runs.values(),
-        readyHistory(thread, sync, shared.state.runs.size, shared.state.items.size),
+        withOaepHistory(sync ? readyHistory(thread, sync, shared.state.runs.size, shared.state.items.size)
+          : cachedHistory ?? readyHistory(thread, { backend_id: "opendrsai", imported: 0, total: 0 }, 0, 0), shared.state),
       );
       const envelope: DesktopThreadSnapshotEnvelope = {
         version: 1,
@@ -292,7 +315,9 @@ async function getRuntimeThreadSnapshotEnvelopeOnce(
         threadId: thread.id,
         runtimeSessionId: runtime.runtimeSessionId,
         sessionSequence: shared.state.cursor,
-        generation: 1,
+        // History publication resets active ViewStores before the pull returns.
+        // Use that same generation rather than handing renderer a stale gen=1.
+        generation: latestSnapshotEnvelopeByThread.get(thread.id)?.generation ?? 1,
         source: "runtime",
         snapshot,
       };
@@ -302,6 +327,7 @@ async function getRuntimeThreadSnapshotEnvelopeOnce(
       shared.stop();
     }
   }
+  if (options.oaepHistoryCursor) throw new Error("OAEP history pagination requires the OAEP protocol.");
   const snapshot = await runtime.resolved.client.getConversationSnapshot(runtime.runtimeSessionId);
   signal?.throwIfAborted();
   const envelope: DesktopThreadSnapshotEnvelope = {
@@ -326,7 +352,7 @@ export function canUseSnapshotCache(
   runtimeSessionId: string,
   options: DesktopThreadSnapshotRequest,
 ): cached is DesktopThreadSnapshotEnvelope {
-  return !options.forceFresh && !stale
+  return !options.forceFresh && !options.historyCursor && !options.oaepHistoryCursor && !stale
     && cached?.runtimeSessionId === runtimeSessionId
     && cached.sessionSequence >= Math.max(0, options.minimumSequence ?? 0)
     && cached.generation >= Math.max(0, options.expectedGeneration ?? 0);
@@ -521,11 +547,8 @@ async function subscribeRuntimeThreadSnapshotOnce(
         capabilities: capabilities.capabilities,
       },
     });
-    const viewStore = new SessionViewStore(
-      thread,
-      runtime.runtimeSessionId,
-      readyHistory(thread, sync, 0, 0),
-    );
+    const history = readyHistory(thread, sync, 0, 0);
+    const viewStore = new SessionViewStore(thread, runtime.runtimeSessionId, history);
     const publishInitial = (sequence: number) => {
       sendThreadSnapshotEvent(target, "desktop:thread-snapshot", {
         version: 1,
@@ -547,7 +570,13 @@ async function subscribeRuntimeThreadSnapshotOnce(
           message: `Loaded OAEP snapshot at sequence ${state.cursor}.`, sequence: state.cursor, cursor: state.cursor,
           details: { itemCount: state.items.size, runCount: state.runs.size },
         });
-        viewStore.reset(state);
+        Object.assign(history, withOaepHistory(history, state));
+        // Reset is a full presentation rebuild; retain deltas for other Items
+        // whose canonical baseline still lives in an unloaded earlier page.
+        viewStore.reset({ ...state, items: new Map([
+          ...state.items,
+          ...[...state.deltaShadows.values()].map((shadow) => [shadow.id, materializeOaepDeltaShadow(shadow)] as const),
+        ]) });
         publishInitial(viewStore.sequence);
         void persistCursorOrReport(target, thread, runtime.runtimeSessionId, viewStore.sequence);
       },
