@@ -175,6 +175,9 @@ export function useDesktopChatAdapter({
   const liveThreadViewsRef = useRef<Map<string, LiveThreadChatView>>(new Map());
   const composerDraftsRef = useRef<Map<string, ComposerThreadDraft>>(new Map());
   const backgroundChatEventsRef = useRef<Map<string, ChatEvent[]>>(new Map());
+  /** Thread that the latest submit() targeted; used to recognize the
+   * optimistic placeholder when the thread switch effect trails the submit. */
+  const submitThreadRef = useRef<{ threadId: string; requestId: string } | null>(null);
   const [currentRuntimeMode, setCurrentRuntimeMode] = useState<ChatRuntimeMode | null>(null);
   const [commandAttachments, setCommandAttachments] = useState<ChatAttachment[]>([]);
   const inputRef = useRef("");
@@ -191,6 +194,11 @@ export function useDesktopChatAdapter({
   const restoredSnapshotThreadRef = useRef<string | null>(null);
   const pendingStructuredEventsByRequest = useRef<Record<string, StructuredConversationEvent[]>>({});
   const structuredFlushFrameRef = useRef<number | null>(null);
+  // Electron IPC bursts can keep the renderer task queue busy long enough for
+  // requestAnimationFrame to be postponed. Without a timer fallback, deltas
+  // remain pending until a terminal event drains them (the visible symptom is
+  // "nothing while running, full answer immediately after Stop").
+  const structuredFlushTimerRef = useRef<number | null>(null);
   const appliedSnapshotUpdatedAtRef = useRef(0);
   const lastPublishedSnapshotAtRef = useRef(0);
   // Coalescing window for streaming publishes; see the module for the rationale.
@@ -218,14 +226,37 @@ export function useDesktopChatAdapter({
   function clearStructuredFlush(): void {
     pendingStructuredEventsByRequest.current = {};
     if (structuredFlushFrameRef.current !== null) window.cancelAnimationFrame(structuredFlushFrameRef.current);
+    if (structuredFlushTimerRef.current !== null) window.clearTimeout(structuredFlushTimerRef.current);
     structuredFlushFrameRef.current = null;
+    structuredFlushTimerRef.current = null;
   }
 
   function applyStructuredEventBatch(requestId: string, events: StructuredConversationEvent[]): void {
     if (!events.length) return;
-    const assistantId = streamingAssistantByRequest.current[requestId];
     setMessages((current) => {
-      const updated = updateAssistantByIdOrLatestStreaming(current, assistantId, (message) =>
+      let assistantId = streamingAssistantByRequest.current[requestId];
+      let base = current;
+      if (findAssistantIndex(base, assistantId) === -1) {
+        // Snapshot resync or a thread transition can replace the optimistic
+        // message while OAEP continues to stream. Recreate one deterministic
+        // target rather than silently dropping every structured event until
+        // the terminal snapshot arrives.
+        assistantId = assistantId || `stream:${requestId}`;
+        streamingAssistantByRequest.current[requestId] = assistantId;
+        base = [
+          ...base.filter((message) => message.id !== "welcome"),
+          {
+            id: assistantId,
+            role: "assistant",
+            content: "",
+            streaming: true,
+            structuredTurn: createStructuredTurnState(requestId),
+            queuedAt: Date.now(),
+            lastEventAt: Date.now(),
+          },
+        ];
+      }
+      const updated = updateAssistantByIdOrLatestStreaming(base, assistantId, (message) =>
         applyStructuredEventsToMessage(message, events),
       );
       return publishAndReturn(
@@ -276,7 +307,10 @@ export function useDesktopChatAdapter({
   }
 
   function flushStructuredEventDeltas(): void {
+    if (structuredFlushFrameRef.current !== null) window.cancelAnimationFrame(structuredFlushFrameRef.current);
+    if (structuredFlushTimerRef.current !== null) window.clearTimeout(structuredFlushTimerRef.current);
     structuredFlushFrameRef.current = null;
+    structuredFlushTimerRef.current = null;
     const pending = pendingStructuredEventsByRequest.current;
     pendingStructuredEventsByRequest.current = {};
     const committedAt = Date.now();
@@ -306,10 +340,11 @@ export function useDesktopChatAdapter({
   function takePendingStructuredEvents(requestId: string): StructuredConversationEvent[] {
     const events = pendingStructuredEventsByRequest.current[requestId] ?? [];
     delete pendingStructuredEventsByRequest.current[requestId];
-    if (!Object.keys(pendingStructuredEventsByRequest.current).length
-        && structuredFlushFrameRef.current !== null) {
-      window.cancelAnimationFrame(structuredFlushFrameRef.current);
+    if (!Object.keys(pendingStructuredEventsByRequest.current).length) {
+      if (structuredFlushFrameRef.current !== null) window.cancelAnimationFrame(structuredFlushFrameRef.current);
+      if (structuredFlushTimerRef.current !== null) window.clearTimeout(structuredFlushTimerRef.current);
       structuredFlushFrameRef.current = null;
+      structuredFlushTimerRef.current = null;
     }
     return events;
   }
@@ -490,6 +525,11 @@ export function useDesktopChatAdapter({
   useEffect(() => {
     appendRendererStage("chat_adapter.thread_changed", { threadId });
     threadIdRef.current = threadId;
+    const replayQueuedEvents = (): void => {
+      const queued = backgroundChatEventsRef.current.get(threadId) ?? [];
+      backgroundChatEventsRef.current.delete(threadId);
+      if (queued.length) window.setTimeout(() => queued.forEach(applyChatEvent), 0);
+    };
     const cached = liveThreadViewsRef.current.get(threadId);
     if (cached?.activeRequestId) {
       liveThreadViewsRef.current.delete(threadId);
@@ -498,13 +538,28 @@ export function useDesktopChatAdapter({
       appliedSnapshotUpdatedAtRef.current = threadSnapshot?.threadId === threadId
         ? threadSnapshot.updatedAt
         : appliedSnapshotUpdatedAtRef.current;
-      const queued = backgroundChatEventsRef.current.get(threadId) ?? [];
-      backgroundChatEventsRef.current.delete(threadId);
-      if (queued.length) window.setTimeout(() => queued.forEach(applyChatEvent), 0);
+      replayQueuedEvents();
       return () => {
         // threadIdRef already points at the incoming thread (render runs
         // before cleanup), so the leaving thread must be flushed under its
         // own id or its tail lands in the new conversation's snapshot store.
+        flushThreadSnapshot(threadId);
+        cacheLiveThreadView(threadId);
+      };
+    }
+    const inflightSubmit = submitThreadRef.current;
+    const hasInflightPlaceholder = inflightSubmit !== null
+      && inflightSubmit.threadId === threadId
+      && activeRequestIdRef.current === inflightSubmit.requestId
+      && messagesRef.current.some((message) => message.id === streamingAssistantByRequest.current[inflightSubmit.requestId]);
+    if (hasInflightPlaceholder) {
+      // submit() just created the optimistic bubble for THIS thread (the
+      // thread switch effect trailed the submit). The reset below would wipe
+      // the placeholder and the request mapping, making the bubble flash and
+      // then vanish. Keep the live state; only replay any events that
+      // arrived while threadIdRef was still stale.
+      replayQueuedEvents();
+      return () => {
         flushThreadSnapshot(threadId);
         cacheLiveThreadView(threadId);
       };
@@ -546,6 +601,11 @@ export function useDesktopChatAdapter({
       restoredSnapshotThreadRef.current = threadId;
     }
     setMessages(preparedMessages);
+    // New threads never have a cached live view, yet the first stream events
+    // may already be queued under this threadId (submit returns after the
+    // backend starts, before this effect re-runs). Replay them here too or
+    // the turn runs invisibly with an empty transcript.
+    replayQueuedEvents();
     return () => {
       // The pending publish may belong to the conversation being replaced;
       // write it out before the switch so a throttled window cannot drop it.
@@ -666,6 +726,8 @@ export function useDesktopChatAdapter({
 
   useEffect(() => () => {
     if (deltaFlushFrameRef.current !== null) window.cancelAnimationFrame(deltaFlushFrameRef.current);
+    if (structuredFlushFrameRef.current !== null) window.cancelAnimationFrame(structuredFlushFrameRef.current);
+    if (structuredFlushTimerRef.current !== null) window.clearTimeout(structuredFlushTimerRef.current);
   }, []);
 
   async function submit(
@@ -869,6 +931,7 @@ export function useDesktopChatAdapter({
     });
     setCancellingRequestId(null);
     activeRequestIdRef.current = requestId;
+    submitThreadRef.current = { threadId, requestId };
     const nextMessages: UiMessage[] = [
       ...historyMessages,
       userMessage,
@@ -1182,6 +1245,9 @@ export function useDesktopChatAdapter({
         ];
         if (structuredFlushFrameRef.current === null) {
           structuredFlushFrameRef.current = window.requestAnimationFrame(flushStructuredEventDeltas);
+        }
+        if (structuredFlushTimerRef.current === null) {
+          structuredFlushTimerRef.current = window.setTimeout(flushStructuredEventDeltas, 50);
         }
         return;
       }

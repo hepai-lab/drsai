@@ -260,7 +260,9 @@ check(
 // already names the incoming conversation when the leaving one is flushed. The
 // leaving id must therefore be threaded through the flush, or the coalesced
 // tail is persisted under the NEW thread's id and pollutes it.
-countOf(adapter, "flushThreadSnapshot(threadId); cacheLiveThreadView(threadId);", 2, "both thread-change cleanups flush a pending publish under the leaving thread id");
+countOf(adapter, "flushThreadSnapshot(threadId); cacheLiveThreadView(threadId);", 3, "all thread-change cleanups flush a pending publish under the leaving thread id");
+check(adapter, "structuredFlushTimerRef.current = window.setTimeout(flushStructuredEventDeltas, 50);", "structured deltas have a timer fallback when requestAnimationFrame is delayed");
+check(adapter, "assistantId = assistantId || `stream:${requestId}`;", "structured events recreate a missing active assistant shell instead of being dropped");
 check(
   adapter,
   "threadId: threadIdOverride ?? threadIdRef.current,",
