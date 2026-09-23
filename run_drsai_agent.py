@@ -298,7 +298,7 @@ if __name__ == "__main__":
             # ── 智能体实体 ──
             agent_factory=create_agent,
             # ── 后端服务配置 ──
-            # controller_address = "http://127.0.0.1:42501",
+            controller_address = "https://aiapi.ihep.ac.cn",
             port=42858,
             no_register=False,
             drsai_dir=DATASET,

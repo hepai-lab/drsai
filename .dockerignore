@@ -9,8 +9,11 @@ dist/
 build/
 *.egg
 
-# 虚拟环境
+# 虚拟环境（禁止宿主机环境覆盖镜像内的 /app/.venv）
+.venv/
+**/.venv/
 venv/
+**/venv/
 env/
 ENV/
 
